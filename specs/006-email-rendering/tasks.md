@@ -546,12 +546,12 @@ arrive.
 **Independent test**: `cargo nextest run -p postio-app --test app_suite remote_images_allowed`
 is green, in both directions.
 
-- [ ] T132 [TEST] [US5] In `crates/postio-runtime/src/remote_images.rs` unit tests, against a loopback HTTP server:
+- [X] T132 [TEST] [US5] In `crates/postio-runtime/src/remote_images.rs` unit tests, against a loopback HTTP server:
   - a PNG is fetched and cached in memory;
   - the request has no `Cookie`, `Referer`, `Origin` or `Authorization`, and a `User-Agent` without "postio";
   - a 4th redirect, a non-http(s) redirect, a response over 16 MiB, a response over the 10 s timeout, and an HTML body labelled `image/png` each yield their `Failed` reason;
   - at most 4 fetches are in flight at once for one message (`contracts/remote-image-fetch.md`)
-- [ ] T133 [US5] Implement `RemoteImageFetcher` in `crates/postio-runtime/src/remote_images.rs` on `io-http` + `pimalaya-stream` over `postio-transport` TLS. The cache is in memory only, and the code carries a `POSTIO-CONSENT:` marker for `scripts/checks/check-no-silent-tracking.py`. Logs carry counts and outcomes only, never a URL
+- [X] T133 [US5] Implement `RemoteImageFetcher` in `crates/postio-runtime/src/remote_images.rs` on `io-http` + `pimalaya-stream` over `postio-transport` TLS. The cache is in memory only, and the code carries a `POSTIO-CONSENT:` marker for `scripts/checks/check-no-silent-tracking.py`. Logs carry counts and outcomes only, never a URL
 - [X] T134 [TEST] [US5] In `crates/postio-render/tests/layout.rs`, render `html-tracking-pixel-remote-images.eml`, whose images declare their sizes, with the images missing and then present in the resource table. Every `MessageBox` and every non-image cluster rect is identical between the two renders (FR-026)
 - [X] T135 [US5] Size placeholders from their declared attributes and styles in `crates/postio-render/src/resources.rs` and `crates/postio-render/src/snapshot.rs`. **Amended:** the size belongs to the markup, so the fix is a presentational hint -- `width`/`height` on `<img>` become `aspect-ratio` in `crates/postio-body/src/hints.rs`, as a browser maps them -- and the resource table gains `insert_remote` for the fetcher's bytes
 - [ ] T136 [TEST] [US5] Add `crates/postio-app/tests/app_suite/remote_images_allowed.rs`, plus its `CASES` row, following the #1336 two-direction discipline:

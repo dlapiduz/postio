@@ -4915,7 +4915,9 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures-util",
+ "io-http",
  "mimalloc",
+ "pimalaya-stream",
  "postio-account",
  "postio-core",
  "postio-index",
@@ -4929,6 +4931,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "zbus",
 ]
 

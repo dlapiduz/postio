@@ -35,6 +35,7 @@
 //! Both are joined to a frontend by `postio-app`, which is the only crate
 //! that knows both halves exist.
 
+pub mod remote_images;
 pub mod engine;
 pub mod network;
 pub mod store;
