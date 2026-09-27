@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 
 use crate::facts::Facts;
 use crate::input::{BodyMessage, FiledMessage, OwnText};
+use crate::needs_action;
 use crate::outcome::{
     Layer, MarkerCandidate, MarkerKind, Outcome, Reason, ReasonKind, RuleName, Span,
 };
@@ -22,6 +23,10 @@ pub fn at_filing(message: &FiledMessage<'_>, facts: &dyn Facts, rules: &dyn Rule
 
 /// Classifies a message once its body has arrived: what it asks of the user,
 /// quoted from `text`, its own words.
+///
+/// With no model connected, the built-in detector answers (FR-105): only for
+/// mail sent directly to the user (FR-106), with at most one question or
+/// to-do, quoting a clause of `text` by its character offsets.
 pub fn at_body(
     message: &BodyMessage<'_>,
     text: &OwnText<'_>,
@@ -151,8 +156,14 @@ struct Corrections;
 impl Stage for Corrections {}
 
 /// Layer 3, structure and rules: calendar parts, list and bulk headers, the
-/// automated-senders table, the user's digest rules, and the built-in
-/// needs-action detector (T105, T110, T116, T122, T133).
+/// automated-senders table and the user's digest rules (T105, T110, T122,
+/// T133).
+///
+/// The built-in needs-action detector belongs to this layer too (FR-130),
+/// but it is not one of its stages: it answers the needs-action question
+/// last, and only when no model is connected, since the user's model
+/// answers that question in its place (FR-107). [`Pipeline`] asks one or
+/// the other.
 struct StructureAndRules;
 
 impl Stage for StructureAndRules {}
@@ -181,6 +192,15 @@ impl<'a> Pipeline<'a> {
     #[cfg(test)]
     pub(crate) fn new(stages: &'a [&'a dyn Stage], model: Option<&'a dyn ModelLayer>) -> Self {
         Pipeline { stages, model }
+    }
+
+    /// Layers 1-3, and the user's model after them when there is one.
+    #[cfg(test)]
+    pub(crate) fn built_in_with(model: Option<&'a dyn ModelLayer>) -> Self {
+        Pipeline {
+            stages: BUILT_IN,
+            model,
+        }
     }
 
     pub(crate) fn at_filing(
@@ -217,23 +237,39 @@ impl<'a> Pipeline<'a> {
         for stage in self.stages {
             stage.at_body(message, text, facts, rules, &mut decisions);
         }
-        if let Some(model) = self.model
-            && decisions.marker.is_open()
-        {
-            let marker = model
-                .needs_action(message, text)
-                .filter(|answer| believable(answer, text))
-                .map(|answer| MarkerCandidate {
-                    kind: answer.kind,
-                    span: Some(answer.span),
-                    starts_at: None,
-                    ends_at: None,
-                    due_at: answer.due_at,
-                    invite: None,
-                });
+        if decisions.marker.is_open() {
+            let marker = self.needs_action(message, text);
             decisions.marker.decide(marker);
         }
         decisions.outcome()
+    }
+
+    /// The needs-action question, for what layers 1-3 left open: only of
+    /// mail sent directly to the user (FR-106), and answered by the user's
+    /// model when they have brought one, in place of the built-in detector
+    /// (FR-107, FR-130), never by both.
+    fn needs_action(
+        &self,
+        message: &BodyMessage<'_>,
+        text: &OwnText<'_>,
+    ) -> Option<MarkerCandidate> {
+        if !needs_action::considered(message) {
+            return None;
+        }
+        let Some(model) = self.model else {
+            return needs_action::detect(message, text);
+        };
+        model
+            .needs_action(message, text)
+            .filter(|answer| believable(answer, text))
+            .map(|answer| MarkerCandidate {
+                kind: answer.kind,
+                span: Some(answer.span),
+                starts_at: None,
+                ends_at: None,
+                due_at: answer.due_at,
+                invite: None,
+            })
     }
 }
 
@@ -251,7 +287,9 @@ fn believable(answer: &NeedsAction, text: &OwnText<'_>) -> bool {
 mod tests {
     use std::cell::Cell;
 
-    use postio_model::{AccountId, EmailAddress, MailboxId, MailboxRole, Message, ThreadId};
+    use postio_model::{
+        AccountId, EmailAddress, Identity, MailboxId, MailboxRole, Message, ThreadId,
+    };
 
     use super::*;
 
@@ -278,13 +316,22 @@ mod tests {
 
     impl Rules for NoRules {}
 
+    fn ada() -> EmailAddress {
+        EmailAddress::new(Some("Ada Norwood"), "ada.norwood@example.com")
+    }
+
+    fn identities() -> Vec<Identity> {
+        let mut identity = Identity::new(AccountId::new(1), ada());
+        identity.display_name = "Ada Norwood".to_owned();
+        vec![identity]
+    }
+
+    /// A notifier's mail to Ada: every later rule would have something to
+    /// say about it.
     fn message() -> Message {
         let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
         message.from = vec![EmailAddress::new(Some("Forge"), "notify@forge.example.com")];
-        message.to = vec![EmailAddress::new(
-            Some("Ada Norwood"),
-            "ada.norwood@example.com",
-        )];
+        message.to = vec![ada()];
         message
     }
 
@@ -294,6 +341,25 @@ mod tests {
             mailbox: Some(MailboxRole::Inbox),
             unsubscribe_offered: Some(true),
             automation: Some(8),
+            has_calendar: false,
+        }
+    }
+
+    /// A person writing to Ada directly: the mail FR-106 lets a detector
+    /// read.
+    fn letter() -> Message {
+        let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
+        message.from = vec![EmailAddress::new(Some("Tove"), "tove@example.org")];
+        message.to = vec![ada()];
+        message
+    }
+
+    fn filed_letter(message: &Message) -> FiledMessage<'_> {
+        FiledMessage {
+            message,
+            mailbox: Some(MailboxRole::Inbox),
+            unsubscribe_offered: Some(false),
+            automation: Some(0),
             has_calendar: false,
         }
     }
@@ -384,24 +450,43 @@ mod tests {
         Pipeline::new(stages, model).at_filing(&filed(&message), &NoFacts, &NoRules)
     }
 
+    /// The letter's body, classified by `stages` and `model`.
     fn classify_body(stages: &[&dyn Stage], model: Option<&dyn ModelLayer>) -> Outcome {
-        let message = message();
+        let message = letter();
+        let identities = identities();
         let body = BodyMessage {
-            filed: filed(&message),
+            filed: filed_letter(&message),
+            identities: &identities,
         };
         Pipeline::new(stages, model).at_body(&body, &OwnText::new(TEXT), &NoFacts, &NoRules)
+    }
+
+    /// The letter's body with Ada only copied on it.
+    fn classify_copied_body(model: Option<&dyn ModelLayer>) -> Outcome {
+        let mut message = letter();
+        message.cc = std::mem::take(&mut message.to);
+        message.to = vec![EmailAddress::new(Some("Oren"), "oren@example.org")];
+        let identities = identities();
+        let body = BodyMessage {
+            filed: filed_letter(&message),
+            identities: &identities,
+        };
+        Pipeline::built_in_with(model).at_body(&body, &OwnText::new(TEXT), &NoFacts, &NoRules)
     }
 
     // --- The built-in pipeline ----------------------------------------------
 
     #[test]
-    fn with_no_rules_yet_the_built_in_pipeline_decides_nothing() {
+    fn the_built_in_pipeline_files_nothing_yet_and_marks_no_automated_mail() {
         // Mail that every later rule would have something to say about -- a
         // notifier's address, List-Unsubscribe, Auto-Submitted, a question --
-        // stays in the inbox, unheld and unmarked, until a rule says so.
+        // stays in the inbox, unheld, until a rule files it (T122), and it
+        // is never marked: an automated sender asks nothing (FR-106).
         let message = message();
+        let identities = identities();
         let body = BodyMessage {
             filed: filed(&message),
+            identities: &identities,
         };
 
         assert_eq!(
@@ -412,6 +497,70 @@ mod tests {
             at_body(&body, &OwnText::new(TEXT), &NoFacts, &NoRules),
             Outcome::default()
         );
+    }
+
+    #[test]
+    fn with_no_model_the_built_in_detector_answers() {
+        // US12 scenario 1, through the classifier's own entry point.
+        let message = letter();
+        let identities = identities();
+        let body = BodyMessage {
+            filed: filed_letter(&message),
+            identities: &identities,
+        };
+
+        let outcome = at_body(&body, &OwnText::new(TEXT), &NoFacts, &NoRules);
+
+        assert_eq!(
+            outcome.marker,
+            Some(MarkerCandidate {
+                kind: MarkerKind::Question,
+                span: Some(0..TEXT.chars().count()),
+                starts_at: None,
+                ends_at: None,
+                due_at: None,
+                invite: None,
+            })
+        );
+        assert_eq!(outcome.filter, None);
+        assert_eq!(outcome.hold, None);
+    }
+
+    #[test]
+    fn a_connected_model_answers_in_place_of_the_built_in_detector() {
+        // FR-107: the model says the letter asks nothing, and the built-in
+        // detector, which would have marked it, is not asked.
+        let model = Model::default();
+
+        let outcome = Pipeline::built_in_with(Some(&model)).at_body(
+            &BodyMessage {
+                filed: filed_letter(&letter()),
+                identities: &identities(),
+            },
+            &OwnText::new(TEXT),
+            &NoFacts,
+            &NoRules,
+        );
+
+        assert_eq!(outcome.marker, None);
+        assert_eq!(model.asked.get(), 1);
+    }
+
+    #[test]
+    fn neither_detector_reads_mail_the_user_is_only_copied_on() {
+        // FR-106 and FR-170: the same rules, whichever detector answers.
+        let model = Model {
+            needs_action: Some(NeedsAction {
+                kind: MarkerKind::Question,
+                span: 0..TEXT.chars().count(),
+                due_at: None,
+            }),
+            ..Model::default()
+        };
+
+        assert_eq!(classify_copied_body(None).marker, None);
+        assert_eq!(classify_copied_body(Some(&model)).marker, None);
+        assert_eq!(model.asked.get(), 0, "the model never saw the message");
     }
 
     // --- An earlier layer's decision stands (FR-130) -------------------------

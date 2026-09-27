@@ -1,7 +1,7 @@
 //! What the classifier is handed: the message at filing, then again with its
 //! body's own text (`contracts/engine.md`, "The filing pass").
 
-use postio_model::{MailboxRole, Message};
+use postio_model::{Identity, MailboxRole, Message};
 
 /// A message as the filing pass knows it, before any body: the envelope,
 /// `References` and `List-Id`, the flags (`$Junk` among them), and what the
@@ -28,6 +28,12 @@ pub struct FiledMessage<'a> {
 pub struct BodyMessage<'a> {
     /// Everything that was known at filing.
     pub filed: FiledMessage<'a>,
+    /// The user's identities on the message's account: the addresses mail
+    /// reaches them at, and the names they go by. They tell mail sent to the
+    /// user from mail they are only copied on, or sent themselves, and an ask
+    /// put to them by name from one put to somebody else (research R10).
+    /// With none, nothing is marked: nothing says who "you" is.
+    pub identities: &'a [Identity],
 }
 
 /// The newest message's own text: the body without quoted history or

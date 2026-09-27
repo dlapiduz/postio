@@ -14,9 +14,12 @@ chrono = { workspace = true, features = ["std"] }
 # The message as filed: its envelope, flags and addresses. The leaf every
 # crate waits on, with nothing in it that sends or connects.
 postio-model = { workspace = true }
+# `parse_when`, which reads a to-do's deadline the way the pickers read a
+# typed date (research R6, R10). A pure leaf: no store, no toolkit.
+postio-search = { workspace = true }
 
 [dev-dependencies]
-# Spike S4 reads its labelled dataset, tests/data/needs_action.toml.
+# SC-013's gate reads its labelled dataset, tests/data/needs_action.toml.
 serde = { workspace = true }
 toml = { workspace = true }
 

@@ -4726,6 +4726,7 @@ version = "0.3.0"
 dependencies = [
  "chrono",
  "postio-model",
+ "postio-search",
  "serde",
  "toml",
 ]

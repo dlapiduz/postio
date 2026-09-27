@@ -11,11 +11,15 @@
 //! - [`Facts`] answers the guards, and [`Rules`] is everything decided by,
 //!   as data;
 //! - [`Outcome`] is the answer, a schema with no text of its own (FR-132);
+//! - the built-in needs-action detector finds a question or a to-do in the
+//!   own text of mail sent directly to the user (FR-104 to FR-106, research
+//!   R10). It is held to SC-013's precision by `tests/needs_action.rs`;
 //! - [`ModelLayer`] is where the user's own model will answer, in milestone
-//!   2, for what the built-in layers leave open.
+//!   2, for what the built-in layers leave open, and in the detector's place.
 
 mod facts;
 mod input;
+mod needs_action;
 mod outcome;
 mod pipeline;
 mod rules;
