@@ -359,10 +359,13 @@ fn colour(node: &Node) -> Option<Rgb> {
         .map(|styles| srgb(&styles.clone_color()).0)
 }
 
-/// The colour behind `id`: the nearest ancestor's opaque background, or
-/// white. Research R10's walk composites translucent grounds and images;
-/// the theme rule (T073) replaces this with it.
+/// The colour behind `id`: its ancestors' backgrounds composited down to
+/// the nearest opaque one, or to white. A translucent ground counts -- a
+/// search match's tint is one -- because it is what a person sees behind
+/// the text.
 fn ground(doc: &BaseDocument, id: NodeId) -> Rgb {
+    let mut layers: Vec<(Rgb, f32)> = Vec::new();
+    let mut base = Rgb::from_u8(255, 255, 255);
     let mut at = doc.get_node(id);
     while let Some(node) = at {
         if let Some(styles) = node.primary_styles() {
@@ -373,12 +376,23 @@ fn ground(doc: &BaseDocument, id: NodeId) -> Rgb {
                 .resolve_to_absolute(&current);
             let (rgb, alpha) = srgb(&background);
             if alpha >= 0.999 {
-                return rgb;
+                base = rgb;
+                break;
+            }
+            if alpha > 0.001 {
+                layers.push((rgb, alpha));
             }
         }
         at = node.parent.and_then(|parent| doc.get_node(parent));
     }
-    Rgb::from_u8(255, 255, 255)
+    layers.iter().rev().fold(base, |under, (over, alpha)| {
+        let a = f64::from(*alpha);
+        Rgb {
+            r: over.r * a + under.r * (1.0 - a),
+            g: over.g * a + under.g * (1.0 - a),
+            b: over.b * a + under.b * (1.0 - a),
+        }
+    })
 }
 
 /// The message a node belongs to.
