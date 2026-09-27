@@ -224,3 +224,219 @@ fn a_translucent_ground_is_composited_over_the_page() {
     let plain = ground_of("plain");
     assert!((plain.r - 1.0).abs() < 0.01, "{plain:?}");
 }
+
+/// One row of the locator's table (spec 007 T066, research R2): a message,
+/// the sentence a detector stored from it, and what the reader must
+/// highlight.
+struct Row {
+    /// What the row is about.
+    case: &'static str,
+    /// The message's HTML part, if it has one.
+    html: Option<&'static str>,
+    /// Its plain part, if it has one.
+    text: Option<&'static str>,
+    /// The text the detector read, when it is not what the reader draws.
+    read: Option<&'static str>,
+    /// The sentence, as the detector stored it.
+    excerpt: &'static str,
+    /// Which occurrence of it, in what was read, the detector stored.
+    nth: usize,
+    /// What the highlight reads, and which occurrence of that in the drawn
+    /// text it must be. `None` when the reader does not draw the sentence.
+    drawn: Option<(&'static str, usize)>,
+}
+
+const FILLER: &str = "The venue moved to the north hall, and parking is behind the \
+                      library this time, so leave a few minutes more than usual.";
+
+fn rows() -> Vec<Row> {
+    let row = |case, html, excerpt, drawn| Row {
+        case,
+        html: Some(html),
+        text: None,
+        read: None,
+        excerpt,
+        nth: 0,
+        drawn,
+    };
+    vec![
+        row(
+            "a sentence drawn once",
+            "<p>Thanks for the notes. Could you send the signed lease by Friday?</p>",
+            "Could you send the signed lease by Friday?",
+            Some(("Could you send the signed lease by Friday?", 0)),
+        ),
+        Row {
+            nth: 0,
+            ..row(
+                "the first of two, told apart by where it sat",
+                said_twice(),
+                "Can you call me back?",
+                Some(("Can you call me back?", 0)),
+            )
+        },
+        Row {
+            nth: 1,
+            ..row(
+                "the second of two, told apart by where it sat",
+                said_twice(),
+                "Can you call me back?",
+                Some(("Can you call me back?", 1)),
+            )
+        },
+        Row {
+            nth: 1,
+            ..row(
+                "the middle of three",
+                "<p>Please confirm.</p><p>The first draft is attached.</p>\
+                 <p>Please confirm.</p><p>The second draft follows on Monday.</p>\
+                 <p>Please confirm.</p>",
+                "Please confirm.",
+                Some(("Please confirm.", 1)),
+            )
+        },
+        Row {
+            text: Some("can you book the cafe in zurich for tuesday?"),
+            read: Some("can you book the cafe in zurich for tuesday?"),
+            ..row(
+                "case and diacritics other than drawn: read from a plain part \
+                 written without them",
+                "<p>Can you book the Café in Zürich for Tuesday?</p>",
+                "can you book the cafe in zurich for tuesday?",
+                Some(("Can you book the Café in Zürich for Tuesday?", 0)),
+            )
+        },
+        row(
+            "accented text before it does not move the range",
+            "<p>Réunion à Genève, déjà prévue, café compris.</p>\
+             <p>Would you forward the agenda to Zoë?</p>",
+            "Would you forward the agenda to Zoë?",
+            Some(("Would you forward the agenda to Zoë?", 0)),
+        ),
+        Row {
+            html: None,
+            text: Some(
+                "Hi Ines,\n\nCould you look over the draft\nbefore the call on Monday?\n\nThanks",
+            ),
+            ..row(
+                "a hard-wrapped plain-text line, drawn as one",
+                "",
+                "Could you look over the draft\nbefore the call on Monday?",
+                Some((
+                    "Could you look over the draft before the call on Monday?",
+                    0,
+                )),
+            )
+        },
+        row(
+            "a sentence across a table-cell boundary",
+            "<table><tr><td>Please sign</td><td>the attached lease today.</td></tr></table>",
+            "Please sign the attached lease today.",
+            Some(("Please sign\tthe attached lease today.", 0)),
+        ),
+        Row {
+            read: Some("Could you send the slides tonight?"),
+            ..row(
+                "a sentence the message does not draw",
+                "<p>See you on Thursday.</p>",
+                "Could you send the slides tonight?",
+                None,
+            )
+        },
+        row(
+            "a sentence in a hidden preheader, never drawn",
+            "<div style=\"display:none\">Could you reply by noon today, please?</div>\
+             <p>Your order has shipped.</p>",
+            "Could you reply by noon today, please?",
+            None,
+        ),
+        Row {
+            read: Some(" \n\t "),
+            ..row(
+                "an excerpt of nothing but whitespace",
+                "<p>Anything at all.</p>",
+                " \n\t ",
+                None,
+            )
+        },
+    ]
+}
+
+/// A body that asks the same question twice, with prose between and after.
+fn said_twice() -> &'static str {
+    static HTML: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HTML.get_or_init(|| {
+        format!(
+            "<p>Can you call me back?</p><p>{FILLER}</p><p>{FILLER}</p>\
+             <p>Can you call me back?</p><p>{FILLER}</p>"
+        )
+    })
+}
+
+/// A body drawn the way the single-message reader draws it.
+fn drawn(html: Option<&str>, text: Option<&str>) -> RenderedDocument {
+    let body = postio_model::MessageBody {
+        html: html.map(str::to_owned),
+        text: text.map(str::to_owned),
+    };
+    let rendered = document::body_html_in(&body, RemoteImages::Blocked, Rendering::Original, None);
+    render_html(document::document_for(
+        &rendered.html,
+        &rendered.styles,
+        RemoteImages::Blocked,
+        document::sheet_for(Rendering::Original, false),
+    ))
+}
+
+/// What a detector reads (spike S5's "what is drawn"): the HTML flattened
+/// when there is HTML, else the plain part.
+fn read_from(html: Option<&str>, text: Option<&str>) -> String {
+    html.map(|html| postio_body::parse(html).to_search_text())
+        .or(text.map(str::to_owned))
+        .unwrap_or_default()
+        .replace("\r\n", "\n")
+}
+
+/// The char offset of the `nth` occurrence of `needle` in `haystack`.
+fn nth_offset(haystack: &str, needle: &str, nth: usize) -> usize {
+    let byte = haystack
+        .match_indices(needle)
+        .nth(nth)
+        .unwrap_or_else(|| panic!("{needle:?} is not in {haystack:?} {} times", nth + 1))
+        .0;
+    haystack[..byte].chars().count()
+}
+
+#[test]
+fn an_excerpt_is_located_where_the_reader_draws_it() {
+    let mut failures = Vec::new();
+    for row in rows() {
+        let html = row.html.filter(|html| !html.is_empty());
+        let document = drawn(html, row.text);
+        let read = row
+            .read
+            .map(str::to_owned)
+            .unwrap_or_else(|| read_from(html, row.text));
+        let excerpt = postio_render::Excerpt {
+            text: row.excerpt,
+            offset: nth_offset(&read, row.excerpt, row.nth),
+            source_len: read.chars().count(),
+        };
+        let found = document.text.locate(excerpt);
+        let want = row.drawn.map(|(words, nth)| {
+            let start = nth_offset(&document.text.text, words, nth);
+            start..start + words.chars().count()
+        });
+        if found != want {
+            failures.push(format!(
+                "{}: located {:?} ({:?}), wanted {want:?} ({:?}), in {:?}",
+                row.case,
+                found,
+                found.clone().map(|range| document.text.slice(range)),
+                row.drawn.map(|(words, _)| words),
+                document.text.text,
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}

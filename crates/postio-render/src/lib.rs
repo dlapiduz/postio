@@ -184,6 +184,24 @@ pub struct TextIndex {
     pub clusters: Vec<Cluster>,
 }
 
+/// A sentence kept by its words, and where it sat in the text it was read
+/// from: what [`TextIndex::locate`] finds again in a rendered body (spec 007
+/// research R2).
+///
+/// The offset cannot address the index directly. The index's text is in
+/// laid-out reading order, with whitespace collapsed, `alt` text in and
+/// closed folds out, so a sentence is found by its words. The offset only
+/// says which occurrence it was when the words repeat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Excerpt<'a> {
+    /// The sentence, as it was read.
+    pub text: &'a str,
+    /// Where it started, in chars into the text it was read from.
+    pub offset: usize,
+    /// That text's length, in chars.
+    pub source_len: usize,
+}
+
 /// A run of text drawn in one colour on one ground.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cluster {

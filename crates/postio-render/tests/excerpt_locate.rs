@@ -60,6 +60,18 @@
 //!   so the tiebreak is measured on every body sent twice over: it picks the
 //!   right occurrence 1,939 times in 1,940 (text first) and 1,979 in 1,980
 //!   (what is drawn). The one miss is a line of emoji in `html-cjk-emoji`.
+//!
+//! # The locator T066 built (2026-09-27)
+//!
+//! `TextIndex::locate` is measured beside the plan, on the same excerpts. It
+//! treats any run of whitespace as any other on both sides, so it finds
+//! everything present at all: 98.2% (text first) and 99.5% (what is drawn)
+//! of the corpus as it is. Over every body twice over it chooses the copy
+//! the sentence was read from 1,918 times in 1,918 and 1,948 in 1,948.
+//! That is judged by which half of the drawn text it lands in, not by
+//! counting occurrences: folding drops the emoji line's variation
+//! selectors, so the count's offsets drift, and that is the plan's one
+//! "miss" above. Its floors are these numbers rounded down.
 
 mod support;
 
@@ -259,16 +271,43 @@ fn locate(index: &TextIndex, source: &str, excerpt: &Excerpt) -> Outcome {
     (how, Which::Unresolved)
 }
 
+/// Where the locator T066 built puts the excerpt: `TextIndex::locate`, the
+/// real thing, judged beside the plan it was built from.
+///
+/// It treats any run of whitespace as any other on both sides, so it can
+/// find what the plan found only with `How::BothCollapsed`. One call, one
+/// fold of the document, so measuring it keeps this test inside the nightly
+/// profile's budget.
+fn by_the_locator(index: &TextIndex, source: &str, excerpt: &Excerpt) -> Option<Range<usize>> {
+    index.locate(postio_render::Excerpt {
+        text: &excerpt.text,
+        offset: excerpt.offset,
+        source_len: source.chars().count(),
+    })
+}
+
 /// Every outcome for one source, and the misses to print.
 #[derive(Default)]
 struct Tally {
     outcomes: BTreeMap<Outcome, usize>,
+    /// What the locator T066 built made of the same excerpts: `Only` when
+    /// it found the sentence, `Right` or `Wrong` for the occurrence it chose
+    /// in a body said twice, `Unresolved` when it found nothing.
+    locator: BTreeMap<Which, usize>,
     misses: Vec<String>,
 }
 
 impl Tally {
-    fn add(&mut self, label: &str, fixture: &str, excerpt: &Excerpt, outcome: Outcome) {
+    fn add(
+        &mut self,
+        label: &str,
+        fixture: &str,
+        excerpt: &Excerpt,
+        outcome: Outcome,
+        locator: Which,
+    ) {
         *self.outcomes.entry(outcome).or_default() += 1;
+        *self.locator.entry(locator).or_default() += 1;
         let (how, which) = outcome;
         if !located(how, which, &[How::AsRead]) {
             self.misses.push(format!(
@@ -307,6 +346,24 @@ impl Tally {
         (right, right + count(Which::Wrong))
     }
 
+    /// The share the locator T066 built found, at the right occurrence
+    /// where there was more than one.
+    fn by_the_locator(&self) -> f64 {
+        let located: usize = [Which::Only, Which::Right]
+            .iter()
+            .filter_map(|which| self.locator.get(which))
+            .sum();
+        located as f64 / self.total().max(1) as f64
+    }
+
+    /// How often the locator picked the right occurrence, of the times it
+    /// had to choose.
+    fn locator_tiebreak(&self) -> (usize, usize) {
+        let count = |wanted: Which| self.locator.get(&wanted).copied().unwrap_or(0);
+        let right = count(Which::Right);
+        (right, right + count(Which::Wrong))
+    }
+
     /// The share present at all, whitespace aside.
     fn present(&self) -> f64 {
         let present: usize = self
@@ -329,6 +386,13 @@ impl Tally {
         );
         for ((how, which), count) in &self.outcomes {
             println!("    {how:?}/{which:?}: {count}");
+        }
+        println!(
+            "  by the locator (TextIndex::locate): {:.1}%",
+            self.by_the_locator() * 100.0
+        );
+        for (which, count) in &self.locator {
+            println!("    {which:?}: {count}");
         }
     }
 }
@@ -369,7 +433,13 @@ fn a_sentence_is_found_again_from_its_excerpt() {
             let Some(source) = source else { continue };
             for excerpt in excerpts(&source) {
                 let outcome = locate(&document.text, &source, &excerpt);
-                tally.add(label, fixture.name(), &excerpt, outcome);
+                // No sentence occurs twice in its own message, so finding
+                // it is finding it.
+                let locator = match by_the_locator(&document.text, &source, &excerpt) {
+                    Some(_) => Which::Only,
+                    None => Which::Unresolved,
+                };
+                tally.add(label, fixture.name(), &excerpt, outcome, locator);
             }
         }
     }
@@ -420,6 +490,13 @@ fn a_sentence_is_found_again_from_its_excerpt() {
             "{label}: {:.3} present at all, below the spike's {present}",
             tally.present()
         );
+        // The locator itself (T066), measured 2026-09-27: 98.2% of what the
+        // text part says, 99.5% of what is drawn -- everything present.
+        assert!(
+            tally.by_the_locator() >= 0.98,
+            "{label}: the locator found {:.3}, below its measured 0.98",
+            tally.by_the_locator()
+        );
     }
 }
 
@@ -446,9 +523,23 @@ fn a_repeated_sentence_is_told_apart_by_where_it_sits() {
         };
         for ((label, source), (_, tally)) in sources(&doubled).into_iter().zip(&mut tallies) {
             let Some(source) = source else { continue };
+            let (source_len, drawn_len) =
+                (source.chars().count(), document.text.text.chars().count());
             for excerpt in excerpts(&source) {
                 let outcome = locate(&document.text, &source, &excerpt);
-                tally.add(label, fixture.name(), &excerpt, outcome);
+                // Both texts are one body and then the same body again, so
+                // the right occurrence is in the copy the excerpt was read
+                // from: the same half of the drawn text.
+                let locator = match by_the_locator(&document.text, &source, &excerpt) {
+                    Some(found)
+                        if (found.start * 2 < drawn_len) == (excerpt.offset * 2 < source_len) =>
+                    {
+                        Which::Right
+                    }
+                    Some(_) => Which::Wrong,
+                    None => Which::Unresolved,
+                };
+                tally.add(label, fixture.name(), &excerpt, outcome, locator);
             }
         }
     }
@@ -469,6 +560,12 @@ fn a_repeated_sentence_is_told_apart_by_where_it_sits() {
     }
 
     for (label, tally) in &tallies {
+        let (right, decided) = tally.locator_tiebreak();
+        println!("{label}: the locator picked right {right} times in {decided}");
+        assert!(
+            right as f64 >= decided as f64 * 0.999,
+            "{label}: the locator picked right {right} times in {decided}"
+        );
         let (right, decided) = tally.tiebreak();
         println!("{label}: the tiebreak picked right {right} times in {decided}");
         assert!(
