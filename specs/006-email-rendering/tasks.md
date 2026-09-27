@@ -458,12 +458,12 @@ script-free rail and scrolling all work in the new reader.
 **Independent test**: `cargo nextest run -p postio-gtk --test gtk_suite body_view`
 cases for select, find, links and a11y are green (SC-007).
 
-- [ ] T106 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, plus its `CASES` row. On `html-transactional-receipt.eml`:
+- [X] T106 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, plus its `CASES` row. On `html-transactional-receipt.eml`:
   - a synthetic drag from one cell to a cell in the next row selects that range, and the highlight rects are drawn;
   - the `Ctrl+C` clipboard text equals `TextIndex.slice`, with a tab between the cells and a newline between the rows;
   - the primary clipboard is set on selection;
   - a double click selects a word, and a triple click selects a line (FR-017)
-- [ ] T107 [US4] Implement selection in `crates/postio-gtk/src/body_view/interact.rs`: `GtkGestureDrag` and `GtkGestureClick` over `TextIndex`, highlights as `append_color` overlays, the clipboard and primary clipboard, and autoscroll near the edges
+- [X] T107 [US4] Implement selection in `crates/postio-gtk/src/body_view/interact.rs`: `GtkGestureDrag` and `GtkGestureClick` over `TextIndex`, highlights as `append_color` overlays, the clipboard and primary clipboard, and autoscroll near the edges
 - [ ] T108 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, check links:
   - hovering a link sets the widget's tooltip to its real target;
   - `Tab` moves focus through the links in document order;
