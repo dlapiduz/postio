@@ -63,6 +63,7 @@
 pub mod date;
 pub mod facets;
 pub mod highlight;
+pub mod matcher;
 pub mod natural;
 mod parser;
 pub mod query;

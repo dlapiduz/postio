@@ -20,6 +20,7 @@ mod account_scope;
 mod backfill;
 mod body_index;
 mod body_index_size;
+mod digest_matcher;
 mod executor;
 mod group_filter;
 mod header_index;
