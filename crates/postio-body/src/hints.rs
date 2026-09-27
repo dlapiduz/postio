@@ -98,13 +98,27 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
                     }
                 }
             }
-            "img" => match get("align").map(|a| a.to_ascii_lowercase()).as_deref() {
-                Some(side @ ("left" | "right")) => hint.push(format!("float: {side}")),
-                Some(position @ ("top" | "middle" | "bottom")) => {
-                    hint.push(format!("vertical-align: {position}"));
+            "img" => {
+                // Declared width and height are the image's proportions:
+                // a browser keeps them under `height: auto` (the reader's
+                // own rule), so a picture arriving late takes the box it
+                // declared and nothing below it moves (FR-026).
+                let size = |name: &str| {
+                    get(name)
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .filter(|n| *n > 0)
+                };
+                if let (Some(w), Some(h)) = (size("width"), size("height")) {
+                    hint.push(format!("aspect-ratio: {w} / {h}"));
                 }
-                _ => {}
-            },
+                match get("align").map(|a| a.to_ascii_lowercase()).as_deref() {
+                    Some(side @ ("left" | "right")) => hint.push(format!("float: {side}")),
+                    Some(position @ ("top" | "middle" | "bottom")) => {
+                        hint.push(format!("vertical-align: {position}"));
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
         if matches!(
@@ -300,6 +314,16 @@ mod tests {
             html.contains("margin-left: auto; margin-right: auto"),
             "{html}"
         );
+    }
+
+    #[test]
+    fn an_images_declared_size_is_its_aspect_ratio() {
+        assert!(
+            clean(r#"<img src="x" width="320" height="240">"#).contains("aspect-ratio: 320 / 240"),
+            "{}",
+            clean(r#"<img src="x" width="320" height="240">"#)
+        );
+        assert!(!clean(r#"<img src="x" width="320">"#).contains("aspect-ratio"));
     }
 
     #[test]

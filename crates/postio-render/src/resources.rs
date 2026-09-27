@@ -26,6 +26,10 @@ pub struct Resources {
     /// fixed; the faces are the caller's, because the composed document's
     /// `@font-face` rules name them.
     fonts: Mutex<HashMap<String, Bytes>>,
+    /// A remote image the app fetched for a consenting sender (FR-025),
+    /// by its URL. Only postio-runtime's fetcher fills this: the engine
+    /// never reaches the network.
+    remote: Mutex<HashMap<String, Bytes>>,
     resolved: AtomicU32,
     unresolved: AtomicU32,
     placeholdered: AtomicU32,
@@ -53,6 +57,14 @@ impl Resources {
                 (scope.map(str::to_owned), id.to_owned()),
                 Bytes::from(bytes),
             );
+    }
+
+    /// Add an image the app fetched from `url` for this message's sender.
+    pub fn insert_remote(&self, url: &str, bytes: Vec<u8>) {
+        self.remote
+            .lock()
+            .expect("the resource table is never poisoned")
+            .insert(url.to_owned(), Bytes::from(bytes));
     }
 
     /// Add a bundled face, answered for `postio-font:<name>`.
@@ -113,6 +125,15 @@ impl Resources {
                 .get(&(scope, id))
                 .cloned()?;
             return self.admit(part);
+        }
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let fetched = self
+                .remote
+                .lock()
+                .expect("the resource table is never poisoned")
+                .get(url)
+                .cloned()?;
+            return self.admit(fetched);
         }
         if let Some(name) = url.strip_prefix(FONT_SCHEME) {
             return self
