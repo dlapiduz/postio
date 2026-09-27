@@ -40,6 +40,7 @@
 mod webkit_probe;
 
 mod body_view;
+mod body_view_a11y;
 mod body_view_find;
 mod body_view_select;
 mod body_view_theme;
@@ -193,6 +194,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view_a11y::the_accessible_text_is_the_text_index",
+        body_view_a11y::the_accessible_text_is_the_text_index as fn(),
+    ),
     (
         "body_view_find::find_highlights_steps_and_survives_a_re_render",
         body_view_find::find_highlights_steps_and_survives_a_re_render as fn(),

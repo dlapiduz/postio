@@ -160,6 +160,7 @@ impl BodyView {
 
     pub(super) fn set_selection(&self, range: Option<std::ops::Range<usize>>) {
         self.imp().selection.replace(range);
+        self.announce_selection();
         self.queue_draw();
     }
 

@@ -483,12 +483,12 @@ cases for select, find, links and a11y are green (SC-007).
   - `Escape` closes the bar and clears the highlights;
   - the highlights survive a theme-change re-render (FR-018, FR-021f)
 - [X] T115 [US4] Implement `crates/postio-gtk/src/body_view/find.rs`: a `GtkSearchBar` in the reading pane, `FindState` over `TextIndex`, the overlay rects, and scroll-to-current
-- [ ] T116 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_a11y.rs`, plus its `CASES` row, running under `GTK_A11Y=test`:
+- [X] T116 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_a11y.rs`, plus its `CASES` row, running under `GTK_A11Y=test`:
   - `AccessibleText::contents(0, -1)` equals `TextIndex.text`;
   - the caret and selection reflect `Selection`;
   - `extents(range)` equals the union of the cluster rects converted to widget coordinates;
   - the widget's role is `Document` (FR-020)
-- [ ] T117 [US4] Implement `AccessibleTextImpl` in `crates/postio-gtk/src/body_view/a11y.rs` (gtk4 `v4_16` APIs, covered by the workspace's `v4_20`). Call `update_contents`, `update_caret_position` and `update_selection_bound` on every snapshot and selection change
+- [X] T117 [US4] Implement `AccessibleTextImpl` in `crates/postio-gtk/src/body_view/a11y.rs` (gtk4 `v4_16` APIs, covered by the workspace's `v4_20`). Call `update_contents`, `update_caret_position` and `update_selection_bound` on every snapshot and selection change
 - [ ] T118 [TEST] [US4] Port the `crates/postio-gtk/tests/gtk_suite/gtk_rail.rs` cases that assert the current message and scroll-to-message so they drive `BodyView`:
   - the current message is the one with the greatest visible area of `MessageBox`, computed by `RenderedDocument::current_message`;
   - activating a rail row scrolls that message's top to the viewport's top;
