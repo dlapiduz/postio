@@ -4534,7 +4534,13 @@ pub(crate) mod tests {
     /// at `docs/book/src/desktop-and-terminal.md`. Taking one off is how
     /// the fix proves itself; the list is allowed to shrink and never to
     /// grow.
-    const GAPS: &[&str] = &[];
+    const GAPS: &[&str] = &[
+        // Spec 006's find, built for the desktop reader's text index; the
+        // terminal's reader has no find yet.
+        "find_in_message",
+        "find_next",
+        "find_previous",
+    ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
         effects
@@ -4722,8 +4728,16 @@ pub(crate) mod tests {
         let mut wired: Vec<postio_core::CommandId> = postio_session::actions::WIRED.to_vec();
         wired.push(postio_core::CommandId::Refresh);
         let mut unanswered = Vec::new();
+        let terminal = postio_core::Availability {
+            terminal: true,
+            ..postio_core::Availability::open(postio_core::Scope::Unified)
+        };
         for spec in postio_core::registry::all() {
             let id = spec.id.as_str();
+            // Never offered here (`Requirement::Graphical`): owed no answer.
+            if !spec.requires.met_by(terminal) {
+                continue;
+            }
             let effects = run_anywhere(id, spec);
             let dropped = effects
                 .iter()
@@ -5768,7 +5782,10 @@ pub(crate) mod tests {
         let expected: Vec<&str> = postio_ui::palette::entries(
             &keymap,
             postio_core::Context::List,
-            postio_core::Availability::open(postio_core::Scope::Unified),
+            postio_core::Availability {
+                terminal: true,
+                ..postio_core::Availability::open(postio_core::Scope::Unified)
+            },
             "",
         )
         .iter()

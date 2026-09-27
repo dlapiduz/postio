@@ -109,15 +109,21 @@ pub enum Requirement {
     /// preview of what it becomes. The desktop's composer edits rich text in
     /// place, so it does not offer these (spec 005, open question 4).
     Terminal,
+    /// The frontend has to draw the message as pixels, because the command
+    /// changes how it is drawn: zoom, and darkening a sheet of paper
+    /// (spec 006). A terminal draws text in its own font and colours, and
+    /// has nothing for these to act on.
+    Graphical,
 }
 
 impl Requirement {
     /// Every requirement, in declaration order. What [`RequirementSet`] is
     /// built over.
-    pub const ALL: [Requirement; 3] = [
+    pub const ALL: [Requirement; 4] = [
         Requirement::SingleAccount,
         Requirement::StoreOpen,
         Requirement::Terminal,
+        Requirement::Graphical,
     ];
 
     const fn bit(self) -> u8 {
@@ -219,6 +225,7 @@ impl Requirement {
             Requirement::SingleAccount => state.scope.is_single_account(),
             Requirement::StoreOpen => state.store_open,
             Requirement::Terminal => state.terminal,
+            Requirement::Graphical => !state.terminal,
         }
     }
 }
@@ -282,6 +289,8 @@ const MAIL: RequirementSet = needs(&[Requirement::StoreOpen]);
 
 /// Works on the terminal composer's Markdown, which only it has.
 const TERMINAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Terminal]);
+/// Mail drawn as pixels: zoom and darken (spec 006).
+const GRAPHICAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Graphical]);
 
 /// Chrome: it means the same thing with an empty window as with a full one.
 const CHROME: RequirementSet = RequirementSet::NONE;
@@ -575,6 +584,90 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::DarkenMessage,
+        title: "Darken this message",
+        // `D` is unbound (`d` is taken); shifted letters are this app's idiom for a stronger form. The title reads "Show as sent" while the message is darkened -- the command is its own undo.
+        default_binding: "D",
+        alternate_bindings: &[],
+        // Wherever `View original` is (spec 006 contracts/registry-commands).
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FindInMessage,
+        title: "Find in message",
+        // The platform's convention, unbound until now.
+        default_binding: "mod+f",
+        alternate_bindings: &[],
+        // Wherever `View original` is (spec 006 contracts/registry-commands).
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FindNext,
+        title: "Next match",
+        // `mod+g` and `F3` are both what every reader uses for the next match.
+        default_binding: "mod+g",
+        alternate_bindings: &["F3"],
+        // Wherever `View original` is (spec 006 contracts/registry-commands).
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FindPrevious,
+        title: "Previous match",
+        // The composer's `mod+shift+g` never meets a message surface: compose takes the reading pane over.
+        default_binding: "mod+shift+g",
+        alternate_bindings: &["shift+F3"],
+        // Wherever `View original` is (spec 006 contracts/registry-commands).
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ZoomIn,
+        title: "Zoom in",
+        // `mod+equal` because `+` is shifted on most layouts.
+        default_binding: "mod+plus",
+        alternate_bindings: &["mod+equal", "mod+KP_Add"],
+        // Wherever `View original` is (spec 006 contracts/registry-commands).
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ZoomOut,
+        title: "Zoom out",
+        // The platform's convention.
+        default_binding: "mod+minus",
+        alternate_bindings: &["mod+KP_Subtract"],
+        // Wherever `View original` is (spec 006 contracts/registry-commands).
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ZoomReset,
+        title: "Actual size",
+        // The platform's convention.
+        default_binding: "mod+0",
+        alternate_bindings: &["mod+KP_0"],
+        // Wherever `View original` is (spec 006 contracts/registry-commands).
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ExpandAll,

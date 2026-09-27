@@ -34,6 +34,8 @@ pub fn legacy_deliverable(chord: &Chord) -> bool {
         }
         Key::Char(_) => true,
         Key::Named(name) => match *name {
+            // A legacy terminal sends the keypad's keys as the main ones.
+            name if name.starts_with("KP_") => false,
             "Return" => !ctrl && !shift,
             "Space" => !shift,
             "Tab" | "BackSpace" => !ctrl,
@@ -246,7 +248,13 @@ mod registry {
 
     #[test]
     fn every_command_has_a_binding_a_legacy_terminal_delivers() {
+        let terminal = postio_core::Availability {
+            terminal: true,
+            ..postio_core::Availability::open(postio_core::Scope::Unified)
+        };
         let unreachable: Vec<String> = postio_core::registry::all()
+            // A command a terminal never offers owes it no key.
+            .filter(|spec| spec.requires.met_by(terminal))
             .filter(|spec| {
                 !spec.bindings().any(|binding| {
                     expand_mod(binding, Platform::Freedesktop)

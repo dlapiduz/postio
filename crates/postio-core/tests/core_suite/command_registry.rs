@@ -721,3 +721,71 @@ fn reader_view_is_a_command_beside_view_original() {
         CommandId::ToggleReaderView
     );
 }
+
+/// Spec 006's reading commands (contracts/registry-commands.md): ids are a
+/// file format, chosen once there; each sits where `View original` does,
+/// none is destructive, and each has its default and its alternates.
+#[test]
+fn the_reading_commands_are_registered_as_the_contract_says() {
+    let reading = registry::get(CommandId::ViewOriginal).contexts;
+    for (id, name, title, default, alternates) in [
+        (
+            CommandId::DarkenMessage,
+            "darken_message",
+            "Darken this message",
+            "D",
+            &[][..],
+        ),
+        (
+            CommandId::FindInMessage,
+            "find_in_message",
+            "Find in message",
+            "mod+f",
+            &[][..],
+        ),
+        (
+            CommandId::FindNext,
+            "find_next",
+            "Next match",
+            "mod+g",
+            &["F3"][..],
+        ),
+        (
+            CommandId::FindPrevious,
+            "find_previous",
+            "Previous match",
+            "mod+shift+g",
+            &["shift+F3"][..],
+        ),
+        (
+            CommandId::ZoomIn,
+            "zoom_in",
+            "Zoom in",
+            "mod+plus",
+            &["mod+equal", "mod+KP_Add"][..],
+        ),
+        (
+            CommandId::ZoomOut,
+            "zoom_out",
+            "Zoom out",
+            "mod+minus",
+            &["mod+KP_Subtract"][..],
+        ),
+        (
+            CommandId::ZoomReset,
+            "zoom_reset",
+            "Actual size",
+            "mod+0",
+            &["mod+KP_0"][..],
+        ),
+    ] {
+        let spec = registry::get(id);
+        assert_eq!(spec.id.as_str(), name);
+        assert_eq!(spec.title, title, "{name}");
+        assert_eq!(spec.default_binding, default, "{name}");
+        assert_eq!(spec.alternate_bindings, alternates, "{name}");
+        assert_eq!(spec.contexts, reading, "{name}");
+        assert!(!spec.destructive, "{name}");
+        assert_eq!(Command::default_for(id).id(), id);
+    }
+}

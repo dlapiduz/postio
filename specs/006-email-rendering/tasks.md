@@ -383,8 +383,8 @@ high-contrast themes (SC-001).
 - [X] T078 [US1] Implement darken in `crates/postio-render/src/theme.rs`: `L → 0.12 + (1 − L) × 0.18` for backgrounds and borders, then repair
 - [X] T079 [TEST] [US1] In `crates/postio-render/tests/presentation.rs`, render `html-transparent-logo.eml` both `Darkened` and `Adapted`. Assert that the image's pixels equal its decoded pixels composited over the **sender's canvas colour**, never over the dark ground, and that no image pixel is recoloured (FR-015)
 - [X] T080 [US1] Implement the image canvas backing in `crates/postio-render/src/theme.rs`
-- [ ] T081 [TEST] [US1] In `crates/postio-core/tests/core_suite/command_registry.rs`, `darken_message` exists with default `D` in message surfaces, is not destructive, and does not collide with any binding in an overlapping context
-- [ ] T082 [US1] Add `DarkenMessage` in `crates/postio-core/src/command.rs` (the `command_ids!` entry, the variant and both conversion matches) and its `CommandSpec` in `crates/postio-core/src/registry.rs`, per `contracts/registry-commands.md`. Regenerate `docs/keybindings.md` with `POSTIO_UPDATE_DOCS=1`, and update the golden `linux-bindings.txt` by hand
+- [X] T081 [TEST] [US1] In `crates/postio-core/tests/core_suite/command_registry.rs`, `darken_message` exists with default `D` in message surfaces, is not destructive, and does not collide with any binding in an overlapping context
+- [X] T082 [US1] Add `DarkenMessage` in `crates/postio-core/src/command.rs` (the `command_ids!` entry, the variant and both conversion matches) and its `CommandSpec` in `crates/postio-core/src/registry.rs`, per `contracts/registry-commands.md`. Regenerate `docs/keybindings.md` with `POSTIO_UPDATE_DOCS=1`, and update the golden `linux-bindings.txt` by hand
 - [ ] T083 [TEST] [US1] In `crates/postio-gtk/tests/gtk_suite/body_view_theme.rs`, in dark mode with `html-newsletter.eml` focused:
   - dispatching `darken_message` issues a request whose `darkened` contains its scope;
   - the command's title reads "Show as sent";
@@ -473,8 +473,8 @@ cases for select, find, links and a11y are green (SC-007).
 - [ ] T109 [US4] Implement links in `crates/postio-gtk/src/body_view/interact.rs`: hover target, keyboard focus ring drawn as an overlay, `gtk::UriLauncher` for `External` targets, and verb dispatch through the existing `connect_message_action`
 - [ ] T110 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, clicking a quote fold's summary rect issues a request with that fold in `toggled_folds`, and the fold body's text appears in the next snapshot's `TextIndex`
 - [ ] T111 [US4] Implement fold clicks in `crates/postio-gtk/src/body_view/interact.rs`
-- [ ] T112 [TEST] [US4] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `find_in_message` (`mod+f`), `find_next` (`mod+g`, alternate `F3`) and `find_previous` (`mod+shift+g`, alternate `shift+F3`) against `contracts/registry-commands.md`, including the context-overlap rule
-- [ ] T113 [US4] Add the three find commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
+- [X] T112 [TEST] [US4] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `find_in_message` (`mod+f`), `find_next` (`mod+g`, alternate `F3`) and `find_previous` (`mod+shift+g`, alternate `shift+F3`) against `contracts/registry-commands.md`, including the context-overlap rule
+- [X] T113 [US4] Add the three find commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
 - [ ] T114 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_find.rs`, plus its `CASES` row:
   - `mod+f` opens the find bar with focus in its entry;
   - typing "total" highlights exactly `TextIndex.find("total").len()` rects;
@@ -512,8 +512,8 @@ reader's place and persisted in `[reader]`.
   - `zoom = 112` loads as 110, and `zoom = 5` loads as 50;
   - a round trip preserves the value
 - [ ] T121 [US6] Add `crates/postio-config/src/reader.rs`, with `ReaderConfig { zoom }`, a serde default and clamping, to `Config` in `crates/postio-config/src/lib.rs`. Add its `patch_reader`, the `ConfigChanged` field, the `docs/config.md` row, and the FFI mirror in `crates/postio-ffi/src/settings.rs`
-- [ ] T122 [TEST] [P] [US6] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `zoom_in` (`mod+plus`, alternates `mod+equal` and `mod+KP_Add`), `zoom_out` (`mod+minus`, `mod+KP_Subtract`) and `zoom_reset` (`mod+0`, `mod+KP_0`) against `contracts/registry-commands.md`
-- [ ] T123 [US6] Add the three zoom commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
+- [X] T122 [TEST] [P] [US6] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `zoom_in` (`mod+plus`, alternates `mod+equal` and `mod+KP_Add`), `zoom_out` (`mod+minus`, `mod+KP_Subtract`) and `zoom_reset` (`mod+0`, `mod+KP_0`) against `contracts/registry-commands.md`
+- [X] T123 [US6] Add the three zoom commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
 - [ ] T124 [TEST] [US6] Write `crates/postio-render/tests/zoom.rs` (SC-009). For every text-bearing corpus fixture at every step from 50 to 300%:
   - no cluster lies outside the document width unless it is inside a scrolling box, meaning nothing is lost off the side;
   - every cluster's text appears in `TextIndex.text`, meaning nothing is clipped;

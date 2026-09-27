@@ -58,6 +58,8 @@ single command.
 | Open a link | ✓ | ◐ | A click shows where it goes and a second opens it; no key yet |
 | Attachments: open, save, save all | ✓ | ✓ | |
 | Reader view, or the sender's own markup (`View original`) | ✓ | ✓ | |
+| Find in the message on screen (`Ctrl+F`, next and previous match) | ✓ | — | Not yet in the terminal: its `GAPS` list names the three commands |
+| Zoom a message in and out; darken a designed message in dark mode | ✓ | — | The terminal draws text in its own font and colours, so there is nothing for these to act on; it does not offer them |
 | Open a part with another app | ✓ | ◐ | The terminal opens every part with the system's default app |
 | Show a held-back part once, with what it references | ✓ | — | For drawing its images, which a terminal cannot |
 | Unsubscribe | ✓ | ✓ | |

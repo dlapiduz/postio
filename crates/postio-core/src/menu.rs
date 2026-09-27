@@ -176,6 +176,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::CopyFields => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
         C::OpenParts | C::ViewOriginal | C::ToggleReaderView => Some(M::View),
+        // Spec 006: how the message on screen is drawn.
+        C::DarkenMessage | C::ZoomIn | C::ZoomOut | C::ZoomReset => Some(M::View),
+        C::FindInMessage | C::FindNext | C::FindPrevious => Some(M::Edit),
         C::CommandPalette => Some(M::View),
 
         // ── Help ─────────────────────────────────────────────────────────
