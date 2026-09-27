@@ -464,15 +464,15 @@ cases for select, find, links and a11y are green (SC-007).
   - the primary clipboard is set on selection;
   - a double click selects a word, and a triple click selects a line (FR-017)
 - [X] T107 [US4] Implement selection in `crates/postio-gtk/src/body_view/interact.rs`: `GtkGestureDrag` and `GtkGestureClick` over `TextIndex`, highlights as `append_color` overlays, the clipboard and primary clipboard, and autoscroll near the edges
-- [ ] T108 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, check links:
+- [X] T108 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, check links:
   - hovering a link sets the widget's tooltip to its real target;
   - `Tab` moves focus through the links in document order;
   - `Return` on an `https` link calls the launcher, captured by a test launcher;
   - a `javascript:` link from `html-script-forms.eml` is not a link at all;
   - verb links dispatch their `MessageVerb` (FR-019)
-- [ ] T109 [US4] Implement links in `crates/postio-gtk/src/body_view/interact.rs`: hover target, keyboard focus ring drawn as an overlay, `gtk::UriLauncher` for `External` targets, and verb dispatch through the existing `connect_message_action`
-- [ ] T110 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, clicking a quote fold's summary rect issues a request with that fold in `toggled_folds`, and the fold body's text appears in the next snapshot's `TextIndex`
-- [ ] T111 [US4] Implement fold clicks in `crates/postio-gtk/src/body_view/interact.rs`
+- [X] T109 [US4] Implement links in `crates/postio-gtk/src/body_view/interact.rs`: hover target, keyboard focus ring drawn as an overlay, `gtk::UriLauncher` for `External` targets, and verb dispatch through the existing `connect_message_action`
+- [X] T110 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, clicking a quote fold's summary rect issues a request with that fold in `toggled_folds`, and the fold body's text appears in the next snapshot's `TextIndex`
+- [X] T111 [US4] Implement fold clicks in `crates/postio-gtk/src/body_view/interact.rs`
 - [X] T112 [TEST] [US4] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `find_in_message` (`mod+f`), `find_next` (`mod+g`, alternate `F3`) and `find_previous` (`mod+shift+g`, alternate `shift+F3`) against `contracts/registry-commands.md`, including the context-overlap rule
 - [X] T113 [US4] Add the three find commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
 - [ ] T114 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_find.rs`, plus its `CASES` row:

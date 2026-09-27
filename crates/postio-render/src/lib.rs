@@ -90,6 +90,9 @@ pub struct RenderedDocument {
     pub messages: Vec<MessageBox>,
     /// Every fold and whether it is open.
     pub folds: Vec<FoldBox>,
+    /// Where each element with an `id` starts, for fragment links: the id
+    /// as the document spells it, and its top in CSS pixels.
+    pub anchors: Vec<(String, f64)>,
     /// What the render cost, counted (Principle V).
     pub counts: RenderCounts,
     /// Whether the sender's markup was drawn, or the plain-text fallback.
@@ -100,6 +103,44 @@ pub struct RenderedDocument {
 }
 
 static_assertions::assert_impl_all!(RenderedDocument: Send, Sync);
+
+impl RenderedDocument {
+    /// The link under `point`, in document coordinates.
+    pub fn link_at(&self, point: Point) -> Option<&LinkBox> {
+        self.links.iter().find(|link| link.rect.contains(point))
+    }
+
+    /// The fold whose summary is under `point`.
+    pub fn fold_at(&self, point: Point) -> Option<&FoldBox> {
+        self.folds
+            .iter()
+            .find(|fold| fold.summary_rect.contains(point))
+    }
+}
+
+impl LinkTarget {
+    /// Where the link goes, as a person reads it: the address, or what the
+    /// verb does.
+    pub fn describe(&self) -> String {
+        match self {
+            LinkTarget::External(url) => url.to_string(),
+            LinkTarget::Verb { verb, .. } => verb.name().to_owned(),
+            LinkTarget::Fragment { id, .. } => format!("#{id}"),
+        }
+    }
+}
+
+impl Verb {
+    /// The verb's name, as the reader's thread document spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Verb::Allow => "allow",
+            Verb::Reply => "reply",
+            Verb::Forward => "forward",
+            Verb::Continue => "continue",
+        }
+    }
+}
 
 /// The document's text in reading order, the one serialisation copy, find
 /// and the screen reader share (R7).

@@ -76,6 +76,18 @@ pub(crate) fn folds(doc: &BaseDocument) -> Vec<FoldBox> {
         .collect()
 }
 
+/// Every element with an `id`, and where it starts: what a fragment link
+/// scrolls to.
+pub(crate) fn anchors(doc: &BaseDocument) -> Vec<(String, f64)> {
+    elements(doc, "[id]")
+        .into_iter()
+        .filter_map(|node| {
+            let id = node.attr(local_name!("id"))?.to_owned();
+            Some((id, border_box(node).y0))
+        })
+        .collect()
+}
+
 /// Every link a reader may follow, one box per line it occupies: its text
 /// runs, grouped under the `<a>` they belong to, and the box of any link
 /// that lays out as a block of its own.
