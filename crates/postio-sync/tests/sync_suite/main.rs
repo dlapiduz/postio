@@ -21,6 +21,7 @@ mod blob_sink;
 mod boundary;
 mod concurrent_writers;
 mod connect;
+mod correspondents;
 mod cross_account_move;
 mod discover;
 mod drafts;

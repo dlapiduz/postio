@@ -599,9 +599,10 @@ async fn incremental(
                 let source: Vec<Message> = slice.to_vec();
                 postio_storage::transaction(connection, move |connection| async move {
                     let mut written = source;
-                    MessageRepository::new(&connection)
+                    let upsert = MessageRepository::new(&connection)
                         .upsert_batch(&mut written)
                         .await?;
+                    crate::correspondents::record(&connection, role, account_id, &upsert).await?;
 
                     let threading = ThreadingRepository::new(&connection, account_id);
                     let mut threads = Vec::with_capacity(written.len());

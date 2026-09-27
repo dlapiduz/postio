@@ -33,6 +33,7 @@ mod settings;
 mod accounts;
 mod contact_groups;
 mod contacts;
+mod correspondents;
 mod cross_account;
 mod digests;
 mod drafts;
@@ -52,6 +53,7 @@ mod unsubscribe;
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use contact_groups::ContactGroupRepository;
 pub use contacts::ContactRepository;
+pub use correspondents::{Correspondent, CorrespondentRepository};
 pub use cross_account::{
     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
 };

@@ -2001,3 +2001,102 @@ async fn a_forward_whose_original_is_gone_names_the_file_it_could_not_carry() {
         postio_model::DraftState::Failed
     );
 }
+
+// ── Who the person wrote to (spec 007, T075) ────────────────────────────────
+
+/// How many messages the person has sent to `address`.
+async fn sent_to(connection: &Connection, address: &str) -> Option<u32> {
+    postio_storage::repository::CorrespondentRepository::new(connection)
+        .get(&EmailAddress::new(None::<String>, address))
+        .await
+        .expect("a read")
+        .map(|correspondent| correspondent.sent_count)
+}
+
+/// Queues `draft` to be sent, and drains the queue over `script`.
+async fn send_one(
+    connection: &Connection,
+    account: &Account,
+    mut draft: Draft,
+    script: SmtpScript,
+) -> postio_sync::DrainReport {
+    let draft_id = DraftRepository::new(connection)
+        .save(&mut draft)
+        .await
+        .expect("save draft");
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .await
+        .expect("enqueue");
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(account).await;
+    let connector = ScriptedConnector::new(script);
+    let blobs = TempBlobs::new();
+    drain_one(
+        connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn sending_to_three_addresses_adds_one_to_each_correspondent() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft
+        .to
+        .push(EmailAddress::new(Some("Tove"), "tove@example.org"));
+    draft.cc = vec![EmailAddress::new(None::<String>, "quinn@example.com")];
+
+    let report = send_one(&connection, &account, draft, accepting_script()).await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    for to in ["grace@example.net", "tove@example.org", "quinn@example.com"] {
+        assert_eq!(sent_to(&connection, to).await, Some(1), "{to}");
+    }
+    assert_eq!(
+        sent_to(&connection, "ada@example.com").await,
+        None,
+        "the sender is nobody she wrote to"
+    );
+}
+
+#[tokio::test]
+async fn a_send_the_server_refused_wrote_to_nobody() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+
+    let report = send_one(
+        &connection,
+        &account,
+        a_draft(&account, "grace@example.net"),
+        script_replying_to_rcpt("550 no such user"),
+    )
+    .await;
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+
+    assert!(
+        !postio_storage::repository::CorrespondentRepository::new(&connection)
+            .wrote_to(&EmailAddress::new(None::<String>, "grace@example.net"))
+            .await
+            .expect("a read"),
+        "nothing was delivered, so nobody was written to"
+    );
+}

@@ -74,7 +74,7 @@ use chrono::Utc;
 use postio_account::auth::{TokenSource, with_credential};
 use postio_account::backend::{AppendMessage, MailBackend};
 use postio_account::secret::AccountKey;
-use postio_model::ids::{AccountId, DraftId};
+use postio_model::ids::{AccountId, DraftId, MessageId};
 use postio_model::{
     Attachment, DraftState, Flag, FlagSet, MailboxId, MailboxRole, Message, OutgoingAttachment,
     mime, outgoing,
@@ -86,8 +86,8 @@ use postio_smtp::transport::SmtpConnector;
 use postio_storage::BlobStore;
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, DraftRepository, MailboxRepository, MessageRepository, StoredBody,
-    ThreadingRepository,
+    AccountRepository, CorrespondentRepository, DraftRepository, MailboxRepository,
+    MessageRepository, StoredBody, ThreadingRepository,
 };
 use secrecy::SecretString;
 use std::collections::BTreeSet;
@@ -546,6 +546,11 @@ async fn file_sent_locally(
     if messages.create(&mut message).await.is_err() {
         return None;
     }
+    // Everyone it went to has been written to, now, before the network
+    // (spec 007, T075): Focus's filter never files their mail, and
+    // completion ranks them higher. A send that fails takes it back in
+    // `unfile_sent_copy`. Best-effort like the rest of this path.
+    record_correspondents(connection, job.account, message.id).await;
     // The thread id comes back onto the struct, and that is the whole of
     // #1488. Threading writes it to the row; this function then *returns*
     // `message`, and `confirm_sent_copy` later sets the server's coordinates
@@ -588,6 +593,19 @@ async fn file_sent_locally(
     Some(message)
 }
 
+/// Counts the Sent row just filed as written to everyone it went to.
+///
+/// Logged and not returned: who was written to is worth keeping, and never
+/// worth failing -- or repeating -- a send over.
+async fn record_correspondents(connection: &Connection, account: AccountId, message: MessageId) {
+    if let Err(error) = CorrespondentRepository::new(connection)
+        .record_sent(account, &[message])
+        .await
+    {
+        tracing::warn!(%error, "could not record who a sent message went to");
+    }
+}
+
 /// Takes back the Sent row [`file_sent_locally`] wrote, after a failed send.
 ///
 /// Only for [`Outcome::Failed`], which ADR 0021 defines as the outcomes where
@@ -600,6 +618,17 @@ async fn unfile_sent_copy(connection: &Connection, filed: Option<&Message>) {
     let Some(message) = filed else {
         return;
     };
+    // Nothing was delivered, so nobody was written to: before the row goes,
+    // since its recipients are what say who (T075).
+    if let Err(error) = CorrespondentRepository::new(connection)
+        .unrecord_sent(message.account_id, message.id)
+        .await
+    {
+        tracing::warn!(
+            %error,
+            "could not take back who a failed send was counted as written to"
+        );
+    }
     if let Err(error) = MessageRepository::new(connection)
         .delete(&[message.id])
         .await
@@ -677,6 +706,7 @@ async fn confirm_sent_copy(
             if messages.create(&mut message).await.is_err() {
                 return;
             }
+            record_correspondents(connection, job.account, message.id).await;
             let _ = ThreadingRepository::new(connection, job.account)
                 .thread(&message)
                 .await;

@@ -468,10 +468,16 @@ pub enum FlagSource {
 }
 
 /// What one [`MessageRepository::upsert_batch`] did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpsertReport {
     /// Messages that were not known locally.
     pub inserted: usize,
+    /// Which rows those are: the messages this batch wrote a row for, as
+    /// distinct from ones it matched and updated -- among them a sent copy
+    /// this client filed before the server named it, which a sync adopts by
+    /// its Message-ID. What counts a message once, on the pass that first
+    /// filed it (the `correspondents` a Sent folder's sync records).
+    pub inserted_ids: Vec<MessageId>,
     /// Messages that already had a row under the same server identity.
     pub updated: usize,
     /// Messages whose flags the queue was still holding intent about, so the
@@ -879,6 +885,7 @@ impl<'a> MessageRepository<'a> {
                         message.id = insert(&transaction, message).await?;
                         write_children(&transaction, message).await?;
                         report.inserted += 1;
+                        report.inserted_ids.push(message.id);
                     }
                 }
             }

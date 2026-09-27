@@ -58,6 +58,7 @@ mod carry;
 pub mod coalesce;
 pub mod connect;
 mod contacts;
+mod correspondents;
 mod cross_account;
 pub mod discover;
 pub mod drafts;

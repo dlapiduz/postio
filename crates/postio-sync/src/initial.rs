@@ -647,6 +647,7 @@ pub async fn commit_batch(
         // The permit, the transaction and the sizing clock, and another try
         // when the engine says busy: see [`write_unit`].
         let account_id = mailbox.account_id;
+        let role = mailbox.role;
         let known_uids = &known;
         let ((upsert, written), held) = write_unit(connection, || {
             // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
@@ -683,6 +684,7 @@ pub async fn commit_batch(
                         }
                     }
                 }
+                crate::correspondents::record(&connection, role, account_id, &upsert).await?;
 
                 Ok::<_, SyncError>((upsert, written))
             })

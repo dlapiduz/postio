@@ -201,6 +201,21 @@ CREATE TABLE contacts (
     last_seen_at        INTEGER
 );
 
+-- Who the person has written to (spec 007): one row per address they have
+-- sent mail to, in To, Cc or Bcc, maintained at local send and when a Sent
+-- folder syncs. The filter's "you wrote to them" guard is one lookup here
+-- (FR-111), and recipient completion's "wrote N times" (FR-052). The
+-- sender's own addresses are never counted. Recomputed by a resync.
+CREATE TABLE correspondents (
+    address_id    INTEGER PRIMARY KEY REFERENCES addresses(id),
+    -- Messages sent with this address in To, Cc or Bcc, each counted once.
+    -- A send that failed takes its one back, so zero is possible, and means
+    -- nobody was written to.
+    sent_count    INTEGER NOT NULL,
+    -- When the latest of them was sent.
+    last_sent_at  INTEGER
+);
+
 CREATE TABLE cross_account_moves (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     source_message_id    INTEGER REFERENCES messages(id)  ON DELETE SET NULL,
