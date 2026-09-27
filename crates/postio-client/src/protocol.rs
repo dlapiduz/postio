@@ -602,6 +602,7 @@ impl Eq for Hits {}
 pub struct RecipientDirectory {
     /// Named groups with their members' addresses, in the store's order.
     pub groups: Vec<(String, Vec<postio_model::EmailAddress>)>,
-    /// Contacts, best first.
-    pub contacts: Vec<postio_model::Contact>,
+    /// Contacts, best first, each with how often the user wrote to it:
+    /// what `postio_ui::recipients::suggest` ranks by (spec 007 T076).
+    pub contacts: Vec<postio_ui::recipients::Correspondent>,
 }

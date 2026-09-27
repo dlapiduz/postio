@@ -498,7 +498,8 @@ pub async fn recipient_directory(
             .await?;
         Ok::<_, postio_storage::Error>(postio_client::protocol::RecipientDirectory {
             groups: named,
-            contacts,
+            // No letters counted yet: the correspondents table is T075's.
+            contacts: contacts.into_iter().map(Into::into).collect(),
         })
     };
     found.await.unwrap_or_else(|error| {
