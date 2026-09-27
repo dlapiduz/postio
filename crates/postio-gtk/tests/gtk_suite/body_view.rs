@@ -13,7 +13,7 @@ use postio_render::Resources;
 use postio_ui::reader::document::{self, Rendering};
 
 /// The fixture as the reader composes it, with its parts and faces.
-fn content(name: &str) -> Content {
+pub(crate) fn content(name: &str) -> Content {
     let parsed = postio_model::mime::parse(test_corpus::load(name).bytes());
     let resources = Resources::new();
     for part in &parsed.parts {
@@ -55,7 +55,7 @@ fn pump() {
 }
 
 /// Run the main loop until `done`, painting frames; false on timeout.
-fn until(done: impl Fn() -> bool) -> bool {
+pub(crate) fn until(done: impl Fn() -> bool) -> bool {
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while !done() && std::time::Instant::now() < deadline {

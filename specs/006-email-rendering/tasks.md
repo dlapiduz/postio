@@ -354,11 +354,11 @@ a contrast floor asserted on painted pixels.
 passes with zero clusters below the floor in the light, dark and
 high-contrast themes (SC-001).
 
-- [ ] T068 [TEST] [US1] In `crates/postio-gtk/tests/gtk_suite/body_view_theme.rs`, plus its row in `CASES`:
+- [X] T068 [TEST] [US1] In `crates/postio-gtk/tests/gtk_suite/body_view_theme.rs`, plus its row in `CASES`:
   - switching `adw::StyleManager` to dark issues exactly one new request with `theme.dark == true`, and one with `high_contrast` when that is toggled;
   - the text-index offset at the top of the viewport is the same before and after the switch;
   - no ground-only frame appears in between (FR-011, US1 scenario 4)
-- [ ] T069 [US1] Implement the theme source in `crates/postio-gtk/src/body_view/mod.rs`: connect to `adw::StyleManager` `dark` and `high-contrast` with the handler ids disconnected on dispose, re-render on change, and restore the anchor
+- [X] T069 [US1] Implement the theme source in `crates/postio-gtk/src/body_view/mod.rs`: connect to `adw::StyleManager` `dark` and `high-contrast` with the handler ids disconnected on dispose, re-render on change, and restore the anchor
 - [X] T070 [TEST] [US1] Write a table test in `crates/postio-render/tests/presentation.rs` with the expected `Presentation` for each fixture:
   - `html-newsletter.eml` and `html-designed-three-column.eml` are `Paper` in dark;
   - `html-white-page-reply.eml` is `Adapted`;

@@ -514,10 +514,19 @@ impl TextIndex {
     }
 
     /// The first offset drawn at or below `y`: what a zoom keeps in place.
+    ///
+    /// The topmost cluster below `y`, leftmost on a tie -- not the first in
+    /// reading order, which in a table can be the top of the next column.
     pub fn char_at_top(&self, y: f64) -> usize {
         self.clusters
             .iter()
-            .find(|c| c.rect.y1 > y)
+            .filter(|c| c.rect.y1 > y)
+            .min_by(|a, b| {
+                a.rect
+                    .y0
+                    .total_cmp(&b.rect.y0)
+                    .then(a.rect.x0.total_cmp(&b.rect.x0))
+            })
             .map_or(self.text.chars().count(), |c| c.range.start)
     }
 }
