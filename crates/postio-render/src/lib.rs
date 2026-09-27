@@ -10,6 +10,7 @@ pub mod fonts;
 pub mod render;
 pub mod resources;
 mod snapshot;
+mod text_index;
 pub mod theme;
 pub mod thread;
 
@@ -119,6 +120,8 @@ pub struct Cluster {
     pub color: Rgb,
     /// The colour painted behind it (R10's ancestor walk).
     pub painted_ground: Rgb,
+    /// Which laid-out line it is on, counted through the document.
+    pub line: u32,
 }
 
 /// A link's box and where it goes.

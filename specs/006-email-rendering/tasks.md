@@ -283,7 +283,7 @@ plan and tasks agree with the decision.
   - `FoldBox`es exist for each thread `<details>`;
   - `counts.renders == 1` and `counts.style_passes ≤ 2`
 - [X] T051 Implement `crates/postio-render/src/snapshot.rs`: record the display list once with `blitz_paint::paint_scene` into `anyrender::recording::Scene`, build the message, link and fold boxes, rasterise the whole document once at 0.25 scale (capped at 16 MiB) as `low_res`, and fill `RenderCounts`
-- [ ] T052 [TEST] In `crates/postio-render/tests/text_index.rs`, assert on the text of `html-transactional-receipt.eml`:
+- [X] T052 [TEST] In `crates/postio-render/tests/text_index.rs`, assert on the text of `html-transactional-receipt.eml`:
   - it contains its table as tab-separated cells and newline-separated rows;
   - a hidden preheader (`display:none`) is absent;
   - image `alt` text is present;
@@ -292,14 +292,14 @@ plan and tasks agree with the decision.
   - `rects()` of a range lies inside the line's boxes;
   - `slice()` equals `text[range]`;
   - `find("TOTAL")` matches `Total` and `tötal` (case- and diacritic-folded)
-- [ ] T053 [TEST] Write `crates/postio-render/tests/affordance_sweep.rs` (SC-007). It runs headlessly over **every** text-bearing corpus fixture, and asserts:
+- [X] T053 [TEST] Write `crates/postio-render/tests/affordance_sweep.rs` (SC-007). It runs headlessly over **every** text-bearing corpus fixture, and asserts:
   - `slice(0..len)` equals `TextIndex.text`;
   - for a word taken from each fixture's own text, `find` returns at least one match, and every match's `rects()` lie inside a `MessageBox`;
   - `hit()` at the centre of every cluster returns an offset inside that cluster's range;
   - every `LinkBox` target is `External` (http, https or mailto), `Verb` or `Fragment`, and its rect lies inside its message's box.
 
   The widget tests in US4 then exercise one fixture each. This sweep is what makes "every text-bearing message in the corpus" true
-- [ ] T054 Implement `crates/postio-render/src/text_index.rs`: a reading-order serializer over the laid-out tree (research R7) with cluster rects from parley geometry, plus `hit`, `word_at`, `line_at`, `rects`, `slice`, `find` and `char_at_top`
+- [X] T054 Implement `crates/postio-render/src/text_index.rs`: a reading-order serializer over the laid-out tree (research R7) with cluster rects from parley geometry, plus `hit`, `word_at`, `line_at`, `rects`, `slice`, `find` and `char_at_top`
 - [ ] T055 [P] [TEST] In `crates/postio-render/src/tile.rs` unit tests, assert that tiles rasterised over a document and stacked are byte-identical to one full raster of the same region
 - [ ] T056 [P] Implement `rasterize_tile` in `crates/postio-render/src/tile.rs` from the recorded display list, callable from any thread
 - [ ] T057 [TEST] Write `crates/postio-render/tests/egress.rs` to `contracts/renderer-graph-checks.md` § 3:

@@ -7,8 +7,8 @@ use parley::layout::PositionedLayoutItem;
 
 use crate::{FoldBox, LinkBox, LinkTarget, MessageBox, Presentation, Rect, Verb};
 
-/// The attribute every message container carries: its scope.
-const MESSAGE_ATTRIBUTE: &str = "data-postio-message";
+/// The attribute a message container in a conversation carries: its scope.
+const MESSAGE_ATTRIBUTE: &str = postio_body::sanitize::MESSAGE_ATTRIBUTE;
 
 /// The reader's own verbs, as `postio-ui`'s thread document writes them
 /// (`reader::thread::*_SCHEME`): followed by the message's scope.
@@ -37,17 +37,21 @@ fn elements<'a>(doc: &'a BaseDocument, selector: &str) -> Vec<&'a Node> {
         .unwrap_or_default()
 }
 
-/// Every message container, in document order.
+/// Every message container, in document order. The single-message reader
+/// names none, and its one container has the empty scope.
 pub(crate) fn messages(doc: &BaseDocument) -> Vec<MessageBox> {
-    elements(doc, &format!("[{MESSAGE_ATTRIBUTE}]"))
+    elements(doc, &format!("div.{}", postio_body::sanitize::BODY_CLASS))
         .into_iter()
-        .filter_map(|node| {
-            Some(MessageBox {
-                scope: node.attr(LocalName::from(MESSAGE_ATTRIBUTE))?.to_owned(),
+        .map(|node| {
+            MessageBox {
+                scope: node
+                    .attr(LocalName::from(MESSAGE_ATTRIBUTE))
+                    .unwrap_or_default()
+                    .to_owned(),
                 rect: border_box(node),
                 // The theme rule (research R10) sets this when it runs.
                 presentation: Presentation::Styled,
-            })
+            }
         })
         .collect()
 }
@@ -134,11 +138,7 @@ fn target(doc: &BaseDocument, anchor: &Node) -> Option<LinkTarget> {
 }
 
 /// The nearest node from `id` upward, itself included, that `want`s.
-fn ancestor(
-    doc: &BaseDocument,
-    id: NodeId,
-    want: impl Fn(&Node) -> bool,
-) -> Option<&Node> {
+fn ancestor(doc: &BaseDocument, id: NodeId, want: impl Fn(&Node) -> bool) -> Option<&Node> {
     let mut at = doc.get_node(id);
     while let Some(node) = at {
         if want(node) {

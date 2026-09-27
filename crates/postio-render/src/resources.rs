@@ -443,6 +443,7 @@ mod hooks {
         }
 
         /// Let the held lookup go on.
+        #[doc(hidden)]
         pub fn release(&self) {
             let mut state = self.state.lock().expect("the gate is never poisoned");
             state.1 = true;
@@ -450,6 +451,7 @@ mod hooks {
         }
 
         /// Wait until a lookup is being held, or `patience` passes.
+        #[doc(hidden)]
         pub fn wait_until_held(&self, patience: Duration) {
             let state = self.state.lock().expect("the gate is never poisoned");
             let _ = self
