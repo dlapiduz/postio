@@ -73,8 +73,8 @@ direction:
 
 This spec names that direction and not the engine. **The engine is chosen by
 an explicit evaluation of Blitz against WebKit** (research R0), run on the same
-corpus and criteria before any engine-specific work; the maintainer decides from
-its scorecard. If the engine replaces the
+corpus and criteria before any engine-specific work. The maintainer chose
+**Blitz** from its scorecard and a performance head to head (Clarifications). If the engine replaces the
 current one, it replaces it: the spike's own conclusion was that shipping two
 reading engines is worse than either one, and ADR 0032's rendering half is then
 amended or superseded on this branch.
@@ -104,6 +104,16 @@ amended or superseded on this branch.
   text? → A: 400 ms (FR-023).
 - Q: What is fidelity judged against? → A: Renders from an established
   browser engine, captured once and checked in (SC-002, Rendering corpus).
+- Q: Which engine draws message bodies? → A: **Blitz**, decided after the
+  evaluation and its performance head to head
+  (`docs/notes/2026-09-26-blitz-or-webkit.md`): *"lets do blitz for now,
+  performance is critical"*. In one process, Blitz used 97 MiB against
+  WebKit's 260 MiB across eight, started in 210 ms against 450, and used
+  half the CPU. FR-001, FR-002, FR-023a and SC-006 stand as written.
+- Q: In high contrast, what happens where the text alone cannot reach 7:1
+  against a sender's background? → A: Designed mail is always shown as
+  paper in high contrast. A message where a run still cannot reach 7:1
+  against its own canvas opens in reader view (FR-013b).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -360,7 +370,9 @@ message and restarting the app.
 - **Messages whose only HTML is a wrapper around plain text** (`<pre>`, or
   `<div>` with line breaks): treated as correspondence and fully legible.
 - **High-contrast mode, and the reduced-motion preference**: high contrast
-  raises the legibility floor. Reduced motion needs no animation, and the
+  raises the legibility floor to 7:1, shows designed mail as paper, and
+  sends to reader view a message whose sender's mid-tone backgrounds no
+  text colour can clear (FR-013b). Reduced motion needs no animation, and the
   renderer adds none.
 - **Printing a message**: out of scope here (see Assumptions). Nothing in this
   spec may make it harder later.
@@ -455,6 +467,13 @@ one, they say so.
   FR-012 and FR-015, and can be undone the same way. It applies to the one
   message it was asked of and is not remembered across openings; a
   per-sender memory is out of scope here.
+- **FR-013b**: In high contrast, a designed message (FR-013(b)) MUST be
+  shown as paper, whatever its sender declared, with its text repaired to
+  7:1 against what is painted behind it. If any run in it cannot reach 7:1
+  by a change of text colour alone, because the sender's own background
+  behind it is a mid-tone neither black nor white clears, that message MUST
+  open in reader view, with the reader-view notice saying why. `View
+  original` still shows the paper, and says the floor is not met there.
 - **FR-014**: Whatever rule FR-013 applies MUST apply to text and background
   together. A sender's text colour MUST NEVER be painted against a background
   the sender did not intend without FR-012's adjustment.
@@ -631,19 +650,17 @@ one, they say so.
 
 - **The reading pane spec (001) stands.** This spec replaces nothing in it
   except where a requirement above says it tightens one.
-- **The engine is decided by evaluation (research R0), not assumed.** The
-  Blitz spike is the evidence for a disconnected in-process renderer. WebKit,
-  improved by this spec's engine-neutral work, is the alternative, and both
-  are measured on the same corpus and criteria. Four requirements were written
-  for the Blitz direction:
-  - FR-001: no network by construction;
-  - FR-002: no script, Postio's own included;
-  - FR-023a: in-process with memory-safe parsers;
-  - SC-006: no separate rendering process.
-
-  If the maintainer chooses WebKit, those four are amended on this branch, as
-  R0 lays out, before engine-specific work continues. Every other
-  requirement holds for either engine.
+- **The engine is Blitz, decided by evaluation (research R0).** Blitz and
+  WebKit were measured on the same corpus and criteria, and then head to
+  head on performance. The maintainer chose Blitz on performance. FR-001,
+  FR-002, FR-023a and SC-006, which were written for this direction, stand.
+  The evaluation's findings about Blitz 0.3.0-beta.2 are the plan's first
+  engine tasks:
+  - phantom borders on collapsed tables;
+  - SVG images not painting;
+  - a panic on a relative URL;
+  - a style mutation that did not restyle;
+  - font loading.
 - **ADRs.** This spec inherits ADR 0020 (bodies and parts are local), ADR
   0023 (bundled fonts) and ADR 0039 (the composer is native, so the reader is
   the only web-content consumer left). It amends ADR 0032 if the rendering
