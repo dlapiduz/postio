@@ -81,12 +81,13 @@ impl Resources {
                 None => (None, rest),
             };
             let id = postio_body::sanitize::percent_decode(id);
-            return self
+            let part = self
                 .parts
                 .lock()
                 .expect("the resource table is never poisoned")
                 .get(&(scope, id))
-                .cloned();
+                .cloned()?;
+            return contained(part);
         }
         if let Some(name) = url.strip_prefix(FONT_SCHEME) {
             return self
@@ -103,6 +104,7 @@ impl Resources {
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload)
             .ok()
             .map(Bytes::from)
+            .and_then(contained)
     }
 }
 
@@ -118,5 +120,41 @@ impl NetProvider for Resources {
                 self.unresolved.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+}
+
+/// `bytes` as the engine may see them: a raster as it is, and an SVG
+/// re-serialised so it names nothing outside itself (research R5). usvg's
+/// default resolver hands any `<image href>` path to `std::fs::read`, and
+/// Blitz parses SVG images with the defaults, so an SVG part could paint a
+/// local file into the page. An SVG that does not parse is dropped.
+fn contained(bytes: Bytes) -> Option<Bytes> {
+    let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let first = text.iter().find(|b| !b.is_ascii_whitespace());
+    // No raster format starts with `<`; gzip is SVGZ, which usvg inflates.
+    let svg = first == Some(&b'<') || bytes.starts_with(&[0x1f, 0x8b]);
+    if !svg {
+        return Some(bytes);
+    }
+    let options = usvg::Options {
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|mime, data, _| raster(mime, data)),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    let tree = usvg::Tree::from_data(&bytes, &options).ok()?;
+    Some(Bytes::from(tree.to_string(&usvg::WriteOptions::default())))
+}
+
+/// A `data:` raster inside an SVG: the four formats the renderer decodes,
+/// and nothing nested -- an SVG inside an SVG is refused, not recursed into.
+fn raster(mime: &str, data: std::sync::Arc<Vec<u8>>) -> Option<usvg::ImageKind> {
+    match mime {
+        "image/png" => Some(usvg::ImageKind::PNG(data)),
+        "image/jpeg" | "image/jpg" => Some(usvg::ImageKind::JPEG(data)),
+        "image/gif" => Some(usvg::ImageKind::GIF(data)),
+        "image/webp" => Some(usvg::ImageKind::WEBP(data)),
+        _ => None,
     }
 }
