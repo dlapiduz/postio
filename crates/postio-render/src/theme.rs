@@ -225,8 +225,10 @@ pub fn repair(text: Rgb, ground: Rgb, floor: f64) -> Rgb {
     }
 }
 
-/// A CSS colour as an engine's computed style reports it, and its alpha.
-pub fn parse_css_color(value: &str) -> Option<(Rgb, f64)> {
+/// A CSS colour as an engine's computed style reports it, and its alpha:
+/// how the tests spell the palette they assert against.
+#[cfg(test)]
+fn parse_css_color(value: &str) -> Option<(Rgb, f64)> {
     let value = value.trim().to_ascii_lowercase();
     if let Some(hex) = value.strip_prefix('#') {
         let digit = |i: usize, len: usize| u8::from_str_radix(hex.get(i..i + len)?, 16).ok();
@@ -291,6 +293,7 @@ pub fn parse_css_color(value: &str) -> Option<(Rgb, f64)> {
 }
 
 /// The named colours mail actually uses, and `transparent`.
+#[cfg(test)]
 fn named(name: &str) -> Option<Rgb> {
     let [r, g, b] = match name {
         "transparent" | "black" => [0, 0, 0],

@@ -129,7 +129,8 @@ impl Drop for Live {
 
 /// How many [`RenderedDocument`]s are alive in this process: the count the
 /// reader's memory claim is held to (SC-006) -- viewing more messages must
-/// not leave more snapshots behind.
+/// not leave more snapshots behind. Test-facing.
+#[doc(hidden)]
 pub fn live_documents() -> usize {
     LIVE.load(std::sync::atomic::Ordering::Relaxed)
 }

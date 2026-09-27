@@ -388,8 +388,12 @@ impl Reader {
         let zoom_indicator = Rc::new(crate::body_view::zoom::ZoomIndicator::new(&view));
         zoom_indicator.widget().set_halign(gtk::Align::End);
         zoom_indicator.widget().set_valign(gtk::Align::Start);
-        zoom_indicator.widget().set_margin_top(6);
-        zoom_indicator.widget().set_margin_end(12);
+        zoom_indicator
+            .widget()
+            .set_margin_top(crate::widgets::space::S2);
+        zoom_indicator
+            .widget()
+            .set_margin_end(crate::widgets::space::S4);
         let body = gtk::Overlay::builder().child(&scroller).build();
         body.add_overlay(zoom_indicator.widget());
 
