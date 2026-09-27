@@ -4,6 +4,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::facts::Facts;
+use crate::guards;
 use crate::input::{BodyMessage, FiledMessage, OwnText};
 use crate::needs_action;
 use crate::outcome::{
@@ -142,11 +143,24 @@ pub(crate) trait Stage {
 }
 
 /// Layer 1, the guards (FR-111): the user wrote to the sender, took part in
-/// the conversation, shares its domain, or pinned it. Through [`Facts`];
-/// T101 gives it its checks.
+/// the conversation, shares its domain, or pinned it. Through [`Facts`], a
+/// guarded message's filter question is closed with a no, which every rule
+/// and classifier after it must accept.
 struct Guards;
 
-impl Stage for Guards {}
+impl Stage for Guards {
+    fn at_filing(
+        &self,
+        message: &FiledMessage<'_>,
+        facts: &dyn Facts,
+        _rules: &dyn Rules,
+        decisions: &mut Decisions,
+    ) {
+        if guards::guarded(message.message, facts) {
+            decisions.filter.decide(None);
+        }
+    }
+}
 
 /// Layer 2, the user's corrections (FR-108, FR-116). They rank above the
 /// rules because a restore must beat the rule that filtered the message;
@@ -621,6 +635,42 @@ mod tests {
             outcome.filter,
             Some(reason(ReasonKind::Spam, Layer::Header))
         );
+    }
+
+    #[test]
+    fn the_guard_layer_keeps_a_guarded_message_from_every_rule_after_it() {
+        // FR-111 through the real first layer: the user wrote to this
+        // notifier once, and a rule after the guards would file it.
+        struct WroteToIt;
+
+        impl Facts for WroteToIt {
+            fn wrote_to(&self, address: &EmailAddress) -> bool {
+                address.address == "notify@forge.example.com"
+            }
+            fn took_part(&self, _: ThreadId) -> bool {
+                false
+            }
+            fn own_domain(&self, _: &EmailAddress) -> bool {
+                false
+            }
+            fn never_filter(&self, _: &EmailAddress) -> bool {
+                false
+            }
+        }
+
+        let mut message = message();
+        message.thread_id = Some(ThreadId::new(3));
+        let stages: &[&dyn Stage] = &[&Guards, &Files(ReasonKind::Notification)];
+        let classify = |facts: &dyn Facts| {
+            Pipeline::new(stages, None).at_filing(&filed(&message), facts, &NoRules)
+        };
+
+        assert_eq!(
+            classify(&NoFacts).filter,
+            Some(reason(ReasonKind::Notification, Layer::Header)),
+            "unguarded, the rule files it"
+        );
+        assert_eq!(classify(&WroteToIt).filter, None);
     }
 
     #[test]
