@@ -218,7 +218,7 @@ blockquote {
 
 /* Where the search matched, per canvas 2b's `preview · match highlighted`.
    The artboard's own steel tint at 28%: strong enough to find by scanning,
-   weak enough to read straight through. `crate::search::mark_html` puts
+   weak enough to read straight through. `postio_ui::search::mark_html` puts
    these in, after the sanitizer, and only for terms the executed query
    actually asked for.
 

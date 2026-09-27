@@ -384,3 +384,207 @@ impl Pacer {
         self.issued += 1;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Painting the match — canvas 2b's "preview · match highlighted"
+// ---------------------------------------------------------------------------
+
+/// The class the reader stylesheet tints. See `reader.css`.
+const MARK_CLASS: &str = "postio-match";
+
+/// Tags whose contents are not prose and must not be marked.
+///
+/// `script` and `style` never survive `postio_body::sanitize`, and
+/// `title` never appears in a body fragment — they are here because
+/// "the sanitizer removes it" is a fact about another module, and a
+/// highlighter that would corrupt a stylesheet if one ever reached it is one
+/// bad refactor away from doing so.
+const OPAQUE_TAGS: [&str; 3] = ["script", "style", "title"];
+
+/// Wraps every place `terms` match in `html` with a `<mark>` the reader
+/// stylesheet tints.
+///
+/// Applied *after* sanitizing, not before: ammonia would strip the `<mark>`
+/// as an unknown tag, and marking first would mean running a matcher over
+/// markup that has not been cleaned yet. What goes in is already-safe HTML
+/// and what comes out adds one fixed literal tag to it — no attacker-shaped
+/// string is ever interpolated.
+///
+/// Matches never cross a tag boundary. `<b>mail</b>dir` is two text runs and
+/// FTS5 would not have matched `maildir` across them either, so the
+/// highlighting agrees with why the message was a hit.
+pub fn mark_html(html: &str, terms: &[String]) -> String {
+    if terms.is_empty() {
+        return html.to_owned();
+    }
+
+    let mut out = String::with_capacity(html.len());
+    let mut run = String::new();
+    let mut rest = html;
+    // `Some(tag)` while inside an element whose contents are not prose.
+    let mut opaque: Option<&str> = None;
+
+    while !rest.is_empty() {
+        let Some(next) = rest.find(['<', '&']) else {
+            run.push_str(rest);
+            break;
+        };
+        run.push_str(&rest[..next]);
+        rest = &rest[next..];
+
+        if rest.starts_with('&') {
+            // An entity is one indivisible character as far as the reader is
+            // concerned, and splitting one would corrupt it. It also ends the
+            // token run, which is right: `&amp;` is punctuation.
+            let end = rest
+                .find(';')
+                .filter(|end| *end <= 12)
+                .map(|end| end + 1)
+                .unwrap_or(1);
+            flush(&mut out, &mut run, terms, opaque.is_none());
+            out.push_str(&rest[..end]);
+            rest = &rest[end..];
+            continue;
+        }
+
+        // A tag. Copy it through untouched, and note whether it opens or
+        // closes something whose contents must be left alone.
+        let end = rest.find('>').map(|end| end + 1).unwrap_or(rest.len());
+        let tag = &rest[..end];
+        flush(&mut out, &mut run, terms, opaque.is_none());
+        out.push_str(tag);
+        rest = &rest[end..];
+
+        let name = tag_name(tag);
+        match opaque {
+            Some(open) if tag.starts_with("</") && name == Some(open) => opaque = None,
+            None if !tag.starts_with("</") => {
+                if let Some(name) = name.filter(|name| OPAQUE_TAGS.contains(name)) {
+                    opaque = Some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut out, &mut run, terms, opaque.is_none());
+    out
+}
+
+/// Empties `run` into `out`, marking the matches if this run is prose.
+fn flush(out: &mut String, run: &mut String, terms: &[String], prose: bool) {
+    if run.is_empty() {
+        return;
+    }
+    if !prose {
+        out.push_str(run);
+        run.clear();
+        return;
+    }
+    let highlighted = postio_search::highlight::highlight(run, terms);
+    for (piece, matched) in highlighted.runs() {
+        if matched {
+            out.push_str("<mark class=\"");
+            out.push_str(MARK_CLASS);
+            out.push_str("\">");
+            out.push_str(piece);
+            out.push_str("</mark>");
+        } else {
+            out.push_str(piece);
+        }
+    }
+    run.clear();
+}
+
+/// The lower-cased element name of a tag, opening or closing.
+fn tag_name(tag: &str) -> Option<&str> {
+    let body = tag
+        .trim_start_matches('<')
+        .trim_start_matches('/')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
+    let name = body.split([' ', '\t', '\n', '\r']).next()?;
+    (!name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric())).then_some(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- painting the match -----------------------------------------------
+
+    fn terms(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_string()).collect()
+    }
+
+    #[test]
+    fn a_matched_word_is_wrapped_where_it_stands() {
+        assert_eq!(
+            mark_html("<p>the maildir index</p>", &terms(&["maildir"])),
+            "<p>the <mark class=\"postio-match\">maildir</mark> index</p>"
+        );
+    }
+
+    #[test]
+    fn a_query_with_no_terms_leaves_the_markup_alone() {
+        let html = "<p>the maildir index</p>";
+        assert_eq!(mark_html(html, &[]), html);
+    }
+
+    #[test]
+    fn a_term_inside_a_tag_is_not_a_word_on_the_page() {
+        // `title` is an attribute here, and `p` an element name. Marking
+        // either would produce markup, not a highlight.
+        let html = r#"<p title="maildir">nothing</p>"#;
+        assert_eq!(mark_html(html, &terms(&["maildir", "p"])), html);
+    }
+
+    #[test]
+    fn a_match_never_crosses_a_tag_boundary() {
+        let html = "<b>mail</b>dir";
+        assert_eq!(
+            mark_html(html, &terms(&["maildir"])),
+            html,
+            "FTS5 did not match across the tag either, so nothing here may"
+        );
+    }
+
+    #[test]
+    fn an_entity_survives_being_marked_around() {
+        assert_eq!(
+            mark_html("a &amp; maildir", &terms(&["maildir"])),
+            "a &amp; <mark class=\"postio-match\">maildir</mark>"
+        );
+        assert_eq!(
+            mark_html("a &amp; b", &terms(&["amp"])),
+            "a &amp; b",
+            "`&amp;` is one character, not the word `amp`"
+        );
+    }
+
+    #[test]
+    fn a_bare_ampersand_does_not_swallow_the_rest_of_the_body() {
+        assert_eq!(
+            mark_html("Tom & Jerry maildir", &terms(&["maildir"])),
+            "Tom & Jerry <mark class=\"postio-match\">maildir</mark>"
+        );
+    }
+
+    #[test]
+    fn a_stylesheet_is_not_prose() {
+        let html = "<style>.maildir { color: red }</style><p>maildir</p>";
+        assert_eq!(
+            mark_html(html, &terms(&["maildir"])),
+            "<style>.maildir { color: red }</style><p><mark class=\"postio-match\">maildir</mark></p>",
+            "marking inside a stylesheet would corrupt it"
+        );
+    }
+
+    #[test]
+    fn several_matches_across_several_elements_are_all_painted() {
+        assert_eq!(
+            mark_html("<p>maildir one</p><p>two maildir</p>", &terms(&["maildir"])),
+            "<p><mark class=\"postio-match\">maildir</mark> one</p>\
+             <p>two <mark class=\"postio-match\">maildir</mark></p>"
+        );
+    }
+}
