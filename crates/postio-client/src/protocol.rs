@@ -28,6 +28,8 @@ pub enum ClientKind {
     Gtk,
     /// `postio-tui`.
     Tui,
+    /// Postio Focus, the other desktop app (spec 007).
+    Focus,
     /// The macOS frontend, through `postio-ffi`.
     Ffi,
     /// A test.

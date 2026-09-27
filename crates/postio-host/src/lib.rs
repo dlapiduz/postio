@@ -43,6 +43,8 @@ use postio_session::actions::{self, Actions};
 use postio_session::refresh;
 use postio_storage::{BlobStore, Store};
 
+pub use focus::{FocusHandle, FocusSetup};
+
 /// The store's owner in this process, serving the clients connected to it.
 ///
 /// Dropping it stops its runtime, and with it the engines.
@@ -72,6 +74,9 @@ struct Inner {
     notify: Mutex<postio_config::SyncConfig>,
     /// The engine syncing each account, once started.
     engines: Engines,
+    /// Focus mode's tasks, once Focus has switched it on (spec 007). `None`
+    /// in every host but Focus's.
+    focus: Mutex<Option<FocusHandle>>,
 }
 
 /// The engine syncing each account: at most one per account, however many
@@ -419,6 +424,7 @@ impl Host {
             queue,
             notify: Mutex::new(postio_config::SyncConfig::default()),
             engines: Engines::default(),
+            focus: Mutex::new(None),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
@@ -1558,6 +1564,7 @@ impl Transport for Local {
 
 pub mod compose;
 pub mod export;
+mod focus;
 pub mod maintenance;
 pub mod notify;
 pub mod onboarding;

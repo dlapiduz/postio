@@ -81,6 +81,7 @@ use postio_storage::repository::{
 };
 
 use crate::drain::SyncError;
+use crate::filing::{FiledMessage, FilingPass};
 use crate::initial::{self, Progress};
 
 /// This module's result type.
@@ -238,6 +239,21 @@ pub async fn resync_mailbox(
     cancel: &CancelToken,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
+    resync_mailbox_filing(connection, backend, mailbox, None, cancel, on_progress).await
+}
+
+/// [`resync_mailbox`], handing what an incremental pass files to `filing`
+/// inside the transaction that files it (spec 007): what a host in Focus
+/// mode runs, and nothing else does. See [`crate::filing`] for why only an
+/// incremental pass's arrivals reach it.
+pub async fn resync_mailbox_filing(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    filing: Option<&dyn FilingPass>,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Outcome> {
     let sync_state = SyncStateRepository::new(connection);
     let previous = sync_state.require(mailbox.id).await?;
 
@@ -342,6 +358,7 @@ pub async fn resync_mailbox(
                 &selected,
                 since,
                 previous.uid_next,
+                filing,
                 cancel,
             )
             .await;
@@ -485,6 +502,9 @@ async fn rebuild(
 ///
 /// See the module docs for why vanish detection is conditional on the
 /// arithmetic rather than always run, and why arrivals get a second witness.
+// Eight, because the filing pass a host in Focus mode hands in (spec 007)
+// joined the seven this pass already needed, each its own.
+#[allow(clippy::too_many_arguments)]
 async fn incremental(
     // A pooled connection rather than a bare one, because this is where the
     // write gate lives: the units below take a background permit, and only
@@ -495,6 +515,7 @@ async fn incremental(
     selected: &ServerStatus,
     since: postio_model::ModSeq,
     previous_uid_next: Option<Uid>,
+    filing: Option<&dyn FilingPass>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -559,6 +580,7 @@ async fn incremental(
             // The permit, the transaction and the sizing clock, and another
             // try when the engine says busy: see `initial::write_unit`.
             let account_id = mailbox.account_id;
+            let role = mailbox.role;
             let account_ref = account.as_ref();
             let known_ref = &known_set;
             let (newly, held) = initial::write_unit(connection, || {
@@ -579,8 +601,9 @@ async fn incremental(
                         .await?;
 
                     let threading = ThreadingRepository::new(&connection, account_id);
+                    let mut threads = Vec::with_capacity(written.len());
                     for message in &written {
-                        threading.thread(message).await?;
+                        threads.push(threading.thread(message).await?.thread_id);
                     }
 
                     // Only the arrivals, by the same test twice over: `known_set`
@@ -600,6 +623,28 @@ async fn incremental(
                                 arrivals.push(message.id);
                             }
                         }
+                    }
+
+                    // The arrivals, to the filing pass a host in Focus mode
+                    // installs, in this same transaction: after the upsert
+                    // and the threading, before any event (spec 007). Its
+                    // error fails the unit today, which a pass that files
+                    // nothing cannot do; one that writes brings the
+                    // contract's "errors never lose mail" with it.
+                    if let Some(filing) = filing
+                        && !arrivals.is_empty()
+                    {
+                        let filed: Vec<FiledMessage<'_>> = written
+                            .iter()
+                            .zip(&threads)
+                            .filter(|(message, _)| arrivals.contains(&message.id))
+                            .map(|(message, thread)| FiledMessage {
+                                message,
+                                thread: *thread,
+                                role,
+                            })
+                            .collect();
+                        filing.file(&connection, &filed).await?;
                     }
                     Ok::<_, SyncError>(arrivals)
                 })

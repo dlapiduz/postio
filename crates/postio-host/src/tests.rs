@@ -1913,3 +1913,123 @@ fn start_syncing_asked_twice_gives_the_account_one_engine() {
         .count();
     assert_eq!(inbox_syncs, 1, "the inbox was synced once, by one engine");
 }
+
+// ── Focus mode (spec 007, T034) ─────────────────────────────────────────────
+
+/// A filing pass that files nothing and remembers what it was handed: the
+/// subjects of each call's messages.
+#[derive(Debug, Default)]
+struct FilingProbe {
+    calls: std::sync::Mutex<Vec<Vec<Option<String>>>>,
+}
+
+impl FilingProbe {
+    fn calls(&self) -> Vec<Vec<Option<String>>> {
+        self.calls.lock().expect("not poisoned").clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl postio_sync::FilingPass for FilingProbe {
+    async fn file(
+        &self,
+        _transaction: &postio_storage::Connection,
+        filed: &[postio_sync::FiledMessage<'_>],
+    ) -> Result<postio_sync::FilingEffects, postio_sync::SyncError> {
+        self.calls.lock().expect("not poisoned").push(
+            filed
+                .iter()
+                .map(|filed| filed.message.subject.clone())
+                .collect(),
+        );
+        Ok(postio_sync::FilingEffects::default())
+    }
+}
+
+/// Mail arriving at the mock's inbox after the first sync, and the next
+/// pass over it, asked for the way `R` asks.
+fn deliver_and_refresh(
+    world: &World,
+    mock: &postio_account::backend::MockBackend,
+    client: &Client,
+) -> MessageId {
+    use postio_account::backend::{AppendMessage, MailBackend as _};
+    let raw = "Message-ID: <weir@example.com>\r\nFrom: Quinn <quinn@example.com>\r\nTo: Test \
+               User <test@example.com>\r\nSubject: Weir level\r\nDate: Wed, 23 Sep 2026 \
+               09:00:00 +0000\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThe weir is \
+               high.\r\n";
+    world
+        .rt
+        .block_on(mock.append("INBOX", &AppendMessage::new(raw.as_bytes().to_vec())))
+        .expect("delivered");
+    world.send(client, Command::Refresh);
+    eventually(world, || row_titled(world, client, "Weir level"))
+}
+
+/// Whether any engine the host runs hands its arrivals to a filing pass.
+fn engines_file(world: &World) -> Vec<bool> {
+    world
+        .host()
+        .inner
+        .engines
+        .running
+        .lock()
+        .expect("never poisoned")
+        .values()
+        .map(postio_runtime::Engine::files_arrivals)
+        .collect()
+}
+
+#[test]
+fn focus_mode_files_what_an_incremental_pass_brings_and_nothing_a_first_sync_does() {
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let probe = std::sync::Arc::new(FilingProbe::default());
+    // Before sync starts, as Focus does at startup.
+    let focus = world
+        .host()
+        .enable_focus(crate::FocusSetup::default().filing(probe.clone()));
+    let (client, _) = world.frontend(ClientKind::Focus);
+    world.host().start_syncing();
+
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    assert!(
+        probe.calls().is_empty(),
+        "the first sync handed its backlog to the filing pass: {:?}",
+        probe.calls()
+    );
+    assert_eq!(
+        engines_file(&world),
+        vec![true],
+        "the account's engine files"
+    );
+    assert!(focus.running(), "the body stage and the due timer run");
+
+    deliver_and_refresh(&world, &mock, &client);
+    assert_eq!(
+        probe.calls(),
+        vec![vec![Some("Weir level".to_owned())]],
+        "the arrival, once, and nothing the first sync filed"
+    );
+}
+
+#[test]
+fn a_host_that_never_enables_focus_mode_files_nothing() {
+    // The classic app and the terminal: the same store, the same sync and
+    // the same arrival, and no call to `enable_focus`.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let probe = std::sync::Arc::new(FilingProbe::default());
+    let _setup = crate::FocusSetup::default().filing(probe.clone());
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    world.host().start_syncing();
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+
+    deliver_and_refresh(&world, &mock, &client);
+    assert_eq!(
+        engines_file(&world),
+        vec![false],
+        "an engine files arrivals under a host Focus never switched on"
+    );
+    assert!(probe.calls().is_empty(), "{:?}", probe.calls());
+}

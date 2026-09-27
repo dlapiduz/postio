@@ -24,6 +24,7 @@ postio-runtime.workspace = true
 postio-search.workspace = true
 postio-session.workspace = true
 postio-storage.workspace = true
+postio-sync.workspace = true
 postio-ui.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }

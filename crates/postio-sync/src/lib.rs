@@ -25,6 +25,8 @@
 //!   completion read.
 //! - [`drain`] sends them in order, resolves conflicts against what the server
 //!   says, and settles each queue row.
+//! - [`filing`] is the seam a host in Focus mode files new mail through, in
+//!   the transaction an incremental pass files it in.
 //! - [`send`] is what [`drain`] calls for `Operation::Send`: build the
 //!   message, hand it to SMTP, file the Sent copy.
 //! - [`retry`] decides when a failure is worth another attempt, and when the
@@ -60,6 +62,7 @@ mod cross_account;
 pub mod discover;
 pub mod drafts;
 pub mod drain;
+pub mod filing;
 pub mod initial;
 pub mod order;
 pub mod resync;
@@ -75,11 +78,12 @@ pub use backfill::{
 pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
+pub use filing::{FiledMessage, FilingEffects, FilingPass, NoFiling};
 pub use initial::{
     DEFAULT_BATCH_SIZE, Progress, Report, commit_batch, sync_mailbox, sync_mailbox_with_batch_size,
 };
 pub use order::sync_priority;
-pub use resync::{Outcome, resync_mailbox};
+pub use resync::{Outcome, resync_mailbox, resync_mailbox_filing};
 pub use retry::RetryPolicy;
 pub use send::SmtpContext;
 pub use status::{StatusTracker, SyncProgress, SyncStatus};

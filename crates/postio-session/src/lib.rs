@@ -359,6 +359,13 @@ pub struct Wiring {
     /// application. A part, like `mail`, so a test can answer from the
     /// provider table without dialing.
     pub discovery: Arc<dyn postio_account::discovery::DiscoveryTransport>,
+    /// The filing pass every engine started from this wiring hands its
+    /// incremental passes' arrivals to (spec 007).
+    ///
+    /// Shared, and empty: only a host Postio Focus switches into Focus mode
+    /// fills it, so while the classic app or the terminal holds the store,
+    /// no engine files anything by Focus's rules.
+    pub filing: postio_runtime::FilingSlot,
 }
 
 /// A mail transport handed to the engine instead of the account's own.
@@ -401,6 +408,7 @@ impl Wiring {
             storage_ceiling: None,
             mail: None,
             discovery: Arc::new(postio_account::discovery::PimalayaTransport::new()),
+            filing: postio_runtime::FilingSlot::default(),
         }
     }
 
