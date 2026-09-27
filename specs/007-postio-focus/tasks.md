@@ -66,12 +66,12 @@ maintainer asks.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the four crates with empty `lib.rs` (and `main.rs` for the app), and add each to the workspace's `members` and `default-members` (#1500):
+- [X] T001 Create the four crates with empty `lib.rs` (and `main.rs` for the app), and add each to the workspace's `members` and `default-members` (#1500):
   - `crates/postio-widgets/`
   - `crates/postio-focus/` (bin `postio-focus`)
   - `crates/postio-classify/`
   - `crates/postio-calendar/`
-- [ ] T002 Add the boundary rules of contracts/engine.md to `scripts/checks/check-crate-boundaries.py`, with their reasons: postio-widgets, postio-focus, postio-classify and postio-calendar, and postio-gtk's "not postio-focus". Add a workspace-wide ban on inference engines to `scripts/checks/check-dependency-policy.py`: candle, ort, tch, tract, burn, and llama.cpp bindings (FR-165). Test first: a fixture graph where `postio-focus` depends on `postio-gtk`, one where `postio-classify` depends on `postio-smtp`, and one where any crate depends on `candle-core`, each fails its check
+- [X] T002 Add the boundary rules of contracts/engine.md to `scripts/checks/check-crate-boundaries.py`, with their reasons: postio-widgets, postio-focus, postio-classify and postio-calendar, and postio-gtk's "not postio-focus". Add a workspace-wide ban on inference engines to `scripts/checks/check-dependency-policy.py`: candle, ort, tch, tract, burn, and llama.cpp bindings (FR-165). Test first: a fixture graph where `postio-focus` depends on `postio-gtk`, one where `postio-classify` depends on `postio-smtp`, and one where any crate depends on `candle-core`, each fails its check
 - [ ] T003 [P] Widen the eight checks that scan only `crates/postio-gtk` so they also scan `crates/postio-widgets` and `crates/postio-focus` (research R1):
   - `check-key-hints-are-derived.py`
   - `check-buttons-have-a-kind.py`
@@ -83,9 +83,9 @@ maintainer asks.
   - `check-uncalled-pub-fn.py`'s `FRONTENDS`
 
   Test first: a literal key hint planted in `crates/postio-widgets/src` fails `check-key-hints-are-derived.py`
-- [ ] T004 [P] Write `docs/decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md`, kept to the rule: what may live there, what may not, and who depends on it. List it in `docs/decisions/README.md`
+- [X] T004 [P] Write `docs/decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md`, kept to the rule: what may live there, what may not, and who depends on it. List it in `docs/decisions/README.md`
 - [ ] T005 [P] Create `crates/postio-focus/tests/focus_suite/main.rs` on the `app_suite` custom harness (`CASES`, `IGNORED`, the `--list` contract of `list_contract.rs`) on the headless compositor, and `crates/postio-widgets/tests/widgets_suite/main.rs` the same way. Test first: an empty case is listed and runs
-- [ ] T006 [P] Create `specs/007-postio-focus/screens.md`: one row per screen from 01 to 20, with the columns "compared on", "differences" and "reason". Pre-fill the known differences C1–C23 from the spec
+- [X] T006 [P] Create `specs/007-postio-focus/screens.md`: one row per screen from 01 to 20, with the columns "compared on", "differences" and "reason". Pre-fill the known differences C1–C23 from the spec
 
 ---
 
@@ -104,7 +104,7 @@ maintainer asks.
   In `crates/postio-calendar/tests/`, parse each with calcard (default features off) and assert the start, end and zone. Record per fixture in research R9, together with `cargo tree -d` and the verdict of `check-dependency-policy.py`. **If calcard fails the zones, T107 wraps ical-rs instead, behind the same adapter**
 - [ ] T008 [P] **S2.** Against a real account, measured locally and never committed, record the bytes per message that `HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)` adds, in research R8
 - [ ] T009 [P] **S3.** In a throwaway `crates/postio-focus/examples/list_spike.rs` (deleted after), put 100,000 synthetic rows of two fixed heights, plus 50 spliced rows, in a `gtk::ListView`. Measure rows built per frame while scrolling and jumping, and record them in research R3
-- [ ] T010 [P] **S4.** Build the labelled needs-action corpus through `/add-fixture`: at least 150 messages of questions, to-dos, pleasantries, rhetorical questions, quoted history, signatures, list mail, copied-only mail, and instruction-shaped text. Measure precision and recall for rules alone, and record them in research R10. **If precision is under 0.9, T116 adds the small weights table**
+- [ ] T010 [P] **S4.** Build the labelled needs-action dataset as one data file, `crates/postio-classify/tests/data/needs_action.toml`: at least 150 items, each a message's own text with its addressing (direct, copied, list or automated) and a label (question, to-do or none, with any due date). Cover pleasantries, rhetorical questions, quoted history, signatures, list mail, copied-only mail, and instruction-shaped text. Sentence-level labels are what the detector reads, and a data file keeps the shared `.eml` corpus from swelling. Reserved domains and fictional names only. Measure precision and recall for rules alone, and record them in research R10. **If precision is under 0.9, T116 adds the small weights table**
 - [ ] T011 [P] **S5.** Across the render corpus, locate a chosen sentence by excerpt with `TextIndex::find` and the offset tiebreak. Record the success rate in research R2
 - [ ] T012 [P] **S6.** On a spike commit (reverted after), switch the list's order to `sort_at` in `crates/postio-storage/src/repository/threads.rs` and `messages.rs`. Run `storage_suite`'s list counting tests, and record the result and the size of the diff in research R7. **The maintainer's default holds unless the spike says otherwise; T093 follows the result**
 
