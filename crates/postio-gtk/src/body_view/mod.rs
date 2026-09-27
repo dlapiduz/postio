@@ -6,6 +6,7 @@
 //! function over the snapshot (research R7), added by the stories that need
 //! it; this is the surface they share.
 
+pub mod find;
 mod interact;
 mod tiles;
 
@@ -100,6 +101,8 @@ mod imp {
         /// What follows an external link; the desktop's launcher unless a
         /// test replaced it.
         pub(super) launcher: RefCell<Option<Launcher>>,
+        /// The find in progress (FR-018).
+        pub(super) find: RefCell<super::find::FindState>,
         /// Where a drag began, in the view's coordinates.
         pub(super) drag_start: Cell<Option<gtk::graphene::Point>>,
         /// The messages the user darkened (FR-013a): for this session only,
@@ -128,6 +131,7 @@ mod imp {
                 darkened: RefCell::default(),
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
+                find: RefCell::default(),
                 toggled_folds: RefCell::default(),
                 focused_link: Cell::new(None),
                 launcher: RefCell::default(),
@@ -530,7 +534,7 @@ impl BodyView {
     }
 
     /// Scroll so `rect`, in document coordinates, is in view.
-    fn scroll_into_view(&self, rect: postio_render::Rect) {
+    pub(super) fn scroll_into_view(&self, rect: postio_render::Rect) {
         let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
             return;
         };
@@ -688,6 +692,8 @@ impl BodyView {
         if let (Some(y), Some(adjustment)) = (anchor, imp.vadjustment.borrow().as_ref()) {
             adjustment.set_value(y);
         }
+        // The text is the same, so a find carries over to the new snapshot.
+        self.refresh_find();
         self.queue_draw();
     }
 
@@ -737,6 +743,7 @@ impl BodyView {
                     view.queue_draw();
                 }
             });
+        self.draw_find(snapshot, left, top);
         self.draw_selection(snapshot, left, top);
         snapshot.pop();
     }

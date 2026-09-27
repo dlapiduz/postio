@@ -475,14 +475,14 @@ cases for select, find, links and a11y are green (SC-007).
 - [X] T111 [US4] Implement fold clicks in `crates/postio-gtk/src/body_view/interact.rs`
 - [X] T112 [TEST] [US4] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `find_in_message` (`mod+f`), `find_next` (`mod+g`, alternate `F3`) and `find_previous` (`mod+shift+g`, alternate `shift+F3`) against `contracts/registry-commands.md`, including the context-overlap rule
 - [X] T113 [US4] Add the three find commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
-- [ ] T114 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_find.rs`, plus its `CASES` row:
+- [X] T114 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_find.rs`, plus its `CASES` row:
   - `mod+f` opens the find bar with focus in its entry;
   - typing "total" highlights exactly `TextIndex.find("total").len()` rects;
   - `mod+g` makes the next match current and scrolls it into view;
   - `mod+shift+g` goes back;
   - `Escape` closes the bar and clears the highlights;
   - the highlights survive a theme-change re-render (FR-018, FR-021f)
-- [ ] T115 [US4] Implement `crates/postio-gtk/src/body_view/find.rs`: a `GtkSearchBar` in the reading pane, `FindState` over `TextIndex`, the overlay rects, and scroll-to-current
+- [X] T115 [US4] Implement `crates/postio-gtk/src/body_view/find.rs`: a `GtkSearchBar` in the reading pane, `FindState` over `TextIndex`, the overlay rects, and scroll-to-current
 - [ ] T116 [TEST] [US4] Add `crates/postio-gtk/tests/gtk_suite/body_view_a11y.rs`, plus its `CASES` row, running under `GTK_A11Y=test`:
   - `AccessibleText::contents(0, -1)` equals `TextIndex.text`;
   - the caret and selection reflect `Selection`;

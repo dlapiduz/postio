@@ -40,6 +40,7 @@
 mod webkit_probe;
 
 mod body_view;
+mod body_view_find;
 mod body_view_select;
 mod body_view_theme;
 mod feed;
@@ -192,6 +193,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view_find::find_highlights_steps_and_survives_a_re_render",
+        body_view_find::find_highlights_steps_and_survives_a_re_render as fn(),
+    ),
     (
         "body_view_select::links_are_followed_by_pointer_and_keyboard",
         body_view_select::links_are_followed_by_pointer_and_keyboard as fn(),
