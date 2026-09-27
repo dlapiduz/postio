@@ -16,6 +16,14 @@ use crate::{Outcome, RenderCounts, RenderRequest, RenderedDocument};
 /// `<img src="x">` (research R1).
 pub const BASE_URL: &str = "postio-message://message/";
 
+/// What this renderer asks of every document, above the author's rules.
+///
+/// A message's box does not scroll inside the snapshot: the view has one
+/// scroller, the page. Content wider than the pane widens the document
+/// instead, and the view scrolls it sideways (FR-021a, SC-009). The shared
+/// `reader.css` keeps `overflow-x: auto` for the macOS reader's web view.
+const RENDERER_CSS: &str = ".postio-body { overflow-x: visible !important; }";
+
 /// Lay out and record `request`'s document, drawing with `fonts`.
 pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     let scale = request.viewport.hidpi_scale;
@@ -35,13 +43,29 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
             style_passes = 2;
         }
     }
-    let size = doc.root_element().final_layout().size;
+    // Zoom (research R11): the document lays out at the pane's width over
+    // the zoom, and is painted at the device scale times the zoom. The
+    // snapshot's geometry is then in the view's own pixels -- CSS pixels
+    // times the zoom -- so the widget never does zoom arithmetic.
+    let zoom = request.viewport.zoom;
+    let mut size = doc.root_element().final_layout().size;
+    // Wider than the pane -- a fixed 600px table at 150% -- widens the
+    // document, so the view scrolls it sideways rather than losing it.
+    size.width = size.width.max(content_width(&doc));
     let (width, height) = (
-        (f64::from(size.width) * scale).ceil() as u32,
-        (f64::from(size.height) * scale).ceil() as u32,
+        (f64::from(size.width) * scale * zoom).ceil() as u32,
+        (f64::from(size.height) * scale * zoom).ceil() as u32,
     );
     let mut display_list = anyrender::Scene::new();
-    blitz_paint::paint_scene(&mut display_list, &mut doc, scale, width, height, 0, 0);
+    blitz_paint::paint_scene(
+        &mut display_list,
+        &mut doc,
+        scale * zoom,
+        width,
+        height,
+        0,
+        0,
+    );
     let counts = RenderCounts {
         renders: 1,
         style_passes,
@@ -61,7 +85,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     }
     let mut document = RenderedDocument {
         generation: request.generation,
-        size: kurbo::Size::new(f64::from(size.width), f64::from(size.height)),
+        size: kurbo::Size::new(f64::from(size.width) * zoom, f64::from(size.height) * zoom),
         scale,
         display_list,
         low_res: Raster {
@@ -78,8 +102,55 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         outcome: Outcome::Rendered,
         needs_reader_view: plan.unreachable,
     };
+    zoom_geometry(&mut document, zoom);
     document.low_res = low_res(&document);
     document
+}
+
+/// The right edge of the furthest laid-out box, in CSS pixels.
+fn content_width(doc: &blitz_dom::BaseDocument) -> f32 {
+    let mut widest = 0.0f32;
+    let mut stack = vec![doc.root_element().id];
+    while let Some(id) = stack.pop() {
+        let Some(node) = doc.get_node(id) else {
+            continue;
+        };
+        if node.is_element() {
+            let size = node.final_layout().size;
+            if size.width > 0.0 && size.height > 0.0 {
+                widest = widest.max(node.absolute_position(0.0, 0.0).x + size.width);
+            }
+        }
+        stack.extend(node.children.iter().copied());
+    }
+    widest
+}
+
+/// Every rect of the snapshot from CSS pixels into the view's, at `zoom`.
+fn zoom_geometry(document: &mut RenderedDocument, zoom: f64) {
+    if zoom == 1.0 {
+        return;
+    }
+    let at = |rect: &mut crate::Rect| {
+        *rect = crate::Rect::new(
+            rect.x0 * zoom,
+            rect.y0 * zoom,
+            rect.x1 * zoom,
+            rect.y1 * zoom,
+        )
+    };
+    document
+        .text
+        .clusters
+        .iter_mut()
+        .for_each(|c| at(&mut c.rect));
+    document.links.iter_mut().for_each(|l| at(&mut l.rect));
+    document.messages.iter_mut().for_each(|m| at(&mut m.rect));
+    document
+        .folds
+        .iter_mut()
+        .for_each(|f| at(&mut f.summary_rect));
+    document.anchors.iter_mut().for_each(|(_, y)| *y *= zoom);
 }
 
 /// Parse, style and lay out `request`'s document, with a plan's overrides
@@ -91,21 +162,26 @@ fn lay_out(
 ) -> blitz_dom::BaseDocument {
     let viewport = &request.viewport;
     let scale = viewport.hidpi_scale;
-    let mut sheets = vec![blitz_dom::DEFAULT_CSS.to_owned()];
+    let mut sheets = vec![blitz_dom::DEFAULT_CSS.to_owned(), RENDERER_CSS.to_owned()];
     if let Some(plan) = plan {
         sheets.push(plan.css.clone());
     }
     let config = DocumentConfig {
-        viewport: Some(blitz_traits::shell::Viewport::new(
-            (viewport.width * scale).round() as u32,
-            (900.0 * scale).round() as u32,
-            scale as f32,
-            if request.theme.dark {
-                ColorScheme::Dark
-            } else {
-                ColorScheme::Light
-            },
-        )),
+        viewport: Some({
+            let mut blitz = blitz_traits::shell::Viewport::new(
+                (viewport.width * scale).round() as u32,
+                (900.0 * scale).round() as u32,
+                scale as f32,
+                if request.theme.dark {
+                    ColorScheme::Dark
+                } else {
+                    ColorScheme::Light
+                },
+            );
+            // Kept apart from the device scale, never folded into it.
+            blitz.set_zoom(viewport.zoom as f32);
+            blitz
+        }),
         base_url: Some(BASE_URL.to_owned()),
         font_ctx: Some(fonts.context()),
         net_provider: Some(Arc::clone(&request.resources) as _),

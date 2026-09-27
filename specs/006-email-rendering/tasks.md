@@ -514,11 +514,11 @@ reader's place and persisted in `[reader]`.
 - [X] T121 [US6] Add `crates/postio-config/src/reader.rs`, with `ReaderConfig { zoom }`, a serde default and clamping, to `Config` in `crates/postio-config/src/lib.rs`. Add its `patch_reader`, the `ConfigChanged` field, the `docs/config.md` row, and the FFI mirror in `crates/postio-ffi/src/settings.rs`
 - [X] T122 [TEST] [P] [US6] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `zoom_in` (`mod+plus`, alternates `mod+equal` and `mod+KP_Add`), `zoom_out` (`mod+minus`, `mod+KP_Subtract`) and `zoom_reset` (`mod+0`, `mod+KP_0`) against `contracts/registry-commands.md`
 - [X] T123 [US6] Add the three zoom commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
-- [ ] T124 [TEST] [US6] Write `crates/postio-render/tests/zoom.rs` (SC-009). For every text-bearing corpus fixture at every step from 50 to 300%:
+- [X] T124 [TEST] [US6] Write `crates/postio-render/tests/zoom.rs` (SC-009). For every text-bearing corpus fixture at every step from 50 to 300%:
   - no cluster lies outside the document width unless it is inside a scrolling box, meaning nothing is lost off the side;
   - every cluster's text appears in `TextIndex.text`, meaning nothing is clipped;
   - `html-responsive-media.eml` at 200% at an 800 px pane stacks its columns, because the effective width is 400 CSS px (FR-021a)
-- [ ] T125 [US6] Carry `viewport.zoom` and `hidpi_scale` separately into Blitz's `Viewport` in `crates/postio-render/src/lib.rs`. They are never folded together (research R11)
+- [X] T125 [US6] Carry `viewport.zoom` and `hidpi_scale` separately into Blitz's `Viewport` in `crates/postio-render/src/lib.rs`. They are never folded together (research R11)
 - [ ] T126 [TEST] [US6] Add `crates/postio-gtk/tests/gtk_suite/body_view_zoom.rs`, plus its `CASES` row:
   - `mod+plus` twice goes 100 → 110 → 125;
   - the header's and message list's allocated sizes are unchanged;
