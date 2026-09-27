@@ -224,13 +224,19 @@ Rejected: `mark_html` with offsets. It matches terms, and a sentence can span
 inline markup.
 
 **Measured (spike S5, T011, 2026-09-27).** The spike ran over the render
-corpus: 61 fixtures and about 980 sentences a detector could store. Each
-sentence was read two ways:
+corpus: 69 fixtures, once the eight invitations had joined, and about 1,000
+sentences a detector could store. Each sentence was read two ways:
 
 | Excerpts read from | As read | Whitespace collapsed | Present at all |
 |---|---|---|---|
-| The text part first, as search reads it | 91.7% | 97.7% | 98.2% |
-| What is drawn: the HTML, flattened, when there is HTML | 92.8% | 98.8% | 99.5% |
+| The text part first, as search reads it | 90.5% | 96.8% | 97.3% |
+| What is drawn: the HTML, flattened, when there is HTML | 92.3% | 98.7% | 99.5% |
+
+Before the invitations joined, the same spike rendered 61 fixtures and found
+91.7, 97.7 and 98.2 for the text part, and 92.8, 98.8 and 99.5 for what is
+drawn. The invitations' plain parts list organisers, guests and links that the
+HTML never draws, and wrap hard. That costs the text-first reading most,
+which is one more reason to read what is drawn.
 
 The plan holds, with three changes:
 
@@ -247,11 +253,12 @@ The plan holds, with three changes:
 
 The tiebreak was measured on every body sent twice over, because no sentence
 occurs twice within its own message anywhere in the corpus. It picks the right
-occurrence 1,907 times in 1,908 (text first) and 1,933 times in 1,934 (what is
+occurrence 1,939 times in 1,940 (text first) and 1,979 times in 1,980 (what is
 drawn). The one miss is a line of emoji.
 
 The test is `crates/postio-render/tests/excerpt_locate.rs`, on the nightly
-profile. Its floors are these numbers rounded down.
+profile. Its floors are these numbers rounded down, for each source on its
+own. When the corpus grows, the rates move, so the floors are measured again.
 
 **Quoted history (FR-034).** Single-message documents give their quote folds
 ids and a line count, as thread documents do:

@@ -30,12 +30,17 @@
 //! build), so it runs nightly (`--profile nightly`), where its floors still
 //! hold the rates below.
 //!
-//! # What it found (2026-09-27, 61 fixtures rendered)
+//! # What it found (2026-09-27, 69 fixtures rendered)
 //!
 //! | excerpts read from | sentences | as read | spaces collapsed | present |
 //! |---|---|---|---|---|
-//! | text first         | 980       | 91.7%   | 97.7%            | 98.2%   |
-//! | what is drawn      | 982       | 92.8%   | 98.8%            | 99.5%   |
+//! | text first         | 1,005     | 90.5%   | 96.8%            | 97.3%   |
+//! | what is drawn      | 1,006     | 92.3%   | 98.7%            | 99.5%   |
+//!
+//! The first run, before eight invitations joined the corpus, rendered 61
+//! fixtures and found 91.7/97.7/98.2 and 92.8/98.8/99.5. The invitations'
+//! plain parts list organisers, guests and links the HTML never draws, and
+//! wrap hard: they cost the text-first reading most.
 //!
 //! * **The index writes all whitespace as one space**, a `<pre>` line break
 //!   included, and `find` compares whitespace as it is: every excerpt that
@@ -53,7 +58,7 @@
 //!   sentences than reading the HTML.
 //! * **No sentence occurs twice in its own message** anywhere in the corpus,
 //!   so the tiebreak is measured on every body sent twice over: it picks the
-//!   right occurrence 1,907 times in 1,908 (text first) and 1,933 in 1,934
+//!   right occurrence 1,939 times in 1,940 (text first) and 1,979 in 1,980
 //!   (what is drawn). The one miss is a line of emoji in `html-cjk-emoji`.
 
 mod support;
@@ -380,20 +385,27 @@ fn a_sentence_is_found_again_from_its_excerpt() {
         }
     }
 
-    // The floors are what the spike measured, rounded down: the locator
-    // T066 builds must do at least this well, and a renderer change that
-    // loses text from the index shows here first.
+    // The floors are what the spike measured, rounded down, for each source
+    // on its own: the locator T066 builds must do at least this well, and a
+    // renderer change that loses text from the index shows here first. A
+    // new fixture moves the rates, so the floors are measured again when
+    // the corpus grows -- the eight invitations did, and their plain parts
+    // hold text the HTML never draws.
     for (label, tally) in &tallies {
+        let [as_read, collapsed, present] = match *label {
+            "text first" => [0.90, 0.96, 0.97],
+            _ => [0.92, 0.98, 0.99],
+        };
         assert!(
             tally.total() >= 100,
             "{label}: only {} sentences to measure",
             tally.total()
         );
         for (hows, floor, name) in [
-            (&[How::AsRead][..], 0.91, "as read"),
+            (&[How::AsRead][..], as_read, "as read"),
             (
                 &[How::AsRead, How::SpacesCollapsed][..],
-                0.97,
+                collapsed,
                 "with spaces collapsed",
             ),
         ] {
@@ -404,8 +416,8 @@ fn a_sentence_is_found_again_from_its_excerpt() {
             );
         }
         assert!(
-            tally.present() >= 0.98,
-            "{label}: {:.3} present at all, below the spike's 0.98",
+            tally.present() >= present,
+            "{label}: {:.3} present at all, below the spike's {present}",
             tally.present()
         );
     }
