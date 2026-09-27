@@ -101,7 +101,7 @@ retries = 0
 webkit = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(gtk_suite) + binary(gtk_reader) + binary(gtk_composer) + binary(gtk_accessibility) + binary(drag_out) + binary(webkit_probe) + binary(app_suite)'
+filter = 'binary(gtk_suite) + binary(gtk_reader) + binary(gtk_composer) + binary(gtk_accessibility) + binary(drag_out) + binary(app_suite)'
 test-group = 'webkit'
 
 # The sync-wave cases, each a whole wave over an archive-sized fixture: ~31 s
