@@ -13,6 +13,7 @@ mod snapshot;
 mod text_index;
 pub mod theme;
 pub mod thread;
+pub mod tile;
 
 pub use kurbo::{Point, Rect};
 pub use render::{BASE_URL, FOLD_ATTRIBUTE, Raster, rasterize, render};
