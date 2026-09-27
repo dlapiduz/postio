@@ -717,18 +717,18 @@ impl<'a> ThreadRepository<'a> {
             let rows: Vec<(i64, i64, i64)> = sql::all(
                 self.connection,
                 &format!(
-                    "SELECT sort_at, id, thread_id FROM messages
+                    "SELECT received_at, id, thread_id FROM messages
                       WHERE mailbox_id = ?1 AND {MEMBER} AND thread_id IS NOT NULL
-                      ORDER BY sort_at DESC, id DESC"
+                      ORDER BY received_at DESC, id DESC"
                 ),
                 [inbox.get()],
                 |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
             )
             .await?;
-            for (sort_at, id, thread) in rows {
+            for (received_at, id, thread) in rows {
                 keys.entry(ThreadId::new(thread))
                     .or_insert_with(|| ThreadCursor {
-                        last_at: from_millis(sort_at),
+                        last_at: from_millis(received_at),
                         id,
                     });
             }
@@ -836,7 +836,7 @@ impl<'a> ThreadRepository<'a> {
             let mut statement = sql::statement(
                 self.connection,
                 &format!(
-                    "SELECT thread_id, sort_at, id FROM messages
+                    "SELECT thread_id, received_at, id FROM messages
                       WHERE thread_id IN ({}) AND mailbox_id IN ({}) AND {MEMBER}",
                     placeholders(wanted.len(), 1),
                     placeholders(inboxes.len(), wanted.len() + 1)
@@ -854,9 +854,9 @@ impl<'a> ThreadRepository<'a> {
             .await?
         };
         let mut keys: HashMap<ThreadId, ThreadCursor> = HashMap::new();
-        for (thread, sort_at, id) in rows {
+        for (thread, received_at, id) in rows {
             let key = ThreadCursor {
-                last_at: from_millis(sort_at),
+                last_at: from_millis(received_at),
                 id,
             };
             keys.entry(ThreadId::new(thread))
@@ -1239,7 +1239,7 @@ impl<'a> ThreadRepository<'a> {
                                  CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
                         coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
                         coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
-                        rep.received_at, rep.sort_at, rep.id
+                        rep.received_at, rep.received_at, rep.id
                    FROM messages rep
                   WHERE rep.mailbox_id = ?2 AND rep.{MEMBER} AND {filter}
                     AND NOT EXISTS (
@@ -1247,7 +1247,7 @@ impl<'a> ThreadRepository<'a> {
                              WHERE newer.mailbox_id = ?2 AND newer.{MEMBER}
                                AND newer.thread_id IS NOT NULL
                                AND newer.thread_id = rep.thread_id
-                               AND (newer.sort_at, newer.id) > (rep.sort_at, rep.id)
+                               AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
                         )"
             )
         };
@@ -1383,7 +1383,7 @@ impl<'a> ThreadRepository<'a> {
         };
 
         let cursor = if query.after.is_some() {
-            " AND rep.sort_at <= ?3 AND (rep.sort_at < ?3 OR rep.id < ?4)"
+            " AND rep.received_at <= ?3 AND (rep.received_at < ?3 OR rep.id < ?4)"
         } else {
             ""
         };
@@ -1402,7 +1402,7 @@ impl<'a> ThreadRepository<'a> {
                              CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
                     coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
                     coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
-                    rep.received_at, rep.sort_at, rep.id
+                    rep.received_at, rep.received_at, rep.id
                FROM messages rep
               WHERE rep.mailbox_id = ?2 AND rep.{MEMBER}
                 AND NOT EXISTS (
@@ -1410,9 +1410,9 @@ impl<'a> ThreadRepository<'a> {
                          WHERE newer.mailbox_id = ?2 AND newer.{MEMBER}
                            AND newer.thread_id IS NOT NULL
                            AND newer.thread_id = rep.thread_id
-                           AND (newer.sort_at, newer.id) > (rep.sort_at, rep.id)
+                           AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
                     ){cursor}
-              ORDER BY rep.sort_at DESC, rep.id DESC LIMIT {}",
+              ORDER BY rep.received_at DESC, rep.id DESC LIMIT {}",
             query.limit
         )
     }
@@ -1458,9 +1458,9 @@ impl<'a> ThreadRepository<'a> {
         let mut rows = sql::statement(
             self.connection,
             &format!(
-                "SELECT sort_at, id, thread_id FROM messages
+                "SELECT received_at, id, thread_id FROM messages
                   WHERE mailbox_id = ?1 AND {MEMBER}
-                  ORDER BY sort_at DESC, id DESC"
+                  ORDER BY received_at DESC, id DESC"
             ),
         )
         .await?
@@ -1620,7 +1620,7 @@ impl<'a> ThreadRepository<'a> {
                  SELECT id, thread_id, subject, preview, received_at, seen, flagged, answered,
                         draft, has_attachments, size,
                         row_number() OVER (PARTITION BY thread_id
-                                           ORDER BY sort_at DESC, id DESC) AS rank
+                                           ORDER BY received_at DESC, id DESC) AS rank
                    FROM messages
                   WHERE thread_id IN ({}) AND {MEMBER}{scope}
              )
@@ -1732,7 +1732,7 @@ async fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
                                           WHERE thread_id = ?1 AND {MEMBER} AND flagged = 1),
                     first_at = coalesce((SELECT min(received_at) FROM messages
                                           WHERE thread_id = ?1 AND {MEMBER}), 0),
-                    last_at = coalesce((SELECT max(sort_at) FROM messages
+                    last_at = coalesce((SELECT max(received_at) FROM messages
                                          WHERE thread_id = ?1 AND {MEMBER}), 0)
               WHERE id = ?1"
         ),

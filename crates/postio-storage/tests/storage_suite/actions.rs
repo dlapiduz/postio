@@ -258,8 +258,8 @@ async fn a_rolled_back_transaction_relocates_nothing() {
 async fn a_message(connection: &Connection, mailbox: MailboxId, remote: &str) -> MessageId {
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, remote_id)
-             SELECT account_id, id, 0, 0, ?2 FROM mailboxes WHERE id = ?1",
+            "INSERT INTO messages (account_id, mailbox_id, received_at, remote_id)
+             SELECT account_id, id, 0, ?2 FROM mailboxes WHERE id = ?1",
             bind![mailbox.get(), remote],
         )
         .await

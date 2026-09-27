@@ -29,8 +29,8 @@ async fn insert_message(connection: &Connection, mailbox: MailboxId, flags: &str
     let flagged = i64::from(flags.contains("\\Flagged"));
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, flags, seen, flagged)
-             SELECT account_id, id, 0, 0, ?2, ?3, ?4 FROM mailboxes WHERE id = ?1",
+            "INSERT INTO messages (account_id, mailbox_id, received_at, flags, seen, flagged)
+             SELECT account_id, id, 0, ?2, ?3, ?4 FROM mailboxes WHERE id = ?1",
             bind![mailbox.get(), flags, seen, flagged],
         )
         .await

@@ -300,8 +300,8 @@ async fn database() -> postio_storage::test_support::TempStore {
 async fn insert_message(connection: &Connection, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, raw_blob_id)
-             VALUES (1, 1, 0, 0, ?1)",
+            "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id)
+             VALUES (1, 1, 0, ?1)",
             bind![raw.map(BlobId::as_str)],
         )
         .await
@@ -767,8 +767,8 @@ fn a_compressed_blob_streams_without_being_read_whole() {
 async fn insert_message_at(connection: &Connection, received_at: i64, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, raw_blob_id, body_state)
-             VALUES (1, 1, ?1, ?1, ?2, 'full')",
+            "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id, body_state)
+             VALUES (1, 1, ?1, ?2, 'full')",
             bind![received_at, raw.map(BlobId::as_str)],
         )
         .await

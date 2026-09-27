@@ -34,8 +34,8 @@ async fn fill(connection: &Connection, mailbox: MailboxId, count: usize) -> Vec<
     for index in 0..count {
         connection
             .execute(
-                "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at)
-                     SELECT account_id, id, ?2, ?2 FROM mailboxes WHERE id = ?1",
+                "INSERT INTO messages (account_id, mailbox_id, received_at)
+                     SELECT account_id, id, ?2 FROM mailboxes WHERE id = ?1",
                 [mailbox.get(), index as i64],
             )
             .await
@@ -155,8 +155,8 @@ async fn fill_thread(
     for index in 0..count {
         connection
             .execute(
-                "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, thread_id)
-                     SELECT account_id, id, ?2, ?2, ?3 FROM mailboxes WHERE id = ?1",
+                "INSERT INTO messages (account_id, mailbox_id, received_at, thread_id)
+                     SELECT account_id, id, ?2, ?3 FROM mailboxes WHERE id = ?1",
                 [mailbox.get(), index as i64, thread],
             )
             .await
