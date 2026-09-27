@@ -283,6 +283,26 @@ CREATE TABLE egress_log (
     outcome     TEXT    NOT NULL CHECK (outcome IN ('connected', 'failed'))
 );
 
+-- Why Focus filed a message out of the inbox (spec 007, FR-113): one
+-- decision per message, from a vocabulary this CHECK keeps closed, and the
+-- same six `postio_classify::ReasonKind` spells. Recomputable from the
+-- message by the catch-up; restoring it (`R`) deletes the row.
+CREATE TABLE filter_decisions (
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    reason      TEXT    NOT NULL
+                        CHECK (reason IN ('spam', 'promotion', 'notification',
+                                          'receipt', 'shipping', 'social')),
+    -- Shown after the reason, "notification · Forge": a sender's or a
+    -- list's name, or NULL when there is none to show.
+    source      TEXT,
+    -- Which layer decided: the message's headers, the shipped senders
+    -- table, the server's `$Junk`, or the person's model (milestone 2).
+    layer       TEXT    NOT NULL
+                        CHECK (layer IN ('header', 'senders', 'server', 'model')),
+    -- When. Local midnight bounds "filtered today".
+    decided_at  INTEGER NOT NULL
+);
+
 CREATE TABLE identities (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id        INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -720,6 +740,10 @@ CREATE INDEX idx_drafts_state ON drafts (state, updated_at);
 CREATE INDEX idx_drafts_thread ON drafts (thread_id);
 
 CREATE INDEX idx_egress_log_at ON egress_log (at DESC);
+
+CREATE INDEX idx_filter_decisions_decided ON filter_decisions (decided_at);
+
+CREATE INDEX idx_filter_decisions_reason ON filter_decisions (reason, decided_at DESC);
 
 CREATE INDEX idx_identities_account ON identities (account_id, position);
 

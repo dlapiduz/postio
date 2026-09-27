@@ -36,6 +36,7 @@ mod contacts;
 mod cross_account;
 mod drafts;
 mod egress;
+mod filter_decisions;
 mod labels;
 mod mailbox_roles;
 mod mailboxes;
@@ -55,6 +56,7 @@ pub use cross_account::{
 };
 pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
+pub use filter_decisions::{FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason};
 pub use labels::LabelRepository;
 pub use mailbox_roles::MailboxRoleRepository;
 pub use mailboxes::{DraftCounts, MailboxRepository};
