@@ -87,6 +87,9 @@ mod imp {
         /// The character to bring back to the top when the next snapshot
         /// arrives: a theme change keeps the reader's place.
         pub(super) anchor: Cell<Option<usize>>,
+        /// The messages the user darkened (FR-013a): for this session only,
+        /// never stored.
+        pub(super) darkened: RefCell<Vec<String>>,
         /// The style manager's handlers, disconnected on dispose.
         pub(super) theme_handlers: RefCell<Vec<glib::SignalHandlerId>>,
     }
@@ -107,6 +110,7 @@ mod imp {
                 document: RefCell::default(),
                 tiles: RefCell::default(),
                 anchor: Cell::new(None),
+                darkened: RefCell::default(),
                 theme_handlers: RefCell::default(),
             }
         }
@@ -246,6 +250,55 @@ impl BodyView {
         })
     }
 
+    /// Darken the message on screen, or show it as sent again (FR-013a).
+    /// False when there is nothing to darken: not dark, or not paper.
+    pub fn toggle_darken(&self) -> bool {
+        let Some((scope, _)) = self.darkenable() else {
+            return false;
+        };
+        {
+            let mut darkened = self.imp().darkened.borrow_mut();
+            match darkened.iter().position(|s| *s == scope) {
+                Some(at) => {
+                    darkened.remove(at);
+                }
+                None => darkened.push(scope),
+            }
+        }
+        self.request_render();
+        true
+    }
+
+    /// `darken_message`'s title for the message on screen, or `None` when
+    /// the command does not apply to it.
+    pub fn darken_title(&self) -> Option<String> {
+        let (_, presentation) = self.darkenable()?;
+        Some(
+            match presentation {
+                postio_render::Presentation::Darkened => "Show as sent",
+                _ => "Darken this message",
+            }
+            .to_owned(),
+        )
+    }
+
+    /// The message on screen `darken_message` acts on, and how it is shown:
+    /// the one a third of the way down the view, if it is paper.
+    fn darkenable(&self) -> Option<(String, postio_render::Presentation)> {
+        use postio_render::Presentation::{Darkened, Paper};
+        let imp = self.imp();
+        let document = imp.document.borrow().clone()?;
+        let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
+        let line = top + f64::from(self.height()) / 3.0;
+        let message = document
+            .messages
+            .iter()
+            .find(|m| m.rect.y0 <= line && line < m.rect.y1)
+            .or(document.messages.first())?;
+        matches!(message.presentation, Paper | Darkened)
+            .then(|| (message.scope.clone(), message.presentation))
+    }
+
     /// The snapshot on screen, if one has arrived.
     pub fn document(&self) -> Option<Arc<RenderedDocument>> {
         self.imp().document.borrow().clone()
@@ -303,7 +356,7 @@ impl BodyView {
                 dark: style.is_dark(),
                 high_contrast: style.is_high_contrast(),
             },
-            darkened: Vec::new(),
+            darkened: imp.darkened.borrow().clone(),
             toggled_folds: Vec::new(),
             reader_view: Vec::new(),
         };

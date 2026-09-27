@@ -55,3 +55,48 @@ pub fn a_theme_change_re_renders_once_and_keeps_the_place() {
     style.set_color_scheme(adw::ColorScheme::Default);
     window.destroy();
 }
+
+/// FR-013a: in dark mode a sheet of paper can be darkened, and the command
+/// is its own undo -- its title says which way it goes.
+pub fn darken_is_its_own_undo() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let style = adw::StyleManager::default();
+    style.set_color_scheme(adw::ColorScheme::ForceDark);
+    let view = BodyView::new(crate::reader_deadline());
+    let scroller = gtk::ScrolledWindow::builder().child(&view).build();
+    let window = gtk::Window::builder()
+        .default_width(800)
+        .default_height(600)
+        .child(&scroller)
+        .build();
+    window.present();
+    view.set_content(content("html-newsletter"));
+    let presented = |want: Presentation| {
+        until(|| {
+            view.document()
+                .is_some_and(|d| d.messages[0].presentation == want)
+        })
+    };
+    assert!(
+        presented(Presentation::Paper),
+        "the newsletter is not paper in dark"
+    );
+    assert_eq!(view.darken_title().as_deref(), Some("Darken this message"));
+    assert!(view.toggle_darken(), "paper could not be darkened");
+    assert!(
+        presented(Presentation::Darkened),
+        "darkening did not re-render it darkened"
+    );
+    assert_eq!(view.darken_title().as_deref(), Some("Show as sent"));
+    assert!(view.toggle_darken());
+    assert!(
+        presented(Presentation::Paper),
+        "showing it as sent did not restore the paper"
+    );
+    assert_eq!(view.darken_title().as_deref(), Some("Darken this message"));
+    style.set_color_scheme(adw::ColorScheme::Default);
+    window.destroy();
+}
