@@ -317,6 +317,40 @@ Setup:
     renderer everywhere, but the macOS text, selection and accessibility
     integration would be built a second time.
 
+## Head to head: performance (requested after the scorecard)
+
+The maintainer chose WebKit from the scorecard, then asked how the two
+compare on performance before the choice is acted on: *"lets re run a head
+to head. I saw [another mail client] uses blitz and it uses way less memory
+than webkit."* The scorecard's cost figures were not like for like:
+- WebKit's times stopped when the document had loaded, then painted
+  elsewhere, on the GPU, for the viewport only;
+- Blitz's times painted the whole document on the CPU;
+- Blitz's memory included a prototype's font loading, which read every
+  installed font file into memory.
+
+This protocol was committed before either arm ran it. Each engine gets a
+minimal real reading widget in the same GTK window, one engine per process:
+- **WebKit** is the shipped hardened `Reader`.
+- **Blitz** is a document laid out once per message, painting only the
+  visible viewport (`paint_scene`'s window) on scroll, into a texture, with
+  fonts memory-mapped rather than read.
+
+Measures, all on this machine, on release builds, with no other session
+building:
+
+| | measure |
+|---|---|
+| H1 cold start | process start → the first message's pixels presented (includes a web process for WebKit, font discovery for Blitz) |
+| H2 open | request → the frame that shows the message, over 20 openings (the designed, theme and plain fixtures, plus 10- and 50-message threads); median and worst |
+| H3 scroll | a 40,000 px message scrolled 300 px per frame for 120 frames; the frame-clock intervals between presented frames, as median, p95 and worst |
+| H4 theme | dark ↔ light while a message is open → the repainted frame |
+| H5 memory | Pss summed over **every** process the reader uses (the app, and WebKit's web, network and any other helper): at idle after the first message, and after the whole H2 sequence |
+| H6 CPU | user + system time over the whole run, summed over the same processes |
+
+The protocol's gates and scored criteria stand. This adds evidence, and
+the maintainer decides again with it in hand.
+
 ## Scorecard
 
 | | arm A — WebKit | arm B — Blitz |
