@@ -4717,6 +4717,7 @@ dependencies = [
  "calcard",
  "chrono",
  "postio-model",
+ "thiserror",
 ]
 
 [[package]]

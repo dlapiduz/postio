@@ -15,9 +15,14 @@ repository.workspace = true
 # should be a decision somebody makes, not a lockfile diff. `jmap` is off, so
 # JSCalendar, JSContact and their serde stack stay out of the graph.
 calcard = { version = "=0.3.14", default-features = false }
+chrono = { workspace = true, features = ["std"] }
+# `EmailAddress`, for organisers, attendees and the address a reply answers
+# as. postio-model is the leaf every crate already waits on, and it takes
+# nothing this crate's boundary rule bans.
+postio-model = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 postio-model = { workspace = true, features = ["test-corpus"] }
 
 [lints]
