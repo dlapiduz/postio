@@ -21,9 +21,10 @@
  * They used to carry those bytes inline as base64, which put ~1.21 MB into
  * every document the reader composed (#768).
  *
- * Postio owns the type: `ammonia` strips every sender `style` attribute and
- * `<style>` tag before a body ever reaches this document (see
- * `reader/sanitize.rs`), so nothing here competes with a sender's CSS.
+ * Postio's own words take this type. A sender's markup keeps its own
+ * styles -- inline `style`, contained, and `<style>` rules, scoped to its
+ * message by `postio_body::styles` -- and `.postio-original` below reverts
+ * these rules inside it, so the two never compete (spec 006 FR-019).
  */
 
 * {
@@ -163,9 +164,9 @@ table {
   max-width: 100%;
 }
 
-/* A sender's own <table> layout keeps its structure — ammonia allows the
-   generic layout attributes (width, align, valign, cellpadding) — but never
-   its colours or fonts, which are stripped with the `style` attribute. */
+/* A sender's own <table> layout keeps its structure and its styling: the
+   layout attributes become the style they mean (`postio_body::hints`), and
+   its colours and fonts arrive with its contained `style` (spec 006). */
 
 pre.postio-body-text {
   font-family: "Barlow", sans-serif;
@@ -190,8 +191,8 @@ details.postio-quote > summary {
   list-style: none;
 }
 
-details.postio-quote > summary::-webkit-details-marker {
-  display: none;
+details.postio-quote > summary {
+  list-style: none;
 }
 
 details.postio-quote > summary::before {

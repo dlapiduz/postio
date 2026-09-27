@@ -2612,3 +2612,21 @@ mod over_cap_tests {
         assert_eq!(rendered.over_cap, Some(postio_body::Cap::Depth));
     }
 }
+
+#[cfg(test)]
+mod no_webkit_tests {
+    /// The reader no longer runs in WebKit (spec 006): a `-webkit-` rule in
+    /// its stylesheets is dead weight that reads as though it mattered.
+    #[test]
+    fn the_reader_stylesheets_name_no_webkit_extension() {
+        for (name, css) in [
+            ("reader.css", include_str!("../../data/reader.css")),
+            ("thread.css", include_str!("../../data/thread.css")),
+        ] {
+            assert!(
+                !css.contains("-webkit-"),
+                "{name} still has a -webkit- rule"
+            );
+        }
+    }
+}
