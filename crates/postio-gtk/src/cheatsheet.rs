@@ -74,7 +74,7 @@ mod imp {
                 availability: RefCell::new(Availability {
                     scope: Scope::default(),
                     store_open: false,
-                    terminal: false,
+                    frontend: postio_core::Frontend::Classic,
                 }),
                 dismissed: RefCell::new(Vec::new()),
             }

@@ -582,7 +582,7 @@ fn every_command_but_the_chrome_needs_the_store_open() {
 fn the_terminal_composers_own_commands_are_offered_only_in_the_terminal() {
     let window = Availability::open(Scope::Account(AccountId::new(1)));
     let terminal = Availability {
-        terminal: true,
+        frontend: postio_core::Frontend::Terminal,
         ..window
     };
     let offered = |state| {
@@ -614,12 +614,12 @@ fn the_vocabulary_before_the_store_is_the_chrome_and_nothing_else() {
     let closed = Availability {
         scope: account,
         store_open: false,
-        terminal: false,
+        frontend: postio_core::Frontend::Classic,
     };
     let open = Availability {
         scope: account,
         store_open: true,
-        terminal: false,
+        frontend: postio_core::Frontend::Classic,
     };
 
     let before: Vec<CommandId> = registry::reachable_in(Context::List, closed)
@@ -680,12 +680,12 @@ fn a_command_can_need_more_than_one_thing_at_once() {
     let unified_and_open = Availability {
         scope: Scope::Unified,
         store_open: true,
-        terminal: false,
+        frontend: postio_core::Frontend::Classic,
     };
     let account_and_closed = Availability {
         scope: Scope::Account(AccountId::new(1)),
         store_open: false,
-        terminal: false,
+        frontend: postio_core::Frontend::Classic,
     };
     for unmet in [unified_and_open, account_and_closed] {
         assert!(
@@ -788,4 +788,38 @@ fn the_reading_commands_are_registered_as_the_contract_says() {
         assert!(!spec.destructive, "{name}");
         assert_eq!(Command::default_for(id).id(), id);
     }
+}
+
+/// Four apps share one registry (specs/007-postio-focus research R4), and
+/// what an app is decides what it offers: a command only Focus has is
+/// unreachable to the classic app, the terminal and macOS, and the two
+/// requirements that already split the frontends keep their meaning across
+/// four. Read through `reachable_in`'s own test, `RequirementSet::met_by`,
+/// so this is what the palette and the cheat sheet see.
+#[test]
+fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
+    use postio_core::registry::{Frontend, RequirementSet};
+    let at = |frontend| Availability {
+        frontend,
+        ..Availability::open(Scope::Unified)
+    };
+    let apps = [
+        Frontend::Classic,
+        Frontend::Terminal,
+        Frontend::Focus,
+        Frontend::Macos,
+    ];
+    let offered_to = |requirement| {
+        let set = RequirementSet::from_slice(&[requirement]);
+        apps.into_iter()
+            .filter(|app| set.met_by(at(*app)))
+            .collect::<Vec<Frontend>>()
+    };
+    assert_eq!(offered_to(Requirement::Focus), [Frontend::Focus]);
+    assert_eq!(offered_to(Requirement::Terminal), [Frontend::Terminal]);
+    assert_eq!(
+        offered_to(Requirement::Graphical),
+        [Frontend::Classic, Frontend::Focus, Frontend::Macos],
+        "every app that draws a message as pixels can zoom and darken it"
+    );
 }

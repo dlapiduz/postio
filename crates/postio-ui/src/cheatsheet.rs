@@ -363,7 +363,7 @@ mod tests {
         let waiting = ids(Availability {
             scope: account,
             store_open: false,
-            terminal: false,
+            frontend: postio_core::Frontend::Classic,
         });
         let open = ids(Availability::open(account));
 

@@ -1501,7 +1501,12 @@ impl Session {
     ///
     /// [`Requirement::StoreOpen`]: postio_core::Requirement::StoreOpen
     fn availability(&self) -> postio_core::Availability {
-        postio_core::Availability::open(*self.account_scope.lock().expect("account scope lock"))
+        postio_core::Availability {
+            frontend: postio_core::Frontend::Macos,
+            ..postio_core::Availability::open(
+                *self.account_scope.lock().expect("account scope lock"),
+            )
+        }
     }
 
     /// The palette's rows for `query`, best first.

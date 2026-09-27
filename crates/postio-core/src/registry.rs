@@ -114,16 +114,23 @@ pub enum Requirement {
     /// (spec 006). A terminal draws text in its own font and colours, and
     /// has nothing for these to act on.
     Graphical,
+    /// The frontend has to be Postio Focus, because the command works on what
+    /// only Focus has: invitations answered from the row, the has-action
+    /// filter, Filtered, digests and reminders (specs/007-postio-focus
+    /// research R4). The one keymap reserves their keys in every app; only
+    /// Focus offers them.
+    Focus,
 }
 
 impl Requirement {
     /// Every requirement, in declaration order. What [`RequirementSet`] is
     /// built over.
-    pub const ALL: [Requirement; 4] = [
+    pub const ALL: [Requirement; 5] = [
         Requirement::SingleAccount,
         Requirement::StoreOpen,
         Requirement::Terminal,
         Requirement::Graphical,
+        Requirement::Focus,
     ];
 
     const fn bit(self) -> u8 {
@@ -185,6 +192,23 @@ impl RequirementSet {
     }
 }
 
+/// Which Postio app is asking (specs/007-postio-focus research R4).
+///
+/// Every app reads the one registry, and the one keymap gives every command
+/// the same key in each; what differs is which commands an app offers at
+/// all, and that is a [`Requirement`] evaluated against this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Frontend {
+    /// The classic GTK desktop app.
+    Classic,
+    /// The terminal app (spec 005).
+    Terminal,
+    /// Postio Focus (spec 007).
+    Focus,
+    /// The macOS app.
+    Macos,
+}
+
 /// The state [`Requirement`]s are evaluated against.
 ///
 /// A struct rather than bare arguments so a new requirement adds a field
@@ -200,20 +224,22 @@ pub struct Availability {
     /// read or a long migration is a window that says what it is waiting for
     /// rather than no window at all (#1114).
     pub store_open: bool,
-    /// Whether the frontend asking is the terminal.
-    pub terminal: bool,
+    /// Which app is asking.
+    pub frontend: Frontend,
 }
 
 impl Availability {
-    /// The ordinary state: this scope, with the mail open behind it.
+    /// The ordinary state: this scope, with the mail open behind it, in the
+    /// classic app.
     ///
     /// What every surface that has been fed is in, and what a test asserting
-    /// about scope alone means.
+    /// about scope alone means. Another app sets
+    /// [`frontend`](Self::frontend) over this.
     pub fn open(scope: Scope) -> Availability {
         Availability {
             scope,
             store_open: true,
-            terminal: false,
+            frontend: Frontend::Classic,
         }
     }
 }
@@ -224,8 +250,9 @@ impl Requirement {
         match self {
             Requirement::SingleAccount => state.scope.is_single_account(),
             Requirement::StoreOpen => state.store_open,
-            Requirement::Terminal => state.terminal,
-            Requirement::Graphical => !state.terminal,
+            Requirement::Terminal => state.frontend == Frontend::Terminal,
+            Requirement::Graphical => state.frontend != Frontend::Terminal,
+            Requirement::Focus => state.frontend == Frontend::Focus,
         }
     }
 }

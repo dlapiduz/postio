@@ -909,7 +909,7 @@ mod tests {
             // No list is open here, so the view is unified, where a move has
             // no account to move within (#182). As this terminal asks.
             postio_core::Availability {
-                terminal: true,
+                frontend: postio_core::Frontend::Terminal,
                 ..postio_core::Availability::open(postio_core::Scope::Unified)
             },
         );

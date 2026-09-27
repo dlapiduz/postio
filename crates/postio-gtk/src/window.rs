@@ -3126,7 +3126,7 @@ impl Window {
         postio_core::Availability {
             scope: self.imp().scope.get(),
             store_open: self.imp().store_open.get(),
-            terminal: false,
+            frontend: postio_core::Frontend::Classic,
         }
     }
 

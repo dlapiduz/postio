@@ -327,7 +327,7 @@ mod tests {
         // In some context of some app: the terminal composer's own commands
         // are in the terminal's palette only.
         let terminal = Availability {
-            terminal: true,
+            frontend: postio_core::Frontend::Terminal,
             ..an_account()
         };
         for spec in registry::all() {
@@ -452,7 +452,7 @@ mod tests {
         let waiting = Availability {
             scope: Scope::Account(AccountId::new(1)),
             store_open: false,
-            terminal: false,
+            frontend: postio_core::Frontend::Classic,
         };
         assert!(
             entries(&defaults(), Context::List, waiting, "archive").is_empty(),

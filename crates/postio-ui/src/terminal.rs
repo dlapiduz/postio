@@ -249,7 +249,7 @@ mod registry {
     #[test]
     fn every_command_has_a_binding_a_legacy_terminal_delivers() {
         let terminal = postio_core::Availability {
-            terminal: true,
+            frontend: postio_core::Frontend::Terminal,
             ..postio_core::Availability::open(postio_core::Scope::Unified)
         };
         let unreachable: Vec<String> = postio_core::registry::all()

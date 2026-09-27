@@ -1683,7 +1683,7 @@ impl App {
     fn availability(&self) -> postio_core::Availability {
         postio_core::Availability {
             // The composer's `$EDITOR` and preview are this frontend's own.
-            terminal: true,
+            frontend: postio_core::Frontend::Terminal,
             ..postio_core::Availability::open(
                 self.account
                     .map_or(postio_core::Scope::Unified, postio_core::Scope::Account),
@@ -4729,7 +4729,7 @@ pub(crate) mod tests {
         wired.push(postio_core::CommandId::Refresh);
         let mut unanswered = Vec::new();
         let terminal = postio_core::Availability {
-            terminal: true,
+            frontend: postio_core::Frontend::Terminal,
             ..postio_core::Availability::open(postio_core::Scope::Unified)
         };
         for spec in postio_core::registry::all() {
@@ -5783,7 +5783,7 @@ pub(crate) mod tests {
             &keymap,
             postio_core::Context::List,
             postio_core::Availability {
-                terminal: true,
+                frontend: postio_core::Frontend::Terminal,
                 ..postio_core::Availability::open(postio_core::Scope::Unified)
             },
             "",

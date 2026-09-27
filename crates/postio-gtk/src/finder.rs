@@ -369,7 +369,7 @@ mod imp {
                 availability: RefCell::new(Availability {
                     scope: Scope::default(),
                     store_open: false,
-                    terminal: false,
+                    frontend: postio_core::Frontend::Classic,
                 }),
                 live_titles: RefCell::new(None),
                 mailboxes: RefCell::new(Vec::new()),
