@@ -320,10 +320,10 @@ plan and tasks agree with the decision.
   - `snapshot()` appending only visible and prefetch tiles.
 
   Add `postio-render` to `crates/postio-gtk/Cargo.toml`
-- [ ] T060 [TEST] In `gtk_suite/body_view.rs`, check frame continuity:
+- [X] T060 [TEST] In `gtk_suite/body_view.rs`, check frame continuity:
   - while a second request is outstanding, the widget's rendered pixels equal the previous frame, with no ground-only frame;
   - a tile evicted from the cache draws from `low_res` rather than the ground (FR-029)
-- [ ] T061 Implement frame continuity in `crates/postio-gtk/src/body_view/mod.rs` and `tiles.rs`
+- [X] T061 Implement frame continuity in `crates/postio-gtk/src/body_view/mod.rs` and `tiles.rs`
 - [ ] T062 Make the render deadline injectable:
   - export `DEFAULT_RENDER_DEADLINE: Duration = 400 ms` from `crates/postio-render/src/lib.rs`;
   - `BodyView::new` takes the deadline as a parameter, and production passes the default;

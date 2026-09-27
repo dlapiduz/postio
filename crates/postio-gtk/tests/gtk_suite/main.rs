@@ -184,6 +184,10 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
     (
+        "body_view::no_frame_shows_only_the_ground",
+        body_view::no_frame_shows_only_the_ground as fn(),
+    ),
+    (
         "body_view::a_snapshot_fills_the_view_and_scrolls_with_it",
         body_view::a_snapshot_fills_the_view_and_scrolls_with_it as fn(),
     ),

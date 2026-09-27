@@ -80,18 +80,32 @@ pub(super) struct Tiles {
     pending: HashMap<u32, ()>,
     results: Option<Receiver<(u64, u32, gdk::MemoryTexture)>>,
     reply: Option<Sender<(u64, u32, gdk::MemoryTexture)>>,
+    /// The snapshot's low-resolution copy: what a missing tile shows, so
+    /// no frame is ever the bare ground (FR-029).
+    low_res: Option<gdk::MemoryTexture>,
 }
 
 impl Tiles {
     /// Start over for a new snapshot.
     pub(super) fn reset(&mut self, document: Arc<RenderedDocument>) {
         let (reply, results) = mpsc::channel();
+        let low = &document.low_res;
+        let low_res = (low.width > 0 && low.height > 0).then(|| {
+            gdk::MemoryTexture::new(
+                low.width as i32,
+                low.height as i32,
+                gdk::MemoryFormat::R8g8b8a8Premultiplied,
+                &glib::Bytes::from(&low.rgba[..]),
+                low.width as usize * 4,
+            )
+        });
         *self = Tiles {
             generation: document.generation,
             textures: HashMap::new(),
             pending: HashMap::new(),
             results: Some(results),
             reply: Some(reply),
+            low_res,
         };
     }
 
@@ -126,6 +140,27 @@ impl Tiles {
                 None => {
                     missing = true;
                     self.ask(document, index);
+                    if let Some(low_res) = &self.low_res {
+                        // The copy stretched over the whole document, seen
+                        // through this tile's band.
+                        let band = gtk::graphene::Rect::new(
+                            -left as f32,
+                            y as f32,
+                            document.size.width as f32,
+                            TILE as f32,
+                        );
+                        snapshot.push_clip(&band);
+                        snapshot.append_texture(
+                            low_res,
+                            &gtk::graphene::Rect::new(
+                                -left as f32,
+                                -top as f32,
+                                document.size.width as f32,
+                                document.size.height as f32,
+                            ),
+                        );
+                        snapshot.pop();
+                    }
                 }
             }
         }
