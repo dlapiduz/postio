@@ -56,6 +56,7 @@ pub mod keys;
 pub mod live;
 pub mod logging;
 pub mod paths;
+pub mod reader;
 pub mod save;
 pub mod secrets;
 mod source;
@@ -80,6 +81,7 @@ pub use filters::{FilterConfig, patch_filters};
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
+pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader};
 pub use storage::StorageConfig;
 pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 pub use tui::{Preview, TuiConfig};
@@ -159,6 +161,9 @@ pub struct Config {
     /// `[tui]` — how the terminal frontend looks and behaves.
     #[serde(default)]
     pub tui: TuiConfig,
+    /// `[reader]` — how the reading pane draws a message: its zoom.
+    #[serde(default)]
+    pub reader: ReaderConfig,
     /// Top-level keys this version of Postio does not know.
     #[serde(flatten)]
     pub extra: Extras,

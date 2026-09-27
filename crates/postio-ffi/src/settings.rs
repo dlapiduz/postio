@@ -205,6 +205,34 @@ pub fn settings_patch_appearance(
     })
 }
 
+/// The reading pane's zoom from `[reader]`, in percent, or `None` when the
+/// file will not parse (spec 006 FR-021) -- `settings_appearance`'s reason.
+#[uniffi::export]
+pub fn settings_reader_zoom(text: String) -> Option<u16> {
+    Some(Config::from_toml_str(&text).ok()?.reader.zoom)
+}
+
+/// Every zoom step, in percent: the ones `[reader] zoom` takes.
+#[uniffi::export]
+pub fn settings_zoom_steps() -> Vec<u16> {
+    postio_config::ZOOM_STEPS.to_vec()
+}
+
+/// Write `zoom` into `text`'s `[reader]` table, as the nearest step, leaving
+/// the rest verbatim.
+#[uniffi::export]
+pub fn settings_patch_reader_zoom(text: String, zoom: u16) -> Result<String, SettingsError> {
+    let mut reader = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .reader;
+    reader.zoom = postio_config::nearest_zoom(zoom);
+    postio_config::patch_reader(&text, &reader).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
 /// Why a settings write could not be made.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SettingsError {
