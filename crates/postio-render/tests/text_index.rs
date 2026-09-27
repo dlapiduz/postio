@@ -163,3 +163,38 @@ fn find_folds_case_and_diacritics() {
         .collect();
     assert_eq!(found, ["Total", "tötal", "total"]);
 }
+
+/// The index's geometry is in the view's pixels whatever the device scale:
+/// Blitz shapes text at the device scale, and a cluster's rect must not
+/// carry it (a 2x display drew highlights twice the size and position).
+#[test]
+fn cluster_rects_do_not_carry_the_device_scale() {
+    let at = |scale: f64| {
+        let mut request = RenderRequest {
+            generation: 1,
+            document: "<!DOCTYPE html><html><body><p>Hello there, the quick fox.</p></body></html>"
+                .to_owned(),
+            plain_text: String::new(),
+            over_cap: None,
+            resources: Arc::new(Resources::new()),
+            viewport: Viewport {
+                width: 400.0,
+                hidpi_scale: scale,
+                zoom: 1.0,
+            },
+            theme: Theme::default(),
+            darkened: Vec::new(),
+            toggled_folds: Vec::new(),
+            reader_view: Vec::new(),
+        };
+        request.viewport.hidpi_scale = scale;
+        postio_render::render(&request, fonts())
+    };
+    let (one, two) = (at(1.0), at(2.0));
+    let rect = |doc: &RenderedDocument| doc.text.rects(doc.text.find("quick")[0].clone())[0];
+    let (a, b) = (rect(&one), rect(&two));
+    assert!(
+        (a.x0 - b.x0).abs() < 1.0 && (a.x1 - b.x1).abs() < 1.0,
+        "{a:?} at 1x, {b:?} at 2x"
+    );
+}

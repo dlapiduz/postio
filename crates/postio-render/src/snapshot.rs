@@ -186,15 +186,18 @@ pub(crate) fn text_runs(doc: &BaseDocument, id: NodeId, out: &mut Vec<(NodeId, R
                     continue;
                 }
                 let metrics = run.run().metrics();
-                let x = left + f64::from(run.offset());
-                let y = top + f64::from(run.baseline() - metrics.ascent);
+                // Blitz shapes text at the device scale; the snapshot is in
+                // CSS pixels.
+                let k = f64::from(doc.viewport().scale());
+                let x = left + f64::from(run.offset()) / k;
+                let y = top + f64::from(run.baseline() - metrics.ascent) / k;
                 out.push((
                     run.style().brush.id,
                     Rect::new(
                         x,
                         y,
-                        x + f64::from(run.advance()),
-                        y + f64::from(metrics.ascent + metrics.descent),
+                        x + f64::from(run.advance()) / k,
+                        y + f64::from(metrics.ascent + metrics.descent) / k,
                     ),
                 ));
             }
