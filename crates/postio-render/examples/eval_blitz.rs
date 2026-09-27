@@ -53,6 +53,23 @@ fn main() {
         .unwrap_or_else(|| PathBuf::from("target/eval/blitz"));
     std::fs::create_dir_all(&out).expect("the output directory");
     let fonts = font_set();
+    // Sharpness: one fixture at 2x natively, and at 1x enlarged to 2x as a
+    // compositor would -- the spike's texture -- cropped to the same region.
+    if let Ok(name) = std::env::var("POSTIO_EVAL_SHARPNESS") {
+        let message = Message::of(test_corpus::load(&name));
+        SCALE.with(|s| s.set(2.0));
+        let native = paint(&mut message.lay_out(&fonts, false, None));
+        SCALE.with(|s| s.set(1.0));
+        let stretched = enlarge(&paint(&mut message.lay_out(&fonts, false, None)));
+        let (x, y, w, h) = (180, 40, 620, 300);
+        crop(&native, x, y, w, h).save_png(&out.join("sharp-2x-native.png"));
+        crop(&stretched, x, y, w, h).save_png(&out.join("sharp-1x-stretched.png"));
+        println!(
+            "wrote {}/sharp-2x-native.png and sharp-1x-stretched.png",
+            out.display()
+        );
+        return;
+    }
     // A minimal document, drawn on its own: how an engine defect is shown to
     // be the engine's rather than the fixture's.
     if let Ok(html) = std::env::var("POSTIO_EVAL_PROBE") {
@@ -315,9 +332,9 @@ impl Message {
         let config = DocumentConfig {
             font_ctx: Some(fonts.context()),
             viewport: Some(Viewport::new(
-                WIDTH,
-                900,
-                1.0,
+                (WIDTH as f32 * scale()) as u32,
+                (900.0 * scale()) as u32,
+                scale(),
                 if dark {
                     ColorScheme::Dark
                 } else {
@@ -588,15 +605,65 @@ fn font_set() -> FontSet {
     FontSet { collection }
 }
 
+/// The device scale renders are made at: 1 unless `POSTIO_EVAL_SCALE` says
+/// otherwise (the sharpness probe sets it per render).
+fn scale() -> f32 {
+    SCALE.with(|s| s.get())
+}
+
+thread_local! {
+    static SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+}
+
 fn paint(doc: &mut BaseDocument) -> Image {
+    let s = scale();
     let height = (doc.root_element().final_layout().size.height.ceil() as u32).clamp(1, 30_000);
-    let mut renderer = anyrender_vello_cpu::VelloCpuImageRenderer::new(WIDTH, height);
-    let mut buffer = vec![0u8; (WIDTH * height * 4) as usize];
+    let (w, h) = ((WIDTH as f32 * s) as u32, (height as f32 * s) as u32);
+    let mut renderer = anyrender_vello_cpu::VelloCpuImageRenderer::new(w, h);
+    let mut buffer = vec![0u8; (w * h * 4) as usize];
     renderer.render(
-        |scene| blitz_paint::paint_scene(scene, doc, 1.0, WIDTH, height, 0, 0),
+        |scene| blitz_paint::paint_scene(scene, doc, f64::from(s), w, h, 0, 0),
         &mut buffer,
     );
-    Image::from_rgba(WIDTH as usize, height as usize, buffer)
+    Image::from_rgba(w as usize, h as usize, buffer)
+}
+
+/// Bilinear 2x enlargement: what a compositor does to a 1x texture shown on
+/// a 2x display.
+fn enlarge(image: &Image) -> Image {
+    let (w, h) = (image.width * 2, image.height * 2);
+    let mut rgba = vec![0u8; w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = ((x as f64 + 0.5) / 2.0 - 0.5, (y as f64 + 0.5) / 2.0 - 0.5);
+            let (x0, y0) = (fx.floor().max(0.0) as usize, fy.floor().max(0.0) as usize);
+            let (x1, y1) = (
+                (x0 + 1).min(image.width - 1),
+                (y0 + 1).min(image.height - 1),
+            );
+            let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+            for c in 0..4 {
+                let at =
+                    |xx: usize, yy: usize| f64::from(image.rgba[(yy * image.width + xx) * 4 + c]);
+                let v = at(x0, y0) * (1.0 - tx) * (1.0 - ty)
+                    + at(x1, y0) * tx * (1.0 - ty)
+                    + at(x0, y1) * (1.0 - tx) * ty
+                    + at(x1, y1) * tx * ty;
+                rgba[(y * w + x) * 4 + c] = v.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    Image::from_rgba(w, h, rgba)
+}
+
+fn crop(image: &Image, x: usize, y: usize, w: usize, h: usize) -> Image {
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for row in y..(y + h).min(image.height) {
+        let start = (row * image.width + x) * 4;
+        rgba.extend_from_slice(&image.rgba[start..start + w.min(image.width - x) * 4]);
+    }
+    let rows = rgba.len() / (w.min(image.width - x) * 4);
+    Image::from_rgba(w.min(image.width - x), rows, rgba)
 }
 
 /// One text run: its element, its rectangle in CSS px, and its colour.
