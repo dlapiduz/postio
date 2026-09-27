@@ -17,6 +17,11 @@ chrono = { workspace = true, features = ["std"] }
 # only thing missing from it is a way to poll a variable number of futures at
 # once. Already in the lock file via `zbus`, so it costs no extra compile.
 futures-util = { workspace = true }
+# Remote images for consenting senders (spec 006 US5): io-http over
+# pimalaya-stream, as the OAuth exchange does -- no other HTTP stack.
+io-http = { version = "0.5", default-features = false }
+pimalaya-stream = { workspace = true }
+url = { workspace = true }
 postio-core.workspace = true
 postio-account.workspace = true
 postio-index.workspace = true
