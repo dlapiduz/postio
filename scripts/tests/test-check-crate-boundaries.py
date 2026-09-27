@@ -84,9 +84,9 @@ def build_fixture(
     # (#560) -- so a rule added for a real crate the fixture never grew a
     # stand-in for takes the whole self-test down on its very first case,
     # regardless of what that case is actually about. None of the cases here
-    # target these three, so a dependency-free crate that trivially passes
-    # every rule is all they need to be.
-    for bystander in ("postio-ffi", "postio-gmail", "postio-jmap"):
+    # target these, so a dependency-free crate that trivially passes every
+    # rule is all they need to be.
+    for bystander in ("postio-ffi", "postio-gmail", "postio-jmap", "postio-render"):
         write_crate(root, "crates", bystander)
     # Stand-ins for the real third-party crates, so nothing is fetched.
     # Both engine names: `turso` is the live rule, `rusqlite` stays banned so

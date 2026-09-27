@@ -72,7 +72,7 @@ diff)
         # a regenerated patch differs only where the change does.
         diff -ruN "$crate" "patched-$crate/" | sed -E \
             -e "s#^diff -ruN ([^ ]*) patched-$crate/#diff -ruN \1 $crate/#" \
-            -e "s#^(---|\+\+\+) (patched-)?([^\t]*)\t.*#\1 \3#" || true
+            -e "s#^(---|[+][+][+]) (patched-)?([^\t]*)\t.*#\1 \3#" || true
     done
     ;;
 *)
