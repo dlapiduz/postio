@@ -14,6 +14,10 @@ use postio_render::tile::{TileSpec, rasterize_tile, tile_width};
 /// A tile's height in logical pixels.
 pub(super) const TILE: f64 = 512.0;
 
+/// The most tile texture bytes one view holds (FR-022): the low-resolution
+/// copy comes on top, and nothing else grows with the message.
+pub(super) const BUDGET: usize = 64 * 1024 * 1024;
+
 /// One tile to rasterise, and where to send it.
 struct Job {
     document: Arc<RenderedDocument>,
@@ -83,6 +87,16 @@ pub(super) struct Tiles {
     /// The snapshot's low-resolution copy: what a missing tile shows, so
     /// no frame is ever the bare ground (FR-029).
     low_res: Option<gdk::MemoryTexture>,
+    /// The last draw lacked a tile.
+    short: bool,
+    /// Where the last draw was scrolled to.
+    drawn_at: Option<f64>,
+    /// When each tile was last drawn or asked for, by draw count: the
+    /// least recent goes first when the budget is passed.
+    used: HashMap<u32, u64>,
+    draws: u64,
+    /// The tiles the last draw showed, which are never evicted.
+    visible: (u32, u32),
 }
 
 impl Tiles {
@@ -106,6 +120,11 @@ impl Tiles {
             results: Some(results),
             reply: Some(reply),
             low_res,
+            short: false,
+            drawn_at: None,
+            used: HashMap::new(),
+            draws: 0,
+            visible: (0, 0),
         };
     }
 
@@ -120,13 +139,17 @@ impl Tiles {
         height: f64,
         redraw: impl Fn() + 'static,
     ) {
-        self.collect();
+        self.draws += 1;
         let first = (top / TILE).floor().max(0.0) as u32;
         let last = ((top + height) / TILE).floor().max(0.0) as u32;
-        let last = last.min((document.size.height / TILE).floor() as u32);
+        let end = (document.size.height / TILE).floor() as u32;
+        let last = last.min(end);
+        self.visible = (first, last);
+        self.collect();
         let mut missing = false;
         for index in first..=last {
             let y = f64::from(index) * TILE - top;
+            self.used.insert(index, self.draws);
             match self.textures.get(&index) {
                 Some(texture) => {
                     let bounds = gtk::graphene::Rect::new(
@@ -164,9 +187,37 @@ impl Tiles {
                 }
             }
         }
-        if missing {
+        // One tile either side, so a scroll finds it ready.
+        for index in [first.checked_sub(1), (last < end).then_some(last + 1)]
+            .into_iter()
+            .flatten()
+        {
+            if !self.textures.contains_key(&index) {
+                self.used.insert(index, self.draws);
+                self.ask(document, index);
+            }
+        }
+        self.short = missing;
+        self.drawn_at = Some(top);
+        // Results are taken on a draw, so draw again while any are out --
+        // a prefetched tile as much as a missing one.
+        if missing || !self.pending.is_empty() {
             self.wake(redraw);
         }
+    }
+
+    /// The bytes of the textures held.
+    pub(super) fn bytes(&self) -> usize {
+        self.textures
+            .values()
+            .map(|t| t.width() as usize * t.height() as usize * 4)
+            .sum()
+    }
+
+    /// Nothing asked for is still on its way, and the last draw had every
+    /// tile it needed.
+    pub(super) fn settled(&self, top: f64) -> bool {
+        self.pending.is_empty() && !self.short && self.drawn_at == Some(top)
     }
 
     fn ask(&mut self, document: &Arc<RenderedDocument>, index: u32) {
@@ -197,6 +248,22 @@ impl Tiles {
                 self.pending.remove(&index);
                 self.textures.insert(index, texture);
             }
+        }
+        self.evict();
+    }
+
+    /// Drop the least recently drawn tiles until the budget holds, never
+    /// one in view.
+    fn evict(&mut self) {
+        while self.bytes() > BUDGET {
+            let oldest = self
+                .textures
+                .keys()
+                .copied()
+                .filter(|index| !(self.visible.0..=self.visible.1).contains(index))
+                .min_by_key(|index| self.used.get(index).copied().unwrap_or(0));
+            let Some(oldest) = oldest else { return };
+            self.textures.remove(&oldest);
         }
     }
 

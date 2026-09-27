@@ -191,6 +191,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 
 const CASES: &[(&str, fn())] = &[
     (
+        "body_view::a_very_tall_message_scrolls_to_its_end_within_budget",
+        body_view::a_very_tall_message_scrolls_to_its_end_within_budget as fn(),
+    ),
+    (
         "body_view::a_render_past_its_deadline_shows_the_plain_text",
         body_view::a_render_past_its_deadline_shows_the_plain_text as fn(),
     ),

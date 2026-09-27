@@ -65,6 +65,32 @@ thread_local! {
     pub(crate) static SURFACES_RELEASED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static PAGES_REQUESTED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static WAITED_OUT: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static SNAPSHOTS: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static STYLE_PASSES: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static SNAPSHOT_NODES: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static REPAIRED_RUNS: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static RESOURCES_UNRESOLVED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static IMAGES_PLACEHOLDERED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static DISPLAY_LIST_COMMANDS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// What one snapshot from the reading renderer cost, counted (spec 006
+/// Principle V): the renderer's own `RenderCounts`, in this crate's terms
+/// because this crate does not link the renderer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SnapshotCounts {
+    /// Style passes: 1, or 2 when colours were repaired.
+    pub style_passes: u64,
+    /// DOM nodes laid out.
+    pub nodes: u64,
+    /// Text runs whose colour was repaired to the floor.
+    pub repaired_runs: u64,
+    /// Lookups the resource table could not answer.
+    pub resources_unresolved: u64,
+    /// Images drawn as placeholders.
+    pub images_placeholdered: u64,
+    /// Commands in the recorded display list.
+    pub display_list_commands: u64,
 }
 
 /// Add to a counter.
@@ -100,6 +126,18 @@ pub(crate) fn note_document(bytes: usize) {
 /// makes that visible instead of silently doubling the cost of a keystroke.
 pub fn note_render() {
     bump(&RENDERS, 1);
+}
+
+/// A snapshot from the reading renderer reached the screen, costing
+/// `counts`. Called by the reading surface as it shows each one.
+pub fn note_snapshot(counts: SnapshotCounts) {
+    bump(&SNAPSHOTS, 1);
+    bump(&STYLE_PASSES, counts.style_passes);
+    bump(&SNAPSHOT_NODES, counts.nodes);
+    bump(&REPAIRED_RUNS, counts.repaired_runs);
+    bump(&RESOURCES_UNRESOLVED, counts.resources_unresolved);
+    bump(&IMAGES_PLACEHOLDERED, counts.images_placeholdered);
+    bump(&DISPLAY_LIST_COMMANDS, counts.display_list_commands);
 }
 
 /// A rendering surface was created.
