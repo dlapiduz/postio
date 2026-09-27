@@ -46,7 +46,7 @@ it.
 | `y` / `Y` | `accept_invite` / `decline_invite` | Focus | **New** |
 | `U` | `unsubscribe` | All | Was `X` |
 | `d` | `digest_rule` | Focus | **New.** From a message: the dialog for a new sender rule. In a digest: edit its rule and cadence |
-| `v` | `view_source` | All | **New.** The raw RFC 822 message (R2) |
+| `v` | `view_source` | Focus | **New.** The raw RFC 822 message (R2). Focus-only for now: the other apps adopt it with a source view of their own, and its key is reserved for them |
 | `o` | `open_attachment_or_link` | Focus | **New.** A chooser over the message's links and parts |
 | `?` | `cheat_sheet` | All | Unchanged. Focus's key map (screen 20) |
 | `*` | `flag` | All | Was `s`. Focus offers no flag verb, but the id stays for the other apps |
