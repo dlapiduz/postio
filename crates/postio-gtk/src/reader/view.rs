@@ -1113,6 +1113,14 @@ impl Reader {
             .as_ref()
             .is_some_and(|open| open.body == *body && open.sender.as_deref() == sender);
         self.place.keep.set(same);
+        // What a render past its deadline shows instead (spec 006 FR-023):
+        // the message's own text part. A message with none keeps the notice
+        // and its "View source" alone -- deriving text from the HTML would
+        // put an html5ever parse back on this thread, which
+        // `render_prepared` exists to keep off it.
+        self.place
+            .plain
+            .replace(body.text.clone().unwrap_or_default());
         let bulk = prepared
             .as_ref()
             .and_then(|prepared| prepared.verdict_for(body))
@@ -1213,6 +1221,7 @@ impl Reader {
             .iter()
             .any(|drawn| messages.iter().any(|message| message.scope == drawn.scope));
         self.place.keep.set(same);
+        self.place.plain.replace(thread_plain_text(messages));
         self.thread.replace(messages.to_vec());
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
@@ -1625,6 +1634,9 @@ impl Reader {
         self.paints.set(self.paints.get() + 1);
         *self.open.borrow_mut() = None;
         self.absent.set(Some(state));
+        // A plate has no text of its own, and must not fall back to the
+        // text of the message before it.
+        self.place.plain.replace(String::new());
         // A message is still open here — headers arrived, only the body has
         // not — so Reply, Forward and Archive stay reachable exactly as they
         // are from the keyboard while the pane explains why there is no body
@@ -1752,6 +1764,7 @@ impl Reader {
     fn reset(&self) {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
+        self.place.plain.replace(String::new());
         self.header.clear();
         // Nothing occupies the pane now, which is what `set_send_state`
         // below reads to decide that no bar belongs on it.
@@ -1864,6 +1877,29 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
         canvas.view.set_content_from_top(content);
     }
     fetch_remote(canvas.view, place, document);
+}
+
+/// A conversation's plain-text alternative, which a render past its deadline
+/// shows instead (spec 006 FR-023): each message under who sent it and when,
+/// in the order the document draws them, with its own text part when it has
+/// one.
+fn thread_plain_text(messages: &[ThreadMessage]) -> String {
+    messages
+        .iter()
+        .map(|message| {
+            let text = message
+                .body
+                .text
+                .as_deref()
+                .filter(|_| !message.absent)
+                .map(str::trim_end)
+                .unwrap_or_default();
+            format!("{} · {}\n{text}", message.sender, message.when)
+                .trim_end()
+                .to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// What the view is handed for `document`: its parts, faces and whatever

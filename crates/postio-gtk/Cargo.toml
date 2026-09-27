@@ -39,6 +39,8 @@ postio-config.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
 # The render-thread hooks: hold a render while a test looks at the frame.
 postio-render = { workspace = true, features = ["test-hooks"] }
+# The same hooks through a view a reader builds itself.
+postio-widgets = { workspace = true, features = ["test-hooks"] }
 tempfile = { workspace = true }
 
 [build-dependencies]

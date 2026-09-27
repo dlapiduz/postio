@@ -126,6 +126,7 @@ mod gtk_reader_account;
 mod gtk_reader_actions;
 mod gtk_reader_anchor;
 mod gtk_reader_commands;
+mod gtk_reader_fallback;
 mod gtk_reader_fonts;
 mod gtk_reader_notices;
 mod gtk_reader_outgoing;
@@ -193,6 +194,14 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_reader_fallback::a_message_past_its_deadline_shows_its_own_text",
+        gtk_reader_fallback::a_message_past_its_deadline_shows_its_own_text as fn(),
+    ),
+    (
+        "gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text",
+        gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text as fn(),
+    ),
     (
         "body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once",
         body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once as fn(),

@@ -126,6 +126,10 @@ pub(super) mod imp {
         pub(super) darkened: RefCell<Vec<String>>,
         /// The style manager's handlers, disconnected on dispose.
         pub(super) theme_handlers: RefCell<Vec<glib::SignalHandlerId>>,
+        /// Renders held on the render thread, and the gates holding them:
+        /// see [`super::BodyView::hold_renders`].
+        #[cfg(feature = "test-hooks")]
+        pub(super) held: RefCell<Option<Vec<Arc<postio_render::resources::Gate>>>>,
     }
 
     impl Default for BodyView {
@@ -157,6 +161,8 @@ pub(super) mod imp {
                 focused_link: Cell::new(None),
                 launcher: RefCell::default(),
                 theme_handlers: RefCell::default(),
+                #[cfg(feature = "test-hooks")]
+                held: RefCell::default(),
             }
         }
     }
@@ -335,6 +341,25 @@ impl BodyView {
             .min_by_key(|c| c.range.start)
             .map_or(0.0, |c| c.rect.y0 - top);
         imp.anchor.set(Some((offset, at)));
+    }
+
+    /// Hold every render this view asks for from now on, on the render
+    /// thread, until [`release_renders`](Self::release_renders): how a test
+    /// makes a render outlast its deadline (spec 006 FR-023) through a
+    /// caller that builds the view's content itself, such as a reader.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn hold_renders(&self) {
+        self.imp().held.replace(Some(Vec::new()));
+    }
+
+    /// Let every held render go on, and hold no more.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn release_renders(&self) {
+        for gate in self.imp().held.take().unwrap_or_default() {
+            gate.release();
+        }
     }
 
     /// The bytes of tile textures held now.
@@ -765,6 +790,10 @@ impl BodyView {
             reader_view: Vec::new(),
         };
         let fallback = (request.plain_text.clone(), request.theme, request.viewport);
+        #[cfg(feature = "test-hooks")]
+        if let Some(held) = imp.held.borrow_mut().as_mut() {
+            held.push(request.resources.hold_lookup());
+        }
         let result = self.renderer().request(request);
         imp.pending.set(Some(generation));
         // The deadline (FR-023): if the render is still out when it passes,

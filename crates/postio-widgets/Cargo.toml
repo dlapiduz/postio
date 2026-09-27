@@ -8,6 +8,12 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
+[features]
+# Test-only: the render thread's hooks, so a test can hold a render past its
+# deadline through a caller that builds the view's content itself. Off by
+# default; the suites that need it turn it on from their dev-dependencies.
+test-hooks = ["postio-render/test-hooks"]
+
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
