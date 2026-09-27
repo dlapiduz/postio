@@ -44,6 +44,7 @@ mod body_view_a11y;
 mod body_view_find;
 mod body_view_select;
 mod body_view_theme;
+mod body_view_zoom;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
@@ -194,6 +195,14 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once",
+        body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once as fn(),
+    ),
+    (
+        "body_view_zoom::zoom_steps_keep_the_place_and_the_selection",
+        body_view_zoom::zoom_steps_keep_the_place_and_the_selection as fn(),
+    ),
     (
         "body_view_select::the_rail_follows_the_snapshot",
         body_view_select::the_rail_follows_the_snapshot as fn(),

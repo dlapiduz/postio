@@ -62,7 +62,9 @@ pub(super) fn install(view: &BodyView) {
         let view = view.downgrade();
         move |_, x, y| {
             if let Some(view) = view.upgrade() {
-                view.hover(gtk::graphene::Point::new(x as f32, y as f32));
+                let at = gtk::graphene::Point::new(x as f32, y as f32);
+                view.imp().pointer.set(Some(at));
+                view.hover(at);
             }
         }
     });

@@ -519,7 +519,7 @@ reader's place and persisted in `[reader]`.
   - every cluster's text appears in `TextIndex.text`, meaning nothing is clipped;
   - `html-responsive-media.eml` at 200% at an 800 px pane stacks its columns, because the effective width is 400 CSS px (FR-021a)
 - [X] T125 [US6] Carry `viewport.zoom` and `hidpi_scale` separately into Blitz's `Viewport` in `crates/postio-render/src/lib.rs`. They are never folded together (research R11)
-- [ ] T126 [TEST] [US6] Add `crates/postio-gtk/tests/gtk_suite/body_view_zoom.rs`, plus its `CASES` row:
+- [X] T126 [TEST] [US6] Add `crates/postio-gtk/tests/gtk_suite/body_view_zoom.rs`, plus its `CASES` row:
   - `mod+plus` twice goes 100 → 110 → 125;
   - the header's and message list's allocated sizes are unchanged;
   - `char_at_top` before and after each step is the same cluster;
@@ -527,9 +527,9 @@ reader's place and persisted in `[reader]`.
   - at 300%, `zoom_in` changes nothing and raises no error;
   - the indicator is visible iff zoom ≠ 100, and its reset button dispatches `zoom_reset`;
   - a selection made before zooming is intact after it (FR-021 to FR-021f)
-- [ ] T127 [US6] Implement `crates/postio-gtk/src/body_view/zoom.rs`: the steps, anchors (top for keys, pointer for scroll), the `GtkEventControllerScroll` with Control, the indicator overlay with reset, and the command handlers
-- [ ] T128 [TEST] [US6] In `crates/postio-gtk/tests/gtk_suite/body_view_zoom.rs`, test pinch: emit `GtkGestureZoom` scale changes of 1.3 then end. During the gesture, existing tiles are drawn scaled and no request is issued. On end, exactly one request is issued at the nearest step to 130%, which is 125%
-- [ ] T129 [US6] Implement pinch in `crates/postio-gtk/src/body_view/zoom.rs`: a transient visual scale while the gesture runs, then snap and re-render on end
+- [X] T127 [US6] Implement `crates/postio-gtk/src/body_view/zoom.rs`: the steps, anchors (top for keys, pointer for scroll), the `GtkEventControllerScroll` with Control, the indicator overlay with reset, and the command handlers. **View half done** (`zoom_in`, `zoom_out`, `zoom_reset`, `set_zoom_percent`, `ZoomIndicator`); the window dispatches the three commands to it at the switch (T139). "The header's and message list's sizes are unchanged" holds by construction: only the view's document is re-laid out
+- [X] T128 [TEST] [US6] In `crates/postio-gtk/tests/gtk_suite/body_view_zoom.rs`, test pinch: emit `GtkGestureZoom` scale changes of 1.3 then end. During the gesture, existing tiles are drawn scaled and no request is issued. On end, exactly one request is issued at the nearest step to 130%, which is 125%
+- [X] T129 [US6] Implement pinch in `crates/postio-gtk/src/body_view/zoom.rs`: a transient visual scale while the gesture runs, then snap and re-render on end
 - [ ] T130 [TEST] [US6] Add `crates/postio-app/tests/app_suite/zoom_persists.rs`, plus its `CASES` row. `zoom_in` writes `[reader] zoom = 110` through the config writer. A new reader created from the same config starts at 110. A live edit of the file to 150 applies to the open reader
 - [ ] T131 [US6] Wire zoom persistence and the live config reload into `crates/postio-app` and `crates/postio-gtk/src/reader/view.rs`
 
