@@ -203,6 +203,135 @@ fn a_frontend_archives_through_the_host_and_its_list_empties() {
     assert_eq!(world.inbox_rows(&client), 0);
 }
 
+/// Files `rfc` into `inbox`, threaded as a sync pass would, and answers
+/// its conversation.
+fn file_threaded(
+    world: &World,
+    account: postio_model::AccountId,
+    inbox: MailboxId,
+    rfc: &str,
+) -> postio_model::ThreadId {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut message = Message::new(account, inbox, Utc::now());
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(rfc));
+        message.subject = Some("Launch".to_owned());
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        postio_storage::repository::ThreadingRepository::new(&connection, account)
+            .thread(&message)
+            .await
+            .expect("threaded")
+            .thread_id
+    })
+}
+
+#[test]
+fn archiving_a_focus_row_received_at_two_addresses_archives_both_copies() {
+    // Spec 007, Edge Cases: one inbox across all accounts. The announcement
+    // reached both of the person's addresses, so Focus shows it once -- and
+    // archiving that one row has to archive both copies, as a unified row's
+    // group does, or the other copy is still in its inbox and the row comes
+    // straight back.
+    let world = World::new();
+    let (second, second_inbox, second_archive) = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut account = postio_model::Account::new(
+            "Second",
+            postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+        );
+        postio_storage::repository::AccountRepository::new(&connection)
+            .create(&mut account)
+            .await
+            .expect("a second account");
+        let inbox = test_support::mailbox(&connection, &account, "INBOX").await;
+        let archive = test_support::mailbox(&connection, &account, "Archive").await;
+        (account.id, inbox.id, archive.id)
+    });
+    let first_copy = file_threaded(&world, world.account, world.inbox(), "<launch@example.net>");
+    let second_copy = file_threaded(&world, second, second_inbox, "<launch@example.net>");
+    let (focus, events) = world.frontend(ClientKind::Focus);
+    let scope = ListScope::Focus(postio_model::FocusScope::Inbox);
+    let page = |client: &Client| match world
+        .rt
+        .block_on(client.list_page(PageRequest {
+            scope,
+            offset: 0,
+            limit: 20,
+        }))
+        .expect("a Focus page")
+    {
+        ListPage::Threads(page) => page,
+        ListPage::Messages(_) => panic!("Focus's inbox lists conversations"),
+    };
+    let before = page(&focus);
+    let row = before
+        .rows
+        .iter()
+        .find(|row| row.id == Some(second_copy) || row.id == Some(first_copy))
+        .expect("the announcement is listed");
+    let mut copies: Vec<_> = row
+        .id
+        .into_iter()
+        .chain(row.copies.iter().copied())
+        .collect();
+    copies.sort();
+    let mut both = vec![first_copy, second_copy];
+    both.sort();
+    assert_eq!(copies, both, "one row, naming both copies");
+
+    world.send(
+        &focus,
+        Command::Archive {
+            target: MessageTarget::Threads(copies),
+        },
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::MessagesRemoved { .. })
+    });
+
+    let after = page(&focus);
+    assert_eq!(after.total, before.total - 1, "the row left Focus's inbox");
+    assert!(
+        after.rows.iter().all(|row| {
+            row.id != Some(first_copy)
+                && row.id != Some(second_copy)
+                && !row.copies.contains(&first_copy)
+                && !row.copies.contains(&second_copy)
+        }),
+        "and no copy of it came back as a row of its own"
+    );
+    let archived = |mailbox: MailboxId| match world
+        .rt
+        .block_on(focus.list_page(PageRequest {
+            scope: ListScope::Mailbox(mailbox),
+            offset: 0,
+            limit: 20,
+        }))
+        .expect("a folder page")
+    {
+        ListPage::Threads(page) => page.total,
+        ListPage::Messages(page) => page.total,
+    };
+    let first_archive = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .by_role(world.account, postio_model::mailbox::MailboxRole::Archive)
+            .await
+            .expect("a read")
+            .expect("an archive")
+            .id
+    });
+    assert_eq!(archived(first_archive), 1, "the first copy is archived");
+    assert_eq!(
+        archived(second_archive),
+        1,
+        "and the second, in its own account's Archive"
+    );
+}
+
 #[test]
 fn what_one_frontend_changed_reaches_the_other() {
     let world = World::new();

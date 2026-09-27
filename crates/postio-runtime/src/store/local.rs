@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use postio_model::FocusScope;
 use postio_storage::repository::{
     FocusListQuery, ListCursor, ListQuery, MailboxRepository, MessageListRow, MessageRepository,
-    ThreadCursor, ThreadListQuery, ThreadListRow, ThreadRepository, UnifiedThreadListQuery,
+    ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow, ThreadRepository,
+    UnifiedThreadListQuery,
 };
 use postio_storage::{Checkout, Store};
 
@@ -673,7 +674,7 @@ impl LocalStore {
 
             let rows = groups
                 .into_iter()
-                .map(|group| summarise_thread(group.row))
+                .map(summarise_group)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ThreadPage { total, rows })
         })
@@ -715,12 +716,12 @@ impl LocalStore {
                 limit: request.limit,
                 after: seek,
             };
-            let mut rows = threads.focus_page_at(&query, skip).await?;
+            let mut groups = threads.focus_page_at(&query, skip).await?;
             // A mark the rows moved under: read from the top once, as the
             // unified page does (#1534).
-            if rows.is_empty() && seek.is_some() && request.offset < total {
+            if groups.is_empty() && seek.is_some() && request.offset < total {
                 marks.lock().expect("not poisoned").forget();
-                rows = threads
+                groups = threads
                     .focus_page_at(
                         &FocusListQuery {
                             after: None,
@@ -730,16 +731,16 @@ impl LocalStore {
                     )
                     .await?;
             }
-            if let Some(last) = rows.last() {
+            if let Some(last) = groups.last() {
                 marks
                     .lock()
                     .expect("not poisoned")
-                    .remember(request.offset + rows.len() as u32, last.cursor());
+                    .remember(request.offset + groups.len() as u32, last.cursor());
             }
 
-            let rows = rows
+            let rows = groups
                 .into_iter()
-                .map(summarise_thread)
+                .map(summarise_group)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ThreadPage { total, rows })
         })
@@ -974,6 +975,21 @@ async fn thread_query(
     }
 }
 
+/// One row of a list that folds a conversation across accounts, as the
+/// frontend needs it: the head's row, naming the other copies an action on
+/// it must reach.
+fn summarise_group(group: ThreadGroup) -> Result<ThreadSummary, StoreError> {
+    let head = group.row.id;
+    let mut summary = summarise_thread(group.row)?;
+    summary.copies = group
+        .members
+        .into_iter()
+        .map(|(_, thread)| thread)
+        .filter(|thread| Some(*thread) != head)
+        .collect();
+    Ok(summary)
+}
+
 /// One thread row, as the frontend needs it.
 fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
     // A thread with no visible message in scope cannot be drawn, and the
@@ -995,6 +1011,7 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
         // Focus reads its markers with its page, once they exist; no other
         // list has any to draw.
         marker: None,
+        copies: Vec::new(),
         representative: MessageSummary {
             id: latest.id,
             thread: latest.thread_id,

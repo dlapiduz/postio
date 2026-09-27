@@ -124,6 +124,17 @@ pub struct ThreadSummary {
     /// in, so a row from a side that never heard of markers has none.
     #[serde(default)]
     pub marker: Option<MarkerSummary>,
+    /// The same conversation in the person's other accounts, folded into
+    /// this row: a list over several inboxes shows a conversation received
+    /// at two addresses once (ADR 0005 Q2), and both copies stay.
+    ///
+    /// What a verb on the row must reach besides [`Self::id`]: archiving it
+    /// is `MessageTarget::Threads` over the id and these, one operation in
+    /// each account's queue. Empty for a list that does not fold -- every
+    /// list but the unified inbox and Focus's -- and for a row with nothing
+    /// to fold. Defaults on the way in, like [`Self::marker`].
+    #[serde(default)]
+    pub copies: Vec<ThreadId>,
 }
 
 /// What a Focus row draws for its marker, and nothing that needs the body.
@@ -417,6 +428,7 @@ mod tests {
             has_attachments: false,
             last_at: at(9),
             marker,
+            copies: Vec::new(),
         }
     }
 

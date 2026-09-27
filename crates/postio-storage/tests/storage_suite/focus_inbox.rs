@@ -13,8 +13,8 @@ use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::{EmailAddress, Message, RfcMessageId};
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, FocusListQuery, MessageRepository, ThreadCursor, ThreadListQuery,
-    ThreadListRow, ThreadRepository, ThreadingRepository,
+    AccountRepository, FocusListQuery, MessageRepository, ThreadCursor, ThreadGroup,
+    ThreadListQuery, ThreadListRow, ThreadRepository, ThreadingRepository, UnifiedThreadListQuery,
 };
 use postio_storage::test_support;
 use postio_storage::test_support::counting::{counted_async, scans};
@@ -204,6 +204,41 @@ fn focus(
     }
 }
 
+/// The rows a page of groups draws.
+fn rows(groups: Vec<ThreadGroup>) -> Vec<ThreadListRow> {
+    groups.into_iter().map(|group| group.row).collect()
+}
+
+/// The same announcement delivered to both enabled inboxes: Ada's copy at
+/// `hour`, Grace's an hour later. Answers the two copies' threads, Ada's
+/// first.
+async fn delivered_to_both(
+    connection: &Connection,
+    inboxes: &[(AccountId, MailboxId)],
+    hour: i64,
+) -> ((AccountId, ThreadId), (AccountId, ThreadId)) {
+    let (ada, grace) = (inboxes[0], inboxes[1]);
+    let (_, ada_copy) = file(
+        connection,
+        ada,
+        hour,
+        "<launch@example.net>",
+        &[],
+        "quinn@example.com",
+    )
+    .await;
+    let (_, grace_copy) = file(
+        connection,
+        grace,
+        hour + 1,
+        "<launch@example.net>",
+        &[],
+        "quinn@example.com",
+    )
+    .await;
+    ((ada.0, ada_copy), (grace.0, grace_copy))
+}
+
 /// The rows each inbox's own folder list shows, merged newest first: what
 /// Focus's inbox is today, row for row.
 async fn every_inbox_s_rows(
@@ -229,10 +264,12 @@ async fn focus_s_inbox_is_every_enabled_inbox_s_conversations_newest_first() {
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;
 
-    let rows = ThreadRepository::new(&connection)
-        .focus_page_at(&focus(&inboxes, 50, None), 0)
-        .await
-        .expect("a Focus page");
+    let rows = rows(
+        ThreadRepository::new(&connection)
+            .focus_page_at(&focus(&inboxes, 50, None), 0)
+            .await
+            .expect("a Focus page"),
+    );
 
     let expected = every_inbox_s_rows(&connection, &inboxes).await;
     assert_eq!(
@@ -262,13 +299,28 @@ async fn focus_s_inbox_is_every_enabled_inbox_s_conversations_newest_first() {
     );
 }
 
+/// Three more conversations of one in Ada's inbox, so her inbox alone is a
+/// page long enough to show a cost that grows with its rows.
+async fn more_of_ada_s(connection: &Connection, ada: (AccountId, MailboxId)) {
+    for (hour, rfc) in [
+        (11, "<weir@example.com>"),
+        (12, "<sluice@example.com>"),
+        (13, "<lock@example.com>"),
+    ] {
+        file(connection, ada, hour, rfc, &[], "tove@example.com").await;
+    }
+}
+
 #[tokio::test]
-async fn a_focus_inbox_page_is_at_most_three_statements_and_reads_only_what_it_shows() {
+async fn a_one_account_focus_page_is_at_most_three_statements_and_reads_only_what_it_shows() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    // One account enabled: one inbox, and nothing any row could fold with.
+    let alone = &inboxes[..1];
     let threads = ThreadRepository::new(&connection);
-    let query = focus(&inboxes, 50, None);
+    let query = focus(alone, 50, None);
     // Warm: this is about the page's shape, not a cold statement cache.
     let _ = threads
         .focus_page_at(&query, 0)
@@ -277,7 +329,7 @@ async fn a_focus_inbox_page_is_at_most_three_statements_and_reads_only_what_it_s
 
     let mut page = Vec::new();
     let first = counted_async(|| async {
-        page = threads.focus_page_at(&query, 0).await.expect("a page");
+        page = rows(threads.focus_page_at(&query, 0).await.expect("a page"));
     })
     .await;
     assert!(
@@ -287,8 +339,9 @@ async fn a_focus_inbox_page_is_at_most_three_statements_and_reads_only_what_it_s
     );
     assert!(
         first.statements <= 3,
-        "a Focus page took {} statements; the budget is the window, its \
-         participants and its markers -- never one per row or per inbox",
+        "a one-account Focus page took {} statements; the budget is the \
+         window, its participants and its markers -- never one per row, and \
+         no partner search with no other account to fold with",
         first.statements
     );
     let participants: usize = page
@@ -305,18 +358,44 @@ async fn a_focus_inbox_page_is_at_most_three_statements_and_reads_only_what_it_s
 
     // A page resumed from a cursor costs the same.
     let head = threads
-        .focus_page_at(&focus(&inboxes, 2, None), 0)
+        .focus_page_at(&focus(alone, 2, None), 0)
         .await
         .expect("a head");
     let after = Some(head.last().expect("two rows").cursor());
     let resumed = counted_async(|| async {
         threads
-            .focus_page_at(&focus(&inboxes, 2, after), 0)
+            .focus_page_at(&focus(alone, 2, after), 0)
             .await
             .expect("a resumed page");
     })
     .await;
     assert!(resumed.statements <= 3, "{resumed:?}");
+
+    // One inbox is its own list's seek: no scan and no sort at all.
+    for (label, query) in [
+        ("first", focus(alone, 50, None)),
+        ("resumed", focus(alone, 2, after)),
+    ] {
+        let sql = threads.explain_focus(&query, 0);
+        let plan = test_support::plan(&connection, &sql).await;
+        assert!(
+            scans(&connection, &sql).await.is_empty() && !test_support::sorts(&plan),
+            "{label}: one inbox is its own list's seek:\n{plan}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_focus_window_over_several_inboxes_merges_their_seeks_and_scans_no_table() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    let threads = ThreadRepository::new(&connection);
+    let head = threads
+        .focus_page_at(&focus(&inboxes, 2, None), 0)
+        .await
+        .expect("a head");
+    let after = Some(head.last().expect("two rows").cursor());
 
     // No mail table is scanned: each inbox is sought through its own list
     // index, and the only thing walked whole is the few rows those seeks
@@ -335,15 +414,107 @@ async fn a_focus_inbox_page_is_at_most_three_statements_and_reads_only_what_it_s
             test_support::plan(&connection, &sql).await
         );
     }
-    // With one inbox there is nothing to merge: no scan and no sort at all.
-    let alone = focus(&inboxes[..1], 50, None);
-    let plan = test_support::plan(&connection, &threads.explain_focus(&alone, 0)).await;
-    assert!(
-        scans(&connection, &threads.explain_focus(&alone, 0))
+}
+
+#[tokio::test]
+async fn a_conversation_that_reached_two_inboxes_is_one_focus_row_as_it_is_in_unified() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    let (ada_copy, grace_copy) = delivered_to_both(&connection, &inboxes, 11).await;
+    let threads = ThreadRepository::new(&connection);
+
+    let page = threads
+        .focus_page_at(&focus(&inboxes, 50, None), 0)
+        .await
+        .expect("a Focus page");
+    let rows_of_it: Vec<&ThreadGroup> = page
+        .iter()
+        .filter(|group| group.members.contains(&ada_copy) || group.members.contains(&grace_copy))
+        .collect();
+    assert_eq!(
+        rows_of_it.len(),
+        1,
+        "one conversation received at two addresses is one row: {page:#?}"
+    );
+    let mut members = rows_of_it[0].members.clone();
+    members.sort();
+    let mut both = vec![ada_copy, grace_copy];
+    both.sort();
+    assert_eq!(
+        members, both,
+        "both copies stay: an action on the row reaches each account's own"
+    );
+    assert_eq!(
+        rows_of_it[0].row.message_count, 1,
+        "dedupe is display-only, by Message-ID: two rows, one message"
+    );
+
+    // Row for row, members and counts, what the unified inbox shows: the
+    // same partner search, not a second one.
+    let unified = threads
+        .unified_page(&UnifiedThreadListQuery {
+            limit: 50,
+            after: None,
+        })
+        .await
+        .expect("Unified's page");
+    assert_eq!(page, unified, "Focus's inbox folds as Unified does");
+
+    // And the count, the cursor walk and the offsets agree with the page.
+    assert_eq!(
+        threads.focus_count(&inboxes).await.expect("a count") as usize,
+        page.len(),
+        "the count and the rows cannot disagree about what a row is"
+    );
+    let mut walked = Vec::new();
+    let mut after = None;
+    loop {
+        let next = threads
+            .focus_page_at(&focus(&inboxes, 2, after), 0)
             .await
-            .is_empty()
-            && !test_support::sorts(&plan),
-        "one inbox is its own list's seek:\n{plan}"
+            .expect("a page");
+        let Some(last) = next.last() else { break };
+        after = Some(last.cursor());
+        walked.extend(next);
+    }
+    assert_eq!(walked, page, "a cursor walk repeats and skips nothing");
+    let mut skipped = Vec::new();
+    for offset in (0..page.len() as u32).step_by(2) {
+        skipped.extend(
+            threads
+                .focus_page_at(&focus(&inboxes, 2, None), offset)
+                .await
+                .expect("a page at an offset"),
+        );
+    }
+    assert_eq!(skipped, page, "offsets land where the cursor walk did");
+}
+
+#[tokio::test]
+async fn folding_across_accounts_adds_only_the_partner_search_unified_pays() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    delivered_to_both(&connection, &inboxes, 11).await;
+    let threads = ThreadRepository::new(&connection);
+    let query = focus(&inboxes, 50, None);
+    let _ = threads.focus_page_at(&query, 0).await.expect("warm");
+
+    let mut page = Vec::new();
+    let counts = counted_async(|| async {
+        page = threads.focus_page_at(&query, 0).await.expect("a page");
+    })
+    .await;
+    let folded = page.iter().filter(|group| group.members.len() > 1).count();
+    assert_eq!(folded, 1, "the fixture folds one row");
+    // The page's own three, the partner search's five -- the threads, their
+    // roots, partners by root, by subject, and where those are in view --
+    // and one to dedupe each folded row's counts.
+    assert!(
+        counts.statements <= 3 + 5 + folded,
+        "a two-account Focus page took {} statements: {counts:?}",
+        counts.statements
     );
 }
 
@@ -357,7 +528,7 @@ async fn focus_s_inbox_pages_by_cursor_and_by_offset_to_the_same_rows() {
         .focus_page_at(&focus(&inboxes, 50, None), 0)
         .await
         .expect("the whole list");
-    let ids = |rows: &[ThreadListRow]| rows.iter().map(ThreadListRow::cursor).collect::<Vec<_>>();
+    let ids = |rows: &[ThreadGroup]| rows.iter().map(ThreadGroup::cursor).collect::<Vec<_>>();
 
     let mut walked = Vec::new();
     let mut after = None;
@@ -398,23 +569,27 @@ async fn focus_s_inbox_is_counted_in_one_statement_from_an_index() {
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;
     let threads = ThreadRepository::new(&connection);
-    let rows = threads
-        .focus_page_at(&focus(&inboxes, 50, None), 0)
-        .await
-        .expect("the whole list");
-    let _ = threads.focus_count(&inboxes).await.expect("warm");
+    for inboxes in [&inboxes[..1], &inboxes[..]] {
+        let rows = threads
+            .focus_page_at(&focus(inboxes, 50, None), 0)
+            .await
+            .expect("the whole list");
+        let _ = threads.focus_count(inboxes).await.expect("warm");
 
-    let mut total = 0;
-    let counts = counted_async(|| async {
-        total = threads.focus_count(&inboxes).await.expect("a count");
-    })
-    .await;
-    assert_eq!(
-        total as usize,
-        rows.len(),
-        "the count and the rows cannot disagree about what a row is"
-    );
-    assert_eq!(counts.statements, 1, "{counts:?}");
+        let mut total = 0;
+        let counts = counted_async(|| async {
+            total = threads.focus_count(inboxes).await.expect("a count");
+        })
+        .await;
+        assert_eq!(
+            total as usize,
+            rows.len(),
+            "the count and the rows cannot disagree about what a row is"
+        );
+        if inboxes.len() == 1 {
+            assert_eq!(counts.statements, 1, "{counts:?}");
+        }
+    }
     let sql = threads.explain_focus_count(inboxes.len());
     assert!(
         scans(&connection, &sql).await.is_empty(),

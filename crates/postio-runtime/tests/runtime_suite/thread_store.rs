@@ -832,3 +832,49 @@ async fn no_list_but_focus_s_carries_a_marker() {
         );
     }
 }
+
+#[tokio::test]
+async fn focus_s_inbox_folds_what_the_unified_inbox_folds() {
+    // Two accounts seeded from one corpus hold the same conversations. One
+    // received at both addresses is one row, in Focus as in Unified, and
+    // the row names the other account's copy -- what archiving it has to
+    // reach as well (spec 007, Edge Cases: one inbox across all accounts).
+    let database = test_support::temp().await;
+    postio_storage::seed::seed_small(&database, 3).await;
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4).await;
+    let store = LocalStore::new(&database);
+
+    let total = store.list_count(FOCUS).await.expect("a count");
+    assert_eq!(
+        total,
+        store.list_count(ListScope::Unified).await.expect("a count"),
+        "Focus's inbox has the unified inbox's rows"
+    );
+    let mut folded = 0;
+    let mut offset = 0;
+    while offset < total {
+        let focus = store
+            .thread_page(request(FOCUS, offset, 10))
+            .await
+            .expect("a Focus page");
+        let unified = store
+            .thread_page(request(ListScope::Unified, offset, 10))
+            .await
+            .expect("a unified page");
+        assert!(
+            !focus.rows.is_empty(),
+            "row {offset} of {total} is servable"
+        );
+        assert_eq!(focus, unified, "the page at {offset}");
+        folded += focus
+            .rows
+            .iter()
+            .filter(|row| !row.copies.is_empty())
+            .count();
+        offset += focus.rows.len() as u32;
+    }
+    assert!(
+        folded > 0,
+        "the fixture has to fold a conversation, or this proves nothing"
+    );
+}

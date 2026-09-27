@@ -106,7 +106,7 @@ pub struct UnifiedThreadListQuery {
 /// a copy, so "archive" means two operations in two per-account queues,
 /// which is the only answer that matches what the user believes they did
 /// (ADR 0005 Q2).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadGroup {
     /// The row the list draws, counts deduped across members.
     pub row: ThreadListRow,
@@ -328,9 +328,17 @@ impl Membership {
     /// The test for the message `alias` names: `"rep."`, `"m."`, or `""`
     /// for a statement's only `messages`.
     fn test(self, alias: &str) -> String {
+        format!("{alias}{MEMBER}{}", self.excludes(alias))
+    }
+
+    /// What this membership leaves out beyond [`MEMBER`], as a conjunct
+    /// (` AND ...`) or nothing: for a statement that asks [`MEMBER`] of a
+    /// wider set and this membership of part of it, as a folded row's
+    /// unread count does.
+    fn excludes(self, alias: &str) -> String {
         match self {
-            Membership::Folder => format!("{alias}{MEMBER}"),
-            Membership::Focus => format!("{alias}{MEMBER}{}", super::focus_excludes(alias)),
+            Membership::Folder => String::new(),
+            Membership::Focus => super::focus_excludes(alias),
         }
     }
 }
@@ -419,23 +427,28 @@ fn focus_arm(mailbox: usize, cursor: Option<(usize, usize)>, limit: u32) -> Stri
     )
 }
 
-/// A row of Focus's window: the conversation, and its representative.
-fn read_focus_row(row: &Row) -> Result<ThreadListRow> {
+/// A row of Focus's window: the account whose inbox it is in, the
+/// conversation, and its representative.
+fn read_focus_row(row: &Row) -> Result<(AccountId, ThreadListRow)> {
     let thread = row.col::<i64>(0)?;
-    Ok(ThreadListRow {
-        // Zero is the window's spelling of "no thread", as in the folder's.
-        id: (thread != 0).then(|| ThreadId::new(thread)),
-        subject: row.col(2)?,
-        participants: Vec::new(),
-        message_count: row.col(3)?,
-        unread_count: row.col(4)?,
-        has_attachments: row.col(5)?,
-        is_flagged: row.col(6)?,
-        first_at: from_millis(row.col(7)?),
-        last_at: from_millis(row.col(8)?),
-        latest: Some(read_list_row_at(row, FOCUS_REPRESENTATIVE)?),
-        sort_id: row.col(9)?,
-    })
+    let account = AccountId::new(row.col(1)?);
+    Ok((
+        account,
+        ThreadListRow {
+            // Zero is the window's spelling of "no thread", as in the folder's.
+            id: (thread != 0).then(|| ThreadId::new(thread)),
+            subject: row.col(2)?,
+            participants: Vec::new(),
+            message_count: row.col(3)?,
+            unread_count: row.col(4)?,
+            has_attachments: row.col(5)?,
+            is_flagged: row.col(6)?,
+            first_at: from_millis(row.col(7)?),
+            last_at: from_millis(row.col(8)?),
+            latest: Some(read_list_row_at(row, FOCUS_REPRESENTATIVE)?),
+            sort_id: row.col(9)?,
+        },
+    ))
 }
 
 impl<'a> ThreadRepository<'a> {
@@ -691,22 +704,46 @@ impl<'a> ThreadRepository<'a> {
     /// [`ThreadGroup::members`] is exactly what an action must expand to.
     pub async fn unified_page(&self, query: &UnifiedThreadListQuery) -> Result<Vec<ThreadGroup>> {
         let inboxes = self.unified_inboxes().await?;
+        self.folded_page(Membership::Folder, &inboxes, query.limit, query.after)
+            .await
+    }
+
+    /// At most `limit` rows of a list over several inboxes after `after`,
+    /// each conversation the person received at more than one address
+    /// folded into one [`ThreadGroup`]: the grouping
+    /// [`Self::unified_page`] describes, for the unified inbox
+    /// ([`Membership::Folder`]) and for Focus's ([`Membership::Focus`]),
+    /// whose raw window is its own merged statement and whose rows leave
+    /// out what Focus holds back.
+    ///
+    /// A Focus row's participants are left to its caller, which reads them
+    /// for the rows it keeps rather than for every raw row read here.
+    async fn folded_page(
+        &self,
+        membership: Membership,
+        inboxes: &[(AccountId, MailboxId)],
+        limit: u32,
+        after: Option<ThreadCursor>,
+    ) -> Result<Vec<ThreadGroup>> {
         let mut groups: Vec<ThreadGroup> = Vec::new();
-        let mut cursor = query.after;
-        let batch = query.limit.max(2) * 2;
+        let mut cursor = after;
+        let batch = limit.max(2) * 2;
 
         // The raw page over-fetches: absorption folds rows together, so a
         // page of rows can under-fill the page of groups. Loop until the
         // groups fill or the list ends; each pass is one seek per inbox.
         'fill: loop {
-            let raw = self.unified_raw_page(&inboxes, batch, cursor).await?;
+            let raw = match membership {
+                Membership::Folder => self.unified_raw_page(inboxes, batch, cursor).await?,
+                Membership::Focus => self.focus_raw_page(inboxes, batch, cursor).await?,
+            };
             let Some((_, last)) = raw.last() else {
                 break;
             };
             cursor = Some(last.cursor());
             let exhausted = raw.len() < batch as usize;
 
-            let mut partners = self.partners_in_view(&inboxes, &raw).await?;
+            let mut partners = self.partners_in_view(membership, inboxes, &raw).await?;
             for (account, row) in raw {
                 let partners = row
                     .id
@@ -728,9 +765,9 @@ impl<'a> ThreadRepository<'a> {
                             .map(|partner| (partner.thread.account_id, partner.thread.id)),
                     )
                     .collect();
-                let row = self.group_row(row, &partners, &inboxes).await?;
+                let row = self.group_row(membership, row, &partners, inboxes).await?;
                 groups.push(ThreadGroup { row, members });
-                if groups.len() as u32 >= query.limit {
+                if groups.len() as u32 >= limit {
                     break 'fill;
                 }
             }
@@ -844,18 +881,30 @@ impl<'a> ThreadRepository<'a> {
         if inboxes.len() < 2 {
             return Ok(total.max(0) as u32);
         }
+        let absorbed = self.absorbed(Membership::Folder, &inboxes).await?;
+        Ok((total - absorbed).max(0) as u32)
+    }
 
+    /// How many of `inboxes`' rows fold into another inbox's: the rows the
+    /// walk in [`Self::folded_page`] skips because a partner in view is
+    /// newer, decided by the same rule over every inbox conversation, so a
+    /// count and the walk cannot disagree about what a row is.
+    async fn absorbed(
+        &self,
+        membership: Membership,
+        inboxes: &[(AccountId, MailboxId)],
+    ) -> Result<i64> {
         // Every inbox conversation's key: its newest message there, the row
         // the folder list draws it from.
         let mut keys: HashMap<ThreadId, ThreadCursor> = HashMap::new();
-        for (_, inbox) in &inboxes {
+        for (_, inbox) in inboxes {
             let rows: Vec<(i64, i64, i64)> = sql::all(
                 self.connection,
                 &format!(
                     "SELECT received_at, id, thread_id FROM messages
                       WHERE mailbox_id = ?1 AND {} AND thread_id IS NOT NULL
                       ORDER BY received_at DESC, id DESC",
-                    Membership::Folder.test("")
+                    membership.test("")
                 ),
                 [inbox.get()],
                 |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
@@ -888,7 +937,7 @@ impl<'a> ThreadRepository<'a> {
                 }
             }
         }
-        Ok((total - absorbed).max(0) as u32)
+        Ok(absorbed)
     }
 
     /// One raw window of the inboxes, merged newest first: at most `limit`
@@ -951,6 +1000,7 @@ impl<'a> ThreadRepository<'a> {
     /// not reach it through the group.
     async fn partners_in_view(
         &self,
+        membership: Membership,
         inboxes: &[(AccountId, MailboxId)],
         raw: &[(AccountId, ThreadListRow)],
     ) -> Result<HashMap<ThreadId, Vec<Partner>>> {
@@ -976,7 +1026,7 @@ impl<'a> ThreadRepository<'a> {
                       WHERE thread_id IN ({}) AND mailbox_id IN ({}) AND {}",
                     placeholders(wanted.len(), 1),
                     placeholders(inboxes.len(), wanted.len() + 1),
-                    Membership::Folder.test("")
+                    membership.test("")
                 ),
             )
             .await?;
@@ -1163,6 +1213,7 @@ impl<'a> ThreadRepository<'a> {
     /// in one batch per inbox page the way [`ThreadRepository::page`] does.
     async fn group_row(
         &self,
+        membership: Membership,
         head: ThreadListRow,
         partners: &[Partner],
         inboxes: &[(AccountId, MailboxId)],
@@ -1191,12 +1242,13 @@ impl<'a> ThreadRepository<'a> {
             &format!(
                 "SELECT
                      count(DISTINCT coalesce(nullif(m.rfc_message_id, ''), 'row:' || m.id)),
-                     count(DISTINCT CASE WHEN m.seen = 0 AND m.mailbox_id IN ({inboxes})
+                     count(DISTINCT CASE WHEN m.seen = 0 AND m.mailbox_id IN ({inboxes}){excludes}
                          THEN coalesce(nullif(m.rfc_message_id, ''), 'row:' || m.id) END)
                    FROM messages m
                   WHERE m.thread_id IN ({members}) AND m.{MEMBER}",
                 members = placeholders(members.len(), 1),
                 inboxes = placeholders(inboxes.len(), first_inbox),
+                excludes = membership.excludes("m."),
             ),
             members
                 .iter()
@@ -1220,7 +1272,7 @@ impl<'a> ThreadRepository<'a> {
     /// one row per conversation it holds, newest first -- the unified
     /// inbox's membership, asked through [`Membership::Focus`].
     ///
-    /// # Two statements, however many inboxes
+    /// # One account: two statements
     ///
     /// The window is one statement: each inbox's own folder window, sought
     /// through `idx_messages_list` and bounded by the page, merged in the
@@ -1231,10 +1283,16 @@ impl<'a> ThreadRepository<'a> {
     /// by id afterwards, which leaves room for the markers read in the budget
     /// of three (`contracts/engine.md`). Participants are the second.
     ///
-    /// A conversation received at two addresses is a row in each inbox here,
-    /// as it is in each inbox's own list: folding it into one row, as the
-    /// unified view does, costs the partner search five more statements a
-    /// page, which this budget has no room for.
+    /// # Several: a conversation received at two addresses is one row
+    ///
+    /// As it is in the unified inbox, and by the same partner search
+    /// ([`Self::folded_page`]): a row with a newer partner in another
+    /// account's inbox is that partner's row, and [`ThreadGroup::members`]
+    /// names both copies, which is what an action on the row must reach.
+    /// With one inbox nothing can fold, so the search is not asked and a
+    /// one-account page keeps its budget; with more, a page adds what
+    /// Unified's does -- five statements for the search, and one to dedupe
+    /// each folded row's counts.
     ///
     /// `offset` counts rows from the cursor, for a list model that scrolls
     /// by index, with the caveat [`Self::page_at`] carries: the store's seek
@@ -1243,23 +1301,40 @@ impl<'a> ThreadRepository<'a> {
         &self,
         query: &FocusListQuery,
         offset: u32,
-    ) -> Result<Vec<ThreadListRow>> {
+    ) -> Result<Vec<ThreadGroup>> {
         if query.inboxes.is_empty() || query.limit == 0 {
             return Ok(Vec::new());
         }
-        let mut arguments: Vec<i64> = query.inboxes.iter().map(|(_, inbox)| inbox.get()).collect();
-        if let Some(cursor) = query.after {
-            arguments.push(to_millis(cursor.last_at));
-            arguments.push(cursor.id);
-        }
-        let mut statement =
-            sql::statement(self.connection, &self.explain_focus(query, offset)).await?;
-        let mut rows = sql::mapped(&mut statement, arguments, read_focus_row).await?;
-        drop(statement);
+        let mut groups = if query.inboxes.len() < 2 {
+            self.focus_window(query, offset)
+                .await?
+                .into_iter()
+                .map(|(account, row)| ThreadGroup {
+                    members: row.id.map(|thread| (account, thread)).into_iter().collect(),
+                    row,
+                })
+                .collect()
+        } else {
+            // A group is not a fixed number of raw rows, so the only thing
+            // that knows where the offset-th row starts is the walk that
+            // produced the ones before it, as in `unified_page_at`.
+            let mut groups = self
+                .folded_page(
+                    Membership::Focus,
+                    &query.inboxes,
+                    query.limit.saturating_add(offset),
+                    query.after,
+                )
+                .await?;
+            if offset as usize >= groups.len() {
+                return Ok(Vec::new());
+            }
+            groups.split_off(offset as usize)
+        };
 
-        let ids: Vec<ThreadId> = rows.iter().filter_map(|row| row.id).collect();
+        let ids: Vec<ThreadId> = groups.iter().filter_map(|group| group.row.id).collect();
         let mut participants = self.participants_for(&ids).await?;
-        for row in &mut rows {
+        for ThreadGroup { row, .. } in &mut groups {
             if let Some(id) = row.id {
                 row.participants = participants.remove(&id).unwrap_or_default();
             }
@@ -1270,7 +1345,45 @@ impl<'a> ThreadRepository<'a> {
                 row.participants = vec![from];
             }
         }
-        Ok(rows)
+        Ok(groups)
+    }
+
+    /// Focus's window, `offset` rows in: one statement, each row with the
+    /// account whose inbox it is in, and no participants yet.
+    async fn focus_window(
+        &self,
+        query: &FocusListQuery,
+        offset: u32,
+    ) -> Result<Vec<(AccountId, ThreadListRow)>> {
+        let mut arguments: Vec<i64> = query.inboxes.iter().map(|(_, inbox)| inbox.get()).collect();
+        if let Some(cursor) = query.after {
+            arguments.push(to_millis(cursor.last_at));
+            arguments.push(cursor.id);
+        }
+        let mut statement =
+            sql::statement(self.connection, &self.explain_focus(query, offset)).await?;
+        sql::mapped(&mut statement, arguments, read_focus_row).await
+    }
+
+    /// One raw window of Focus's inboxes for [`Self::folded_page`]: at most
+    /// `limit` rows after `after`, merged newest first in one statement --
+    /// the Focus twin of [`Self::unified_raw_page`], which asks each inbox
+    /// in turn.
+    async fn focus_raw_page(
+        &self,
+        inboxes: &[(AccountId, MailboxId)],
+        limit: u32,
+        after: Option<ThreadCursor>,
+    ) -> Result<Vec<(AccountId, ThreadListRow)>> {
+        self.focus_window(
+            &FocusListQuery {
+                inboxes: inboxes.to_vec(),
+                limit,
+                after,
+            },
+            0,
+        )
+        .await
     }
 
     /// The SQL [`Self::focus_page_at`] runs, for `EXPLAIN QUERY PLAN`: one
@@ -1301,12 +1414,15 @@ impl<'a> ThreadRepository<'a> {
     }
 
     /// How many rows Focus's inbox has over `inboxes`: one per conversation
-    /// each holds, plus one per message there in none -- one statement, from
-    /// `idx_messages_mailbox_threads` alone.
+    /// each holds, plus one per message there in none, less the rows that
+    /// fold into another inbox's -- the rows [`Self::focus_page_at`] walks.
     ///
-    /// A conversation belongs to one account and each account gives the
-    /// list one inbox, so the distinct keys across every inbox are the sum
-    /// of each inbox's own.
+    /// The first part is one statement, from `idx_messages_mailbox_threads`
+    /// alone: a conversation belongs to one account and each account gives
+    /// the list one inbox, so the distinct keys across every inbox are the
+    /// sum of each inbox's own. With one inbox nothing can fold and that is
+    /// the answer. With more, the fold is counted as the unified inbox's is
+    /// ([`Self::unified_count`]), over the same membership as the rows.
     pub async fn focus_count(&self, inboxes: &[(AccountId, MailboxId)]) -> Result<u32> {
         if inboxes.is_empty() {
             return Ok(0);
@@ -1321,7 +1437,11 @@ impl<'a> ThreadRepository<'a> {
             |row| row.col(0),
         )
         .await?;
-        Ok(count.max(0) as u32)
+        if inboxes.len() < 2 {
+            return Ok(count.max(0) as u32);
+        }
+        let absorbed = self.absorbed(Membership::Focus, inboxes).await?;
+        Ok((count - absorbed).max(0) as u32)
     }
 
     /// The SQL [`Self::focus_count`] runs over `inboxes` inboxes.
