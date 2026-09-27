@@ -8,5 +8,12 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
+[dependencies]
+# Due dates and event times in the fixed schema.
+chrono = { workspace = true, features = ["std"] }
+# The message as filed: its envelope, flags and addresses. The leaf every
+# crate waits on, with nothing in it that sends or connects.
+postio-model = { workspace = true }
+
 [lints]
 workspace = true

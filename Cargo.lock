@@ -4723,6 +4723,10 @@ dependencies = [
 [[package]]
 name = "postio-classify"
 version = "0.3.0"
+dependencies = [
+ "chrono",
+ "postio-model",
+]
 
 [[package]]
 name = "postio-client"
