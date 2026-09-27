@@ -1515,3 +1515,19 @@ mod unexpanded_mod_tests {
         assert!("ctrl+k".parse::<Binding>().is_ok());
     }
 }
+
+/// A key's keysym name is what GTK's accelerator parser reads back.
+#[cfg(test)]
+mod keysym_tests {
+    use super::Key;
+
+    #[test]
+    fn punctuation_letters_and_named_keys_spell_as_keysyms() {
+        assert_eq!(Key::Char('?').keysym_name(), "question");
+        assert_eq!(Key::Char('+').keysym_name(), "plus");
+        assert_eq!(Key::Char('a').keysym_name(), "a");
+        assert_eq!(Key::Char('7').keysym_name(), "7");
+        assert_eq!(Key::Named("Space").keysym_name(), "space");
+        assert_eq!(Key::Named("Return").keysym_name(), "Return");
+    }
+}

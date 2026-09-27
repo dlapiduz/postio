@@ -660,3 +660,17 @@ mod tests {
         }
     }
 }
+
+/// A rail built around a mark kept elsewhere keeps it only if it names a
+/// message the conversation has.
+#[cfg(test)]
+mod at_tests {
+    use super::Rail;
+
+    #[test]
+    fn a_mark_inside_the_conversation_is_kept_and_one_past_it_is_not() {
+        assert_eq!(Rail::at(4, Some(2)).marked(), Some(2));
+        assert_eq!(Rail::at(4, Some(4)).marked(), None);
+        assert_eq!(Rail::at(4, None).marked(), None);
+    }
+}

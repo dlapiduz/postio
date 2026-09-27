@@ -870,3 +870,43 @@ mod tests {
         assert!(ids.contains(&message_anchor("7").as_str()));
     }
 }
+
+/// Who a message went to is drawn under its head, labelled, and escaped:
+/// a display name is the sender's to write (#1437).
+#[cfg(test)]
+mod recipients_tests {
+    use super::*;
+
+    #[test]
+    fn to_and_cc_are_labelled_rows_and_empty_ones_are_left_out() {
+        let rows = recipients_html("Quinn <quinn@example.net>", "");
+        assert!(rows.contains(">To</span>"), "{rows}");
+        assert!(
+            !rows.contains(">Cc</span>"),
+            "an empty Cc drew a row: {rows}"
+        );
+        assert!(
+            rows.contains("Quinn &lt;quinn@example.net&gt;"),
+            "the address was not escaped: {rows}"
+        );
+        let both = recipients_html("a@example.com", "b@example.com");
+        assert_eq!(
+            both.matches("postio-message-recipients").count(),
+            2,
+            "{both}"
+        );
+        assert_eq!(
+            recipients_html("  ", ""),
+            "",
+            "blank recipients draw nothing"
+        );
+    }
+
+    #[test]
+    fn chrome_text_escapes_everything_markup_could_use() {
+        assert_eq!(
+            escape(r#"<b>"Ada" & 'Bo'</b>"#),
+            "&lt;b&gt;&quot;Ada&quot; &amp; &#39;Bo&#39;&lt;/b&gt;"
+        );
+    }
+}

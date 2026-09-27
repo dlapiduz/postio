@@ -272,3 +272,16 @@ mod registry {
         );
     }
 }
+
+/// Safe text prints as the text it holds, with control characters shown
+/// rather than obeyed.
+#[cfg(test)]
+mod safe_text_display_tests {
+    use super::SafeText;
+
+    #[test]
+    fn it_displays_its_neutralised_text() {
+        assert_eq!(SafeText::new("plain").to_string(), "plain");
+        assert_eq!(SafeText::new("a\u{7f}b").to_string(), "a\u{2421}b");
+    }
+}

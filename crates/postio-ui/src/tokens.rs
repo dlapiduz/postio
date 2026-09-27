@@ -1425,3 +1425,18 @@ mod tests {
         assert_ne!(light, dark, "dark mode has an accent of its own");
     }
 }
+
+/// A token error says what went wrong, as an error.
+#[cfg(test)]
+mod token_error_tests {
+    use super::{TokenError, err};
+
+    #[test]
+    fn a_token_error_displays_its_message() {
+        let failed: Result<(), TokenError> = err("no --color-accent in :root");
+        let error = failed.expect_err("err builds an error");
+        assert_eq!(error.to_string(), "no --color-accent in :root");
+        let boxed: Box<dyn std::error::Error> = Box::new(error);
+        assert_eq!(boxed.to_string(), "no --color-accent in :root");
+    }
+}

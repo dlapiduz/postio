@@ -1378,3 +1378,64 @@ mod a_snippet_is_words_not_syntax {
         }
     }
 }
+
+/// `parameter_value` reads every spelling a server hands over of a
+/// `BODYSTRUCTURE` parameter (#1686).
+#[cfg(test)]
+mod parameter_value_tests {
+    use super::parameter_value;
+
+    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_plain_parameter_is_read_as_written() {
+        let found = parameter_value(&pairs(&[("name", "report.pdf")]), "name");
+        assert_eq!(found.as_deref(), Some("report.pdf"));
+    }
+
+    #[test]
+    fn rfc_2231_continuations_are_joined_and_decoded() {
+        let found = parameter_value(
+            &pairs(&[
+                ("filename*0*", "UTF-8''Qu%C3%A9"),
+                ("filename*1*", "bec%20notes.txt"),
+            ]),
+            "filename",
+        );
+        assert_eq!(found.as_deref(), Some("Québec notes.txt"));
+    }
+
+    #[test]
+    fn an_encoded_word_in_a_plain_name_is_decoded() {
+        let found = parameter_value(&pairs(&[("name", "=?UTF-8?B?w6l0w6kucGRm?=")]), "name");
+        assert_eq!(found.as_deref(), Some("été.pdf"));
+    }
+
+    #[test]
+    fn quotes_and_backslashes_in_a_value_survive_the_round_trip() {
+        let found = parameter_value(&pairs(&[("name", "a \"quoted\" \\ name")]), "name");
+        assert_eq!(found.as_deref(), Some("a \"quoted\" \\ name"));
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_token_cannot_inject_another_parameter() {
+        let found = parameter_value(
+            &pairs(&[("x; name", "evil.exe"), ("charset", "utf-8")]),
+            "name",
+        );
+        assert_eq!(found, None, "a hostile parameter name was read as `name`");
+    }
+
+    #[test]
+    fn an_absent_or_empty_key_is_none() {
+        assert_eq!(
+            parameter_value(&pairs(&[("charset", "utf-8")]), "name"),
+            None
+        );
+        assert_eq!(parameter_value(&pairs(&[("name", "  ")]), "name"), None);
+    }
+}
