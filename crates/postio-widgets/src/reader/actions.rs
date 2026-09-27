@@ -54,6 +54,44 @@ pub const STOPPED: [Action; 1] = [button(
     "postio-reader-action-retry",
 )];
 
+/// The verb bars a reader draws in its header: one per verb set
+/// [`ReaderAction::for_send_state`] can return.
+///
+/// Configuration, because not every surface wants them. The reading pane
+/// draws [`Verbs::STANDARD`]; a surface with a toolbar of its own -- Focus's
+/// open-message dialog -- draws [`Verbs::NONE`], rather than two rows of the
+/// same verbs (specs/007-postio-focus research R1).
+#[derive(Clone, Copy, Debug)]
+pub struct Verbs {
+    /// What received mail offers.
+    pub received: &'static [Action],
+    /// What a message waiting to be sent offers.
+    pub queued: &'static [Action],
+    /// What a send that stopped offers.
+    pub stopped: &'static [Action],
+}
+
+impl Verbs {
+    /// The reading pane's: [`ACTIONS`], [`QUEUED`] and [`STOPPED`].
+    pub const STANDARD: Verbs = Verbs {
+        received: &ACTIONS,
+        queued: &QUEUED,
+        stopped: &STOPPED,
+    };
+
+    /// None at all: the surface around the reader draws its own.
+    pub const NONE: Verbs = Verbs {
+        received: &[],
+        queued: &[],
+        stopped: &[],
+    };
+
+    /// Whether there is any verb to draw.
+    pub fn is_empty(&self) -> bool {
+        self.received.is_empty() && self.queued.is_empty() && self.stopped.is_empty()
+    }
+}
+
 /// One verb, dressed for GTK.
 const fn button(verb: ReaderAction, class: &'static str) -> Action {
     let action = Action::new(verb.command(), verb.title(), class);

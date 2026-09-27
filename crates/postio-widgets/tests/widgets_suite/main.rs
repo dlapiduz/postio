@@ -24,6 +24,7 @@
 mod body_view_resets;
 mod harness;
 mod list_contract;
+mod reader_verbs;
 mod support;
 mod widgets_css;
 
@@ -64,6 +65,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "widgets_css::the_shared_sheet_brings_the_shared_metrics",
         widgets_css::the_shared_sheet_brings_the_shared_metrics as fn(),
+    ),
+    (
+        "reader_verbs::a_reader_draws_the_verbs_it_is_given_and_none_when_given_none",
+        reader_verbs::a_reader_draws_the_verbs_it_is_given_and_none_when_given_none as fn(),
     ),
 ];
 

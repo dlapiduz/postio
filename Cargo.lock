@@ -5149,9 +5149,11 @@ dependencies = [
 name = "postio-widgets"
 version = "0.3.0"
 dependencies = [
+ "chrono",
  "glib-build-tools",
  "gtk4",
  "libadwaita",
+ "pango",
  "postio-body",
  "postio-config",
  "postio-core",

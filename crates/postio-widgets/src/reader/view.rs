@@ -161,8 +161,8 @@ pub struct Reader {
     /// reading; set while a search is what put the message on screen.
     highlight: Rc<RefCell<Vec<String>>>,
     /// What came with the message, per canvas 1b — and the way into the
-    /// parts panel. See [`crate::parts::Chips`].
-    chips: crate::parts::Chips,
+    /// parts panel. See [`super::chips::Chips`].
+    chips: super::chips::Chips,
     /// Called every time a render settles how many remote references are
     /// being held back — initial render, and again if the banner's "show
     /// once" or "always allow" changes it. See [`connect_rendered`].
@@ -367,6 +367,19 @@ impl Reader {
         allowlist: RemoteImageAllowList,
         allowlist_path: std::path::PathBuf,
     ) -> Self {
+        Self::with_verbs(source, allowlist, allowlist_path, super::Verbs::STANDARD)
+    }
+
+    /// As [`with_allowlist`](Self::with_allowlist), drawing `verbs` in the
+    /// header: the reading pane's [`Verbs::STANDARD`](super::Verbs::STANDARD),
+    /// or [`Verbs::NONE`](super::Verbs::NONE) for a surface whose own
+    /// toolbar carries them.
+    pub fn with_verbs(
+        source: Rc<dyn BlobSource>,
+        allowlist: RemoteImageAllowList,
+        allowlist_path: std::path::PathBuf,
+        verbs: super::Verbs,
+    ) -> Self {
         // One `Reader` is one rendering surface: a render thread and its
         // snapshot. Under WebKit it was a web process, the cost ADR 0032 put
         // at thirty for a thirty-message thread, so it is counted from the
@@ -409,15 +422,15 @@ impl Reader {
                 .binding(postio_core::CommandId::ViewOriginal),
         );
         let unsubscribe_banner = Rc::new(UnsubscribeBanner::new());
-        let actions = super::actions::new();
+        let actions = super::actions::new_for(verbs.received);
         // One bar per verb set `ReaderAction::for_send_state` can return.
         // Exactly one is visible, and for `Sending` none is: cancelling is
         // refused once the submission started and retrying would risk a
         // second copy, so the bar offers nothing rather than a refusal.
-        let queued_actions = super::actions::new_for(&super::actions::QUEUED);
-        let stopped_actions = super::actions::new_for(&super::actions::STOPPED);
+        let queued_actions = super::actions::new_for(verbs.queued);
+        let stopped_actions = super::actions::new_for(verbs.stopped);
 
-        let chips = crate::parts::Chips::new();
+        let chips = super::chips::Chips::new();
 
         // The header sits above the banner and does not scroll away with
         // the body (#319): it is a sibling in this native box, never markup
@@ -443,11 +456,14 @@ impl Reader {
         // two different places depending on which surface opened it -- and
         // for a one-message row that surface is this one, so the older
         // placement was what most mail showed (#1435).
-        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        verbs.append(&actions.widget());
-        verbs.append(&queued_actions.widget());
-        verbs.append(&stopped_actions.widget());
-        header.set_verbs(verbs.upcast_ref::<gtk::Widget>());
+        // A surface that draws its own verbs gets no row of empty bars.
+        if !verbs.is_empty() {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            row.append(&actions.widget());
+            row.append(&queued_actions.widget());
+            row.append(&stopped_actions.widget());
+            header.set_verbs(row.upcast_ref::<gtk::Widget>());
+        }
 
         let reader = Reader {
             container,
@@ -788,7 +804,8 @@ impl Reader {
         crate::body_view::prewarm_fonts();
     }
 
-    /// The widget to place in [`crate::shell::Shell::reader`]: the header,
+    /// The widget to place in a surface -- the classic app's shell puts it in
+    /// `postio_gtk::shell::Shell::reader` -- the header,
     /// notices and body, stacked.
     pub fn widget(&self) -> gtk::Widget {
         self.container.clone().upcast()
@@ -845,7 +862,7 @@ impl Reader {
     ///
     /// For a reader embedded inside another surface that already draws its
     /// own actions for the same message — the conversation pane's per-entry
-    /// row (`crate::conversation::ConversationView::build_entry`) — the same
+    /// row (`postio_gtk::conversation::ConversationView::build_entry`) — the same
     /// reason [`Reader::header`]'s identity fields get hidden there. The
     /// surface around this reader already carries Reply/Reply all/Forward;
     /// drawing this reader's own copy on top is a duplicate, not a second
@@ -1420,7 +1437,7 @@ impl Reader {
     ///
     /// Fires on the initial render and again whenever the banner's "show
     /// once" or "always allow" changes the count, so a caller wiring the
-    /// parts panel's [`crate::parts::PartsPanel::set_held_back`] never goes
+    /// parts panel's `postio_gtk::parts::PartsPanel::set_held_back` never goes
     /// stale.
     pub fn connect_rendered(&self, handler: impl Fn(HeldBack) + 'static) {
         self.rendered.borrow_mut().push(Box::new(handler));
@@ -1430,7 +1447,7 @@ impl Reader {
     ///
     /// Metadata only, and deliberately: a chip is drawn from what
     /// `BODYSTRUCTURE` already said, so a message nothing has been fetched
-    /// for still shows what came with it. See [`crate::parts`].
+    /// for still shows what came with it. See [`super::chips`].
     pub fn set_attachments(&self, root: &str, parts: &[postio_model::Attachment]) {
         self.chips.set_parts(root, parts);
     }
@@ -1438,8 +1455,8 @@ impl Reader {
     /// Called when one of those chips is activated.
     ///
     /// The chip does not act — it asks. Whoever wires this opens
-    /// [`crate::parts::PartsPanel`], which is where the verbs live.
-    pub fn connect_attachment(&self, handler: impl Fn(&crate::parts::Node) + 'static) {
+    /// the classic app's parts panel, which is where the verbs live.
+    pub fn connect_attachment(&self, handler: impl Fn(&postio_ui::reader::parts::Node) + 'static) {
         self.chips.connect_activated(handler);
     }
 
@@ -1463,10 +1480,13 @@ impl Reader {
         self.on_current_message.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called with a message's scope and verb when its own reply, forward
+    /// or continue is activated in the document.
     pub fn connect_message_action(&self, handler: impl Fn(&str, MessageVerb) + 'static) {
         self.on_message_action.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called when `p` asks for the parts panel.
     pub fn connect_parts_requested(&self, handler: impl Fn() + 'static) {
         self.on_parts_requested.borrow_mut().push(Box::new(handler));
     }
@@ -1480,11 +1500,10 @@ impl Reader {
 
     /// Gives the action bar's buttons the key each currently carries, so a
     /// `[keys]` rebind reaches the pointer's way in the same moment it
-    /// reaches the keyboard's. See [`Window::apply_keymap`] for where this is
+    /// reaches the keyboard's. See the classic `Window::apply_keymap` for where this is
     /// called from, alongside the finder, the cheat sheet and the parts
     /// panel's own copies.
     ///
-    /// [`Window::apply_keymap`]: crate::window::Window::apply_keymap
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
         // All three, for the reason `connect_command` gives: a bar nobody
         // hands a keymap to draws a verb with no key on it, and these two are
@@ -1502,7 +1521,7 @@ impl Reader {
     /// Called with the invocation whenever a button in the action bar is
     /// pressed — the same [`postio_core::Command`] the keyboard's binding for
     /// the same verb would produce. See
-    /// [`crate::list_view::MessageListView::connect_command`] for the shared shape;
+    /// `postio_gtk::list_view::MessageListView::connect_command` for the shared shape;
     /// whoever mounts the reader hands this straight to the same
     /// `Window::act` the list's row actions do.
     pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {
@@ -1612,7 +1631,7 @@ impl Reader {
     ///
     /// What canvas 2b means by "preview · match highlighted": the same
     /// hardened pane, with the reason this message is a hit picked out in it.
-    /// Marking happens after sanitizing (see [`crate::search::mark_html`]),
+    /// Marking happens after sanitizing (see [`postio_ui::search::mark_html`]),
     /// so nothing here loosens what the reader will render. An empty list
     /// turns it off, which is the state ordinary reading is in.
     ///
@@ -1746,6 +1765,7 @@ impl Reader {
         self.on_unsubscribe.borrow_mut().push(Box::new(handler));
     }
 
+    /// Empty the pane: no message, no bar, no notice.
     pub fn clear(&self) {
         self.reset();
         load_document(
@@ -2255,7 +2275,7 @@ fn render_open(
     // After sanitizing and quote-folding, never before: ammonia would strip
     // the `<mark>` as an unknown tag, and there is no point running a matcher
     // over markup that has not been cleaned yet.
-    let content = crate::search::mark_html(&content, &highlight.borrow());
+    let content = postio_ui::search::mark_html(&content, &highlight.borrow());
 
     banner.set_sender(sender.as_deref());
     // The count, before the visibility: a notice that appeared and then

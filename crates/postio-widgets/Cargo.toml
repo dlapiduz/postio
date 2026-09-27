@@ -16,11 +16,14 @@ test-hooks = ["postio-render/test-hooks"]
 
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+chrono = { workspace = true, features = ["std"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+pango = { version = "0.22.9", features = ["v1_56"] }
 postio-body.workspace = true
 postio-config.workspace = true
 # The command registry and keymap the keycaps and action bars read.
 postio-core.workspace = true
+postio-model.workspace = true
 # The reading renderer (spec 006): BodyView draws its snapshots.
 postio-render.workspace = true
 postio-ui.workspace = true

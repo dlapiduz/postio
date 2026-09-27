@@ -44,6 +44,7 @@ fn show_cc_toggle(toggle: &gtk::ToggleButton, shown: bool) {
     toggle.set_can_focus(shown);
 }
 
+/// The strip above the body: sender, recipients, subject, date and verbs (#319).
 pub struct MessageHeader {
     root: gtk::Box,
     /// Subject and the sender/date row, grouped so they can be hidden
@@ -232,6 +233,7 @@ impl MessageHeader {
         self.verbs.append(widget);
     }
 
+    /// The strip, to place above the body.
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
     }

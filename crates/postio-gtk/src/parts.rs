@@ -29,124 +29,21 @@
 //! a hierarchy or asks the store for one.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
 use postio_core::{CommandId, Keymap};
 use postio_model::Attachment;
-use postio_model::ids::AttachmentId;
 use postio_ui::hints::{self, Hint};
 
 use crate::widgets::{KeyLine, keyhint, plate};
 
-/// One node of the tree, flattened into the order the keyboard walks it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Node {
-    /// The IMAP part id — `2.1`. Empty for the synthetic root.
-    pub part_id: String,
-    /// How deep it sits; the root is 0.
-    pub depth: usize,
-    /// `text/html`, `image/png`, `multipart/mixed`.
-    pub mime: String,
-    /// The name the sender gave it, if any.
-    pub filename: Option<String>,
-    /// Size in bytes as the server declared it. `0` for a container.
-    pub size: u64,
-    /// Whether the bytes are already in the blob store.
-    pub downloaded: bool,
-    /// Whether this is the last child of its parent, for `└` rather than `├`.
-    pub last: bool,
-    /// The attachment row this came from; `None` for the synthetic root.
-    pub attachment: Option<AttachmentId>,
-}
-
-impl Node {
-    /// What the row calls this part: its filename, or its type when the
-    /// sender did not name it.
-    pub fn label(&self) -> &str {
-        match self.filename.as_deref().map(str::trim) {
-            Some(name) if !name.is_empty() => name,
-            _ => &self.mime,
-        }
-    }
-
-    /// Whether this part holds bytes worth saving, as opposed to being a
-    /// container for other parts.
-    pub fn is_leaf(&self) -> bool {
-        !self.mime.starts_with("multipart/") && self.attachment.is_some()
-    }
-}
-
-/// Reads `parts` as a tree, flattened in walk order.
-///
-/// `root` is the message's own content type — `multipart/mixed` — which is a
-/// property of the message rather than of any part, so it is passed in rather
-/// than guessed. A message with no parts still gets its root node: a tree
-/// with one entry is a true answer, where an empty panel would look broken.
-///
-/// Parts are ordered by their id read as a path of numbers, so `2.10` sorts
-/// after `2.9` rather than before it the way a string compare would.
-pub fn tree(root: &str, parts: &[Attachment]) -> Vec<Node> {
-    let mut ordered: Vec<(Vec<u32>, &Attachment)> = parts
-        .iter()
-        .map(|part| (path_of(part), part))
-        .filter(|(path, _)| !path.is_empty())
-        .collect();
-    ordered.sort_by(|(left, _), (right, _)| left.cmp(right));
-
-    let mut nodes = Vec::with_capacity(ordered.len() + 1);
-    nodes.push(Node {
-        part_id: String::new(),
-        depth: 0,
-        mime: root.to_owned(),
-        filename: None,
-        size: parts.iter().map(|part| part.size).sum(),
-        downloaded: false,
-        last: ordered.is_empty(),
-        attachment: None,
-    });
-
-    for (index, (path, part)) in ordered.iter().enumerate() {
-        // The last child of *this* parent, not the last row overall: a
-        // deeper branch that ends before its parent's next sibling still
-        // needs its own `└`.
-        let last = ordered.get(index + 1).is_none_or(|(next, _)| {
-            next.len() < path.len() || next[..path.len() - 1] != path[..path.len() - 1]
-        });
-        nodes.push(Node {
-            part_id: part.part_id.clone().unwrap_or_default(),
-            depth: path.len(),
-            mime: part.mime_type.clone(),
-            filename: part.filename.clone(),
-            size: part.size,
-            downloaded: part.blob_id.is_some(),
-            last,
-            attachment: Some(part.id),
-        });
-    }
-    nodes
-}
-
-/// A part id read as a path: `"2.1"` becomes `[2, 1]`.
-///
-/// A part with no id at all, or one that is not a path of numbers, sorts as
-/// nothing and is dropped — the tree draws what the server described, and a
-/// row nothing can be fetched for is a row that leads nowhere.
-fn path_of(part: &Attachment) -> Vec<u32> {
-    let Some(id) = part.part_id.as_deref() else {
-        return Vec::new();
-    };
-    let mut path = Vec::new();
-    for segment in id.split('.') {
-        match segment.parse::<u32>() {
-            Ok(number) => path.push(number),
-            Err(_) => return Vec::new(),
-        }
-    }
-    path
-}
+// The part tree and how a part reads are toolkit-free, and the attachment
+// chips under a message -- which both desktop apps draw -- read them, so
+// they live in `postio_ui::reader::parts` (ADR 0043; specs/007-postio-focus
+// T019). Re-exported here, where the panel and its callers name them.
+pub use postio_ui::reader::parts::{Node, detail, spoken, tree};
 
 /// The box-drawing prefix the canvas draws down the left of the tree.
 ///
@@ -179,14 +76,6 @@ pub fn summary(nodes: &[Node]) -> String {
         many => format!("{many} parts"),
     };
     format!("{} · {count} · {}", root.mime, human_size(root.size))
-}
-
-/// What the detail pane says about one part: `text/html · 6 KB`.
-pub fn detail(node: &Node) -> String {
-    if node.depth == 0 || node.size == 0 {
-        return node.mime.clone();
-    }
-    format!("{} · {}", node.mime, human_size(node.size))
 }
 
 /// Whether a part is one the panel can show inline rather than only save.
@@ -1061,133 +950,6 @@ fn tree_row(node: &Node) -> gtk::ListBoxRow {
     row.set_child(Some(&line));
     row.update_property(&[gtk::accessible::Property::Label(&spoken(node))]);
     row
-}
-
-/// How a part reads to a screen reader: what it is, how big, and whether
-/// anything has actually been downloaded.
-pub fn spoken(node: &Node) -> String {
-    if node.depth == 0 {
-        return format!("{}, the whole message", node.mime);
-    }
-    let name = match node.filename.as_deref() {
-        Some(name) if !name.trim().is_empty() => format!("{name}, {}", node.mime),
-        _ => node.mime.clone(),
-    };
-    if !node.is_leaf() {
-        return format!("{name}, a container");
-    }
-    let fetched = if node.downloaded {
-        "downloaded"
-    } else {
-        "not downloaded"
-    };
-    format!("{name}, {}, {fetched}", human_size(node.size))
-}
-
-// ---------------------------------------------------------------------------
-// The chips under a message — canvas 1b
-// ---------------------------------------------------------------------------
-
-/// The attachments of an open message, as a row of chips.
-///
-/// Canvas 1b draws these under the body: what came with the message, named
-/// and sized, before anything is downloaded. They are the way into
-/// [`PartsPanel`] — a message's structure is a thing you go and look at, and
-/// this is the affordance that says there is something to look at.
-///
-/// Only parts that hold bytes get a chip. A `multipart/alternative` is real
-/// and appears in the tree, but nobody wants a chip for it.
-#[derive(Clone)]
-pub struct Chips {
-    row: gtk::Box,
-    handlers: Rc<RefCell<Vec<NodeHandler>>>,
-}
-
-impl Default for Chips {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Chips {
-    /// An empty, hidden row.
-    pub fn new() -> Self {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        row.add_css_class("postio-attachments");
-        row.set_visible(false);
-        row.update_property(&[gtk::accessible::Property::Label("Attachments")]);
-        Chips {
-            row,
-            handlers: Rc::new(RefCell::new(Vec::new())),
-        }
-    }
-
-    /// The widget to place under a message body.
-    pub fn widget(&self) -> gtk::Widget {
-        self.row.clone().upcast()
-    }
-
-    /// Draw a chip for every part of `parts` that holds bytes.
-    ///
-    /// `root` is the message's own content type, so the nodes handed to
-    /// [`Chips::connect_activated`] are the same nodes [`PartsPanel`] walks.
-    pub fn set_parts(&self, root: &str, parts: &[Attachment]) {
-        while let Some(child) = self.row.first_child() {
-            self.row.remove(&child);
-        }
-        let mut any = false;
-        for node in tree(root, parts).into_iter().filter(Node::is_leaf) {
-            // The body parts came with the message and are already on screen;
-            // a chip for the text you are reading is noise.
-            if node.mime.starts_with("text/") && node.filename.is_none() {
-                continue;
-            }
-            self.row.append(&self.chip(node));
-            any = true;
-        }
-        self.row.set_visible(any);
-    }
-
-    /// Called when a chip is activated, with the part it stands for.
-    pub fn connect_activated(&self, handler: impl Fn(&Node) + 'static) {
-        self.handlers.borrow_mut().push(Box::new(handler));
-    }
-
-    fn chip(&self, node: Node) -> gtk::Button {
-        let name = gtk::Label::new(Some(node.label()));
-        name.add_css_class("postio-attachment-name");
-        name.set_ellipsize(pango::EllipsizeMode::Middle);
-        name.set_max_width_chars(24);
-        name.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-        let size = gtk::Label::new(Some(&human_size(node.size)));
-        size.add_css_class("postio-attachment-size");
-        size.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-        line.append(&name);
-        line.append(&size);
-
-        let button = gtk::Button::new();
-        button.add_css_class("postio-attachment");
-        button.set_child(Some(&line));
-        button.update_property(&[gtk::accessible::Property::Label(&spoken(&node))]);
-        // What it *is*, not what activating it will do: activating opens the
-        // parts panel, which is where the verbs live. A chip that promised to
-        // save would be a second place the same verb was implemented.
-        button.set_tooltip_text(Some(&format!(
-            "{} — show the message's parts",
-            detail(&node)
-        )));
-
-        let handlers = Rc::clone(&self.handlers);
-        button.connect_clicked(move |_| {
-            for handler in handlers.borrow().iter() {
-                handler(&node);
-            }
-        });
-        button
-    }
 }
 
 #[cfg(test)]

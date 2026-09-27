@@ -36,17 +36,16 @@
 //! The names are re-exported below so this module still reads as one thing
 //! from the outside.
 
-pub mod actions;
-pub mod banner;
-pub mod message_header;
-mod notices;
 pub mod rail;
-pub mod view;
 
-// The reading pane's bar is a `crate::widgets::ActionBar` now (#1002);
-// `actions` still owns which four verbs it carries.
+// The reader both desktop apps draw moved to postio-widgets (ADR 0043;
+// specs/007-postio-focus T019): the view, its header, banners and notices,
+// and which verbs its bars carry. Re-exported under their old paths, so
+// every surface and test here that names `crate::reader::view::Reader` is
+// unchanged. The rail stays: only the classic conversation pane draws it.
 pub use message_header::MessageHeader;
 pub use postio_body::{RemoteImages, quote, sanitize};
+pub use postio_widgets::reader::{Verbs, actions, banner, chips, message_header, view};
 // The allow list moved to postio-ui (spec 005); the module keeps its old
 // path here too, so a caller that names it by that path is unchanged.
 pub use postio_ui::allowlist;

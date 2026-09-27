@@ -11,7 +11,8 @@ list_state.rs 10
 list_view.rs 2
 onboarding.rs 13
 orientation.rs 8
-parts.rs 5
+parts.rs 3
+reader/chips.rs 2
 reader/message_header.rs 7
 reader/rail.rs 1
 search.rs 6
