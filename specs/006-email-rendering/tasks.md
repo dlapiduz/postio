@@ -489,11 +489,11 @@ cases for select, find, links and a11y are green (SC-007).
   - `extents(range)` equals the union of the cluster rects converted to widget coordinates;
   - the widget's role is `Document` (FR-020)
 - [X] T117 [US4] Implement `AccessibleTextImpl` in `crates/postio-gtk/src/body_view/a11y.rs` (gtk4 `v4_16` APIs, covered by the workspace's `v4_20`). Call `update_contents`, `update_caret_position` and `update_selection_bound` on every snapshot and selection change
-- [ ] T118 [TEST] [US4] Port the `crates/postio-gtk/tests/gtk_suite/gtk_rail.rs` cases that assert the current message and scroll-to-message so they drive `BodyView`:
+- [X] T118 [TEST] [US4] Port the `crates/postio-gtk/tests/gtk_suite/gtk_rail.rs` cases that assert the current message and scroll-to-message so they drive `BodyView`:
   - the current message is the one with the greatest visible area of `MessageBox`, computed by `RenderedDocument::current_message`;
   - activating a rail row scrolls that message's top to the viewport's top;
   - page down and page up move one real page (001 FR-034 to 001 FR-037)
-- [ ] T119 [US4] Implement the script-free rail and scrolling in `crates/postio-gtk/src/body_view/mod.rs` and `crates/postio-gtk/src/conversation.rs` from `message_extents` and the vadjustment. The rail's observer script (`RAIL_HANDLER`), `SCROLL_REPORTER` and the `#pos-N` markers are no longer used on the `BodyView` path; they are deleted in T143
+- [X] T119 [US4] Implement the script-free rail and scrolling in `crates/postio-gtk/src/body_view/mod.rs` and `crates/postio-gtk/src/conversation.rs` from `message_extents` and the vadjustment. The rail's observer script (`RAIL_HANDLER`), `SCROLL_REPORTER` and the `#pos-N` markers are no longer used on the `BodyView` path; they are deleted in T143. **View half done** (`BodyView::current_message`, `scroll_to_message`, `page`, tested in `body_view_select.rs`); `conversation.rs` calls them at the switch (T139), where the `gtk_rail` cases move onto `BodyView`
 
 **Checkpoint**: US4 is independently proven.
 
