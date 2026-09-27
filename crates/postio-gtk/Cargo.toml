@@ -42,6 +42,8 @@ parley = { version = "0.11", default-features = false, features = ["std"] }
 fontdb = "0.24"
 memmap2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+# The theme rule the head to head applies to its legibility probe.
+postio-render.workspace = true
 tracing-subscriber = { workspace = true }
 gtk4-sys = "0.11.4"
 postio-config.workspace = true

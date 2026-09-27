@@ -143,6 +143,7 @@ postio-account = { path = "crates/postio-account" }
 postio-jmap    = { path = "crates/postio-jmap" }
 postio-gmail   = { path = "crates/postio-gmail" }
 postio-ui      = { path = "crates/postio-ui" }
+postio-render  = { path = "crates/postio-render" }
 postio-smtp    = { path = "crates/postio-smtp" }
 postio-transport = { path = "crates/postio-transport" }
 postio-sync    = { path = "crates/postio-sync" }

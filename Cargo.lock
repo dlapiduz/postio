@@ -4793,6 +4793,7 @@ dependencies = [
  "postio-config",
  "postio-core",
  "postio-model",
+ "postio-render",
  "postio-search",
  "postio-test-support",
  "postio-ui",
