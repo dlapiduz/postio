@@ -1,0 +1,251 @@
+/* The controls both desktop apps draw (ADR 0043), dressed once.
+ *
+ * These rules moved here from postio-gtk's shell.css with the widgets that
+ * wear them (specs/007-postio-focus research R1): the key hints, the four
+ * kinds of button, the chips, the action bar and the one-line notice.
+ * `postio_widgets::widgets` is the code.
+ *
+ * Every value is a `--postio-*` role, never a literal colour, and each app
+ * defines the roles: the classic app from its generated `tokens.css`, and
+ * Focus from libadwaita's own colours (research R11).
+ *
+ * An app layers its own surfaces over these rules by importing this sheet
+ * at the top of its own, not by loading it beside it: GTK compares
+ * specificity only inside one provider (`postio_widgets::style` says more).
+ *
+ * TYPE IS IN `rem`, NEVER `px`: a font size in px ignores GNOME's
+ * text-scaling setting (postio-gtk's shell.css says why at length).
+ *
+ * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent.
+ */
+
+/* ── Key hints (`widgets::keyhint`) ─────────────────────────────────── */
+/* A key hint riding along inside a control. Quieter than `.postio-key`,
+   which is the standalone cap the focused row draws. */
+.postio-keyhint {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  opacity: 0.75;
+}
+
+/* A hint that is not a control: what it does, then its cap
+   (`widgets::keyhint::chip`). The words are secondary ink, the cap mono. */
+.postio-keyhint-label {
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* A footer of hints in one mono line: `j/k walk · Return open · s save`
+   (`widgets::KeyLine`). Canvas 3g's and 2b's foot, at the canvas' 10.5px;
+   each surface adds only its own inset. */
+.postio-keyline {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  line-height: 1.7;
+  color: var(--postio-faint);
+}
+
+/* ── Buttons (`widgets::button`) ─────────────────────────────────────
+   Four kinds and two sizes, from the design system's `.btn-*`: square
+   (`radius-sm`, as every control is), the heading face, a hairline border
+   that a primary fills and a ghost drops. One primary look everywhere --
+   it had been libadwaita's pill in the header, a pale tint in the action
+   bars and a solid square in settings. */
+button.postio-button {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  border: 1px solid transparent;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-ink);
+}
+
+button.postio-button:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
+}
+
+button.postio-button-regular {
+  min-height: 30px;
+  padding: 0 13px;
+  font-size: var(--postio-text-ui);
+}
+
+button.postio-button-small {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: var(--postio-text-small);
+}
+
+button.postio-button-primary {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-accent);
+  color: var(--postio-accent-fg);
+}
+
+button.postio-button-primary:hover {
+  border-color: var(--postio-accent-hover);
+  background-color: var(--postio-accent-hover);
+}
+
+button.postio-button-secondary {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-surface);
+}
+
+button.postio-button-secondary:hover {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-hover-bg);
+}
+
+/* Chrome, in the canvas' neutral rather than the design system's accent:
+   Postio's ghosts are the header and the bars, not links. */
+button.postio-button-ghost {
+  color: var(--postio-dim);
+}
+
+button.postio-button-ghost:hover {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* Findable, not inviting: bordered in the destructive colour, never
+   filled. */
+button.postio-button-destructive {
+  border-color: var(--destructive-color);
+  color: var(--destructive-color);
+}
+
+button.postio-button-destructive:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+button.postio-button:disabled {
+  opacity: 0.45;
+}
+
+/* An icon alone (`widgets::icon_button`): the design system's `.btn-icon`,
+   ghost-quiet. */
+button.postio-icon-button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-dim);
+}
+
+button.postio-icon-button:hover {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* ── Chips (`widgets::chip`) ──────────────────────────────────────── */
+/* An offered narrowing. The outline tag from canvas 2b: mono, because it is
+   a token the user could have typed, and hollow rather than filled so it
+   reads as something on offer next to the solid chips already in the query. */
+/* Every text chip's box, in one place. A chip class below carries colour
+   and face only; the metrics live here and in the three --postio-chip-*
+   tokens, so two chips can no longer disagree about their height. Applied
+   by the constructors in `widgets::chip`, never by hand at a call site. */
+.postio-chip-base {
+  min-height: var(--postio-chip-height);
+  padding: var(--postio-chip-pad-y) var(--postio-chip-pad-x);
+  border-radius: var(--postio-radius-sm);
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  /* Every chip pays for its border, drawn or not: a bordered chip beside a
+     borderless one is two pixels taller, which is exactly the drift the
+     base class exists to stop. A chip that wants a visible border recolours
+     this one rather than adding its own. */
+  border: 1px solid transparent;
+}
+
+.postio-refine-chip {
+  border-color: var(--postio-hairline-strong);
+  background: none;
+  box-shadow: none;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-refine-chip:hover {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-accent-text);
+}
+
+.postio-refine-chip:focus {
+  border-color: var(--postio-accent);
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 1px;
+}
+
+/* An operator, drawn as what it is. IBM Plex Mono, because it is syntax. */
+.postio-chip {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* Still being typed: the keyword landed, the value has not. */
+.postio-chip.partial {
+  background: none;
+  border: 1px dashed var(--postio-hairline);
+  color: var(--postio-faint);
+}
+
+/* `-from:someone` excludes rather than includes, and has to look like it. */
+.postio-chip.negated {
+  background-color: var(--postio-surface);
+  border: 1px solid var(--postio-selected-border);
+  color: var(--postio-faint);
+}
+
+/* ── The shared controls (#1002) ─────────────────────────────────────
+   A button with its key beside it, a row of them, and a one-line notice.
+   Postio had three or four hand-rolled copies of each; these are the
+   classes the single implementation wears, and every surface that draws
+   one of these draws this. */
+
+/* An action bar is a row of real buttons with keycap hints, identical on
+   every screen — the canvas's turn-7 rule. The surfaces that mount one add
+   their own class beside this for the padding and the rule above it. */
+.postio-action-bar {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+/* ── One-line notices ────────────────────────────────────────────────
+   Icon, ellipsised text, one action, an overflow. It never wraps: a notice
+   that grows vertically pushes the mail down the pane, which is the
+   opposite of what a notice is for. The height is fixed for the same
+   reason — a notice appearing must not reflow the message under it by a
+   variable amount. */
+.postio-notice {
+  min-height: 30px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+/* The overflow is a whole button, 34px on its own -- taller than the notice
+   it sits in, and only there when the notice has a menu. So the slot, sized
+   to its tallest page, was 2px taller for a message whose sender could be
+   always-allowed than for one that could not, and the body moved with it
+   (#1671). */
+.postio-notice > menubutton > button {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.postio-notice-icon {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-notice-label {
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-ui);
+}

@@ -27,11 +27,14 @@ pub const HIGH_CONTRAST_CLASS: &str = "postio-hc";
 ///
 /// Two sheets, in this order and at this priority: `tokens.css` is generated
 /// from the design system and defines the variables, `shell.css` is written by
-/// hand and dresses the widgets in them. Returns the providers so a caller can
-/// drop them again; the app normally just leaves them installed for the life
-/// of the process.
+/// hand and dresses the widgets in them. `shell.css` imports the controls both
+/// desktop apps share from postio-widgets' `widgets.css` (ADR 0043), whose
+/// bundle is registered first so the import resolves. Returns the providers
+/// so a caller can drop them again; the app normally just leaves them
+/// installed for the life of the process.
 pub fn install(display: &gdk::Display) -> Vec<gtk::CssProvider> {
     resources::register();
+    postio_widgets::style::register();
     [resources::TOKENS_CSS, resources::SHELL_CSS]
         .into_iter()
         .map(|sheet| load(display, sheet))

@@ -25,6 +25,7 @@ mod body_view_resets;
 mod harness;
 mod list_contract;
 mod support;
+mod widgets_css;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
 /// `#[ignore]`, which means one thing here: this machine may not have what
@@ -55,6 +56,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "body_view_resets::a_message_shown_again_folds_as_it_was_sent",
         body_view_resets::a_message_shown_again_folds_as_it_was_sent as fn(),
+    ),
+    (
+        "widgets_css::the_shared_sheet_dresses_the_shared_widgets",
+        widgets_css::the_shared_sheet_dresses_the_shared_widgets as fn(),
     ),
 ];
 

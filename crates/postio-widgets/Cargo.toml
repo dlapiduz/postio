@@ -25,6 +25,9 @@ postio-core.workspace = true
 postio-render.workspace = true
 postio-ui.workspace = true
 
+[build-dependencies]
+glib-build-tools = "0.22.8"
+
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-test-support.workspace = true

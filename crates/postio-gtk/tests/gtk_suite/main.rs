@@ -173,6 +173,7 @@ mod gtk_toggle_sidebar;
 mod gtk_unavailable;
 mod gtk_undo_toast;
 mod gtk_widgets;
+mod gtk_widgets_css;
 mod gtk_window;
 mod gtk_window_open_message;
 mod gtk_window_run_search;
@@ -194,6 +195,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_widgets_css::the_classic_app_dresses_the_shared_widgets",
+        gtk_widgets_css::the_classic_app_dresses_the_shared_widgets as fn(),
+    ),
     (
         "gtk_reader_fallback::a_message_past_its_deadline_shows_its_own_text",
         gtk_reader_fallback::a_message_past_its_deadline_shows_its_own_text as fn(),

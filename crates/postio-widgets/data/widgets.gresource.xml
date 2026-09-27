@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  What the shared widgets need at runtime, compiled into the binary by
+  build.rs. Its own prefix, beside the classic app's /dev/postio/Postio, so
+  either app can register both bundles.
+-->
+<gresources>
+  <gresource prefix="/dev/postio/Widgets">
+    <!-- Hand-written; every value in it is a postio role the app defines. -->
+    <file compressed="true">widgets.css</file>
+  </gresource>
+</gresources>
