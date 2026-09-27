@@ -462,9 +462,9 @@ fn a_sentence_is_found_again_from_its_excerpt() {
     // the corpus grows -- the eight invitations did, and their plain parts
     // hold text the HTML never draws.
     for (label, tally) in &tallies {
-        let [as_read, collapsed, present] = match *label {
-            "text first" => [0.90, 0.96, 0.97],
-            _ => [0.92, 0.98, 0.99],
+        let [as_read, collapsed, present, located] = match *label {
+            "text first" => [0.90, 0.96, 0.97, 0.97],
+            _ => [0.92, 0.98, 0.99, 0.99],
         };
         assert!(
             tally.total() >= 100,
@@ -490,11 +490,11 @@ fn a_sentence_is_found_again_from_its_excerpt() {
             "{label}: {:.3} present at all, below the spike's {present}",
             tally.present()
         );
-        // The locator itself (T066), measured 2026-09-27: 98.2% of what the
-        // text part says, 99.5% of what is drawn -- everything present.
+        // The locator itself (T066) finds everything present at all, so its
+        // floor is the same as "present" for each source.
         assert!(
-            tally.by_the_locator() >= 0.98,
-            "{label}: the locator found {:.3}, below its measured 0.98",
+            tally.by_the_locator() >= located,
+            "{label}: the locator found {:.3}, below its measured {located}",
             tally.by_the_locator()
         );
     }
