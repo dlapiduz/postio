@@ -2109,7 +2109,15 @@ impl Window {
                 if id != postio_core::ActionId::Builtin(CommandId::DarkenMessage) {
                     return None;
                 }
-                window.upgrade()?.reader_showing().darken_title()
+                // Only a reader that exists: asking for a title must not
+                // build one, in the middle of the palette's own refresh.
+                let window = window.upgrade()?;
+                let imp = window.imp();
+                imp.conversation
+                    .get()
+                    .and_then(|pane| pane.document_reader())
+                    .or_else(|| imp.reader.get().cloned())?
+                    .darken_title()
             }
         });
         let _ = self.imp().finder.set(finder);
