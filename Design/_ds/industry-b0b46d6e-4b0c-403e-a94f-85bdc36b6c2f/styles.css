@@ -21,6 +21,22 @@
   --color-neutral-800: #424244;
   --color-neutral-900: #2b2b2d;
 
+  /* The reader in dark (spec 006 FR-016, #1588). Designed, not derived:
+     the reading surface lifts three steps above the dark chrome
+     (neutral-900), the way the light reader sits above --color-bg, and
+     keeps the ramp's own hue -- blue two or three units above red -- so it
+     never reads warm beside it. Set in steps, not in a ratio of the light
+     ramp: at the dark end a proportion rounds away in eight bits. Every
+     ink role holds 4.5:1 on the ground (ink 12.4, secondary 11.0, dim 6.8,
+     accent 6.8); hairlines lift rather than darken. */
+  --color-reader-dark-ground: #2e2e31;
+  --color-reader-dark-ink: #f5f5f8;
+  --color-reader-dark-ink-secondary: #e7e7ea;
+  --color-reader-dark-dim: #b7b7ba;
+  --color-reader-dark-hairline: #424244;
+  --color-reader-dark-hairline-strong: #5d5d60;
+  --color-reader-dark-accent: #94bce3;
+
   --color-accent-100: #eef6ff;
   --color-accent-200: #d6ebff;
   --color-accent-300: #b5d9fd;

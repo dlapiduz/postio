@@ -26,12 +26,12 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --r-ground: #2b2b2d;
+    --r-ground: #2e2e31;
     --r-ink: #f5f5f8;
     --r-ink-secondary: #e7e7ea;
     --r-dim: #b7b7ba;
-    --r-hairline: #5d5d60;
-    --r-hairline-strong: #7a7a7d;
+    --r-hairline: #424244;
+    --r-hairline-strong: #5d5d60;
     --r-accent: #94bce3;
     --r-quote-bg: rgba(148, 188, 227, 0.08);
     --r-match-bg: rgba(148, 188, 227, 0.32);

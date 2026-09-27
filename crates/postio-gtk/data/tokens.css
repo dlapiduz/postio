@@ -29,6 +29,13 @@
   --postio-color-neutral-700: #5d5d60;
   --postio-color-neutral-800: #424244;
   --postio-color-neutral-900: #2b2b2d;
+  --postio-color-reader-dark-ground: #2e2e31;
+  --postio-color-reader-dark-ink: #f5f5f8;
+  --postio-color-reader-dark-ink-secondary: #e7e7ea;
+  --postio-color-reader-dark-dim: #b7b7ba;
+  --postio-color-reader-dark-hairline: #424244;
+  --postio-color-reader-dark-hairline-strong: #5d5d60;
+  --postio-color-reader-dark-accent: #94bce3;
   --postio-color-accent-100: #eef6ff;
   --postio-color-accent-200: #d6ebff;
   --postio-color-accent-300: #b5d9fd;
