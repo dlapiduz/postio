@@ -55,6 +55,7 @@ mod gtk_composer_attachments;
 mod gtk_composer_autosave;
 mod gtk_composer_confirms;
 mod gtk_composer_detach;
+mod gtk_composer_detached_scheme;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_composer_header;
@@ -197,6 +198,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_composer_detached_scheme::a_detached_composer_follows_dark_mode",
+        gtk_composer_detached_scheme::a_detached_composer_follows_dark_mode as fn(),
+    ),
     (
         "gtk_composer_host::a_composer_on_a_test_host_autosaves_and_sends",
         gtk_composer_host::a_composer_on_a_test_host_autosaves_and_sends as fn(),

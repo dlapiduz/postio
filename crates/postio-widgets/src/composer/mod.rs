@@ -430,6 +430,10 @@ pub trait ComposerHost {
     /// The composer opened (`open`) or closed: a host with a control that
     /// says which -- the classic header's Compose button -- says so here.
     fn composing(&self, open: bool, keymap: &Keymap);
+    /// A window of the composer's own -- a detached one -- joins the host's
+    /// app: whatever the host's own windows follow, such as the light, dark
+    /// and high-contrast scheme, it follows too (T025).
+    fn adopt(&self, window: &gtk::Window);
 }
 
 /// The class `shell.css` dims the sidebar and the list under.
@@ -1802,6 +1806,10 @@ impl Composer {
             }
         ));
 
+        // Its own window, so the scheme the host's windows follow is not
+        // this one's until the host says so -- a detached composer that
+        // stayed light in a dark application (T025).
+        holder.adopt(host.upcast_ref());
         self.imp().detached.replace(Some(host.clone()));
         sync_detach_button(&self.imp().detach, true);
         host.present();

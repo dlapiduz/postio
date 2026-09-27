@@ -152,6 +152,13 @@ impl ComposerHost for WindowHost {
             crate::header::sync_compose(&button, open, keymap);
         }
     }
+
+    // The classic stylesheet keys its schemes off classes on a window's
+    // root, and only a tracked window carries them: the settings window is
+    // tracked the same way.
+    fn adopt(&self, window: &gtk::Window) {
+        crate::style::track(window);
+    }
 }
 
 /// Puts `composer` in `window`'s reading pane and wires the keyboard.
