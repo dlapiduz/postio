@@ -245,11 +245,11 @@ plan and tasks agree with the decision.
 - [X] T037 Make T036 green: `image` features from T033, and the `cid:` resource resolving through a first minimal version of `crates/postio-render/src/resources.rs`
 - [X] T038 [TEST] In `crates/postio-render/tests/images.rs`, the test writes a temporary PNG of solid `#ff00ff`, then renders `html-svg-local-file.eml` with the SVG's `href` pointed at that path. Assert that no `#ff00ff` pixel is painted, and that the SVG's own shapes are painted (research R5)
 - [X] T039 Implement SVG re-serialisation in `crates/postio-render/src/resources.rs`: usvg parse with an `image_href_resolver` that keeps only `data:` rasters, then usvg's writer. Enable `blitz-paint/svg`
-- [ ] T040 [TEST] In `crates/postio-render/tests/details.rs`, assert three things:
+- [X] T040 [TEST] In `crates/postio-render/tests/details.rs`, assert three things:
   - a closed `<details>` paints only its `<summary>`;
-  - a request whose `open_folds` names that fold paints the body;
+  - a request whose `toggled_folds` names that fold paints the body;
   - the two display lists differ only below the summary (risk R15-a)
-- [ ] T041 Implement fold toggling in `crates/postio-render/src/lib.rs`: set `open` on the named `<details>` before layout, with the fold id taken from a stable attribute stamped by `postio-ui/src/reader/thread.rs`. If Blitz cannot toggle, use the Postio-owned attribute fallback in research R15, and record which was used
+- [X] T041 Implement fold toggling in `crates/postio-render/src/lib.rs`: set `open` on the named `<details>` before layout, with the fold id taken from a stable attribute stamped by `postio-ui/src/reader/thread.rs`. If Blitz cannot toggle, use the Postio-owned attribute fallback in research R15, and record which was used. **Used: Blitz's own `open`**, set or cleared on the parsed document before the first style pass; no fallback needed (risk R15-a retired). The request field is `toggled_folds`: a toggle from the document's default, since the latest message starts open
 
 ### Fonts, resources, the render thread
 
@@ -471,7 +471,7 @@ cases for select, find, links and a11y are green (SC-007).
   - a `javascript:` link from `html-script-forms.eml` is not a link at all;
   - verb links dispatch their `MessageVerb` (FR-019)
 - [ ] T109 [US4] Implement links in `crates/postio-gtk/src/body_view/interact.rs`: hover target, keyboard focus ring drawn as an overlay, `gtk::UriLauncher` for `External` targets, and verb dispatch through the existing `connect_message_action`
-- [ ] T110 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, clicking a quote fold's summary rect issues a request with that fold in `open_folds`, and the fold body's text appears in the next snapshot's `TextIndex`
+- [ ] T110 [TEST] [US4] In `crates/postio-gtk/tests/gtk_suite/body_view_select.rs`, clicking a quote fold's summary rect issues a request with that fold in `toggled_folds`, and the fold body's text appears in the next snapshot's `TextIndex`
 - [ ] T111 [US4] Implement fold clicks in `crates/postio-gtk/src/body_view/interact.rs`
 - [ ] T112 [TEST] [US4] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `find_in_message` (`mod+f`), `find_next` (`mod+g`, alternate `F3`) and `find_previous` (`mod+shift+g`, alternate `shift+F3`) against `contracts/registry-commands.md`, including the context-overlap rule
 - [ ] T113 [US4] Add the three find commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand

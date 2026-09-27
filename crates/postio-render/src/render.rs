@@ -35,6 +35,7 @@ pub fn render(request: &RenderRequest) -> RenderedDocument {
         ..Default::default()
     };
     let mut doc = blitz_html::HtmlDocument::from_html(&request.document, config).into_inner();
+    toggle_folds(&mut doc, &request.toggled_folds);
     doc.resolve(0.0);
     let size = doc.root_element().final_layout().size;
     let (width, height) = (
@@ -99,5 +100,40 @@ pub fn rasterize(doc: &RenderedDocument) -> Raster {
         width,
         height,
         rgba,
+    }
+}
+
+/// The attribute `postio-ui` stamps on every `<details>` it composes: the
+/// fold's stable id, the same across re-renders.
+pub const FOLD_ATTRIBUTE: &str = "data-postio-fold";
+
+/// Flip `open` on every fold `toggled` names, before the first style pass,
+/// so the document is laid out once, already in the state asked for.
+fn toggle_folds(doc: &mut blitz_dom::BaseDocument, toggled: &[String]) {
+    if toggled.is_empty() {
+        return;
+    }
+    let Ok(folds) = doc.query_selector_all(&format!("details[{FOLD_ATTRIBUTE}]")) else {
+        return;
+    };
+    let flips: Vec<(blitz_dom::NodeId, bool)> = folds
+        .into_iter()
+        .filter_map(|id| {
+            let node = doc.get_node(id)?;
+            let fold = node.attr(blitz_dom::LocalName::from(FOLD_ATTRIBUTE))?;
+            toggled
+                .iter()
+                .any(|t| t == fold)
+                .then(|| (id, node.attr(blitz_dom::local_name!("open")).is_some()))
+        })
+        .collect();
+    let open = blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("open"));
+    let mut mutator = doc.mutate();
+    for (id, was_open) in flips {
+        if was_open {
+            mutator.clear_attribute(id, open.clone());
+        } else {
+            mutator.set_attribute(id, open.clone(), "");
+        }
     }
 }

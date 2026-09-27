@@ -102,7 +102,7 @@ during it.
 | `viewport` | `width_px` (logical), `hidpi_scale` (fractional surface scale), `zoom` (a step) |
 | `theme` | `Theme { dark: bool, high_contrast: bool, palette: ReaderPalette }` |
 | `darkened` | The set of message scopes the user asked to darken (FR-013a) |
-| `open_folds` | The `<details>` the user has toggled, by stable fold id |
+| `toggled_folds` | The `<details>` the user has flipped from how the document sets them, by the stable id `postio-ui` stamps as `data-postio-fold` (a message's anchor, or `<anchor>-q<n>` for its quotes). A toggle, not a state: the latest message starts open and a quote closed |
 | `reader_view` | The set of message scopes shown reduced (R16) |
 
 ---

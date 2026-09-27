@@ -48,7 +48,7 @@ fn request(fixture: &str) -> (RenderRequest, Vec<(String, Vec<u8>)>) {
         },
         theme: Theme::default(),
         darkened: Vec::new(),
-        open_folds: Vec::new(),
+        toggled_folds: Vec::new(),
         reader_view: Vec::new(),
     };
     (request, parts)

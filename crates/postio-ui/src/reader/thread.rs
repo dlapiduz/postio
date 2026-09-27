@@ -77,6 +77,28 @@ pub const CONTINUE_SCHEME: &str = "postio-continue";
 /// pane (#1444).
 pub const MINE_CLASS: &str = "postio-mine";
 
+/// The attribute every fold in a conversation carries: its stable id, by
+/// which the renderer opens or closes it across re-renders (spec 006 R15).
+/// A message's fold is its anchor; a quote's is `<anchor>-q<n>`, numbered
+/// in document order within its message.
+pub const FOLD_ATTRIBUTE: &str = "data-postio-fold";
+
+/// The opening tag `postio-body` folds quoted text with. A sender cannot
+/// write it: the sanitizer strips every `postio-` class.
+const QUOTE_FOLD: &str = "<details class=\"postio-quote\"";
+
+/// Give every quote fold in one message's body its id.
+fn number_quote_folds(body: &str, anchor: &str) -> String {
+    let mut parts = body.split(QUOTE_FOLD);
+    let mut out = String::with_capacity(body.len());
+    out.push_str(parts.next().unwrap_or_default());
+    for (n, rest) in parts.enumerate() {
+        out.push_str(&format!("{QUOTE_FOLD} {FOLD_ATTRIBUTE}=\"{anchor}-q{n}\""));
+        out.push_str(rest);
+    }
+    out
+}
+
 /// The element id a message carries, so a pane can scroll to it.
 ///
 /// One function rather than two format strings, because the id and the
@@ -278,6 +300,7 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // were scoped to, and without it they match nothing.
     let body = contain_body_in(entry.body, Some(entry.scope));
     let anchor = message_anchor(entry.scope);
+    let body = number_quote_folds(&body, &anchor);
     let recipients = recipients_html(entry.recipients, entry.cc);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
@@ -288,7 +311,8 @@ fn entry_html(entry: &Entry<'_>) -> String {
         String::new()
     };
     format!(
-        "<details class=\"postio-message{mine}\" id=\"{anchor}\"{open}>\
+        "<details class=\"postio-message{mine}\" id=\"{anchor}\" \
+         {FOLD_ATTRIBUTE}=\"{anchor}\"{open}>\
          <summary class=\"postio-message-head\">\
          <span class=\"postio-recipients-label\">From</span>\
          <span class=\"postio-from\">{sender}</span>\
@@ -595,8 +619,8 @@ mod tests {
             1,
             "exactly one message should start open: {document}"
         );
-        assert!(document.contains(r#"id="m-2" open>"#));
-        assert!(document.contains(r#"id="m-1">"#));
+        assert!(document.contains(r#"id="m-2" data-postio-fold="m-2" open>"#));
+        assert!(document.contains(r#"id="m-1" data-postio-fold="m-1">"#));
     }
 
     /// #323's edge, which matters more here than in a single-message document:
@@ -650,7 +674,7 @@ mod tests {
 
         assert_eq!(document.matches("<details").count(), 1);
         assert!(
-            document.contains(r#"id="m-7" open>"#),
+            document.contains(r#"id="m-7" data-postio-fold="m-7" open>"#),
             "the one message has to be open, or a single message opens closed"
         );
         assert!(document.contains("orders@marketside.example"));
@@ -807,5 +831,42 @@ mod tests {
             "a message with nothing to fold gained a fold from its neighbour: \
              {grace}"
         );
+    }
+
+    #[test]
+    fn every_fold_carries_a_stable_id_unique_in_the_document() {
+        // The renderer toggles a fold by this id (spec 006 R15), and a toggle
+        // has to survive a re-render and land on the fold the user touched:
+        // so every `<details>` has one, no two share it, and it is the same
+        // each time the conversation is composed.
+        let quoted = "<p>a</p><details class=\"postio-quote\"><summary>q</summary>\
+                      <blockquote>one</blockquote></details><details class=\"postio-quote\">\
+                      <summary>q</summary><blockquote>two</blockquote></details>";
+        let compose = || {
+            conversation_document(
+                &[
+                    entry("7", "Ada", quoted, true),
+                    entry("11", "Grace", quoted, true),
+                ],
+                postio_body::RemoteImages::Blocked,
+                crate::reader::document::Sheet::Theme,
+            )
+        };
+        let document = compose();
+        let ids: Vec<&str> = document
+            .split("<details")
+            .skip(1)
+            .map(|tag| {
+                tag.split_once("data-postio-fold=\"")
+                    .filter(|(before, _)| !before.contains('>'))
+                    .and_then(|(_, rest)| rest.split('"').next())
+                    .unwrap_or_else(|| panic!("a fold without an id: <details{tag}"))
+            })
+            .collect();
+        assert_eq!(ids.len(), 6, "two messages and four quotes: {ids:?}");
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "fold ids collide: {ids:?}");
+        assert_eq!(compose(), document, "the ids are not stable");
+        assert!(ids.contains(&message_anchor("7").as_str()));
     }
 }

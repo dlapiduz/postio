@@ -11,7 +11,7 @@ pub mod resources;
 pub mod theme;
 
 pub use kurbo::{Point, Rect};
-pub use render::{BASE_URL, Raster, rasterize, render};
+pub use render::{BASE_URL, FOLD_ATTRIBUTE, Raster, rasterize, render};
 pub use resources::Resources;
 pub use theme::{Presentation, Rgb, Theme};
 
@@ -34,8 +34,11 @@ pub struct RenderRequest {
     pub theme: Theme,
     /// The messages the user asked to darken (FR-013a).
     pub darkened: Vec<Scope>,
-    /// The `<details>` the user has toggled open, by stable fold id.
-    pub open_folds: Vec<String>,
+    /// The `<details>` folds the user has toggled from how the document
+    /// sets them, by the stable id `postio-ui` stamps as
+    /// `data-postio-fold`. A toggle, not a state: the latest thread message
+    /// starts open and a quote starts closed, and either may be flipped.
+    pub toggled_folds: Vec<String>,
     /// The messages shown in Reader view (R16).
     pub reader_view: Vec<Scope>,
 }
