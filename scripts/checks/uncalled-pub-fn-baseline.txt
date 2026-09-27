@@ -68,6 +68,7 @@ on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
+parse_when                        # crates/postio-search/src/date.rs:76 -- spec 007 builds its callers after it: Focus's picker date entry (T091) and the detector's due dates (T116)
 partials                          # crates/postio-search/src/query.rs:369
 plain_forward                     # crates/postio-model/src/reply.rs:221
 plain_quote                       # crates/postio-model/src/reply.rs:213
@@ -78,6 +79,7 @@ recount_account                   # crates/postio-storage/src/repository/mailbox
 recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
+remind_presets                    # crates/postio-ui/src/schedule.rs:74 -- spec 007's remind picker (T091, T094) is built after it
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
 reopen                            # crates/postio-account/src/secret.rs:670
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
@@ -93,6 +95,7 @@ set_metered                       # crates/postio-sync/src/backfill.rs:478
 set_name                          # crates/postio-storage/src/repository/contact_groups.rs:66
 set_thread                        # crates/postio-storage/src/repository/messages.rs:1136
 set_user_active                   # crates/postio-sync/src/backfill.rs:483
+snooze_presets                    # crates/postio-ui/src/schedule.rs:59 -- spec 007's snooze picker (T091, T092) is built after it
 suspend                           # crates/postio-sync/src/watch.rs:510
 takes_free_text                   # crates/postio-search/src/query.rs:157
 temporary_directory               # crates/postio-storage/src/blob.rs:145
