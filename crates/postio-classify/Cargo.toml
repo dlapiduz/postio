@@ -19,6 +19,8 @@ postio-model = { workspace = true }
 postio-search = { workspace = true }
 
 [dev-dependencies]
+# The corpus: `untrusted-instructions` holds the text ADR 0009 Q4 is about.
+postio-model = { workspace = true, features = ["test-corpus"] }
 # SC-013's gate reads its labelled dataset, tests/data/needs_action.toml.
 serde = { workspace = true }
 toml = { workspace = true }

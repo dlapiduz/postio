@@ -122,6 +122,10 @@ pub enum Category {
     /// Colour choices that stress legibility across light, dark and high
     /// contrast: a white page, dark text on nothing, sender dark styling.
     ThemeContrast,
+    /// Text that tries to instruct an assistant reading the mail:
+    /// instruction-shaped and tool-shaped. It is data, never instructions
+    /// (ADR 0009 Q4, ADR 0010).
+    PromptInjection,
 }
 
 impl Category {
@@ -153,6 +157,7 @@ impl Category {
         Category::Designed,
         Category::Hostile,
         Category::ThemeContrast,
+        Category::PromptInjection,
     ];
 
     /// The category's stable, lower-kebab-case name.
@@ -184,6 +189,7 @@ impl Category {
             Category::Designed => "designed",
             Category::Hostile => "hostile",
             Category::ThemeContrast => "theme-contrast",
+            Category::PromptInjection => "prompt-injection",
         }
     }
 
@@ -464,6 +470,8 @@ corpus! {
         "A plain-text body encoded base64, as export tools emit even when there is nothing to escape.",
     "transfer-encoding-quoted-printable": [QuotedPrintable, PlainText, EncodedWord] =>
         "Quoted-printable with soft line breaks, a literal =3D, encoded trailing whitespace and accented runs.",
+    "untrusted-instructions": [PlainText, PromptInjection] =>
+        "One honest question, then instructions and a tool call aimed at an assistant: none of it may become an action, a request or a marker.",
 }
 
 /// Every fixture in the corpus, in file-name order.

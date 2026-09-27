@@ -319,6 +319,25 @@ pub(super) const ASSISTANT: &[&str] = &[
     "system prompt",
 ];
 
+/// What only text aimed at a model says (ADR 0009 Q4): an instruction about
+/// its instructions, a name for the machine, or a tool call. A message
+/// holding any of it is asked nothing at all. Unlike [`ASSISTANT`], nothing
+/// here is a word ordinary mail uses: a person's assistant is not in it, and
+/// nor is "AI" alone.
+pub(super) const TO_A_MACHINE: &[&str] = &[
+    "previous instructions",
+    "prior instructions",
+    "system prompt",
+    "ai assistant",
+    "email assistant",
+    "dear ai",
+    "language model",
+    "automated agent",
+    "ai agent",
+    "tool_call",
+    "function_call",
+];
+
 /// What makes a phrase a deadline rather than a date (R10): "by Friday",
 /// "before 15 October", "no later than Thursday". "On Monday" says when, not
 /// by when.
