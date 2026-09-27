@@ -53,6 +53,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         nodes: u32::try_from(doc.tree().len()).unwrap_or(u32::MAX),
         resources_resolved: resolved,
         resources_unresolved: unresolved,
+        images_placeholdered: request.resources.placeholdered(),
         display_list_commands: u32::try_from(display_list.commands.len()).unwrap_or(u32::MAX),
         ..RenderCounts::default()
     };

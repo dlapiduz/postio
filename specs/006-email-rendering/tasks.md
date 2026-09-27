@@ -259,13 +259,13 @@ plan and tasks agree with the decision.
   - shaping `html-cjk-emoji.eml` and `html-rtl-mixed.eml` produces **no glyph id 0** (tofu);
   - `FontSet` construction reads no file outside the fontdb-discovered set and the bundled bytes
 - [X] T043 Implement `crates/postio-render/src/fonts.rs`. `FontSet` registers ADR 0023's `FACES` first, then the `fontdb` discovery **memory-mapped with `memmap2`, never read into memory** (research R3 amendment: reading every file cost 198 MiB resident), with explicit generic families and per-script fallbacks for Latin, CJK, Arabic, Hebrew, Devanagari and emoji. It is built once, off the UI thread
-- [ ] T044 [TEST] In `crates/postio-render/src/resources.rs` unit tests, assert:
+- [X] T044 [TEST] In `crates/postio-render/src/resources.rs` unit tests, assert:
   - a scope-A `cid:` never resolves for a scope-B reference (FR-004);
   - an unknown key resolves to nothing and increments `resources_unresolved`;
   - an image over 8,192 px a side, over 40 MP or over 16 MiB becomes `Placeholder { w, h }`;
   - `tiff`, `bmp`, `ico` and `avif` bytes become placeholders;
   - an animated GIF yields its first frame (FR-024, research R4)
-- [ ] T045 Implement the resource table in `crates/postio-render/src/resources.rs`: keys from `data-model.md`, header-only dimension probes, and placeholders
+- [X] T045 Implement the resource table in `crates/postio-render/src/resources.rs`: keys from `data-model.md`, header-only dimension probes, and placeholders
 - [ ] T046 [TEST] In `crates/postio-render/tests/thread.rs`, test containment and generations:
   - a request whose resource provider panics (a `#[cfg(test)]` hook) returns `outcome = FellBack { Panicked }` and does not unwind into the test;
   - the next request succeeds;
