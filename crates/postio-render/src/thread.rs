@@ -191,14 +191,18 @@ fn fallback(
     } else {
         ("#ffffff", "#1a1a1a")
     };
-    let escaped = text
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let escaped = escape(text);
+    let notice = escape(notice(reason));
     let request = RenderRequest {
         generation,
         document: format!(
             "<!DOCTYPE html><html><body style=\"margin:0;background:{ground};color:{ink}\">\
+             <p style=\"margin:16px;opacity:0.75\">{notice}</p>\
              <pre style=\"white-space:pre-wrap;font-family:sans-serif;margin:16px\">{escaped}</pre>\
              </body></html>"
         ),
@@ -214,6 +218,16 @@ fn fallback(
     let mut document = crate::render(&request, fonts);
     document.outcome = crate::Outcome::FellBack(reason);
     document
+}
+
+/// Why the plain text is showing: never a silent swap (FR-023).
+fn notice(reason: FallbackReason) -> &'static str {
+    match reason {
+        FallbackReason::Deadline => "Shown as plain text: this message took too long to lay out.",
+        FallbackReason::Panicked => "Shown as plain text: this message could not be laid out.",
+        FallbackReason::OverCap(_) => "Shown as plain text: this message is too large to lay out.",
+        FallbackReason::Undecodable => "Shown as plain text: this message could not be read.",
+    }
 }
 
 /// Log a render thread's panic by where it happened, never by what it

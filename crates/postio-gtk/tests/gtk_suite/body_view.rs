@@ -7,7 +7,7 @@ use std::sync::Arc;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_body::RemoteImages;
-use postio_gtk::body_view::{BodyView, Content, DEFAULT_RENDER_DEADLINE};
+use postio_gtk::body_view::{BodyView, Content};
 use postio_model::test_corpus;
 use postio_render::Resources;
 use postio_ui::reader::document::{self, Rendering};
@@ -87,7 +87,7 @@ pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
-    let view = BodyView::new(postio_test_support::scaled(DEFAULT_RENDER_DEADLINE));
+    let view = BodyView::new(crate::reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()
         .default_width(800)
@@ -139,7 +139,7 @@ pub fn no_frame_shows_only_the_ground() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
-    let view = BodyView::new(postio_test_support::scaled(DEFAULT_RENDER_DEADLINE));
+    let view = BodyView::new(crate::reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()
         .default_width(800)
@@ -218,6 +218,69 @@ pub fn no_frame_shows_only_the_ground() {
     assert!(
         near(Some(frame), card),
         "an evicted tile drew {frame:?}, not the low-resolution card"
+    );
+    window.destroy();
+}
+
+/// FR-023: a render that outlives its deadline is abandoned, and the plain
+/// text shows with a notice saying why and a way to the source. The render
+/// is held by the test, so nothing here depends on a clock.
+pub fn a_render_past_its_deadline_shows_the_plain_text() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let view = BodyView::new(std::time::Duration::from_millis(1));
+    let scroller = gtk::ScrolledWindow::builder().child(&view).build();
+    let window = gtk::Window::builder()
+        .default_width(800)
+        .default_height(600)
+        .child(&scroller)
+        .build();
+    window.present();
+    let mut held = content("html-designed-three-column");
+    let resources = Resources::new();
+    let gate = resources.hold_lookup();
+    held.resources = Arc::new(resources);
+    held.plain_text = "the words the sender also sent as text".to_owned();
+    view.set_content(held);
+    assert!(
+        until(|| view
+            .document()
+            .is_some_and(|d| matches!(d.outcome, postio_render::Outcome::FellBack(_)))),
+        "the render past its deadline did not fall back"
+    );
+    let fallback = view.document().expect("the fallback");
+    assert_eq!(
+        fallback.outcome,
+        postio_render::Outcome::FellBack(postio_render::FallbackReason::Deadline)
+    );
+    assert!(
+        fallback
+            .text
+            .text
+            .contains("the words the sender also sent as text")
+    );
+    assert!(
+        fallback.text.text.contains("took too long"),
+        "no notice says why: {:?}",
+        fallback.text.text
+    );
+    assert!(
+        view.activate_action("body.view-source", None).is_ok(),
+        "no View source action"
+    );
+
+    // The late snapshot arrives, and is not shown.
+    gate.release();
+    let generation = fallback.generation;
+    for _ in 0..30 {
+        pump();
+    }
+    let shown = view.document().expect("still a document");
+    assert_eq!(
+        shown.generation, generation,
+        "the late snapshot replaced the fallback"
     );
     window.destroy();
 }

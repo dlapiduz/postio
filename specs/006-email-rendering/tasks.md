@@ -324,14 +324,14 @@ plan and tasks agree with the decision.
   - while a second request is outstanding, the widget's rendered pixels equal the previous frame, with no ground-only frame;
   - a tile evicted from the cache draws from `low_res` rather than the ground (FR-029)
 - [X] T061 Implement frame continuity in `crates/postio-gtk/src/body_view/mod.rs` and `tiles.rs`
-- [ ] T062 Make the render deadline injectable:
+- [X] T062 Make the render deadline injectable:
   - export `DEFAULT_RENDER_DEADLINE: Duration = 400 ms` from `crates/postio-render/src/lib.rs`;
   - `BodyView::new` takes the deadline as a parameter, and production passes the default;
-  - add one test helper, used by every `gtk_suite` and `app_suite` test that is not about the deadline itself, that builds readers with `postio_test_support::scaled(DEFAULT_RENDER_DEADLINE)`. The helper lives in `crates/postio-gtk/tests/gtk_suite/main.rs` and `crates/postio-app/tests/app_suite/main.rs`.
+  - add one test helper, used by every `gtk_suite` and `app_suite` test that is not about the deadline itself, that builds readers with `postio_test_support::scaled(DEFAULT_RENDER_DEADLINE)`. The helper lives in `crates/postio-gtk/tests/gtk_suite/main.rs` and `crates/postio-app/tests/app_suite/main.rs`. **Done:** `reader_deadline()` in `gtk_suite/main.rs`; `app_suite` gains its twin at the switch (T139), the first time an app test builds a `BodyView`.
 
   This keeps a debug build on a busy CI runner from falling back by accident, while production keeps its 400 ms (research R6, `check-test-deadlines-scale.py`)
-- [ ] T063 [TEST] In `gtk_suite/body_view.rs`, construct a `BodyView` with an **injected 1 ms deadline**, and hold its render with the delay hook until the test releases it. Assert that the widget shows the plain-text fallback with the notice text and a "View source" action. Then release the hook, and assert the late snapshot is not shown. No wall clock appears in the assertion (FR-023)
-- [ ] T064 Implement the deadline timer, `abandon` and the fallback notice in `crates/postio-gtk/src/body_view/mod.rs`, using the injected length and `crates/postio-gtk/src/reader/notices.rs` for the notice
+- [X] T063 [TEST] In `gtk_suite/body_view.rs`, construct a `BodyView` with an **injected 1 ms deadline**, and hold its render with the delay hook until the test releases it. Assert that the widget shows the plain-text fallback with the notice text and a "View source" action. Then release the hook, and assert the late snapshot is not shown. No wall clock appears in the assertion (FR-023)
+- [X] T064 Implement the deadline timer, `abandon` and the fallback notice in `crates/postio-gtk/src/body_view/mod.rs`, using the injected length and `crates/postio-gtk/src/reader/notices.rs` for the notice
 - [ ] T065 [TEST] In `gtk_suite/body_view.rs`, render `html-very-tall.eml` and scroll the adjustment to `upper - page_size` in 50 steps. Assert:
   - the unique last line's cluster rect is inside the viewport;
   - tile bytes held never exceed 64 MiB plus `low_res`, sampled at every step (FR-022)

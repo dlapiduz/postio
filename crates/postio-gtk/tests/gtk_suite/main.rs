@@ -182,7 +182,18 @@ mod no_stray_prints;
 /// this is for; nothing here is held out today.
 const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
+/// The render deadline for every test that is not about the deadline: the
+/// production bound, scaled by `POSTIO_TEST_PATIENCE`, so a debug build on a
+/// busy runner does not fall back by accident (spec 006 research R6).
+pub(crate) fn reader_deadline() -> std::time::Duration {
+    postio_test_support::scaled(postio_gtk::body_view::DEFAULT_RENDER_DEADLINE)
+}
+
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view::a_render_past_its_deadline_shows_the_plain_text",
+        body_view::a_render_past_its_deadline_shows_the_plain_text as fn(),
+    ),
     (
         "body_view::no_frame_shows_only_the_ground",
         body_view::no_frame_shows_only_the_ground as fn(),
