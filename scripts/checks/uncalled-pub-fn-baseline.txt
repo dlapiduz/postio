@@ -72,7 +72,6 @@ on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
-parse_when                        # crates/postio-search/src/date.rs:76 -- spec 007 builds its callers after it: Focus's picker date entry (T091) and the detector's due dates (T116)
 partials                          # crates/postio-search/src/query.rs:369
 plain_forward                     # crates/postio-model/src/reply.rs:221
 plain_quote                       # crates/postio-model/src/reply.rs:213
