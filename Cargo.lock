@@ -4888,13 +4888,16 @@ dependencies = [
  "fontdb",
  "html5ever 0.39.0",
  "image",
+ "kurbo",
  "markup5ever_rcdom 0.39.0+unofficial",
  "parley",
  "postio-body",
  "postio-model",
  "postio-test-support",
  "postio-ui",
+ "static_assertions",
  "stylo",
+ "url",
  "usvg",
 ]
 
