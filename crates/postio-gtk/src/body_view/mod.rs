@@ -508,6 +508,11 @@ impl BodyView {
     }
 
     /// Follow `target`: open it outside, dispatch its verb, or scroll to it.
+    ///
+    // POSTIO-CONSENT: the system browser opens only when the user follows
+    // a link -- a click on it, or Return on the link keyboard focus is on --
+    // never on hover, on render or on load, and never for a URL the
+    // snapshot did not show as an http, https or mailto link.
     fn follow(&self, target: &postio_render::LinkTarget) {
         use postio_render::LinkTarget;
         match target {
