@@ -182,3 +182,35 @@ fn the_low_resolution_copy_is_a_quarter_scale() {
     assert_eq!(doc.low_res.width, expected);
     assert!(doc.low_res.rgba.len() <= 16 * 1024 * 1024);
 }
+
+/// A fragment link names an element the snapshot knows the place of.
+#[test]
+fn a_fragment_link_has_a_place_to_go() {
+    let doc = snapshot();
+    let id = doc
+        .links
+        .iter()
+        .find_map(|l| match &l.target {
+            LinkTarget::Fragment { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .expect("the jump to the budget");
+    let (_, y) = doc
+        .anchors
+        .iter()
+        .find(|(anchor, _)| *anchor == id)
+        .expect("the element it names is in the snapshot's anchors");
+    // The heading, not the link's own "Jump to the budget": find folds case.
+    let heading = doc.text.rects(
+        doc.text
+            .find("Budget")
+            .last()
+            .cloned()
+            .expect("the heading"),
+    )[0];
+    assert!(
+        (heading.y0 - y).abs() < 30.0,
+        "{id} is at {y}, its heading at {}",
+        heading.y0
+    );
+}

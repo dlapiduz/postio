@@ -193,6 +193,14 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 
 const CASES: &[(&str, fn())] = &[
     (
+        "body_view_select::links_are_followed_by_pointer_and_keyboard",
+        body_view_select::links_are_followed_by_pointer_and_keyboard as fn(),
+    ),
+    (
+        "body_view_select::clicking_a_fold_opens_it",
+        body_view_select::clicking_a_fold_opens_it as fn(),
+    ),
+    (
         "body_view_select::a_drag_across_cells_selects_and_copies_them_as_rows",
         body_view_select::a_drag_across_cells_selects_and_copies_them_as_rows as fn(),
     ),

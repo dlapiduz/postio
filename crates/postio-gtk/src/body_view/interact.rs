@@ -57,6 +57,45 @@ pub(super) fn install(view: &BodyView) {
     });
     view.add_controller(click);
 
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_motion({
+        let view = view.downgrade();
+        move |_, x, y| {
+            if let Some(view) = view.upgrade() {
+                view.hover(gtk::graphene::Point::new(x as f32, y as f32));
+            }
+        }
+    });
+    view.add_controller(motion);
+
+    // Tab walks the links in document order; Return follows the focused one.
+    let keys = gtk::EventControllerKey::new();
+    keys.connect_key_pressed({
+        let view = view.downgrade();
+        move |_, key, _, modifiers| {
+            let Some(view) = view.upgrade() else {
+                return gtk::glib::Propagation::Proceed;
+            };
+            let has_links = view.document().is_some_and(|d| !d.links.is_empty());
+            match key {
+                gdk::Key::Tab | gdk::Key::ISO_Left_Tab if has_links => {
+                    let back = modifiers.contains(gdk::ModifierType::SHIFT_MASK)
+                        || key == gdk::Key::ISO_Left_Tab;
+                    view.focus_next_link(!back);
+                    gtk::glib::Propagation::Stop
+                }
+                gdk::Key::Return | gdk::Key::KP_Enter
+                    if view.imp().focused_link.get().is_some() =>
+                {
+                    view.activate_focused_link();
+                    gtk::glib::Propagation::Stop
+                }
+                _ => gtk::glib::Propagation::Proceed,
+            }
+        }
+    });
+    view.add_controller(keys);
+
     let shortcuts = gtk::ShortcutController::new();
     for trigger in ["<Control>c", "<Control>Insert"] {
         shortcuts.add_shortcut(gtk::Shortcut::new(
@@ -143,8 +182,24 @@ impl BodyView {
         }
     }
 
-    /// Draw the selection over the tiles.
+    /// Draw the selection over the tiles, and the keyboard focus ring.
     pub(super) fn draw_selection(&self, snapshot: &gtk::Snapshot, left: f64, top: f64) {
+        if let (Some(at), Some(document)) = (self.imp().focused_link.get(), self.document())
+            && let Some(link) = document.links.get(at)
+        {
+            let r = link.rect;
+            let bounds = gtk::graphene::Rect::new(
+                (r.x0 - left - 2.0) as f32,
+                (r.y0 - top - 2.0) as f32,
+                (r.width() + 4.0) as f32,
+                (r.height() + 4.0) as f32,
+            );
+            snapshot.append_border(
+                &gtk::gsk::RoundedRect::from_rect(bounds, 3.0),
+                &[2.0; 4],
+                &[HIGHLIGHT.with_alpha(1.0); 4],
+            );
+        }
         for rect in self.selection_rects() {
             snapshot.append_color(
                 &HIGHLIGHT,

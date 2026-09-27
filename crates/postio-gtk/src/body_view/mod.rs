@@ -21,6 +21,9 @@ use postio_render::{RenderRequest, RenderedDocument, Renderer, Resources, Theme,
 
 pub use postio_render::DEFAULT_RENDER_DEADLINE;
 
+/// What follows an external link in place of the desktop's launcher.
+type Launcher = Box<dyn Fn(&str)>;
+
 /// What a `BodyView` shows: a composed document and everything it may load.
 #[derive(Clone)]
 pub struct Content {
@@ -90,6 +93,13 @@ mod imp {
         pub(super) anchor: Cell<Option<usize>>,
         /// The selection, as a range of the text index (FR-017).
         pub(super) selection: RefCell<Option<std::ops::Range<usize>>>,
+        /// The folds the user has flipped from how the document sets them.
+        pub(super) toggled_folds: RefCell<Vec<String>>,
+        /// The link keyboard focus is on, by its index in the snapshot.
+        pub(super) focused_link: Cell<Option<usize>>,
+        /// What follows an external link; the desktop's launcher unless a
+        /// test replaced it.
+        pub(super) launcher: RefCell<Option<Launcher>>,
         /// Where a drag began, in the view's coordinates.
         pub(super) drag_start: Cell<Option<gtk::graphene::Point>>,
         /// The messages the user darkened (FR-013a): for this session only,
@@ -118,6 +128,9 @@ mod imp {
                 darkened: RefCell::default(),
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
+                toggled_folds: RefCell::default(),
+                focused_link: Cell::new(None),
+                launcher: RefCell::default(),
                 theme_handlers: RefCell::default(),
             }
         }
@@ -170,7 +183,16 @@ mod imp {
 
         fn signals() -> &'static [glib::subclass::Signal] {
             static SIGNALS: OnceLock<Vec<glib::subclass::Signal>> = OnceLock::new();
-            SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("view-source").build()])
+            SIGNALS.get_or_init(|| {
+                vec![
+                    glib::subclass::Signal::builder("view-source").build(),
+                    // A verb link was followed: the message's scope, and the
+                    // verb (`reply`, `forward`, `continue`, `allow`).
+                    glib::subclass::Signal::builder("message-verb")
+                        .param_types([String::static_type(), String::static_type()])
+                        .build(),
+                ]
+            })
         }
     }
 
@@ -260,6 +282,20 @@ impl BodyView {
         })
     }
 
+    /// Open a closed fold, or close an open one, and re-render.
+    fn toggle_fold(&self, id: &str) {
+        {
+            let mut toggled = self.imp().toggled_folds.borrow_mut();
+            match toggled.iter().position(|t| t == id) {
+                Some(at) => {
+                    toggled.remove(at);
+                }
+                None => toggled.push(id.to_owned()),
+            }
+        }
+        self.request_render();
+    }
+
     /// Darken the message on screen, or show it as sent again (FR-013a).
     /// False when there is nothing to darken: not dark, or not paper.
     pub fn toggle_darken(&self) -> bool {
@@ -322,11 +358,28 @@ impl BodyView {
         let Some(document) = self.document() else {
             return;
         };
+        if presses == 1 {
+            let point = self.document_point(at);
+            // A link first: the reader's verbs sit inside a message's
+            // header, which is its fold's summary.
+            if let Some(link) = document.link_at(point) {
+                self.follow(&link.target.clone());
+                return;
+            }
+            if let Some(fold) = document.fold_at(point) {
+                self.toggle_fold(&fold.id.clone());
+                return;
+            }
+        }
         let Some(offset) = document.text.hit(self.document_point(at)) else {
             self.set_selection(None);
             return;
         };
         let range = match presses {
+            1 => {
+                self.set_selection(None);
+                return;
+            }
             2 => document.text.word_at(offset),
             3 => document.text.line_at(offset),
             _ => {
@@ -349,6 +402,143 @@ impl BodyView {
         match (self.selection(), self.document()) {
             (Some(range), Some(document)) => document.text.rects(range),
             _ => Vec::new(),
+        }
+    }
+
+    /// Follow external links with `launch` instead of the desktop's
+    /// launcher: how a test sees what would have opened.
+    #[doc(hidden)]
+    pub fn set_launcher(&self, launch: impl Fn(&str) + 'static) {
+        self.imp().launcher.replace(Some(Box::new(launch)));
+    }
+
+    /// Call `f` with a message's scope and verb (`reply`, `forward`,
+    /// `continue`, `allow`) when a verb link in it is followed.
+    pub fn connect_message_verb(
+        &self,
+        f: impl Fn(&Self, &str, &str) + 'static,
+    ) -> Option<glib::SignalHandlerId> {
+        Some(self.connect_local("message-verb", false, move |values| {
+            let view = values[0].get::<BodyView>().expect("the signal's own view");
+            let scope = values[1].get::<String>().expect("a scope");
+            let verb = values[2].get::<String>().expect("a verb");
+            f(&view, &scope, &verb);
+            None
+        }))
+    }
+
+    /// The pointer is at `at`, in the view's coordinates.
+    #[doc(hidden)]
+    pub fn hover(&self, at: gtk::graphene::Point) {
+        let point = self.document_point(at);
+        let target = self
+            .document()
+            .and_then(|doc| doc.link_at(point).map(|link| link.target.describe()));
+        self.set_tooltip_text(target.as_deref());
+        self.set_cursor_from_name(Some(if target.is_some() { "pointer" } else { "text" }));
+    }
+
+    /// Move keyboard focus to the next link (`forward`) or the previous.
+    #[doc(hidden)]
+    pub fn focus_next_link(&self, forward: bool) {
+        let Some(document) = self.document() else {
+            return;
+        };
+        let count = document.links.len();
+        if count == 0 {
+            return;
+        }
+        let next = match (self.imp().focused_link.get(), forward) {
+            (None, true) => 0,
+            (None, false) => count - 1,
+            (Some(at), true) => (at + 1) % count,
+            (Some(at), false) => (at + count - 1) % count,
+        };
+        self.imp().focused_link.set(Some(next));
+        self.scroll_into_view(document.links[next].rect);
+        self.queue_draw();
+    }
+
+    /// Where the focused link goes, as its tooltip says it.
+    #[doc(hidden)]
+    pub fn focused_link_target(&self) -> Option<String> {
+        let document = self.document()?;
+        let link = document.links.get(self.imp().focused_link.get()?)?;
+        Some(link.target.describe())
+    }
+
+    /// Follow the focused link.
+    #[doc(hidden)]
+    pub fn activate_focused_link(&self) {
+        let Some(document) = self.document() else {
+            return;
+        };
+        if let Some(link) = self
+            .imp()
+            .focused_link
+            .get()
+            .and_then(|at| document.links.get(at))
+        {
+            self.follow(&link.target);
+        }
+    }
+
+    /// Follow `target`: open it outside, dispatch its verb, or scroll to it.
+    fn follow(&self, target: &postio_render::LinkTarget) {
+        use postio_render::LinkTarget;
+        match target {
+            LinkTarget::External(url) => {
+                if let Some(launch) = self.imp().launcher.borrow().as_ref() {
+                    launch(url.as_str());
+                    return;
+                }
+                let root = self.root().and_downcast::<gtk::Window>();
+                gtk::UriLauncher::new(url.as_str()).launch(
+                    root.as_ref(),
+                    None::<&gtk::gio::Cancellable>,
+                    |_| {},
+                );
+            }
+            LinkTarget::Verb { scope, verb } => {
+                self.emit_by_name::<()>("message-verb", &[scope, &verb.name().to_owned()]);
+            }
+            LinkTarget::Fragment { scope, id } => {
+                let Some(document) = self.document() else {
+                    return;
+                };
+                let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+                    return;
+                };
+                // The element with that id, or failing that its message's top.
+                let top = document
+                    .anchors
+                    .iter()
+                    .find(|(anchor, _)| anchor == id)
+                    .map(|(_, y)| *y)
+                    .or_else(|| {
+                        document
+                            .messages
+                            .iter()
+                            .find(|m| &m.scope == scope)
+                            .map(|m| m.rect.y0)
+                    });
+                if let Some(top) = top {
+                    adjustment.set_value(top);
+                }
+            }
+        }
+    }
+
+    /// Scroll so `rect`, in document coordinates, is in view.
+    fn scroll_into_view(&self, rect: postio_render::Rect) {
+        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+            return;
+        };
+        let (top, page) = (adjustment.value(), adjustment.page_size());
+        if rect.y0 < top {
+            adjustment.set_value(rect.y0);
+        } else if rect.y1 > top + page {
+            adjustment.set_value(rect.y1 - page);
         }
     }
 
@@ -410,7 +600,7 @@ impl BodyView {
                 high_contrast: style.is_high_contrast(),
             },
             darkened: imp.darkened.borrow().clone(),
-            toggled_folds: Vec::new(),
+            toggled_folds: imp.toggled_folds.borrow().clone(),
             reader_view: Vec::new(),
         };
         let fallback = (request.plain_text.clone(), request.theme, request.viewport);

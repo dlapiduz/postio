@@ -73,6 +73,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         links: crate::snapshot::links(&doc),
         messages,
         folds: crate::snapshot::folds(&doc),
+        anchors: crate::snapshot::anchors(&doc),
         counts,
         outcome: Outcome::Rendered,
         needs_reader_view: plan.unreachable,
