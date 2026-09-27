@@ -16,8 +16,9 @@ use crate::rules::Rules;
 /// it and whether to hold it (`contracts/engine.md`).
 ///
 /// The layers run in FR-130's order -- guards, corrections, structure and
-/// rules -- and each decides only what no earlier layer has. With no rules
-/// yet, nothing is decided, and the outcome is empty.
+/// rules -- and each decides only what no earlier layer has. The guards
+/// can only keep mail in the inbox, and with no filing rules yet (T122,
+/// T133) nothing is filtered or held: the outcome is empty.
 pub fn at_filing(message: &FiledMessage<'_>, facts: &dyn Facts, rules: &dyn Rules) -> Outcome {
     Pipeline::built_in().at_filing(message, facts, rules)
 }
