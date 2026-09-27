@@ -162,7 +162,7 @@ fn numeric_piece(run: &str) -> Option<Piece> {
 }
 
 /// A weekday by any of the names people type for it.
-fn weekday_from_name(name: &str) -> Option<chrono::Weekday> {
+pub(crate) fn weekday_from_name(name: &str) -> Option<chrono::Weekday> {
     use chrono::Weekday;
     Some(match name {
         "mon" | "monday" => Weekday::Mon,
@@ -626,7 +626,7 @@ fn flush_number(number: &mut String, runs: &mut Vec<Run>) -> Option<()> {
 }
 
 /// English month names and the abbreviations people actually type.
-fn month_from_name(name: &str) -> Option<u32> {
+pub(crate) fn month_from_name(name: &str) -> Option<u32> {
     let month = match name {
         "jan" | "january" => 1,
         "feb" | "february" => 2,
