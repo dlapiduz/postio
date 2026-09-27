@@ -4,9 +4,9 @@
 
 **Created**: 2026-09-26
 
-**Status**: Draft, clarified 2026-09-26. Nothing lands on `main` until the
-maintainer says so. Planning waits for `specs/006-email-rendering` to merge
-(see *The message view waits for the new renderer*).
+**Status**: Draft, clarified 2026-09-26 and planned 2026-09-27
+([plan.md](./plan.md)), once `specs/006-email-rendering` had merged. Nothing
+lands on `main` until the maintainer says so.
 
 **Input**: User description: "Postio Focus: a second GTK4/libadwaita desktop
 app on the Postio engine. It is a dense, keyboard-first inbox that shows mail
@@ -200,8 +200,9 @@ Neither matches `main` as of 2026-09-26:
 
 The work that matches is `specs/006-email-rendering` on
 `feature/email-rendering`: a disconnected reading renderer, with its engine
-chosen by an evaluation. It is planned and in implementation, and it is not
-merged. The maintainer confirmed it is the change meant (Clarifications).
+chosen by an evaluation. The maintainer confirmed it is the change meant
+(Clarifications). It merged to `main` on 2026-09-27, and the plan designs
+against it as it stands there (research R0, R2).
 
 So:
 
