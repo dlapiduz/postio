@@ -60,11 +60,16 @@ impl Resources {
     }
 
     /// Add an image the app fetched from `url` for this message's sender.
+    ///
+    /// Kept under the parsed URL, because that is how the engine asks for
+    /// it: `https://IMAGES.example.net/a b.png` in a document is requested
+    /// as `https://images.example.net/a%20b.png`.
     pub fn insert_remote(&self, url: &str, bytes: Vec<u8>) {
+        let key = url::Url::parse(url).map_or_else(|_| url.to_owned(), |parsed| parsed.to_string());
         self.remote
             .lock()
             .expect("the resource table is never poisoned")
-            .insert(url.to_owned(), Bytes::from(bytes));
+            .insert(key, Bytes::from(bytes));
     }
 
     /// Add a bundled face, answered for `postio-font:<name>`.
@@ -315,6 +320,19 @@ mod tests {
         assert!(table.resolve("postio-cid:7/logo%40example.com").is_some());
         assert!(table.resolve("postio-cid:11/logo%40example.com").is_none());
         assert!(table.resolve("postio-cid:logo%40example.com").is_none());
+    }
+
+    /// The engine asks for a remote image by its parsed URL, which is not
+    /// always how the document spelled it: the table answers either.
+    #[test]
+    fn a_remote_image_resolves_by_its_parsed_url() {
+        let table = Resources::new();
+        table.insert_remote("https://IMAGES.example.net/a b.png", png(2, 2));
+        assert!(
+            table
+                .resolve("https://images.example.net/a%20b.png")
+                .is_some()
+        );
     }
 
     #[test]

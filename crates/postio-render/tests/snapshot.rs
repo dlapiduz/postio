@@ -214,3 +214,14 @@ fn a_fragment_link_has_a_place_to_go() {
         heading.y0
     );
 }
+
+/// Every snapshot alive is counted, and a dropped one stops being: what the
+/// reader's "memory does not grow with messages viewed" rests on (SC-006).
+#[test]
+fn a_snapshot_is_counted_while_it_lives() {
+    let before = postio_render::live_documents();
+    let doc = snapshot();
+    assert_eq!(postio_render::live_documents(), before + 1);
+    drop(doc);
+    assert_eq!(postio_render::live_documents(), before);
+}

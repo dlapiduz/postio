@@ -108,6 +108,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         counts,
         outcome: Outcome::Rendered,
         needs_reader_view: plan.unreachable,
+        _live: crate::Live::new(),
     };
     zoom_geometry(&mut document, zoom);
     document.low_res = low_res(&document);
