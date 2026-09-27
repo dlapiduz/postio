@@ -155,6 +155,8 @@ These change in the same commit as the defaults:
 - the terminal's `app.rs` tests that press `s`, `d` and `X`;
 - `docs/PRODUCT.md` §8 (`e` replies, `a` archives, `u` undoes, `J`/`K` walk a
   thread), which becomes the new sentence;
+- `CLAUDE.md`'s line of keys (`e` reply, `a`/`A` archive, `u` undo, `J`/`K`
+  walk a thread), which says `mod+z` for undo;
 - the design canvas's key hints, which follow the registry at render time.
 
 **How to test it.** An enumeration across frontends
