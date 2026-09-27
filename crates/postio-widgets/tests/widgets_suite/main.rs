@@ -58,7 +58,7 @@ fn close_all_windows() {
     for window in windows {
         window.destroy();
     }
-    while glib::MainContext::default().iteration(false) {}
+    while gtk::glib::MainContext::default().iteration(false) {}
 }
 
 fn main() {

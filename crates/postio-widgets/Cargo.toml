@@ -8,10 +8,14 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
-[dev-dependencies]
+[dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
-glib = { version = "0.22.9", features = ["v2_72"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+postio-body.workspace = true
+postio-config.workspace = true
+# The reading renderer (spec 006): BodyView draws its snapshots.
+postio-render.workspace = true
+postio-ui.workspace = true
 
 # The shared crate's GTK suite: the custom harness of postio-gtk's gtk_suite
 # and postio-app's app_suite, for their reasons -- GTK initializes on exactly

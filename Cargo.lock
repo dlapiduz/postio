@@ -4844,6 +4844,7 @@ dependencies = [
  "postio-search",
  "postio-test-support",
  "postio-ui",
+ "postio-widgets",
  "tempfile",
  "thiserror",
  "tracing",
@@ -5148,9 +5149,12 @@ dependencies = [
 name = "postio-widgets"
 version = "0.3.0"
 dependencies = [
- "glib",
  "gtk4",
  "libadwaita",
+ "postio-body",
+ "postio-config",
+ "postio-render",
+ "postio-ui",
 ]
 
 [[package]]

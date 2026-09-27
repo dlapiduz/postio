@@ -24,6 +24,8 @@ postio-ui.workspace = true
 # The reading renderer (spec 006): BodyView draws its snapshots.
 postio-render.workspace = true
 postio-search.workspace = true
+# What both desktop apps draw: the message view, and more to come (ADR 0043).
+postio-widgets.workspace = true
 thiserror = { workspace = true }
 tracing = { workspace = true }
 webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }

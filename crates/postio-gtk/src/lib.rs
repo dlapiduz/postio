@@ -65,7 +65,10 @@
 
 pub mod app;
 pub mod autoscroll;
-pub mod body_view;
+// Moved to postio-widgets, which both desktop apps draw with (ADR 0043).
+// The reader still names it `crate::body_view` until it moves there too
+// (specs/007-postio-focus T019), which is when this line goes.
+pub use postio_widgets::body_view;
 pub mod capture;
 pub mod cheatsheet;
 pub mod composer;
