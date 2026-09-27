@@ -60,7 +60,7 @@
 //! `postio-gtk` needs no change to keep reaching [`parse`], [`ParsedQuery`],
 //! [`facets`] and [`highlight`].
 
-mod date;
+pub mod date;
 pub mod facets;
 pub mod highlight;
 mod parser;
