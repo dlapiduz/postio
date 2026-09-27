@@ -103,3 +103,51 @@ fn a_relative_image_url_resolves_to_nothing_without_a_panic() {
         "the dangling cid: and the relative src"
     );
 }
+
+/// An SVG image paints its own shapes, and never a local file its
+/// `<image href>` names: usvg's default resolver reads any path it is
+/// given, and Blitz used the default (research R5).
+#[test]
+fn an_svg_image_paints_its_shapes_and_no_local_file() {
+    let probe = tempfile::Builder::new()
+        .suffix(".png")
+        .tempfile()
+        .expect("a temporary file");
+    let magenta = image::RgbImage::from_pixel(40, 40, image::Rgb([0xff, 0x00, 0xff]));
+    magenta
+        .save_with_format(probe.path(), image::ImageFormat::Png)
+        .expect("the probe PNG is written");
+
+    let (request, parts) = request("html-svg-local-file");
+    let (cid, svg) = parts.into_iter().next().expect("the fixture's SVG part");
+    let svg = String::from_utf8(svg)
+        .expect("the SVG is text")
+        // Both forms: the fixture's `file://` URL, and a bare absolute
+        // path, which is what usvg's default resolver hands to fs::read.
+        .replacen(
+            "file:///tmp/postio-svg-local-file-probe.png",
+            &probe.path().to_string_lossy(),
+            1,
+        )
+        .replace(
+            "/tmp/postio-svg-local-file-probe.png",
+            &probe.path().to_string_lossy(),
+        );
+    request.resources.insert_part(None, &cid, svg.into_bytes());
+
+    let raster = postio_render::rasterize(&postio_render::render(&request));
+    let pixels = raster.rgba.as_chunks::<4>().0;
+    let near = |p: &[u8; 4], [r, g, b]: [u8; 3]| {
+        p[0].abs_diff(r) < 8 && p[1].abs_diff(g) < 8 && p[2].abs_diff(b) < 8
+    };
+    let green = pixels
+        .iter()
+        .filter(|p| near(p, [0x2e, 0x7d, 0x32]))
+        .count();
+    let leaked = pixels
+        .iter()
+        .filter(|p| near(p, [0xff, 0x00, 0xff]))
+        .count();
+    assert_eq!(leaked, 0, "{leaked} pixels of a local file were painted");
+    assert!(green > 1_000, "the SVG's own rect painted {green} pixels");
+}

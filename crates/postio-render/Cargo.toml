@@ -27,6 +27,8 @@ fontdb = "0.24"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 kurbo = "0.13"
 base64 = { workspace = true }
+# SVG images are re-serialised with no external references (research R5).
+usvg = "=0.48"
 # The sanitizer's part URI scheme, and its decoding.
 postio-body = { workspace = true }
 url = { workspace = true }
@@ -44,6 +46,7 @@ markup5ever_rcdom = "0.39.0"
 postio-model = { version = "0.3.0", path = "../postio-model", features = ["test-corpus"] }
 postio-ui = { version = "0.3.0", path = "../postio-ui" }
 postio-test-support = { workspace = true, features = ["fidelity"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

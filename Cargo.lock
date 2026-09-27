@@ -4898,7 +4898,9 @@ dependencies = [
  "postio-ui",
  "static_assertions",
  "stylo",
+ "tempfile",
  "url",
+ "usvg",
 ]
 
 [[package]]
