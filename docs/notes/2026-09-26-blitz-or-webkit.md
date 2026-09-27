@@ -199,7 +199,16 @@ not:
   borders at all. A one-cell probe paints 1,989 dark pixels with
   `collapse` and none with `separate`. Upstream has it as DioxusLabs/blitz
   #504, *"Collapsed table borders paint a phantom 3px grid for borderless
-  tables"*, an open PR with a fix, not merged at the time of writing.
+  tables"*, an open issue with no fix upstream: 0.3.0-beta.2 of
+  2026-08-24 is still the latest release, and nothing on `main` since
+  touches collapsed borders.
+- **Patched, it is 6 of 6.** Postio now carries Blitz in-tree with its own
+  fix (`patches/blitz/0001-collapsed-borders-only-where-they-are-drawn.patch`,
+  written against upstream's source; `scripts/blitz-patches.sh verify`
+  proves `vendor/` is the release plus the queue). With it the harness
+  gives `html-newsletter` **98.4%** and `html-transactional-receipt`
+  98.9%, the rest unchanged, and legibility still 0 runs below 4.5:1
+  after the rule.
 - **The counterfactual.** Forcing `separate`, which stands in for #504,
   gives **6 of 6** (97.2–99.1%). This was measured and labelled as such
   (`POSTIO_EVAL_COUNTERFACTUAL_504`), and it is not arm B's result.
@@ -429,7 +438,7 @@ Read-only, by an agent:
 | **G1** legible | **pass**, with the rule and a dark flag it owes: 28 → 0 at 4.5:1 | **pass**, with the rule: 26 → 0 at 4.5:1 |
 | **G2** no egress | **pass**: 0 unconsented; images only when consented | **pass**: 0, structurally |
 | **G3** survives | **pass**: ≤ 374 ms, no crash | **pass**, with a `base_url` configured; 1–101 ms |
-| S1 fidelity | 6 of 6 (the references are WebKit's own) | 5 of 6; 6 of 6 with blitz#504 |
+| S1 fidelity | 6 of 6 (the references are WebKit's own) | 5 of 6 as released; **6 of 6** with Postio's #504 patch |
 | S2 cost | ~85–100 MiB web process + UI; 42 ms asynchronous handover | no process; per-render growth bounded by tiles; font loading needs redesign |
 | S3 blank frames | open reports (#749, #947) | not measurable yet; removed by construction |
 | S4 affordance work | ~15–20 tasks | ~75 tasks |

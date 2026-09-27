@@ -533,72 +533,84 @@ impl ElementCx<'_, '_> {
         let inner_width = cols.span() as f64;
         let inner_height = rows.span() as f64;
 
-        // TODO: support different colors for different borders
+        // Each edge in its own colour: the vertical lines were drawn in
+        // `border-top-color` too. An edge with no visible width (its style
+        // `none` or `hidden`, so laid out as zero) or no visible colour is
+        // not drawn at all.
         let current_color = self.style.clone_color();
-        let border_color = border_style
-            .border_top_color
-            .resolve_to_absolute(&current_color)
-            .as_srgb_color();
+        let widths = &table.collapsed_widths;
+        let edge = |width: f32, color: &style::values::computed::Color| {
+            let color = color.resolve_to_absolute(&current_color).as_srgb_color();
+            (width > 0.0 && color != Color::TRANSPARENT).then_some((f64::from(width), color))
+        };
+        let top = edge(widths.top, &border_style.border_top_color);
+        let right = edge(widths.right, &border_style.border_right_color);
+        let bottom = edge(widths.bottom, &border_style.border_bottom_color);
+        let left = edge(widths.left, &border_style.border_left_color);
 
-        // No need to draw transparent borders (as they won't be visible anyway)
-        if border_color == Color::TRANSPARENT {
-            return;
-        }
-
-        let border_width = border_style.border_top_width.0.to_f64_px();
-
-        // Draw horizontal inner borders (the gutters between adjacent row tracks)
-        let row_origin = rows.origin();
-        for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
-            let shape = Rect::new(
-                0.0,
-                (prev.end - row_origin) as f64,
-                inner_width,
-                (next.start - row_origin) as f64,
-            )
-            .scale_from_origin(self.scale);
-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+        // Draw horizontal inner borders (the gutters between adjacent row
+        // tracks), in the colour of the edge that gave them their width
+        if let Some((_, color)) = bottom.or(top) {
+            let row_origin = rows.origin();
+            for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
+                let shape = Rect::new(
+                    0.0,
+                    (prev.end - row_origin) as f64,
+                    inner_width,
+                    (next.start - row_origin) as f64,
+                )
+                .scale_from_origin(self.scale);
+                scene.fill(Fill::NonZero, self.transform, color, None, &shape);
+            }
         }
 
         // Draw horizontal outer borders
         // Top border
-        if outer_border_style.border_top_style != BorderStyle::Hidden {
-            let shape =
-                Rect::new(0.0, 0.0, inner_width, border_width).scale_from_origin(self.scale);
-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+        if let Some((width, color)) = top
+            && outer_border_style.border_top_style != BorderStyle::Hidden
+        {
+            let shape = Rect::new(0.0, 0.0, inner_width, width).scale_from_origin(self.scale);
+            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
         }
         // Bottom border
-        if outer_border_style.border_bottom_style != BorderStyle::Hidden {
-            let shape = Rect::new(0.0, inner_height, inner_width, inner_height + border_width)
+        if let Some((width, color)) = bottom
+            && outer_border_style.border_bottom_style != BorderStyle::Hidden
+        {
+            let shape = Rect::new(0.0, inner_height, inner_width, inner_height + width)
                 .scale_from_origin(self.scale);
-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
         }
 
         // Draw vertical inner borders (the gutters between adjacent column tracks)
-        let col_origin = cols.origin();
-        for (prev, next) in cols.iter().zip(cols.iter().skip(1)) {
-            let shape = Rect::new(
-                (prev.end - col_origin) as f64,
-                0.0,
-                (next.start - col_origin) as f64,
-                inner_height,
-            )
-            .scale_from_origin(self.scale);
-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+        if let Some((_, color)) = right.or(left) {
+            let col_origin = cols.origin();
+            for (prev, next) in cols.iter().zip(cols.iter().skip(1)) {
+                let shape = Rect::new(
+                    (prev.end - col_origin) as f64,
+                    0.0,
+                    (next.start - col_origin) as f64,
+                    inner_height,
+                )
+                .scale_from_origin(self.scale);
+                scene.fill(Fill::NonZero, self.transform, color, None, &shape);
+            }
         }
 
         // Draw vertical outer borders
         // Left border
-        if outer_border_style.border_left_style != BorderStyle::Hidden {
-            let shape =
-                Rect::new(0.0, 0.0, border_width, inner_height).scale_from_origin(self.scale);
-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+        if let Some((width, color)) = left
+            && outer_border_style.border_left_style != BorderStyle::Hidden
+        {
+            let shape = Rect::new(0.0, 0.0, width, inner_height).scale_from_origin(self.scale);
+            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
         }
         // Right border
-        if outer_border_style.border_right_style != BorderStyle::Hidden {
-            let shape = Rect::new(inner_width, 0.0, inner_width + border_width, inner_height)
+        if let Some((width, color)) = right
+            && outer_border_style.border_right_style != BorderStyle::Hidden
+        {
+            let shape = Rect::new(inner_width, 0.0, inner_width + width, inner_height)
                 .scale_from_origin(self.scale);
-            scene.fill(Fill::NonZero, self.transform, border_color, None, &shape);
+            scene.fill(Fill::NonZero, self.transform, color, None, &shape);
         }
     }
 

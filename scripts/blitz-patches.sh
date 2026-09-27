@@ -68,7 +68,11 @@ diff)
     cd "$work"
     for crate in "${CRATES[@]}"; do
         ln -s "$ROOT/vendor/$crate" "patched-$crate"
-        diff -ruN "$crate" "patched-$crate/" | sed "s#^+++ patched-$crate/#+++ $crate/#" || true
+        # Headers name both sides by the crate and carry no timestamps, so
+        # a regenerated patch differs only where the change does.
+        diff -ruN "$crate" "patched-$crate/" | sed -E \
+            -e "s#^diff -ruN ([^ ]*) patched-$crate/#diff -ruN \1 $crate/#" \
+            -e "s#^(---|\+\+\+) (patched-)?([^\t]*)\t.*#\1 \3#" || true
     done
     ;;
 *)
