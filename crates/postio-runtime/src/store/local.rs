@@ -1008,9 +1008,9 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
         flagged: row.is_flagged,
         has_attachments: row.has_attachments,
         last_at: row.last_at,
-        // Focus reads its markers with its page, once they exist; no other
-        // list has any to draw.
-        marker: None,
+        // Only Focus's page reads markers; every other list's rows have
+        // none to draw.
+        marker: row.marker,
         copies: Vec::new(),
         representative: MessageSummary {
             id: latest.id,

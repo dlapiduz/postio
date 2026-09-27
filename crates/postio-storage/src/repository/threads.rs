@@ -25,6 +25,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use postio_model::listing::{MarkerSummary, MarkerWhen};
 use postio_model::{
     AccountId, EmailAddress, LabelId, MailboxId, MessageId, Thread, ThreadId, normalize_subject,
 };
@@ -265,6 +266,13 @@ pub struct ThreadListRow {
     /// different columns, and a cursor is only ever compared against the one
     /// it came from.
     pub sort_id: i64,
+    /// What Focus calls out on the row: the conversation's newest marker
+    /// the person has not dismissed (spec 007).
+    ///
+    /// Read by Focus's pages only, in one statement for the page; every
+    /// list the classic app and the terminal read leaves it `None` and
+    /// reads nothing to find that out.
+    pub marker: Option<MarkerSummary>,
 }
 
 impl ThreadListRow {
@@ -447,6 +455,7 @@ fn read_focus_row(row: &Row) -> Result<(AccountId, ThreadListRow)> {
             last_at: from_millis(row.col(8)?),
             latest: Some(read_list_row_at(row, FOCUS_REPRESENTATIVE)?),
             sort_id: row.col(9)?,
+            marker: None,
         },
     ))
 }
@@ -1345,7 +1354,73 @@ impl<'a> ThreadRepository<'a> {
                 row.participants = vec![from];
             }
         }
+        self.mark(&query.inboxes, &mut groups).await?;
         Ok(groups)
+    }
+
+    /// Gives each row of a Focus page its marker, in one statement for the
+    /// page ([`Self::explain_focus_markers`]), on the pattern of
+    /// [`Self::participants_for`].
+    ///
+    /// A folded row draws its own conversation's marker first and a copy's
+    /// only when its own has none: the copies are one conversation, so
+    /// whichever copy the person's classifier reached first speaks for it.
+    async fn mark(
+        &self,
+        inboxes: &[(AccountId, MailboxId)],
+        groups: &mut [ThreadGroup],
+    ) -> Result<()> {
+        let mut threads: Vec<i64> = groups
+            .iter()
+            .flat_map(|group| group.members.iter().map(|(_, thread)| thread.get()))
+            .collect();
+        threads.sort_unstable();
+        threads.dedup();
+        let lone: Vec<i64> = groups
+            .iter()
+            .filter(|group| group.row.id.is_none())
+            .filter_map(|group| group.row.latest.as_ref().map(|latest| latest.id.get()))
+            .collect();
+        if threads.is_empty() && lone.is_empty() {
+            return Ok(());
+        }
+        let sql = self.explain_focus_markers(inboxes.len(), threads.len(), lone.len());
+        let mut arguments = threads.clone();
+        if !threads.is_empty() {
+            arguments.extend(inboxes.iter().map(|(_, inbox)| inbox.get()));
+        }
+        arguments.extend(lone);
+        let mut statement = sql::statement(self.connection, &sql).await?;
+        let found = sql::mapped(&mut statement, arguments, |row| {
+            Ok((
+                row.col::<Option<i64>>(0)?,
+                row.col::<i64>(1)?,
+                read_marker_summary(row, 2)?,
+            ))
+        })
+        .await?;
+        drop(statement);
+
+        let mut by_thread: HashMap<ThreadId, MarkerSummary> = HashMap::new();
+        let mut by_message: HashMap<MessageId, MarkerSummary> = HashMap::new();
+        for (thread, message, marker) in found {
+            match thread {
+                Some(thread) => by_thread.insert(ThreadId::new(thread), marker),
+                None => by_message.insert(MessageId::new(message), marker),
+            };
+        }
+        for ThreadGroup { row, members } in groups {
+            row.marker = match row.id {
+                Some(_) => members
+                    .iter()
+                    .find_map(|(_, thread)| by_thread.get(thread).cloned()),
+                None => row
+                    .latest
+                    .as_ref()
+                    .and_then(|latest| by_message.get(&latest.id).cloned()),
+            };
+        }
+        Ok(())
     }
 
     /// Focus's window, `offset` rows in: one statement, each row with the
@@ -1411,6 +1486,46 @@ impl<'a> ThreadRepository<'a> {
             "{arms}\n ORDER BY focus_at DESC, focus_id DESC LIMIT {}{skip}",
             query.limit
         )
+    }
+
+    /// The SQL a Focus page reads its markers with, for `inboxes` inboxes,
+    /// `threads` conversations and `lone` messages in none: for each
+    /// conversation, its newest message in the inboxes' Focus slice that
+    /// carries a marker the person has not dismissed -- one row per
+    /// conversation that draws a marker, and none for one that does not.
+    ///
+    /// Driven from the conversations' own index, each bounded by the size of
+    /// one conversation, and into `markers` by its key: never a walk of
+    /// either table. `m.mailbox_id + 0` is what keeps it there -- with the
+    /// column bare the planner seeks the inbox instead and walks all of it,
+    /// a cost of the inbox rather than of the page. The newest marked
+    /// message is `max()`'s row, whose bare columns the engine answers from,
+    /// the pattern [`Self::participants_for`] relies on with `min()`.
+    pub fn explain_focus_markers(&self, inboxes: usize, threads: usize, lone: usize) -> String {
+        let columns = "k.kind, k.starts_at, k.ends_at, k.due_at, k.excerpt, k.answer, \
+                       k.invite_state";
+        let mut arms = Vec::new();
+        if threads > 0 {
+            arms.push(format!(
+                "SELECT m.thread_id, m.id, {columns}, max(m.received_at)
+                   FROM messages m JOIN markers k ON k.message_id = m.id
+                  WHERE m.thread_id IN ({threads}) AND m.mailbox_id + 0 IN ({inboxes})
+                    AND {member} AND k.dismissed_at IS NULL
+                  GROUP BY m.thread_id",
+                threads = placeholders(threads, 1),
+                inboxes = placeholders(inboxes, threads + 1),
+                member = Membership::Focus.test("m."),
+            ));
+        }
+        if lone > 0 {
+            arms.push(format!(
+                "SELECT NULL, m.id, {columns}, m.received_at
+                   FROM messages m JOIN markers k ON k.message_id = m.id
+                  WHERE m.id IN ({lone}) AND k.dismissed_at IS NULL",
+                lone = placeholders(lone, threads + inboxes + 1),
+            ));
+        }
+        arms.join("\n UNION ALL\n")
     }
 
     /// How many rows Focus's inbox has over `inboxes`: one per conversation
@@ -1662,6 +1777,7 @@ impl<'a> ThreadRepository<'a> {
                     last_at: from_millis(row.col(8)?),
                     latest: None,
                     sort_id: if scoped { row.col(9)? } else { thread },
+                    marker: None,
                 },
                 // The representative's id, which the folder window already
                 // knows and the account window has to look up.
@@ -2099,6 +2215,36 @@ async fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+/// What a row draws of a marker, from the columns
+/// [`ThreadRepository::explain_focus_markers`] reads starting at `first`:
+/// kind, event start and end, due date, excerpt, answer, invitation state.
+fn read_marker_summary(row: &Row, first: usize) -> Result<MarkerSummary> {
+    let time = |index: usize| -> Result<Option<DateTime<Utc>>> {
+        Ok(row.col::<Option<i64>>(first + index)?.map(from_millis))
+    };
+    let when = match (time(1)?, time(2)?, time(3)?) {
+        (Some(starts_at), Some(ends_at), _) => Some(MarkerWhen::Event { starts_at, ends_at }),
+        (_, _, Some(due)) => Some(MarkerWhen::Due(due)),
+        _ => None,
+    };
+    let state = row
+        .col::<Option<String>>(first + 6)?
+        .as_deref()
+        .map(super::markers::state_of)
+        .transpose()?;
+    Ok(MarkerSummary {
+        kind: super::markers::kind_of(&row.col::<String>(first)?)?,
+        when,
+        excerpt: row.col(first + 4)?,
+        answer: row
+            .col::<Option<String>>(first + 5)?
+            .as_deref()
+            .map(super::markers::answer_of)
+            .transpose()?,
+        cancelled: state == Some(super::InviteState::Cancelled),
+    })
 }
 
 /// [`read_thread`], with the thread's columns starting at `offset`.

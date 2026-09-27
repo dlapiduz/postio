@@ -815,7 +815,51 @@ async fn focus_s_inbox_is_counted_once_while_nothing_moves() {
 async fn no_list_but_focus_s_carries_a_marker() {
     // Markers are Focus's, read with Focus's pages (FR-020): a classic
     // scope's rows have none to draw, whatever the store holds.
-    let (store, account, inbox, _database) = store(200, 4).await;
+    let (store, account, inbox, database) = store(200, 4).await;
+    let top = store
+        .thread_page(request(FOCUS, 0, 1))
+        .await
+        .expect("a Focus page")
+        .rows
+        .remove(0)
+        .representative
+        .id;
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MarkerRepository::new(&connection)
+            .insert(&postio_storage::repository::Marker {
+                message: top,
+                kind: postio_model::listing::MarkerKind::Question,
+                source: postio_storage::repository::MarkerSource::Detector,
+                span: Some((0, 21)),
+                excerpt: Some("Could you look at it?".to_owned()),
+                starts_at: None,
+                ends_at: None,
+                due_at: None,
+                invite: None,
+                invite_state: None,
+                answer: None,
+                dismissed_at: None,
+            })
+            .await
+            .expect("a marker");
+    }
+    let focus = store
+        .thread_page(request(FOCUS, 0, 50))
+        .await
+        .expect("a Focus page");
+    assert_eq!(
+        focus.rows[0]
+            .marker
+            .as_ref()
+            .and_then(|marker| marker.excerpt.as_deref()),
+        Some("Could you look at it?"),
+        "Focus's row draws its conversation's marker"
+    );
+    assert_eq!(
+        focus.rows.iter().filter(|row| row.marker.is_some()).count(),
+        1
+    );
     for scope in [
         ListScope::Mailbox(inbox),
         ListScope::Account(account),

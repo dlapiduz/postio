@@ -154,6 +154,11 @@ pub struct MarkerSummary {
     pub excerpt: Option<String>,
     /// How the person has answered an invitation, once they have.
     pub answer: Option<InviteAnswer>,
+    /// Whether the organiser cancelled the invitation: the row says so and
+    /// offers no answer (spec 007 US8 scenario 4). An event that is over
+    /// needs no flag, since [`Self::when`] says when it ended.
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 /// What kind of action a marker calls out.
@@ -457,6 +462,7 @@ mod tests {
             }),
             excerpt: None,
             answer: Some(InviteAnswer::Accepting),
+            cancelled: false,
         };
         let written = serde_json::to_string(&row(Some(marker.clone()))).expect("serialises");
         let read: ThreadSummary = serde_json::from_str(&written).expect("reads back");

@@ -360,6 +360,44 @@ CREATE TABLE mailboxes (
     last_synced_at     INTEGER
 );
 
+-- Focus's markers (spec 007): what a conversation's row calls out, at most
+-- one per message. Written by Focus's body task; read with a Focus page in
+-- one batched statement, so drawing a row reads no body. Recomputable from
+-- the message, except a dismissal, which a resync forgets like a snooze.
+CREATE TABLE markers (
+    message_id       INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    -- What the row calls out. `no_reply` is a fired reminder's.
+    kind             TEXT    NOT NULL
+                             CHECK (kind IN ('invite', 'question', 'todo', 'no_reply')),
+    -- What made it: a calendar part, the built-in detector, the person's
+    -- own model, or a reminder.
+    source           TEXT    NOT NULL
+                             CHECK (source IN ('calendar', 'detector', 'model', 'reminder')),
+    -- Character offsets of the sentence in the message's own text; NULL for
+    -- an invitation or a reminder.
+    span_start       INTEGER,
+    span_end         INTEGER,
+    -- The sentence, verbatim, at most 200 characters; NULL for an invitation.
+    excerpt          TEXT,
+    -- An invitation's event, UTC milliseconds.
+    starts_at        INTEGER,
+    ends_at          INTEGER,
+    -- A to-do's due date; for `no_reply`, the day the reminder was set.
+    due_at           INTEGER,
+    -- The invitation's iTIP identity: which later REQUEST or CANCEL
+    -- replaces this marker (research R9).
+    invite_uid       TEXT,
+    invite_sequence  INTEGER,
+    invite_stamp     INTEGER,
+    invite_state     TEXT    CHECK (invite_state IN ('open', 'cancelled', 'past')),
+    -- How the person answered; the `-ing` two last while the reply's window
+    -- is open.
+    answer           TEXT    CHECK (answer IN ('accepting', 'accepted',
+                                               'declining', 'declined')),
+    -- When the person dismissed it. It never returns on this message.
+    dismissed_at     INTEGER
+);
+
 CREATE TABLE message_labels (
     message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     label_id    INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
@@ -687,6 +725,8 @@ CREATE UNIQUE INDEX idx_mailboxes_account_path ON mailboxes (account_id, path);
 CREATE INDEX idx_mailboxes_account_role ON mailboxes (account_id, role);
 
 CREATE INDEX idx_mailboxes_parent ON mailboxes (parent_id);
+
+CREATE INDEX idx_markers_invite ON markers (invite_uid);
 
 CREATE INDEX idx_message_labels_label ON message_labels (label_id, message_id);
 

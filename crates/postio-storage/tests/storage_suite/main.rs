@@ -39,6 +39,7 @@ mod mailbox_counts;
 mod mailbox_roles;
 mod mailbox_size;
 mod mailboxes;
+mod markers;
 mod messages;
 mod operations;
 mod reclaim_pages;

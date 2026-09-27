@@ -10,11 +10,13 @@
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
+use postio_model::listing::{InviteAnswer, MarkerKind, MarkerSummary, MarkerWhen};
 use postio_model::{EmailAddress, Message, RfcMessageId};
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, FocusListQuery, MessageRepository, ThreadCursor, ThreadGroup,
-    ThreadListQuery, ThreadListRow, ThreadRepository, ThreadingRepository, UnifiedThreadListQuery,
+    AccountRepository, FocusListQuery, InviteIdentity, InviteState, Marker, MarkerRepository,
+    MarkerSource, MessageRepository, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
+    ThreadRepository, ThreadingRepository, UnifiedThreadListQuery,
 };
 use postio_storage::test_support;
 use postio_storage::test_support::counting::{counted_async, scans};
@@ -299,16 +301,27 @@ async fn focus_s_inbox_is_every_enabled_inbox_s_conversations_newest_first() {
     );
 }
 
-/// Three more conversations of one in Ada's inbox, so her inbox alone is a
-/// page long enough to show a cost that grows with its rows.
+/// Three more conversations of one in Ada's inbox, and one of two, so her
+/// inbox alone is a page long enough to show a cost that grows with its
+/// rows.
 async fn more_of_ada_s(connection: &Connection, ada: (AccountId, MailboxId)) {
     for (hour, rfc) in [
         (11, "<weir@example.com>"),
         (12, "<sluice@example.com>"),
         (13, "<lock@example.com>"),
+        (14, "<dam@example.com>"),
     ] {
         file(connection, ada, hour, rfc, &[], "tove@example.com").await;
     }
+    file(
+        connection,
+        ada,
+        15,
+        "<dam-2@example.com>",
+        &["<dam@example.com>"],
+        "quinn@example.com",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -595,5 +608,275 @@ async fn focus_s_inbox_is_counted_in_one_statement_from_an_index() {
         scans(&connection, &sql).await.is_empty(),
         "counting Focus's inbox reads an index, never the table:\n{}",
         test_support::plan(&connection, &sql).await
+    );
+}
+
+/// The message filed as `rfc`.
+async fn id_of(connection: &Connection, rfc: &str) -> MessageId {
+    MessageId::new(
+        postio_storage::sql::one(
+            connection,
+            "SELECT id FROM messages WHERE rfc_message_id = ?1",
+            [rfc],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("the message"),
+    )
+}
+
+fn marker(message: MessageId, kind: MarkerKind, excerpt: Option<&str>) -> Marker {
+    Marker {
+        message,
+        kind,
+        source: MarkerSource::Detector,
+        span: excerpt.map(|excerpt| (0, excerpt.chars().count() as u32)),
+        excerpt: excerpt.map(str::to_owned),
+        starts_at: None,
+        ends_at: None,
+        due_at: None,
+        invite: None,
+        invite_state: None,
+        answer: None,
+        dismissed_at: None,
+    }
+}
+
+/// Markers on Ada's inbox: a question on the *older* message of the gate
+/// conversation, a to-do and a dismissed one on two conversations of one,
+/// a cancelled invitation someone had accepted on a third, and one on each
+/// message of the dam conversation, whose newer one the row draws.
+async fn mark_ada_s(connection: &Connection) -> Vec<(&'static str, Option<MarkerSummary>)> {
+    let markers = MarkerRepository::new(connection);
+    markers
+        .insert(&marker(
+            id_of(connection, "<dam@example.com>").await,
+            MarkerKind::Question,
+            Some("Is the dam survey still on?"),
+        ))
+        .await
+        .expect("a question");
+    markers
+        .insert(&marker(
+            id_of(connection, "<dam-2@example.com>").await,
+            MarkerKind::Todo,
+            Some("Book the survey boat."),
+        ))
+        .await
+        .expect("a to-do");
+    let asked = "Can the gate open by nine?";
+    markers
+        .insert(&marker(
+            id_of(connection, "<gate@example.com>").await,
+            MarkerKind::Question,
+            Some(asked),
+        ))
+        .await
+        .expect("a question");
+    let due = at(40);
+    let mut todo = marker(
+        id_of(connection, "<weir@example.com>").await,
+        MarkerKind::Todo,
+        Some("Send the weir readings."),
+    );
+    todo.due_at = Some(due);
+    markers.insert(&todo).await.expect("a to-do");
+    let dismissed = id_of(connection, "<sluice@example.com>").await;
+    markers
+        .insert(&marker(dismissed, MarkerKind::Question, Some("Any news?")))
+        .await
+        .expect("a question");
+    markers
+        .dismiss(dismissed, Some(at(20)))
+        .await
+        .expect("dismissed");
+    let (starts_at, ends_at) = (at(50), at(51));
+    markers
+        .insert(&Marker {
+            source: MarkerSource::Calendar,
+            span: None,
+            excerpt: None,
+            starts_at: Some(starts_at),
+            ends_at: Some(ends_at),
+            invite: Some(InviteIdentity {
+                uid: "lock-inspection@calendar.example".to_owned(),
+                sequence: 2,
+                stamp: None,
+            }),
+            invite_state: Some(InviteState::Cancelled),
+            answer: Some(InviteAnswer::Accepted),
+            ..marker(
+                id_of(connection, "<lock@example.com>").await,
+                MarkerKind::Invite,
+                None,
+            )
+        })
+        .await
+        .expect("an invitation");
+    vec![
+        (
+            "About <gate-2@example.com>",
+            Some(MarkerSummary {
+                kind: MarkerKind::Question,
+                when: None,
+                excerpt: Some(asked.to_owned()),
+                answer: None,
+                cancelled: false,
+            }),
+        ),
+        (
+            "About <weir@example.com>",
+            Some(MarkerSummary {
+                kind: MarkerKind::Todo,
+                when: Some(MarkerWhen::Due(due)),
+                excerpt: Some("Send the weir readings.".to_owned()),
+                answer: None,
+                cancelled: false,
+            }),
+        ),
+        ("About <sluice@example.com>", None),
+        (
+            "About <lock@example.com>",
+            Some(MarkerSummary {
+                kind: MarkerKind::Invite,
+                when: Some(MarkerWhen::Event { starts_at, ends_at }),
+                excerpt: None,
+                answer: Some(InviteAnswer::Accepted),
+                cancelled: true,
+            }),
+        ),
+        ("About <tide@example.com>", None),
+        (
+            "About <dam-2@example.com>",
+            Some(MarkerSummary {
+                kind: MarkerKind::Todo,
+                when: None,
+                excerpt: Some("Book the survey boat.".to_owned()),
+                answer: None,
+                cancelled: false,
+            }),
+        ),
+    ]
+}
+
+fn subject(row: &ThreadListRow) -> Option<&str> {
+    row.latest
+        .as_ref()
+        .and_then(|latest| latest.subject.as_deref())
+}
+
+#[tokio::test]
+async fn a_focus_page_draws_each_conversation_s_marker_in_its_budget_of_three() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    let expected = mark_ada_s(&connection).await;
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    let query = focus(alone, 50, None);
+    let _ = threads.focus_page_at(&query, 0).await.expect("warm");
+
+    let mut page = Vec::new();
+    let counts = counted_async(|| async {
+        page = rows(threads.focus_page_at(&query, 0).await.expect("a page"));
+    })
+    .await;
+    for (drawn, marker) in &expected {
+        let row = page
+            .iter()
+            .find(|row| subject(row) == Some(drawn))
+            .unwrap_or_else(|| panic!("{drawn} is listed"));
+        assert_eq!(&row.marker, marker, "{drawn}");
+    }
+    assert!(
+        counts.statements <= 3,
+        "a Focus page with markers took {} statements; the budget is the \
+         window, its participants and its markers",
+        counts.statements
+    );
+    let participants: usize = page
+        .iter()
+        .filter(|row| row.id.is_some())
+        .map(|row| row.participants.len())
+        .sum();
+    let marked = page.iter().filter(|row| row.marker.is_some()).count();
+    assert_eq!(
+        counts.rows,
+        page.len() + participants + marked,
+        "one marker read per row that draws one, and nothing read to be \
+         thrown away"
+    );
+    let ids: Vec<ThreadId> = page.iter().filter_map(|row| row.id).collect();
+    let sql = threads.explain_focus_markers(alone.len(), ids.len(), 0);
+    let plan = test_support::plan(&connection, &sql).await;
+    assert!(
+        scans(&connection, &sql).await.is_empty() && plan.contains("(thread_id=?)"),
+        "reading a page's markers seeks the page's conversations and scans \
+         nothing:\n{plan}"
+    );
+}
+
+#[tokio::test]
+async fn markers_are_focus_s_and_a_classic_list_neither_reads_nor_draws_them() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    let (ada, ada_inbox) = inboxes[0];
+    let threads = ThreadRepository::new(&connection);
+    let folder = ThreadListQuery::in_mailbox(ada, ada_inbox).limit(50);
+    let unified = UnifiedThreadListQuery {
+        limit: 50,
+        after: None,
+    };
+    let _ = threads.page(&folder).await.expect("warm");
+    let _ = threads.unified_page(&unified).await.expect("warm");
+    let folder_before = counted_async(|| async {
+        threads.page(&folder).await.expect("a folder page");
+    })
+    .await;
+    let unified_before = counted_async(|| async {
+        threads
+            .unified_page(&unified)
+            .await
+            .expect("a unified page");
+    })
+    .await;
+
+    mark_ada_s(&connection).await;
+
+    let mut folder_rows = Vec::new();
+    let folder_after = counted_async(|| async {
+        folder_rows = threads.page(&folder).await.expect("a folder page");
+    })
+    .await;
+    let mut unified_rows = Vec::new();
+    let unified_after = counted_async(|| async {
+        unified_rows = rows(threads.unified_page(&unified).await.expect("a page"));
+    })
+    .await;
+    assert_eq!(
+        folder_after, folder_before,
+        "the folder's page costs what it did"
+    );
+    assert_eq!(unified_after, unified_before, "and so does Unified's");
+    assert!(
+        folder_rows
+            .iter()
+            .chain(&unified_rows)
+            .all(|row| row.marker.is_none()),
+        "the classic lists draw no marker"
+    );
+    let focus = rows(
+        threads
+            .focus_page_at(&focus(&inboxes[..1], 50, None), 0)
+            .await
+            .expect("a Focus page"),
+    );
+    assert_eq!(
+        focus.iter().filter(|row| row.marker.is_some()).count(),
+        4,
+        "while Focus's page of the same inbox draws its four"
     );
 }
