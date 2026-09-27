@@ -8,6 +8,11 @@
   subset (Q1), the hardening requirements, quoting (Q3), inline images (Q4),
   and the rejection of Markdown-authored compose — stands, and is what made
   replacing the surface cheap.
+  **Reader statements amended 2026-09-27 by [ADR 0042](0042-the-reading-renderer-is-disconnected-and-memory-safe.md):**
+  the reader is no longer a WebView. Where this ADR says the reader's WebView
+  has JavaScript off or refuses the network, read: the reader's renderer
+  cannot run script or reach the network, by construction (ADR 0042). The
+  composer's hardening requirements below are unchanged.
 - **Date:** 2026-08-24
 - **Issue:** [#3 Rich-text (HTML) compose](https://github.com/dlapiduz/postio/issues/3), under [#17 Epic: Compose](https://github.com/dlapiduz/postio/issues/17)
 - **Related:** bead `postio-3o8f`; issues [#12](https://github.com/dlapiduz/postio/issues/12) (rich signatures), [#13](https://github.com/dlapiduz/postio/issues/13) (`$EDITOR`)
@@ -155,6 +160,12 @@ own bundled editor script is not message content and is therefore permitted.
 That is a sharper rule than "the WebView has JS off", not a weaker one — it
 closes a gap the old wording missed entirely.
 
+> **Amended 2026-09-27 (ADR 0042):** the next three paragraphs describe the
+> WebKit reader that spec 006 replaced. The reader now draws with
+> `postio-render`, which has no script engine at all, and reads the rail's
+> positions from its snapshot's geometry. They are kept as the history of
+> why the rule is stated as a principle.
+
 **The reader followed it too, from 2026-09-09** (#1367). It had been stricter
 than this principle required: JavaScript off wholesale, which refuses the
 sender's script and Postio's own alike. That was affordable until the
@@ -184,7 +195,8 @@ These are the conditions under which the above is acceptable. They are
 acceptance criteria, not advice.
 
 1. **The composer WebView is a separate view with its own settings.** The
-   reader's WebView keeps JS off. Nothing here relaxes the reader.
+   reader's WebView keeps JS off. Nothing here relaxes the reader. *(Since
+   ADR 0042 the reader is not a WebView: it cannot run script at all.)*
 2. **Quoted content is sanitised before it is ever inserted** — through the
    existing sanitiser (`crates/postio-body/src/sanitize.rs` since ADR 0004),
    reduced to the Q1 subset. Hostile markup never reaches the DOM, so enabling

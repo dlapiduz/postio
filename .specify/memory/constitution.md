@@ -1,7 +1,14 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.1.0 → 1.2.0 (was: 1.0.0 → 1.1.0; unversioned scaffold → 1.0.0)
+Version change: 1.2.0 → 1.2.1 (was: 1.1.0 → 1.2.0; 1.0.0 → 1.1.0; unversioned scaffold → 1.0.0)
+Bump rationale (1.2.1): PATCH. Principle VI's reader clause is reworded from
+  the mechanism it named ("the reader's WebKit view has JavaScript and network
+  off") to the guarantee: the reader's renderer cannot run script or reach the
+  network (ADR 0042). Spec 006 replaced the WebKit reader with `postio-render`,
+  in which the guarantee holds by construction and
+  `check-renderer-is-memory-safe.py` enforces it; the clause is a
+  clarification that strengthens what it promises, and narrows nothing.
 Bump rationale (1.2.0): MINOR. Additional Constraints → Scope names a second
   Linux frontend, the terminal one (`postio-tui`), on the same store as the
   desktop app, one app at a time; the maintainer asked for it on 2026-09-23 ("I want to create a
@@ -173,8 +180,8 @@ the same number on every machine.
 **Nothing leaves this machine that the user did not ask for.** Remote images are
 blocked until allowed per sender; read receipts are never sent automatically;
 one-click unsubscribe fires only on deliberate activation; there is no link
-prefetch, favicon fetch, or speculative connection; the reader's WebKit view has
-JavaScript and network off. No telemetry, no crash reporting, no update ping.
+prefetch, favicon fetch, or speculative connection; the reader's renderer cannot
+run script or reach the network (ADR 0042). No telemetry, no crash reporting, no update ping.
 Credentials live in the OS keyring — never in `config.toml`, never in a log. The
 local store holds the whole mailbox and MUST be encrypted at rest. **Logs MUST
 NOT carry message content**: ids, counts, and outcomes only.
@@ -324,4 +331,4 @@ architecture call an agent can make is labelled `needs-architecture`.
 the skills it names. `CLAUDE.md` elaborates this constitution and MUST NOT
 contradict it.
 
-**Version**: 1.2.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-24
+**Version**: 1.2.1 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-27

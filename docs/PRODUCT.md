@@ -592,11 +592,11 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
 - `List-Unsubscribe` One-Click fires only on deliberate activation — sending it
   confirms to a spammer that the address is live.
 - No link prefetch, no favicon fetch, no speculative connections. The reader's
-  WebView refuses script that arrived in a message — a `<script>` element, an
-  event-handler attribute, a `javascript:` href — and has network off. Postio's
-  own script runs there, which is how the conversation rail knows which message
-  is on screen (ADR 0003, #1367); `cid:` images resolve from the
-  local blob store.
+  renderer cannot run script or reach the network (ADR 0042): it has no script
+  engine, and it draws only what it is handed — the message's own parts, from
+  the local blob store, and a remote image the user allowed, fetched by the
+  application. The conversation rail reads which message is on screen from
+  the renderer's geometry, not from script.
 - Replies and forwards carry nothing outward, and since
   [ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md) they rest
   on different mechanisms for it. A **forward** is still generated from
