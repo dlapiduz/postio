@@ -22,8 +22,8 @@
 use chrono::{DateTime, Utc};
 use postio_model::{AccountId, EmailAddress, MessageId};
 
-use super::messages::placeholders;
 use super::from_millis;
+use super::messages::placeholders;
 
 use crate::error::Result;
 use crate::sql::{self, RowExt as _};

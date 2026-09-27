@@ -19,8 +19,9 @@
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, AttachmentId, BlobId, Disposition, Draft, DraftId, DraftKind,
-    DraftState, EmailAddress, IdentityId, MailboxRole, MessageBody, MessageId, ModSeq, Operation,
-    OperationTarget, RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity,
+    DraftState, EmailAddress, IdentityId, LabelId, MailboxRole, MessageBody, MessageId, ModSeq,
+    Operation, OperationTarget, RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid,
+    UidValidity,
 };
 
 /// Where an appended draft landed, as [`DraftRepository::set_server_copy`]
@@ -68,7 +69,7 @@ pub struct DraftRepository<'a> {
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
 body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
-rfc_message_id, forwarded_message_id, body_markdown";
+rfc_message_id, forwarded_message_id, body_markdown, label_ids";
 
 impl<'a> DraftRepository<'a> {
     /// Borrows a connection.
@@ -108,7 +109,8 @@ impl<'a> DraftRepository<'a> {
                             updated_at = ?15,
                             rfc_message_id = ?16,
                             forwarded_message_id = ?17,
-                            body_markdown = ?18
+                            body_markdown = ?18,
+                            label_ids = ?19
                       WHERE id = ?1",
                     bind![
                         draft.id.get(),
@@ -136,6 +138,7 @@ impl<'a> DraftRepository<'a> {
                         reservation_for(draft),
                         optional_message(draft.forwarded_from),
                         draft.body_markdown,
+                        label_ids(draft),
                     ],
                 )
                 .await?;
@@ -152,9 +155,10 @@ impl<'a> DraftRepository<'a> {
                     "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
                                          thread_id, subject, body_text, body_html, state, uid,
                                          uid_validity, mod_seq, remote_id, created_at, updated_at,
-                                         rfc_message_id, forwarded_message_id, body_markdown)
+                                         rfc_message_id, forwarded_message_id, body_markdown,
+                                         label_ids)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16, ?17, ?18)",
+                             ?16, ?17, ?18, ?19)",
                     bind![
                         account_id,
                         optional_identity(draft.identity_id),
@@ -181,6 +185,7 @@ impl<'a> DraftRepository<'a> {
                         reservation_for(draft),
                         optional_message(draft.forwarded_from),
                         draft.body_markdown,
+                        label_ids(draft),
                     ],
                 )
                 .await?;
@@ -1157,6 +1162,16 @@ async fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result
     Ok(())
 }
 
+/// `draft.labels` as the `label_ids` column spells them.
+fn label_ids(draft: &Draft) -> String {
+    draft
+        .labels
+        .iter()
+        .map(|label| label.get().to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn read_draft(row: &Row) -> Result<Draft> {
     let kind: String = row.col(3)?;
     let state: String = row.col(9)?;
@@ -1191,6 +1206,12 @@ fn read_draft(row: &Row) -> Result<Draft> {
         },
         rfc_message_id: row.col::<Option<String>>(16)?.map(RfcMessageId::new),
         body_markdown: row.col(18)?,
+        labels: row
+            .col::<String>(19)?
+            .split_whitespace()
+            .filter_map(|id| id.parse().ok())
+            .map(LabelId::new)
+            .collect(),
         created_at: from_millis(row.col(14)?),
         updated_at: from_millis(row.col(15)?),
     })

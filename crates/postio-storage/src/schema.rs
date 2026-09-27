@@ -315,7 +315,13 @@ CREATE TABLE "drafts" (
     -- attachment whose bytes were never downloaded is fetched from at send
     -- time. Not `in_reply_to_message_id`, which decides threading headers a
     -- forward must not carry.
-    forwarded_message_id    INTEGER REFERENCES messages(id) ON DELETE SET NULL
+    forwarded_message_id    INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    -- The labels chosen for the message (spec 007 US3), space-separated
+    -- label ids: applied to its conversation when it is sent. A list column
+    -- for `reference_ids`' reason -- only ever read and written whole, with
+    -- the row -- and an id whose label has since been deleted is skipped
+    -- when it is applied.
+    label_ids               TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE egress_log (

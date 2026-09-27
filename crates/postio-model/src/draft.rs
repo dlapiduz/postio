@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::account::Identity;
 use crate::address::EmailAddress;
 use crate::attachment::Attachment;
-use crate::ids::{AccountId, DraftId, IdentityId, MessageId, RfcMessageId, ThreadId};
+use crate::ids::{AccountId, DraftId, IdentityId, LabelId, MessageId, RfcMessageId, ThreadId};
 use crate::message::{MessageBody, ServerIdentifiers};
 
 /// What the user was doing when the draft was started.
@@ -165,6 +165,14 @@ pub struct Draft {
     /// [`outgoing::build`](crate::outgoing::build)).
     #[serde(default)]
     pub body_markdown: Option<String>,
+    /// The labels chosen for the message (spec 007 US3): applied to its
+    /// conversation when it is sent, so it and the mail it answers carry
+    /// them. A reply starts with its conversation's own.
+    ///
+    /// Defaults on the way in, so a draft from a side that never heard of
+    /// them has none.
+    #[serde(default)]
+    pub labels: Vec<LabelId>,
     /// Attachments added so far. These carry
     /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
     /// until the draft becomes a sent message.
@@ -215,6 +223,7 @@ impl Draft {
             subject: String::new(),
             body: MessageBody::default(),
             body_markdown: None,
+            labels: Vec::new(),
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,

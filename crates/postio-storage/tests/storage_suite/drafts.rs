@@ -2337,3 +2337,45 @@ async fn a_re_saved_draft_rises_to_the_top_of_drafts_again() {
         "the draft just saved is the one at the top"
     );
 }
+
+#[tokio::test]
+async fn a_draft_keeps_the_labels_chosen_for_it_until_it_is_sent() {
+    // Spec 007 US3 scenario 4: labels chosen in the composer are applied to
+    // the conversation when the message is sent, so the draft carries them
+    // until then -- across autosaves, and in either app.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let labels = postio_storage::repository::LabelRepository::new(&connection);
+    let mut harbour = postio_model::Label::new(account.id, "Harbour");
+    let mut travel = postio_model::Label::new(account.id, "Travel");
+    labels.create(&mut harbour).await.expect("a label");
+    labels.create(&mut travel).await.expect("a label");
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    draft.labels = vec![harbour.id, travel.id];
+    let id = drafts.save(&mut draft).await.expect("save");
+    assert_eq!(
+        drafts
+            .get(id)
+            .await
+            .expect("get")
+            .expect("the draft")
+            .labels,
+        vec![harbour.id, travel.id]
+    );
+
+    draft.labels = vec![travel.id];
+    drafts.save(&mut draft).await.expect("save again");
+    assert_eq!(
+        drafts
+            .get(id)
+            .await
+            .expect("get")
+            .expect("the draft")
+            .labels,
+        vec![travel.id],
+        "an autosave writes the set the composer holds"
+    );
+}
