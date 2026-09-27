@@ -41,6 +41,10 @@ usvg = "=0.48"
 # The sanitizer's part URI scheme, and its decoding.
 postio-body = { workspace = true }
 url = { workspace = true }
+# Computed styles, read for the text index (display, visibility, colour).
+style = { package = "stylo", version = "0.20" }
+# Find folds diacritics: decompose, then drop the marks.
+unicode-normalization = "0.1"
 # RenderedDocument crosses from the render thread to the UI thread (R7).
 static_assertions = "1.1"
 
@@ -49,7 +53,6 @@ static_assertions = "1.1"
 postio-render = { path = ".", features = ["test-hooks"] }
 # Arm B of the engine evaluation (research R0, T023) is a harness in
 # `examples/` that reaches into Blitz's styles and parses markup itself.
-style = { package = "stylo", version = "0.20" }
 # Stamps every element of a composed document with an index, so the
 # harness can address its overrides as a stylesheet and lay out afresh.
 html5ever = "0.39.0"

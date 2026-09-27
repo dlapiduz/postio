@@ -9,7 +9,7 @@ use blitz_dom::DocumentConfig;
 use blitz_traits::shell::ColorScheme;
 
 use crate::fonts::FontSet;
-use crate::{Outcome, RenderCounts, RenderRequest, RenderedDocument, TextIndex};
+use crate::{Outcome, RenderCounts, RenderRequest, RenderedDocument};
 
 /// What relative URLs resolve against. Without a base Blitz resolves
 /// against a `data:` URL, which cannot be one, and panics on the first
@@ -67,7 +67,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
             height: 0,
             rgba: Vec::new(),
         },
-        text: TextIndex::default(),
+        text: crate::text_index::build(&doc),
         links: crate::snapshot::links(&doc),
         messages: crate::snapshot::messages(&doc),
         folds: crate::snapshot::folds(&doc),
