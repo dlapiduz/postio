@@ -24,9 +24,15 @@ that retires it first.
 
 ## R0 — The engine is decided by an evaluation, not assumed
 
-**Status: open. It gates every engine-specific task** (maintainer,
-2026-09-26: *"we still need to evaluate whether we should use blitz or
-webkit"*).
+**Status: decided — Blitz** (maintainer, 2026-09-26: *"lets do blitz for
+now, performance is critical"*). The evaluation asked for it (*"we still need
+to evaluate whether we should use blitz or webkit"*) ran as written below.
+Both arms passed the gates; with Postio's #504 patch Blitz is 6 of 6 on S1,
+and the head to head measured it at a third of WebKit's memory (97 MiB in
+one process against 260 MiB in eight), half the cold start (~210 ms against
+~450 ms), and half the CPU. The scorecard, the measurements and the findings
+are in `docs/notes/2026-09-26-blitz-or-webkit.md`; the "If WebKit is chosen"
+column below is therefore moot, and arm A's harness is deleted (T029).
 
 R1 onward describe the **Blitz** path. That path came from the spike, and
 the spike never measured WebKit on the same terms. So the engine is chosen by
@@ -104,13 +110,25 @@ classification rule and the floor), R12 (the app-side fetcher), R13
 
 **Decision.** Use Blitz: `blitz-dom`, `blitz-html`, `blitz-paint` and
 `blitz-traits`, all **`=0.3.0-beta.2`**, plus `anyrender =0.13` and
-`anyrender_vello_cpu =0.17`, from crates.io with exact pins. No git
-dependency and no fork up front.
+`anyrender_vello_cpu =0.17`, with exact pins. No git dependency.
 
-The behaviour Blitz lacks is closed **on Postio's side**, before the markup
-reaches Blitz (R9). A `[patch.crates-io]` fork of **`blitz-dom` only**, pinned
-to a git revision, is allowed later for a gap that cannot be closed that way.
-It MUST be recorded in this file with the upstream PR it tracks.
+The behaviour Blitz lacks is closed **on Postio's side** where it can be,
+before the markup reaches Blitz (R9). A gap in the engine itself that cannot
+be closed that way is fixed **in a patch queue**: `blitz-dom` and
+`blitz-paint` are carried in `vendor/` exactly as released, wired through
+`[patch.crates-io]`, with Postio's changes as numbered patches in
+`patches/blitz/series`. `scripts/blitz-patches.sh verify` (run by
+`check.sh`) proves `vendor/` is the release, by the registry's checksums, plus
+the series; each patch names the upstream issue it tracks, is tested in
+`crates/postio-render/tests/engine_patches.rs`, and is dropped when a release
+takes the fix. Patches stay in this repository — nothing is sent upstream
+(maintainer, 2026-09-26).
+
+**Patches carried:**
+
+| Patch | Upstream | What it fixes |
+|---|---|---|
+| `0001-collapsed-borders-only-where-they-are-drawn` | #504 (open issue) | a borderless `border-collapse: collapse` table painted a 3px grid in the text colour, and every collapsed edge in `border-top-color`; S1's one failure (newsletter 88.8% → 98.4%) |
 
 **Rationale.**
 - **The spike's evidence.** All nine corpus HTML fixtures and all eight legacy
@@ -129,13 +147,25 @@ It MUST be recorded in this file with the upstream PR it tracks.
   document.
 
 **Alternatives.**
-- **Vendor all of Blitz.** Rejected. It takes on a browser engine's
-  maintenance for five attribute mappings.
+- **Vendor all of Blitz, or fork it by git.** Rejected. It takes on a
+  browser engine's maintenance for five attribute mappings and a table fix;
+  the queue carries only the two crates a patch touches, and only the diff
+  is Postio's.
 - **Track `main` by git.** Rejected until parley publishes.
 - **Keep WebKit and fix dark mode in CSS.** Rejected. It keeps the ~408 MB web
   process and the black inter-document frame. It also keeps privacy as a
   matter of eighteen settings rather than of what is linked (spec FR-001), and
   the spec requires one engine (FR-027).
+
+**Configuration the evaluation found necessary (T029).** Each is a
+Foundational task:
+- `DocumentConfig::base_url` MUST be set (`postio-message://message/`).
+  Without one Blitz resolves relative URLs against a `data:` URL, which
+  cannot be a base, and panics on the first `<img src="x">`.
+- `svg` on in `blitz-paint` as well as `blitz-dom` (R5).
+- fonts memory-mapped, not read (R3).
+- painting at the surface's fractional scale (R8). The spike painted at 1.0
+  and let the compositor stretch it, which is why it looked blurry on HiDPI.
 
 **Upstream movement worth taking at 0.3 final:**
 - relayout reworked into a damage pre-pass (#919, #921);
@@ -235,8 +265,11 @@ tool, not linked code, and it is allowed.
 
 **Fonts without fontconfig.** Turn off `system-fonts`. Discover installed
 font files with **`fontdb`** (already in the graph through usvg; its
-fontconfig *configuration* parser is pure Rust), read their bytes, and
-register them into a fontique `Collection`. Register the bundled faces
+fontconfig *configuration* parser is pure Rust), **memory-map** them
+(`memmap2`), and register the maps into a fontique `Collection`. Reading
+every installed file's bytes cost 198 MiB of resident memory in the
+evaluation; a map costs address space, and only the pages a shaped face
+touches become resident (amended 2026-09-26, T029). Register the bundled faces
 (ADR 0023's `FACES`) first. Generic families (serif, sans-serif, monospace)
 and per-script fallbacks (Latin, CJK, Arabic, Hebrew, Devanagari, emoji) are
 set explicitly from what `fontdb` found, with bundled faces as the floor.
@@ -315,8 +348,16 @@ reader.
 through its pixels, into anything that reads the snapshot. It never leaves
 the machine, but it is still a read the user never asked for.
 
-**Alternatives.** A `blitz-dom` fork that sets the resolver. That is
-equivalent, but it costs a fork. Re-serialising in the table needs none.
+**Amended 2026-09-26 (T029).** With `svg` on in both crates, the evaluation
+still painted **no** SVG image, `cid:` or `data:`; the cause was not found.
+Finding it comes first (a lettered Phase 4 task), because a sender's SVG
+logo is a common thing to lose. If the cause is in Blitz, the fix is a
+patch in the queue (R1), and the resolver can be set in the same patch
+rather than by re-serialising.
+
+**Alternatives.** A `blitz-dom` patch that sets the resolver. That is
+equivalent, and with the queue (R1) no longer costs a fork; re-serialising
+in the table stays the default because it needs no patch.
 
 ---
 
@@ -574,9 +615,21 @@ WCAG's lower 3:1 for large text is deliberately not taken. Keep C and h, and red
 only if the colour leaves gamut.
 
 The repaired colours are applied as **overrides on the render thread's
-document** (`color` set on the element with the highest precedence), followed
-by one restyle. That is a two-pass render: the second pass is measured, and
-counted in the render counts.
+document**, and the second pass is measured and counted in the render counts.
+**Amended 2026-09-26 (T029):** in Blitz 0.3.0-beta.2 a style mutation through
+`DocumentMutator` does not restyle the element, so an override is not set on
+the element. Every element is stamped with an index attribute
+(`data-postio-eval` in the harness) as the document is composed, the
+overrides are written as **one stylesheet** keyed by those stamps with
+ID-level specificity (`:is(#x,[stamp])` repeated), and the document is laid
+out **afresh** with it. The cost is a second parse and layout, which the
+evaluation measured inside the 400 ms deadline.
+
+**High contrast (FR-013b).** In high contrast a Designed message is still
+shown as paper, and every run on it is repaired to 7:1. If any run cannot
+reach 7:1 on its ground -- a colour on a mid-tone background has no OKLCH L
+that reaches it -- the message opens in **Reader view** with a notice, and
+View original shows the paper. The evaluation found 2 such runs of 88.
 
 **Darken (FR-013a).** For a message presented as Designed, the darken
 command:
@@ -595,8 +648,8 @@ runs the same rule on both arms. An engine's part is:
   backgrounds;
 - applying the overrides the rule returns.
 
-Blitz does this from its layout. WebKit does it through Postio's
-isolated-world script.
+Blitz does this from its layout: text runs from parley's positioned glyph
+runs, grounds from the ancestors' computed backgrounds.
 
 **Images are never touched (FR-015).** An image inside a darkened or
 adaptable message keeps a backing of its intended canvas colour, painted
