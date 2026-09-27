@@ -32,6 +32,31 @@ pub struct TableContext {
     pub computed_grid_info: AtomicRefCell<Option<DetailedGridInfo<Atom>>>,
     pub border_style: Option<ServoArc<Border>>,
     pub border_collapse: BorderCollapse,
+    /// In the collapsed model, the width each edge of the grid is drawn at:
+    /// the representative cell's border widths, with an edge whose style is
+    /// `none` or `hidden` counting as zero. Zero everywhere when separate.
+    pub collapsed_widths: taffy::Rect<f32>,
+}
+
+/// The width an edge of `border` actually occupies. A computed border
+/// width keeps its value (the initial `medium`, say) when the style is
+/// `none` or `hidden`, but such an edge has no width at all
+/// (css-backgrounds-3 §3.3), and the collapsed model must not lay out or
+/// paint one: that was a 3px grid through every borderless table.
+fn visible_widths(border: &Border) -> taffy::Rect<f32> {
+    let width = |style: style::values::computed::BorderStyle, width: app_units::Au| {
+        if style.none_or_hidden() {
+            0.0
+        } else {
+            width.to_f32_px()
+        }
+    };
+    taffy::Rect {
+        top: width(border.border_top_style, border.border_top_width.0),
+        right: width(border.border_right_style, border.border_right_width.0),
+        bottom: width(border.border_bottom_style, border.border_bottom_width.0),
+        left: width(border.border_left_style, border.border_left_width.0),
+    }
 }
 
 // #[derive(Debug, Clone, Eq, PartialEq)]
@@ -113,6 +138,16 @@ pub(crate) fn build_table_context(
     style.grid_template_columns = column_sizes.into_iter().map(|dim| dim.into()).collect();
     style.grid_template_rows = vec![style_helpers::auto(); row as usize];
 
+    let collapsed_widths = match (border_collapse, first_cell_border.as_deref()) {
+        (BorderCollapse::Collapse, Some(border)) => visible_widths(border),
+        _ => taffy::Rect {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        },
+    };
+
     style.gap = match border_collapse {
         BorderCollapse::Separate => {
             // In the separated borders model, `border-spacing` also applies between
@@ -131,25 +166,10 @@ pub(crate) fn build_table_context(
                 height: style_helpers::length(spacing_y),
             }
         }
-        BorderCollapse::Collapse => first_cell_border
-            .as_ref()
-            .map(|border| {
-                let x = border
-                    .border_left_width
-                    .0
-                    .max(border.border_right_width.0)
-                    .to_f32_px();
-                let y = border
-                    .border_top_width
-                    .0
-                    .max(border.border_bottom_width.0)
-                    .to_f32_px();
-                taffy::Size {
-                    width: style_helpers::length(x),
-                    height: style_helpers::length(y),
-                }
-            })
-            .unwrap_or(taffy::Size::ZERO.map(style_helpers::length)),
+        BorderCollapse::Collapse => taffy::Size {
+            width: style_helpers::length(collapsed_widths.left.max(collapsed_widths.right)),
+            height: style_helpers::length(collapsed_widths.top.max(collapsed_widths.bottom)),
+        },
     };
 
     if border_collapse == BorderCollapse::Collapse {
@@ -173,6 +193,7 @@ pub(crate) fn build_table_context(
             computed_grid_info: AtomicRefCell::new(None),
             border_collapse,
             border_style: first_cell_border,
+            collapsed_widths,
         },
         layout_children,
     )
