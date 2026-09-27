@@ -287,9 +287,12 @@ impl Builder<'_> {
                 let share = consumed..consumed + run.glyphs().count();
                 consumed = share.end;
                 let metrics = run.run().metrics();
-                let y0 = top + f64::from(run.baseline() - metrics.ascent);
-                let y1 = y0 + f64::from(metrics.ascent + metrics.descent);
-                let mut x = left + f64::from(run.offset());
+                // Blitz shapes text at the device scale (times the zoom);
+                // the index is in CSS pixels.
+                let k = f64::from(self.doc.viewport().scale());
+                let y0 = top + f64::from(run.baseline() - metrics.ascent) / k;
+                let y1 = y0 + f64::from(metrics.ascent + metrics.descent) / k;
+                let mut x = left + f64::from(run.offset()) / k;
                 let mut glyph = 0usize;
                 for cluster in run.run().visual_clusters() {
                     let first = glyph;
@@ -297,7 +300,7 @@ impl Builder<'_> {
                     if !share.contains(&first) || glyph == first {
                         continue;
                     }
-                    let advance = f64::from(cluster.advance());
+                    let advance = f64::from(cluster.advance()) / k;
                     let bytes = cluster.text_range();
                     let range = at[bytes.start.min(at.len() - 1)]..at[bytes.end.min(at.len() - 1)];
                     // A zero-advance cluster draws nothing -- a zero-width
