@@ -2306,3 +2306,34 @@ async fn an_appended_drafts_server_copy_is_counted_as_refused() {
         "and it is the drafts mailbox that is short, not every mailbox"
     );
 }
+
+#[tokio::test]
+async fn a_re_saved_draft_rises_to_the_top_of_drafts_again() {
+    // Drafts is ordered by the list's sort key, and a draft's row takes
+    // `received_at` from `updated_at` on every save. The key is set when a
+    // row is filed, so a save that moves `received_at` later has to move
+    // the key with it, or a draft being written sinks under ones nobody
+    // has touched since (spec 007, research R7).
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = account_with_drafts(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut first = a_draft(account.id);
+    first.subject = "First".to_owned();
+    first.updated_at = at(1);
+    drafts.save(&mut first).await.expect("save");
+    let mut second = a_draft(account.id);
+    second.subject = "Second".to_owned();
+    second.updated_at = at(2);
+    drafts.save(&mut second).await.expect("save");
+    assert_eq!(folder(&connection, mailbox).await, ["Second", "First"]);
+
+    first.updated_at = at(3);
+    drafts.save(&mut first).await.expect("save again");
+    assert_eq!(
+        folder(&connection, mailbox).await,
+        ["First", "Second"],
+        "the draft just saved is the one at the top"
+    );
+}

@@ -380,7 +380,7 @@ fn representative_filter(membership: Membership, mailbox: &str, also: &str) -> S
                          WHERE newer.mailbox_id = {mailbox} AND {}
                            AND newer.thread_id IS NOT NULL
                            AND newer.thread_id = rep.thread_id
-                           AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
+                           AND (newer.sort_at, newer.id) > (rep.sort_at, rep.id)
                     )",
         membership.test("rep."),
         membership.test("newer.")
@@ -414,7 +414,7 @@ fn focus_arm(mailbox: usize, cursor: Option<(usize, usize)>, limit: u32) -> Stri
     let slice = slice(membership, &mailbox);
     let cursor = cursor
         .map(|(at, id)| {
-            format!(" AND rep.received_at <= ?{at} AND (rep.received_at < ?{at} OR rep.id < ?{id})")
+            format!(" AND rep.sort_at <= ?{at} AND (rep.sort_at < ?{at} OR rep.id < ?{id})")
         })
         .unwrap_or_default();
     format!(
@@ -425,11 +425,11 @@ fn focus_arm(mailbox: usize, cursor: Option<(usize, usize)>, limit: u32) -> Stri
                          CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
                 coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
                 coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
-                rep.received_at, rep.received_at AS focus_at, rep.id AS focus_id,
+                rep.received_at, rep.sort_at AS focus_at, rep.id AS focus_id,
                 {representative}
            FROM messages rep
           WHERE {filter}{cursor}
-          ORDER BY rep.received_at DESC, rep.id DESC LIMIT {limit}",
+          ORDER BY rep.sort_at DESC, rep.id DESC LIMIT {limit}",
         representative = list_columns_of("rep"),
         filter = representative_filter(membership, &mailbox, ""),
     )
@@ -681,7 +681,7 @@ impl<'a> ThreadRepository<'a> {
     /// Each inbox contributes the rows its own folder list has
     /// ([`ThreadRepository::page`] on [`ThreadListQuery::in_mailbox`]): one
     /// per conversation holding a message there, drawn from its newest
-    /// message there, ordered by that message's `(received_at, id)`. That
+    /// message there, ordered by that message's `(sort_at, id)`. That
     /// order is global -- message ids are unique across accounts -- so the
     /// inboxes' windows merge by it, and one cursor resumes all of them. Each
     /// window is the folder list's own seek over `idx_messages_list`, so a
@@ -910,19 +910,19 @@ impl<'a> ThreadRepository<'a> {
             let rows: Vec<(i64, i64, i64)> = sql::all(
                 self.connection,
                 &format!(
-                    "SELECT received_at, id, thread_id FROM messages
+                    "SELECT sort_at, id, thread_id FROM messages
                       WHERE mailbox_id = ?1 AND {} AND thread_id IS NOT NULL
-                      ORDER BY received_at DESC, id DESC",
+                      ORDER BY sort_at DESC, id DESC",
                     membership.test("")
                 ),
                 [inbox.get()],
                 |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
             )
             .await?;
-            for (received_at, id, thread) in rows {
+            for (sort_at, id, thread) in rows {
                 keys.entry(ThreadId::new(thread))
                     .or_insert_with(|| ThreadCursor {
-                        last_at: from_millis(received_at),
+                        last_at: from_millis(sort_at),
                         id,
                     });
             }
@@ -1031,7 +1031,7 @@ impl<'a> ThreadRepository<'a> {
             let mut statement = sql::statement(
                 self.connection,
                 &format!(
-                    "SELECT thread_id, received_at, id FROM messages
+                    "SELECT thread_id, sort_at, id FROM messages
                       WHERE thread_id IN ({}) AND mailbox_id IN ({}) AND {}",
                     placeholders(wanted.len(), 1),
                     placeholders(inboxes.len(), wanted.len() + 1),
@@ -1050,9 +1050,9 @@ impl<'a> ThreadRepository<'a> {
             .await?
         };
         let mut keys: HashMap<ThreadId, ThreadCursor> = HashMap::new();
-        for (thread, received_at, id) in rows {
+        for (thread, sort_at, id) in rows {
             let key = ThreadCursor {
-                last_at: from_millis(received_at),
+                last_at: from_millis(sort_at),
                 id,
             };
             keys.entry(ThreadId::new(thread))
@@ -1285,7 +1285,7 @@ impl<'a> ThreadRepository<'a> {
     ///
     /// The window is one statement: each inbox's own folder window, sought
     /// through `idx_messages_list` and bounded by the page, merged in the
-    /// same statement by `(received_at, id)` -- the order every inbox's list
+    /// same statement by `(sort_at, id)` -- the order every inbox's list
     /// already keeps, and a total one, since message ids are unique across
     /// accounts. The merge sorts at most the inboxes times the page, never an
     /// inbox. The representative's list row comes in the same row rather than
@@ -1728,7 +1728,7 @@ impl<'a> ThreadRepository<'a> {
                                  CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
                         coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
                         coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
-                        rep.received_at, rep.received_at, rep.id
+                        rep.received_at, rep.sort_at, rep.id
                    FROM messages rep
                   WHERE {window}"
             )
@@ -1840,7 +1840,7 @@ impl<'a> ThreadRepository<'a> {
     /// join that widens the set being ordered: whether the folder holds any
     /// of the conversation, how much of it is unread here, and whether any of
     /// it is flagged here. Each of those seeks
-    /// `idx_messages_thread_mailbox (thread_id, mailbox_id, received_at DESC,
+    /// `idx_messages_thread_mailbox (thread_id, mailbox_id, sort_at DESC,
     /// id DESC)`, which migration 0012 added for exactly this, and each is
     /// bounded by the size of one conversation rather than by the mailbox.
     ///
@@ -1866,7 +1866,7 @@ impl<'a> ThreadRepository<'a> {
         };
 
         let cursor = if query.after.is_some() {
-            " AND rep.received_at <= ?3 AND (rep.received_at < ?3 OR rep.id < ?4)"
+            " AND rep.sort_at <= ?3 AND (rep.sort_at < ?3 OR rep.id < ?4)"
         } else {
             ""
         };
@@ -1883,10 +1883,10 @@ impl<'a> ThreadRepository<'a> {
                              CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
                     coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
                     coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
-                    rep.received_at, rep.received_at, rep.id
+                    rep.received_at, rep.sort_at, rep.id
                FROM messages rep
               WHERE {window}{cursor}
-              ORDER BY rep.received_at DESC, rep.id DESC LIMIT {}",
+              ORDER BY rep.sort_at DESC, rep.id DESC LIMIT {}",
             query.limit
         )
     }
@@ -1932,9 +1932,9 @@ impl<'a> ThreadRepository<'a> {
         let mut rows = sql::statement(
             self.connection,
             &format!(
-                "SELECT received_at, id, thread_id FROM messages
+                "SELECT sort_at, id, thread_id FROM messages
                   WHERE mailbox_id = ?1 AND {}
-                  ORDER BY received_at DESC, id DESC",
+                  ORDER BY sort_at DESC, id DESC",
                 Membership::Folder.test("")
             ),
         )
@@ -2095,7 +2095,7 @@ impl<'a> ThreadRepository<'a> {
                  SELECT id, thread_id, subject, preview, received_at, seen, flagged, answered,
                         draft, has_attachments, size,
                         row_number() OVER (PARTITION BY thread_id
-                                           ORDER BY received_at DESC, id DESC) AS rank
+                                           ORDER BY sort_at DESC, id DESC) AS rank
                    FROM messages
                   WHERE thread_id IN ({}) AND {MEMBER}{scope}
              )
@@ -2207,7 +2207,7 @@ async fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
                                           WHERE thread_id = ?1 AND {MEMBER} AND flagged = 1),
                     first_at = coalesce((SELECT min(received_at) FROM messages
                                           WHERE thread_id = ?1 AND {MEMBER}), 0),
-                    last_at = coalesce((SELECT max(received_at) FROM messages
+                    last_at = coalesce((SELECT max(sort_at) FROM messages
                                          WHERE thread_id = ?1 AND {MEMBER}), 0)
               WHERE id = ?1"
         ),

@@ -46,6 +46,7 @@ mod reclaim_pages;
 mod schema_fidelity;
 mod seed_is_honest;
 mod snoozed_due_index;
+mod sort_at;
 mod statement_cache;
 mod store_key;
 mod sync_state;

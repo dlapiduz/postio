@@ -48,7 +48,8 @@ pub struct MessageSummary {
     pub subject: Option<String>,
     /// The snippet under the subject.
     pub preview: Option<String>,
-    /// When the server received it; the list's sort key.
+    /// When the server received it: what the row says, and the order of
+    /// every list but a folder's, which a woken snooze tops (spec 007).
     pub received_at: DateTime<Utc>,
     /// Whether it has been read.
     pub seen: bool,

@@ -78,8 +78,9 @@ async fn main() {
         let one = Instant::now();
         connection
             .execute(
-                "INSERT INTO messages (account_id, mailbox_id, received_at, subject, remote_id)
-                 SELECT account_id, id, ?2, ?3, ?4 FROM mailboxes WHERE id = 1",
+                "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, subject,
+                                       remote_id)
+                 SELECT account_id, id, ?2, ?2, ?3, ?4 FROM mailboxes WHERE id = 1",
                 postio_storage::sql::bind![
                     1_i64,
                     9_000_000 + n,

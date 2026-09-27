@@ -19,8 +19,8 @@ fn at(hour: u32) -> DateTime<Utc> {
 async fn insert_message(connection: &Connection, mailbox: MailboxId, uid: u32) {
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, uid, received_at)
-             SELECT account_id, id, ?2, 0 FROM mailboxes WHERE id = ?1",
+            "INSERT INTO messages (account_id, mailbox_id, uid, received_at, sort_at)
+             SELECT account_id, id, ?2, 0, 0 FROM mailboxes WHERE id = ?1",
             bind![mailbox.get(), i64::from(uid)],
         )
         .await

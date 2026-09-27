@@ -424,8 +424,16 @@ CREATE TABLE messages (
     normalized_subject      TEXT,
     -- The `Date` header, as claimed by the sender; may be absent or a lie.
     date                    INTEGER,
-    -- When the server received it. Always known; this is the list sort key.
+    -- When the server received it. Always known, and what the query views,
+    -- search and a conversation's own chronology are ordered by.
     received_at             INTEGER NOT NULL,
+    -- The message's place in a folder's lists (spec 007, research R7):
+    -- `received_at` when it is filed, and the wake time when a snooze wakes,
+    -- so a woken message comes back at the top. The folder and conversation
+    -- lists, their seek marks and their indexes order by it. A write that
+    -- moves `received_at` later -- a draft's re-save -- takes it along; an
+    -- earlier one leaves it where it is.
+    sort_at                 INTEGER NOT NULL,
     -- `List-Id`, for the mailing-list filters.
     list_id                 TEXT,
     -- The top-level `Content-Type`.
@@ -737,7 +745,7 @@ CREATE INDEX idx_messages_in_reply_to
     ON messages (account_id, in_reply_to);
 
 CREATE INDEX idx_messages_list
-    ON messages (mailbox_id, received_at DESC, id DESC, deleted_locally, snoozed_until);
+    ON messages (mailbox_id, sort_at DESC, id DESC, deleted_locally, snoozed_until);
 
 -- The backfill's top-up: a folder's newest messages that still owe a body.
 -- Newest first puts the bodies already fetched at the front, so a read that
@@ -745,13 +753,13 @@ CREATE INDEX idx_messages_list
 -- top-ups a backfill makes. `body_state` leads the order so each state seeks
 -- straight to the rows it wants, already in the order they are wanted.
 CREATE INDEX idx_messages_body_state
-    ON messages (mailbox_id, body_state, received_at DESC, id DESC);
+    ON messages (mailbox_id, body_state, sort_at DESC, id DESC);
 
 -- The same question for a body an older parser got wrong (see
 -- `body_parsed_with`): nearly every message has `body_encoding_problems = 0`,
 -- and the seek lands on the few that do not.
 CREATE INDEX idx_messages_body_problems
-    ON messages (mailbox_id, body_encoding_problems, received_at DESC, id DESC);
+    ON messages (mailbox_id, body_encoding_problems, sort_at DESC, id DESC);
 
 CREATE INDEX idx_messages_list_id ON messages (account_id, list_id);
 
@@ -779,7 +787,7 @@ CREATE INDEX idx_messages_thread
     ON messages (thread_id, received_at, id, deleted_locally, snoozed_until);
 
 CREATE INDEX idx_messages_thread_mailbox
-    ON messages (thread_id, mailbox_id, received_at DESC, id DESC);
+    ON messages (thread_id, mailbox_id, sort_at DESC, id DESC);
 
 CREATE UNIQUE INDEX idx_messages_uid
     ON messages (mailbox_id, uid_validity, uid) WHERE uid IS NOT NULL;

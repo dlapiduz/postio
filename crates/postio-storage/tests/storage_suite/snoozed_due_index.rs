@@ -90,9 +90,9 @@ async fn fill(connection: &Connection) {
     }
     connection
         .execute_batch(&format!(
-            "INSERT INTO messages (account_id, mailbox_id, remote_id, received_at, snoozed_until)
+            "INSERT INTO messages (account_id, mailbox_id, remote_id, received_at, sort_at, snoozed_until)
              WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {MESSAGES})
-             SELECT 1, 1 + (i % 4), 'r' || i, 1700000000 + i,
+             SELECT 1, 1 + (i % 4), 'r' || i, 1700000000 + i, 1700000000 + i,
                     CASE WHEN i % 7000 = 0 THEN 1700000100 ELSE NULL END
                FROM n;"
         ))
