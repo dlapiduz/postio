@@ -223,6 +223,36 @@ collapsed, `alt` text included and closed folds left out.
 Rejected: `mark_html` with offsets. It matches terms, and a sentence can span
 inline markup.
 
+**Measured (spike S5, T011, 2026-09-27).** The spike ran over the render
+corpus: 61 fixtures and about 980 sentences a detector could store. Each
+sentence was read two ways:
+
+| Excerpts read from | As read | Whitespace collapsed | Present at all |
+|---|---|---|---|
+| The text part first, as search reads it | 91.7% | 97.7% | 98.2% |
+| What is drawn: the HTML, flattened, when there is HTML | 92.8% | 98.8% | 99.5% |
+
+The plan holds, with three changes:
+
+- **The locator collapses the excerpt's whitespace** (T066). The index writes
+  every run of whitespace as one space, a `<pre>` line break included, and
+  `find` compares whitespace as it is written. Collapsing recovers six points.
+- **The locator matches any whitespace to any other, on both sides.** Blocks
+  and table cells are line breaks and tabs in the index, where a flattened
+  source has spaces. This recovers most of what is left of "present at all".
+- **The detector reads what is drawn** (T115). Text that is never drawn
+  cannot be found: a `<title>`, a hidden preheader, a blocked image's `alt`.
+  A `text/plain` alternative can also say something the HTML does not; read
+  that way, 13 more sentences are lost.
+
+The tiebreak was measured on every body sent twice over, because no sentence
+occurs twice within its own message anywhere in the corpus. It picks the right
+occurrence 1,907 times in 1,908 (text first) and 1,933 times in 1,934 (what is
+drawn). The one miss is a line of emoji.
+
+The test is `crates/postio-render/tests/excerpt_locate.rs`, on the nightly
+profile. Its floors are these numbers rounded down.
+
 **Quoted history (FR-034).** Single-message documents give their quote folds
 ids and a line count, as thread documents do:
 
@@ -449,6 +479,19 @@ existing `SaveSearch`.
 (`crates/postio-gtk/src/finder.rs:245-268`, moving to postio-ui). A command
 acts on the aim the bar opened over; the finder already carries it.
 
+**Built (T084).** `natural::lower` refines three of the rules above:
+
+- A name is a name only when the caller's address book knows it, or when it
+  is an address. The longest run of up to three words is tried first.
+- "With attachments" becomes `has:attach`, the language's own spelling.
+- "In" becomes `in:` only before a mailbox's role ("in archive", "in spam").
+  "In Receipts" stays free text, because `in:` naming a folder that does not
+  exist selects nothing, and a wrong guess would hide every result. The bar's
+  `in:` completion is how a folder gets named.
+
+A bare name, month or weekday stays free text as well: with no word marking it
+as a sender or a date, it is as likely to be a subject.
+
 ---
 
 ## R6. Pickers and dates
@@ -469,12 +512,43 @@ The existing schedule-send preset "This evening" and Snooze's "Later today"
 become one wording for both apps (spec C14; ADR 0029). `/ux-architect`
 chooses it.
 
+**Built (T037).** When two pickers mean the same moment (this evening, tomorrow
+morning, Monday morning), they call the same function. `schedule_presets` is
+rewritten over those functions and returns what it returned before.
+
+C14 is not settled yet. A test holds "Later today" and "This evening" to one
+instant at every time of day, so the choice is a change of words; T091 makes
+it.
+
+Remind's presets:
+
+- "In 2 working days" counts Monday to Friday, starting the day after today.
+- "End of the week" is the first Friday 09:00 still ahead, with the same
+  five-minute lead "This evening" has.
+
+The presets step whole days as 24-hour durations, as `main`'s do. Near
+midnight in a daylight-saving week, that lands on the wrong day (#1700).
+
 **Typed dates.** `postio_search::date::parse_when(text, now) ->
 Option<DateTime<Local>>` is new and public. It looks forward and understands a
 time of day: "tue 9am", "thu 2pm", "tomorrow 8", "in 2 days", "oct 3 14:00".
 The existing `parse_date` (`crates/postio-search/src/date.rs:24`, crate-private)
 resolves only past dates with no time, for queries, and it stays as it is. The
 detector's due dates (R10) use `parse_when` too.
+
+**Built (T036).** The function is generic over the zone:
+`parse_when<Tz: TimeZone>(text, now: DateTime<Tz>) -> Option<DateTime<Tz>>`.
+That lets its tests run in a zone with daylight saving, whatever zone the
+machine is in. Its rules:
+
+- A day with no time is 08:00.
+- A bare number is an hour on the 24-hour clock.
+- A numeric date is month first.
+- A time the clocks skip is pushed forward by the gap. A time they repeat is
+  its first occurrence still ahead.
+
+The picker shows the instant it read, so a misreading shows before it is used
+(T091).
 
 **Snooze takes the chosen time.** `Command::Snooze` gains `until`. Today
 `Actions::snooze` always uses three hours (`crates/postio-session/src/actions.rs:84-92`).
@@ -770,6 +844,19 @@ keeps its bundled fonts for message bodies.
   and screens 01–03 use the system's.
 - *Retyping hex values.* ARCHITECTURE §10 forbids it.
 
+**Label colours (T042).** The function is
+`postio_ui::label_colour::label_colour(name, stored, accent_hue)`.
+
+- A label with a stored colour, set by the user or by their server, is drawn
+  in it.
+- Any other label gets one of twelve hues, chosen by a hash of its name, so it
+  has the same colour in both apps.
+- A hue within 30° of the accent steps round the wheel to the nearest hue
+  outside that band. Only those labels move when the accent changes.
+
+FR-091 covers the colours Postio chooses. A colour someone chose is drawn as
+they chose it, even inside the band.
+
 ---
 
 ## R12. Filtering and the Filtered view
@@ -853,6 +940,15 @@ mail.
 
 **`g d`:** the rules list, a full view in screen 21's frame (spec C15),
 designed with `/ux-architect` before its task.
+
+**Built (T131).** The matcher is `postio_search::matcher::Matcher::new(&ParsedQuery)`,
+which returns `Unsupported` for anything beyond `from:` and `list:`.
+`crates/postio-index/tests/index_suite/digest_matcher.rs` holds it equal to
+the executor on 35 queries over the corpus.
+
+The executor has a bug: `from:<address>` also finds mail *sent to* that
+address (#1699). The matcher deliberately repeats it, because ADR 0008 makes
+agreement the first test. So a fix for #1699 changes both in one commit.
 
 ---
 

@@ -1526,7 +1526,8 @@ the conversation in Postio.
   keyboard focus ring and the has-action toggle. Default buttons (Send,
   Create, Add task, Archive all) MUST be plain raised buttons with bold
   labels, not the suggested-action style, so the accent stays reserved.
-  Label colours MUST avoid the accent's hue.
+  Label colours that Postio assigns MUST avoid the accent's hue; a colour
+  the user or their server set is drawn as set (Assumptions).
 - **FR-092**: There MUST be one keycap style, one dialog pattern for every
   window over the app, and one picker pattern (a popover anchored to the
   row), shared with the classic app wherever the classic app draws the same

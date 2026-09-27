@@ -105,7 +105,7 @@ maintainer asks.
 - [ ] T008 [P] **S2.** Against a real account, measured locally and never committed, record the bytes per message that `HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)` adds, in research R8
 - [ ] T009 [P] **S3.** In a throwaway `crates/postio-focus/examples/list_spike.rs` (deleted after), put 100,000 synthetic rows of two fixed heights, plus 50 spliced rows, in a `gtk::ListView`. Measure rows built per frame while scrolling and jumping, and record them in research R3
 - [ ] T010 [P] **S4.** Build the labelled needs-action dataset as one data file, `crates/postio-classify/tests/data/needs_action.toml`: at least 150 items, each a message's own text with its addressing (direct, copied, list or automated) and a label (question, to-do or none, with any due date). Cover pleasantries, rhetorical questions, quoted history, signatures, list mail, copied-only mail, and instruction-shaped text. Sentence-level labels are what the detector reads, and a data file keeps the shared `.eml` corpus from swelling. Reserved domains and fictional names only. Measure precision and recall for rules alone, and record them in research R10. **If precision is under 0.9, T116 adds the small weights table**
-- [ ] T011 [P] **S5.** Across the render corpus, locate a chosen sentence by excerpt with `TextIndex::find` and the offset tiebreak. Record the success rate in research R2
+- [x] T011 [P] **S5.** Across the render corpus, locate a chosen sentence by excerpt with `TextIndex::find` and the offset tiebreak. Record the success rate in research R2. Done: 91.7% of excerpts read from the text part, 92.8% of those read from what is drawn, and 98.8% once whitespace is collapsed (R2); `crates/postio-render/tests/excerpt_locate.rs` holds the floors, nightly
 - [ ] T012 [P] **S6.** On a spike commit (reverted after), switch the list's order to `sort_at` in `crates/postio-storage/src/repository/threads.rs` and `messages.rs`. Run `storage_suite`'s list counting tests, and record the result and the size of the diff in research R7. **The maintainer's default holds unless the spike says otherwise; T093 follows the result**
 
 ### `postio-widgets`: the shared crate, with no change in behaviour
@@ -159,8 +159,8 @@ maintainer asks.
 - [ ] T033 Add `ListScope::Focus(FocusScope::Inbox)` and `ThreadSummary.marker` (serde) in `crates/postio-model/src/{scope,listing}.rs`, with a Focus scope in `crates/postio-runtime/src/store/local.rs` equal to the unified inbox, and a predicate seam at every membership site (contracts/engine.md). Test first, with counting: a Focus inbox page is at most 3 statements, with no scans, and rows equal to those returned
 - [ ] T034 Add `Host::enable_focus`, `ClientKind::Focus`, a no-op `FilingPass` in `crates/postio-sync`, and empty body-stage and due-timer tasks. Test first: a probe counts calls, and it is called under Focus but never under the classic or terminal host
 - [ ] T035 [P] Build the `crates/postio-classify` skeleton: the `Outcome` schema, the `Facts` and `Rules` traits, and the layer pipeline with no rules yet. Test first: an empty pipeline returns an empty `Outcome`, and the boundary rule is green
-- [ ] T036 [P] Add `postio_search::date::parse_when(text, now)`, public, forward-looking, with a time of day. Test first: a table that includes "tue 9am", "thu 2pm", "tomorrow 8", "in 2 days", "oct 3 14:00", a date inside a daylight-saving change, and nonsense, which gives `None`
-- [ ] T037 [P] Extend the preset table in `crates/postio-ui/src/schedule.rs` with Snooze and Remind, in one wording that `/ux-architect` chooses (spec C14). Test first, at Saturday 16:09: the four snooze times of spec US5 scenario 1, and the four remind times
+- [x] T036 [P] Add `postio_search::date::parse_when(text, now)`, public, forward-looking, with a time of day. Test first: a table that includes "tue 9am", "thu 2pm", "tomorrow 8", "in 2 days", "oct 3 14:00", a date inside a daylight-saving change, and nonsense, which gives `None`
+- [x] T037 [P] Extend the preset table in `crates/postio-ui/src/schedule.rs` with Snooze and Remind, in one wording that `/ux-architect` chooses (spec C14). Test first, at Saturday 16:09: the four snooze times of spec US5 scenario 1, and the four remind times. Done, except C14's wording, which T091 settles: `snooze_presets`' "Later today" and `schedule_presets`' "This evening" are pinned to one instant, so the choice is a change of words
 
 **Checkpoint:** the classic app, the terminal and macOS are green on the one keymap and the shared crate. Focus's surfaces can start.
 
@@ -178,7 +178,7 @@ maintainer asks.
   The filtered and digest counts stay hidden until those features exist. Test first: the widget tree carries each control and its key
 - [ ] T040 [P] [US1] `data/focus-colours.css`: the `--postio-*` colour variables from libadwaita's named colours, and the accent from `AdwStyleManager`. Test first: switching to dark changes the resolved colours, and a CSS assertion shows the accent only on markers, focus and the has-action toggle
 - [ ] T041 [US1] The list model: `FocusRow` over `postio_widgets::list_model` and `Paging` over `ListScope::Focus(Inbox)`. Test first: scrolling reads only the visible window (scenario 7, counted)
-- [ ] T042 [P] [US1] `postio_ui::label_colour(name, accent_hue)`. Test first: a stable colour, never within the accent's hue band, and a label's stored colour when it has one
+- [x] T042 [P] [US1] `postio_ui::label_colour(name, accent_hue)`. Test first: a stable colour, never within the accent's hue band, and a label's stored colour when it has one
 - [ ] T043 [US1] The one-line row (40 px, one `snapshot()`): the gutter, sender, subject, up to two pills, first line, attachment icon, count and time, with bold for unread, and day headings. Test first: a row shows "RE: Q3 numbers!!" and "Hi all —" verbatim (scenario 2), and a third label draws no third pill (scenario 8)
 - [ ] T044 [US1] The two-line row (72 px) from `MarkerSummary`, with the kind chip, date, quote and actions with their keycaps. Test first: a marked row is 72 px, and its height does not change with focus or selection
 - [ ] T045 [US1] Cursor and selection: `x`, `J`/`K`, `X` (a predicate), `Escape`, and the bulk bar with keycaps. Test first: select three rows, put the cursor on a fourth, press `a`, and exactly the three are archived (scenario 3)
@@ -222,7 +222,7 @@ maintainer asks.
 **Goal**: Screen 04. **Independent test**: spec US2.
 
 - [ ] T065 [US2] `BodyView` gains a public highlight of a `TextIndex` range, and scrolls to it. Test first in `widgets_suite`: the overlay covers the range's rectangles, and the range is scrolled into view
-- [ ] T066 [P] [US2] A locator from excerpt to range in `crates/postio-ui/src/reader/`, using `TextIndex::find` with the offset tiebreak (research R2). Test first: a table that includes duplicates and diacritics
+- [ ] T066 [P] [US2] A locator from excerpt to range in `crates/postio-ui/src/reader/`, using `TextIndex::find` with the offset tiebreak (research R2). Test first: a table that includes duplicates and diacritics. S5 (T011) says: collapse the excerpt's whitespace, and treat any run of whitespace as any other, on both sides
 - [ ] T067 [US2] Quote folds with ids and line counts in single-message documents (`crates/postio-body/src/quote.rs`, `crates/postio-ui/src/reader/document.rs`). Test first: "31 quoted lines from v2 folded" shows and opens on activation, and the classic single-message reader gains it too (a `gtk_suite` case)
 - [ ] T068 [US2] `view_source`: `Req::RawSource` reads the raw blob, fetched on the key press if it is not local, and the dialog shows it. Test first: `v` shows the raw message's header lines (scenario 5)
 - [ ] T069 [US2] The dialog (980×820): the header with Close, the title, the position, and `k`/`j`; the toolbar with its keys; the shared `Reader` in single-message mode with the Focus header card, the marker slot, attachment cards and the fold line. Test first: 100 opens build one surface (`surfaces_created` = 1, scenario 7), and the dialog opens within one frame of `Enter`
@@ -250,7 +250,7 @@ maintainer asks.
 
 **Goal**: Screens 07–10. **Independent test**: spec US4.
 
-- [ ] T084 [P] [US4] `postio_search::natural::lower(text, today, names)`. Test first: a phrase table that includes screen 07's sentence, the words it cannot lower, and determinism (scenarios 1 and 8)
+- [x] T084 [P] [US4] `postio_search::natural::lower(text, today, names)`. Test first: a phrase table that includes screen 07's sentence, the words it cannot lower, and determinism (scenarios 1 and 8)
 - [ ] T085 [P] [US4] The finder's blended mode in `crates/postio-ui/src/finder.rs`: commands, places and one search row, grouped, with `>` for commands only. Test first: typing "arch" gives the three groups of screen 09, and a command acts on the aim held before the bar opened (scenario 3)
 - [ ] T086 [US4] The bar overlay (860 px): the saved row (`Alt+1`–`4`), the input with chips, `Tab` into the chips, `back_to_words`, the echo line, the results, and the footer. Test first: half-typed operators show no error (scenario 2), and `in:Rec` lists Receipts newest first (scenario 4)
 - [ ] T087 [US4] `saved_search_1`–`4` in Focus. Test first: `Alt+2` shows its results (scenario 5)
@@ -262,7 +262,7 @@ maintainer asks.
 
 **Goal**: Screens 11–14. **Independent test**: spec US5.
 
-- [ ] T091 [US5] The pickers in `crates/postio-widgets/src/widgets/pickers/`: a popover anchored to the row, its title and target, preset rows with number keys, a date entry (`parse_when`), a footnote, and the picker commands in `Context::Picker`. Test first in `widgets_suite`: `2` picks the second preset, and `Tab` focuses the date entry
+- [ ] T091 [US5] The pickers in `crates/postio-widgets/src/widgets/pickers/`: a popover anchored to the row, its title and target, preset rows with number keys, a date entry (`parse_when`), a footnote, and the picker commands in `Context::Picker`. Test first in `widgets_suite`: `2` picks the second preset, and `Tab` focuses the date entry. Settle C14's wording first (`/ux-architect`). This task gives `snooze_presets`, `remind_presets` and `parse_when` their first callers, so delete their lines in `scripts/checks/uncalled-pub-fn-baseline.txt`
 - [ ] T092 [US5] `Command::Snooze { until }` (core, session and host). Test first: scenarios 1 and 2 at a fixed clock
 - [ ] T093 [US5] `messages.sort_at` (per T012): the schema, the list's order, seek marks and indexes, and a woken snooze setting it. Test first: a woken snooze lists at the top, and `list_statement_count.rs` and `threads.rs:340` are unchanged. **If T012 chose the alternative:** change screen 11's copy instead, and record it
 - [ ] T094 [US5] The `reminders` table, `remind_if_no_reply { at }` (undoable), cancellation by the filing pass on a reply from someone else, and firing on the tick. Test first: scenarios 3 and 4, including Focus closed at the due time and offline
@@ -312,7 +312,7 @@ maintainer asks.
 
 ## Phase 13: User Story 12, milestone 1's part: the built-in needs-action detector (P2)
 
-- [ ] T115 [US12] Own-text extraction in `crates/postio-body`: the newest message's text without quoted history or signature, with stable offsets. Test first: fixtures with top-posted and bottom-posted replies
+- [ ] T115 [US12] Own-text extraction in `crates/postio-body`: the newest message's text without quoted history or signature, with stable offsets. Test first: fixtures with top-posted and bottom-posted replies. S5 (T011) says: read the part the reader draws, the HTML flattened when there is HTML. Leave out what is never drawn: `<title>`, hidden preheaders, `alt` text
 - [ ] T116 [US12] The detector's rules in `crates/postio-classify`: questions and to-dos, the exclusions, due dates through `parse_when`, and one marker per message (research R10). Test first: the labelled corpus's precision gate of at least 0.9 (SC-013), red against the empty detector. Add the weights table only if T010 said so
 - [ ] T117 [US12] The body task writes question and to-do markers for mail sent directly to the user. The catch-up covers the inbox and the last 30 days. Test first: scenarios 1–3 and 7 (no model configured: markers still appear, and nothing connects)
 - [ ] T118 [US12] `dismiss_marker { dismissed }` (undoable), and three dismissals write `[focus.filter] stop_markers`. Test first: scenario 5
@@ -338,8 +338,8 @@ maintainer asks.
 
 **Goal**: Screen 24, the digest rows on 01 and 16, and the digest window in 22's frame. **Independent test**: spec US10.
 
-- [ ] T131 [P] [US10] A matcher for `from:` and `list:` in `crates/postio-search`. Test first: ADR 0008's differential test against the executor over the corpus
-- [ ] T132 [P] [US10] `[[focus.digests]]`: parse, validate, and compute the next due time, safe across daylight-saving changes. Test first: contracts/config.md's validation list, and a weekly rule across a DST change
+- [x] T131 [P] [US10] A matcher for `from:` and `list:` in `crates/postio-search`. Test first: ADR 0008's differential test against the executor over the corpus. Done: `postio_search::matcher::Matcher`. It mirrors the executor's `from:` bug, #1699, as ADR 0008 requires, so fixing #1699 changes both in one commit
+- [ ] T132 [P] [US10] `[[focus.digests]]`: parse, validate, and compute the next due time, safe across daylight-saving changes. Test first: contracts/config.md's validation list, and a weekly rule across a DST change. Step calendar days (`date_naive() + Days`), never `+ Duration::days`, which is 24 hours (#1700). Resolve the time with `parse_when`'s rule: a skipped time is pushed forward, a repeated one is its first occurrence
 - [ ] T133 [US10] The `digest_holds` and `digest_deliveries` tables. The filing pass holds matching mail, but never mail with an invitation or question or to-do, and never a conversation the user took part in. Test first: scenarios 1 and 2
 - [ ] T134 [US10] The Focus inbox scope leaves out held mail at every membership site, and its counts do too. Test first: counting assertions, and totals, seek marks and rows agree
 - [ ] T135 [US10] The due timer creates deliveries. One missed while Focus was closed is delivered once on start, and an empty one is not created. Test first: scenarios 3 and 6
