@@ -192,6 +192,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 
 const CASES: &[(&str, fn())] = &[
     (
+        "body_view_theme::darken_is_its_own_undo",
+        body_view_theme::darken_is_its_own_undo as fn(),
+    ),
+    (
         "body_view_theme::a_theme_change_re_renders_once_and_keeps_the_place",
         body_view_theme::a_theme_change_re_renders_once_and_keeps_the_place as fn(),
     ),

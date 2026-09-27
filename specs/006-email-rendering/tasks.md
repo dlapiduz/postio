@@ -385,11 +385,11 @@ high-contrast themes (SC-001).
 - [X] T080 [US1] Implement the image canvas backing in `crates/postio-render/src/theme.rs`
 - [X] T081 [TEST] [US1] In `crates/postio-core/tests/core_suite/command_registry.rs`, `darken_message` exists with default `D` in message surfaces, is not destructive, and does not collide with any binding in an overlapping context
 - [X] T082 [US1] Add `DarkenMessage` in `crates/postio-core/src/command.rs` (the `command_ids!` entry, the variant and both conversion matches) and its `CommandSpec` in `crates/postio-core/src/registry.rs`, per `contracts/registry-commands.md`. Regenerate `docs/keybindings.md` with `POSTIO_UPDATE_DOCS=1`, and update the golden `linux-bindings.txt` by hand
-- [ ] T083 [TEST] [US1] In `crates/postio-gtk/tests/gtk_suite/body_view_theme.rs`, in dark mode with `html-newsletter.eml` focused:
+- [X] T083 [TEST] [US1] In `crates/postio-gtk/tests/gtk_suite/body_view_theme.rs`, in dark mode with `html-newsletter.eml` focused:
   - dispatching `darken_message` issues a request whose `darkened` contains its scope;
   - the command's title reads "Show as sent";
   - dispatching it again restores "Darken this message" and the `Paper` request
-- [ ] T084 [US1] Handle `darken_message` in `crates/postio-gtk/src/reader/view.rs` and `crates/postio-gtk/src/body_view/mod.rs`, with a session-only set of darkened scopes and the dynamic title. Add the context-menu entry
+- [ ] T084 [US1] Handle `darken_message` in `crates/postio-gtk/src/reader/view.rs` and `crates/postio-gtk/src/body_view/mod.rs`, with a session-only set of darkened scopes and the dynamic title. Add the context-menu entry. **View half done** (`BodyView::toggle_darken`, `darken_title`); the reader's dispatch and the context-menu entry land with the switch (T139), when `BodyView` is the reader's body
 - [ ] T085 [US1] Design the dark reader palette (#1588, FR-016) with `/ux-architect` and then `/gtk-design`, against `Design/Mail Client.dc.html`. Record the named roles in the design canvas's source, alongside the light ones
 - [ ] T086 [TEST] [US1] In `crates/postio-gtk/tests/logic_suite/reader_tokens.rs`, assert that the dark reader roles equal the designed values recorded by T085, and that `--r-ground` no longer equals `neutral-900`
 - [ ] T087 [US1] Replace `reader_dark_roles` in `crates/postio-ui/src/tokens.rs` with the designed roles, and regenerate `crates/postio-ui/data/reader-tokens.css`. `BodyView` builds `Theme.palette` from them in `crates/postio-gtk/src/body_view/mod.rs`
