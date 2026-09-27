@@ -195,6 +195,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 
 const CASES: &[(&str, fn())] = &[
     (
+        "body_view_select::the_rail_follows_the_snapshot",
+        body_view_select::the_rail_follows_the_snapshot as fn(),
+    ),
+    (
         "body_view_a11y::the_accessible_text_is_the_text_index",
         body_view_a11y::the_accessible_text_is_the_text_index as fn(),
     ),

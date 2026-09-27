@@ -244,3 +244,82 @@ pub fn clicking_a_fold_opens_it() {
     );
     window.destroy();
 }
+
+/// 001 FR-034 to FR-037 without script: the current message is the one
+/// with the most of it on screen, a rail row scrolls its message to the
+/// top, and page down moves one real page.
+pub fn the_rail_follows_the_snapshot() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    use postio_ui::reader::thread::{Entry, conversation_document};
+    let long = "<p>A paragraph that goes on for a while.</p>".repeat(40);
+    let bodies: Vec<String> = ["7", "11", "15"]
+        .iter()
+        .map(|scope| {
+            postio_body::sanitize::sanitize_body_in(
+                &long,
+                postio_body::RemoteImages::Blocked,
+                Some(scope),
+            )
+            .html
+        })
+        .collect();
+    let entries: Vec<Entry<'_>> = ["7", "11", "15"]
+        .iter()
+        .zip(&bodies)
+        .map(|(scope, body)| Entry {
+            scope,
+            sender: "Ada",
+            address: "ada@example.com",
+            when: "09:14",
+            preview: "the first line",
+            expanded: true,
+            draft: false,
+            mine: false,
+            latest: false,
+            blocked: 0,
+            styles: "",
+            recipients: "",
+            cc: "",
+            body,
+        })
+        .collect();
+    let mut thread = content("plain-text-simple");
+    thread.document = conversation_document(
+        &entries,
+        postio_body::RemoteImages::Blocked,
+        postio_ui::reader::document::Sheet::Theme,
+    );
+    let (window, view) = show(thread);
+    let doc = view.document().expect("a snapshot");
+    let second = doc
+        .messages
+        .iter()
+        .find(|m| m.scope == "11")
+        .expect("message 11")
+        .rect;
+    assert_eq!(view.current_message().as_deref(), Some("7"));
+
+    view.scroll_to_message("11");
+    let adjustment = view.vadjustment().expect("scrolled");
+    assert!(
+        (adjustment.value() - second.y0).abs() < 1.0,
+        "message 11 is not at the top"
+    );
+    assert_eq!(view.current_message().as_deref(), Some("11"));
+
+    let before = adjustment.value();
+    view.page(true);
+    assert!(
+        (adjustment.value() - before - adjustment.page_size()).abs() < 1.0,
+        "page down did not move one page"
+    );
+    view.page(false);
+    assert!(
+        (adjustment.value() - before).abs() < 1.0,
+        "page up did not come back"
+    );
+    window.destroy();
+}

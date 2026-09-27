@@ -549,6 +549,49 @@ impl BodyView {
         }
     }
 
+    /// The message the rail marks as current: the one with the most of it
+    /// on screen (001 FR-035).
+    pub fn current_message(&self) -> Option<String> {
+        let document = self.document()?;
+        let adjustment = self.imp().vadjustment.borrow().clone()?;
+        let extents: Vec<postio_ui::reader::rail::Extent> = document
+            .messages
+            .iter()
+            .map(|m| postio_ui::reader::rail::Extent {
+                top: m.rect.y0,
+                height: m.rect.height(),
+            })
+            .collect();
+        let at =
+            postio_ui::reader::rail::current(&extents, adjustment.value(), adjustment.page_size())?;
+        Some(document.messages[at].scope.clone())
+    }
+
+    /// Scroll `scope`'s message to the top of the view.
+    pub fn scroll_to_message(&self, scope: &str) {
+        let (Some(document), Some(adjustment)) =
+            (self.document(), self.imp().vadjustment.borrow().clone())
+        else {
+            return;
+        };
+        if let Some(message) = document.messages.iter().find(|m| m.scope == scope) {
+            adjustment.set_value(message.rect.y0);
+        }
+    }
+
+    /// Scroll one page down (`forward`) or up: the view's own height.
+    pub fn page(&self, forward: bool) {
+        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+            return;
+        };
+        let step = if forward {
+            adjustment.page_size()
+        } else {
+            -adjustment.page_size()
+        };
+        adjustment.set_value(adjustment.value() + step);
+    }
+
     /// The snapshot on screen, if one has arrived.
     pub fn document(&self) -> Option<Arc<RenderedDocument>> {
         self.imp().document.borrow().clone()
