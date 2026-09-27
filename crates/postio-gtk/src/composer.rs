@@ -376,6 +376,196 @@ const LARGE_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 /// this much of a sentence.
 const AUTOSAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// What a composer needs from whatever holds it (specs/007-postio-focus
+/// T023): the classic window, whose reading pane it takes over, or Focus's
+/// compose dialog.
+///
+/// Everything the composer used to ask the classic `Window` for goes through
+/// here -- where it is drawn, the pane and the keyboard context it takes and
+/// gives back, the keymap its keys resolve against, the command broadcast,
+/// the parent of its file dialogs -- so the composer names no app, and a
+/// second host is a second implementation of this, not a second composer.
+pub trait ComposerHost {
+    /// The window a file dialog, and a detached composer's own window, are
+    /// transient for.
+    fn parent(&self) -> Option<gtk::Window>;
+    /// Put `composer` where the host draws it, hidden until it takes the pane.
+    /// Called once, by [`Composer::mount_on`].
+    fn install(&self, composer: &Composer);
+    /// Put `composer` back where the host draws it, after it was detached.
+    fn restore(&self, composer: &Composer);
+    /// Take `composer` out of where the host draws it, to detach it into a
+    /// window of its own.
+    fn remove(&self, composer: &Composer);
+    /// The composer takes the pane and the keyboard. The host remembers what
+    /// it had, to give it back.
+    fn take_pane(&self);
+    /// The composer gives the pane back, as the host remembered it.
+    fn release_pane(&self);
+    /// The command `key` runs in [`Context::Composer`] as pressed in `window`,
+    /// resolved against the host's keymap.
+    fn command_for_key(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        window: &gtk::Window,
+    ) -> Option<CommandId>;
+    /// What the host does with a key, pressed in `window`, that no composer
+    /// command claimed.
+    fn handle_key(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        window: &gtk::Window,
+    ) -> glib::Propagation;
+    /// Offer `action` where the host's own controls reach it: the classic
+    /// header's Compose button reaches `win.compose`.
+    fn add_action(&self, action: &gio::SimpleAction);
+    /// Call `handler` with every command the host dispatches.
+    fn connect_command(&self, handler: Box<dyn Fn(CommandId)>);
+    /// The keymap in force.
+    fn keymap(&self) -> Keymap;
+    /// The composer opened (`open`) or closed: a host with a control that
+    /// says which -- the classic header's Compose button -- says so here.
+    fn composing(&self, open: bool, keymap: &Keymap);
+}
+
+/// The classic window as a composer's host: its reading pane, its keyboard
+/// context and its keymap.
+struct WindowHost {
+    window: glib::WeakRef<Window>,
+    /// The context and pane to put back when the composer closes.
+    restore: Cell<Option<(Context, Pane)>>,
+}
+
+impl ComposerHost for WindowHost {
+    fn parent(&self) -> Option<gtk::Window> {
+        self.window.upgrade().map(|window| window.upcast())
+    }
+
+    fn install(&self, composer: &Composer) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let reader = window.shell().reader();
+        composer.set_vexpand(true);
+        reader.append(composer);
+        // The pane's arbiter owns this widget's visibility from here on
+        // (#502): hidden until the composer claims the pane.
+        window.shell().register_reader_occupant(
+            crate::shell::ReaderOccupant::Composer,
+            composer.upcast_ref(),
+        );
+    }
+
+    fn restore(&self, composer: &Composer) {
+        if let Some(window) = self.window.upgrade() {
+            window.shell().reader().append(composer);
+        }
+    }
+
+    fn remove(&self, composer: &Composer) {
+        if let Some(window) = self.window.upgrade() {
+            window.shell().reader().remove(composer);
+        }
+    }
+
+    // Hides whatever else is in the reading pane and remembers the way back.
+    fn take_pane(&self) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let shell = window.shell();
+        self.restore
+            .set(Some((window.context(), shell.focused_pane())));
+
+        // Through the pane's one owner (#502): the shell hides whichever
+        // occupant had the pane and shows this composer. The old shape —
+        // hide every sibling here, show every sibling on release — is what
+        // put a search preview back under an open message.
+        shell.set_composing(true);
+        // In the one-pane mode the reader is not necessarily on screen, and a
+        // composer the user cannot see is the worst possible mode.
+        shell.set_focused_pane(Pane::Reader);
+        shell.add_css_class(COMPOSING_CLASS);
+        window.set_context(Context::Composer);
+    }
+
+    // Gives the reading pane back to whatever is active now.
+    fn release_pane(&self) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        // Computed, not replayed: the shell shows what the current state
+        // calls for — the search preview if search is up, the message the
+        // pane was open on, or nothing. Showing every sibling here is the
+        // #502 bug.
+        window.shell().set_composing(false);
+        window.shell().remove_css_class(COMPOSING_CLASS);
+        if let Some((context, pane)) = self.restore.take() {
+            window.set_context(context);
+            window.shell().set_focused_pane(pane);
+        }
+
+        // The keyboard is still in one of the composer's fields, which is
+        // about to be a *hidden* text entry — and the resolver's "typing
+        // always wins" rule would then swallow the next single-key binding as
+        // a character typed into something nobody can see. Dropping the focus
+        // first is what makes `c` after `Esc` open the composer again rather
+        // than type a `c` into it.
+        gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+        window.shell().grab_focus();
+    }
+
+    fn command_for_key(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        window: &gtk::Window,
+    ) -> Option<CommandId> {
+        self.window
+            .upgrade()?
+            .command_for_key_in(key, state, window, Context::Composer)
+    }
+
+    fn handle_key(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        window: &gtk::Window,
+    ) -> glib::Propagation {
+        match self.window.upgrade() {
+            Some(main) => main.handle_key_in(key, state, window, Context::Composer),
+            None => glib::Propagation::Proceed,
+        }
+    }
+
+    fn add_action(&self, action: &gio::SimpleAction) {
+        if let Some(window) = self.window.upgrade() {
+            window.add_action(action);
+        }
+    }
+
+    fn connect_command(&self, handler: Box<dyn Fn(CommandId)>) {
+        if let Some(window) = self.window.upgrade() {
+            window.connect_command(handler);
+        }
+    }
+
+    fn keymap(&self) -> Keymap {
+        self.window
+            .upgrade()
+            .map(|window| window.keymap_in_force())
+            .unwrap_or_else(|| Keymap::defaults().clone())
+    }
+
+    fn composing(&self, open: bool, keymap: &Keymap) {
+        if let Some(button) = self.window.upgrade().and_then(|w| w.compose_button()) {
+            crate::header::sync_compose(&button, open, keymap);
+        }
+    }
+}
+
 /// The class `shell.css` dims the sidebar and the list under.
 ///
 /// Canvas 2a's own signal that the keyboard is in the composer: the list is
@@ -639,10 +829,8 @@ mod imp {
         /// by `build()` with a draft-aware lookup, held here because the
         /// editor is constructed before the composer object exists.
         pub blob_lookup: BlobLookup,
-        /// The window the composer took a pane from, once mounted.
-        pub window: glib::WeakRef<Window>,
-        /// The context and pane to put back when the composer closes.
-        pub restore: Cell<Option<(Context, Pane)>>,
+        /// What holds the composer, once mounted: see [`super::ComposerHost`].
+        pub host: RefCell<Option<Rc<dyn super::ComposerHost>>>,
         /// Set while `open` is filling the fields, so the widgets' own
         /// `changed` signals do not report the fill as the user typing.
         /// Which composition this is: bumped every time the fields are
@@ -725,8 +913,7 @@ mod imp {
                 inline_image: RefCell::new(None),
                 attachment_bytes: RefCell::new(None),
                 blob_lookup,
-                window: glib::WeakRef::new(),
-                restore: Cell::new(None),
+                host: RefCell::new(None),
                 previous_generation: Cell::new(0),
                 generation: Cell::new(0),
                 filling: Cell::new(false),
@@ -1683,7 +1870,7 @@ impl Composer {
         if self.is_detached() || !self.is_open() {
             return;
         }
-        let Some(window) = self.imp().window.upgrade() else {
+        let Some(holder) = self.host() else {
             return;
         };
         let field = self.focused_field();
@@ -1696,7 +1883,7 @@ impl Composer {
 
         let host = adw::Window::builder()
             .title(self.window_title())
-            .transient_for(&window)
+            .transient_for(&holder.parent().unwrap_or_default())
             // Not modal, and this is the criterion rather than a default:
             // the point of detaching is to read something else while you
             // write, and a modal is precisely the thing that forbids it.
@@ -1714,7 +1901,7 @@ impl Composer {
         // as a GNOME application.
         let layout = adw::ToolbarView::new();
         layout.add_top_bar(&adw::HeaderBar::new());
-        window.shell().reader().remove(self);
+        holder.remove(self);
         layout.set_content(Some(self));
         host.set_content(Some(&layout));
         self.set_visible(true);
@@ -1833,8 +2020,8 @@ impl Composer {
             layout.set_content(None::<&gtk::Widget>);
         }
         host.set_content(None::<&gtk::Widget>);
-        if let Some(window) = self.imp().window.upgrade() {
-            window.shell().reader().append(self);
+        if let Some(holder) = self.host() {
+            holder.restore(self);
         }
         // `destroy`, not `close`: `close` emits `close-request`, and this is
         // reached from inside that handler.
@@ -1856,23 +2043,24 @@ impl Composer {
         key: gtk::gdk::Key,
         state: gtk::gdk::ModifierType,
     ) -> glib::Propagation {
-        let Some(window) = self.imp().window.upgrade() else {
+        let Some(holder) = self.host() else {
             return glib::Propagation::Proceed;
         };
         let Some(host) = self.detached_window() else {
             return glib::Propagation::Proceed;
         };
-        // Resolved by the window, dispatched by *this* composer. Going
-        // through `handle_key_in` would broadcast to every subscriber, and
-        // once there are several composers open that means `Send` sends every
-        // open draft (ADR 0034). The keymap is still the window's, so
+        let host: gtk::Window = host.upcast();
+        // Resolved by the host, dispatched by *this* composer. Going through
+        // the host's own key handling would broadcast to every subscriber,
+        // and once there are several composers open that means `Send` sends
+        // every open draft (ADR 0034). The keymap is still the host's, so
         // `[keys]` reaches both containers.
-        match window.command_for_key_in(key, state, &host, Context::Composer) {
+        match holder.command_for_key(key, state, &host) {
             Some(id) => {
                 self.dispatch(id);
                 glib::Propagation::Stop
             }
-            None => window.handle_key_in(key, state, &host, Context::Composer),
+            None => holder.handle_key(key, state, &host),
         }
     }
 
@@ -1886,17 +2074,18 @@ impl Composer {
     /// say the same thing the keys do. The header's Compose button reaches the
     /// same place through the `win.compose` action.
     pub fn mount(&self, window: &Window) {
-        let imp = self.imp();
-        imp.window.set(Some(window));
+        self.mount_on(Rc::new(WindowHost {
+            window: window.downgrade(),
+            restore: Cell::new(None),
+        }));
+    }
 
-        let reader = window.shell().reader();
-        self.set_vexpand(true);
-        reader.append(self);
-        // The pane's arbiter owns this widget's visibility from here on
-        // (#502): hidden until the composer claims the pane.
-        window
-            .shell()
-            .register_reader_occupant(crate::shell::ReaderOccupant::Composer, self.upcast_ref());
+    /// Puts the composer in `host`, and wires its keys, its action and its
+    /// command broadcast through it (T023): [`mount`](Self::mount) is this
+    /// for the classic window.
+    pub fn mount_on(&self, host: Rc<dyn ComposerHost>) {
+        self.imp().host.replace(Some(Rc::clone(&host)));
+        host.install(self);
 
         let action = gio::SimpleAction::new("compose", None);
         action.connect_activate(glib::clone!(
@@ -1920,13 +2109,13 @@ impl Composer {
                 }
             }
         ));
-        window.add_action(&action);
+        host.add_action(&action);
 
         // The broadcast belongs to whichever composer has the pane. A
         // detached one hears its own keys through its own controller, above,
         // and must not also hear this -- with two open, `Send` would
         // otherwise send both drafts (ADR 0034).
-        window.connect_command(glib::clone!(
+        host.connect_command(Box::new(glib::clone!(
             #[weak(rename_to = composer)]
             self,
             move |id| {
@@ -1935,30 +2124,29 @@ impl Composer {
                 }
                 composer.dispatch(id);
             }
-        ));
+        )));
 
-        if let Some(button) = window.compose_button() {
-            crate::header::sync_compose(&button, false, &window.keymap_in_force());
-            self.connect_opened({
-                let button = button.clone();
-                let window = window.downgrade();
-                move || {
-                    if let Some(window) = window.upgrade() {
-                        crate::header::sync_compose(&button, true, &window.keymap_in_force());
-                    }
-                }
-            });
-            let window = window.downgrade();
-            self.connect_closed(move |_outcome| {
-                if let Some(window) = window.upgrade() {
-                    crate::header::sync_compose(&button, false, &window.keymap_in_force());
-                }
-            });
-        }
+        host.composing(false, &host.keymap());
+        self.connect_opened({
+            let host = Rc::clone(&host);
+            move || host.composing(true, &host.keymap())
+        });
+        self.connect_closed({
+            let host = Rc::clone(&host);
+            move |_outcome| host.composing(false, &host.keymap())
+        });
+    }
+
+    /// What holds this composer, once mounted.
+    fn host(&self) -> Option<Rc<dyn ComposerHost>> {
+        self.imp().host.borrow().clone()
     }
 
     /// Acts on the commands the composer owns, and ignores the rest.
-    fn dispatch(&self, id: CommandId) {
+    ///
+    /// Public so a host that resolves its own keys can hand the composer the
+    /// command they ran (T023): the same verbs, whichever app holds it.
+    pub fn dispatch(&self, id: CommandId) {
         match id {
             CommandId::Compose => self.open_new_draft(),
             CommandId::Send if self.is_open() => self.send(),
@@ -2149,7 +2337,7 @@ impl Composer {
     /// The bytes go down the same path as a paste or a drop, so an image has
     /// one representation however it arrived.
     fn open_image_chooser(&self) {
-        let Some(window) = self.imp().window.upgrade() else {
+        let Some(window) = self.host().and_then(|host| host.parent()) else {
             return;
         };
         // Unnamed on purpose. `FileFilter::set_name` would give the chooser's
@@ -2205,7 +2393,7 @@ impl Composer {
     }
 
     fn open_file_chooser(&self) {
-        let Some(window) = self.imp().window.upgrade() else {
+        let Some(window) = self.host().and_then(|host| host.parent()) else {
             return;
         };
         let dialog = gtk::FileDialog::builder().title("Attach files").build();
@@ -2439,52 +2627,18 @@ impl Composer {
         imp.attachments_box.clone()
     }
 
-    /// Hides whatever else is in the reading pane and remembers the way back.
+    /// Takes the host's pane and keyboard; the host remembers the way back.
     fn take_pane(&self) {
-        let Some(window) = self.imp().window.upgrade() else {
-            return;
-        };
-        let shell = window.shell();
-        self.imp()
-            .restore
-            .set(Some((window.context(), shell.focused_pane())));
-
-        // Through the pane's one owner (#502): the shell hides whichever
-        // occupant had the pane and shows this composer. The old shape —
-        // hide every sibling here, show every sibling on release — is what
-        // put a search preview back under an open message.
-        shell.set_composing(true);
-        // In the one-pane mode the reader is not necessarily on screen, and a
-        // composer the user cannot see is the worst possible mode.
-        shell.set_focused_pane(Pane::Reader);
-        shell.add_css_class(COMPOSING_CLASS);
-        window.set_context(Context::Composer);
+        if let Some(host) = self.host() {
+            host.take_pane();
+        }
     }
 
-    /// Gives the reading pane back to whatever is active now.
+    /// Gives the host's pane back, as it remembered it.
     fn release_pane(&self) {
-        let Some(window) = self.imp().window.upgrade() else {
-            return;
-        };
-        // Computed, not replayed: the shell shows what the current state
-        // calls for — the search preview if search is up, the message the
-        // pane was open on, or nothing. Showing every sibling here is the
-        // #502 bug.
-        window.shell().set_composing(false);
-        window.shell().remove_css_class(COMPOSING_CLASS);
-        if let Some((context, pane)) = self.imp().restore.take() {
-            window.set_context(context);
-            window.shell().set_focused_pane(pane);
+        if let Some(host) = self.host() {
+            host.release_pane();
         }
-
-        // The keyboard is still in one of the composer's fields, which is
-        // about to be a *hidden* text entry — and the resolver's "typing
-        // always wins" rule would then swallow the next single-key binding as
-        // a character typed into something nobody can see. Dropping the focus
-        // first is what makes `c` after `Esc` open the composer again rather
-        // than type a `c` into it.
-        gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
-        window.shell().grab_focus();
     }
 
     /// Loads a draft into the fields without reporting it as an edit.
@@ -2665,7 +2819,8 @@ impl Composer {
         // Not mounted yet: this is `build()`'s own initial layout — setting
         // the placeholder identity, for instance — not a user editing
         // anything, and there is nowhere for a save to go yet regardless.
-        if self.imp().window.upgrade().is_none() {
+        // Mounted means on a host, whichever app's (T023).
+        if self.host().is_none() {
             return;
         }
         self.cancel_autosave();
@@ -3265,8 +3420,8 @@ impl Composer {
         imp.escape.set_label(&hints::line(escape.iter()));
         imp.escape.set_visible(escape.is_some());
 
-        if let Some(button) = imp.window.upgrade().and_then(|w| w.compose_button()) {
-            crate::header::sync_compose(&button, self.is_open(), keymap);
+        if let Some(host) = self.host() {
+            host.composing(self.is_open(), keymap);
         }
     }
 

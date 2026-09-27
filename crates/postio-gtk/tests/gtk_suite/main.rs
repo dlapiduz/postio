@@ -58,6 +58,7 @@ mod gtk_composer_detach;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_composer_header;
+mod gtk_composer_host;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
 mod gtk_composer_many;
@@ -196,6 +197,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_composer_host::a_composer_on_a_test_host_autosaves_and_sends",
+        gtk_composer_host::a_composer_on_a_test_host_autosaves_and_sends as fn(),
+    ),
     (
         "gtk_one_allowlist::two_readers_in_one_app_see_one_always_allow",
         gtk_one_allowlist::two_readers_in_one_app_see_one_always_allow as fn(),
