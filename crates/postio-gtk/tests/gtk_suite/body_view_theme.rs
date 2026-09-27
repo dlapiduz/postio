@@ -84,19 +84,19 @@ pub fn darken_is_its_own_undo() {
         presented(Presentation::Paper),
         "the newsletter is not paper in dark"
     );
-    assert_eq!(view.darken_title().as_deref(), Some("Darken this message"));
+    assert_eq!(view.darken_title(), Some("Darken this message"));
     assert!(view.toggle_darken(), "paper could not be darkened");
     assert!(
         presented(Presentation::Darkened),
         "darkening did not re-render it darkened"
     );
-    assert_eq!(view.darken_title().as_deref(), Some("Show as sent"));
+    assert_eq!(view.darken_title(), Some("Show as sent"));
     assert!(view.toggle_darken());
     assert!(
         presented(Presentation::Paper),
         "showing it as sent did not restore the paper"
     );
-    assert_eq!(view.darken_title().as_deref(), Some("Darken this message"));
+    assert_eq!(view.darken_title(), Some("Darken this message"));
     style.set_color_scheme(adw::ColorScheme::Default);
     window.destroy();
 }

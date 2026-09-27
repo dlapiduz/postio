@@ -55,12 +55,14 @@ mod orientation;
 mod parts_open_wiring;
 mod read_receipt_wiring;
 mod reader_loads;
+mod reader_spawns_no_web_process;
 mod reader_stability;
 mod reading;
 mod reading_offline;
 mod reclaim_pages;
 mod reclaim_wiring;
 mod recover_empty_draft;
+mod remote_images_allowed;
 mod remove_walks_down;
 mod render_dedup;
 mod reply_identity;
@@ -106,6 +108,7 @@ mod unsubscribe_wiring;
 mod window_drain;
 mod window_teardown;
 mod wiring;
+mod zoom_persists;
 
 /// Cases held out of a default run, by name.
 ///
@@ -377,6 +380,19 @@ const CASES: &[(&str, fn())] = &[
     (
         "reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it",
         reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it as fn(),
+    ),
+    (
+        "reader_spawns_no_web_process::ten_conversations_start_no_web_process_and_hold_what_one_holds",
+        reader_spawns_no_web_process::ten_conversations_start_no_web_process_and_hold_what_one_holds
+            as fn(),
+    ),
+    (
+        "remote_images_allowed::an_allowed_senders_images_arrive_and_nothing_else_does",
+        remote_images_allowed::an_allowed_senders_images_arrive_and_nothing_else_does as fn(),
+    ),
+    (
+        "zoom_persists::a_zoom_is_saved_and_a_live_edit_applies",
+        zoom_persists::a_zoom_is_saved_and_a_live_edit_applies as fn(),
     ),
     (
         "storage_ceiling_wiring::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs",
@@ -719,6 +735,17 @@ pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
 /// store. It runs on this thread, between iterations of the main context, so
 /// what it observes is what the application has actually committed — which is
 /// the whole reason these are `settle_until` and not a sleep.
+/// The words `reader`'s view has drawn: its snapshot's text, what a person
+/// sees, rather than the document it was handed. Empty before the first
+/// snapshot.
+pub fn drawn(reader: &postio_gtk::reader::Reader) -> String {
+    reader
+        .view()
+        .document()
+        .map(|document| document.text.text.clone())
+        .unwrap_or_default()
+}
+
 pub async fn settle_until<F, Fut>(done: F) -> bool
 where
     F: Fn() -> Fut,

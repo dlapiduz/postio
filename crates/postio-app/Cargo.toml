@@ -37,6 +37,8 @@ postio-model.workspace = true
 # guarded against the `rusqlite` it pulls in — which is the whole reason this
 # crate exists. See its `main.rs`.
 postio-runtime.workspace = true
+# Remote image URLs, parsed before the fetcher is asked (spec 006 T137).
+url = { workspace = true }
 postio-search.workspace = true
 postio-session.workspace = true
 # The render counters (#1328). Named here rather than reached through
@@ -51,6 +53,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 postio-test-support.workspace = true
+# The reader's snapshot, rasterised, so a remote image is asserted painted
+# rather than merely fetched (spec 006 T136).
+postio-render.workspace = true
 # Only the `e2e` test builds a subscriber; the application configures its
 # logging through postio-session. A [dependencies] entry is visible to
 # integration tests too, which is what hid this being test-only.

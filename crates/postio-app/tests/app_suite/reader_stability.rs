@@ -433,10 +433,9 @@ pub fn a_body_that_lands_quickly_never_shows_the_waiting_plate() {
             "the two seeded messages never reached the list"
         );
         assert!(
-            settle_until(async || window
-                .reader()
-                .test_document()
-                .contains("the body that was already here"))
+            settle_until(
+                async || crate::drawn(&window.reader()).contains("the body that was already here")
+            )
             .await,
             "the first message never filled the pane"
         );
@@ -480,10 +479,10 @@ pub fn a_body_that_lands_quickly_never_shows_the_waiting_plate() {
         .await;
 
         assert!(
-            window
-                .reader()
-                .test_document()
-                .contains("the body that came late"),
+            settle_until(
+                async || crate::drawn(&window.reader()).contains("the body that came late")
+            )
+            .await,
             "the late body never reached the pane"
         );
         assert_eq!(
@@ -606,7 +605,7 @@ pub fn moving_through_mail_sanitises_nothing_on_the_main_thread() {
             "the three seeded rows never reached the list"
         );
         assert!(
-            settle_until(async || window.reader().test_document().contains("the first body")).await,
+            settle_until(async || crate::drawn(&window.reader()).contains("the first body")).await,
             "the first message never filled the pane"
         );
         watch_for(std::time::Duration::from_millis(300), || {}).await;
@@ -625,7 +624,7 @@ pub fn moving_through_mail_sanitises_nothing_on_the_main_thread() {
         );
         window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
         assert!(
-            settle_until(async || window.reader().test_document().contains("the last body")).await,
+            settle_until(async || crate::drawn(&window.reader()).contains("the last body")).await,
             "`j` never drew the last message"
         );
 

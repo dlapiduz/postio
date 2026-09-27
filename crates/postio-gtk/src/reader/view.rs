@@ -89,6 +89,10 @@ type UnsubscribeHandler = Box<dyn Fn(&str)>;
 pub struct Reader {
     container: gtk::Box,
     view: crate::body_view::BodyView,
+    /// Find in the message (spec 006 FR-018), above the body.
+    find: Rc<crate::body_view::find::FindBar>,
+    /// The zoom, when it is not actual size, over the body's corner.
+    zoom_indicator: Rc<crate::body_view::zoom::ZoomIndicator>,
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
     /// "Reader view — the sender's HTML layout is hidden", with the way
@@ -312,6 +316,10 @@ struct Place {
     remote: RefCell<std::collections::HashMap<String, Vec<u8>>>,
     /// URLs already asked for, arrived or not: each is asked once.
     asked: RefCell<std::collections::HashSet<String>>,
+    /// The next load follows the user's explicit consent -- "Show once",
+    /// "Always allow", a message's own Show -- so its images are asked for
+    /// at once rather than after the dwell.
+    consented: std::cell::Cell<bool>,
 }
 
 /// What a reader's owner fetches remote images with: the URLs one document
@@ -331,6 +339,7 @@ impl Place {
             fetch: RefCell::new(None),
             remote: RefCell::default(),
             asked: RefCell::default(),
+            consented: std::cell::Cell::new(false),
         }
     }
 }
@@ -375,6 +384,14 @@ impl Reader {
             .hexpand(true)
             .build();
         let place = Rc::new(Place::new(Rc::clone(&source)));
+        let find = Rc::new(crate::body_view::find::FindBar::new(&view));
+        let zoom_indicator = Rc::new(crate::body_view::zoom::ZoomIndicator::new(&view));
+        zoom_indicator.widget().set_halign(gtk::Align::End);
+        zoom_indicator.widget().set_valign(gtk::Align::Start);
+        zoom_indicator.widget().set_margin_top(6);
+        zoom_indicator.widget().set_margin_end(12);
+        let body = gtk::Overlay::builder().child(&scroller).build();
+        body.add_overlay(zoom_indicator.widget());
 
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
@@ -413,7 +430,8 @@ impl Reader {
             unsubscribe_banner.widget(),
         ]));
         container.append(&notices.widget());
-        container.append(&scroller);
+        container.append(find.widget());
+        container.append(&body);
         container.append(&chips.widget());
         // **Not appended last any more.** #498 put the bar under the chips,
         // "matching the canvas' footer treatment"; the conversation pane
@@ -430,6 +448,8 @@ impl Reader {
         let reader = Reader {
             container,
             view,
+            find,
+            zoom_indicator,
             header,
             banner,
             reader_notice,
@@ -529,6 +549,7 @@ impl Reader {
                     }
                     let messages = thread.borrow().clone();
                     place.keep.set(true);
+                    place.consented.set(true);
                     load_document(
                         &Canvas {
                             view,
@@ -547,13 +568,9 @@ impl Reader {
                 });
             }
             {
-                // What the observer reports, arriving from the document.
-                //
-                // Treated as untrusted input even though Postio wrote the
-                // script: it comes from a page that also holds several
-                // senders' markup, and a panic here would take the
-                // application down from inside a message. An unparseable or
-                // unknown payload is dropped.
+                // Which message has most of the view, as the view scrolls:
+                // the rail's mark. Only a scope this document rendered is
+                // passed on.
                 let on_current_message = Rc::clone(&reader.on_current_message);
                 let thread = Rc::clone(&reader.thread);
                 view.connect_current_message(move |_, scope| {
@@ -564,6 +581,31 @@ impl Reader {
                     for handler in on_current_message.borrow().iter() {
                         handler(scope);
                     }
+                });
+            }
+
+            {
+                // The fallback notice's "View source" (spec 006 FR-023,
+                // T105): what was sent, as text, in this pane. Local, and
+                // one navigation from the message again.
+                let open = Rc::clone(&reader.open);
+                let thread = Rc::clone(&reader.thread);
+                let document = Rc::clone(&reader.document);
+                let loads = Rc::clone(&reader.loads);
+                let place = Rc::clone(&reader.place);
+                let notices = Rc::clone(&reader.notices);
+                view.connect_view_source(move |view| {
+                    let source = source_document(open.borrow().as_ref(), &thread.borrow());
+                    load_document(
+                        &Canvas {
+                            view,
+                            document: &document,
+                            loads: &loads,
+                            place: &place,
+                            notices: &notices,
+                        },
+                        &source,
+                    );
                 });
             }
 
@@ -643,6 +685,7 @@ impl Reader {
                 };
                 if let Some(banner) = banner_weak.upgrade() {
                     place.keep.set(true);
+                    place.consented.set(true);
                     render_open(
                         &Canvas {
                             view: &view,
@@ -663,15 +706,6 @@ impl Reader {
         }
         {
             let view = reader.view.clone();
-            {
-                // What the observer reports, arriving from the document.
-                //
-                // Treated as untrusted input even though Postio wrote the
-                // script: it comes from a page that also holds several
-                // senders' markup, and a panic here would take the
-                // application down from inside a message. An unparseable or
-                // unknown payload is dropped.
-            }
 
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
@@ -699,6 +733,7 @@ impl Reader {
                 }
                 if let Some(banner) = banner_weak.upgrade() {
                     place.keep.set(true);
+                    place.consented.set(true);
                     render_open(
                         &Canvas {
                             view: &view,
@@ -1484,6 +1519,82 @@ impl Reader {
         self.place.fetch.replace(Some(Rc::new(fetch)));
     }
 
+    /// Darken the message on screen, or show it as sent again
+    /// (`darken_message`, spec 006 FR-013a). False when it does not apply:
+    /// not the dark theme, or not a message on paper.
+    pub fn darken_message(&self) -> bool {
+        self.view.toggle_darken()
+    }
+
+    /// `darken_message`'s title for what is on screen, or `None` when the
+    /// command does not apply to it.
+    pub fn darken_title(&self) -> Option<&'static str> {
+        self.view.darken_title()
+    }
+
+    /// Open find in the message (`find_in_message`, FR-018).
+    pub fn find_in_message(&self) {
+        self.find.open();
+    }
+
+    /// The next match (`find_next`), or the previous (`find_previous`).
+    pub fn find_step(&self, forward: bool) {
+        self.view.find_step(forward);
+    }
+
+    /// Whether find is open.
+    pub fn finding(&self) -> bool {
+        self.find.widget().is_search_mode()
+    }
+
+    /// Zoom the message one step in (`zoom_in`, FR-021).
+    pub fn zoom_in(&self) {
+        self.view.zoom_in();
+    }
+
+    /// Zoom the message one step out (`zoom_out`).
+    pub fn zoom_out(&self) {
+        self.view.zoom_out();
+    }
+
+    /// Back to actual size (`zoom_reset`).
+    pub fn zoom_reset(&self) {
+        self.view.zoom_reset();
+    }
+
+    /// The zoom, in percent.
+    pub fn zoom(&self) -> u16 {
+        self.view.zoom()
+    }
+
+    /// Draw at `percent`, snapped to a step: `[reader] zoom` from
+    /// `config.toml`.
+    pub fn set_zoom(&self, percent: u16) {
+        self.view.set_zoom_percent(percent);
+    }
+
+    /// What the zoom indicator says, and whether it shows. Test-facing.
+    #[doc(hidden)]
+    pub fn zoom_indicator(&self) -> Option<String> {
+        self.zoom_indicator
+            .widget()
+            .is_visible()
+            .then(|| self.zoom_indicator.label())
+    }
+
+    /// Call `f` with the new zoom each time it changes, however it was
+    /// changed: a key, Ctrl+scroll, a pinch or the indicator's reset.
+    pub fn connect_zoom_changed(&self, f: impl Fn(u16) + 'static) {
+        self.view
+            .connect_local("zoom-changed", false, move |values| {
+                let view = values[0]
+                    .get::<crate::body_view::BodyView>()
+                    .expect("the signal's own view");
+                f(view.zoom());
+                None
+            });
+    }
+
     /// Paint `terms` wherever they appear in the body.
     ///
     /// What canvas 2b means by "preview · match highlighted": the same
@@ -1774,9 +1885,36 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
 ///
 /// A document names a remote image only when its sender is allowed or the
 /// user chose "Show once": the sanitizer strips every one otherwise
-/// (spec 006 FR-025). So what is asked for here is exactly what the user
-/// consented to, for the message they opened, and nothing is prefetched.
+/// (spec 006 FR-025). And only for a message the user opened: the pane
+/// follows the list's cursor, so a message counts as opened once it has
+/// stayed on screen for the dwell that marks it read ([`DWELL_TO_READ`]) --
+/// a cursor sweeping past it fetches nothing -- or at once when the load
+/// is the user's own consent.
+///
+/// [`DWELL_TO_READ`]: postio_ui::dwell::DWELL_TO_READ
 fn fetch_remote(view: &crate::body_view::BodyView, place: &Rc<Place>, document: &str) {
+    if remote_image_urls(document).is_empty() {
+        return;
+    }
+    if place.consented.replace(false) {
+        ask_remote(view, place, document);
+        return;
+    }
+    let view = view.downgrade();
+    let weak = Rc::downgrade(place);
+    let document = document.to_owned();
+    glib::timeout_add_local_once(postio_ui::dwell::DWELL_TO_READ, move || {
+        let (Some(view), Some(place)) = (view.upgrade(), weak.upgrade()) else {
+            return;
+        };
+        if *place.shown.borrow() == document {
+            ask_remote(&view, &place, &document);
+        }
+    });
+}
+
+/// The asking half of [`fetch_remote`], once the message counts as opened.
+fn ask_remote(view: &crate::body_view::BodyView, place: &Rc<Place>, document: &str) {
     let Some(fetch) = place.fetch.borrow().clone() else {
         return;
     };
@@ -1813,9 +1951,36 @@ fn fetch_remote(view: &crate::body_view::BodyView, place: &Rc<Place>, document: 
     );
 }
 
+/// What "View source" draws: each message's body as it was sent -- its
+/// HTML, or its text -- escaped into a document of preformatted text, with
+/// nothing in it that could load or run.
+fn source_document(open: Option<&Open>, thread: &[ThreadMessage]) -> String {
+    let bodies: Vec<&MessageBody> = match open {
+        Some(open) => vec![&open.body],
+        None => thread.iter().map(|message| &message.body).collect(),
+    };
+    let mut out = String::new();
+    for body in bodies {
+        let source = body.html.as_deref().or(body.text.as_deref()).unwrap_or("");
+        out.push_str("<pre class=\"postio-source\" style=\"white-space: pre-wrap\">");
+        for c in source.chars() {
+            match c {
+                '<' => out.push_str("&lt;"),
+                '>' => out.push_str("&gt;"),
+                '&' => out.push_str("&amp;"),
+                '"' => out.push_str("&quot;"),
+                c => out.push(c),
+            }
+        }
+        out.push_str("</pre>");
+    }
+    wrap_document(&out, RemoteImages::Blocked, Sheet::Theme)
+}
+
 /// The `http` and `https` URLs `document` names as images: an `<img>`'s
-/// `src` and a style's `url()`. Never a link's `href`: following a link is
-/// the user's to do.
+/// `src`, a `background=` attribute, and a background in a style. Never a
+/// link's `href`, a cursor or anything else CSS can name: the contract
+/// allows images and backgrounds and nothing more.
 fn remote_image_urls(document: &str) -> Vec<String> {
     let decode = |url: &str| {
         url.replace("&quot;", "\"")
@@ -1828,12 +1993,26 @@ fn remote_image_urls(document: &str) -> Vec<String> {
             urls.push(url);
         }
     };
-    for piece in document.split("src=\"").skip(1) {
-        if let Some(end) = piece.find('"') {
-            push(decode(&piece[..end]));
+    for attribute in ["src=\"", "background=\""] {
+        for piece in document.split(attribute).skip(1) {
+            if let Some(end) = piece.find('"') {
+                push(decode(&piece[..end]));
+            }
         }
     }
-    for piece in document.split("url(").skip(1) {
+    let mut pieces = document.split("url(");
+    let mut before = pieces.next().unwrap_or("");
+    for piece in pieces {
+        // The declaration this `url(` is in: from the last boundary before
+        // it. Only a background names an image.
+        let declaration = before
+            .rfind([';', '{', '"', '\''])
+            .map_or(before, |at| &before[at + 1..]);
+        let is_background = declaration.trim_start().starts_with("background");
+        before = piece;
+        if !is_background {
+            continue;
+        }
         let piece = decode(piece);
         let piece = piece.trim_start();
         let (quote, rest) = match piece.chars().next() {
@@ -2106,12 +2285,16 @@ mod tests {
             <img src="https://images.example.net/a.gif?x=1&amp;y=2">
             <img src="postio-cid:part@example.com">
             <div style="background:url(&quot;http://images.example.net/b.png&quot;)"></div>
-            <style>.hero { background: url(https://images.example.net/c.png) }</style>
+            <style>.hero { background: url(https://images.example.net/c.png) }
+            .pointer { cursor: url(https://images.example.net/cursor.png), auto }
+            li { list-style-image: url(https://images.example.net/bullet.png) }</style>
+            <table background="https://images.example.net/d.png"></table>
             <img src="https://images.example.net/a.gif?x=1&amp;y=2">"#;
         assert_eq!(
             super::remote_image_urls(document),
             [
                 "https://images.example.net/a.gif?x=1&y=2",
+                "https://images.example.net/d.png",
                 "http://images.example.net/b.png",
                 "https://images.example.net/c.png",
             ]

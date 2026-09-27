@@ -386,15 +386,12 @@ impl BodyView {
 
     /// `darken_message`'s title for the message on screen, or `None` when
     /// the command does not apply to it.
-    pub fn darken_title(&self) -> Option<String> {
+    pub fn darken_title(&self) -> Option<&'static str> {
         let (_, presentation) = self.darkenable()?;
-        Some(
-            match presentation {
-                postio_render::Presentation::Darkened => "Show as sent",
-                _ => "Darken this message",
-            }
-            .to_owned(),
-        )
+        Some(match presentation {
+            postio_render::Presentation::Darkened => "Show as sent",
+            _ => "Darken this message",
+        })
     }
 
     /// The message on screen `darken_message` acts on, and how it is shown:

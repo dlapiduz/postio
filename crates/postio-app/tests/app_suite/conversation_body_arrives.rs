@@ -12,8 +12,8 @@
 //! of empty headers until it was closed and reopened.
 //!
 //! The seam is `body_arrives.rs`': write the body, hand `Feeds::apply` the
-//! `BodyLoaded` a real engine would emit, and assert on the document that
-//! reached WebKit.
+//! `BodyLoaded` a real engine would emit, and assert on the document the
+//! reader was handed and on the words its view drew.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe: it races any other thread reading
@@ -167,6 +167,16 @@ pub fn a_body_arriving_fills_in_the_open_conversation() {
             "the body landed for the message the conversation is showing and the \
              pane went on showing an empty header. `Event::BodyLoaded` has to \
              reach the one-document pane, not only the single reader"
+        );
+        // And it is drawn, not only composed: the words are in the view's
+        // snapshot, which is what a person reads.
+        let reader = window
+            .conversation()
+            .document_reader()
+            .expect("the one-document pane draws through a reader");
+        assert!(
+            settle_until(async || crate::drawn(&reader).contains(BODY)).await,
+            "the body reached the conversation's document and was never drawn"
         );
 
         window.destroy();

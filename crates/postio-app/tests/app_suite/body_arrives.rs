@@ -213,6 +213,13 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
              showing the wait. `Event::BodyLoaded` is emitted the moment the \
              bytes are committed; check that anything at all consumes it"
         );
+        assert!(
+            settle_until(
+                async || crate::drawn(&window.reader()).contains("See the attached figures.")
+            )
+            .await,
+            "the plate went and the body's words were never drawn"
+        );
 
         // ── 4. and it did so once, not once per event ───────────────────────
         //

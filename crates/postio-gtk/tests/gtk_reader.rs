@@ -1048,8 +1048,13 @@ fn an_allowed_senders_images_survive_the_thread_document() {
          in a conversation"
     );
     // Surviving the sanitizer is not enough to be *fetched*: the reader has
-    // to ask its owner for it. Asserting only that the URL is present would
-    // have passed while the picture stayed blank.
+    // to ask its owner for it, once the message has stayed on screen for the
+    // dwell that makes it opened. Asserting only that the URL is present
+    // would have passed while the picture stayed blank.
+    let deadline = Instant::now() + postio_test_support::patience();
+    while asked.borrow().is_empty() && Instant::now() < deadline {
+        pump_for(Duration::from_millis(50));
+    }
     let asked = asked.borrow().clone();
     assert_eq!(
         asked,

@@ -4628,6 +4628,7 @@ dependencies = [
  "postio-host",
  "postio-index",
  "postio-model",
+ "postio-render",
  "postio-runtime",
  "postio-search",
  "postio-session",
