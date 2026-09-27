@@ -36,7 +36,6 @@
 /* The disclosure triangle is the browser's, and it is not Postio's design
    language. The marker in canvas 17 is a small square that reads as a state,
    not as an affordance to twist. */
-.postio-message-head::-webkit-details-marker,
 .postio-message-head::marker {
   display: none;
   content: "";

@@ -6,11 +6,12 @@
 //! anything else; see `postio_gtk::reader::view`). A bug here should degrade
 //! markup, never to a live tracking pixel.
 //!
-//! [`ammonia`] does most of the work from its own defaults: `<script>` and
-//! `<style>` are removed tag-and-contents, every `on*` handler is dropped, and
-//! the `style` attribute is not in its generic allow-list — a sender's CSS
-//! never competes with Postio's injected stylesheet
-//! (`postio_gtk::reader::view::DOCUMENT_TEMPLATE`).
+//! [`ammonia`] does most of the work from its own defaults: `<script>` is
+//! removed tag-and-contents and every `on*` handler is dropped. A sender's
+//! CSS is kept, not stripped (spec 006 FR-019): `style` attributes pass
+//! through [`contain_declarations`], and `<style>` rules are lifted out and
+//! scoped to the message by [`crate::styles`], so they style the sender's
+//! markup and nothing of Postio's.
 //! What this module adds on top:
 //!
 //! * `<iframe>`, `<object>`, `<embed>`, `<svg>`, `<math>`, `<noscript>` and
