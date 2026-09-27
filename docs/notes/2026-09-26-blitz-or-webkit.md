@@ -351,6 +351,77 @@ building:
 The protocol's gates and scored criteria stand. This adds evidence, and
 the maintainer decides again with it in hand.
 
+### Results (`crates/postio-gtk/examples/head_to_head.rs`)
+
+**Setup.**
+- The runs are on a headless mutter at 1280×1000, scale 1, because the
+  desktop's screen had stopped presenting frames. `capture.rs` records why
+  that stops a frame clock.
+- There were 3 alternating runs per engine, and the ranges are over those
+  runs.
+- The build was release, and no other session was compiling (load average
+  about 2).
+- **One bias**: headless mutter composites in software, so WebKit's GPU
+  compositing runs on its software path. Blitz paints on the CPU either way.
+
+| | WebKit | Blitz |
+|---|---|---|
+| H1 cold start (process start → first message presented) | 432–462 ms | **206–219 ms** |
+| H2 open, median of 20 | 21.0–22.1 ms | **16.6–16.7 ms** |
+| H2 open, worst | 37.5–50.3 ms | **27.0–28.2 ms** |
+| H2 thread of 10 / of 50 | 25–41 / 33 ms | **14–15 / 22 ms** |
+| H3 scroll, frame interval median / p95 / worst | 16.7 / 16.9–17.0 / 17.1–17.5 ms | 16.6–16.7 / 17.2–17.6 / 18.7–19.2 ms |
+| H4 theme switch | 33–49 ms, style only: the time until the body's ground turned dark, not a painted frame | 38–41 ms, full relayout and paint |
+| H5 memory, idle after the first message | 168 MiB across the app and WebKit's helpers | **84 MiB**, one process |
+| H5 memory after the session (20 openings) | 214–216 MiB | **96 MiB** |
+| H5 memory at the end | 260–263 MiB across **8 processes** | **97 MiB across 1** |
+| H6 CPU over the run, all processes | 2.14–2.18 s | **1.04–1.06 s** |
+
+**Blitz at a forced 2× scale.** Its CPU raster cost quadruples per frame
+there. This isolates what a HiDPI display costs Blitz; WebKit could not be
+forced to 2× on this compositor.
+- scroll median / p95 / worst: 16.6–16.7 / 17.4–17.7 / 18.5–19.2 ms, so
+  **still no dropped frame**, where one would show as ~33 ms;
+- opening a message: 16.8–17.0 ms median, 35–36 ms worst;
+- theme switch: 46–52 ms;
+- memory: 121 MiB, one process;
+- CPU: 2.0 s, about WebKit's at 1×.
+
+**What these numbers are and are not.**
+- **Memory is the large difference: about 2.7× less for Blitz.** WebKit is
+  a UI process plus a web process, a network process and their sandbox
+  helpers: 8 processes, 260 MiB by the end. Blitz is one process at 97 MiB,
+  and it grew 13 MiB across the session to WebKit's 92. This is the
+  difference flectar reports.
+- **Blitz is ahead on cold start, opening messages and CPU.** It starts
+  about 2× faster, opens messages about a frame sooner, and uses about half
+  the CPU at 1×.
+- **Scrolling is at parity: neither dropped a frame.** Blitz shows slightly
+  more jitter, because it repaints the viewport from scratch every frame on
+  the UI thread. A tile cache would remove most of that.
+- **The Blitz widget is minimal.** It has no selection, find, accessibility
+  or tile cache, and it lays out on the UI thread. Adding those costs
+  memory and CPU that these numbers do not include. flectar, which has
+  most of them, is evidence the cost stays small.
+- **Unmeasured.** WebKit on real GPU hardware, which may scroll and
+  composite more cheaply than its software path here. Both engines on a
+  real 2× display.
+
+**What flectar shows.** It is the evidence the maintainer pointed to.
+Read-only, by an agent:
+- **It patches Blitz: 7 patches, pinned and verified by a script.** They
+  include the phantom-grid fix for collapsed borders (the same idea as
+  blitz#504), CTA text on inline backgrounds, a bounded resource queue,
+  and a layout that could loop forever.
+- **It renders on the CPU by default**, on purpose: a GPU device makes
+  several Linux drivers reserve hundreds of MiB.
+- **It paints 512 px tiles for the viewport only.** Its regression test
+  holds at most 4 tiles, and RSS growth under 24 MiB over 160 openings.
+- **Fonts come through fontique's fontconfig backend**, which is C and
+  which this spec's FR-023a forbids.
+- **It lays out on the UI thread, with `catch_unwind` around every stage.**
+- **It has no dark mode for bodies, and blocks SVG images by policy.**
+
 ## Scorecard
 
 | | arm A — WebKit | arm B — Blitz |
