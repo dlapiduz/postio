@@ -198,3 +198,29 @@ fn cluster_rects_do_not_carry_the_device_scale() {
         "{a:?} at 1x, {b:?} at 2x"
     );
 }
+
+/// A translucent ground is part of what is behind the text: a search
+/// match's tint over a white page is a tint, not white.
+#[test]
+fn a_translucent_ground_is_composited_over_the_page() {
+    let doc = render_html(
+        "<!DOCTYPE html><html><body style=\"background:#fff\">\
+         <p>plain <span style=\"background:rgba(0,0,255,0.5)\">tinted</span></p>\
+         </body></html>"
+            .to_owned(),
+    );
+    let ground_of = |needle: &str| {
+        let range = range_of(&doc.text, needle);
+        doc.text
+            .clusters
+            .iter()
+            .find(|c| c.range.contains(&range.start))
+            .map(|c| c.painted_ground)
+            .expect("a cluster")
+    };
+    let tinted = ground_of("tinted");
+    assert!((tinted.r - 0.5).abs() < 0.01, "{tinted:?}");
+    assert!((tinted.b - 1.0).abs() < 0.01, "{tinted:?}");
+    let plain = ground_of("plain");
+    assert!((plain.r - 1.0).abs() < 0.01, "{plain:?}");
+}
