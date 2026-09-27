@@ -347,6 +347,24 @@ pub const REFUSALS: &[(Refused, Refusal)] = &[
     // CSS.
     (Refused::Property("position"), Refusal::Containment),
     (Refused::Property("z-index"), Refusal::Containment),
+    (Refused::Property("top"), Refusal::Containment),
+    (Refused::Property("right"), Refusal::Containment),
+    (Refused::Property("bottom"), Refusal::Containment),
+    (Refused::Property("left"), Refusal::Containment),
+    (Refused::Property("inset"), Refusal::Containment),
+    (Refused::Property("inset-block"), Refusal::Containment),
+    (Refused::Property("inset-block-start"), Refusal::Containment),
+    (Refused::Property("inset-block-end"), Refusal::Containment),
+    (Refused::Property("inset-inline"), Refusal::Containment),
+    (
+        Refused::Property("inset-inline-start"),
+        Refusal::Containment,
+    ),
+    (Refused::Property("inset-inline-end"), Refusal::Containment),
+    (Refused::Property("transform"), Refusal::Containment),
+    (Refused::Property("translate"), Refusal::Containment),
+    (Refused::Property("rotate"), Refusal::Containment),
+    (Refused::Property("scale"), Refusal::Containment),
     (Refused::AtRule("import"), Refusal::Privacy),
     (Refused::AtRule("font-face"), Refusal::Privacy),
     (Refused::AtRule("namespace"), Refusal::Containment),
@@ -483,6 +501,27 @@ pub const REFUSED: &[(&str, Refusal)] = &[
     // the box `contain_body` draws around it (#323), which is the edge a
     // reader uses to tell Postio's words from a sender's.
     ("position", Refusal::Containment),
+    // The offsets `position` would have used. Without a position they mean
+    // nothing in a browser, but an engine that applies them to a static box
+    // (Blitz does) lifts it out of its message all the same: html-escaping-
+    // styles' `top:-400px` drew its line 312px above the message.
+    ("top", Refusal::Containment),
+    ("right", Refusal::Containment),
+    ("bottom", Refusal::Containment),
+    ("left", Refusal::Containment),
+    ("inset", Refusal::Containment),
+    ("inset-block", Refusal::Containment),
+    ("inset-block-start", Refusal::Containment),
+    ("inset-block-end", Refusal::Containment),
+    ("inset-inline", Refusal::Containment),
+    ("inset-inline-start", Refusal::Containment),
+    ("inset-inline-end", Refusal::Containment),
+    // Moves what is painted without moving what is laid out, so a message
+    // can draw over whatever sits above or beside it.
+    ("transform", Refusal::Containment),
+    ("translate", Refusal::Containment),
+    ("rotate", Refusal::Containment),
+    ("scale", Refusal::Containment),
     // Stacking order is how a message would draw *over* the application's own
     // chrome rather than beside it.
     ("z-index", Refusal::Containment),
@@ -1858,7 +1897,7 @@ mod tests {
         // `contain_body` puts it in (#323).
         for escape in ["position:fixed", "position: sticky"] {
             let out = sanitize_body(
-                &format!(r#"<p style="{escape};top:0">hi</p>"#),
+                &format!(r#"<p style="{escape};top:0;color:red">hi</p>"#),
                 RemoteImages::Blocked,
             );
             assert!(
@@ -1866,9 +1905,12 @@ mod tests {
                 "{escape} survived: {}",
                 out.html
             );
+            // Its offset goes with it: without a position it means nothing,
+            // and an engine that applies it anyway lifts the box out.
+            assert!(!out.html.contains("top"), "{}", out.html);
             // The rest of the declaration is untouched -- refusing a property
             // is not licence to drop the ones beside it.
-            assert!(out.html.contains("top"), "{}", out.html);
+            assert!(out.html.contains("color:red"), "{}", out.html);
         }
     }
 

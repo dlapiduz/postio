@@ -437,12 +437,12 @@ causes no crash or hang, and nothing escapes a message's box.
 **Independent test**: `cargo nextest run -p postio-render --test hostile` and
 `--test egress` are green (SC-003, SC-004).
 
-- [ ] T102 [TEST] [US3] Write `crates/postio-render/tests/hostile.rs`. For every hostile fixture from T005, plus `html-escaping-styles.eml` and `html-tracking-pixel-remote-images.eml`, assert that the render:
+- [X] T102 [TEST] [US3] Write `crates/postio-render/tests/hostile.rs`. For every hostile fixture from T005, plus `html-escaping-styles.eml` and `html-tracking-pixel-remote-images.eml`, assert that the render:
   - either returns `Rendered` with every painted box inside its `MessageBox` rect (001 FR-020, 001 FR-021), or returns `FellBack` with the expected reason;
   - finishes within `postio_test_support::scaled(DEFAULT_RENDER_DEADLINE)`: the production bound, reachable by the `POSTIO_TEST_PATIENCE` dial, as a containment assertion and not a performance gate;
   - produces no `LinkTarget` other than http, https, mailto, a verb or a fragment;
   - leaves `counts.resources_unresolved` counting every refused remote reference
-- [ ] T103 [US3] Fix every T102 failure at the layer that owns it: the sanitizer (`crates/postio-body/src/sanitize.rs`), the resources (`crates/postio-render/src/resources.rs`) or containment CSS (`crates/postio-ui/data/reader.css`). Each fix is its own commit, naming the fixture
+- [X] T103 [US3] Fix every T102 failure at the layer that owns it: the sanitizer (`crates/postio-body/src/sanitize.rs`), the resources (`crates/postio-render/src/resources.rs`) or containment CSS (`crates/postio-ui/data/reader.css`). Each fix is its own commit, naming the fixture
 - [ ] T104 [TEST] [US3] Add `crates/postio-app/tests/app_suite/hostile_mail.rs`, plus its `CASES` row. Open each hostile fixture from the message list, and assert that the reading pane shows either a painted body or the fallback notice, the app keeps responding (the next keystroke is handled), and the process is alive
 - [ ] T105 [US3] Wire the fallback notice's "View source" action to the existing original-source path (001 FR-027) in `crates/postio-gtk/src/reader/notices.rs`
 
