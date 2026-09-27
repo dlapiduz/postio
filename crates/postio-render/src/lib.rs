@@ -6,6 +6,8 @@
 //! crate is being built task by task; until it is, it holds the evaluation's
 //! harness in `examples/` and the dependency graph the checks prove.
 
+pub mod theme;
+
 // Placeholder uses until the renderer is written, one per dependency.
 #[allow(unused_imports)]
 use {

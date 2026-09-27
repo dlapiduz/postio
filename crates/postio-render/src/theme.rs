@@ -1,12 +1,13 @@
 //! Legibility in every theme: the colour arithmetic and the rule of spec 006
-//! research R10, as pure functions every rendering engine shares.
+//! research R10, as pure functions.
 //!
-//! An engine's part is to supply facts — each text run's colour and the
+//! The engine's part is to supply facts — each text run's colour and the
 //! colour actually painted behind it, and what a message declares about its
 //! own backgrounds and dark support — and to apply what this returns. The
-//! rule itself is here, where it is proven in milliseconds with no display,
-//! and where the evaluation of two engines (research R0) can run the same
-//! rule on both.
+//! rule itself is kept apart from the engine, where it is proven in
+//! milliseconds with no display. It lives in this crate rather than in
+//! `postio-ui` because `postio-ui` links `postio-core`, and with it `tokio`,
+//! which the renderer's graph may not contain (FR-001).
 //!
 //! **The floor has no large-text allowance** (spec FR-012): 4.5:1 for every
 //! run of text, 7:1 in high contrast.

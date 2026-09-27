@@ -362,8 +362,8 @@ impl Surface for WebKitSurface {
                 move |value| {
                     if let Ok(value) = value
                         && let Some((c, _)) =
-                            postio_ui::reader::theme::parse_css_color(&value.to_str())
-                        && postio_ui::reader::theme::relative_luminance(c) < 0.2
+                            postio_render::theme::parse_css_color(&value.to_str())
+                        && postio_render::theme::relative_luminance(c) < 0.2
                     {
                         answer.set(true);
                     }

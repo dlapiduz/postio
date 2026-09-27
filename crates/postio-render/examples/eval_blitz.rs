@@ -10,7 +10,7 @@
 //!
 //! - **G1**: every text run's rectangle and colour from Blitz's own layout,
 //!   the pixels behind it sampled, before and after research R10's rule
-//!   (`postio_ui::reader::theme`), applied as style overrides and a restyle.
+//!   (`postio_render::theme`), applied as style overrides and a restyle.
 //! - **S1**: each designed fixture in light, with the same neutralized
 //!   container geometry as arm A, against its reference.
 //!
@@ -32,7 +32,7 @@ use postio_model::MessageBody;
 use postio_model::test_corpus::{self, Category, Fixture};
 use postio_test_support::fidelity::{self, Image};
 use postio_ui::reader::document::{self, Rendering};
-use postio_ui::reader::theme::{self, MessageFacts, Presentation, Rgb, Theme};
+use postio_render::theme::{self, MessageFacts, Presentation, Rgb, Theme};
 
 /// The reader's width for every render, in CSS pixels.
 const WIDTH: u32 = 800;
