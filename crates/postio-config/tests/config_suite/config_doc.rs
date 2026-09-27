@@ -62,6 +62,13 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Show each row's sender-initials chip.",
     },
+    // ── [reader] ──────────────────────────────────────────────────────
+    Entry {
+        path: "reader.zoom",
+        kind: "integer",
+        default: "100",
+        description: "How large messages are drawn, in percent: one of 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 or 300. Another value loads as the nearest step.",
+    },
     // ── [sync] ────────────────────────────────────────────────────────
     Entry {
         path: "sync.check_for_mail",

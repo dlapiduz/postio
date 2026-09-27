@@ -507,11 +507,11 @@ reader's place and persisted in `[reader]`.
 **Independent test**: `cargo nextest run -p postio-render --test zoom` and the
 `body_view_zoom` gtk_suite case are green (SC-009).
 
-- [ ] T120 [TEST] [P] [US6] In `crates/postio-config` tests, including the config-doc drift entry in `crates/postio-config/tests/config_suite/config_doc.rs`:
+- [X] T120 [TEST] [P] [US6] In `crates/postio-config` tests, including the config-doc drift entry in `crates/postio-config/tests/config_suite/config_doc.rs`:
   - `[reader] zoom` defaults to 100;
   - `zoom = 112` loads as 110, and `zoom = 5` loads as 50;
   - a round trip preserves the value
-- [ ] T121 [US6] Add `crates/postio-config/src/reader.rs`, with `ReaderConfig { zoom }`, a serde default and clamping, to `Config` in `crates/postio-config/src/lib.rs`. Add its `patch_reader`, the `ConfigChanged` field, the `docs/config.md` row, and the FFI mirror in `crates/postio-ffi/src/settings.rs`
+- [X] T121 [US6] Add `crates/postio-config/src/reader.rs`, with `ReaderConfig { zoom }`, a serde default and clamping, to `Config` in `crates/postio-config/src/lib.rs`. Add its `patch_reader`, the `ConfigChanged` field, the `docs/config.md` row, and the FFI mirror in `crates/postio-ffi/src/settings.rs`
 - [X] T122 [TEST] [P] [US6] In `crates/postio-core/tests/core_suite/command_registry.rs`, check `zoom_in` (`mod+plus`, alternates `mod+equal` and `mod+KP_Add`), `zoom_out` (`mod+minus`, `mod+KP_Subtract`) and `zoom_reset` (`mod+0`, `mod+KP_0`) against `contracts/registry-commands.md`
 - [X] T123 [US6] Add the three zoom commands in `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`, regenerate `docs/keybindings.md`, and update `linux-bindings.txt` by hand
 - [ ] T124 [TEST] [US6] Write `crates/postio-render/tests/zoom.rs` (SC-009). For every text-bearing corpus fixture at every step from 50 to 300%:

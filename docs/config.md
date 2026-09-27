@@ -21,6 +21,12 @@ wrote it.
 | `show_hover_actions` | boolean | `true` | Show per-row actions when the pointer rests over a row. |
 | `sender_avatars` | boolean | `true` | Show each row's sender-initials chip. |
 
+## `[reader]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `zoom` | integer | `100` | How large messages are drawn, in percent: one of 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 or 300. Another value loads as the nearest step. |
+
 ## `[sync]`
 
 | Key | Type | Default | Description |
