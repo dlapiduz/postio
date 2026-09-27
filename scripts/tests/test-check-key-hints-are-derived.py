@@ -31,10 +31,32 @@ def run(files: dict[str, str]) -> subprocess.CompletedProcess[str]:
         )
 
 
+def run_root(files: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """The check over a whole repository: every desktop crate's `src/`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for crate in ("postio-gtk", "postio-widgets", "postio-focus"):
+            (root / "crates" / crate / "src").mkdir(parents=True)
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return subprocess.run(
+            [sys.executable, str(CHECK), "--root", str(root)], capture_output=True, text=True
+        )
+
+
 def expect(name: str, files: dict[str, str], ok: bool, *seen: str) -> None:
-    result = run(files)
+    check(name, run(files), ok, *seen)
+
+
+def expect_root(name: str, files: dict[str, str], ok: bool, *seen: str) -> None:
+    check(name, run_root(files), ok, *seen)
+
+
+def check(name: str, result: subprocess.CompletedProcess[str], ok: bool, *seen: str) -> None:
     if (result.returncode == 0) != ok:
-        FAILURES.append(f"{name}: exit {result.returncode}\n{result.stdout}")
+        FAILURES.append(f"{name}: exit {result.returncode}\n{result.stdout}{result.stderr}")
     for text in seen:
         if text not in result.stdout:
             FAILURES.append(f"{name}: output lacks {text!r}\n{result.stdout}")
@@ -101,6 +123,45 @@ expect(
     False,
     "header.rs: 1 hints::fixed call(s), 0 allowed",
 )
+
+# Both desktop apps draw hints, and the shared crate draws most of them
+# (ADR 0043), so the rule follows the code there (specs/007-postio-focus R1).
+expect_root(
+    "a literal hint in the classic app's crate fails",
+    {"crates/postio-gtk/src/header.rs": 'labelled("Compose", "c");'},
+    False,
+    "crates/postio-gtk/src/header.rs:1: a literal key hint",
+)
+expect_root(
+    "a literal key hint planted in postio-widgets fails",
+    {"crates/postio-widgets/src/widgets/picker.rs": 'keyhint::labelled("Snooze", Some("s"));'},
+    False,
+    "crates/postio-widgets/src/widgets/picker.rs:1: a literal key hint",
+)
+expect_root(
+    "a literal key hint planted in postio-focus fails",
+    {"crates/postio-focus/src/window.rs": 'labelled("Has action", "!");'},
+    False,
+    "crates/postio-focus/src/window.rs:1: a literal key hint",
+)
+expect_root(
+    "a cap built by hand in postio-focus fails",
+    {"crates/postio-focus/src/list.rs": 'key.add_css_class("postio-key");'},
+    False,
+    "crates/postio-focus/src/list.rs:1: a cap built by hand",
+)
+expect_root(
+    "the owner draws caps in the shared crate",
+    {"crates/postio-widgets/src/widgets/keyhint.rs": 'label.add_css_class("postio-keyhint");'},
+    True,
+)
+expect_root(
+    "an unlisted fixed hint in postio-widgets fails",
+    {"crates/postio-widgets/src/reader/view.rs": 'hints::fixed("c", "Compose", "because");'},
+    False,
+    "crates/postio-widgets/src/reader/view.rs: 1 hints::fixed call(s), 0 allowed",
+)
+expect_root("a clean repository passes", {}, True)
 
 if FAILURES:
     print("\n".join(FAILURES))

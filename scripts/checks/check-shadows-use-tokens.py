@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A drop shadow in the GTK stylesheet comes from the token scale.
+"""A drop shadow in the GTK stylesheets comes from the token scale.
 
 Five overlays each typed `box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18)` beside
 a token scale that already had `--postio-shadow-sm/-md/-lg` -- generated from
@@ -7,15 +7,22 @@ the design system, and redefined for the dark scheme, where a black shadow at
 18% on a near-black ground is no lift at all. The literal was right on the
 day it was typed and could not follow the tokens anywhere after that.
 
-The rule: no `box-shadow` in `crates/postio-gtk/data/shell.css` may carry a
-colour of its own -- no `rgba(`, `rgb(`, `hsl(` or `#hex`. A shadow is
-`var(--postio-shadow-*)`, or an inset hairline drawn with a colour token
-(`inset 0 -1px var(--postio-hairline)`), or `none`. `tokens.css` is exempt:
-it is generated from the design system, and is where the scale is defined.
+The rule: no `box-shadow` in a desktop crate's stylesheets --
+`crates/{postio-gtk,postio-widgets,postio-focus}/data/*.css`, the shared
+crate's included (ADR 0043) -- may carry a colour of its own -- no `rgba(`,
+`rgb(`, `hsl(` or `#hex`. A shadow is `var(--postio-shadow-*)`, or an inset
+hairline drawn with a colour token (`inset 0 -1px var(--postio-hairline)`),
+or `none`. `tokens.css` is exempt: it is generated from the design system,
+and is where the scale is defined.
 
 Fix: use `var(--postio-shadow-sm|md|lg)`, or a colour token. For a lift the
 scale does not have, add it to the design system's tokens and regenerate,
 rather than typing it here.
+
+Usage:
+    python3 scripts/checks/check-shadows-use-tokens.py             # the repository
+    python3 scripts/checks/check-shadows-use-tokens.py --root DIR  # a fixture repository
+    python3 scripts/checks/check-shadows-use-tokens.py SHEET       # one stylesheet
 """
 
 from __future__ import annotations
@@ -25,22 +32,41 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SHEET = ROOT / "crates/postio-gtk/data/shell.css"
+# The crates whose `data/` holds stylesheets: both desktop apps, and the crate
+# holding the widget rules both of them draw with (ADR 0043;
+# specs/007-postio-focus R1).
+CRATES = ("postio-gtk", "postio-widgets", "postio-focus")
+# Generated from the design system: where the scale is defined, not used.
+GENERATED = "tokens.css"
 
 COMMENT = re.compile(r"/\*.*?\*/", re.S)
 DECLARATION = re.compile(r"box-shadow\s*:([^;}]*)", re.S)
 LITERAL = re.compile(r"\b(?:rgba?|hsla?)\(|#[0-9a-fA-F]{3,8}\b")
 
 
+def sheets_of(argv: list[str]) -> list[tuple[Path, str]]:
+    """Each stylesheet to read, with how it is shown."""
+    args = argv[1:]
+    if args and args[0] != "--root":
+        return [(Path(args[0]), Path(args[0]).name)]
+    root = Path(args[1]) if args else ROOT
+    return [
+        (sheet, sheet.relative_to(root).as_posix())
+        for crate in CRATES
+        for sheet in sorted((root / "crates" / crate / "data").glob("*.css"))
+        if sheet.name != GENERATED
+    ]
+
+
 def main(argv: list[str]) -> int:
-    sheet = Path(argv[1]) if len(argv) == 2 else SHEET
-    text = COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), sheet.read_text(encoding="utf-8"))
     problems = []
-    for match in DECLARATION.finditer(text):
-        if LITERAL.search(match.group(1)):
-            line = text.count("\n", 0, match.start()) + 1
-            value = " ".join(match.group(1).split())
-            problems.append(f"  {sheet.name}:{line}: box-shadow:{value}")
+    for sheet, shown in sheets_of(argv):
+        text = COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), sheet.read_text(encoding="utf-8"))
+        for match in DECLARATION.finditer(text):
+            if LITERAL.search(match.group(1)):
+                line = text.count("\n", 0, match.start()) + 1
+                value = " ".join(match.group(1).split())
+                problems.append(f"  {shown}:{line}: box-shadow:{value}")
     if not problems:
         return 0
     print("Drop shadows with a colour of their own, not the token scale:")

@@ -36,9 +36,27 @@ def run(css: str, files: dict[str, str]) -> subprocess.CompletedProcess[str]:
         )
 
 
+def run_root(files: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """The check over a whole repository: every desktop crate's `data/`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "crates").mkdir()
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return subprocess.run(
+            [sys.executable, str(CHECK), "--root", str(root)],
+            capture_output=True,
+            text=True,
+        )
+
+
 def expect(name: str, result: subprocess.CompletedProcess[str], ok: bool, *seen: str) -> None:
     if (result.returncode == 0) != ok:
-        FAILURES.append(f"{name}: exit {result.returncode}, wanted {'0' if ok else '1'}\n{result.stdout}")
+        FAILURES.append(
+            f"{name}: exit {result.returncode}, wanted {'0' if ok else '1'}\n{result.stdout}{result.stderr}"
+        )
     for text in seen:
         if text not in result.stdout:
             FAILURES.append(f"{name}: output lacks {text!r}\n{result.stdout}")
@@ -95,6 +113,37 @@ expect(
     run(".postio-meta {}", {"postio-ui/src/tokens.rs": '".postio-meta {{"'}),
     False,
     ".postio-meta",
+)
+
+# Both desktop apps carry stylesheets, and the shared crate carries the widget
+# rules both of them draw with (ADR 0043; specs/007-postio-focus R1).
+expect(
+    "a dead rule in the classic app's stylesheet fails",
+    run_root({"crates/postio-gtk/data/shell.css": ".postio-gone {}"}),
+    False,
+    "crates/postio-gtk/data/shell.css:1: .postio-gone",
+)
+expect(
+    "a dead rule planted in postio-widgets' stylesheet fails",
+    run_root({"crates/postio-widgets/data/widgets.css": ".postio-row {}\n.postio-gone {}"}),
+    False,
+    "crates/postio-widgets/data/widgets.css:2: .postio-gone",
+)
+expect(
+    "a dead rule planted in postio-focus' stylesheet fails",
+    run_root({"crates/postio-focus/data/focus.css": ".postio-focus-gone {}"}),
+    False,
+    "crates/postio-focus/data/focus.css:1: .postio-focus-gone",
+)
+expect(
+    "a shared rule set by the other app's code is a use",
+    run_root(
+        {
+            "crates/postio-widgets/data/widgets.css": ".postio-pill {}",
+            "crates/postio-focus/src/row.rs": 'w.add_css_class("postio-pill");',
+        }
+    ),
+    True,
 )
 
 if FAILURES:
