@@ -5153,7 +5153,9 @@ dependencies = [
  "libadwaita",
  "postio-body",
  "postio-config",
+ "postio-model",
  "postio-render",
+ "postio-test-support",
  "postio-ui",
 ]
 

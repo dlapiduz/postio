@@ -21,8 +21,10 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+mod body_view_resets;
 mod harness;
 mod list_contract;
+mod support;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
 /// `#[ignore]`, which means one thing here: this machine may not have what
@@ -40,6 +42,19 @@ const CASES: &[(&str, fn())] = &[
     (
         "harness::an_empty_case_is_listed_and_runs",
         harness::an_empty_case_is_listed_and_runs as fn(),
+    ),
+    (
+        "body_view_resets::a_message_shown_after_a_darkened_one_is_not_darkened",
+        body_view_resets::a_message_shown_after_a_darkened_one_is_not_darkened as fn(),
+    ),
+    (
+        "body_view_resets::a_message_shown_after_another_has_no_selection_and_no_focused_link",
+        body_view_resets::a_message_shown_after_another_has_no_selection_and_no_focused_link
+            as fn(),
+    ),
+    (
+        "body_view_resets::a_message_shown_again_folds_as_it_was_sent",
+        body_view_resets::a_message_shown_again_folds_as_it_was_sent as fn(),
     ),
 ];
 

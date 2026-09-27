@@ -287,8 +287,22 @@ impl BodyView {
 
     /// Show `content` from its top: a different message, not a redraw of
     /// the one on screen.
+    ///
+    /// Nothing the user did to the last message is drawn over this one: it
+    /// is shown as it was sent. A darkening applies to the one message it
+    /// was asked of (spec 006 FR-013a), and a single message's scope is the
+    /// empty string, so a darkened scope kept here would darken every
+    /// message after it. A selection, a focused link and a fold are places
+    /// in one message's text. Focus's dialog shows every message in one
+    /// view, which is where this was found (specs/007-postio-focus research
+    /// R1).
     pub fn set_content_from_top(&self, content: Content) {
-        self.imp().to_top.set(true);
+        let imp = self.imp();
+        imp.to_top.set(true);
+        imp.darkened.borrow_mut().clear();
+        imp.toggled_folds.borrow_mut().clear();
+        imp.focused_link.set(None);
+        self.set_selection(None);
         self.set_content(content);
     }
 
