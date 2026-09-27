@@ -253,12 +253,12 @@ plan and tasks agree with the decision.
 
 ### Fonts, resources, the render thread
 
-- [ ] T042 [TEST] In `crates/postio-render/tests/fonts.rs`, assert:
+- [X] T042 [TEST] In `crates/postio-render/tests/fonts.rs`, assert:
   - the bundled faces resolve by family name;
   - `serif`, `sans-serif` and `monospace` resolve;
   - shaping `html-cjk-emoji.eml` and `html-rtl-mixed.eml` produces **no glyph id 0** (tofu);
   - `FontSet` construction reads no file outside the fontdb-discovered set and the bundled bytes
-- [ ] T043 Implement `crates/postio-render/src/fonts.rs`. `FontSet` registers ADR 0023's `FACES` first, then the `fontdb` discovery **memory-mapped with `memmap2`, never read into memory** (research R3 amendment: reading every file cost 198 MiB resident), with explicit generic families and per-script fallbacks for Latin, CJK, Arabic, Hebrew, Devanagari and emoji. It is built once, off the UI thread
+- [X] T043 Implement `crates/postio-render/src/fonts.rs`. `FontSet` registers ADR 0023's `FACES` first, then the `fontdb` discovery **memory-mapped with `memmap2`, never read into memory** (research R3 amendment: reading every file cost 198 MiB resident), with explicit generic families and per-script fallbacks for Latin, CJK, Arabic, Hebrew, Devanagari and emoji. It is built once, off the UI thread
 - [ ] T044 [TEST] In `crates/postio-render/src/resources.rs` unit tests, assert:
   - a scope-A `cid:` never resolves for a scope-B reference (FR-004);
   - an unknown key resolves to nothing and increments `resources_unresolved`;

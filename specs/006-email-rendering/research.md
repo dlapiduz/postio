@@ -269,7 +269,15 @@ fontconfig *configuration* parser is pure Rust), **memory-map** them
 (`memmap2`), and register the maps into a fontique `Collection`. Reading
 every installed file's bytes cost 198 MiB of resident memory in the
 evaluation; a map costs address space, and only the pages a shaped face
-touches become resident (amended 2026-09-26, T029). Register the bundled faces
+touches become resident (amended 2026-09-26, T029). The map is fontdb's
+`make_shared_face_data`, an `unsafe fn`, so `postio-render` is the lint
+floor's fifth exception: `unsafe_code = "deny"`, one annotated call in
+`fonts.rs`, nothing else unsafe (T043). The hazard is the one every font
+stack that maps fonts accepts: a file truncated underneath the map.
+Per-script fallbacks are chosen by coverage, not by name alone: for each
+script, the first installed face whose character map holds a sample
+character, with well-known families preferred. Helvetica, Arial, Times
+and Courier alias to the Liberation faces, as fontconfig would substitute. Register the bundled faces
 (ADR 0023's `FACES`) first. Generic families (serif, sans-serif, monospace)
 and per-script fallbacks (Latin, CJK, Arabic, Hebrew, Devanagari, emoji) are
 set explicitly from what `fontdb` found, with bundled faces as the floor.

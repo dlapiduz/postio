@@ -21,8 +21,10 @@ blitz-traits = { version = "=0.3.0-beta.2", default-features = false }
 anyrender = "=0.13.0"
 anyrender_vello_cpu = "=0.17.0"
 parley = { version = "0.11", default-features = false, features = ["std"] }
-# Fonts are discovered by fontdb, which is pure Rust (research R3).
+# Fonts are discovered by fontdb, which is pure Rust (research R3), and
+# memory-mapped through it; skrifa reads their character maps.
 fontdb = "0.24"
+skrifa = "0.44"
 # Pure-Rust decoders only; no avif, tiff or exr (research R4).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 kurbo = "0.13"
@@ -48,5 +50,16 @@ postio-ui = { version = "0.3.0", path = "../postio-ui" }
 postio-test-support = { workspace = true, features = ["fidelity"] }
 tempfile = { workspace = true }
 
-[lints]
-workspace = true
+[lints.rust]
+# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
+# One site, `fonts.rs`'s `map_installed`: installed font files are
+# memory-mapped rather than read (research R3), because reading every one
+# cost 198 MiB resident. fontdb's mapping call is `unsafe fn`. No parser
+# here is unsafe; every one is Rust's own (FR-023a).
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+# A crate that keeps its own `[lints.rust]` inherits none of the workspace
+# lints, so the clippy floor's most load-bearing rule is restated here.
+[lints.clippy]
+let_underscore_future = "deny"
