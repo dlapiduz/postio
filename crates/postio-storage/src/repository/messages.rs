@@ -38,6 +38,8 @@ use postio_model::{
 /// stopped this being one of five spellings of it.
 pub use postio_model::ListScope;
 
+use postio_model::promoted::PromotedHeaders;
+
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 
 use crate::error::{Error, Result};
@@ -635,7 +637,8 @@ id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_id
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
 raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
-html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested";
+html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested,
+unsubscribe_offered, automation";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -1183,6 +1186,25 @@ impl<'a> MessageRepository<'a> {
         let mut parameters = vec![i64::from(present)];
         parameters.extend(arguments);
         Ok(sql::execute(self.connection, &sql, parameters).await? as usize)
+    }
+
+    /// Records what a message's promoted headers say (spec 007, research
+    /// R8), and answers whether the message is still here.
+    ///
+    /// For the body's own headers, when a first sync did not ask for them:
+    /// one statement, and a message expunged meanwhile is no error.
+    pub async fn set_promoted(&self, id: MessageId, promoted: PromotedHeaders) -> Result<bool> {
+        let written = sql::execute(
+            self.connection,
+            "UPDATE messages SET unsubscribe_offered = ?2, automation = ?3 WHERE id = ?1",
+            bind![
+                id.get(),
+                i64::from(promoted.unsubscribe_offered),
+                i64::from(promoted.automation)
+            ],
+        )
+        .await?;
+        Ok(written > 0)
     }
 
     /// Hides messages pending a remote delete or move, or brings them back.
@@ -2372,7 +2394,9 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
                 last_synced_at = ?29, raw_blob_id = ?30, content_type = ?31, list_id = ?32,
                 text_part_id = ?33, text_part_headers = ?34,
                 html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37,
-                read_receipt_requested = ?38, sort_at = max(sort_at, ?11)
+                read_receipt_requested = ?38, sort_at = max(sort_at, ?11),
+                unsubscribe_offered = coalesce(?39, unsubscribe_offered),
+                automation = coalesce(?40, automation)
           WHERE id = ?1",
         row_values(id, message),
     )
@@ -2419,10 +2443,11 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
                                deleted_locally, last_synced_at, raw_blob_id, content_type,
                                list_id, text_part_id, text_part_headers,
                                html_part_id, html_part_headers, text_is_flowed,
-                               read_receipt_requested, sort_at)
+                               read_receipt_requested, sort_at, unsubscribe_offered,
+                               automation)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                 ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?11)",
+                 ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?11, ?39, ?40)",
     )
     .await?
     .execute(row_values(0, message))
@@ -2514,6 +2539,18 @@ fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
         maybe_text(message.html_part_headers.clone()),
         boolean(message.text_is_flowed),
         boolean(message.read_receipt_requested),
+        // NULL while not known, which `write_update` reads as "keep what is
+        // there" rather than as "none of the three".
+        maybe_integer(
+            message
+                .promoted
+                .map(|promoted| i64::from(promoted.unsubscribe_offered)),
+        ),
+        maybe_integer(
+            message
+                .promoted
+                .map(|promoted| i64::from(promoted.automation)),
+        ),
     ]
 }
 
@@ -2743,6 +2780,14 @@ fn read_message(row: &Row) -> Result<Message> {
         snoozed_until: row.col::<Option<i64>>(30)?.map(from_millis),
         text_is_flowed: row.col(31)?,
         read_receipt_requested: row.col(32)?,
+        promoted: match (row.col::<Option<bool>>(33)?, row.col::<Option<i64>>(34)?) {
+            (Some(unsubscribe_offered), Some(automation)) => Some(PromotedHeaders {
+                unsubscribe_offered,
+                // Only this crate writes the column, from a `u8`.
+                automation: u8::try_from(automation).unwrap_or_default(),
+            }),
+            _ => None,
+        },
     })
 }
 

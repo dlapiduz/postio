@@ -69,6 +69,7 @@ pub(crate) fn fetched(email: &JmapEmail, position: u32) -> Option<FetchedMessage
         // No BODYSTRUCTURE mapping in this slice: the backfill takes its
         // documented no-sections path and fetches the whole message.
         structure: None,
+        promoted: None,
     })
 }
 

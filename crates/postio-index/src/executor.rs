@@ -1578,6 +1578,23 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
                 State::Unread => ("m.seen = 0".to_string(), Vec::new()),
                 State::Read => ("m.seen = 1".to_string(), Vec::new()),
                 State::Flagged => ("m.flagged = 1".to_string(), Vec::new()),
+                // The promoted headers' columns (spec 007, research R8).
+                // NULL is "not known yet", and a NULL comparison is no
+                // match: mail whose headers nothing has read is neither.
+                State::Bulk => (
+                    format!(
+                        "(m.unsubscribe_offered = 1 OR (m.automation & {}) <> 0)",
+                        postio_model::promoted::PRECEDENCE
+                    ),
+                    Vec::new(),
+                ),
+                State::Automated => (
+                    format!(
+                        "(m.automation & {}) <> 0",
+                        postio_model::promoted::AUTO_SUBMITTED
+                    ),
+                    Vec::new(),
+                ),
             }
         }
         Filter::After(date) => (

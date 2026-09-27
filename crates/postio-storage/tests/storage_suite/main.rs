@@ -44,6 +44,7 @@ mod mailboxes;
 mod markers;
 mod messages;
 mod operations;
+mod promoted_headers;
 mod reclaim_pages;
 mod schema_fidelity;
 mod seed_is_honest;

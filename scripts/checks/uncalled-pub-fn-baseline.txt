@@ -35,7 +35,6 @@ extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
 fts_match                         # crates/postio-search/src/query.rs:417
-get_all                           # crates/postio-model/src/headers.rs:52
 handler_fn                        # crates/postio-core/src/bridge.rs:144 -- a test bus: suites and shot.rs build one; postio-ffi was its last production caller (T019)
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435

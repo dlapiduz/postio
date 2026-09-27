@@ -211,3 +211,116 @@ async fn a_first_sync_resumed_through_the_incremental_entry_files_nothing() {
         probe.calls()
     );
 }
+
+/// A newsletter as its sender builds one.
+fn newsletter(n: u32) -> Vec<u8> {
+    format!(
+        "From: Ledger <news@ledger.example>\r\n\
+         List-Unsubscribe: <https://ledger.example/u/{n}>\r\n\
+         Precedence: bulk\r\n\
+         Subject: Issue {n}\r\n\r\nThe numbers.\r\n"
+    )
+    .into_bytes()
+}
+
+/// A filing pass that remembers what each arrival's promoted headers said.
+#[derive(Debug, Default)]
+struct Reader {
+    said: Mutex<Vec<Option<postio_model::promoted::PromotedHeaders>>>,
+}
+
+#[async_trait::async_trait]
+impl FilingPass for Reader {
+    async fn file(
+        &self,
+        _transaction: &Connection,
+        filed: &[FiledMessage<'_>],
+    ) -> Result<FilingEffects, SyncError> {
+        self.said
+            .lock()
+            .expect("not poisoned")
+            .extend(filed.iter().map(|filed| filed.message.promoted));
+        Ok(FilingEffects::default())
+    }
+}
+
+#[tokio::test]
+async fn an_arrival_is_filed_knowing_its_promoted_headers_and_a_first_sync_is_not() {
+    // Spec 007, research R8: an incremental pass asks for List-Unsubscribe,
+    // Precedence and Auto-Submitted, so the filing pass can tell bulk mail
+    // at arrival; a first sync asks for none of them, and its mail learns
+    // them from its body's headers later.
+    let mut mailbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    mailbox = mailbox.message(MockMessage::new(newsletter(1)));
+    let backend = MockBackend::builder().mailbox(mailbox).build();
+    backend.connect().await.expect("connect");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inbox = local(&connection).await;
+    sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("the first sync");
+
+    backend
+        .append(INBOX, &AppendMessage::new(newsletter(2)))
+        .await
+        .expect("deliver");
+    let reader = Reader::default();
+    let outcome = resync_mailbox_filing(
+        &connection,
+        &backend,
+        &inbox,
+        Some(&reader),
+        &CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("an incremental pass");
+    let Outcome::Incremental { arrived, .. } = outcome else {
+        panic!("expected an incremental pass, got {outcome:?}");
+    };
+
+    let bulk = postio_model::promoted::PromotedHeaders {
+        unsubscribe_offered: true,
+        automation: postio_model::promoted::PRECEDENCE_BULK,
+    };
+    assert_eq!(
+        *reader.said.lock().expect("not poisoned"),
+        vec![Some(bulk)],
+        "the filing pass is handed what the arrival said"
+    );
+    let stored = |id| {
+        let connection = &connection;
+        async move {
+            postio_storage::repository::MessageRepository::new(connection)
+                .get(id)
+                .await
+                .expect("a read")
+                .expect("the message")
+                .promoted
+        }
+    };
+    assert_eq!(
+        stored(arrived[0]).await,
+        Some(bulk),
+        "and the store keeps it"
+    );
+    let first: Vec<(MessageId, Option<String>)> = postio_storage::sql::all(
+        &connection,
+        "SELECT id, subject FROM messages WHERE subject = 'Issue 1'",
+        (),
+        |row| {
+            Ok((
+                MessageId::new(postio_storage::sql::RowExt::col(row, 0)?),
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
+        },
+    )
+    .await
+    .expect("the first sync's message");
+    assert_eq!(
+        stored(first[0].0).await,
+        None,
+        "the first sync did not ask, so does not know"
+    );
+}

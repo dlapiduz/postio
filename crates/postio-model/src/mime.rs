@@ -211,6 +211,11 @@ impl ParsedMessage {
             })
             .collect();
         message.size = self.size;
+        // What the three promoted headers say is known from any header block
+        // (spec 007, research R8) -- but not from bytes that had none, which
+        // say nothing either way.
+        message.promoted = (!self.headers.is_empty())
+            .then(|| crate::promoted::PromotedHeaders::from_headers(&self.headers));
         message.headers = self.headers;
         message.sync.body_state = self.body_state;
 

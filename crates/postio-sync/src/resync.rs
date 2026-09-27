@@ -523,13 +523,16 @@ async fn incremental(
     let known_set: UidSet = known.iter().copied().collect();
     let known_count = known.len() as u32;
 
+    // Both fetches that can bring new mail ask for the headers the filing
+    // pass reads before a body exists (spec 007, research R8); the vanish
+    // check below does not, since it only asks what is still there.
     let mut changed = backend
-        .fetch_headers(&mailbox.path, &UidSet::all(), Some(since), cancel)
+        .fetch_headers_for_filing(&mailbox.path, &UidSet::all(), Some(since), cancel)
         .await?;
 
     if let Some(floor) = unaccounted_arrivals(&changed, selected, previous_uid_next) {
         let arrivals = backend
-            .fetch_headers(
+            .fetch_headers_for_filing(
                 &mailbox.path,
                 &UidSet::from_uid_onwards(floor),
                 None,

@@ -77,6 +77,16 @@ fn is_unread_and_is_flagged() {
 }
 
 #[test]
+fn is_bulk_and_is_automated_are_states_of_their_own() {
+    // Spec 007, research R8: the promoted headers' operators. Anything else
+    // after `is:` stays a half-typed query, never an error.
+    assert_eq!(filters("is:bulk"), vec![Filter::Is(State::Bulk)]);
+    assert_eq!(filters("is:BULK"), vec![Filter::Is(State::Bulk)]);
+    assert_eq!(filters("is:automated"), vec![Filter::Is(State::Automated)]);
+    assert_eq!(filters("is:bul"), Vec::<Filter>::new());
+}
+
+#[test]
 fn is_starred_is_accepted_as_a_synonym_for_flagged() {
     // An earlier brief said `is:starred`; the canvas renamed it to Flagged, and
     // docs/PRODUCT.md §7 keeps the old spelling so muscle memory from other

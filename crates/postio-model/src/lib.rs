@@ -62,6 +62,7 @@ pub mod mime;
 pub mod net;
 pub mod operation;
 pub mod outgoing;
+pub mod promoted;
 pub mod reply;
 pub mod scope;
 pub mod signature;

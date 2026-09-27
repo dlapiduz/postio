@@ -234,6 +234,56 @@ async fn fetched_headers_carry_the_id_verbatim_and_seen_is_inverted_unread() {
 }
 
 #[tokio::test]
+async fn the_metadata_already_says_what_the_promoted_headers_say() {
+    // Gmail's metadata carries every header, so what `List-Unsubscribe`,
+    // `Precedence` and `Auto-Submitted` say is known from the request a
+    // sync already makes, whichever sync it is (spec 007, research R8).
+    let server = ScriptedServer::start();
+    server.on("GET", "/gmail/v1/users/me/labels", LABELS);
+    server.on(
+        "GET",
+        "/gmail/v1/users/me/messages?",
+        r#"{"messages": [{"id": "gm-2"}, {"id": "gm-1"}], "resultSizeEstimate": 2}"#,
+    );
+    server.on(
+        "GET",
+        "/gmail/v1/users/me/messages/gm-1",
+        r#"{"id": "gm-1", "labelIds": ["INBOX"], "internalDate": "1755680000000",
+            "sizeEstimate": 100, "payload": {"headers": [
+              {"name": "Subject", "value": "This week"},
+              {"name": "List-Unsubscribe", "value": "<https://ledger.example/u/9>"},
+              {"name": "Precedence", "value": "bulk"}]}}"#,
+    );
+    server.on(
+        "GET",
+        "/gmail/v1/users/me/messages/gm-2",
+        r#"{"id": "gm-2", "labelIds": ["INBOX"], "internalDate": "1755770000000",
+            "sizeEstimate": 200, "payload": {"headers": [
+              {"name": "Subject", "value": "Lunch"}]}}"#,
+    );
+    let backend = server.backend();
+
+    let set = [1, 2].into_iter().map(Uid::new).collect();
+    let fetched = backend
+        .fetch_headers("Inbox", &set, None, &CancelToken::new())
+        .await
+        .expect("fetch");
+    assert_eq!(
+        fetched
+            .iter()
+            .map(|message| message.promoted)
+            .collect::<Vec<_>>(),
+        vec![
+            Some(postio_model::promoted::PromotedHeaders {
+                unsubscribe_offered: true,
+                automation: postio_model::promoted::PRECEDENCE_BULK,
+            }),
+            Some(postio_model::promoted::PromotedHeaders::default()),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn marking_seen_removes_unread_and_reports_the_labels_truth() {
     let server = ScriptedServer::start();
     server.on(

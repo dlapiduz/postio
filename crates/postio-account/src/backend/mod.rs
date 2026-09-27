@@ -171,6 +171,32 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         cancel: &CancelToken,
     ) -> BackendResult<Vec<FetchedMessage>>;
 
+    /// [`fetch_headers`](Self::fetch_headers), and what the three headers
+    /// Focus promotes say: `List-Unsubscribe`, `Precedence` and
+    /// `Auto-Submitted` (spec 007, research R8), in
+    /// [`FetchedMessage::promoted`].
+    ///
+    /// What an incremental pass files new mail with, so the filing pass
+    /// knows bulk and automated mail at arrival. A first sync asks
+    /// [`fetch_headers`](Self::fetch_headers) instead: every message it
+    /// enumerates would pay for the fields, which is the cost ADR 0025
+    /// refuses to put on everyone.
+    ///
+    /// The default answers what `fetch_headers` does, with the facts not
+    /// known -- right for a backend that cannot ask for three header fields
+    /// on their own, whose messages then learn them from their body's
+    /// headers when it arrives.
+    async fn fetch_headers_for_filing(
+        &self,
+        mailbox: &str,
+        uids: &UidSet,
+        changed_since: Option<ModSeq>,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<FetchedMessage>> {
+        self.fetch_headers(mailbox, uids, changed_since, cancel)
+            .await
+    }
+
     /// Streams one part of one message into `sink`.
     ///
     /// The sink sees the bytes as they arrive and is the only place they exist

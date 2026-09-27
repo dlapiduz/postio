@@ -69,6 +69,64 @@ pub async fn fetch_headers(
     priority: Priority,
     cancel: &CancelToken,
 ) -> BackendResult<Vec<FetchedMessage>> {
+    fetch(
+        pool,
+        mailbox,
+        uids,
+        changed_since,
+        Promoted::NotAsked,
+        priority,
+        cancel,
+    )
+    .await
+}
+
+/// [`fetch_headers`], and what `List-Unsubscribe`, `Precedence` and
+/// `Auto-Submitted` say (spec 007, research R8): what an incremental pass
+/// files new mail with.
+///
+/// One more `BODY.PEEK[HEADER.FIELDS (...)]` item on the same command, so
+/// still one round trip, and only here: a first sync's [`fetch_headers`]
+/// asks for none of the three, because every message it enumerates would
+/// pay for them -- ADR 0025's objection to a header allowlist at sync time,
+/// which promotion answers by charging only the incremental passes that
+/// file new mail.
+pub async fn fetch_headers_for_filing(
+    pool: &ConnectionPool,
+    mailbox: &str,
+    uids: &UidSet,
+    changed_since: Option<ModSeq>,
+    priority: Priority,
+    cancel: &CancelToken,
+) -> BackendResult<Vec<FetchedMessage>> {
+    fetch(
+        pool,
+        mailbox,
+        uids,
+        changed_since,
+        Promoted::Asked,
+        priority,
+        cancel,
+    )
+    .await
+}
+
+/// Whether a fetch asks for the promoted headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Promoted {
+    NotAsked,
+    Asked,
+}
+
+async fn fetch(
+    pool: &ConnectionPool,
+    mailbox: &str,
+    uids: &UidSet,
+    changed_since: Option<ModSeq>,
+    promoted: Promoted,
+    priority: Priority,
+    cancel: &CancelToken,
+) -> BackendResult<Vec<FetchedMessage>> {
     if uids.is_empty() {
         return Ok(Vec::new());
     }
@@ -88,7 +146,15 @@ pub async fn fetch_headers(
             return Err(BackendError::Cancelled);
         }
 
-        fetch_batch(session, &mailbox, uid_validity, &uids, changed_since).await
+        fetch_batch(
+            session,
+            &mailbox,
+            uid_validity,
+            &uids,
+            changed_since,
+            promoted,
+        )
+        .await
     })
     .await
 }
@@ -106,9 +172,10 @@ async fn fetch_batch(
     uid_validity: UidValidity,
     uids: &UidSet,
     changed_since: Option<ModSeq>,
+    promoted: Promoted,
 ) -> BackendResult<Vec<FetchedMessage>> {
     if changed_since.is_none() {
-        return fetch_batch_inner(session, uid_validity, uids, changed_since).await;
+        return fetch_batch_inner(session, uid_validity, uids, changed_since, promoted).await;
     }
 
     skip_counter::install();
@@ -117,6 +184,7 @@ async fn fetch_batch(
         uid_validity,
         uids,
         changed_since,
+        promoted,
     ))
     .await;
     let messages = messages?;
@@ -136,6 +204,7 @@ async fn fetch_batch_inner(
     uid_validity: UidValidity,
     uids: &UidSet,
     changed_since: Option<ModSeq>,
+    promoted: Promoted,
 ) -> BackendResult<Vec<FetchedMessage>> {
     let sequence_set = sequence_set_for(uids)?;
     let condstore = session.capabilities().contains(Capability::CondStore);
@@ -150,6 +219,9 @@ async fn fetch_batch_inner(
         references_item(),
         list_id_item(),
     ];
+    if promoted == Promoted::Asked {
+        item_names.push(promoted_item());
+    }
     if condstore {
         item_names.push(MessageDataItemName::ModSeq);
     }
@@ -249,6 +321,33 @@ fn list_id_section() -> Section<'static> {
     )
 }
 
+/// `BODY.PEEK[HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)]`:
+/// the headers Focus promotes (spec 007, research R8), asked for by a filing
+/// fetch only. An item of its own rather than folded into `LIST-ID`'s,
+/// because `list_id_from_header` and `references_from_header` each read a
+/// block holding exactly one field; this block is read as a whole, by the
+/// same parser a stored header block goes through.
+fn promoted_item() -> MessageDataItemName<'static> {
+    MessageDataItemName::BodyExt {
+        section: Some(promoted_section()),
+        partial: None,
+        peek: true,
+    }
+}
+
+fn promoted_section() -> Section<'static> {
+    let names: Vec<AString<'static>> = postio_model::promoted::FIELDS
+        .iter()
+        .map(|name| {
+            AString::try_from(name.to_ascii_uppercase()).expect("a header name is a valid AString")
+        })
+        .collect();
+    Section::HeaderFields(
+        None,
+        Vec1::try_from(names).expect("three field names are not an empty list"),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Response mapping
 // ---------------------------------------------------------------------------
@@ -279,6 +378,7 @@ fn build_fetched_message(
     let mut structure = None;
     let mut references = Vec::new();
     let mut list_id = None;
+    let mut promoted = None;
 
     for item in items {
         match item {
@@ -297,6 +397,16 @@ fn build_fetched_message(
                 if section == Some(list_id_section()) =>
             {
                 list_id = list_id_from_header(nstring_to_string(data).as_deref());
+            }
+            // Asked for, so known: a block with none of the three is a
+            // message that says none of them, not one nobody looked at.
+            MessageDataItem::BodyExt { section, data, .. }
+                if section == Some(promoted_section()) =>
+            {
+                let block = nstring_to_string(data).unwrap_or_default();
+                promoted = Some(postio_model::promoted::PromotedHeaders::from_headers(
+                    &postio_model::headers::parse_block(block.trim_end()),
+                ));
             }
             MessageDataItem::BodyExt { data, .. } => {
                 references = references_from_header(nstring_to_string(data).as_deref());
@@ -325,6 +435,7 @@ fn build_fetched_message(
         size,
         envelope: envelope.map(|wire| envelope_from_wire(wire, references.split_off(0), list_id)),
         structure: structure.map(|wire| body_structure_from_wire(&wire)),
+        promoted,
     }))
 }
 

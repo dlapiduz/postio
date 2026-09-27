@@ -59,7 +59,8 @@ pub enum Field {
     Subject,
     /// `has:` — a structural property, currently only `has:attach`.
     Has,
-    /// `is:` — a flag state: `is:unread`, `is:read`, `is:flagged`.
+    /// `is:` — a flag state, `is:unread`, `is:read`, `is:flagged`, or what a
+    /// message's promoted headers say, `is:bulk`, `is:automated`.
     Is,
     /// `before:` — messages strictly older than a date.
     Before,
@@ -194,6 +195,11 @@ pub enum State {
     /// `is:flagged` — `\Flagged` is present. The canvas says "Flagged", never
     /// "Starred", but `is:starred` is accepted on input.
     Flagged,
+    /// `is:bulk` — the message offers `List-Unsubscribe`, or says
+    /// `Precedence: bulk`, `list` or `junk` (spec 007, research R8).
+    Bulk,
+    /// `is:automated` — the message says `Auto-Submitted` other than `no`.
+    Automated,
 }
 
 /// One structured constraint, with its value already parsed.
@@ -250,7 +256,7 @@ pub enum Filter {
     },
     /// `has:attach`
     HasAttachment,
-    /// `is:unread`, `is:read`, `is:flagged`
+    /// `is:unread`, `is:read`, `is:flagged`, `is:bulk`, `is:automated`
     Is(State),
     /// `after:2026-01-01` — on or after this date, inclusive.
     After(NaiveDate),

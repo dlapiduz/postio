@@ -8,9 +8,10 @@ use postio_account::backend::UidSet;
 use postio_account::cancel::CancelToken;
 use postio_account::imap::{
     ConnectionPool, ConnectionSettings, IMAPS_PORT, ImapScript, PoolConfig, Priority,
-    RustlsConnector, ScriptedConnector, fetch_headers,
+    RustlsConnector, ScriptedConnector, fetch_headers, fetch_headers_for_filing,
 };
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_model::promoted::{PRECEDENCE_BULK, PromotedHeaders};
 use postio_model::{ModSeq, TransportSecurity, Uid};
 
 const ACCOUNT: &str = "someone@example.com";
@@ -477,4 +478,119 @@ async fn live_server_fetches_real_headers() {
     }
 
     pool.close();
+}
+
+// ── The promoted headers (spec 007, research R8) ─────────────────────────────
+
+/// The item a filing fetch adds, as the command spells it.
+const PROMOTED: &str = "HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)";
+
+/// [`fetch_line`], carrying the promoted headers' block as a literal: what a
+/// server answers a filing fetch with.
+fn filing_line(seq: u32, uid: u32, block: &str) -> String {
+    let line = fetch_line(seq, uid);
+    let (head, tail) = line.split_at(line.len() - 1);
+    format!(
+        "{head} BODY[{PROMOTED}] {{{len}}}\r\n{block}{tail}",
+        len = block.len()
+    )
+}
+
+#[tokio::test]
+async fn a_filing_fetch_asks_for_the_three_promoted_headers_in_the_same_command() {
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply().as_str())
+            .on(
+                "FETCH",
+                fetch_reply(&[
+                    filing_line(
+                        1,
+                        101,
+                        "List-Unsubscribe: <https://news.example.org/u/8f21c9>\r\n\
+                         Precedence: bulk\r\n\r\n",
+                    ),
+                    filing_line(2, 102, "\r\n"),
+                ])
+                .as_str(),
+            ),
+    );
+    let pool = pool_over(connector.clone()).await;
+    let uids: UidSet = [Uid::new(101), Uid::new(102)].into_iter().collect();
+
+    let messages = fetch_headers_for_filing(
+        &pool,
+        "INBOX",
+        &uids,
+        Some(ModSeq::new(3000)),
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+
+    let fetches: Vec<String> = connector
+        .log()
+        .commands()
+        .into_iter()
+        .filter(|command| command.contains("FETCH"))
+        .collect();
+    assert_eq!(
+        fetches.len(),
+        1,
+        "one round trip, the promoted headers riding on it: {fetches:?}"
+    );
+    assert!(
+        fetches[0].contains(PROMOTED) && fetches[0].contains("HEADER.FIELDS (LIST-ID)"),
+        "the filing fetch asks for the three beside what it always asks: {fetches:?}"
+    );
+    let promoted: Vec<_> = messages.iter().map(|message| message.promoted).collect();
+    assert_eq!(
+        promoted,
+        vec![
+            Some(PromotedHeaders {
+                unsubscribe_offered: true,
+                automation: PRECEDENCE_BULK,
+            }),
+            Some(PromotedHeaders::default()),
+        ],
+        "what each said, and that the second said none of the three"
+    );
+    assert_eq!(
+        messages[0]
+            .envelope
+            .as_ref()
+            .map(|envelope| envelope.references.len()),
+        Some(1),
+        "and References is still read from its own item"
+    );
+}
+
+#[tokio::test]
+async fn a_first_sync_s_fetch_asks_for_none_of_them_and_knows_nothing() {
+    let connector = ScriptedConnector::new(script());
+    let pool = pool_over(connector.clone()).await;
+
+    let messages = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::single(Uid::new(101)),
+        None,
+        Priority::Interactive,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+
+    let commands = connector.log().commands();
+    assert!(
+        commands
+            .iter()
+            .filter(|command| command.contains("FETCH"))
+            .all(|command| !command.contains("LIST-UNSUBSCRIBE")
+                && !command.contains("PRECEDENCE")
+                && !command.contains("AUTO-SUBMITTED")),
+        "a first sync pays for none of the three: {commands:?}"
+    );
+    assert_eq!(messages[0].promoted, None, "not asked, not known");
 }

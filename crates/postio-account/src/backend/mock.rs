@@ -1108,40 +1108,22 @@ impl MailBackend for MockBackend {
         changed_since: Option<ModSeq>,
         cancel: &CancelToken,
     ) -> BackendResult<Vec<FetchedMessage>> {
-        self.enter("FETCH").await?;
-        if cancel.is_cancelled() {
-            return Err(BackendError::Cancelled);
-        }
+        self.fetched(mailbox, uids, changed_since, false, cancel)
+            .await
+    }
 
-        let mut state = self.state();
-        let seq = state.calls;
-        state.header_fetches.push((seq, mailbox.to_owned()));
-        let state = state;
-        let index = self.locate(&state, mailbox, "FETCH")?;
-        let condstore = state.condstore();
-        let folder = &state.mailboxes[index];
-
-        Ok(folder
-            .messages
-            .iter()
-            .filter(|message| uids.contains(Uid::new(message.uid)))
-            .filter(|message| match changed_since {
-                // RFC 7162 CHANGEDSINCE is strictly greater than.
-                Some(floor) => message.mod_seq > floor.get(),
-                None => true,
-            })
-            .map(|message| FetchedMessage {
-                remote_id: identity::remote_id(folder.uid_validity, Uid::new(message.uid)),
-                uid: Uid::new(message.uid),
-                uid_validity: folder.uid_validity,
-                mod_seq: condstore.then(|| ModSeq::new(message.mod_seq)),
-                flags: message.flags.clone(),
-                internal_date: message.internal_date,
-                size: message.raw.len() as u64,
-                envelope: Some(message.envelope.clone()),
-                structure: message.structure.clone(),
-            })
-            .collect())
+    /// As a server answers a filing fetch: what each message's own header
+    /// block says of the three promoted fields, read by the parser a stored
+    /// block goes through, as the IMAP adapter reads the block it is sent.
+    async fn fetch_headers_for_filing(
+        &self,
+        mailbox: &str,
+        uids: &UidSet,
+        changed_since: Option<ModSeq>,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<FetchedMessage>> {
+        self.fetched(mailbox, uids, changed_since, true, cancel)
+            .await
     }
 
     async fn fetch_sections(
@@ -1584,6 +1566,60 @@ fn section(message: &MessageState, part: &BodyPart) -> BackendResult<Vec<u8>> {
                         .to_owned(),
                 })
         }
+    }
+}
+
+impl MockBackend {
+    /// `fetch_headers` and `fetch_headers_for_filing`, which differ only in
+    /// whether the promoted headers were asked for.
+    async fn fetched(
+        &self,
+        mailbox: &str,
+        uids: &UidSet,
+        changed_since: Option<ModSeq>,
+        promoted: bool,
+        cancel: &CancelToken,
+    ) -> BackendResult<Vec<FetchedMessage>> {
+        self.enter("FETCH").await?;
+
+        if cancel.is_cancelled() {
+            return Err(BackendError::Cancelled);
+        }
+
+        let mut state = self.state();
+        let seq = state.calls;
+        state.header_fetches.push((seq, mailbox.to_owned()));
+        let state = state;
+        let index = self.locate(&state, mailbox, "FETCH")?;
+        let condstore = state.condstore();
+        let folder = &state.mailboxes[index];
+
+        Ok(folder
+            .messages
+            .iter()
+            .filter(|message| uids.contains(Uid::new(message.uid)))
+            .filter(|message| match changed_since {
+                // RFC 7162 CHANGEDSINCE is strictly greater than.
+                Some(floor) => message.mod_seq > floor.get(),
+                None => true,
+            })
+            .map(|message| FetchedMessage {
+                remote_id: identity::remote_id(folder.uid_validity, Uid::new(message.uid)),
+                uid: Uid::new(message.uid),
+                uid_validity: folder.uid_validity,
+                mod_seq: condstore.then(|| ModSeq::new(message.mod_seq)),
+                flags: message.flags.clone(),
+                internal_date: message.internal_date,
+                size: message.raw.len() as u64,
+                envelope: Some(message.envelope.clone()),
+                structure: message.structure.clone(),
+                promoted: promoted.then(|| {
+                    postio_model::promoted::PromotedHeaders::from_headers(
+                        &postio_model::mime::parse_headers(&message.raw).headers,
+                    )
+                }),
+            })
+            .collect())
     }
 }
 

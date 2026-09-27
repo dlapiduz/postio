@@ -166,6 +166,16 @@ pub struct Message {
     /// privacy section is explicit that this is fixed policy, not a setting —
     /// so this exists only to let the privacy pane count how often it was asked.
     pub read_receipt_requested: bool,
+    /// What its `List-Unsubscribe`, `Precedence` and `Auto-Submitted` say
+    /// (spec 007, research R8), or `None` while that is not known.
+    ///
+    /// Known at filing when an incremental sync asked for the three fields,
+    /// and otherwise from the body's own headers when they arrive: a first
+    /// sync does not ask, since every message it enumerates would pay for
+    /// it (ADR 0025). The filing pass reads it, and `is:bulk` and
+    /// `is:automated` answer from it.
+    #[serde(default)]
+    pub promoted: Option<crate::promoted::PromotedHeaders>,
 
     /// `From`. A list because RFC 5322 permits more than one author.
     pub from: Vec<EmailAddress>,
@@ -275,6 +285,7 @@ impl Message {
             references: Vec::new(),
             list_id: None,
             read_receipt_requested: false,
+            promoted: None,
             from: Vec::new(),
             sender: None,
             reply_to: Vec::new(),

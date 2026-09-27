@@ -488,6 +488,20 @@ CREATE TABLE messages (
     sort_at                 INTEGER NOT NULL,
     -- `List-Id`, for the mailing-list filters.
     list_id                 TEXT,
+    -- What `List-Unsubscribe`, `Precedence` and `Auto-Submitted` say (spec
+    -- 007, research R8): headers promoted from the body-time header index
+    -- (ADR 0025) so Focus's filing pass knows them at arrival. NULL while
+    -- not known: an incremental sync asks for them, a first sync does not,
+    -- and the body's own headers fill them otherwise. A write that does not
+    -- know them never erases what one did.
+    --
+    -- `unsubscribe_offered`: 0 or 1, whether it carries `List-Unsubscribe`.
+    -- `automation`: a bitmask, 1 `Precedence: bulk`, 2 `list`, 4 `junk`,
+    -- 8 `Auto-Submitted: auto-generated` (or any value but `no` and
+    -- `auto-replied`), 16 `auto-replied`. `is:bulk` answers from the first
+    -- and bits 1-4, `is:automated` from bits 8 and 16.
+    unsubscribe_offered     INTEGER,
+    automation              INTEGER,
     -- The top-level `Content-Type`.
     content_type            TEXT,
 
