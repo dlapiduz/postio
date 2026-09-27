@@ -16,6 +16,9 @@ test-hooks = ["postio-render/test-hooks"]
 
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+# The presenters hand work between a watcher's or a runtime's thread and the
+# main loop.
+async-channel = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.22.9", features = ["v1_56"] }
@@ -27,7 +30,10 @@ postio-model.workspace = true
 # The reading renderer (spec 006): BodyView draws its snapshots.
 postio-render.workspace = true
 postio-ui.workspace = true
+tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
+# Remote image URLs, parsed before a fetcher is asked (spec 006 T137).
+url = { workspace = true }
 
 [build-dependencies]
 glib-build-tools = "0.22.8"
@@ -35,6 +41,8 @@ glib-build-tools = "0.22.8"
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-test-support.workspace = true
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 # The shared crate's GTK suite: the custom harness of postio-gtk's gtk_suite
 # and postio-app's app_suite, for their reasons -- GTK initializes on exactly

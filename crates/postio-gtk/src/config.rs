@@ -10,10 +10,11 @@
 //! * Every GTK widget is **main-thread only** and not `Send`, so the watcher's
 //!   callback cannot touch the window.
 //!
-//! [`install`] is the bridge: an `async_channel` whose `Sender` goes to the
-//! watcher thread and whose `Receiver` is awaited by a task on the main
-//! context, where the window is. That task is the only place a reload becomes
-//! a repaint.
+//! The bridge -- an `async_channel` whose `Sender` goes to the watcher thread
+//! and whose `Receiver` is awaited by a task on the main context -- is
+//! `postio_widgets::present::config::follow`, which both desktop apps use.
+//! [`install`] hands it this window's answer to a reload: that callback is
+//! the only place a reload becomes a repaint.
 //!
 //! # A broken file is not a broken application
 //!
@@ -61,12 +62,9 @@
 use std::path::Path;
 
 use adw::prelude::*;
-use gtk::glib;
 use postio_config::Config;
 use postio_config::filters::Reorder;
-use postio_config::validate::Checked;
-use postio_config::watch::ConfigWatcher;
-use postio_core::{CommandId, ConfigService, Event};
+use postio_core::{CommandId, ConfigService};
 
 use crate::finder::Mode;
 use crate::sidebar::{SavedSearch, SavedSearchAction};
@@ -109,7 +107,7 @@ fn placement(setting: postio_config::SignaturePlacement) -> postio_body::Placeme
 }
 
 pub fn install_at(window: &Window, path: &Path) {
-    let mut service = ConfigService::load(path);
+    let service = ConfigService::load(path);
     report(service.status().errors());
     window.apply_keymap(service.keymap().clone());
     window.apply_ui(&service.config().ui);
@@ -190,77 +188,46 @@ pub fn install_at(window: &Window, path: &Path) {
         }
     });
 
-    // Unbounded because the sender is a file watcher that has already debounced
-    // a burst of save events down to one message, and because blocking that
-    // thread would be worse than queueing.
-    let (sender, receiver) = async_channel::unbounded::<Checked>();
-    let watcher = match ConfigWatcher::new(path, move |checked| {
-        // `send_blocking` on the watcher's own thread, which is allowed to
-        // block and has nothing else to do.
-        let _ = sender.send_blocking(checked);
-    }) {
-        Ok(watcher) => watcher,
-        Err(error) => {
-            tracing::warn!(path = %path.display(), %error, "config will not be watched; edits need a restart");
-            return;
-        }
-    };
-
+    // The watcher's thread to the main loop, one validated reload at a time:
+    // the bridge both desktop apps share (`postio_widgets::present::config`).
+    // What a reload *means* to this window stays here.
     let weak = window.downgrade();
-    glib::spawn_future_local(async move {
-        // The watcher is moved in so that it lives exactly as long as the task
-        // reading from it. Dropping it stops the thread.
-        let _watcher = watcher;
-        while let Ok(checked) = receiver.recv().await {
-            // One span per reload, so the problems a file produced are
-            // attributable to *that* reload rather than to whichever of the
-            // day's edits happened to be nearest in the log. Nothing here
-            // awaits, so entering it for the body is sound.
-            let reload = tracing::info_span!("config_reload", path = %service.path().display());
-            let _entered = reload.enter();
-
-            let update = service.apply(checked);
-            for event in &update.events {
-                if let Event::Error { message } = event {
-                    tracing::warn!(message, "rejected");
-                }
-            }
-            tracing::debug!(keys = update.changed.keys, "applied",);
-            let Some(window) = weak.upgrade() else {
-                break;
-            };
-            if update.changed.keys {
-                window.apply_keymap(service.keymap().clone());
-                window.list().set_keymap(service.keymap().clone());
-                window.settings().set_keymap(service.keymap());
-            }
-            if update.changed.ui {
-                window.apply_ui(&service.config().ui);
-                window.list().set_density(service.config().ui.density);
-            }
-            if update.changed.compose {
-                apply_compose(&window, service.config());
-            }
-            if update.changed.reader {
-                window.apply_reader(&service.config().reader);
-            }
-            if update.changed.filters {
-                window
-                    .sidebar()
-                    .set_saved_searches(&saved_searches(service.config()));
-            }
-            if update.changed.storage {
-                window.notify_storage_changed(service.config().storage.max_bytes);
-            }
-            // Whichever save this was — the panel's own debounced write, or
-            // `$EDITOR`'s — a file that loads without error is what "Revert
-            // file" should be able to go back to.
-            if service.status().is_valid()
-                && let Ok(text) = std::fs::read_to_string(service.path())
-            {
-                window.settings().note_known_good(&text);
-            }
+    postio_widgets::present::config::follow(service, move |service, update| {
+        let Some(window) = weak.upgrade() else {
+            return std::ops::ControlFlow::Break(());
+        };
+        if update.changed.keys {
+            window.apply_keymap(service.keymap().clone());
+            window.list().set_keymap(service.keymap().clone());
+            window.settings().set_keymap(service.keymap());
         }
+        if update.changed.ui {
+            window.apply_ui(&service.config().ui);
+            window.list().set_density(service.config().ui.density);
+        }
+        if update.changed.compose {
+            apply_compose(&window, service.config());
+        }
+        if update.changed.reader {
+            window.apply_reader(&service.config().reader);
+        }
+        if update.changed.filters {
+            window
+                .sidebar()
+                .set_saved_searches(&saved_searches(service.config()));
+        }
+        if update.changed.storage {
+            window.notify_storage_changed(service.config().storage.max_bytes);
+        }
+        // Whichever save this was — the panel's own debounced write, or
+        // `$EDITOR`'s — a file that loads without error is what "Revert
+        // file" should be able to go back to.
+        if service.status().is_valid()
+            && let Ok(text) = std::fs::read_to_string(service.path())
+        {
+            window.settings().note_known_good(&text);
+        }
+        std::ops::ControlFlow::Continue(())
     });
 }
 

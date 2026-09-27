@@ -11,6 +11,7 @@
 
 pub mod body_view;
 pub mod list_model;
+pub mod present;
 pub mod reader;
 pub mod style;
 pub mod widgets;

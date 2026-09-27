@@ -26,6 +26,8 @@ mimalloc = "0.1"
 postio-config.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
+# The presenters both desktop apps share (ADR 0043).
+postio-widgets.workspace = true
 # The store's owner: logic this app used to do itself, moved there so every
 # frontend shares it (specs/005-tui-frontend, ADR 0041).
 postio-client.workspace = true

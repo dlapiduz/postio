@@ -25,6 +25,8 @@ mod body_view_resets;
 mod harness;
 mod list_contract;
 mod list_model_generic;
+mod present_config;
+mod present_reading;
 mod reader_verbs;
 mod support;
 mod widgets_css;
@@ -74,6 +76,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "list_model_generic::a_list_of_another_row_type_is_windowed_filled_and_refreshed",
         list_model_generic::a_list_of_another_row_type_is_windowed_filled_and_refreshed as fn(),
+    ),
+    (
+        "present_config::an_edit_reaches_the_app_and_a_broken_one_keeps_the_last_good_keys",
+        present_config::an_edit_reaches_the_app_and_a_broken_one_keeps_the_last_good_keys as fn(),
+    ),
+    (
+        "present_reading::fetched_images_come_back_under_the_documents_spelling",
+        present_reading::fetched_images_come_back_under_the_documents_spelling as fn(),
     ),
 ];
 

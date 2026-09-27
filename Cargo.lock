@@ -4662,6 +4662,7 @@ dependencies = [
  "postio-storage",
  "postio-test-support",
  "postio-ui",
+ "postio-widgets",
  "serde-xml-rs",
  "tempfile",
  "tokio",
@@ -4826,7 +4827,6 @@ dependencies = [
 name = "postio-gtk"
 version = "0.4.2"
 dependencies = [
- "async-channel",
  "chrono",
  "gio",
  "glib",
@@ -5149,6 +5149,7 @@ dependencies = [
 name = "postio-widgets"
 version = "0.3.0"
 dependencies = [
+ "async-channel",
  "chrono",
  "glib-build-tools",
  "gtk4",
@@ -5161,7 +5162,10 @@ dependencies = [
  "postio-render",
  "postio-test-support",
  "postio-ui",
+ "tempfile",
+ "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

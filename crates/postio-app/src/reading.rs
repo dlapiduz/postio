@@ -128,42 +128,25 @@ pub async fn install_for(
     // fetches them on the runtime and hands the bytes back on the main
     // loop. `postio-gtk` speaks no protocol, so the fetcher lives here.
     let fetcher = std::sync::Arc::new(postio_runtime::remote_images::RemoteImageFetcher::new());
-    window.set_remote_fetch({
-        let runtime = runtime.clone();
-        move |urls, done| {
-            // The document's spelling, by the parsed URL the fetch reports
-            // back: the reader looks its images up by the former.
-            let spelled: std::collections::HashMap<String, String> = urls
-                .iter()
-                .filter_map(|raw| Some((url::Url::parse(raw).ok()?.to_string(), raw.clone())))
-                .collect();
-            let parsed: Vec<url::Url> = spelled
-                .keys()
-                .filter_map(|url| url::Url::parse(url).ok())
-                .collect();
-            let (sender, receiver) = async_channel::bounded(1);
+    window.set_remote_fetch(postio_widgets::present::reading::remote_fetch(
+        runtime.clone(),
+        move |parsed: Vec<url::Url>| {
             let fetcher = std::sync::Arc::clone(&fetcher);
-            runtime.spawn(async move {
-                let _ = sender.send(fetcher.fetch_all(&parsed).await).await;
-            });
-            glib::spawn_future_local(async move {
-                let Ok(fetched) = receiver.recv().await else {
-                    return;
-                };
-                let arrived = fetched
+            async move {
+                fetcher
+                    .fetch_all(&parsed)
+                    .await
                     .into_iter()
-                    .filter_map(|(url, fetched)| match fetched {
+                    .map(|(url, fetched)| match fetched {
                         postio_runtime::remote_images::Fetched::Image(bytes) => {
-                            let raw = spelled.get(url.as_str())?.clone();
-                            Some((raw, bytes.to_vec()))
+                            (url, Some(bytes.to_vec()))
                         }
-                        postio_runtime::remote_images::Fetched::Failed(_) => None,
+                        postio_runtime::remote_images::Fetched::Failed(_) => (url, None),
                     })
-                    .collect();
-                done(arrived);
-            });
-        }
-    });
+                    .collect()
+            }
+        },
+    ));
 
     // See `accounts_to_name`: empty in the single-account case, which is the
     // common one, and then this costs a length check per message.
