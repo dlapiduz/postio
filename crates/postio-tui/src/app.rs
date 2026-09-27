@@ -941,7 +941,7 @@ impl App {
             | ListScope::Flagged(account)
             | ListScope::Snoozed(account)
             | ListScope::Outbox(account) => Some(account),
-            ListScope::Unified | ListScope::Thread(_) => None,
+            ListScope::Unified | ListScope::Thread(_) | ListScope::Focus(_) => None,
         }
     }
 

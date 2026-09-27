@@ -52,6 +52,25 @@ pub enum ListScope {
     /// drill-in that filtered the list's own resident rows used to show only
     /// the part of it that happened to be paged in.
     Thread(ThreadId),
+    /// One of Postio Focus's own lists (spec 007).
+    ///
+    /// A view, never a destination, like [`Self::Unified`]. Only Focus reads
+    /// these, and the classic app and the terminal never see one.
+    Focus(FocusScope),
+}
+
+/// Which of Focus's lists a [`ListScope::Focus`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum FocusScope {
+    /// Focus's inbox: every enabled account's inbox, one row per
+    /// conversation, newest first.
+    ///
+    /// Its membership is the unified inbox's. It is a scope of its own
+    /// because it will not stay that: mail held for a digest and a
+    /// conversation whose reminder has surfaced leave it, and every read of
+    /// it asks the store's one Focus membership test so that its rows, its
+    /// count and its seek marks agree about them.
+    Inbox,
 }
 
 impl ListScope {
@@ -81,7 +100,7 @@ impl ListScope {
             | Self::Flagged(account)
             | Self::Snoozed(account)
             | Self::Outbox(account) => account_present(*account),
-            Self::Unified | Self::Thread(_) => !mailboxes.is_empty(),
+            Self::Unified | Self::Thread(_) | Self::Focus(_) => !mailboxes.is_empty(),
         }
     }
 
@@ -99,7 +118,8 @@ impl ListScope {
             // Never a destination: being in the Outbox is a consequence of
             // having been sent, not somewhere a message can be put.
             | ListScope::Outbox(_)
-            | ListScope::Thread(_) => None,
+            | ListScope::Thread(_)
+            | ListScope::Focus(_) => None,
         }
     }
 
@@ -164,7 +184,11 @@ impl ListScope {
             // would draw the same conversation twice, which is the one thing
             // the grouping exists to prevent. Reloading re-runs the walk,
             // which is the only thing that knows which it was.
-            ListScope::Unified => match arrival {
+            //
+            // Focus's inbox is the same inboxes, and it never inserts either:
+            // Focus may hold an arrival for a digest or file it away before it
+            // is ever a row, and only the store knows which.
+            ListScope::Unified | ListScope::Focus(FocusScope::Inbox) => match arrival {
                 NewMail | MessagesRemoved | MessageListChanged if inbox == Some(false) => Ignore,
                 NewMail | MessagesRemoved | MessageListChanged => Reload,
                 MessagesChanged => Refetch,
@@ -249,6 +273,41 @@ mod reaction_tests {
              somewhere a message can be put"
         );
         assert_eq!(ListScope::Thread(ThreadId::new(3)).mailbox(), None);
+        assert_eq!(
+            ListScope::Focus(FocusScope::Inbox).mailbox(),
+            None,
+            "Focus's inbox is a view over every inbox, not a folder"
+        );
+    }
+
+    #[test]
+    fn focus_s_inbox_reacts_to_every_arrival_as_the_unified_inbox_does() {
+        // The same inboxes, read as conversations, so the same events move
+        // it -- and like Unified it never inserts a delivery at the top: Focus
+        // may hold an arrival back or file it away before it is ever a row
+        // (spec 007), and only a reload asks the store which it was.
+        let focus = ListScope::Focus(FocusScope::Inbox);
+        for arrival in [
+            Arrival::NewMail,
+            Arrival::MessagesRemoved,
+            Arrival::MessageListChanged,
+            Arrival::MessagesChanged,
+        ] {
+            for (mailbox, inbox) in [
+                (Some(INBOX), Some(true)),
+                (Some(ARCHIVE), Some(false)),
+                (Some(ARCHIVE), None),
+                (None, None),
+            ] {
+                for account in [HOME, AWAY] {
+                    assert_eq!(
+                        focus.reaction(arrival, account, mailbox, inbox),
+                        ListScope::Unified.reaction(arrival, account, mailbox, inbox),
+                        "{arrival:?} in {mailbox:?} (an inbox: {inbox:?}) of {account:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -560,6 +619,14 @@ mod reaction_tests {
             // the bug this predicate exists to prevent.
             assert!(ListScope::Unified.is_drawn_from(&home_tree()));
             assert!(ListScope::Thread(crate::ids::ThreadId::new(1)).is_drawn_from(&home_tree()));
+        }
+
+        #[test]
+        fn focus_s_inbox_is_never_overridden_either() {
+            // Like the unified view it is every inbox at once, and somewhere
+            // the person went on purpose.
+            assert!(ListScope::Focus(FocusScope::Inbox).is_drawn_from(&home_tree()));
+            assert!(!ListScope::Focus(FocusScope::Inbox).is_drawn_from(&[]));
         }
 
         #[test]

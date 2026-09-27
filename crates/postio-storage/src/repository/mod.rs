@@ -62,8 +62,8 @@ pub use settings::SettingsRepository;
 pub use sync_state::SyncStateRepository;
 pub use threading::{Threaded, ThreadingRepository};
 pub use threads::{
-    DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
-    ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
+    DEFAULT_THREAD_PAGE_SIZE, FocusListQuery, ThreadCursor, ThreadGroup, ThreadListQuery,
+    ThreadListRow, ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
 };
 pub use unsubscribe::UnsubscribeRepository;
 
@@ -86,6 +86,20 @@ use crate::error::{Error, Result};
 /// same two-tier arrangement the live list query (`where_clause`) is the
 /// other half of.
 pub(crate) const VISIBLE: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
+
+/// What Focus's lists leave out beyond what every list does ([`VISIBLE`]),
+/// as a conjunct on the message `alias` names (`"rep."`, `"messages."`):
+/// the one place mail Focus holds back will leave its inbox (spec 007,
+/// research R13).
+///
+/// Nothing yet, which is why Focus's inbox is the unified inbox's
+/// membership today. Every read of a Focus scope appends it -- the window,
+/// its representative's `NOT EXISTS` and its slice, the count, and a flat
+/// read of the same view -- so that when it stops being empty, the rows,
+/// the total and the seek marks still agree about what a row is.
+pub(crate) fn focus_excludes(_alias: &str) -> String {
+    String::new()
+}
 
 /// A timestamp as the schema stores it: milliseconds since the Unix epoch, UTC.
 pub(crate) fn to_millis(at: DateTime<Utc>) -> i64 {

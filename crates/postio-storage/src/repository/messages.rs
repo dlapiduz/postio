@@ -655,6 +655,15 @@ messages.size, messages.send_state, messages.send_at,
   ORDER BY recipients.position LIMIT 1),
 (SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id)";
 
+/// [`LIST_COLUMNS`], read off the message `alias` names rather than off
+/// `messages`: for a statement whose list row is one of several things it
+/// reads, as Focus's window reads its representative alongside the
+/// conversation. Rewritten from the one list, never copied, for the reason
+/// `ThreadRepository`'s `latest_messages_for` gives.
+pub(crate) fn list_columns_of(alias: &str) -> String {
+    LIST_COLUMNS.replace("messages.", &format!("{alias}."))
+}
+
 impl<'a> MessageRepository<'a> {
     /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
@@ -2095,6 +2104,7 @@ const STILL_SNOOZED: &str =
     "messages.snoozed_until IS NOT NULL AND messages.snoozed_until > (strftime('%s','now') * 1000)";
 
 fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
+    let focus: String;
     let (scope, snooze) = match query.scope {
         // The Drafts exclusion rides on the generic mailbox scope, because
         // the mirror row for a draft being sent is *in* the Drafts folder --
@@ -2143,6 +2153,19 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
             NOT_YET_DUE,
         ),
         ListScope::Thread(_) => ("messages.thread_id = ?1", NOT_YET_DUE),
+        // Focus's inbox, read flat: the unified view's inboxes, less what
+        // Focus holds back -- the same `focus_excludes` its window asks
+        // (spec 007).
+        ListScope::Focus(postio_model::FocusScope::Inbox) => {
+            focus = format!(
+                "messages.mailbox_id IN (
+                 SELECT m.id FROM accounts a JOIN mailboxes m
+                     ON m.account_id = a.id AND m.role = 'inbox'
+                  WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1){}",
+                super::focus_excludes("messages.")
+            );
+            (focus.as_str(), NOT_YET_DUE)
+        }
     };
     // Numbered from however many arguments the scope itself bound, so a
     // scope that names nothing does not leave a hole at ?1.
@@ -2176,7 +2199,7 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
     match scope {
         // Nothing to bind: the scope is every enabled account's inbox.
-        ListScope::Unified => Vec::new(),
+        ListScope::Unified | ListScope::Focus(_) => Vec::new(),
         ListScope::Mailbox(id) => vec![id.get()],
         ListScope::Account(id)
         | ListScope::Flagged(id)
@@ -2632,29 +2655,40 @@ fn read_message(row: &Row) -> Result<Message> {
 }
 
 pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
-    let from_address: Option<String> = row.col(14)?;
+    read_list_row_at(row, 0)
+}
+
+/// [`read_list_row`], for a statement whose [`LIST_COLUMNS`] start at
+/// column `first` rather than at the front.
+pub(crate) fn read_list_row_at(row: &Row, first: usize) -> Result<MessageListRow> {
+    let from_address: Option<String> = row.col(first + 14)?;
     Ok(MessageListRow {
-        id: MessageId::new(row.col(0)?),
-        thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
+        id: MessageId::new(row.col(first)?),
+        thread_id: row.col::<Option<i64>>(first + 1)?.map(ThreadId::new),
         from: from_address
             .map(|address| {
-                Ok::<_, Error>(EmailAddress::new(row.col::<Option<String>>(13)?, address))
+                Ok::<_, Error>(EmailAddress::new(
+                    row.col::<Option<String>>(first + 13)?,
+                    address,
+                ))
             })
             .transpose()?,
-        subject: row.col(2)?,
-        preview: row.col(3)?,
-        received_at: from_millis(row.col(4)?),
-        seen: row.col(5)?,
-        flagged: row.col(6)?,
-        answered: row.col(7)?,
+        subject: row.col(first + 2)?,
+        preview: row.col(first + 3)?,
+        received_at: from_millis(row.col(first + 4)?),
+        seen: row.col(first + 5)?,
+        flagged: row.col(first + 6)?,
+        answered: row.col(first + 7)?,
         send_state: row
-            .col::<Option<String>>(11)?
+            .col::<Option<String>>(first + 11)?
             .as_deref()
             .and_then(DraftState::from_name),
-        send_at: row.col::<Option<i64>>(12)?.map(from_millis),
-        has_attachments: row.col(9)?,
-        size: row.col::<i64>(10)? as u64,
-        thread_count: row.col::<Option<i64>>(15)?.map(|count| count.max(0) as u32),
+        send_at: row.col::<Option<i64>>(first + 12)?.map(from_millis),
+        has_attachments: row.col(first + 9)?,
+        size: row.col::<i64>(first + 10)? as u64,
+        thread_count: row
+            .col::<Option<i64>>(first + 15)?
+            .map(|count| count.max(0) as u32),
     })
 }
 

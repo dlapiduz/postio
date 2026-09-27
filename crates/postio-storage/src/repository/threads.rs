@@ -29,7 +29,9 @@ use postio_model::{
     AccountId, EmailAddress, LabelId, MailboxId, MessageId, Thread, ThreadId, normalize_subject,
 };
 
-use super::messages::{LIST_COLUMNS, MessageListRow, placeholders, read_list_row};
+use super::messages::{
+    LIST_COLUMNS, MessageListRow, list_columns_of, placeholders, read_list_row, read_list_row_at,
+};
 use super::{from_millis, require_persisted, to_millis};
 
 use crate::error::{Error, Result};
@@ -203,6 +205,19 @@ impl ThreadListQuery {
     }
 }
 
+/// One window of Focus's inbox (spec 007): every inbox in `inboxes`, one
+/// row per conversation it holds, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusListQuery {
+    /// The inboxes the list is made of, as
+    /// [`ThreadRepository::unified_inboxes`] names them.
+    pub inboxes: Vec<(AccountId, MailboxId)>,
+    /// How many rows at most.
+    pub limit: u32,
+    /// Where to resume; `None` starts at the newest conversation.
+    pub after: Option<ThreadCursor>,
+}
+
 /// One row of the threaded message list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadListRow {
@@ -290,11 +305,41 @@ first_at, last_at";
 /// cannot drift apart: [`super::VISIBLE`].
 const MEMBER: &str = super::VISIBLE;
 
+/// Which of a folder's messages are rows of a list over it: the membership
+/// test, asked in one place by every list query here (spec 007, research
+/// R13).
+///
+/// Every list the classic app and the terminal read asks
+/// [`Membership::Folder`], which is [`MEMBER`] and nothing else. Focus's
+/// inbox asks [`Membership::Focus`]: the same test with
+/// [`super::focus_excludes`] after it, which is empty until Focus holds mail
+/// back and is then the one predicate that takes held mail out of the
+/// window, the representative's `NOT EXISTS`, the slice, the count, the seek
+/// marks and the rows for changed messages together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Membership {
+    /// A folder's own list, and the unified inbox made of them.
+    Folder,
+    /// Focus's inbox.
+    Focus,
+}
+
+impl Membership {
+    /// The test for the message `alias` names: `"rep."`, `"m."`, or `""`
+    /// for a statement's only `messages`.
+    fn test(self, alias: &str) -> String {
+        match self {
+            Membership::Folder => format!("{alias}{MEMBER}"),
+            Membership::Focus => format!("{alias}{MEMBER}{}", super::focus_excludes(alias)),
+        }
+    }
+}
+
 /// How many rows a folder's thread list has: one per conversation the
 /// folder holds, plus one per message it holds that belongs to no
 /// conversation -- the same predicate the window uses, so the number and the
 /// rows cannot disagree about what a row is.
-fn folder_count_sql() -> String {
+fn folder_count_sql(membership: Membership) -> String {
     // Distinct conversations, with a lone message standing for itself under
     // its negated id, which no conversation id can equal. Read entirely
     // from `idx_messages_mailbox_threads`: the old shape asked, for every
@@ -302,8 +347,95 @@ fn folder_count_sql() -> String {
     // 786 ms on a real 60,907-message folder (#1534, #1607).
     format!(
         "SELECT count(DISTINCT coalesce(thread_id, -id)) FROM messages
-          WHERE mailbox_id = ?1 AND {MEMBER}"
+          WHERE mailbox_id = ?1 AND {}",
+        membership.test("")
     )
+}
+
+/// The rows of `mailbox`'s list: a message there that no newer member of
+/// its conversation there outranks -- the representative the window draws a
+/// row from. `mailbox` is the placeholder that names the folder, and `also`
+/// narrows the candidates before the `NOT EXISTS` is asked of them.
+fn representative_filter(membership: Membership, mailbox: &str, also: &str) -> String {
+    format!(
+        "rep.mailbox_id = {mailbox} AND {}{also}
+                AND NOT EXISTS (
+                        SELECT 1 FROM messages newer
+                         WHERE newer.mailbox_id = {mailbox} AND {}
+                           AND newer.thread_id IS NOT NULL
+                           AND newer.thread_id = rep.thread_id
+                           AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
+                    )",
+        membership.test("rep."),
+        membership.test("newer.")
+    )
+}
+
+/// The folder's slice of a representative's conversation, for the row's
+/// aggregates: spelled once, so they cannot drift apart on what counts as a
+/// member here.
+fn slice(membership: Membership, mailbox: &str) -> String {
+    format!(
+        "FROM messages m
+              WHERE m.thread_id = rep.thread_id AND m.mailbox_id = {mailbox} AND {}",
+        membership.test("m.")
+    )
+}
+
+/// Where Focus's window starts reading the representative's list row: after
+/// the ten columns every thread window has.
+const FOCUS_REPRESENTATIVE: usize = 10;
+
+/// One inbox's part of Focus's window: the folder window over `?{mailbox}`,
+/// asking Focus's membership, with the representative's list row read in
+/// the same statement rather than by id afterwards.
+///
+/// The sort key and id are named, so a merge of several of these can order
+/// by them.
+fn focus_arm(mailbox: usize, cursor: Option<(usize, usize)>, limit: u32) -> String {
+    let membership = Membership::Focus;
+    let mailbox = format!("?{mailbox}");
+    let slice = slice(membership, &mailbox);
+    let cursor = cursor
+        .map(|(at, id)| {
+            format!(" AND rep.received_at <= ?{at} AND (rep.received_at < ?{at} OR rep.id < ?{id})")
+        })
+        .unwrap_or_default();
+    format!(
+        "SELECT coalesce(rep.thread_id, 0), rep.account_id, rep.subject,
+                coalesce((SELECT t.message_count FROM threads t
+                           WHERE t.id = rep.thread_id), 1),
+                coalesce((SELECT count(*) {slice} AND m.seen = 0),
+                         CASE WHEN rep.seen = 0 THEN 1 ELSE 0 END),
+                coalesce((SELECT max(m.has_attachments) {slice}), rep.has_attachments),
+                coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
+                rep.received_at, rep.received_at AS focus_at, rep.id AS focus_id,
+                {representative}
+           FROM messages rep
+          WHERE {filter}{cursor}
+          ORDER BY rep.received_at DESC, rep.id DESC LIMIT {limit}",
+        representative = list_columns_of("rep"),
+        filter = representative_filter(membership, &mailbox, ""),
+    )
+}
+
+/// A row of Focus's window: the conversation, and its representative.
+fn read_focus_row(row: &Row) -> Result<ThreadListRow> {
+    let thread = row.col::<i64>(0)?;
+    Ok(ThreadListRow {
+        // Zero is the window's spelling of "no thread", as in the folder's.
+        id: (thread != 0).then(|| ThreadId::new(thread)),
+        subject: row.col(2)?,
+        participants: Vec::new(),
+        message_count: row.col(3)?,
+        unread_count: row.col(4)?,
+        has_attachments: row.col(5)?,
+        is_flagged: row.col(6)?,
+        first_at: from_millis(row.col(7)?),
+        last_at: from_millis(row.col(8)?),
+        latest: Some(read_list_row_at(row, FOCUS_REPRESENTATIVE)?),
+        sort_id: row.col(9)?,
+    })
 }
 
 impl<'a> ThreadRepository<'a> {
@@ -700,9 +832,12 @@ impl<'a> ThreadRepository<'a> {
         let inboxes = self.unified_inboxes().await?;
         let mut total: i64 = 0;
         for (_, inbox) in &inboxes {
-            let count: i64 = sql::one(self.connection, &folder_count_sql(), [inbox.get()], |row| {
-                row.col(0)
-            })
+            let count: i64 = sql::one(
+                self.connection,
+                &folder_count_sql(Membership::Folder),
+                [inbox.get()],
+                |row| row.col(0),
+            )
             .await?;
             total += count;
         }
@@ -718,8 +853,9 @@ impl<'a> ThreadRepository<'a> {
                 self.connection,
                 &format!(
                     "SELECT received_at, id, thread_id FROM messages
-                      WHERE mailbox_id = ?1 AND {MEMBER} AND thread_id IS NOT NULL
-                      ORDER BY received_at DESC, id DESC"
+                      WHERE mailbox_id = ?1 AND {} AND thread_id IS NOT NULL
+                      ORDER BY received_at DESC, id DESC",
+                    Membership::Folder.test("")
                 ),
                 [inbox.get()],
                 |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
@@ -837,9 +973,10 @@ impl<'a> ThreadRepository<'a> {
                 self.connection,
                 &format!(
                     "SELECT thread_id, received_at, id FROM messages
-                      WHERE thread_id IN ({}) AND mailbox_id IN ({}) AND {MEMBER}",
+                      WHERE thread_id IN ({}) AND mailbox_id IN ({}) AND {}",
                     placeholders(wanted.len(), 1),
-                    placeholders(inboxes.len(), wanted.len() + 1)
+                    placeholders(inboxes.len(), wanted.len() + 1),
+                    Membership::Folder.test("")
                 ),
             )
             .await?;
@@ -1079,6 +1216,126 @@ impl<'a> ThreadRepository<'a> {
         Ok(row)
     }
 
+    /// One window of Focus's inbox (spec 007): every inbox in the query,
+    /// one row per conversation it holds, newest first -- the unified
+    /// inbox's membership, asked through [`Membership::Focus`].
+    ///
+    /// # Two statements, however many inboxes
+    ///
+    /// The window is one statement: each inbox's own folder window, sought
+    /// through `idx_messages_list` and bounded by the page, merged in the
+    /// same statement by `(received_at, id)` -- the order every inbox's list
+    /// already keeps, and a total one, since message ids are unique across
+    /// accounts. The merge sorts at most the inboxes times the page, never an
+    /// inbox. The representative's list row comes in the same row rather than
+    /// by id afterwards, which leaves room for the markers read in the budget
+    /// of three (`contracts/engine.md`). Participants are the second.
+    ///
+    /// A conversation received at two addresses is a row in each inbox here,
+    /// as it is in each inbox's own list: folding it into one row, as the
+    /// unified view does, costs the partner search five more statements a
+    /// page, which this budget has no room for.
+    pub async fn focus_page(&self, query: &FocusListQuery) -> Result<Vec<ThreadListRow>> {
+        self.focus_page_at(query, 0).await
+    }
+
+    /// [`Self::focus_page`] at a row offset from its cursor, for a list model
+    /// that scrolls by index, with the caveat [`Self::page_at`] carries.
+    pub async fn focus_page_at(
+        &self,
+        query: &FocusListQuery,
+        offset: u32,
+    ) -> Result<Vec<ThreadListRow>> {
+        if query.inboxes.is_empty() || query.limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut arguments: Vec<i64> = query.inboxes.iter().map(|(_, inbox)| inbox.get()).collect();
+        if let Some(cursor) = query.after {
+            arguments.push(to_millis(cursor.last_at));
+            arguments.push(cursor.id);
+        }
+        let mut statement =
+            sql::statement(self.connection, &self.explain_focus(query, offset)).await?;
+        let mut rows = sql::mapped(&mut statement, arguments, read_focus_row).await?;
+        drop(statement);
+
+        let ids: Vec<ThreadId> = rows.iter().filter_map(|row| row.id).collect();
+        let mut participants = self.participants_for(&ids).await?;
+        for row in &mut rows {
+            if let Some(id) = row.id {
+                row.participants = participants.remove(&id).unwrap_or_default();
+            }
+            // As the folder's rows do: whoever wrote a conversation of one.
+            if row.participants.is_empty()
+                && let Some(from) = row.latest.as_ref().and_then(|latest| latest.from.clone())
+            {
+                row.participants = vec![from];
+            }
+        }
+        Ok(rows)
+    }
+
+    /// The SQL [`Self::focus_page_at`] runs, for `EXPLAIN QUERY PLAN`: one
+    /// inbox's window alone, or several merged. The query names at least one
+    /// inbox.
+    pub fn explain_focus(&self, query: &FocusListQuery, offset: u32) -> String {
+        let inboxes = query.inboxes.len();
+        let cursor = query.after.map(|_| (inboxes + 1, inboxes + 2));
+        let skip = if offset > 0 {
+            format!(" OFFSET {offset}")
+        } else {
+            String::new()
+        };
+        if inboxes == 1 {
+            return format!("{}{skip}", focus_arm(1, cursor, query.limit));
+        }
+        // Each inbox is asked for as many rows as the page could need from
+        // it, and the merge keeps the page's.
+        let each = query.limit.saturating_add(offset);
+        let arms = (1..=inboxes)
+            .map(|mailbox| format!("SELECT * FROM ({})", focus_arm(mailbox, cursor, each)))
+            .collect::<Vec<_>>()
+            .join("\n UNION ALL\n");
+        format!(
+            "{arms}\n ORDER BY focus_at DESC, focus_id DESC LIMIT {}{skip}",
+            query.limit
+        )
+    }
+
+    /// How many rows Focus's inbox has over `inboxes`: one per conversation
+    /// each holds, plus one per message there in none -- one statement, from
+    /// `idx_messages_mailbox_threads` alone.
+    ///
+    /// A conversation belongs to one account and each account gives the
+    /// list one inbox, so the distinct keys across every inbox are the sum
+    /// of each inbox's own.
+    pub async fn focus_count(&self, inboxes: &[(AccountId, MailboxId)]) -> Result<u32> {
+        if inboxes.is_empty() {
+            return Ok(0);
+        }
+        let count: i64 = sql::one(
+            self.connection,
+            &self.explain_focus_count(inboxes.len()),
+            inboxes
+                .iter()
+                .map(|(_, inbox)| inbox.get())
+                .collect::<Vec<_>>(),
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(count.max(0) as u32)
+    }
+
+    /// The SQL [`Self::focus_count`] runs over `inboxes` inboxes.
+    pub fn explain_focus_count(&self, inboxes: usize) -> String {
+        format!(
+            "SELECT count(DISTINCT coalesce(messages.thread_id, -messages.id)) FROM messages
+              WHERE messages.mailbox_id IN ({}) AND {}",
+            placeholders(inboxes, 1),
+            Membership::Focus.test("messages.")
+        )
+    }
+
     /// One window of the thread list, most recently active first.
     pub async fn page(&self, query: &ThreadListQuery) -> Result<Vec<ThreadListRow>> {
         self.page_with(query, "").await
@@ -1205,8 +1462,9 @@ impl<'a> ThreadRepository<'a> {
             "SELECT count(*) FROM threads t
               WHERE t.id IN ({})
                 AND NOT EXISTS (SELECT 1 FROM messages m
-                                 WHERE m.thread_id = t.id AND m.mailbox_id = ?1 AND m.{MEMBER})",
-            placeholders(threads.len(), 2)
+                                 WHERE m.thread_id = t.id AND m.mailbox_id = ?1 AND {})",
+            placeholders(threads.len(), 2),
+            Membership::Folder.test("m.")
         );
         let mut arguments = vec![mailbox.get()];
         arguments.extend(threads);
@@ -1226,11 +1484,9 @@ impl<'a> ThreadRepository<'a> {
                 placeholders(threads, 2)
             );
         };
-        let slice = format!(
-            "FROM messages m
-              WHERE m.thread_id = rep.thread_id AND m.mailbox_id = ?2 AND m.{MEMBER}"
-        );
+        let slice = slice(Membership::Folder, "?2");
         let representatives = |filter: String| {
+            let window = representative_filter(Membership::Folder, "?2", &format!(" AND {filter}"));
             format!(
                 "SELECT coalesce(rep.thread_id, 0), ?1, rep.subject,
                         coalesce((SELECT t.message_count FROM threads t
@@ -1241,14 +1497,7 @@ impl<'a> ThreadRepository<'a> {
                         coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
                         rep.received_at, rep.received_at, rep.id
                    FROM messages rep
-                  WHERE rep.mailbox_id = ?2 AND rep.{MEMBER} AND {filter}
-                    AND NOT EXISTS (
-                            SELECT 1 FROM messages newer
-                             WHERE newer.mailbox_id = ?2 AND newer.{MEMBER}
-                               AND newer.thread_id IS NOT NULL
-                               AND newer.thread_id = rep.thread_id
-                               AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
-                        )"
+                  WHERE {window}"
             )
         };
         let mut arms = Vec::new();
@@ -1390,10 +1639,8 @@ impl<'a> ThreadRepository<'a> {
         // The folder's slice of this row's conversation. Spelled once and
         // reused, so the aggregates cannot drift apart on what counts as a
         // member here.
-        let slice = format!(
-            "FROM messages m
-              WHERE m.thread_id = rep.thread_id AND m.mailbox_id = ?2 AND m.{MEMBER}"
-        );
+        let slice = slice(Membership::Folder, "?2");
+        let window = representative_filter(Membership::Folder, "?2", "");
         format!(
             "SELECT coalesce(rep.thread_id, 0), ?1, rep.subject,
                     coalesce((SELECT t.message_count FROM threads t
@@ -1404,14 +1651,7 @@ impl<'a> ThreadRepository<'a> {
                     coalesce((SELECT max(m.flagged) {slice}), rep.flagged),
                     rep.received_at, rep.received_at, rep.id
                FROM messages rep
-              WHERE rep.mailbox_id = ?2 AND rep.{MEMBER}
-                AND NOT EXISTS (
-                        SELECT 1 FROM messages newer
-                         WHERE newer.mailbox_id = ?2 AND newer.{MEMBER}
-                           AND newer.thread_id IS NOT NULL
-                           AND newer.thread_id = rep.thread_id
-                           AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
-                    ){cursor}
+              WHERE {window}{cursor}
               ORDER BY rep.received_at DESC, rep.id DESC LIMIT {}",
             query.limit
         )
@@ -1459,8 +1699,9 @@ impl<'a> ThreadRepository<'a> {
             self.connection,
             &format!(
                 "SELECT received_at, id, thread_id FROM messages
-                  WHERE mailbox_id = ?1 AND {MEMBER}
-                  ORDER BY received_at DESC, id DESC"
+                  WHERE mailbox_id = ?1 AND {}
+                  ORDER BY received_at DESC, id DESC",
+                Membership::Folder.test("")
             ),
         )
         .await?
@@ -1535,7 +1776,7 @@ impl<'a> ThreadRepository<'a> {
     /// The SQL [`Self::count_of`] counts a folder with, so a test can ask the
     /// planner about it.
     pub fn explain_count_of(&self) -> String {
-        folder_count_sql()
+        folder_count_sql(Membership::Folder)
     }
 
     /// The members of a thread, oldest first.

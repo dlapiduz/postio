@@ -155,10 +155,14 @@ pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope
         // verbs it would reach are cancel and discard, and doing either to
         // every message in flight at once is not a thing to make easy by
         // accident. A rejection, not a no-op that claims to have acted.
+        //
+        // Focus's inbox too, until its select-all is a predicate that leaves
+        // out what Focus holds back as its list does (spec 007).
         ListScope::Account(_)
         | ListScope::Snoozed(_)
         | ListScope::Outbox(_)
-        | ListScope::Thread(_) => None,
+        | ListScope::Thread(_)
+        | ListScope::Focus(_) => None,
     }
 }
 

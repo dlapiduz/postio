@@ -115,6 +115,77 @@ pub struct ThreadSummary {
     pub has_attachments: bool,
     /// When the conversation last moved; the list's sort key.
     pub last_at: DateTime<Utc>,
+    /// What Focus calls out on this row: an invitation, a question, a to-do,
+    /// or a reminder with no reply (spec 007).
+    ///
+    /// Read with the page rather than per row, so drawing it reads no body
+    /// (FR-020), and read only for Focus's own scopes: every scope the
+    /// classic app and the terminal read answers `None`. Defaults on the way
+    /// in, so a row from a side that never heard of markers has none.
+    #[serde(default)]
+    pub marker: Option<MarkerSummary>,
+}
+
+/// What a Focus row draws for its marker, and nothing that needs the body.
+///
+/// Which command its action key runs is the frontend's to derive from the
+/// kind and the answer: this crate cannot name a command, and every app has
+/// the same one keymap to derive it from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarkerSummary {
+    /// What the conversation is waiting on.
+    pub kind: MarkerKind,
+    /// When: an invitation's event, a to-do's due date, or the day a
+    /// reminder was set.
+    pub when: Option<MarkerWhen>,
+    /// The sentence the marker is about, verbatim and short. `None` for an
+    /// invitation, which is about its event rather than a sentence.
+    pub excerpt: Option<String>,
+    /// How the person has answered an invitation, once they have.
+    pub answer: Option<InviteAnswer>,
+}
+
+/// What kind of action a marker calls out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MarkerKind {
+    /// A meeting invitation, answerable from the row.
+    Invite,
+    /// A question put to the person.
+    Question,
+    /// Something the person was asked to do.
+    Todo,
+    /// A reminder that came due with no reply to what the person sent.
+    NoReply,
+}
+
+/// The time a marker names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MarkerWhen {
+    /// An invitation's event.
+    Event {
+        /// When it starts.
+        starts_at: DateTime<Utc>,
+        /// When it ends.
+        ends_at: DateTime<Utc>,
+    },
+    /// A to-do's due date, or the day a reminder was set.
+    Due(DateTime<Utc>),
+}
+
+/// How the person answered an invitation.
+///
+/// The two `-ing` states last while the reply waits in the outbox and can
+/// still be taken back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InviteAnswer {
+    /// Accepted, and the reply not yet sent.
+    Accepting,
+    /// Accepted, and the reply sent.
+    Accepted,
+    /// Declined, and the reply not yet sent.
+    Declining,
+    /// Declined, and the reply sent.
+    Declined,
 }
 
 impl ThreadSummary {
@@ -309,4 +380,74 @@ pub trait MailStore: Send + Sync {
     /// one: it has no row in `mailboxes` to carry a count, and the Drafts badge
     /// needs a number the cached column deliberately does not hold.
     fn draft_counts(&self, account: AccountId) -> Read<'_, DraftCounts>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone as _;
+
+    fn at(hour: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 9, 27, hour, 0, 0).unwrap()
+    }
+
+    fn row(marker: Option<MarkerSummary>) -> ThreadSummary {
+        ThreadSummary {
+            id: Some(ThreadId::new(7)),
+            representative: MessageSummary {
+                id: MessageId::new(70),
+                thread: Some(ThreadId::new(7)),
+                from: Some(EmailAddress::new(Some("Ada"), "ada@example.com")),
+                subject: Some("Tide gate".to_owned()),
+                preview: None,
+                received_at: at(9),
+                seen: false,
+                flagged: false,
+                answered: false,
+                send_state: None,
+                send_at: None,
+                has_attachments: false,
+                thread_count: 2,
+            },
+            subject: Some("Tide gate".to_owned()),
+            participants: Vec::new(),
+            message_count: 2,
+            unread_count: 1,
+            flagged: false,
+            has_attachments: false,
+            last_at: at(9),
+            marker,
+        }
+    }
+
+    #[test]
+    fn a_row_written_without_a_marker_reads_back_with_none() {
+        // `marker` defaults on the way in: a row from a side that never
+        // heard of markers is a row with nothing to call out, not a read
+        // that fails.
+        let mut written = serde_json::to_value(row(None)).expect("a row serialises");
+        written
+            .as_object_mut()
+            .expect("a row is an object")
+            .remove("marker")
+            .expect("the field was written");
+        let read: ThreadSummary = serde_json::from_value(written).expect("and reads back");
+        assert_eq!(read, row(None));
+    }
+
+    #[test]
+    fn a_marker_crosses_the_boundary_whole() {
+        let marker = MarkerSummary {
+            kind: MarkerKind::Invite,
+            when: Some(MarkerWhen::Event {
+                starts_at: at(14),
+                ends_at: at(15),
+            }),
+            excerpt: None,
+            answer: Some(InviteAnswer::Accepting),
+        };
+        let written = serde_json::to_string(&row(Some(marker.clone()))).expect("serialises");
+        let read: ThreadSummary = serde_json::from_str(&written).expect("reads back");
+        assert_eq!(read.marker, Some(marker));
+    }
 }

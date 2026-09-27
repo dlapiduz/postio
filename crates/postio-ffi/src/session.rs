@@ -1455,9 +1455,10 @@ impl Session {
                     .map(|mailbox| postio_core::Scope::Account(mailbox.account_id))
                     .unwrap_or(postio_core::Scope::Unified)
             }
-            ListScope::Unified | ListScope::Snoozed(_) | ListScope::Thread(_) => {
-                postio_core::Scope::Unified
-            }
+            ListScope::Unified
+            | ListScope::Snoozed(_)
+            | ListScope::Thread(_)
+            | ListScope::Focus(_) => postio_core::Scope::Unified,
         }
     }
 

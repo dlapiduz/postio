@@ -102,7 +102,8 @@ impl MessageSource for Store {
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
             | ListScope::Outbox(_)
-            | ListScope::Thread(_) => MailboxId::new(0),
+            | ListScope::Thread(_)
+            | ListScope::Focus(_) => MailboxId::new(0),
         };
         // Each mailbox holds a different amount of mail, so "the list shows
         // the folder you picked" is checkable by counting.

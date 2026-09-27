@@ -32,6 +32,7 @@ mod contacts;
 mod draft_indexes;
 mod drafts;
 mod encryption;
+mod focus_inbox;
 mod labels;
 mod list_statement_count;
 mod mailbox_counts;
