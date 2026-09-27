@@ -76,6 +76,9 @@ mod imp {
         pub(super) content: RefCell<Option<Content>>,
         /// The newest generation asked for.
         pub(super) generation: Cell<u64>,
+        /// The generation still being rendered, if any: what the deadline
+        /// gives up on.
+        pub(super) pending: Cell<Option<u64>>,
         /// The width the current request or snapshot was laid out at.
         pub(super) laid_out_width: Cell<i32>,
         /// What is on screen.
@@ -94,6 +97,7 @@ mod imp {
                 deadline: Cell::new(DEFAULT_RENDER_DEADLINE),
                 content: RefCell::default(),
                 generation: Cell::new(0),
+                pending: Cell::new(None),
                 laid_out_width: Cell::new(0),
                 document: RefCell::default(),
                 tiles: RefCell::default(),
@@ -107,10 +111,23 @@ mod imp {
         type Type = super::BodyView;
         type ParentType = gtk::Widget;
         type Interfaces = (gtk::Scrollable,);
+
+        fn class_init(klass: &mut Self::Class) {
+            // The fallback notice's way to what was actually sent; the
+            // reader connects it to the original-source view.
+            klass.install_action("body.view-source", None, |view, _, _| {
+                view.emit_by_name::<()>("view-source", &[]);
+            });
+        }
     }
 
     #[glib::derived_properties]
-    impl ObjectImpl for BodyView {}
+    impl ObjectImpl for BodyView {
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: OnceLock<Vec<glib::subclass::Signal>> = OnceLock::new();
+            SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("view-source").build()])
+        }
+    }
 
     impl WidgetImpl for BodyView {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
@@ -168,6 +185,15 @@ impl BodyView {
     pub fn set_content(&self, content: Content) {
         self.imp().content.replace(Some(content));
         self.request_render();
+    }
+
+    /// Call `f` when the fallback notice's "View source" is chosen.
+    pub fn connect_view_source(&self, f: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
+        self.connect_local("view-source", false, move |values| {
+            let view = values[0].get::<BodyView>().expect("the signal's own view");
+            f(&view);
+            None
+        })
     }
 
     /// The snapshot on screen, if one has arrived.
@@ -231,7 +257,32 @@ impl BodyView {
             toggled_folds: Vec::new(),
             reader_view: Vec::new(),
         };
+        let fallback = (request.plain_text.clone(), request.theme, request.viewport);
         let result = self.renderer().request(request);
+        imp.pending.set(Some(generation));
+        // The deadline (FR-023): if the render is still out when it passes,
+        // give up on it and show the plain text instead.
+        let view = self.downgrade();
+        glib::timeout_add_local_once(imp.deadline.get(), move || {
+            let Some(view) = view.upgrade() else { return };
+            let imp = view.imp();
+            if imp.pending.get() != Some(generation) {
+                return;
+            }
+            view.renderer().abandon(generation);
+            let next = generation + 1;
+            imp.generation.set(next);
+            imp.pending.set(None);
+            let (text, theme, viewport) = &fallback;
+            let document = view.renderer().fallback(
+                text,
+                theme,
+                *viewport,
+                postio_render::FallbackReason::Deadline,
+                next,
+            );
+            view.show(document);
+        });
         let view = self.downgrade();
         glib::timeout_add_local(Duration::from_millis(4), move || {
             let Some(view) = view.upgrade() else {
@@ -252,6 +303,9 @@ impl BodyView {
         let imp = self.imp();
         if document.generation != imp.generation.get() {
             return;
+        }
+        if imp.pending.get() == Some(document.generation) {
+            imp.pending.set(None);
         }
         let document = Arc::new(document);
         imp.tiles.borrow_mut().reset(document.clone());
