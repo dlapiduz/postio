@@ -26,6 +26,10 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
+use crate::reader::view::RemoteFetch;
+
+/// Told a zoom a person chose; see [`Window::connect_zoom_changed`].
+type ZoomHandler = Box<dyn Fn(u16)>;
 use postio_core::{ActionId, CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
@@ -191,6 +195,18 @@ mod imp {
         /// `set_blob_source` runs after the reader is built.
         pub blobs:
             std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn crate::reader::BlobSource>>>>,
+        /// What every reader this window builds fetches remote images with,
+        /// once the application supplies it (spec 006 T137). A cell for the
+        /// reason `blobs` is one: readers hold the cell, not the window.
+        pub remote_fetch: std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<RemoteFetch>>>>,
+        /// `[reader] zoom`, in percent; 0 until configuration says (actual
+        /// size).
+        pub zoom: std::cell::Cell<u16>,
+        /// Set while configuration is applying a zoom, so that is not written
+        /// back to the file it came from.
+        pub applying_zoom: std::rc::Rc<std::cell::Cell<bool>>,
+        /// Told the zoom a person chose, to persist it.
+        pub on_zoom_changed: std::rc::Rc<std::cell::RefCell<Vec<ZoomHandler>>>,
         /// Where the reader's remote-image allow list is read from and saved
         /// back to, when it should not be the real one.
         ///
@@ -917,6 +933,151 @@ impl Window {
     /// responsible for calling it as few times as the design allows — see
     /// `conversation::EAGER_EXPANSION_CAP`.
     pub fn new_reader(&self) -> crate::reader::Reader {
+        let reader = self.build_reader();
+        self.wire_reader(&reader);
+        reader
+    }
+
+    /// What every reader this window builds shares: the zoom in force, the
+    /// remote-image fetcher, the zoom persisted when a person changes it,
+    /// and the reading pane's context menu.
+    fn wire_reader(&self, reader: &crate::reader::Reader) {
+        let imp = self.imp();
+        let zoom = imp.zoom.get();
+        if zoom != 0 {
+            imp.applying_zoom.set(true);
+            reader.set_zoom(zoom);
+            imp.applying_zoom.set(false);
+        }
+        let fetch = std::rc::Rc::clone(&imp.remote_fetch);
+        reader.set_remote_fetch(move |urls, done| {
+            if let Some(fetch) = fetch.borrow().as_ref() {
+                fetch(urls, done);
+            }
+        });
+        let applying = std::rc::Rc::clone(&imp.applying_zoom);
+        let handlers = std::rc::Rc::clone(&imp.on_zoom_changed);
+        reader.connect_zoom_changed(move |percent| {
+            if applying.get() {
+                return;
+            }
+            for handler in handlers.borrow().iter() {
+                handler(percent);
+            }
+        });
+        self.install_reader_menu(reader);
+    }
+
+    /// The reading pane's context menu (spec 006 contracts/registry-commands):
+    /// darken and reader view, from the registry, each run as its key runs.
+    fn install_reader_menu(&self, reader: &crate::reader::Reader) {
+        use gtk::gio;
+        let view = reader.view().clone();
+        let click = gtk::GestureClick::builder().button(3).build();
+        let window = self.downgrade();
+        click.connect_pressed(move |gesture, _, x, y| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let Some(view) = gesture.widget() else {
+                return;
+            };
+            let keymap = window
+                .imp()
+                .keymap
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| postio_core::Keymap::resolve(&Default::default()));
+            let reader = window.reader_showing();
+            let menu = gio::Menu::new();
+            let item = |title: &str, id: CommandId| {
+                let label = match keymap.binding(id) {
+                    Some(binding) => format!("{title}\t{binding}"),
+                    None => title.to_owned(),
+                };
+                let entry = gio::MenuItem::new(Some(&label), None);
+                entry.set_action_and_target_value(
+                    Some("readermenu.command"),
+                    Some(&id.as_str().to_variant()),
+                );
+                menu.append_item(&entry);
+            };
+            if let Some(title) = reader.darken_title() {
+                item(title, CommandId::DarkenMessage);
+            }
+            if let Some(spec) =
+                postio_core::registry::all().find(|spec| spec.id == CommandId::ToggleReaderView)
+            {
+                item(spec.title, CommandId::ToggleReaderView);
+            }
+            let popover = gtk::PopoverMenu::from_model(Some(&menu));
+            popover.set_parent(&view);
+            popover.set_has_arrow(false);
+            popover.set_halign(gtk::Align::Start);
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            let actions = gio::SimpleActionGroup::new();
+            let command = gio::SimpleAction::new("command", Some(glib::VariantTy::STRING));
+            let weak = window.downgrade();
+            command.connect_activate(move |_, parameter| {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                let Some(name) = parameter.and_then(|value| value.str().map(str::to_owned)) else {
+                    return;
+                };
+                if let Some(spec) =
+                    postio_core::registry::all().find(|spec| spec.id.as_str() == name)
+                {
+                    window.act(postio_core::Command::default_for(spec.id));
+                }
+            });
+            actions.add_action(&command);
+            popover.insert_action_group("readermenu", Some(&actions));
+            popover.connect_closed(|popover| popover.unparent());
+            popover.popup();
+        });
+        view.add_controller(click);
+    }
+
+    /// Fetch remote images with `fetch`, for every reader this window has
+    /// built or will build: the application's fetcher (spec 006 T137).
+    pub fn set_remote_fetch(
+        &self,
+        fetch: impl Fn(Vec<String>, crate::reader::view::RemoteArrived) + 'static,
+    ) {
+        self.imp()
+            .remote_fetch
+            .replace(Some(std::rc::Rc::new(fetch)));
+    }
+
+    /// Apply `[reader]` from `config.toml`: the zoom, to every reader open
+    /// now and every one built later (spec 006 FR-021).
+    pub fn apply_reader(&self, config: &postio_config::ReaderConfig) {
+        let imp = self.imp();
+        imp.zoom.set(config.zoom);
+        imp.applying_zoom.set(true);
+        if let Some(reader) = imp.reader.get() {
+            reader.set_zoom(config.zoom);
+        }
+        if let Some(reader) = imp
+            .conversation
+            .get()
+            .and_then(|pane| pane.document_reader())
+        {
+            reader.set_zoom(config.zoom);
+        }
+        imp.applying_zoom.set(false);
+    }
+
+    /// Call `f` with the zoom a person chose -- a key, Ctrl+scroll, a pinch,
+    /// the indicator's reset -- so it can be persisted. Not called for a
+    /// zoom configuration applied.
+    pub fn connect_zoom_changed(&self, f: impl Fn(u16) + 'static) {
+        self.imp().on_zoom_changed.borrow_mut().push(Box::new(f));
+    }
+
+    /// A reader, unwired: see [`new_reader`](Self::new_reader).
+    fn build_reader(&self) -> crate::reader::Reader {
         // Read through the slot on every request rather than captured, so a
         // source wired after the reader was built still resolves parts.
         // Weak, and this one is load-bearing (#794). The closure becomes the
@@ -1940,6 +2101,17 @@ impl Window {
         let _ = self.imp().sidebar.set(sidebar);
         let _ = self.imp().list_state.set(list_state);
         let _ = self.imp().list.set(list_view);
+        // `darken_message` reads "Show as sent" on a darkened message: the
+        // title is the undo (spec 006 contracts/registry-commands).
+        finder.set_live_titles({
+            let window = self.downgrade();
+            move |id| {
+                if id != postio_core::ActionId::Builtin(CommandId::DarkenMessage) {
+                    return None;
+                }
+                window.upgrade()?.reader_showing().darken_title()
+            }
+        });
         let _ = self.imp().finder.set(finder);
         let _ = self.imp().cheatsheet.set(cheatsheet);
         let _ = self.imp().orientation.set(orientation);
@@ -2441,6 +2613,17 @@ impl Window {
                     self.reader_showing().toggle_reader_view();
                 }
             }
+            // The reading renderer's own verbs (spec 006): each acts on the
+            // reader on screen, which has the snapshot they need.
+            CommandId::DarkenMessage => {
+                self.reader_showing().darken_message();
+            }
+            CommandId::FindInMessage => self.reader_showing().find_in_message(),
+            CommandId::FindNext => self.reader_showing().find_step(true),
+            CommandId::FindPrevious => self.reader_showing().find_step(false),
+            CommandId::ZoomIn => self.reader_showing().zoom_in(),
+            CommandId::ZoomOut => self.reader_showing().zoom_out(),
+            CommandId::ZoomReset => self.reader_showing().zoom_reset(),
 
             // The conversation's own, so it goes to the pane rather than out
             // on the bus: nothing outside this window has anything to do with

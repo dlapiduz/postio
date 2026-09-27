@@ -125,6 +125,7 @@ mod gtk_rail;
 mod gtk_reader_account;
 mod gtk_reader_actions;
 mod gtk_reader_anchor;
+mod gtk_reader_commands;
 mod gtk_reader_fonts;
 mod gtk_reader_notices;
 mod gtk_reader_outgoing;
@@ -1423,6 +1424,14 @@ const CASES: &[(&str, fn())] = &[
         "gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before",
         gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before
             as fn(),
+    ),
+    (
+        "gtk_reader_commands::the_keys_darken_zoom_and_find_in_the_message_on_screen",
+        gtk_reader_commands::the_keys_darken_zoom_and_find_in_the_message_on_screen as fn(),
+    ),
+    (
+        "gtk_reader_commands::view_source_draws_what_was_sent",
+        gtk_reader_commands::view_source_draws_what_was_sent as fn(),
     ),
     (
         "gtk_reader_anchor::a_late_body_does_not_throw_the_reader_back_to_the_top",

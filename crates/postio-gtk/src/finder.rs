@@ -292,6 +292,9 @@ type LabelHandler = Box<dyn Fn(LabelId)>;
 type ContactHandler = Box<dyn Fn(&ContactHit)>;
 type QueryHandler = Box<dyn Fn(&ParsedQuery)>;
 
+/// What [`Finder::set_live_titles`] holds.
+type LiveTitles = Box<dyn Fn(ActionId) -> Option<&'static str>>;
+
 mod imp {
     use std::cell::{Cell, RefCell};
 
@@ -312,6 +315,10 @@ mod imp {
         /// surface has focus, this is what that surface is showing, and a
         /// command can need either (#182).
         pub(super) availability: RefCell<Availability>,
+        /// A title the window gives a command for what is on screen now,
+        /// where the registry's is only half the story: `darken_message`
+        /// reads "Show as sent" on a darkened message (spec 006).
+        pub(super) live_titles: RefCell<Option<LiveTitles>>,
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
         pub(super) contacts: RefCell<Vec<Contact>>,
         pub(super) query: RefCell<Query>,
@@ -319,6 +326,8 @@ mod imp {
         /// The hit count and timing, once `attach` has a field to draw it in.
         pub(super) live: RefCell<Option<Live>>,
         pub(super) commands: RefCell<Vec<ActionId>>,
+        /// The listed commands' titles, as drawn.
+        pub(super) command_titles: RefCell<Vec<&'static str>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
         /// What the empty box is offering, as a person reads it.
         pub(super) hints: RefCell<Vec<String>>,
@@ -362,12 +371,14 @@ mod imp {
                     store_open: false,
                     terminal: false,
                 }),
+                live_titles: RefCell::new(None),
                 mailboxes: RefCell::new(Vec::new()),
                 contacts: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
                 parsed: RefCell::new(ParsedQuery::default()),
                 live: RefCell::new(None),
                 commands: RefCell::new(Vec::new()),
+                command_titles: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
                 hints: RefCell::new(Vec::new()),
                 hinted: RefCell::new(Vec::new()),
@@ -529,6 +540,12 @@ impl Finder {
         self.refresh();
     }
 
+    /// Give commands titles that depend on what is on screen: `title_for`
+    /// answers a command's title now, or `None` for the registry's.
+    pub fn set_live_titles(&self, title_for: impl Fn(ActionId) -> Option<&'static str> + 'static) {
+        self.imp().live_titles.replace(Some(Box::new(title_for)));
+    }
+
     /// The folders `#` can jump to.
     pub fn set_mailboxes(&self, mailboxes: &[Mailbox]) {
         *self.imp().mailboxes.borrow_mut() = mailboxes.to_vec();
@@ -632,6 +649,12 @@ impl Finder {
     /// The commands listed, best first.
     pub fn commands(&self) -> Vec<ActionId> {
         self.imp().commands.borrow().clone()
+    }
+
+    /// The listed commands' titles, as drawn, best first.
+    #[doc(hidden)]
+    pub fn command_titles(&self) -> Vec<&'static str> {
+        self.imp().command_titles.borrow().clone()
     }
 
     /// The folders listed, best first.
@@ -1152,16 +1175,25 @@ impl Finder {
                 if let Some(live) = imp.live.borrow().as_ref() {
                     live.clear();
                 }
-                let found = entries(
+                let mut found = entries(
                     &imp.keymap.borrow(),
                     *imp.context.borrow(),
                     *imp.availability.borrow(),
                     &query.text,
                 );
+                if let Some(title_for) = imp.live_titles.borrow().as_ref() {
+                    for entry in &mut found {
+                        if let Some(title) = title_for(entry.id) {
+                            entry.title = title;
+                            entry.positions.clear();
+                        }
+                    }
+                }
                 for entry in &found {
                     imp.list.append(&command_row(entry));
                 }
                 *imp.commands.borrow_mut() = found.iter().map(|entry| entry.id).collect();
+                *imp.command_titles.borrow_mut() = found.iter().map(|entry| entry.title).collect();
             }
             Mode::Mailbox => {
                 if let Some(live) = imp.live.borrow().as_ref() {
