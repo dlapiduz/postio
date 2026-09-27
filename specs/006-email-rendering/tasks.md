@@ -310,10 +310,10 @@ plan and tasks agree with the decision.
 
 ### A minimal BodyView (every story's widget tests need it)
 
-- [ ] T058 [TEST] Add `crates/postio-gtk/tests/gtk_suite/body_view.rs`, plus its row in `CASES`. Render a snapshot of `html-designed-three-column.eml` into a `BodyView`, then assert:
+- [X] T058 [TEST] Add `crates/postio-gtk/tests/gtk_suite/body_view.rs`, plus its row in `CASES`. Render a snapshot of `html-designed-three-column.eml` into a `BodyView`, then assert:
   - `vadjustment.upper == size.height`;
   - rendering the widget with `gtk::WidgetPaintable` at a known offset shows the fixture's hero-block colour at that point
-- [ ] T059 Implement `crates/postio-gtk/src/body_view/mod.rs` and `tiles.rs` (research R8):
+- [X] T059 Implement `crates/postio-gtk/src/body_view/mod.rs` and `tiles.rs` (research R8):
   - `gtk::Scrollable`, with a `Renderer` request on allocation;
   - 512 px tiles rasterised on a small pool;
   - an LRU tile cache capped at 64 MiB, with `gdk::MemoryTextureBuilder` and pooled buffers;

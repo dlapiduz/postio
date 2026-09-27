@@ -65,6 +65,7 @@
 
 pub mod app;
 pub mod autoscroll;
+pub mod body_view;
 pub mod capture;
 pub mod cheatsheet;
 pub mod composer;

@@ -39,6 +39,7 @@
 #[path = "../webkit_probe.rs"]
 mod webkit_probe;
 
+mod body_view;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
@@ -182,6 +183,10 @@ mod no_stray_prints;
 const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view::a_snapshot_fills_the_view_and_scrolls_with_it",
+        body_view::a_snapshot_fills_the_view_and_scrolls_with_it as fn(),
+    ),
     (
         "gtk_conversation::dropping_a_conversation_releases_its_pane",
         gtk_conversation::dropping_a_conversation_releases_its_pane as fn(),
