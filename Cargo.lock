@@ -5147,6 +5147,11 @@ dependencies = [
 [[package]]
 name = "postio-widgets"
 version = "0.3.0"
+dependencies = [
+ "glib",
+ "gtk4",
+ "libadwaita",
+]
 
 [[package]]
 name = "potential_utf"

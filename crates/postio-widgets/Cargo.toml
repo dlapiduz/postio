@@ -8,5 +8,19 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
+[dev-dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+glib = { version = "0.22.9", features = ["v2_72"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+
+# The shared crate's GTK suite: the custom harness of postio-gtk's gtk_suite
+# and postio-app's app_suite, for their reasons -- GTK initializes on exactly
+# one thread per process (#41), and libtest runs tests on a pool. See
+# tests/widgets_suite/main.rs.
+[[test]]
+name = "widgets_suite"
+path = "tests/widgets_suite/main.rs"
+harness = false
+
 [lints]
 workspace = true
