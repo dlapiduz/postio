@@ -250,7 +250,8 @@ and `note_removed` with no new request. It gains the following typed calls, one
 | `digest_preview(match, since)` | Screen 24's count and first four rows, through the executor |
 | `digest_rules()` | Each rule with its next delivery and what it holds now (`g d`) |
 | `raw_source(message)` | The raw RFC 822 bytes, fetched on demand if not local |
-| `move_recent()` | The move picker's Recent |
+| `move_recent()` / `note_move(folder)` | The move picker's Recent, and remembering a move (T098) |
+| `label_counts()` / `create_label(name)` | The label picker's counts, which count conversations, and "Create label" (T097) |
 
 **Events.** `Event::SurfacedChanged` joins the event set. The list learns about
 held, filtered and restored mail through the existing `MessageListChanged` and

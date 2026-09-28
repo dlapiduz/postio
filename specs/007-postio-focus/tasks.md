@@ -228,16 +228,16 @@ maintainer asks.
 
 **Goal**: Screen 04. **Independent test**: spec US2.
 
-- [ ] T065 [US2] `BodyView` gains a public highlight of a `TextIndex` range, and scrolls to it. Test first in `widgets_suite`: the overlay covers the range's rectangles, and the range is scrolled into view
+- [X] T065 [US2] `BodyView` gains a public highlight of a `TextIndex` range, and scrolls to it. Test first in `widgets_suite`: the overlay covers the range's rectangles, and the range is scrolled into view
 - [X] T066 [P] [US2] A locator from excerpt to range in `crates/postio-ui/src/reader/`, using `TextIndex::find` with the offset tiebreak (research R2). Test first: a table that includes duplicates and diacritics. S5 (T011) says: collapse the excerpt's whitespace, and treat any run of whitespace as any other, on both sides. Done, in `postio-render` (`TextIndex::locate`), since `postio-ui` must not take on the renderer (R2)
-- [ ] T067 [US2] Quote folds with ids and line counts in single-message documents (`crates/postio-body/src/quote.rs`, `crates/postio-ui/src/reader/document.rs`). Test first: "31 quoted lines from v2 folded" shows and opens on activation, and the classic single-message reader gains it too (a `gtk_suite` case). The document half is done: ids `q0`…, and "N quoted lines" on every fold. The GTK half waits for T019's reader move. Also make the terminal's fold line count the same way
-- [ ] T068 [US2] `view_source`: `Req::RawSource` reads the raw blob, fetched on the key press if it is not local, and the dialog shows it. Test first: `v` shows the raw message's header lines (scenario 5). The engine half is done: `Client::raw_source(message)`, which fetches only on request. The dialog remains
-- [ ] T069 [US2] The dialog (980×820): the header with Close, the title, the position, and `k`/`j`; the toolbar with its keys; the shared `Reader` in single-message mode with the Focus header card, the marker slot, attachment cards and the fold line. Test first: 100 opens build one surface (`surfaces_created` = 1, scenario 7), and the dialog opens within one frame of `Enter`
-- [ ] T070 [US2] `Escape` returns with the selection kept. `j`/`k` step the list and move its cursor, and `[`/`]` step the thread. Test first: scenarios 1–3
-- [ ] T071 [US2] `open_attachment_or_link`: a chooser over the snapshot's links and the message's parts. Nothing opens without a choice, and a link's target shows first. Test first: scenario 9
-- [ ] T072 [US2] HTML-only mail with remote images: sanitised, images blocked per sender, no script, no request. Test first: scenario 4, reusing the reader's no-request fixtures
-- [ ] T073 [US2] The marker card, and the sentence highlighted in the body (through T065 and T066). Test first: scenario 6, with a seeded question marker. Pass `own_text`'s length as the excerpt's `source_len` (R2)
-- [ ] T074 [US2] Compare screen 04, and record it (research R2's scrolling difference included)
+- [X] T067 [US2] Quote folds with ids and line counts in single-message documents (`crates/postio-body/src/quote.rs`, `crates/postio-ui/src/reader/document.rs`). Test first: "31 quoted lines from v2 folded" shows and opens on activation, and the classic single-message reader gains it too (a `gtk_suite` case). The document half is done: ids `q0`…, and "N quoted lines" on every fold. The GTK half waits for T019's reader move. Also make the terminal's fold line count the same way
+- [X] T068 [US2] `view_source`: `Req::RawSource` reads the raw blob, fetched on the key press if it is not local, and the dialog shows it. Test first: `v` shows the raw message's header lines (scenario 5). The engine half is done: `Client::raw_source(message)`, which fetches only on request. The dialog remains
+- [X] T069 [US2] The dialog (980×820): the header with Close, the title, the position, and `k`/`j`; the toolbar with its keys; the shared `Reader` in single-message mode with the Focus header card, the marker slot, attachment cards and the fold line. Test first: 100 opens build one surface (`surfaces_created` = 1, scenario 7), and the dialog opens within one frame of `Enter`
+- [X] T070 [US2] `Escape` returns with the selection kept. `j`/`k` step the list and move its cursor, and `[`/`]` step the thread. Test first: scenarios 1–3
+- [X] T071 [US2] `open_attachment_or_link`: a chooser over the snapshot's links and the message's parts. Nothing opens without a choice, and a link's target shows first. Test first: scenario 9
+- [X] T072 [US2] HTML-only mail with remote images: sanitised, images blocked per sender, no script, no request. Test first: scenario 4, reusing the reader's no-request fixtures
+- [X] T073 [US2] The marker card, and the sentence highlighted in the body (through T065 and T066). Test first: scenario 6, with a seeded question marker. Pass `own_text`'s length as the excerpt's `source_len` (R2)
+- [X] T074 [US2] Compare screen 04, and record it (research R2's scrolling difference included)
 
 ## Phase 8: User Story 3: write and reply with the existing composer (P1)
 
@@ -259,26 +259,27 @@ maintainer asks.
 
 - [X] T084 [P] [US4] `postio_search::natural::lower(text, today, names)`. Test first: a phrase table that includes screen 07's sentence, the words it cannot lower, and determinism (scenarios 1 and 8)
 - [X] T085 [P] [US4] The finder's blended mode in `crates/postio-ui/src/finder.rs`: commands, places and one search row, grouped, with `>` for commands only. Test first: typing "arch" gives the three groups of screen 09, and a command acts on the aim held before the bar opened (scenario 3)
-- [ ] T086 [US4] The bar overlay (860 px): the saved row (`Alt+1`–`4`), the input with chips, `Tab` into the chips, `back_to_words`, the echo line, the results, and the footer. Test first: half-typed operators show no error (scenario 2), and `in:Rec` lists Receipts newest first (scenario 4)
-- [ ] T087 [US4] `saved_search_1`–`4` in Focus. Test first: `Alt+2` shows its results (scenario 5)
-- [ ] T088 [US4] The folders popover (`g o`, or clicking "Inbox ▾"): mailboxes with their keys, folders, labels and counts, a filter, and `Enter` goes there. The header then names the place. Test first: scenario 6
-- [ ] T089 [US4] Search stays within its budget, counted: scenario 7
-- [ ] T090 [US4] Compare screens 07–10, and record them ("invoice" as free text included)
+- [ ] T086 [US4] The bar overlay (860 px): the saved row (`Alt+1`–`4`), the input with chips, `Tab` into the chips, `back_to_words`, the echo line, the results, and the footer. Test first: half-typed operators show no error (scenario 2), and `in:Rec` lists Receipts newest first (scenario 4). The bar is built: blended rows, names read as senders, plain words kept as words, a dimmed list, and a click outside closes it. Still to do: `Tab` into the chips, `back_to_words`, and `Ctrl+S` to save the search
+- [X] T087 [US4] `saved_search_1`–`4` in Focus. Test first: `Alt+2` shows its results (scenario 5)
+- [X] T088 [US4] The folders popover (`g o`, or clicking "Inbox ▾"): mailboxes with their keys, folders, labels and counts, a filter, and `Enter` goes there. The header then names the place. Test first: scenario 6
+- [X] T089 [US4] Search stays within its budget, counted: scenario 7
+- [X] T090 [US4] Compare screens 07–10, and record them ("invoice" as free text included)
 
 ## Phase 10: User Story 5: snooze, remind, label and move from a picker (P1)
 
 **Goal**: Screens 11–14. **Independent test**: spec US5.
 
-- [ ] T091 [US5] The pickers in `crates/postio-widgets/src/widgets/pickers/`: a popover anchored to the row, its title and target, preset rows with number keys, a date entry (`parse_when`), a footnote, and the picker commands in `Context::Picker`. Test first in `widgets_suite`: `2` picks the second preset, and `Tab` focuses the date entry. Settle C14's wording first (`/ux-architect`). This task gives `snooze_presets`, `remind_presets` and `parse_when` their first callers, so delete their lines in `scripts/checks/uncalled-pub-fn-baseline.txt`
+- [X] T091 [US5] The pickers in `crates/postio-widgets/src/widgets/pickers/`: a popover anchored to the row, its title and target, preset rows with number keys, a date entry (`parse_when`), a footnote, and the picker commands in `Context::Picker`. Test first in `widgets_suite`: `2` picks the second preset, and `Tab` focuses the date entry. Settle C14's wording first (`/ux-architect`). This task gives `snooze_presets`, `remind_presets` and `parse_when` their first callers, so delete their lines in `scripts/checks/uncalled-pub-fn-baseline.txt`
 - [X] T092 [US5] `Command::Snooze { until }` (core, session and host). Test first: scenarios 1 and 2 at a fixed clock. `Command::Snooze` has no `until` yet (T029 kept the payloads minimal)
 - [X] T093 [US5] `messages.sort_at` (per T012): the schema, the list's order, seek marks and indexes, and a woken snooze setting it. Test first: a woken snooze lists at the top, and `list_statement_count.rs` and `threads.rs:340` are unchanged. **If T012 chose the alternative:** change screen 11's copy instead, and record it. S6's conditions (R7): the folder and conversation lists move while the query views and search stay on `received_at`; `write_update` keeps `sort_at` at least `received_at` so drafts still rise, with a test; raw test inserts name the column. Move Focus's own window too: `focus_arm`'s `ORDER BY`, cursor and `focus_at`, and `representative_filter`
 - [X] T094 [US5] The `reminders` table, `remind_if_no_reply { at }` (undoable), cancellation by the filing pass on a reply from someone else, and firing on the tick. Test first: scenarios 3 and 4, including Focus closed at the due time and offline. `Command::RemindIfNoReply` has no `at` yet. The due timer does not fire reminders yet
-- [ ] T095 [US5] Surfaced reminder rows: splice positions in `crates/postio-ui/src/list.rs`, `FocusRow::Reminder` as a two-line "No reply since …" row, and the Focus scope leaving out the conversation's ordinary row. Test first: the position is 1 statement, and a surfaced conversation is not listed twice. The host already fires reminders and lists them through `surfaced()`. Settling a reminder when the person replies or archives is still to do here
+- [ ] T095 [US5] Surfaced reminder rows: splice positions in `crates/postio-ui/src/list.rs`, `FocusRow::Reminder` as a two-line "No reply since …" row, and the Focus scope leaving out the conversation's ordinary row. Test first: the position is 1 statement, and a surfaced conversation is not listed twice. The host already fires reminders and lists them through `surfaced()`. Settling a reminder when the person replies or archives is still to do here. The rows are done: `FocusRow::Reminder` spliced at its place, listed once, and gone when archived, with undo. Still to do: settling when the person themselves replies, in the filing pass in `postio-sync`, which today settles only on other people's replies
 - [ ] T096 [US5] `Draft.remind_at` (Remind if no reply, `mod+h`, in the composer) becomes a reminder on send. Test first: US3's scenario 5
-- [ ] T097 [US5] The label picker: filter, `Space` toggles (`add_label` on or off), create, "✓ applied", counts. Test first: scenario 5
-- [ ] T098 [US5] The move picker: filter, Recent (`settings` key `focus.move_recent`), All folders, `Enter` moves, and `Ctrl+Z` undoes. Test first: scenario 6
-- [ ] T099 [US5] `Escape` closes any picker without a change. Test first: scenario 7
-- [ ] T100 [US5] Compare screens 11–14, and record them
+- [X] T097 [US5] The label picker: filter, `Space` toggles (`add_label` on or off), create, "✓ applied", counts. Test first: scenario 5
+- [X] T098 [US5] The move picker: filter, Recent (`settings` key `focus.move_recent`), All folders, `Enter` moves, and `Ctrl+Z` undoes. Test first: scenario 6
+- [ ] T170 [US5] The label picker reads the labels of the row's own account. Today it reads the first account's, because a row does not say which account it belongs to. Test first: with two accounts, labelling a row of the second offers the second's labels
+- [X] T099 [US5] `Escape` closes any picker without a change. Test first: scenario 7
+- [X] T100 [US5] Compare screens 11–14, and record them
 
 **Checkpoint:** all P1 stories are done. Focus is a complete mail client on the one keymap, with no differentiator yet.
 
@@ -404,7 +405,7 @@ maintainer asks.
 
 - [X] T157 [US15] `crates/postio-vault`: the Tasks line with the link before the date (spec C21), notes appended, project suggestion, and finished tasks read back. Test first: against a temporary vault, scenario 1's bytes, and nothing else changed
 - [ ] T158 [US15] The capture sheet (screen 25): `t` and `n`, and `Context::Capture`'s keys. Test first: a `focus_suite` case. `postio_vault::Vault` has `append_task`, `append_note`, `projects`, `suggest` and `tasks`. Wire them through a host request, and delete their baseline lines
-- [ ] T159 [US15] `postio://`: `x-scheme-handler/postio` in Focus's desktop file, and `open` only navigates. Test first: scenario 2, including an unknown id refused with a message. The desktop entry registers `x-scheme-handler/postio` (T144). Still to do: `HANDLES_OPEN`, and navigating from the URI
+- [X] T159 [US15] `postio://`: `x-scheme-handler/postio` in Focus's desktop file, and `open` only navigates. Test first: scenario 2, including an unknown id refused with a message. The desktop entry registers `x-scheme-handler/postio` (T144). Still to do: `HANDLES_OPEN`, and navigating from the URI. Done: `HANDLES_OPEN`, and `postio://message/<id>`, where the id is the local message id, opens that message and does nothing else. An unknown id or link is refused with a sentence
 - [ ] T160 Compare screen 25, and record it
 
 ---
