@@ -354,6 +354,191 @@ fn archiving_a_focus_row_received_at_two_addresses_archives_both_copies() {
     );
 }
 
+/// Files a message about `subject` into `inbox` as the start of its own
+/// conversation, threaded as a sync pass would.
+fn file_about(
+    world: &World,
+    account: postio_model::AccountId,
+    inbox: MailboxId,
+    rfc: &str,
+    subject: &str,
+) -> MessageId {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut message = Message::new(account, inbox, Utc::now());
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(rfc));
+        message.subject = Some(subject.to_owned());
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        postio_storage::repository::ThreadingRepository::new(&connection, account)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        id
+    })
+}
+
+/// A second account beside the world's, with an inbox and an archive.
+fn second_account(world: &World) -> (postio_model::AccountId, MailboxId, MailboxId) {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut account = postio_model::Account::new(
+            "Second",
+            postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+        );
+        postio_storage::repository::AccountRepository::new(&connection)
+            .create(&mut account)
+            .await
+            .expect("a second account");
+        let inbox = test_support::mailbox(&connection, &account, "INBOX").await;
+        let archive = test_support::mailbox(&connection, &account, "Archive").await;
+        (account.id, inbox.id, archive.id)
+    })
+}
+
+#[test]
+fn a_focus_select_all_archives_what_focus_lists_and_never_held_mail() {
+    // T167: `X` then `a` in Focus. The selection is a predicate over what
+    // Focus's inbox lists -- not the unified inbox, which also holds mail
+    // kept for a digest -- and a row taken back out of it keeps every copy
+    // it stands for, in every account.
+    let world = World::new();
+    let (second, second_inbox, second_archive) = second_account(&world);
+    file_threaded(&world, world.account, world.inbox(), "<launch@example.net>");
+    file_threaded(&world, second, second_inbox, "<launch@example.net>");
+    let budget = file_about(
+        &world,
+        world.account,
+        world.inbox(),
+        "<budget@example.net>",
+        "Budget",
+    );
+    let minutes = file_about(
+        &world,
+        second,
+        second_inbox,
+        "<minutes@example.org>",
+        "Minutes",
+    );
+    let held = file_about(
+        &world,
+        world.account,
+        world.inbox(),
+        "<ledger@example.com>",
+        "The Ledger, this week",
+    );
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::DigestRepository::new(&connection)
+            .hold(held, "The Ledger", Utc::now())
+            .await
+            .expect("held for its digest");
+    });
+
+    let listed = |client: &Client| match world
+        .rt
+        .block_on(client.list_page(PageRequest {
+            scope: ListScope::Focus(postio_model::FocusScope::Inbox),
+            offset: 0,
+            limit: 20,
+        }))
+        .expect("a Focus page")
+    {
+        ListPage::Threads(page) => page,
+        ListPage::Messages(_) => panic!("Focus's inbox lists conversations"),
+    };
+    let (focus, events) = world.frontend(ClientKind::Focus);
+    let before = listed(&focus);
+    assert_eq!(
+        before.total, 4,
+        "the launch once, the budget, the minutes, and the world's own message"
+    );
+    let launch = before
+        .rows
+        .iter()
+        .find(|row| row.subject.as_deref() == Some("Launch"))
+        .expect("the launch is listed");
+    assert_eq!(launch.copies.len(), 1, "folded from both inboxes");
+
+    // As Focus aims `X`, and then `x` on the launch's row: its
+    // representative, the one id the row carries.
+    let state = SharedState::default();
+    let (sink, _) = event_channel();
+    state.update(&sink, |app| {
+        let mut said = app.open_view(postio_core::state::ViewScope::Focus {
+            accounts: vec![world.account, second],
+        });
+        said.extend(app.select_all());
+        said.extend(app.toggle_selection(launch.representative.id));
+        said
+    });
+    let aimed = world.host().connect(ClientKind::Focus).with_state(state);
+    let heard = aimed.events();
+    world.send(
+        &aimed,
+        Command::Archive {
+            target: MessageTarget::Selection,
+        },
+    );
+    let said = world.drain(&heard);
+    assert!(
+        said.iter()
+            .any(|event| matches!(event, Event::ActionCompleted { .. })),
+        "the archive was not done: {said:?}"
+    );
+    drop(events);
+
+    let after = listed(&focus);
+    assert_eq!(
+        after
+            .rows
+            .iter()
+            .map(|row| row.subject.clone().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec!["Launch".to_owned()],
+        "only the row taken back out is still listed"
+    );
+    assert_eq!(after.rows[0].copies.len(), 1, "with both its copies");
+
+    let in_folder = |mailbox: MailboxId| -> Vec<Option<String>> {
+        match world
+            .rt
+            .block_on(focus.list_page(PageRequest {
+                scope: ListScope::Mailbox(mailbox),
+                offset: 0,
+                limit: 20,
+            }))
+            .expect("a folder page")
+        {
+            ListPage::Threads(page) => page.rows.into_iter().map(|row| row.subject).collect(),
+            ListPage::Messages(page) => page.rows.into_iter().map(|row| row.subject).collect(),
+        }
+    };
+    let mut first_inbox = in_folder(world.inbox());
+    first_inbox.sort();
+    assert_eq!(
+        first_inbox,
+        vec![
+            Some("Launch".to_owned()),
+            Some("The Ledger, this week".to_owned())
+        ],
+        "the held newsletter never left its inbox: Focus never listed it"
+    );
+    assert_eq!(
+        in_folder(second_inbox),
+        vec![Some("Launch".to_owned())],
+        "the launch's other copy stayed with it"
+    );
+    assert_eq!(
+        in_folder(second_archive),
+        vec![Some("Minutes".to_owned())],
+        "what Focus listed in the second account was archived"
+    );
+    let _ = (budget, minutes);
+}
+
 #[test]
 fn what_one_frontend_changed_reaches_the_other() {
     let world = World::new();

@@ -259,6 +259,19 @@ pub enum ViewScope {
         /// nothing in it is not something a selection can be relative to.
         accounts: Vec<AccountId>,
     },
+    /// Postio Focus's inbox over the accounts it could show when it was
+    /// asked (spec 007, T167).
+    ///
+    /// Its own scope rather than [`ViewScope::Unified`], because it is not
+    /// the unified inbox: mail held for a digest is not in it, and each row
+    /// is a conversation folded across the person's accounts. A whole-view
+    /// selection here is about exactly what Focus lists, and a row taken
+    /// back out of it takes out every copy the row stands for.
+    Focus {
+        /// Those accounts, in the sidebar's order. Never empty, for
+        /// [`ViewScope::Unified`]'s reason.
+        accounts: Vec<AccountId>,
+    },
 }
 
 impl ViewScope {
@@ -269,7 +282,7 @@ impl ViewScope {
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
             ViewScope::Mailbox(mailbox) => Some(*mailbox),
-            ViewScope::Flagged(_) | ViewScope::Unified { .. } => None,
+            ViewScope::Flagged(_) | ViewScope::Unified { .. } | ViewScope::Focus { .. } => None,
         }
     }
 
@@ -281,7 +294,7 @@ impl ViewScope {
     /// [`ViewScope::accounts`] is the question the aggregate can answer.
     pub fn account(&self) -> Option<AccountId> {
         match self {
-            ViewScope::Mailbox(_) | ViewScope::Unified { .. } => None,
+            ViewScope::Mailbox(_) | ViewScope::Unified { .. } | ViewScope::Focus { .. } => None,
             ViewScope::Flagged(account) => Some(*account),
         }
     }
@@ -294,7 +307,7 @@ impl ViewScope {
         match self {
             ViewScope::Mailbox(_) => &[],
             ViewScope::Flagged(account) => std::slice::from_ref(account),
-            ViewScope::Unified { accounts } => accounts,
+            ViewScope::Unified { accounts } | ViewScope::Focus { accounts } => accounts,
         }
     }
 }

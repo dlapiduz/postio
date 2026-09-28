@@ -156,13 +156,19 @@ pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope
         // every message in flight at once is not a thing to make easy by
         // accident. A rejection, not a no-op that claims to have acted.
         //
-        // Focus's inbox too, until its select-all is a predicate that leaves
-        // out what Focus holds back as its list does (spec 007).
+        // Focus's inbox is a predicate over what Focus lists, over the
+        // accounts it could show, for the aggregate's reason (T167).
+        ListScope::Focus(postio_model::FocusScope::Inbox) if reachable.is_empty() => None,
+        ListScope::Focus(postio_model::FocusScope::Inbox) => Some(ViewScope::Focus {
+            accounts: reachable.to_vec(),
+        }),
+        // The has-action filter is the markers' few rows, and nothing needs
+        // `X` over them yet: a rejection rather than a guess.
         ListScope::Account(_)
         | ListScope::Snoozed(_)
         | ListScope::Outbox(_)
         | ListScope::Thread(_)
-        | ListScope::Focus(_) => None,
+        | ListScope::Focus(postio_model::FocusScope::HasAction) => None,
     }
 }
 
@@ -593,6 +599,29 @@ mod tests {
             view_scope(ListScope::Unified, &[]),
             None,
             "no account is reachable, so there is no view to be relative to",
+        );
+    }
+
+    /// T167: Focus's inbox is its own scope, not the unified inbox's, so
+    /// a whole-view selection there is about what Focus lists; the
+    /// has-action filter's few rows are not something `X` is aimed at yet.
+    #[test]
+    fn focus_s_inbox_is_a_scope_of_its_own_over_the_accounts_it_could_show() {
+        use postio_model::{AccountId, FocusScope};
+
+        assert_eq!(
+            view_scope(ListScope::Focus(FocusScope::Inbox), &[AccountId::new(2)]),
+            Some(ViewScope::Focus {
+                accounts: vec![AccountId::new(2)],
+            }),
+        );
+        assert_eq!(view_scope(ListScope::Focus(FocusScope::Inbox), &[]), None);
+        assert_eq!(
+            view_scope(
+                ListScope::Focus(FocusScope::HasAction),
+                &[AccountId::new(2)]
+            ),
+            None,
         );
     }
 

@@ -1778,6 +1778,36 @@ impl Actions {
                 // Unified shows (#1692): a set over the account's whole mail
                 // would reach the Archive the view never drew. An account
                 // with no inbox yet has nothing in the view to select.
+                // Focus's inbox, one predicate per account's inbox as the
+                // aggregate is, asking Focus's membership rather than the
+                // folder's: held digest mail is not listed, so it is not
+                // selected. A deselected row is a conversation folded across
+                // accounts, so every copy of it stays out, in every unit
+                // (T167).
+                ViewScope::Focus { accounts } => {
+                    let (lone, except_threads) = focus_exceptions(connection, &except).await?;
+                    let folders = MailboxRepository::new(connection);
+                    let mut units = Vec::with_capacity(accounts.len());
+                    for account in accounts {
+                        let Some(inbox) = folders
+                            .by_role(account, MailboxRole::Inbox)
+                            .await
+                            .map_err(store_failure)?
+                        else {
+                            continue;
+                        };
+                        units.push(BulkUnit {
+                            set: MessageSet::InFocusInbox {
+                                mailbox: inbox.id,
+                                except: lone.clone(),
+                                except_threads: except_threads.clone(),
+                            },
+                            account,
+                            from: Some(inbox.id),
+                        });
+                    }
+                    units
+                }
                 ViewScope::Unified { accounts } => {
                     let folders = MailboxRepository::new(connection);
                     let mut units = Vec::with_capacity(accounts.len());
@@ -2235,6 +2265,35 @@ async fn mailbox_for(
                 ))
             }),
     }
+}
+
+/// What a deselection in Focus's inbox takes back out: the messages that
+/// belong to no conversation, and every conversation a deselected row
+/// stands for, each folded copy included (T167).
+async fn focus_exceptions(
+    connection: &Checkout,
+    except: &[MessageId],
+) -> Result<(Vec<MessageId>, Vec<ThreadId>), CommandError> {
+    let messages = MessageRepository::new(connection);
+    let mut lone = Vec::new();
+    let mut threads = Vec::new();
+    for id in except {
+        match messages.get(*id).await.map_err(store_failure)? {
+            Some(Message {
+                thread_id: Some(thread),
+                ..
+            }) => threads.push(thread),
+            _ => lone.push(*id),
+        }
+    }
+    if threads.is_empty() {
+        return Ok((lone, threads));
+    }
+    let threads = ThreadRepository::new(connection)
+        .with_folded_copies(&threads)
+        .await
+        .map_err(store_failure)?;
+    Ok((lone, threads))
 }
 
 async fn thread_messages(

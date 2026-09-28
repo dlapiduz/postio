@@ -231,6 +231,24 @@ pub enum MessageSet {
         /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
+    /// What Postio Focus's inbox lists of one account's inbox, less the
+    /// conversations taken back out of the selection (spec 007, T167).
+    ///
+    /// Focus's membership, not the folder's: mail held for a digest is not
+    /// listed, so a whole-view selection there never reaches it -- the same
+    /// test [`super::focus_excludes`] puts on every read of Focus's inbox.
+    /// A Focus row is a conversation folded across accounts, so what is
+    /// taken back out is conversations: every one a deselected row stands
+    /// for, in whichever account this unit is.
+    InFocusInbox {
+        /// The inbox the predicate is about.
+        mailbox: MailboxId,
+        /// Messages the user deselected that belong to no conversation.
+        except: Vec<MessageId>,
+        /// The conversations the deselected rows stand for, every folded
+        /// copy included.
+        except_threads: Vec<ThreadId>,
+    },
     /// Every flagged message in an account, wherever it is filed, less the
     /// rows taken back out of the selection.
     ///
@@ -294,7 +312,9 @@ impl MessageSet {
     /// it names put them.
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
-            MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
+            MessageSet::InMailbox { mailbox, .. } | MessageSet::InFocusInbox { mailbox, .. } => {
+                Some(*mailbox)
+            }
             // A smart folder is not a folder, here as everywhere else --
             // and an aggregate over accounts is further from one still.
             MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
@@ -347,6 +367,35 @@ impl MessageSet {
                 sql.push_str(&without_conversations(except, first + 1));
                 let mut arguments = vec![mailbox.get()];
                 arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
+                (sql, arguments)
+            }
+            MessageSet::InFocusInbox {
+                mailbox,
+                except,
+                except_threads,
+            } => {
+                let mut sql = format!(
+                    "messages.mailbox_id = ?{first} AND messages.{}{}",
+                    super::VISIBLE,
+                    super::focus_excludes("messages.")
+                );
+                let mut next = first + 1;
+                if !except.is_empty() {
+                    sql.push_str(&format!(
+                        " AND messages.id NOT IN ({})",
+                        placeholders(except.len(), next)
+                    ));
+                    next += except.len();
+                }
+                if !except_threads.is_empty() {
+                    sql.push_str(&format!(
+                        " AND (messages.thread_id IS NULL OR messages.thread_id NOT IN ({}))",
+                        placeholders(except_threads.len(), next)
+                    ));
+                }
+                let mut arguments = vec![mailbox.get()];
+                arguments.extend(except.iter().map(|id| id.get()));
+                arguments.extend(except_threads.iter().map(|id| id.get()));
                 (sql, arguments)
             }
             // The subquery is bounded by two integers, so SQLite seeks the

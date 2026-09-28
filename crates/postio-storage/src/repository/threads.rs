@@ -1182,6 +1182,25 @@ impl<'a> ThreadRepository<'a> {
             .collect())
     }
 
+    /// `threads` and every copy of each folded into it from the person's
+    /// other accounts: the conversations a row of a folded list stands for,
+    /// by the rule [`Self::unified_page`] folds by.
+    ///
+    /// What a whole-view selection over Focus's inbox takes back out when a
+    /// row is deselected (spec 007, T167): the row carries one id, and every
+    /// copy has to stay with it.
+    pub async fn with_folded_copies(&self, threads: &[ThreadId]) -> Result<Vec<ThreadId>> {
+        let found = self.threads_by_id(threads).await?;
+        let partners = self.group_partners_for(&found).await?;
+        let mut all: Vec<ThreadId> = threads.to_vec();
+        for copies in partners.values() {
+            all.extend(copies.iter().map(|thread| thread.id));
+        }
+        all.sort();
+        all.dedup();
+        Ok(all)
+    }
+
     /// The threads in *other* accounts that are each page thread's
     /// conversation — by root identity, then by subject within the window.
     ///
