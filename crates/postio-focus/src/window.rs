@@ -686,12 +686,7 @@ impl FocusWindow {
         state_banner.connect_action(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |action| window.act(match action {
-                postio_ui::focus_state::BannerAction::Retry => CommandId::Refresh,
-                postio_ui::focus_state::BannerAction::UpdatePassword => {
-                    CommandId::UpdateCredential
-                }
-            })
+            move |action| window.act(banner_command(action))
         ));
         imp.inbox.append(state_banner.widget());
         imp.state_banner.replace(Some(state_banner));
@@ -1050,6 +1045,47 @@ impl FocusWindow {
         dialog.present(Some(self));
     }
 
+    /// The rows the command bar lists. None: the command bar is US4's, and
+    /// registry parity (T059) counts every command without one.
+    pub fn command_bar_rows(&self) -> Vec<CommandId> {
+        Vec::new()
+    }
+
+    /// Every command a person can reach with the mouse somewhere in the
+    /// window: the chrome and its menu, the bulk bar, the banner's button,
+    /// the empty inbox's shortcuts, and the toast's Undo. Each is read from
+    /// the table that builds it.
+    pub fn controls(&self) -> Vec<CommandId> {
+        let mut commands = Chrome::commands();
+        commands.extend(Bulk::commands());
+        commands.extend(
+            [
+                postio_ui::focus_state::BannerAction::Retry,
+                postio_ui::focus_state::BannerAction::UpdatePassword,
+            ]
+            .map(banner_command),
+        );
+        let everything = postio_config::FocusConfig {
+            filtering: true,
+            ..postio_config::FocusConfig::default()
+        };
+        commands.extend(
+            postio_ui::focus_state::empty_inbox(
+                &everything,
+                0,
+                &self.keymap(),
+                &chrono::Local::now(),
+            )
+            .shortcuts
+            .into_iter()
+            .map(|(_, _, command)| command),
+        );
+        commands.push(CommandId::Undo);
+        commands.sort_by_key(|command| command.as_str());
+        commands.dedup();
+        commands
+    }
+
     /// The key map, while it is open.
     pub fn key_map(&self) -> Option<adw::Dialog> {
         self.visible_dialog()
@@ -1106,5 +1142,13 @@ impl FocusWindow {
         if let Some(toast) = toast {
             toast.dismiss();
         }
+    }
+}
+
+/// The command a banner's button runs.
+fn banner_command(action: postio_ui::focus_state::BannerAction) -> CommandId {
+    match action {
+        postio_ui::focus_state::BannerAction::Retry => CommandId::Refresh,
+        postio_ui::focus_state::BannerAction::UpdatePassword => CommandId::UpdateCredential,
     }
 }

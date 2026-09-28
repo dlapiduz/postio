@@ -62,6 +62,11 @@ impl Bulk {
         bulk
     }
 
+    /// Every command the bar has a button for.
+    pub fn commands() -> Vec<CommandId> {
+        ACTIONS.iter().map(|action| action.command).collect()
+    }
+
     /// The bar, to place under the list.
     pub fn widget(&self) -> &gtk::Box {
         &self.root

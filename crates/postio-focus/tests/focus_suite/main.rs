@@ -31,6 +31,7 @@ mod has_action;
 mod keymap;
 mod list_contract;
 mod marked_rows;
+mod registry_parity;
 mod rows;
 mod selection;
 mod shot;
@@ -48,6 +49,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "registry_parity::every_focus_command_has_a_key_a_bar_row_and_a_control",
+        registry_parity::every_focus_command_has_a_key_a_bar_row_and_a_control as fn(),
+    ),
     (
         "keymap::every_key_the_key_map_shows_runs_its_command",
         keymap::every_key_the_key_map_shows_runs_its_command as fn(),

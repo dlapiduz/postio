@@ -20,6 +20,26 @@ use postio_widgets::widgets::{Kind, Size, icon_button};
 /// What a control asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
 
+/// The main menu, top to bottom: each item's label and the command it runs
+/// (`None` for About, which is the application's, not a command).
+const MENU: &[(&str, Option<CommandId>)] = &[
+    ("Settings", Some(CommandId::Settings)),
+    ("Keyboard shortcuts", Some(CommandId::CheatSheet)),
+    ("About", None),
+    ("Quit", Some(CommandId::Quit)),
+];
+
+/// The chrome's buttons, each with the command a click runs. The command
+/// field runs search, and wears the palette's key beside search's.
+const BUTTONS: &[CommandId] = &[
+    CommandId::Compose,
+    CommandId::Search,
+    CommandId::CommandPalette,
+    CommandId::GoToFolders,
+    CommandId::ToggleHasAction,
+    CommandId::Quit,
+];
+
 /// The top bar and the header strip, and the keycaps on them.
 pub struct Chrome {
     top: gtk::CenterBox,
@@ -94,10 +114,14 @@ impl Chrome {
         sync_row.append(&sync);
 
         let menu = gio::Menu::new();
-        menu.append(Some("Settings"), Some("win.run::settings"));
-        menu.append(Some("Keyboard shortcuts"), Some("win.run::cheat_sheet"));
-        menu.append(Some("About"), Some("win.about"));
-        menu.append(Some("Quit"), Some("win.run::quit"));
+        for (label, command) in MENU {
+            match command {
+                Some(command) => {
+                    menu.append(Some(label), Some(&format!("win.run::{}", command.as_str())));
+                }
+                None => menu.append(Some(label), Some("win.about")),
+            }
+        }
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
             .menu_model(&menu)
@@ -303,6 +327,16 @@ impl Chrome {
             }
             None => self.showing.set_visible(false),
         }
+    }
+
+    /// Every command the chrome has a control for: its buttons and its main
+    /// menu.
+    pub fn commands() -> Vec<CommandId> {
+        BUTTONS
+            .iter()
+            .copied()
+            .chain(MENU.iter().filter_map(|(_, command)| *command))
+            .collect()
     }
 
     /// The counts that wait for their features (FR-018), for the tasks that
