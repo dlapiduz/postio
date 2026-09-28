@@ -287,6 +287,11 @@ impl FocusWindow {
             bulk.set_keymap(&keymap);
         }
         imp.keymap.replace(keymap);
+        // An open key map is drawn from the keymap: draw it again.
+        if let Some(open) = self.key_map() {
+            open.force_close();
+            self.show_key_map();
+        }
     }
 
     /// The keymap in force.

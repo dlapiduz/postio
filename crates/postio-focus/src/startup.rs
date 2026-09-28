@@ -36,7 +36,9 @@ const IDLE_PASSES_AFTER_FIRST_FRAME: std::time::Duration = std::time::Duration::
 /// as the app does on its way out, so the engines finish their writes and the
 /// clean-shutdown mark is left.
 pub struct Session {
-    host: Host,
+    /// Shared only with the config follower, which holds it weakly: the
+    /// session is still what keeps the host, and dropping it stops it.
+    host: std::rc::Rc<Host>,
     client: Client,
     state: SharedState,
     focus: FocusHandle,
@@ -80,6 +82,33 @@ impl Session {
             .start_idle_passes_after(IDLE_PASSES_AFTER_FIRST_FRAME);
     }
 
+    /// Follow `config.toml` at `path` while the window lives (US7 scenario
+    /// 1): a saved `[keys]` reaches the keyboard, every keycap and the key
+    /// map at once; a saved `[focus]` reaches the host's Focus mode -- its
+    /// filing and its digests -- and what the empty inbox names. A file
+    /// that does not validate changes nothing, and the last good keys stay
+    /// (`postio_widgets::present::config`). `false` when the file cannot be
+    /// watched: edits then wait for a restart.
+    pub fn follow_config(&self, window: &FocusWindow, path: &std::path::Path) -> bool {
+        let service = postio_core::config::ConfigService::load(path);
+        let window = window.downgrade();
+        let host = std::rc::Rc::downgrade(&self.host);
+        postio_widgets::present::config::follow(service, move |service, update| {
+            let (Some(window), Some(host)) = (window.upgrade(), host.upgrade()) else {
+                return std::ops::ControlFlow::Break(());
+            };
+            if update.changed.keys {
+                window.set_keymap(service.keymap().clone());
+            }
+            if update.changed.focus {
+                let focus = service.config().focus.clone();
+                host.enable_focus(FocusSetup::default().with_config(focus.clone()));
+                window.set_focus_config(focus);
+            }
+            std::ops::ControlFlow::Continue(())
+        })
+    }
+
     /// Stop the engines and mark a clean end, before the host is dropped.
     pub fn stop(&self) {
         self.host.stop();
@@ -109,7 +138,7 @@ pub fn adopt(window: &FocusWindow, host: Host, config: &postio_config::Config) -
         postio_core::Keymap::resolve(&config.keys),
     );
     Session {
-        host,
+        host: std::rc::Rc::new(host),
         client,
         state,
         focus,

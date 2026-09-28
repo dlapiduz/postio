@@ -32,6 +32,7 @@ mod keymap;
 mod list_contract;
 mod marked_rows;
 mod registry_parity;
+mod reload;
 mod rows;
 mod selection;
 mod shot;
@@ -49,6 +50,14 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "reload::a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map",
+        reload::a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map as fn(),
+    ),
+    (
+        "reload::a_saved_focus_section_reaches_the_empty_inbox",
+        reload::a_saved_focus_section_reaches_the_empty_inbox as fn(),
+    ),
     (
         "registry_parity::every_focus_command_has_a_key_a_bar_row_and_a_control",
         registry_parity::every_focus_command_has_a_key_a_bar_row_and_a_control as fn(),

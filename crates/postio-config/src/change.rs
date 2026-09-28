@@ -59,6 +59,8 @@ pub struct ConfigChanged {
     pub storage: bool,
     /// `[reader]` — the reading pane's zoom, applied to the open reader.
     pub reader: bool,
+    /// `[focus]` — filtering and the digest rules, for Postio Focus.
+    pub focus: bool,
 }
 
 impl ConfigChanged {
@@ -76,6 +78,7 @@ impl ConfigChanged {
             || self.compose
             || self.storage
             || self.reader
+            || self.focus
     }
 
     /// Compare two configurations section by section.
@@ -96,6 +99,7 @@ impl ConfigChanged {
             compose: old.compose != new.compose,
             storage: old.storage != new.storage,
             reader: old.reader != new.reader,
+            focus: old.focus != new.focus,
         }
     }
 }
@@ -120,6 +124,21 @@ mod tests {
         assert!(!changed.keys);
         assert!(!changed.sync);
         assert!(!changed.filters);
+    }
+
+    #[test]
+    fn changing_focus_touches_only_focus() {
+        // Focus's own section: filtering, the never-filter list and the
+        // digest rules, applied to a running Focus (spec 007 T060).
+        let old = config("[focus]\nfiltering = true\n");
+        let new = config("[focus]\nfiltering = false\n");
+
+        let changed = ConfigChanged::between(&old, &new);
+
+        assert!(changed.focus);
+        assert!(changed.any());
+        assert!(!changed.keys);
+        assert!(!changed.ui);
     }
 
     #[test]

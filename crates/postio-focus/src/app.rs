@@ -77,7 +77,12 @@ pub fn run() -> glib::ExitCode {
             let opened: Rc<dyn Fn(Session)> = {
                 let session = Rc::clone(&session);
                 let window = window.downgrade();
+                let config_path = config_path.clone();
                 Rc::new(move |opened: Session| {
+                    // `[keys]` and `[focus]` apply while Focus runs (T060).
+                    if let (Some(path), Some(window)) = (config_path.as_deref(), window.upgrade()) {
+                        opened.follow_config(&window, path);
+                    }
                     let session = Rc::clone(&session);
                     session.replace(Some(opened));
                     if let Some(window) = window.upgrade() {
