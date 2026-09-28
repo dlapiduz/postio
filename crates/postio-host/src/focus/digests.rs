@@ -8,6 +8,13 @@ use postio_storage::repository::DigestRepository;
 
 use crate::Inner;
 
+/// How many messages each of `rules` holds now, in their order.
+pub(crate) async fn waiting(inner: &Inner, rules: &[String]) -> Result<Vec<u32>, StoreError> {
+    let reader = inner.wiring.database.read().await?;
+    let names: Vec<&str> = rules.iter().map(String::as_str).collect();
+    Ok(DigestRepository::new(&reader).waiting(&names).await?)
+}
+
 /// What `delivery` holds, newest first.
 pub(crate) async fn delivery_messages(
     inner: &Inner,

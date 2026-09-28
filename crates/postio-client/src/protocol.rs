@@ -372,6 +372,9 @@ pub enum Req {
     /// What a digest delivery holds, as list rows, newest first: the
     /// digest window's plain list (spec 007 T137).
     DeliveryMessages(postio_model::DeliveryId),
+    /// How many messages each named rule holds now, waiting for its next
+    /// delivery: the `g d` list's "holds N" (spec 007 T139).
+    DigestWaiting(Vec<String>),
     /// A page of the Filtered view, newest first.
     Filtered {
         /// One reason, as the store spells it, or every reason.
@@ -552,6 +555,8 @@ pub enum Resp {
     MoveRecent(Vec<MailboxId>),
     /// Each filter reason with its count, in the tabs' order.
     FilteredTabs(Vec<(String, u32)>),
+    /// Counts, in the order asked for.
+    Counts(Vec<u32>),
     /// A page of filtered mail.
     Filtered(Vec<FilteredRow>),
     /// Each label with how many conversations carry it; a label nothing

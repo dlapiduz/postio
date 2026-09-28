@@ -308,3 +308,56 @@ async fn a_delivery_keeps_its_summary_and_its_row_reads_it_in_the_same_statement
         ]
     );
 }
+
+#[tokio::test]
+async fn each_rule_counts_what_it_holds_now_in_one_statement() {
+    // The `g d` list (T139): each rule with how many messages it holds now,
+    // waiting for its next delivery -- not what it already delivered. One
+    // statement for every rule, each count a seek on idx_digest_holds_rule.
+    use postio_storage::test_support::counting::{counted_async, scans};
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages(&connection, 5).await;
+    let digests = DigestRepository::new(&connection);
+    for message in &ids[..2] {
+        digests
+            .hold(*message, "Newsletters", at(1, 9))
+            .await
+            .expect("held");
+    }
+    digests
+        .deliver("Newsletters", at(2, 9), at(2, 9))
+        .await
+        .expect("delivered");
+    digests
+        .hold(ids[2], "Newsletters", at(3, 9))
+        .await
+        .expect("held");
+    for message in &ids[3..] {
+        digests
+            .hold(*message, "Receipts", at(3, 9))
+            .await
+            .expect("held");
+    }
+
+    let rules = ["Newsletters", "Receipts", "Nobody"];
+    let _ = digests.waiting(&rules).await.expect("warm");
+    let mut waiting = Vec::new();
+    let counts = counted_async(|| async {
+        waiting = digests.waiting(&rules).await.expect("the counts");
+    })
+    .await;
+    assert_eq!(
+        waiting,
+        [1, 2, 0],
+        "what each holds now, in the rules' order"
+    );
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    let walks: Vec<String> = scans(&connection, &DigestRepository::explain_waiting(3))
+        .await
+        .into_iter()
+        .filter(|step| step != "SCAN CONSTANT ROW")
+        .collect();
+    assert!(walks.is_empty(), "{walks:?}");
+}

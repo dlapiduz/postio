@@ -231,6 +231,48 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
+    /// How many messages each of `rules` holds now, waiting for its next
+    /// delivery, in their order: the `g d` list's "holds N".
+    ///
+    /// One statement for every rule, each count a seek on
+    /// `idx_digest_holds_rule`.
+    pub async fn waiting(&self, rules: &[&str]) -> Result<Vec<u32>> {
+        if rules.is_empty() {
+            return Ok(Vec::new());
+        }
+        let counts = sql::first(
+            self.connection,
+            &Self::explain_waiting(rules.len()),
+            rules
+                .iter()
+                .map(|rule| (*rule).to_owned())
+                .collect::<Vec<_>>(),
+            |row| {
+                (0..rules.len())
+                    .map(|index| row.col::<i64>(index))
+                    .collect::<Result<Vec<i64>>>()
+            },
+        )
+        .await?
+        .unwrap_or_default();
+        Ok(counts
+            .into_iter()
+            .map(|count| u32::try_from(count.max(0)).unwrap_or(u32::MAX))
+            .collect())
+    }
+
+    /// The SQL [`Self::waiting`] runs over `rules` rules.
+    pub fn explain_waiting(rules: usize) -> String {
+        let counts: Vec<String> = (1..=rules)
+            .map(|n| {
+                format!(
+                    "(SELECT count(*) FROM digest_holds WHERE rule = ?{n} AND delivery_id IS NULL)"
+                )
+            })
+            .collect();
+        format!("SELECT {}", counts.join(", "))
+    }
+
     /// Every delivery not yet archived, newest first, each with how many
     /// messages it holds: the digest rows of Focus's inbox. One statement,
     /// a seek on `idx_digest_deliveries_open` and each count a seek on

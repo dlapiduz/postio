@@ -131,6 +131,7 @@ impl Req {
             Req::MoveRecent => "MoveRecent",
             Req::FilteredTabs => "FilteredTabs",
             Req::DeliveryMessages(_) => "DeliveryMessages",
+            Req::DigestWaiting(_) => "DigestWaiting",
             Req::Filtered { .. } => "Filtered",
             Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
@@ -1038,6 +1039,20 @@ impl Client {
             Resp::MoveRecent(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// How many messages each of `rules` holds now, waiting for its next
+    /// delivery, in their order.
+    pub async fn digest_waiting(&self, rules: Vec<String>) -> Result<Vec<u32>, StoreError> {
+        self.read(
+            Req::DigestWaiting(rules),
+            "what the rules hold",
+            |answer| match answer {
+                Resp::Counts(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 
