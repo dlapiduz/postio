@@ -1,5 +1,6 @@
 //! The data the rules layer reads (`contracts/engine.md`, "The classifier").
 
+use crate::digests::Digests;
 use crate::senders::Senders;
 
 /// Everything the classifier decides by, as data rather than code
@@ -21,4 +22,11 @@ pub trait Rules {
     /// needs-action question is not asked of mail from a sender in it
     /// (FR-106), and T122's filing pass files by it.
     fn senders(&self) -> &Senders;
+
+    /// The user's digest rules (`[[focus.digests]]`, T133), in the file's
+    /// order: the first that matches holds the message. None unless the
+    /// rules say otherwise.
+    fn digests(&self) -> &Digests {
+        Digests::none()
+    }
 }

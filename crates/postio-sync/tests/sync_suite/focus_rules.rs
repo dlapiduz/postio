@@ -311,3 +311,176 @@ fn corpus_source(corpus: &[Case], source: &str) -> Option<&'static str> {
         _ => None,
     })
 }
+
+// --- Digests: holding at filing (T133, US10) ------------------------------------------
+
+/// An invitation from the Ledger, in the Ledger's bulk-mail clothes, with
+/// the calendar part a server's `BODYSTRUCTURE` would report.
+fn invitation() -> MockMessage {
+    use postio_account::backend::{BodyStructure, PartNode};
+    MockMessage::new(
+        b"From: Ledger <news@ledger.example>\r\nTo: Test User <test@example.com>\r\n\
+          Message-ID: <reader-evening@ledger.example>\r\nSubject: Readers' evening\r\n\
+          List-Unsubscribe: <https://ledger.example/u>\r\nPrecedence: bulk\r\n\
+          Content-Type: multipart/alternative; boundary=b\r\n\r\n\
+          --b\r\nContent-Type: text/plain\r\n\r\nJoin us.\r\n\
+          --b\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\nBEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n\
+          --b--\r\n"
+            .to_vec(),
+    )
+    .with_structure(BodyStructure::from_parts(
+        "multipart/alternative",
+        [
+            PartNode::new("1", "text/plain", 9).with_charset("utf-8"),
+            PartNode::new("2", "text/calendar", 30),
+        ],
+    ))
+}
+
+#[tokio::test]
+async fn a_digest_rule_holds_its_sender_s_mail_and_never_an_invitation() {
+    // US10 scenarios 1 and 2, at filing: the rule's sender's mail skips
+    // Focus's inbox -- held, not filtered, and still filed in the inbox,
+    // where the other apps see it (FR-121) -- and the same sender's
+    // invitation comes straight to the inbox.
+    const STAGING: &str = "Staging";
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new(INBOX)
+                .uid_validity(UidValidity::new(VALIDITY))
+                .message(MockMessage::new(
+                    b"From: Old <old@example.org>\r\nSubject: Old\r\n\r\nOld.\r\n".to_vec(),
+                )),
+        )
+        .mailbox(
+            MockMailbox::new(STAGING)
+                .uid_validity(UidValidity::new(VALIDITY + 1))
+                .message(invitation()),
+        )
+        .build();
+    backend.connect().await.expect("connect");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, INBOX).await;
+    test_support::mailbox(&connection, &account, "Archive").await;
+    sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("the first sync");
+    let threads = postio_storage::repository::ThreadRepository::new(&connection);
+    let inboxes = [(account.id, inbox.id)];
+    let before = threads.focus_count(&inboxes).await.expect("a count");
+
+    // Wednesday: the newsletter, a letter, and the invitation.
+    backend
+        .append(
+            INBOX,
+            &AppendMessage::new(raw(
+                0,
+                &case(
+                    "The weekly numbers",
+                    "Ledger <news@ledger.example>",
+                    BULK,
+                    Fate::Inbox,
+                ),
+            )),
+        )
+        .await
+        .expect("deliver");
+    backend
+        .append(
+            INBOX,
+            &AppendMessage::new(raw(
+                1,
+                &case(
+                    "Lunch on Thursday?",
+                    "Tove <tove@example.org>",
+                    "",
+                    Fate::Inbox,
+                ),
+            )),
+        )
+        .await
+        .expect("deliver");
+    backend
+        .copy_messages(
+            STAGING,
+            &[postio_model::RemoteId::new(format!("{}:1", VALIDITY + 1))],
+            INBOX,
+        )
+        .await
+        .expect("the invitation arrives");
+
+    let config = postio_config::Config::from_toml_str(
+        r#"[[focus.digests]]
+name    = "Newsletters"
+match   = ["from:news@ledger.example"]
+cadence = "weekly"
+day     = "sunday"
+at      = "09:00"
+"#,
+    )
+    .expect("a config");
+    let outcome = resync_mailbox_filing(
+        &connection,
+        &backend,
+        &inbox,
+        Some(&FocusFiling::from_config(&config.focus)),
+        &CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("an incremental pass");
+    assert!(matches!(outcome, Outcome::Incremental { ref arrived, .. } if arrived.len() == 3));
+
+    let fate = |subject: &'static str| {
+        let connection = &connection;
+        async move {
+            let (id, mailbox): (i64, i64) = postio_storage::sql::first(
+                connection,
+                "SELECT id, mailbox_id FROM messages WHERE subject = ?1",
+                [subject],
+                |row| {
+                    Ok((
+                        postio_storage::sql::RowExt::col(row, 0)?,
+                        postio_storage::sql::RowExt::col(row, 1)?,
+                    ))
+                },
+            )
+            .await
+            .expect("a read")
+            .unwrap_or_else(|| panic!("`{subject}` was not stored"));
+            let held: Option<String> = postio_storage::sql::first(
+                connection,
+                "SELECT rule FROM digest_holds WHERE message_id = ?1",
+                [id],
+                |row| postio_storage::sql::RowExt::col(row, 0),
+            )
+            .await
+            .expect("a read");
+            let decided = FilterDecisionRepository::new(connection)
+                .get(MessageId::new(id))
+                .await
+                .expect("a read")
+                .is_some();
+            (postio_model::MailboxId::new(mailbox), held, decided)
+        }
+    };
+
+    assert_eq!(
+        fate("The weekly numbers").await,
+        (inbox.id, Some("Newsletters".to_owned()), false),
+        "held under its rule, still filed in the inbox, and not filtered"
+    );
+    assert_eq!(
+        fate("Readers' evening").await,
+        (inbox.id, None, false),
+        "the rule's sender's invitation is neither held nor filtered"
+    );
+    assert_eq!(fate("Lunch on Thursday?").await, (inbox.id, None, false));
+    assert_eq!(
+        threads.focus_count(&inboxes).await.expect("a count"),
+        before + 2,
+        "Focus's inbox gained the letter and the invitation, not the held newsletter"
+    );
+}

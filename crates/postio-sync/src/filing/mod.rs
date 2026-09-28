@@ -53,6 +53,9 @@ pub use postio_model::filing::FiledMessage;
 pub struct FilingEffects {
     /// The arrivals it filed away out of the inbox, into Filtered.
     pub filtered: Vec<MessageId>,
+    /// The arrivals it held for a digest: still filed in the inbox, out of
+    /// Focus's own.
+    pub held: Vec<MessageId>,
 }
 
 /// Files what an incremental pass brought in.

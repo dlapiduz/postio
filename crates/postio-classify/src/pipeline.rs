@@ -163,6 +163,12 @@ impl Stage for Guards {
         if guards::guarded(message, facts) {
             decisions.filter.decide(None);
         }
+        // FR-122: a conversation the user took part in is never held. The
+        // other guards are about filtering: a sender the user pinned, or
+        // wrote to once, can still be one they asked to read weekly.
+        if message.thread.is_none_or(|thread| facts.took_part(thread)) {
+            decisions.hold.decide(None);
+        }
     }
 }
 
@@ -203,6 +209,20 @@ impl Stage for StructureAndRules {
             decisions.filter.decide(None);
             decisions.hold.decide(None);
             return;
+        }
+        // An invitation is never held (FR-122): it comes to the inbox with
+        // its marker. Nor is it filtered on a guess -- `filters` lets only
+        // the server's own spam verdict file one away.
+        if message.has_calendar() {
+            decisions.hold.decide(None);
+        }
+        if decisions.hold.is_open()
+            && let Some(rule) = rules.digests().holding(message.message)
+        {
+            decisions.hold.decide(Some(rule.clone()));
+            // The rule is the user's own word on this sender, and wins over
+            // a reason the headers would have guessed.
+            decisions.filter.decide(None);
         }
         if decisions.filter.is_open()
             && let Some(reason) = filters::reason(message, rules)
@@ -892,6 +912,160 @@ mod tests {
         );
         assert_eq!(
             at_filing(&filed(&promotion), &TookPart, &ShippedRules).filter,
+            None
+        );
+    }
+
+    // --- Holding for a digest (T133, US10) -----------------------------------
+
+    /// The shipped senders, and `digests`.
+    struct Digesting(crate::digests::Digests);
+
+    impl Rules for Digesting {
+        fn senders(&self) -> &crate::senders::Senders {
+            crate::senders::Senders::shipped()
+        }
+        fn digests(&self) -> &crate::digests::Digests {
+            &self.0
+        }
+    }
+
+    fn digesting(rules: &[(&str, &[&str])]) -> Digesting {
+        let owned: Vec<(String, Vec<String>)> = rules
+            .iter()
+            .map(|(name, queries)| {
+                (
+                    (*name).to_owned(),
+                    queries.iter().map(|query| (*query).to_owned()).collect(),
+                )
+            })
+            .collect();
+        Digesting(crate::digests::Digests::new(
+            owned
+                .iter()
+                .map(|(name, queries)| (name.as_str(), queries.as_slice())),
+            chrono::NaiveDate::from_ymd_opt(2026, 9, 23).expect("a date"),
+        ))
+    }
+
+    /// The Ledger's newsletter: bulk mail every filter would file away.
+    fn ledger() -> Message {
+        from(
+            EmailAddress::new(Some("Ledger"), "news@ledger.example"),
+            said(true, PRECEDENCE_BULK),
+        )
+    }
+
+    fn held_under(outcome: &Outcome) -> Option<&str> {
+        outcome.hold.as_ref().map(RuleName::as_str)
+    }
+
+    #[test]
+    fn mail_a_digest_rule_matches_is_held_and_not_filed_away() {
+        // US10 scenario 1: it skips the inbox until its digest is due. The
+        // rule is the user's own word on that sender, so it wins over a
+        // reason the headers would have guessed.
+        let rules = digesting(&[("Newsletters", &["from:news@ledger.example"])]);
+        let outcome = at_filing(&filed(&ledger()), &NoFacts, &rules);
+
+        assert_eq!(held_under(&outcome), Some("Newsletters"));
+        assert_eq!(outcome.filter, None);
+    }
+
+    #[test]
+    fn an_invitation_is_never_held_nor_filed_away() {
+        // US10 scenario 2, FR-122: it comes to the inbox with its marker,
+        // from the rule's sender and in bulk mail's clothes. An invitation is
+        // a real action; only the server's own spam verdict files one away.
+        let rules = digesting(&[("Newsletters", &["from:news@ledger.example"])]);
+        let mut invitation = ledger();
+        invitation.attachments = vec![postio_model::Attachment::new(
+            postio_model::MessageId::new(1),
+            "text/calendar",
+            2_048,
+        )];
+
+        let outcome = at_filing(&filed(&invitation), &NoFacts, &rules);
+        assert_eq!(held_under(&outcome), None);
+        assert_eq!(outcome.filter, None);
+
+        invitation.flags.insert(postio_model::Flag::Junk);
+        assert_eq!(
+            at_filing(&filed(&invitation), &NoFacts, &rules)
+                .filter
+                .map(|reason| reason.layer),
+            Some(Layer::Server),
+            "a spam invitation is still spam"
+        );
+    }
+
+    #[test]
+    fn a_conversation_the_user_took_part_in_is_never_held() {
+        // FR-122: a reply to the user comes to the inbox, rule or no rule.
+        struct TookPart;
+        impl Facts for TookPart {
+            fn wrote_to(&self, _: &EmailAddress) -> bool {
+                false
+            }
+            fn took_part(&self, _: ThreadId) -> bool {
+                true
+            }
+            fn own_domain(&self, _: &EmailAddress) -> bool {
+                false
+            }
+            fn never_filter(&self, _: &EmailAddress) -> bool {
+                false
+            }
+        }
+        let rules = digesting(&[("Newsletters", &["from:news@ledger.example"])]);
+        let outcome = at_filing(&filed(&ledger()), &TookPart, &rules);
+
+        assert_eq!(held_under(&outcome), None);
+        assert_eq!(outcome.filter, None, "and a guard keeps it from Filtered");
+    }
+
+    #[test]
+    fn the_first_rule_that_matches_holds_it() {
+        // contracts/config.md: the file's order is the order rules match in.
+        let rules = digesting(&[
+            ("Morning", &["from:alerts@example.org"]),
+            ("Newsletters", &["from:news@ledger.example"]),
+            ("Everything from the Ledger", &["from:news@ledger.example"]),
+        ]);
+
+        assert_eq!(
+            held_under(&at_filing(&filed(&ledger()), &NoFacts, &rules)),
+            Some("Newsletters")
+        );
+    }
+
+    #[test]
+    fn a_rule_with_a_query_the_matcher_cannot_read_holds_nothing() {
+        // A rule that fails is not applied, and the others still are (ADR
+        // 0008 Q6): a query outside `from:` and `list:` would hold mail the
+        // rule never meant.
+        let rules = digesting(&[
+            ("Broken", &["from:news@ledger.example", "is:unread"]),
+            ("Half-typed", &["from:"]),
+            ("Newsletters", &["from:news@ledger.example"]),
+        ]);
+
+        assert_eq!(
+            held_under(&at_filing(&filed(&ledger()), &NoFacts, &rules)),
+            Some("Newsletters")
+        );
+    }
+
+    #[test]
+    fn mail_no_rule_matches_is_not_held() {
+        let rules = digesting(&[("Newsletters", &["from:news@ledger.example"])]);
+        let letter = from(
+            EmailAddress::new(Some("Tove"), "tove@example.org"),
+            said(false, 0),
+        );
+
+        assert_eq!(
+            held_under(&at_filing(&filed(&letter), &NoFacts, &rules)),
             None
         );
     }

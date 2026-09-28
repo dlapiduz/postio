@@ -47,6 +47,15 @@ impl<'a> FiledMessage<'a> {
         self.promoted().map(|said| said.automation)
     }
 
+    /// Whether its structure holds a `text/calendar` part: an invitation, or
+    /// an answer to one.
+    pub fn has_calendar(&self) -> bool {
+        self.message
+            .attachments
+            .iter()
+            .any(|part| part.mime_type.eq_ignore_ascii_case("text/calendar"))
+    }
+
     fn promoted(&self) -> Option<PromotedHeaders> {
         self.message.promoted
     }
@@ -58,7 +67,7 @@ mod tests {
 
     use super::*;
     use crate::promoted::{AUTO_GENERATED, PRECEDENCE_BULK};
-    use crate::{AccountId, MailboxId};
+    use crate::{AccountId, Attachment, MailboxId, MessageId};
 
     fn filed(message: &Message) -> FiledMessage<'_> {
         FiledMessage {
@@ -83,5 +92,19 @@ mod tests {
             filed(&message).automation(),
             Some(PRECEDENCE_BULK | AUTO_GENERATED)
         );
+    }
+
+    #[test]
+    fn a_calendar_part_in_the_structure_is_an_invitation_s() {
+        let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
+        assert!(!filed(&message).has_calendar());
+
+        let part = |mime_type: &str| vec![Attachment::new(MessageId::new(1), mime_type, 2_048)];
+        message.attachments = part("text/calendar");
+        assert!(filed(&message).has_calendar());
+        message.attachments = part("TEXT/CALENDAR");
+        assert!(filed(&message).has_calendar(), "a MIME type is caseless");
+        message.attachments = part("application/pdf");
+        assert!(!filed(&message).has_calendar());
     }
 }

@@ -17,6 +17,7 @@
 //! - [`ModelLayer`] is where the user's own model will answer, in milestone
 //!   2, for what the built-in layers leave open, and in the detector's place.
 
+mod digests;
 mod facts;
 mod filters;
 mod guards;
@@ -27,6 +28,7 @@ mod pipeline;
 mod rules;
 mod senders;
 
+pub use digests::Digests;
 pub use facts::Facts;
 pub use input::{BodyMessage, FiledMessage, OwnText};
 pub use outcome::{

@@ -16,6 +16,10 @@
 //!    - `List-Unsubscribe` with no `List-Id`: a sender's own mailing, so a
 //!      promotion.
 //!
+//! **An invitation is never filed on a guess.** Past the server's verdict,
+//! mail with a calendar part stays: an invitation is a real action, and it
+//! comes to the inbox with its marker (FR-100, FR-122).
+//!
 //! **Anything else stays in the inbox** (FR-112). A person's letter, and a
 //! discussion list -- `List-Id` with `Precedence: list`, which is people
 //! writing through a list rather than a sender mailing its customers -- are
@@ -44,6 +48,11 @@ pub(crate) fn reason(filed: &FiledMessage<'_>, rules: &dyn Rules) -> Option<Reas
             source: source_of(filed),
             layer: Layer::Server,
         });
+    }
+    // An invitation is a real action (FR-100, FR-122): past the server's
+    // own verdict, nothing here files one away.
+    if filed.has_calendar() {
+        return None;
     }
     if let Some(sender) = message
         .from

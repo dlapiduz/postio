@@ -5,6 +5,11 @@
 //!
 //! # What it does with a decision
 //!
+//! - **Hold** (FR-120 to FR-122): the message is held under its digest
+//!   rule, and stays filed in the inbox, where the other apps and devices
+//!   see it; Focus's own inbox leaves it out until its digest is delivered
+//!   (`digest_holds`). A rule the user wrote wins over a reason Postio
+//!   guessed, so held mail is never also filtered.
 //! - **Filter** (FR-110 to FR-117): the decision is recorded with its
 //!   reason, its source and the layer that decided, and the message is
 //!   archived with the server's move queued, exactly as `a` archives it
@@ -26,15 +31,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use chrono::Utc;
-use postio_classify::{Facts, Layer, Outcome, ReasonKind, Rules, Senders};
+use chrono::{Local, Utc};
+use postio_classify::{Digests, Facts, Layer, Outcome, ReasonKind, Rules, Senders};
 use postio_config::{FocusConfig, FocusFilter};
 use postio_model::{AccountId, EmailAddress, MailboxId, MailboxRole, MessageId};
 use postio_storage::Connection;
 use postio_storage::actions::{self, Relocation};
 use postio_storage::repository::{
-    CorrespondentRepository, FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason,
-    IdentityRepository, MailboxRepository, ThreadRepository,
+    CorrespondentRepository, DigestRepository, FilterDecision, FilterDecisionRepository,
+    FilterLayer, FilterReason, IdentityRepository, MailboxRepository, ThreadRepository,
 };
 
 use super::facts::Known;
@@ -58,22 +63,43 @@ pub trait Classifier: Send + Sync + std::fmt::Debug {
 }
 
 /// Postio's own classifier: `postio_classify`'s layers, over the automated
-/// senders Postio ships.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct BuiltIn;
+/// senders Postio ships and the user's digest rules.
+#[derive(Debug, Clone, Default)]
+pub struct BuiltIn {
+    digests: Digests,
+}
 
-impl Classifier for BuiltIn {
-    fn at_filing(&self, message: &FiledMessage<'_>, facts: &dyn Facts) -> Outcome {
-        postio_classify::at_filing(message, facts, &Shipped)
+impl BuiltIn {
+    /// The built-in layers, holding what `[[focus.digests]]` in `config`
+    /// asks: the rules that apply, in the file's order (contracts/config.md),
+    /// read as of today.
+    pub fn from_config(config: &FocusConfig) -> Self {
+        let applicable = config.applicable_digests();
+        BuiltIn {
+            digests: Digests::new(
+                applicable
+                    .iter()
+                    .map(|(rule, _)| (rule.name.as_str(), rule.queries.as_slice())),
+                Local::now().date_naive(),
+            ),
+        }
     }
 }
 
-/// The rules as shipped: the automated-senders table, as data.
-struct Shipped;
+impl Classifier for BuiltIn {
+    fn at_filing(&self, message: &FiledMessage<'_>, facts: &dyn Facts) -> Outcome {
+        postio_classify::at_filing(message, facts, self)
+    }
+}
 
-impl Rules for Shipped {
+impl Rules for BuiltIn {
+    /// The automated-senders table, as data (FR-114).
     fn senders(&self) -> &Senders {
         Senders::shipped()
+    }
+
+    fn digests(&self) -> &Digests {
+        &self.digests
     }
 }
 
@@ -89,16 +115,17 @@ pub struct FocusFiling {
 
 impl Default for FocusFiling {
     /// Focus's own: the built-in classifier, with `[focus]` as it is when
-    /// nothing is written -- filtering on, nobody pinned.
+    /// nothing is written -- filtering on, nobody pinned, no digests.
     fn default() -> Self {
-        FocusFiling::with_classifier(Arc::new(BuiltIn))
+        FocusFiling::with_classifier(Arc::new(BuiltIn::default()))
     }
 }
 
 impl FocusFiling {
-    /// Focus's own pass, as `config` sets it.
+    /// Focus's own pass, as `config` sets it: the built-in classifier with
+    /// its digest rules, and whether and whom to file away.
     pub fn from_config(config: &FocusConfig) -> Self {
-        FocusFiling::default().configured(config)
+        FocusFiling::with_classifier(Arc::new(BuiltIn::from_config(config))).configured(config)
     }
 
     /// A pass that decides with `classifier`, with `[focus]` at its
@@ -119,10 +146,10 @@ impl FocusFiling {
         self
     }
 
-    /// Whether `outcome` asks this pass to do anything: a reason to file
-    /// the message away, while filtering is on.
+    /// Whether `outcome` asks this pass to do anything: a digest to hold the
+    /// message for, or a reason to file it away while filtering is on.
     fn acts(&self, outcome: &Outcome) -> bool {
-        self.filtering && outcome.filter.is_some()
+        outcome.hold.is_some() || (self.filtering && outcome.filter.is_some())
     }
 
     /// The SQL of every read the pass can issue, so a test can ask the
@@ -224,6 +251,15 @@ impl FilingPass for FocusFiling {
 
         for message in filed {
             let outcome = self.decide(transaction, message, &mut own).await?;
+            // A rule the user wrote wins over a reason Postio guessed: held
+            // mail stays filed in the inbox, out of Focus's own (FR-121).
+            if let Some(rule) = &outcome.hold {
+                DigestRepository::new(transaction)
+                    .hold(message.message.id, rule.as_str(), now)
+                    .await?;
+                effects.held.push(message.message.id);
+                continue;
+            }
             let Some(reason) = outcome.filter.filter(|_| self.filtering) else {
                 continue;
             };
@@ -277,11 +313,12 @@ impl FilingPass for FocusFiling {
             )
             .await?;
         }
-        if !effects.filtered.is_empty() {
+        if !effects.filtered.is_empty() || !effects.held.is_empty() {
             tracing::debug!(
                 arrivals = filed.len(),
                 filtered = effects.filtered.len(),
-                "Focus filed arrivals away"
+                held = effects.held.len(),
+                "Focus filed arrivals"
             );
         }
         Ok(effects)
