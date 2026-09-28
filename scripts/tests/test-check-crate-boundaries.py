@@ -65,6 +65,7 @@ def build_fixture(
     focus_deps: str = "",
     classify_deps: str = "",
     calendar_deps: str = "",
+    ai_deps: str = "",
     app_deps: str = "",
     include_gtk: bool = True,
 ) -> Path:
@@ -90,6 +91,8 @@ def build_fixture(
     write_crate(root, "crates", "postio-focus", focus_deps)
     write_crate(root, "crates", "postio-classify", classify_deps)
     write_crate(root, "crates", "postio-calendar", calendar_deps)
+    # Milestone 2: the client for the person's own model.
+    write_crate(root, "crates", "postio-ai", ai_deps)
     write_crate(root, "crates", "postio-app", app_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
@@ -118,6 +121,8 @@ def build_fixture(
         "ammonia",
         "tokio",
         "candle-core",
+        "reqwest",
+        "io-http",
     ):
         write_crate(root, "vendor", banned)
     return root / "Cargo.toml"
@@ -464,6 +469,64 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-focus", "candle-core", "helper"),
+        )
+
+        # Milestone 2: postio-ai may speak HTTP to this computer, and nothing
+        # more (specs/007-postio-focus T151, FR-132, FR-165, FR-168).
+        check_case(
+            "postio-ai may frame HTTP with io-http",
+            build_fixture(
+                tmp_path / "ai-http",
+                ai_deps='io-http = { path = "../../vendor/io-http" }\n',
+            ),
+            expected_status=0,
+            must_mention=("postio-ai",),
+        )
+        check_case(
+            "postio-ai gains a path that sends mail",
+            build_fixture(
+                tmp_path / "ai-smtp",
+                ai_deps='postio-smtp = { path = "../postio-smtp" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-ai", "postio-smtp"),
+        )
+        check_case(
+            "postio-ai gains another HTTP client",
+            build_fixture(
+                tmp_path / "ai-reqwest",
+                ai_deps='reqwest = { path = "../../vendor/reqwest" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-ai", "reqwest"),
+        )
+        check_case(
+            "postio-ai gains the store engine",
+            build_fixture(
+                tmp_path / "ai-turso",
+                ai_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-ai", "turso"),
+        )
+        check_case(
+            "postio-ai gains a toolkit",
+            build_fixture(
+                tmp_path / "ai-gtk",
+                ai_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-ai", "gtk4"),
+        )
+        check_case(
+            "postio-ai reaches an inference engine through another crate",
+            build_fixture(
+                tmp_path / "ai-candle",
+                ai_deps='helper = { path = "../helper" }\n',
+                helper_deps='candle-core = { path = "../../vendor/candle-core" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-ai", "candle-core", "helper"),
         )
 
         # 18. And the real workspace is clean today.

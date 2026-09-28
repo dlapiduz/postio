@@ -57,6 +57,7 @@ pub mod focus_edit;
 pub mod keys;
 pub mod live;
 pub mod logging;
+pub mod model;
 pub mod paths;
 pub mod reader;
 pub mod save;
@@ -84,6 +85,7 @@ pub use focus::{DigestRule, Due, DueError, FocusConfig, FocusFilter, StopMarker}
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
+pub use model::{EndpointRefused, FocusModel, ModelEndpoint, ModelFeature, ModelProblem, Reach};
 pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader};
 pub use storage::StorageConfig;
 pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};

@@ -331,7 +331,9 @@ CREATE TABLE "drafts" (
 CREATE TABLE egress_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     at          INTEGER NOT NULL,
-    subsystem   TEXT    NOT NULL CHECK (subsystem IN ('imap', 'smtp', 'discovery')),
+    -- 'model' is the person's own model runtime, on this computer (spec 007
+    -- FR-168): every call Focus makes to it, by where and outcome.
+    subsystem   TEXT    NOT NULL CHECK (subsystem IN ('imap', 'smtp', 'discovery', 'model')),
     -- NULL before an account exists: discovery during onboarding probes
     -- servers for an account not yet created.
     account_id  INTEGER REFERENCES accounts(id) ON DELETE SET NULL,

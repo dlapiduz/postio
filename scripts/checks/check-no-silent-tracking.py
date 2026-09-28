@@ -81,6 +81,10 @@ TRACKING: dict[str, str] = {
     "urlsession": "makes an HTTP request from the frontend (Swift URLSession)",
     "nsworkspace.shared.open": "opens the user's system browser (Swift NSWorkspace)",
     "uiapplication.shared.open": "opens the user's system browser (Swift UIApplication)",
+    # ADR 0009 Q6: a call to a model runtime is a connection like any other.
+    # Postio's is to the person's own, on this computer, and only when they
+    # named it (specs/007-postio-focus FR-166, FR-168).
+    "chat/completions": "calls a model runtime (OpenAI-compatible chat completions)",
 }
 
 # The marker that says a human decided how the user asks for this.

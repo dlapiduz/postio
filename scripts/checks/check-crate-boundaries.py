@@ -49,6 +49,10 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-classify`` must not link anything that sends mail or reaches the
     network (``specs/007-postio-focus`` FR-132, ADR 0009), and
     ``postio-calendar`` must stay a pure leaf.
+  * ``postio-ai``, the client for the person's own model, must not link a
+    send path, another HTTP client, the store engine, a toolkit, or an
+    inference engine: it frames HTTP to this computer with ``io-http`` and
+    nothing else (``specs/007-postio-focus`` FR-165, FR-168, ADR 0009 Q1).
   * No app binary (``postio-app``, ``postio-focus``, ``postio-tui``,
     ``postio-ffi``) may link an inference engine. The local model is the
     user's own and optional (``specs/007-postio-focus`` FR-165).
@@ -225,6 +229,60 @@ RULES: dict[str, dict[str, object]] = {
             "postio-calendar is a pure leaf (specs/007-postio-focus research "
             "R9): it parses an invitation and writes a reply, and needs no "
             "store, no toolkit, no runtime and no network to do either"
+        ),
+    },
+    "postio-ai": {
+        "banned": [
+            # A send path: nothing that submits, stores or syncs mail.
+            "postio-smtp",
+            "io-smtp",
+            "postio-account",
+            "postio-sync",
+            "postio-runtime",
+            "postio-transport",
+            "io-imap",
+            # The store engine, whatever it is called.
+            "postio-storage",
+            "turso",
+            "turso_core",
+            "rusqlite",
+            "libsqlite3-sys",
+            # A toolkit.
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "webkit6",
+            "webkit6-sys",
+            # Every other HTTP client. What it does keep is io-http, the
+            # framing it speaks to this computer with, and what the rest of
+            # the workspace turns on in it: cargo unifies features
+            # workspace-wide, so io-http's TLS (pimalaya-stream, rustls) is
+            # in the resolved graph however this crate asks for it -- the
+            # same reason postio-sync's rule lives in its own boundary test.
+            # The crate asks for io-http's `client` alone, and its own
+            # manifest test holds that line; `mio` and `socket2` come with
+            # the config crate's file watcher. The connection itself is
+            # std's, to a loopback address or a local socket, and a
+            # `ModelEndpoint` cannot name anything else.
+            *[
+                name
+                for name in NETWORK_CRATES
+                if name
+                not in ("io-http", "pimalaya-stream", "rustls", "tokio-rustls", "mio", "socket2")
+            ],
+            *INFERENCE_ENGINES,
+        ],
+        # What ships: its tests run against a fake runtime and need nothing
+        # more, but the invariant is about the product.
+        "edges": "product",
+        "why": (
+            "specs/007-postio-focus FR-165, FR-168 / ADR 0009 Q1: postio-ai "
+            "asks the person's own model, on this computer, questions in a "
+            "fixed schema. It cannot send mail (no send path in its graph), "
+            "speaks HTTP only through io-http to an endpoint that can only be "
+            "this computer, "
+            "opens no store and draws nothing, and carries no model of its own"
         ),
     },
     "postio-app": {

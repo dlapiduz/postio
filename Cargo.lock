@@ -4637,6 +4637,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-ai"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "io-http",
+ "postio-classify",
+ "postio-config",
+ "postio-model",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "postio-app"
 version = "0.4.2"
 dependencies = [
@@ -4758,6 +4774,7 @@ dependencies = [
  "thiserror",
  "toml",
  "toml_edit",
+ "url",
 ]
 
 [[package]]
