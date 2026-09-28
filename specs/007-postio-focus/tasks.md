@@ -218,7 +218,7 @@ maintainer asks.
 ## Phase 6: User Story 11: one store, either desktop app (P1)
 
 - [X] T063 [US11] The store-in-use screen: "Postio is already open in another window. Close it to open Postio here.", with Try again. Test first, in the pattern of `crates/postio-tui/tests/store_in_use.rs`: a second process holds the store, the sentence shows, and the store is byte-for-byte unchanged (scenario 1)
-- [ ] T064 [US11] Across apps: archive in Focus and the classic app shows the archive; a draft left in either opens in the other. Test first: scenarios 2 and 3 over one temporary store. The archive half is done. The draft half comes with Focus's composer (US3)
+- [X] T064 [US11] Across apps: archive in Focus and the classic app shows the archive; a draft left in either opens in the other. Test first: scenarios 2 and 3 over one temporary store. The archive half is done. The draft half comes with Focus's composer (US3)
 - [X] T165 Move the credential and add-account dialogs (`postio_gtk::onboarding`) and their probe and persist (`postio_app::onboarding`) behind `postio-client`, into `postio-widgets`: T022's remainder, which T055 needs. Test first: the classic app's onboarding cases pass unchanged, and Focus opens the dialog from its banner
 - [X] T166 Commands Focus offers no surface for become `Requirement::ThreePane`: the conversation rail, the folder-list keys, the parts-panel keys and the account-list keys. `toggle_fold` and `expand_all` stay for Focus's dialog (FR-034). Test first: registry parity, with none of them in `NOT_YET`
 - [X] T167 A select-all (`X`) in Focus is a predicate over Focus's own scope. Today it aims at the unified view, so it takes in held digest mail, and its exceptions remove only representatives. Give `postio-core` and `postio-session` a Focus view scope. Test first: `X` then `a` archives exactly what the list shows
@@ -246,12 +246,12 @@ maintainer asks.
 - [X] T075 [US3] The `correspondents` table, maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and when Sent syncs. Test first: sending to three addresses adds one to each, counted. Fill `sent_count` in `recipient_directory()`: the rows carry it since T076. `sent_count` reached the directory only with T076 (`CorrespondentRepository::sent_counts`)
 - [X] T076 [P] [US3] `RecipientDirectory` rows carry `sent_count`, and completion ranks by it, with one rule for both apps (`crates/postio-ui/src/recipients.rs`). Test first: an address written to 42 times ranks above one seen 100 times and never written to (scenario 6). The rule is done: `postio_ui::recipients::suggest`, with ADR 0007's band (R15). Still open: the classic composer calls `Directory::suggest`, and the terminal ranks in SQL. Move both to the one rule after T024
 - [X] T077 [US3] `Draft.labels` (`crates/postio-model/src/draft.rs`), and the host applies them to the Sent copy's conversation. Test first: scenario 4
-- [ ] T078 [US3] `DialogHost` for `ComposerHost`, in the 980×820 frame of screens 05 and 06: the header, the fields with Labels, the footer, and "Draft saved locally". Test first: `E` fills every recipient, "Re:", the thread's labels, and a folded quote (scenario 1). The compose seams are still in `postio-gtk` (T022): Focus reaches compose through `postio-client`
-- [ ] T079 [P] [US3] An opt-in recipient chip entry in `crates/postio-widgets/src/widgets/recipients.rs`, which Focus turns on. Test first: choosing a suggestion adds a chip with name and address (scenario 6)
-- [ ] T080 [US3] Drafts: `Escape` saves locally, and a draft opens in either app. Test first: scenario 3
-- [ ] T081 [US3] Focus has no composer of its own. Test first: the same content from Focus and from the classic app queues byte-identical messages (scenario 2)
-- [ ] T082 [US3] Sending offline goes to the Outbox and leaves at most once. Test first: scenario 7
-- [ ] T083 [US3] Compare screens 05 and 06, and record them (C7 and C23)
+- [X] T078 [US3] `DialogHost` for `ComposerHost`, in the 980×820 frame of screens 05 and 06: the header, the fields with Labels, the footer, and "Draft saved locally". Test first: `E` fills every recipient, "Re:", the thread's labels, and a folded quote (scenario 1). The compose seams are still in `postio-gtk` (T022): Focus reaches compose through `postio-client`
+- [X] T079 [P] [US3] An opt-in recipient chip entry in `crates/postio-widgets/src/widgets/recipients.rs`, which Focus turns on. Test first: choosing a suggestion adds a chip with name and address (scenario 6)
+- [X] T080 [US3] Drafts: `Escape` saves locally, and a draft opens in either app. Test first: scenario 3
+- [X] T081 [US3] Focus has no composer of its own. Test first: the same content from Focus and from the classic app queues byte-identical messages (scenario 2)
+- [X] T082 [US3] Sending offline goes to the Outbox and leaves at most once. Test first: scenario 7
+- [X] T083 [US3] Compare screens 05 and 06, and record them (C7 and C23)
 
 ## Phase 9: User Story 4: search, go to and run commands from one bar (P1)
 
@@ -319,8 +319,8 @@ maintainer asks.
   - nothing reaches the transport before the window ends (scenario 2);
   - undo within it sends nothing;
   - after it, exactly one reply leaves (scenario 3)
-- [ ] T113 [US8] The row and the dialog: the Invite line with Accept `y` and Decline `Y`, and the "Accepted · Undo" toast. Test first: a `focus_suite` case over an invitation fixture
-- [ ] T114 [US8] Compare invitation markers on screens 01, 03 and 04, and record them
+- [X] T113 [US8] The row and the dialog: the Invite line with Accept `y` and Decline `Y`, and the "Accepted · Undo" toast. Test first: a `focus_suite` case over an invitation fixture
+- [X] T114 [US8] Compare invitation markers on screens 01, 03 and 04, and record them
 
 ## Phase 13: User Story 12, milestone 1's part: the built-in needs-action detector (P2)
 
