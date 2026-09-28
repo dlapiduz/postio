@@ -21,6 +21,7 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+mod body_view_highlight;
 mod body_view_resets;
 mod capture;
 mod harness;
@@ -41,6 +42,11 @@ mod widgets_css;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view_highlight::a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view",
+        body_view_highlight::a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view
+            as fn(),
+    ),
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),

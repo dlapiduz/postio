@@ -216,3 +216,60 @@ impl BodyView {
         }
     }
 }
+
+impl BodyView {
+    /// Highlight `range` of the text on screen -- the sentence a marker
+    /// quotes (specs/007-postio-focus research R2) -- and bring it into view
+    /// a third of the way down; `None` takes the highlight away. The range
+    /// is the rendered text's (`TextIndex::locate` finds it), and belongs to
+    /// the message on screen: showing another clears it.
+    pub fn set_highlight(&self, range: Option<std::ops::Range<usize>>) {
+        self.imp().highlight.replace(range);
+        let rects = self.highlight_rects();
+        if let (Some(first), Some(adjustment)) =
+            (rects.first(), self.imp().vadjustment.borrow().clone())
+        {
+            let y0 = rects.iter().map(|rect| rect.y0).fold(first.y0, f64::min);
+            let y1 = rects.iter().map(|rect| rect.y1).fold(first.y1, f64::max);
+            let (top, page) = (adjustment.value(), adjustment.page_size());
+            if y0 < top || y1 > top + page {
+                adjustment.set_value((y0 - page / 3.0).max(0.0));
+            }
+        }
+        self.queue_draw();
+    }
+
+    /// The highlight's rectangles, in document coordinates.
+    pub fn highlight_rects(&self) -> Vec<postio_render::Rect> {
+        match (self.imp().highlight.borrow().clone(), self.document()) {
+            (Some(range), Some(document)) => document.text.rects(range),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Draw the highlight under the find's matches: a faint ground in the
+    /// accent and a line under it, the marker's colour (screen 04), in the
+    /// scheme on screen.
+    pub(super) fn draw_highlight(&self, snapshot: &gtk::Snapshot, left: f64, top: f64) {
+        let rects = self.highlight_rects();
+        if rects.is_empty() {
+            return;
+        }
+        let manager = adw::StyleManager::default();
+        let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
+        let mut ground = accent;
+        ground.set_alpha(0.14);
+        for rect in rects {
+            let (x, y) = ((rect.x0 - left) as f32, (rect.y0 - top) as f32);
+            let (width, height) = (rect.width() as f32, rect.height() as f32);
+            snapshot.append_color(&ground, &gtk::graphene::Rect::new(x, y, width, height));
+            snapshot.append_color(
+                &accent,
+                &gtk::graphene::Rect::new(x, y + height - UNDERLINE, width, UNDERLINE),
+            );
+        }
+    }
+}
+
+/// How thick the highlight's line is.
+const UNDERLINE: f32 = 1.5;

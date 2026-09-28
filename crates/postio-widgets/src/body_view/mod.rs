@@ -119,6 +119,8 @@ pub(super) mod imp {
         pub(super) launcher: RefCell<Option<Launcher>>,
         /// The find in progress (FR-018).
         pub(super) find: RefCell<super::find::FindState>,
+        /// The range highlighted in the text on screen, if one is.
+        pub(super) highlight: RefCell<Option<std::ops::Range<usize>>>,
         /// Where a drag began, in the view's coordinates.
         pub(super) drag_start: Cell<Option<gtk::graphene::Point>>,
         /// The messages the user darkened (FR-013a): for this session only,
@@ -157,6 +159,7 @@ pub(super) mod imp {
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
                 find: RefCell::default(),
+                highlight: RefCell::default(),
                 toggled_folds: RefCell::default(),
                 focused_link: Cell::new(None),
                 launcher: RefCell::default(),
@@ -308,6 +311,7 @@ impl BodyView {
         imp.darkened.borrow_mut().clear();
         imp.toggled_folds.borrow_mut().clear();
         imp.focused_link.set(None);
+        imp.highlight.replace(None);
         self.set_selection(None);
         self.set_content(content);
     }
@@ -943,6 +947,7 @@ impl BodyView {
                     view.queue_draw();
                 }
             });
+        self.draw_highlight(snapshot, left, top);
         self.draw_find(snapshot, left, top);
         self.draw_selection(snapshot, left, top);
         if pinch.is_some() {
