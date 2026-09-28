@@ -564,6 +564,15 @@ impl FocusWindow {
         self.imp().compose.replace(Some(compose));
     }
 
+    /// Open the draft behind the Drafts row `message` for editing, in the
+    /// composer's dialog: what a Drafts row does when it is opened, whichever
+    /// app left the draft there (US11 scenario 3).
+    pub fn open_draft(&self, message: MessageId) {
+        if let Some(compose) = self.compose() {
+            compose.open_draft(message);
+        }
+    }
+
     /// Start the composer's editing surface, while nobody is waiting on it.
     pub fn warm_composer(&self) {
         self.imp().warm.set(true);

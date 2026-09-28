@@ -36,6 +36,7 @@ pub struct Compose {
     composer: Composer,
     frame: Rc<frame::Frame>,
     host: Rc<host::DialogHost>,
+    resume: seams::Resume,
 }
 
 impl Compose {
@@ -83,11 +84,12 @@ impl Compose {
             composer,
             move |_| composer.dispatch(CommandId::Back)
         ));
-        seams::wire(&composer, &frame, client, account, current);
+        let resume = seams::wire(&composer, &frame, client, account, current);
         Rc::new(Compose {
             composer,
             frame,
             host,
+            resume,
         })
     }
 
@@ -108,6 +110,11 @@ impl Compose {
             CommandId::ScheduleSend if self.composer.is_open() => self.frame.pop_send_later(),
             _ => self.host.run(id),
         }
+    }
+
+    /// Open the draft behind the Drafts row `message` for editing.
+    pub fn open_draft(&self, message: postio_model::MessageId) {
+        (self.resume)(message);
     }
 
     /// Take `keymap` as the keys in force.

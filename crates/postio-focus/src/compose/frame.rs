@@ -279,6 +279,12 @@ impl Frame {
         self.saved.set_text(&saved_at(at));
     }
 
+    /// Say `note` under the heading: what happened to the draft as it
+    /// opened.
+    pub fn note(&self, note: &str) {
+        self.saved.set_text(note);
+    }
+
     /// Open the Send later menu, as its key does.
     pub fn pop_send_later(&self) {
         self.send_later.popup();

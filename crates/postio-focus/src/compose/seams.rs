@@ -18,8 +18,8 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 use postio_client::Client;
 use postio_client::protocol::RecipientDirectory;
-use postio_model::DraftId;
 use postio_model::ids::{AccountId, MessageId};
+use postio_model::{DraftId, DraftState};
 use postio_widgets::composer::{Closing, Composer, ReplyAnswer};
 
 use super::frame::Frame;
@@ -30,14 +30,22 @@ const SUGGESTION_LIMIT: usize = 8;
 /// Which message `e`, `E` and `f` answer: the row the cursor is on.
 pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
 
-/// Answer every seam of `composer` through `client`, for `account`.
+/// Open the draft behind a Drafts row for editing.
+pub type Resume = Rc<dyn Fn(MessageId)>;
+
+/// What the frame's subtitle says once opening a queued draft has cancelled
+/// its send, as the classic app says it (#433).
+const SEND_CANCELLED: &str = "Send cancelled \u{2014} you're editing this draft again";
+
+/// Answer every seam of `composer` through `client`, for `account`; the
+/// answer is how a Drafts row opens its draft here.
 pub fn wire(
     composer: &Composer,
     frame: &Rc<Frame>,
     client: &Client,
     account: AccountId,
     current: Current,
-) {
+) -> Resume {
     composer.set_account(account);
     identities(composer, client, account);
     signature_default(composer, client, account);
@@ -48,6 +56,61 @@ pub fn wire(
     label_names(composer, frame, client, account);
     attach(composer, client);
     inline_images(composer, client);
+    resume(composer, frame, client, last_id)
+}
+
+/// A draft left in Drafts -- by Focus or by the classic app -- opens in the
+/// composer for editing (US3 scenario 3, US11 scenario 3), as the classic
+/// app's `install_resume` opens one: a draft whose send is still queued is
+/// taken back first, so an edit cannot race the drainer (#433), and a
+/// failed send says why.
+fn resume(
+    composer: &Composer,
+    frame: &Rc<Frame>,
+    client: &Client,
+    last_id: Rc<Cell<Option<DraftId>>>,
+) -> Resume {
+    let weak = composer.downgrade();
+    let frame = Rc::downgrade(frame);
+    let client = client.clone();
+    Rc::new(move |message| {
+        let weak = weak.clone();
+        let frame = frame.clone();
+        let client = client.clone();
+        let last_id = Rc::clone(&last_id);
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: client calls are oneshot receives.
+            let draft = match client.draft_behind(message).await {
+                Ok(Some(draft)) => draft,
+                Ok(None) => return,
+                Err(error) => {
+                    tracing::warn!(%error, "could not read the draft behind a row");
+                    return;
+                }
+            };
+            let (draft, note) = if draft.state == DraftState::Queued {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                let Ok(Some(reopened)) = client.cancel_send(draft.id).await else {
+                    return;
+                };
+                (reopened, Some(SEND_CANCELLED.to_owned()))
+            } else if draft.state == DraftState::Failed {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                let why = client.send_failure(draft.id).await.ok().flatten();
+                (draft, why.map(|why| format!("Not sent \u{2014} {why}")))
+            } else {
+                (draft, None)
+            };
+            let Some(composer) = weak.upgrade() else {
+                return;
+            };
+            last_id.set(Some(draft.id));
+            composer.resume(draft);
+            if let (Some(note), Some(frame)) = (note, frame.upgrade()) {
+                frame.note(&note);
+            }
+        });
+    })
 }
 
 /// The account's identities and signatures, read once.

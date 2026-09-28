@@ -30,6 +30,7 @@ mod compose;
 mod corrections;
 mod cursor;
 mod desktop;
+mod drafts;
 mod empty;
 mod harness;
 mod has_action;
@@ -164,6 +165,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
+    ),
+    (
+        "drafts::escape_keeps_the_draft_and_the_classic_app_opens_it",
+        drafts::escape_keeps_the_draft_and_the_classic_app_opens_it as fn(),
+    ),
+    (
+        "drafts::a_draft_the_classic_app_kept_opens_in_focus",
+        drafts::a_draft_the_classic_app_kept_opens_in_focus as fn(),
     ),
     (
         "compose::reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote",
