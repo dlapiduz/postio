@@ -44,6 +44,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "reader_verbs::a_card_placed_under_the_header_sits_between_it_and_the_body",
+        reader_verbs::a_card_placed_under_the_header_sits_between_it_and_the_body as fn(),
+    ),
+    (
         "quote_folds::a_quote_is_folded_behind_its_line_count_and_opens_when_clicked",
         quote_folds::a_quote_is_folded_behind_its_line_count_and_opens_when_clicked as fn(),
     ),

@@ -88,6 +88,9 @@ type UnsubscribeHandler = Box<dyn Fn(&str)>;
 #[derive(Clone)]
 pub struct Reader {
     container: gtk::Box,
+    /// What a surface puts under the header: Focus's marker card. Hidden
+    /// while empty, so the notices and the body start where they did.
+    under_header: gtk::Box,
     view: crate::body_view::BodyView,
     /// Find in the message (spec 006 FR-018), above the body.
     find: Rc<crate::body_view::find::FindBar>,
@@ -470,6 +473,10 @@ impl Reader {
         // it (#1435).
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&header.widget());
+        let under_header = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        under_header.add_css_class("postio-reader-under-header");
+        under_header.set_visible(false);
+        container.append(&under_header);
         let notices = Rc::new(NoticeSlot::new([
             decode_notice.widget(),
             reader_notice.widget(),
@@ -497,6 +504,7 @@ impl Reader {
 
         let reader = Reader {
             container,
+            under_header,
             view,
             find,
             zoom_indicator,
@@ -1471,6 +1479,18 @@ impl Reader {
     /// stale.
     pub fn connect_rendered(&self, handler: impl Fn(HeldBack) + 'static) {
         self.rendered.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Put `widget` under the message header and over the notices and the
+    /// body -- Focus's marker card -- or take away what is there.
+    pub fn set_under_header(&self, widget: Option<&gtk::Widget>) {
+        while let Some(child) = self.under_header.first_child() {
+            self.under_header.remove(&child);
+        }
+        if let Some(widget) = widget {
+            self.under_header.append(widget);
+        }
+        self.under_header.set_visible(widget.is_some());
     }
 
     /// Draw the message's attachments as chips under the body.
