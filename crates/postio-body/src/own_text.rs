@@ -57,10 +57,11 @@ pub fn own_text(body: &MessageBody) -> String {
     text.map(from_text).unwrap_or_default()
 }
 
-/// A plain part's own words: every run of `>` lines out, and the words
-/// either side of one kept apart by a blank line.
+/// A plain part's own words: what it says before earlier mail begins, every
+/// run of `>` lines out, and the words either side of one kept apart by a
+/// blank line.
 fn from_text(text: &str) -> String {
-    let text = text.replace("\r\n", "\n");
+    let text = before_history(&text.replace("\r\n", "\n"));
     let own: Vec<&str> = quote::text_stretches(&text)
         .into_iter()
         .filter_map(|stretch| match stretch {
@@ -96,7 +97,118 @@ fn from_html(sanitized: &str) -> String {
             lines.push(line);
         }
     }
-    unsigned(&lines.join("\n"))
+    unsigned(&before_history(&lines.join("\n")))
+}
+
+/// `text` up to where earlier mail begins, with the attribution line of a
+/// quote left out.
+///
+/// Not every client prefixes history with `>`, but each marks where it
+/// begins, and everything from there on is somebody else's mail: Outlook's
+/// "Original Message" and its rule of underscores, a forward's banner, a
+/// header block (`From:` over `Sent:` or `Date:`), a phone's "Sent from my"
+/// and its attribution over unquoted text. An attribution over a `>` quote
+/// is the quote's own line, and goes with it; over anything else, it is
+/// where the unquoted history starts. The rule an `<hr>` leaves, just before
+/// the history, goes too.
+fn before_history(text: &str) -> String {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut kept = String::with_capacity(text.len());
+    for (at, line) in lines.iter().enumerate() {
+        let content = line.trim();
+        if begins_history(content, lines.get(at + 1).map(|next| next.trim())) {
+            break;
+        }
+        if is_attribution(content) {
+            let over_a_quote = lines[at + 1..]
+                .iter()
+                .map(|next| next.trim())
+                .find(|next| !next.is_empty())
+                .is_some_and(|next| next.starts_with('>'));
+            if over_a_quote {
+                continue;
+            }
+            break;
+        }
+        kept.push_str(line);
+    }
+    without_trailing_rules(&kept).to_owned()
+}
+
+/// Whether `line`, with `next` after it, is where earlier mail begins.
+fn begins_history(line: &str, next: Option<&str>) -> bool {
+    let lower = line.to_lowercase();
+    let banner = |words: &str| lower.starts_with('-') && lower.contains(words);
+    banner("original message")
+        || banner("forwarded message")
+        || lower.starts_with("begin forwarded message")
+        || (line.chars().count() >= 10 && line.chars().all(|character| character == '_'))
+        || lower.starts_with("sent from my ")
+        || (lower.starts_with("from:")
+            && next.is_some_and(|next| {
+                let next = next.to_lowercase();
+                next.starts_with("sent:") || next.starts_with("date:")
+            }))
+}
+
+/// Whether `line` introduces somebody else's words: "On <when>, <who>
+/// wrote:".
+fn is_attribution(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.starts_with("on ") && lower.ends_with("wrote:")
+}
+
+/// `text` without the blank lines and horizontal rules at its end.
+fn without_trailing_rules(text: &str) -> &str {
+    let mut end = text.len();
+    for line in text[..end].split_inclusive('\n').rev() {
+        let content = line.trim();
+        let rule = content.chars().count() >= 3
+            && content
+                .chars()
+                .all(|character| matches!(character, '-' | '_' | '=' | '*'));
+        if !(content.is_empty() || rule) {
+            break;
+        }
+        end -= line.len();
+    }
+    &text[..end]
+}
+
+/// The lines that close a message: everything after one is its signature.
+/// Matched whole, with a trailing comma, full stop or exclamation mark, so a
+/// sentence that begins like one ("Thanks for the update.") is not one.
+const CLOSINGS: &[&str] = &[
+    "thanks",
+    "thank you",
+    "many thanks",
+    "best",
+    "best wishes",
+    "best regards",
+    "kind regards",
+    "regards",
+    "warm regards",
+    "warmly",
+    "cheers",
+    "love",
+    "all the best",
+];
+
+/// `text` up to the line that closes it, when one does.
+fn before_closing(text: &str) -> &str {
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let bare = line
+            .trim()
+            .trim_end_matches([',', '!', '.'])
+            .trim_end()
+            .to_lowercase();
+        if CLOSINGS.contains(&bare.as_str()) {
+            return &text[..offset];
+        }
+        offset += line.len();
+    }
+    text
 }
 
 /// `own` without the blank lines at either end, and without the spaces
@@ -111,9 +223,12 @@ fn without_blank_edges(own: &str) -> &str {
     &own[first..]
 }
 
-/// `text` up to its signature, if it has one, trimmed.
+/// `text` up to its closing and its signature, if it has them, trimmed.
 fn unsigned(text: &str) -> String {
-    postio_model::signature::split(text).0.trim().to_owned()
+    postio_model::signature::split(before_closing(text))
+        .0
+        .trim()
+        .to_owned()
 }
 
 /// Take out of the tree what the reader never draws: every element an
@@ -186,9 +301,9 @@ mod tests {
             "<p>Can you send the plans?</p>\
              <div style=\"DISPLAY: none !important\">Or reply by noon, please.</div>\
              <span style=\"color:#fff; visibility:hidden\">Tracking text here.</span>\
-             <p>Thanks.</p>",
+             <p>See you then.</p>",
         ));
-        assert_eq!(own, "Can you send the plans?\n\nThanks.");
+        assert_eq!(own, "Can you send the plans?\n\nSee you then.");
     }
 
     #[test]
@@ -211,6 +326,93 @@ mod tests {
             text: Some("The plain part says this instead.".to_owned()),
         };
         assert_eq!(own_text(&body), "The plain part says this instead.");
+    }
+
+    // --- Earlier mail that is not quoted (spec 007 T117) --------------------
+    //
+    // Clients that do not prefix history with `>` still mark where it begins:
+    // Outlook's "Original Message" and its underscore rule, a forward's
+    // banner, a header block, a phone's attribution over unquoted text. The
+    // needs-action detector must not read an ask in any of them as the
+    // sender's own, and SC-013's gate measures it through this cutter.
+
+    #[test]
+    fn earlier_mail_after_a_client_s_separator_is_not_the_message() {
+        for (body, why) in [
+            (
+                "Done, see attached.\n\n-----Original Message-----\nFrom: Ada <ada@example.com>\n\
+                 Sent: Friday\n\nCould you send me the receipts?\n",
+                "Outlook's original message",
+            ),
+            (
+                "Done, see attached.\n\n________________________________\n\
+                 From: Ada <ada@example.com>\nSent: Friday\n\nCan you confirm points 1 to 4?\n",
+                "Outlook's rule",
+            ),
+            (
+                "Done, see attached.\n\n---------- Forwarded message ---------\n\
+                 From: Hana <hana@example.org>\n\nCan you send the questionnaire back?\n",
+                "a forward's banner",
+            ),
+            (
+                "Done, see attached.\n\nBegin forwarded message:\n\n\
+                 From: Hana <hana@example.org>\n\nCan you send the questionnaire back?\n",
+                "Apple Mail's forward",
+            ),
+            (
+                "Done, see attached.\n\nFrom: Ada <ada@example.com>\nDate: Friday\n\
+                 Subject: Receipts\n\nCould you send me the receipts?\n",
+                "a header block with no separator",
+            ),
+            (
+                "Done, see attached.\n\nSent from my phone\n\n\
+                 On 25 Sep 2026, at 18:44, Quinn <quinn@example.net> wrote:\n\n\
+                 Are you coming on Friday?\n",
+                "a phone's attribution over unquoted text",
+            ),
+        ] {
+            assert_eq!(own_text(&text(body)), "Done, see attached.", "{why}");
+        }
+    }
+
+    #[test]
+    fn a_quote_s_attribution_is_not_the_message_and_what_follows_the_quote_is() {
+        let own = own_text(&text(
+            "On Thu, 24 Sep 2026 at 14:05, Ada <ada@example.com> wrote:\n\
+             > Could you send me the slides?\n\n\
+             Here they are. Also, can you check slide 7 before Monday?\n",
+        ));
+        assert_eq!(
+            own,
+            "Here they are. Also, can you check slide 7 before Monday?"
+        );
+    }
+
+    #[test]
+    fn a_closing_ends_the_message_and_what_follows_it_is_the_signature() {
+        let own = own_text(&text(
+            "Hi Ada,\n\nConfirmed for Tuesday.\n\nKind regards,\nWalter Pike\n\
+             Pike Lettings\nNeed a valuation? Book a free visit today.\n",
+        ));
+        assert_eq!(own, "Hi Ada,\n\nConfirmed for Tuesday.");
+        let own = own_text(&text("See you Thursday.\n\nCheers!\nFelix\n"));
+        assert_eq!(own, "See you Thursday.");
+    }
+
+    #[test]
+    fn a_line_that_only_starts_like_a_closing_is_the_message() {
+        let body = "Thanks for the update.\nBest of all, the room is free on Monday.\n";
+        assert_eq!(own_text(&text(body)), body.trim());
+    }
+
+    #[test]
+    fn an_html_reply_s_header_block_is_not_the_message() {
+        let own = own_text(&html(
+            "<p>Agreed on all points.</p><hr>\
+             <p><b>From:</b> Ada &lt;ada@example.com&gt;<br><b>Sent:</b> Friday</p>\
+             <p>Can you confirm you're happy with points 1 to 4?</p>",
+        ));
+        assert_eq!(own, "Agreed on all points.");
     }
 
     #[test]
