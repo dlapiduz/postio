@@ -118,3 +118,64 @@ pub fn each_sync_state_shows_its_banner_and_label() {
         );
     });
 }
+
+/// US6 scenario 1, the archive half: with no network, `a` takes the row
+/// away at once and queues the move for sync. Labelling and searching wait
+/// for their surfaces (the label picker, the command bar).
+pub fn offline_an_archive_takes_effect_at_once_and_queues() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        fixture
+            .file(("Lena Park", "lena@example.org"), "Draft", "Comments.", 9)
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        assert!(sink.emit(Event::ConnectionChanged {
+            account: fixture.account.id,
+            state: ConnectionState::Offline,
+        }));
+        assert!(
+            crate::settle_until(async || window.sync_said() == "Offline").await,
+            "the window never heard it was offline"
+        );
+
+        support::keys(&window, &["j", "a"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Draft"]).await,
+            "the archived row stayed while offline: {:?}",
+            support::subjects(&window)
+        );
+        let connection = fixture.database.connect().await.expect("a connection");
+        let queued = postio_storage::repository::OperationQueueRepository::new(&connection)
+            .pending(fixture.account.id, chrono::Utc::now())
+            .await
+            .expect("the queue reads");
+        assert_eq!(
+            queued.len(),
+            1,
+            "the archive waits in the queue: {queued:?}"
+        );
+        assert!(
+            window
+                .banner_showing()
+                .is_some_and(|(title, ..)| title.starts_with("You're offline")),
+            "the offline banner stays while the change waits"
+        );
+    });
+}

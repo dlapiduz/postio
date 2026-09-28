@@ -902,13 +902,18 @@ impl FocusWindow {
     fn hear_sync(&self, event: &postio_core::Event) {
         use postio_core::Event;
         let imp = self.imp();
-        if let Event::ConnectionChanged { account, .. }
-        | Event::SyncProgress { account, .. }
-        | Event::BackfillProgress { account, .. } = event
-        {
-            self.note_account(*account);
-        }
-        if !imp.trackers.borrow_mut().apply(event, None) {
+        // The first word about an account is news even when it changes
+        // nothing in its tracker: a tracker starts at `Offline`, so an
+        // account whose first report is `Offline` would otherwise never
+        // be drawn as such.
+        let first = match event {
+            Event::ConnectionChanged { account, .. }
+            | Event::SyncProgress { account, .. }
+            | Event::BackfillProgress { account, .. } => self.note_account(*account),
+            _ => false,
+        };
+        let changed = imp.trackers.borrow_mut().apply(event, None);
+        if !(first || changed) {
             return;
         }
         if let Event::SyncProgress { done, total, .. } = event
@@ -919,12 +924,14 @@ impl FocusWindow {
         self.show_state();
     }
 
-    /// Follow `account`'s sync state from here on.
-    fn note_account(&self, account: AccountId) {
+    /// Follow `account`'s sync state from here on; whether it is new.
+    fn note_account(&self, account: AccountId) -> bool {
         let mut tracked = self.imp().tracked.borrow_mut();
-        if !tracked.contains(&account) {
+        let new = !tracked.contains(&account);
+        if new {
             tracked.push(account);
         }
+        new
     }
 
     /// Draw the banner and the sync label for where every account stands.

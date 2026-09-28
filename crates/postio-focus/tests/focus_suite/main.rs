@@ -47,6 +47,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "state::offline_an_archive_takes_effect_at_once_and_queues",
+        state::offline_an_archive_takes_effect_at_once_and_queues as fn(),
+    ),
+    (
         "state::each_sync_state_shows_its_banner_and_label",
         state::each_sync_state_shows_its_banner_and_label as fn(),
     ),
