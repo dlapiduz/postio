@@ -12,8 +12,11 @@ Legend:
 - **All**: every app that has the surface.
 - **Focus**: `Requirement::Focus`, offered only by Focus.
 - **Three-pane**: `Requirement::ThreePane`, offered by the apps with a
-  sidebar and panes (classic, terminal, macOS) and not by Focus. It covers
-  flag, the sidebar toggle, pane cycling and the parts panel (T029).
+  sidebar and panes (classic, terminal, macOS) and not by Focus. It covers:
+  - flag, the sidebar toggle, pane cycling and the parts panel (T029);
+  - the conversation rail, and the folder-list, parts-panel and account-list
+    keys (T166). `update_credential` stays with Focus, because its sign-in
+    banner uses it.
 - **New**: a new `CommandId`, and so a new `[keys]` name.
 - `mod` is Ctrl on Linux and ⌘ on macOS (`crates/postio-config/src/keys.rs:191-221`).
 

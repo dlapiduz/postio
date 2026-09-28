@@ -347,6 +347,14 @@ The Focus window lane added (T048, T043):
   no digest fields: the window derives "next digest" and "N digest rules"
   from `[focus]`.
 
+The classic lane added (T167, T168):
+
+- `ViewScope::Focus { accounts }`. A select-all in Focus resolves to
+  `MessageSet::InFocusInbox`: Focus's membership, so held digest mail is
+  never in it, minus every copy of each deselected conversation.
+- `Marked::copies`. The has-action page draws a folded conversation once,
+  and its counts are deduplicated.
+
 No `no_reply` marker is written. A fired reminder is a surfaced row that
 carries `since` (T136).
 

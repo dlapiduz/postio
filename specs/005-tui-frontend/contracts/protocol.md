@@ -33,6 +33,13 @@ rather than rewritten.
 | Search | `Search`, `SearchHits`, `Facets`, `Correspondents`, `Labels` | `postio-host/src/search.rs` over `postio_session::search` |
 | Compose | `SaveDraft`, `QueueSend`, `DiscardDraft`, `RecoverDraft`, `DraftBehind`, `CancelSend`, `SendFailure`, `Recipients`, `ReplySource`, `DefaultSignature`, `Attach { path, mime_type }`, `InlineImage`, `AttachmentBytes` | `postio-host/src/compose.rs`, one `DraftWriter` per client |
 | Accounts | `Discover`, `AddAccount`, `SaveAccount`, `SaveOAuthAccount`, `BeginOAuth`, `FinishOAuth`, `CancelOAuth`, `Account(AccountOp)`, `EditAccount`, `RebuildIndex` | `postio-host/src/onboarding.rs`, `postio_session::onboarding` |
+
+Since spec 007's T165, three of these carry more:
+
+- `Discover { address, stop: Stop }` can be stopped.
+- `AddAccount` and `BeginOAuth` carry `then: AfterSave`. The desktop apps pass
+  `Wait`, so the app starts sync after its sync-window step. The terminal
+  passes `Sync`.
 | Settings | `AccountSettings`, `SaveSignature`, `DeleteSignature`, `SetBackfillExcluded`, `EgressLog`, `PrivacyLog`, `OrientationSeen`, `RetireOrientation` | `postio-host/src/settings.rs` |
 | Diagnostics | `Diagnose(report)` | `postio_session::diag` |
 | Startup and upkeep | `StartupRoute`, `Wired`, `StartSync`, `FetchBody(message)`, `StorageCeiling(max)`, `RecordEgress(event)` | `postio-host/src/{startup,maintenance}.rs` and the host's engines by account |

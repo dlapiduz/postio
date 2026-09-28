@@ -119,7 +119,7 @@ maintainer asks.
 - [X] T019 `git mv` the reader (`reader/{view,message_header,banner,notices}.rs`, and `parts::Chips`) into `crates/postio-widgets/src/reader/`. Then a wiring commit in which the verb bars become configuration and the classic app passes its three. `gtk_suite` and `app_suite` pass unchanged
 - [X] T020 One remote-image allowlist per app, shared by its readers. Test first: two readers in one app see one "always allow"
 - [X] T021 [P] `git mv` `MessageList` (`crates/postio-gtk/src/list.rs:283-376`) to `crates/postio-widgets/src/list_model.rs`, generalised over its row type. The classic list's tests are unchanged
-- [ ] T022 Move the presenters to `crates/postio-widgets/src/present/`:. Partial: the config and remote-image presenters moved. Three things stay in `postio-gtk`, because they reach `postio-session` or `postio-host` directly, which `postio-widgets` may not: the compose seams, the credential and add-account dialogs, and the cid blob source. Each moves once it goes through `postio-client` (T055, T078)
+- [ ] T022 Move the presenters to `crates/postio-widgets/src/present/`:. Partial: the config and remote-image presenters moved. Two things stay in `postio-gtk`, because they reach `postio-session` or `postio-host` directly, which `postio-widgets` may not: the compose seams and the cid blob source (T078). The credential and add-account dialogs moved with T165
   - the compose seams (`crates/postio-app/src/compose.rs:77-98`);
   - the reading wiring (`reading.rs`);
   - the config service and watcher glue (`crates/postio-gtk/src/config.rs:111`);
@@ -201,7 +201,7 @@ maintainer asks.
 - [X] T052 [US6] One `AdwBanner` for first sync, offline or a sign-in error, chosen in that priority, with the sync label to match. Test first: drive each state through the host's test seam, and the banner and label read as contracts/focus-surface.md says
 - [ ] T053 [US6] With no network, archiving, labelling and searching take effect at once and queue. Test first: scenario 1. The archive half is done: offline, an archive takes effect at once and queues. The label and search halves come with the label picker (T097) and the command bar (US4)
 - [ ] T054 [US6] First sync: what has arrived can be read and searched, and progress shows. Test first: scenario 2. The listing half is done. Reading and searching during a first sync come with T069 and US4
-- [ ] T055 [US6] Update password… opens the shared credential dialog. Test first: scenario 3. The credential dialog is still in `postio-gtk` (T022): route onboarding through `postio-client` first. Blocked on T165
+- [X] T055 [US6] Update password… opens the shared credential dialog. Test first: scenario 3. The credential dialog is still in `postio-gtk` (T022): route onboarding through `postio-client` first. Blocked on T165
 - [X] T056 [US6] The empty inbox lists only what exists. Test first: scenario 4, with and without digests or filtering
 - [X] T057 [US6] Compare screens 16–19, and record them
 
@@ -219,10 +219,10 @@ maintainer asks.
 
 - [X] T063 [US11] The store-in-use screen: "Postio is already open in another window. Close it to open Postio here.", with Try again. Test first, in the pattern of `crates/postio-tui/tests/store_in_use.rs`: a second process holds the store, the sentence shows, and the store is byte-for-byte unchanged (scenario 1)
 - [ ] T064 [US11] Across apps: archive in Focus and the classic app shows the archive; a draft left in either opens in the other. Test first: scenarios 2 and 3 over one temporary store. The archive half is done. The draft half comes with Focus's composer (US3)
-- [ ] T165 Move the credential and add-account dialogs (`postio_gtk::onboarding`) and their probe and persist (`postio_app::onboarding`) behind `postio-client`, into `postio-widgets`: T022's remainder, which T055 needs. Test first: the classic app's onboarding cases pass unchanged, and Focus opens the dialog from its banner
-- [ ] T166 Commands Focus offers no surface for become `Requirement::ThreePane`: the conversation rail, the folder-list keys, the parts-panel keys and the account-list keys. `toggle_fold` and `expand_all` stay for Focus's dialog (FR-034). Test first: registry parity, with none of them in `NOT_YET`
-- [ ] T167 A select-all (`X`) in Focus is a predicate over Focus's own scope. Today it aims at the unified view, so it takes in held digest mail, and its exceptions remove only representatives. Give `postio-core` and `postio-session` a Focus view scope. Test first: `X` then `a` archives exactly what the list shows
-- [ ] T168 Folded copies in Focus's counts: the has-action page folds copies across accounts, as the inbox does (T161), and `focus_unread` counts a folded conversation once. Test first: a conversation in two inboxes counts once in each figure
+- [X] T165 Move the credential and add-account dialogs (`postio_gtk::onboarding`) and their probe and persist (`postio_app::onboarding`) behind `postio-client`, into `postio-widgets`: T022's remainder, which T055 needs. Test first: the classic app's onboarding cases pass unchanged, and Focus opens the dialog from its banner
+- [X] T166 Commands Focus offers no surface for become `Requirement::ThreePane`: the conversation rail, the folder-list keys, the parts-panel keys and the account-list keys. `toggle_fold` and `expand_all` stay for Focus's dialog (FR-034). Test first: registry parity, with none of them in `NOT_YET`
+- [X] T167 A select-all (`X`) in Focus is a predicate over Focus's own scope. Today it aims at the unified view, so it takes in held digest mail, and its exceptions remove only representatives. Give `postio-core` and `postio-session` a Focus view scope. Test first: `X` then `a` archives exactly what the list shows
+- [X] T168 Folded copies in Focus's counts: the has-action page folds copies across accounts, as the inbox does (T161), and `focus_unread` counts a folded conversation once. Test first: a conversation in two inboxes counts once in each figure
 
 ## Phase 7: User Story 2: open a message, come back to the same place (P1)
 
@@ -243,8 +243,8 @@ maintainer asks.
 
 **Goal**: Screens 05 and 06. **Independent test**: spec US3.
 
-- [X] T075 [US3] The `correspondents` table, maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and when Sent syncs. Test first: sending to three addresses adds one to each, counted. Fill `sent_count` in `recipient_directory()`: the rows carry it since T076
-- [ ] T076 [P] [US3] `RecipientDirectory` rows carry `sent_count`, and completion ranks by it, with one rule for both apps (`crates/postio-ui/src/recipients.rs`). Test first: an address written to 42 times ranks above one seen 100 times and never written to (scenario 6). The rule is done: `postio_ui::recipients::suggest`, with ADR 0007's band (R15). Still open: the classic composer calls `Directory::suggest`, and the terminal ranks in SQL. Move both to the one rule after T024
+- [X] T075 [US3] The `correspondents` table, maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and when Sent syncs. Test first: sending to three addresses adds one to each, counted. Fill `sent_count` in `recipient_directory()`: the rows carry it since T076. `sent_count` reached the directory only with T076 (`CorrespondentRepository::sent_counts`)
+- [X] T076 [P] [US3] `RecipientDirectory` rows carry `sent_count`, and completion ranks by it, with one rule for both apps (`crates/postio-ui/src/recipients.rs`). Test first: an address written to 42 times ranks above one seen 100 times and never written to (scenario 6). The rule is done: `postio_ui::recipients::suggest`, with ADR 0007's band (R15). Still open: the classic composer calls `Directory::suggest`, and the terminal ranks in SQL. Move both to the one rule after T024
 - [X] T077 [US3] `Draft.labels` (`crates/postio-model/src/draft.rs`), and the host applies them to the Sent copy's conversation. Test first: scenario 4
 - [ ] T078 [US3] `DialogHost` for `ComposerHost`, in the 980×820 frame of screens 05 and 06: the header, the fields with Labels, the footer, and "Draft saved locally". Test first: `E` fills every recipient, "Re:", the thread's labels, and a folded quote (scenario 1). The compose seams are still in `postio-gtk` (T022): Focus reaches compose through `postio-client`
 - [ ] T079 [P] [US3] An opt-in recipient chip entry in `crates/postio-widgets/src/widgets/recipients.rs`, which Focus turns on. Test first: choosing a suggestion adds a chip with name and address (scenario 6)
@@ -379,7 +379,7 @@ maintainer asks.
   - needs-action alone: 3,000 bodies in 3.7 s, against a 60 s budget;
   - the filing catch-up alone: 61,188 messages in 177 s, against 300 s;
   - the two together: each about 184 s (T169)
-- [ ] T169 First open on a large backlog: the filing catch-up and the needs-action pass share one background connection. Together they take about 184 s, missing needs-action's 60 s budget, and inbox page reads reach 380 ms. Give the passes their own connections or a priority, and have both yield to interactive reads. Test first: T147's measurement with both passes running, needs-action inside its budget, and page reads within 16 ms at the median
+- [X] T169 First open on a large backlog: the filing catch-up and the needs-action pass share one background connection. Together they take about 184 s, missing needs-action's 60 s budget, and inbox page reads reach 380 ms. Give the passes their own connections or a priority, and have both yield to interactive reads. Test first: T147's measurement with both passes running, needs-action inside its budget, and page reads within 16 ms at the median. Done. The filing catch-up held the write permit through its pause. Now it drops the permit before pausing, starts only once needs-action has caught up, and both passes yield to a read in flight. With both running: needs-action 3.9 s, filing 163.5 s, page reads 6 ms at the median
 - [ ] T148 `screens.md` complete for 01–20, with every difference and its reason (SC-009)
 - [ ] T149 Walk quickstart.md by hand (scenarios 1–11) on a throwaway store, and record the outcomes in `screens.md`'s notes
 - [ ] T150 Rebase onto `main`, and run the full suites the diff touches (quickstart, "Automated"). **Do not land**
