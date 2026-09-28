@@ -22,6 +22,7 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+mod across_apps;
 mod chrome;
 mod colours;
 mod cursor;
@@ -52,6 +53,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "across_apps::what_focus_archives_the_classic_app_sees_archived",
+        across_apps::what_focus_archives_the_classic_app_sees_archived as fn(),
+    ),
     (
         "store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone",
         store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone
