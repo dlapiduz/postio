@@ -250,3 +250,82 @@ async fn of_the_bodies_that_landed_the_stage_takes_recent_inbox_mail_it_has_not_
     assert_eq!(found, vec![newer, older]);
     assert_eq!(counts.statements, 1, "{counts:?}");
 }
+
+#[tokio::test]
+async fn the_filing_catch_up_reads_inbox_mail_filed_since_a_mark_newest_first() {
+    // FR-134, US9 scenario 8: mail another app filed while Focus was closed
+    // -- every message after the newest one Focus had accounted for -- and
+    // not yet filed at this classifier's version, newest first.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
+    let hours = TimeDelta::hours;
+    let before = message(
+        &connection,
+        account.id,
+        inbox,
+        hours(9),
+        BodyState::HeadersOnly,
+    )
+    .await;
+    let mark = MessageRepository::new(&connection)
+        .newest_id()
+        .await
+        .expect("a read")
+        .expect("a message");
+    assert_eq!(mark, before);
+    let first = message(
+        &connection,
+        account.id,
+        inbox,
+        hours(3),
+        BodyState::HeadersOnly,
+    )
+    .await;
+    let second = message(
+        &connection,
+        account.id,
+        inbox,
+        hours(2),
+        BodyState::HeadersOnly,
+    )
+    .await;
+    let _archived = message(
+        &connection,
+        account.id,
+        archive.id,
+        hours(1),
+        BodyState::Full,
+    )
+    .await;
+    let done = message(&connection, account.id, inbox, hours(1), BodyState::Full).await;
+    let focus = FocusClassifiedRepository::new(&connection);
+    focus
+        .record(&[done], FocusStage::Filing, 1)
+        .await
+        .expect("recorded");
+
+    let mut found = Vec::new();
+    let counts = counted_async(|| async {
+        found = focus
+            .pending_filings(inbox, mark, 1, 10)
+            .await
+            .expect("a read");
+    })
+    .await;
+
+    assert_eq!(found, vec![second, first], "newest first, since the mark");
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    let plan = test_support::plan(
+        &connection,
+        FocusClassifiedRepository::explain_pending_filings(),
+    )
+    .await;
+    assert!(
+        !plan
+            .lines()
+            .any(|step| step.trim_start().starts_with("SCAN")),
+        "{plan}"
+    );
+}

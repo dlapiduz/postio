@@ -3200,3 +3200,147 @@ fn focus_mode_announces_no_arrival_it_filtered_or_held() {
         "only the letter reached Focus's inbox"
     );
 }
+
+// ── Catching up on what another app filed (spec 007, T127) ──────────────────
+
+/// A message filed in the world's inbox from `from`, an hour ago, threaded
+/// as a sync threads it: what another app's sync leaves behind.
+fn filed_elsewhere(world: &World, from: &str, subject: &str) -> MessageId {
+    let inbox = folder(world, postio_model::MailboxRole::Inbox);
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let mut message = Message::new(
+            world.account,
+            inbox,
+            Utc::now() - chrono::TimeDelta::hours(1),
+        );
+        message.subject = Some(subject.to_owned());
+        message.from = vec![postio_model::EmailAddress::new(None::<&str>, from)];
+        message.to = vec![postio_model::EmailAddress::new(
+            Some("Test User"),
+            "test@example.com",
+        )];
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        postio_storage::repository::ThreadingRepository::new(&connection, world.account)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        id
+    })
+}
+
+/// Focus last ran with the store as it is now: its mark set, as a session
+/// that had just filed everything here would leave it.
+fn focus_ran_before(world: &World) {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let newest = MessageRepository::new(&connection)
+            .newest_id()
+            .await
+            .expect("a read")
+            .expect("a message");
+        postio_storage::repository::SettingsRepository::new(&connection)
+            .set(crate::focus::FILED_THROUGH, &newest.get().to_string())
+            .await
+            .expect("the mark");
+    });
+}
+
+#[test]
+fn mail_another_app_filed_while_focus_was_closed_is_sorted_when_it_opens() {
+    // US9 scenario 8: a notification that arrived while the classic app was
+    // open moves from the inbox to Filtered, with its reason, when Focus
+    // next opens -- as if Focus had filed it. A letter stays.
+    let world = World::new();
+    focus_ran_before(&world);
+    let notification = filed_elsewhere(&world, "notifications@forge.example", "Build passed");
+    let letter = filed_elsewhere(&world, "tove@example.org", "Lunch?");
+
+    world.host().enable_focus(crate::FocusSetup::default());
+
+    let (role, reason) = eventually(&world, || {
+        filed_where(&world, "Build passed")
+            .filter(|(role, _)| *role != postio_model::MailboxRole::Inbox)
+    });
+    assert_eq!(role, postio_model::MailboxRole::Archive);
+    assert_eq!(
+        reason,
+        Some(postio_storage::repository::FilterReason::Notification)
+    );
+    assert_eq!(
+        filed_where(&world, "Lunch?"),
+        Some((postio_model::MailboxRole::Inbox, None))
+    );
+    let _ = (notification, letter);
+}
+
+#[test]
+fn focus_s_first_open_sorts_nothing_already_in_the_inbox() {
+    // FR-118: filtering applies to mail filed after it is turned on, and
+    // Focus's first open is what turns it on. What is already in the inbox
+    // is the deliberate sweep's to move (T128), never the catch-up's.
+    let world = World::new();
+    filed_elsewhere(&world, "notifications@forge.example", "Build passed");
+
+    world.host().enable_focus(crate::FocusSetup::default());
+
+    let marked = eventually(&world, || {
+        world.rt.block_on(async {
+            let connection = world.database.connect().await.expect("a connection");
+            postio_storage::repository::SettingsRepository::new(&connection)
+                .get(crate::focus::FILED_THROUGH)
+                .await
+                .expect("a read")
+        })
+    });
+    assert!(!marked.is_empty());
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        filed_where(&world, "Build passed"),
+        Some((postio_model::MailboxRole::Inbox, None))
+    );
+}
+
+#[test]
+fn the_catch_up_leaves_the_row_under_the_cursor_where_it_is() {
+    // Spec Edge Cases: the catch-up never moves the row under the cursor.
+    let world = World::new();
+    focus_ran_before(&world);
+    let watched = filed_elsewhere(&world, "notifications@forge.example", "Build passed");
+    filed_elsewhere(&world, "alerts@builds.example", "Deploy finished");
+    let state = SharedState::default();
+    let (quiet, _) = event_channel();
+    state.update(&quiet, |app| {
+        let mut events = app.open_mailbox(world.inbox());
+        events.extend(app.select(Vec::new(), Some(watched)));
+        events
+    });
+    let client = world.host().connect(ClientKind::Focus).with_state(state);
+    world.send(&client, Command::Refresh);
+    eventually(&world, || {
+        world
+            .host()
+            .inner
+            .clients
+            .lock()
+            .expect("never poisoned")
+            .values()
+            .any(|entry| entry.state.snapshot().focus() == Some(watched))
+            .then_some(())
+    });
+
+    world.host().enable_focus(crate::FocusSetup::default());
+
+    eventually(&world, || {
+        filed_where(&world, "Deploy finished")
+            .filter(|(role, _)| *role == postio_model::MailboxRole::Archive)
+    });
+    assert_eq!(
+        filed_where(&world, "Build passed"),
+        Some((postio_model::MailboxRole::Inbox, None)),
+        "the row under the cursor stayed"
+    );
+}

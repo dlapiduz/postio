@@ -89,6 +89,45 @@ impl<'a> FocusClassifiedRepository<'a> {
           LIMIT ?4"
     }
 
+    /// Up to `limit` messages filed in `inbox` after `after` -- the newest
+    /// message Focus had accounted for when it last ran -- that have not been
+    /// filed at `version`, newest first: mail another app filed while Focus
+    /// was closed, which Focus sorts when it opens (FR-134, US9 scenario 8).
+    ///
+    /// One statement: message ids only grow, so the walk is of the rows
+    /// newer than the mark, newest first, and never of the mail before it.
+    pub async fn pending_filings(
+        &self,
+        inbox: MailboxId,
+        after: MessageId,
+        version: u32,
+        limit: u32,
+    ) -> Result<Vec<MessageId>> {
+        sql::all(
+            self.connection,
+            Self::explain_pending_filings(),
+            bind![
+                inbox.get(),
+                after.get(),
+                i64::from(version),
+                i64::from(limit)
+            ],
+            |row| Ok(MessageId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::pending_filings`] runs.
+    pub fn explain_pending_filings() -> &'static str {
+        "SELECT m.id FROM messages m
+          WHERE m.id > ?2 AND m.mailbox_id = ?1 AND m.deleted_locally = 0
+            AND NOT EXISTS (SELECT 1 FROM focus_classified c
+                             WHERE c.message_id = m.id AND c.stage = 'filing'
+                               AND c.version = ?3)
+          ORDER BY m.id DESC
+          LIMIT ?4"
+    }
+
     /// Which of `messages` -- bodies that just landed, in any folder -- are
     /// the body stage's to classify: the mail its catch-up would take, in an
     /// inbox, filed since `since`, body here, and not yet classified at

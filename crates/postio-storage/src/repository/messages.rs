@@ -941,6 +941,20 @@ impl<'a> MessageRepository<'a> {
         Ok(Some(message))
     }
 
+    /// The newest message's id: every message stored after it has a larger
+    /// one, since ids are never reused (`AUTOINCREMENT`). What Focus marks
+    /// the mail it has accounted for with (spec 007 FR-134). One lookup at
+    /// the end of the key.
+    pub async fn newest_id(&self) -> Result<Option<MessageId>> {
+        sql::first(
+            self.connection,
+            "SELECT id FROM messages ORDER BY id DESC LIMIT 1",
+            (),
+            |row| Ok(MessageId::new(row.col(0)?)),
+        )
+        .await
+    }
+
     /// One window of the message list, newest first.
     pub async fn page(&self, query: &ListQuery) -> Result<Vec<MessageListRow>> {
         let sql = self.explain(query);

@@ -22,13 +22,18 @@
 //!    ([`postio_runtime::POLL_INTERVAL`]), for digest deliveries ([`due`]),
 //!    and later reminders and RSVP windows. One for the store rather than one
 //!    per account, so it keeps time whether or not an engine is running.
+//!    Before it starts ticking it sorts what another app filed while Focus
+//!    was closed ([`catch_up`]).
 
 mod body;
+mod catch_up;
 mod due;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
+#[cfg(test)]
+pub(crate) use catch_up::FILED_THROUGH;
 pub(crate) use due::deliver_due;
 
 use postio_config::FocusConfig;
@@ -128,15 +133,24 @@ impl Host {
     }
 }
 
-/// The due timer: the engine's tick, kept by the host for the whole store,
-/// delivering the digests `config` says have come due ([`due`]). Its first
-/// tick is at once, so what came due while Focus was closed is delivered as
-/// it opens.
-fn due_timer(inner: &Inner, config: Arc<RwLock<FocusConfig>>) -> tokio::task::AbortHandle {
-    let database = inner.wiring.database.clone();
-    inner
-        .runtime()
+/// The due timer: the engine's tick, kept by the host for the whole store.
+///
+/// Before its first tick it sorts what another app filed while Focus was
+/// closed ([`catch_up`]), so a digest that comes due at once holds that mail
+/// too. Then, each tick, it delivers the digests `config` says have come due
+/// ([`due`]) -- the first tick is at once, so what came due while Focus was
+/// closed is delivered as it opens -- and keeps the mark that says how far
+/// Focus has accounted for the mail.
+fn due_timer(inner: &Arc<Inner>, config: Arc<RwLock<FocusConfig>>) -> tokio::task::AbortHandle {
+    let inner = Arc::clone(inner);
+    let runtime = inner.runtime().clone();
+    runtime
         .spawn(async move {
+            if let Err(error) = catch_up::catch_up(&inner).await {
+                tracing::warn!(%error, "Focus could not sort what was filed while it was closed: {error}");
+            }
+            let database = inner.wiring.database.clone();
+            let mut marked = None;
             let mut tick = tokio::time::interval(postio_runtime::POLL_INTERVAL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
@@ -148,6 +162,9 @@ fn due_timer(inner: &Inner, config: Arc<RwLock<FocusConfig>>) -> tokio::task::Ab
                     Err(error) => {
                         tracing::warn!(%error, "Focus could not deliver its digests: {error}");
                     }
+                }
+                if let Err(error) = catch_up::keep_mark(&database, &mut marked).await {
+                    tracing::warn!(%error, "Focus could not keep its mark: {error}");
                 }
             }
         })
