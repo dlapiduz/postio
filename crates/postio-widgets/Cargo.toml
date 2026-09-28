@@ -32,6 +32,8 @@ postio-model.workspace = true
 # The reading renderer (spec 006): BodyView draws its snapshots.
 postio-render.workspace = true
 postio-ui.workspace = true
+# The capture's error: why a window could not become a picture.
+thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 # Remote image URLs, parsed before a fetcher is asked (spec 006 T137).

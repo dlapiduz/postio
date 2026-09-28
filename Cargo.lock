@@ -5196,6 +5196,7 @@ dependencies = [
  "postio-test-support",
  "postio-ui",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
  "url",

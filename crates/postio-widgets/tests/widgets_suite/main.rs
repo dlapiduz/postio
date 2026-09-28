@@ -22,6 +22,7 @@
 //! when several cases fail at once, trust the first.
 
 mod body_view_resets;
+mod capture;
 mod harness;
 mod list_contract;
 mod list_model_generic;
@@ -84,6 +85,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "present_reading::fetched_images_come_back_under_the_documents_spelling",
         present_reading::fetched_images_come_back_under_the_documents_spelling as fn(),
+    ),
+    (
+        "capture::a_window_the_compositor_never_showed_is_an_error",
+        capture::a_window_the_compositor_never_showed_is_an_error as fn(),
+    ),
+    (
+        "capture::a_capture_that_fails_leaves_no_file",
+        capture::a_capture_that_fails_leaves_no_file as fn(),
+    ),
+    (
+        "capture::a_presented_window_is_captured_without_the_caller_counting_frames",
+        capture::a_presented_window_is_captured_without_the_caller_counting_frames as fn(),
     ),
 ];
 
