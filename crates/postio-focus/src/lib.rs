@@ -15,6 +15,7 @@ pub mod chooser;
 pub mod chrome;
 pub mod compose;
 pub mod empty;
+pub mod filtered;
 pub mod keymap_dialog;
 pub mod keys;
 pub mod label_picker;

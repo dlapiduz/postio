@@ -36,6 +36,8 @@ const BLANK: &str = "blank";
 const OPENING: &str = "opening";
 const UNAVAILABLE: &str = "unavailable";
 const INBOX: &str = "inbox";
+/// The Filtered view's page (screen 21).
+const FILTERED: &str = "filtered";
 /// The inbox's list, and the empty inbox in its place.
 const LIST: &str = "list";
 /// The key map dialog's name, so it can be told from another dialog.
@@ -132,6 +134,8 @@ mod imp {
         pub remind: RefCell<Option<Rc<WhenPicker>>>,
         /// The label picker, built the first time `l` opens it.
         pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
+        /// The Filtered view, built the first time `g f` opens it.
+        pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         /// A `postio://` link that arrived before the store was open.
         pub pending_link: RefCell<Option<String>>,
         /// The move picker, built the first time `m` opens it.
@@ -196,6 +200,7 @@ mod imp {
                 compose: RefCell::default(),
                 warm: Cell::default(),
                 answering: Cell::default(),
+                filtered: RefCell::default(),
             }
         }
     }
@@ -479,6 +484,8 @@ impl FocusWindow {
             .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
         {
             KeyContext::Reader
+        } else if self.filtered().is_some() {
+            KeyContext::Filtered
         } else {
             KeyContext::List
         }
@@ -622,6 +629,8 @@ impl FocusWindow {
                     places.close();
                 } else if let Some(bar) = self.bar().filter(|bar| bar.is_open()) {
                     bar.close();
+                } else if self.filtered().is_some() {
+                    self.leave_filtered();
                 } else {
                     self.clear_selection();
                 }
@@ -664,6 +673,26 @@ impl FocusWindow {
             CommandId::GoToFolders => self.open_places(),
             CommandId::GoToInbox => self.go_to_inbox(),
             CommandId::ViewSource => self.view_source(),
+            CommandId::GoToFiltered => self.show_filtered(),
+            CommandId::RestoreFiltered => {
+                if let Some(message) = self.filtered().and_then(|view| view.focused()) {
+                    self.restore_filtered(message);
+                }
+            }
+            CommandId::FilteredTab1
+            | CommandId::FilteredTab2
+            | CommandId::FilteredTab3
+            | CommandId::FilteredTab4
+            | CommandId::FilteredTab5
+            | CommandId::FilteredTab6
+            | CommandId::FilteredTab7 => {
+                let index = postio_ui::filtered::TAB_COMMANDS
+                    .iter()
+                    .position(|tab| *tab == id);
+                if let (Some(view), Some(index)) = (self.filtered(), index) {
+                    view.set_tab(index);
+                }
+            }
             CommandId::Snooze => self.open_when(When::Snooze),
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
@@ -1360,6 +1389,79 @@ impl FocusWindow {
         if let Some(pane) = self.imp().pane.borrow().as_ref() {
             pane.feed().handle(event);
         }
+        // What is filtered moves with a restore, its undo, and mail filed
+        // away while the view is open.
+        if matches!(
+            event,
+            Event::MessageListChanged { .. }
+                | Event::UndoPerformed { .. }
+                | Event::ActionCompleted { .. }
+        ) && let Some(view) = self.filtered()
+        {
+            view.refresh();
+        }
+    }
+
+    /// The Filtered view, while it is the page on screen.
+    pub fn filtered(&self) -> Option<Rc<crate::filtered::FilteredView>> {
+        let imp = self.imp();
+        if imp.pages.visible_child_name().as_deref() != Some(FILTERED) {
+            return None;
+        }
+        imp.filtered.borrow().clone()
+    }
+
+    /// `g f`: the Filtered view in place of the inbox (screen 21).
+    fn show_filtered(&self) {
+        let imp = self.imp();
+        let Some(client) = imp.client.borrow().clone() else {
+            return;
+        };
+        let view = imp.filtered.borrow().clone();
+        let view = view.unwrap_or_else(|| {
+            let view = crate::filtered::FilteredView::new(client, &self.keymap());
+            view.connect_action(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |action| window.filtered_action(action)
+            ));
+            imp.pages.add_named(view.widget(), Some(FILTERED));
+            imp.filtered.replace(Some(Rc::clone(&view)));
+            view
+        });
+        view.open();
+        imp.pages.set_visible_child_name(FILTERED);
+        view.focus_list();
+    }
+
+    /// Back from Filtered to the inbox, as it was.
+    fn leave_filtered(&self) {
+        self.imp().pages.set_visible_child_name(INBOX);
+        if let Some(pane) = self.pane() {
+            pane.view().grab_focus();
+        }
+    }
+
+    /// What the Filtered view asked for.
+    fn filtered_action(&self, action: crate::filtered::FilteredAction) {
+        use crate::filtered::FilteredAction;
+        match action {
+            FilteredAction::Back => self.leave_filtered(),
+            FilteredAction::Open { message, subject } => {
+                if let Some(reading) = self.reading_dialog() {
+                    reading.show_found(self, message, &subject);
+                }
+            }
+            FilteredAction::Restore(message) => self.restore_filtered(message),
+        }
+    }
+
+    /// Put `message` back in the inbox, and never filter its sender (FR-116).
+    fn restore_filtered(&self, message: MessageId) {
+        self.post(Command::RestoreFiltered {
+            target: MessageTarget::Messages(vec![message]),
+            restored: true,
+        });
     }
 
     /// What sync said about an account: the banner and the label follow.

@@ -18,6 +18,7 @@ pub mod conversation;
 pub mod digest;
 pub mod dwell;
 pub mod editor;
+pub mod filtered;
 pub mod finder;
 pub mod focus;
 pub mod focus_row;

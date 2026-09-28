@@ -314,6 +314,48 @@ impl Fixture {
             .expect("a correspondent");
     }
 
+    /// A message from `from` about `subject`, filed into the archive
+    /// `minutes` before the fixture's now and filtered there for `reason`
+    /// ("notification", as the store spells it), as Focus's filing does.
+    pub async fn filtered(
+        &self,
+        from: (&str, &str),
+        subject: &str,
+        reason: &str,
+        source: Option<&str>,
+        minutes: i64,
+    ) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
+        let archive: i64 = postio_storage::sql::scalar(
+            &connection,
+            "SELECT id FROM mailboxes WHERE account_id = ?1 AND name = 'Archive'",
+            [self.account.id.get()],
+        )
+        .await
+        .expect("the archive");
+        let at = now() - Duration::minutes(minutes);
+        let mut message = Message::new(self.account.id, MailboxId::new(archive), at);
+        message.from = vec![EmailAddress::new(Some(from.0), from.1)];
+        message.subject = Some(subject.to_owned());
+        message.preview = Some(format!("About {subject}."));
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        postio_storage::repository::FilterDecisionRepository::new(&connection)
+            .record(&postio_storage::repository::FilterDecision {
+                message: id,
+                reason: postio_storage::repository::FilterReason::from_name(reason)
+                    .expect("a reason the store has"),
+                source: source.map(str::to_owned),
+                layer: postio_storage::repository::FilterLayer::Header,
+                decided_at: at,
+            })
+            .await
+            .expect("a decision");
+        id
+    }
+
     /// A folder named `name` in the fixture's account.
     pub async fn folder(&self, name: &str) -> MailboxId {
         let connection = self.database.connect().await.expect("a connection");

@@ -32,6 +32,7 @@ mod cursor;
 mod desktop;
 mod drafts;
 mod empty;
+mod filtered;
 mod harness;
 mod has_action;
 mod invitations;
@@ -112,6 +113,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "desktop::a_postio_link_opens_its_message_and_an_unknown_one_is_refused",
         desktop::a_postio_link_opens_its_message_and_an_unknown_one_is_refused as fn(),
+    ),
+    (
+        "filtered::g_f_lists_filtered_mail_and_its_number_keys_narrow_it",
+        filtered::g_f_lists_filtered_mail_and_its_number_keys_narrow_it as fn(),
+    ),
+    (
+        "filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back",
+        filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
     ),
     (
         "desktop::focus_says_which_application_it_is",

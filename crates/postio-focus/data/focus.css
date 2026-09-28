@@ -579,3 +579,90 @@ banner.focus-banner button {
   background: none;
   color: var(--postio-ink);
 }
+
+/* ── Filtered (screen 21): a full view in place of the inbox ────────── */
+.focus-filtered {
+  background-color: var(--postio-surface);
+}
+
+.focus-filtered-header {
+  min-height: 46px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-filtered-title {
+  font-weight: bold;
+  font-size: var(--postio-text-ui);
+}
+
+.focus-filtered-subtitle {
+  font-size: var(--postio-text-meta);
+}
+
+.focus-filtered-tab-row {
+  min-height: 44px;
+  padding: 0 var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-filtered-tab {
+  min-height: 0;
+  padding: var(--postio-space-1) var(--postio-space-3);
+  border-radius: 999px;
+  font-weight: normal;
+}
+
+.focus-filtered-tab-on {
+  border: 1px solid var(--postio-hairline-strong);
+  font-weight: bold;
+}
+
+.focus-filtered-note {
+  font-size: var(--postio-text-label);
+}
+
+.focus-filtered-list > row {
+  padding: 0;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-filtered-list > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-fg);
+  box-shadow: inset 0 0 0 2px var(--postio-accent);
+}
+
+.focus-filtered-row {
+  min-height: 40px;
+  padding: 0 var(--postio-space-4) 0 56px;
+}
+
+.focus-filtered-subject {
+  color: var(--postio-ink);
+}
+
+.focus-filtered-pill {
+  padding: 0 var(--postio-space-2);
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-raised-bg);
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-label);
+}
+
+.focus-filtered-restore {
+  min-height: 0;
+  padding: var(--postio-space-1) var(--postio-space-2);
+  font-weight: bold;
+}
+
+.focus-filtered-time {
+  min-width: 48px;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-filtered-footer {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-header);
+}
