@@ -23,8 +23,15 @@
       and read receipts stay off until you allow them, and there is no
       telemetry.
     </p>
+    <p>
+      Postio Focus comes with it, a second launcher on the same mail: one
+      dense inbox that calls out invitations, questions and to-dos, holds
+      newsletters back into digests on a cadence you choose, and files
+      spam and automated updates away, each with its reason.
+    </p>
   </description>
   <launchable type="desktop-id">dev.postio.Postio.desktop</launchable>
+  <launchable type="desktop-id">dev.postio.Postio.Focus.desktop</launchable>
   <url type="homepage">https://dlapiduz.github.io/postio/</url>
   <url type="help">https://dlapiduz.github.io/postio/docs/</url>
   <url type="bugtracker">https://github.com/dlapiduz/postio/issues</url>
@@ -112,5 +119,6 @@
   </categories>
   <provides>
     <binary>postio</binary>
+    <binary>postio-focus</binary>
   </provides>
 </component>

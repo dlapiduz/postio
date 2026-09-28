@@ -239,6 +239,22 @@ jobs:
             --install-deps-from=flathub \
             --repo=repo build-dir "$MANIFEST"
 
+      # The bundle carries two apps: the desktop app, and Postio Focus as a
+      # second launcher (specs/007-postio-focus research R3). A manifest that
+      # stops building either one still builds, so look inside before
+      # publishing rather than finding out from a user. `packaging.rs` in
+      # postio-focus's tests holds this list to the manifest.
+      - name: Check the build carries both apps
+        run: |
+          for path in \
+            files/bin/postio \
+            files/bin/postio-focus \
+            files/share/applications/dev.postio.Postio.desktop \
+            files/share/applications/dev.postio.Postio.Focus.desktop
+          do
+            test -e "build-dir/$path" || { echo "::error::the build has no $path"; exit 1; }
+          done
+
       - name: Bundle
         run: |
           flatpak build-bundle repo "$ASSET" "$APP_ID" \
