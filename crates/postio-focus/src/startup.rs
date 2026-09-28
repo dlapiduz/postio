@@ -141,13 +141,13 @@ pub fn open_on_a_thread(
 /// inbox once it is open -- or the sentence for why not, with "Try again".
 ///
 /// `progress` is an open already under way (`open_on_a_thread`), started
-/// before GTK was; `reopen` starts another, for the retry. `opened` is
+/// before GTK was; `open_again` starts another, for the retry. `opened` is
 /// called with the session once there is one.
 pub fn open(
     window: &FocusWindow,
     progress: async_channel::Receiver<Progress>,
     config: Rc<postio_config::Config>,
-    reopen: Rc<dyn Fn() -> async_channel::Receiver<Progress>>,
+    open_again: Rc<dyn Fn() -> async_channel::Receiver<Progress>>,
     opened: Rc<dyn Fn(Session)>,
 ) {
     let window = window.clone();
@@ -177,15 +177,15 @@ pub fn open(
                 let retry = {
                     let window = window.downgrade();
                     let config = Rc::clone(&config);
-                    let reopen = Rc::clone(&reopen);
+                    let open_again = Rc::clone(&open_again);
                     let opened = Rc::clone(&opened);
                     move || {
                         if let Some(window) = window.upgrade() {
                             open(
                                 &window,
-                                reopen(),
+                                open_again(),
                                 Rc::clone(&config),
-                                Rc::clone(&reopen),
+                                Rc::clone(&open_again),
                                 Rc::clone(&opened),
                             );
                         }

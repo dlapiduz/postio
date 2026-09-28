@@ -18,6 +18,7 @@ use postio_model::{FocusScope, ListScope};
 use postio_ui::keymap::{KeyContext, Outcome, Resolver};
 use postio_ui::list_state::{OPENING_THRESHOLD, Waiting, describe_wait};
 
+use crate::chrome::Chrome;
 use crate::list::{Feed, ListPane};
 
 /// The window's pages, by name.
@@ -37,6 +38,7 @@ mod imp {
         pub inbox: gtk::Box,
         pub toasts: adw::ToastOverlay,
         pub pane: RefCell<Option<ListPane>>,
+        pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
         /// What the store is being waited on for, while it is.
         pub waiting: Cell<Option<Waiting>>,
@@ -61,6 +63,7 @@ mod imp {
                 inbox: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 toasts: adw::ToastOverlay::new(),
                 pane: RefCell::default(),
+                chrome: RefCell::default(),
                 client: RefCell::default(),
                 waiting: Cell::default(),
                 waiting_since: Cell::default(),
@@ -149,6 +152,39 @@ impl FocusWindow {
             move |_, key, _, state| window.handle_key(key, state)
         ));
         self.add_controller(keys);
+
+        // What the main menu's items run: a command by its id, through the
+        // same `act` a key press reaches, and About.
+        let run = gio::SimpleAction::new("run", Some(glib::VariantTy::STRING));
+        run.connect_activate(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_, parameter| {
+                if let Some(id) = parameter
+                    .and_then(|parameter| parameter.get::<String>())
+                    .and_then(|id| id.parse::<CommandId>().ok())
+                {
+                    window.act(id);
+                }
+            }
+        ));
+        self.add_action(&run);
+        let about = gio::SimpleAction::new("about", None);
+        about.connect_activate(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_, _| window.show_about()
+        ));
+        self.add_action(&about);
+    }
+
+    fn show_about(&self) {
+        let about = adw::AboutDialog::builder()
+            .application_name("Postio Focus")
+            .version(env!("CARGO_PKG_VERSION"))
+            .license_type(gtk::License::MitX11)
+            .build();
+        about.present(Some(self));
     }
 
     /// Take `keymap` as the keys in force: the resolver is rebuilt for
@@ -160,6 +196,9 @@ impl FocusWindow {
         }
         let imp = self.imp();
         imp.resolver.replace(Some(resolver));
+        if let Some(chrome) = imp.chrome.borrow().as_ref() {
+            chrome.set_keymap(&keymap);
+        }
         imp.keymap.replace(keymap);
     }
 
@@ -219,7 +258,10 @@ impl FocusWindow {
 
     /// Run the command `id` means here, with the registry's default target.
     pub fn act(&self, id: CommandId) {
-        tracing::debug!(command = %id, "no Focus surface answers this command yet");
+        match id {
+            CommandId::Quit => self.close(),
+            _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
+        }
     }
 
     /// Say what the store is being waited on for -- once the wait has
@@ -307,11 +349,26 @@ impl FocusWindow {
     /// Show the inbox, read through `client` with `keymap`'s keys, and
     /// follow what the store says from here on.
     pub fn show_inbox(&self, client: Client, keymap: Keymap) {
-        self.set_keymap(keymap);
         let imp = self.imp();
         imp.waiting.set(None);
         imp.waiting_since.set(None);
+        let chrome = Chrome::new(&keymap);
+        chrome.connect_command(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |id| window.act(id)
+        ));
+        chrome.set_sync("Not synced yet", "emblem-synchronizing-symbolic");
+        imp.inbox.append(chrome.top_bar());
+        imp.inbox.append(chrome.strip());
+        imp.chrome.replace(Some(Rc::clone(&chrome)));
+        self.set_keymap(keymap);
         let feed = Feed::new(client.clone());
+        feed.connect_filled(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.update_counts()
+        ));
         let pane = ListPane::new(feed.clone());
         imp.inbox.append(pane.widget());
         imp.pane.replace(Some(pane));
@@ -331,6 +388,20 @@ impl FocusWindow {
                 window.hear(&envelope.event);
             }
         });
+    }
+
+    /// Bring the strip's counts into step with the list.
+    fn update_counts(&self) {
+        let imp = self.imp();
+        let total = imp.pane.borrow().as_ref().map(|pane| pane.feed().total());
+        if let (Some(total), Some(chrome)) = (total, imp.chrome.borrow().as_ref()) {
+            chrome.set_counts(total);
+        }
+    }
+
+    /// The window's chrome, once the inbox is showing.
+    pub fn chrome(&self) -> Option<Rc<Chrome>> {
+        self.imp().chrome.borrow().clone()
     }
 
     /// What the store just said.

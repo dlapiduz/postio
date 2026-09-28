@@ -22,6 +22,7 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+mod chrome;
 mod harness;
 mod list_contract;
 mod starts_offline;
@@ -43,6 +44,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "harness::an_empty_case_is_listed_and_runs",
         harness::an_empty_case_is_listed_and_runs as fn(),
+    ),
+    (
+        "chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key",
+        chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key as fn(),
     ),
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",

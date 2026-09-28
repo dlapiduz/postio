@@ -48,13 +48,13 @@ pub fn run() -> glib::ExitCode {
     // One keyring for the installation, read on the opening thread.
     let secrets: Arc<dyn postio_account::secret::SecretStore> =
         Arc::new(postio_account::secret::KeyringSecretStore::default());
-    let reopen: Rc<dyn Fn() -> async_channel::Receiver<startup::Progress>> = {
+    let open_again: Rc<dyn Fn() -> async_channel::Receiver<startup::Progress>> = {
         let config_path = config_path.clone();
         let secrets = Arc::clone(&secrets);
         Rc::new(move || startup::open_on_a_thread(config_path.clone(), Arc::clone(&secrets)))
     };
     // Before GTK: the open overlaps the whole of GTK's own start.
-    let early = RefCell::new(Some(reopen()));
+    let early = RefCell::new(Some(open_again()));
 
     if adw::init().is_err() {
         tracing::error!("no display; Focus needs a Wayland or X11 session");
@@ -73,7 +73,7 @@ pub fn run() -> glib::ExitCode {
             }
             let window = FocusWindow::new(Some(application));
             window.present();
-            let progress = early.borrow_mut().take().unwrap_or_else(|| reopen());
+            let progress = early.borrow_mut().take().unwrap_or_else(|| open_again());
             let opened: Rc<dyn Fn(Session)> = {
                 let session = Rc::clone(&session);
                 let window = window.downgrade();
@@ -95,7 +95,7 @@ pub fn run() -> glib::ExitCode {
                 &window,
                 progress,
                 Rc::clone(&config),
-                Rc::clone(&reopen),
+                Rc::clone(&open_again),
                 opened,
             );
         }

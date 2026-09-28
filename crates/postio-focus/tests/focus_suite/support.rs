@@ -119,3 +119,105 @@ impl Fixture {
         Host::start(self.database.clone(), blobs, |wiring| wiring).expect("a host")
     }
 }
+
+/// Every widget under `root`, `root` included, that wears `class`, in tree
+/// order.
+pub fn with_class(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> Vec<gtk::Widget> {
+    use gtk::prelude::*;
+    let mut found = Vec::new();
+    let mut stack = vec![root.as_ref().clone()];
+    while let Some(widget) = stack.pop() {
+        if widget.has_css_class(class) {
+            found.push(widget.clone());
+        }
+        let mut children = Vec::new();
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            children.push(next);
+        }
+        stack.extend(children.into_iter().rev());
+    }
+    found
+}
+
+/// The one widget under `root` wearing `class`; fails the case if there is
+/// not exactly one.
+pub fn only(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> gtk::Widget {
+    let mut found = with_class(root, class);
+    assert_eq!(
+        found.len(),
+        1,
+        "expected exactly one widget with class {class}, found {}",
+        found.len()
+    );
+    found.remove(0)
+}
+
+/// What a person reads in `widget`: the text of every label under it that
+/// is on screen, in tree order.
+pub fn texts(widget: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<String> {
+    use gtk::prelude::*;
+    let mut said = Vec::new();
+    let mut stack = vec![widget.as_ref().clone()];
+    while let Some(widget) = stack.pop() {
+        if !widget.is_mapped() {
+            continue;
+        }
+        if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+            let text = label.text().to_string();
+            if !text.is_empty() {
+                said.push(text);
+            }
+        }
+        let mut children = Vec::new();
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            children.push(next);
+        }
+        stack.extend(children.into_iter().rev());
+    }
+    said
+}
+
+/// A fixture with three conversations in its inbox, and a Focus window
+/// adopted over it, showing them: the shape most cases start from.
+pub async fn three_in_the_inbox() -> (Fixture, postio_focus::window::FocusWindow) {
+    use gtk::prelude::*;
+    let fixture = Fixture::empty().await;
+    fixture
+        .file(
+            ("Ada Moreno", "ada@example.com"),
+            "Atlas budget",
+            "The numbers are attached.",
+            30,
+        )
+        .await;
+    fixture
+        .file(
+            ("Lena Park", "lena@example.org"),
+            "Harbor draft",
+            "Uploaded the second draft.",
+            20,
+        )
+        .await;
+    fixture
+        .file(
+            ("Tomás Reyes", "tomas@example.net"),
+            "Staffing plan",
+            "Sharing the draft before Monday.",
+            10,
+        )
+        .await;
+    let window = postio_focus::window::FocusWindow::new(None);
+    window.present();
+    let session =
+        postio_focus::startup::adopt(&window, fixture.host(), &postio_config::Config::default());
+    assert!(
+        crate::settle_until(async || window.rows_on_screen().len() >= 3).await,
+        "the fixture's three conversations never reached the screen"
+    );
+    keep(session);
+    (fixture, window)
+}
