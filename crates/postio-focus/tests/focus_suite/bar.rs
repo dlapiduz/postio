@@ -177,8 +177,8 @@ pub fn alt_2_runs_the_second_saved_search() {
 }
 
 /// US4 scenario 7: with no network, a search answers from this machine's
-/// index, and within its budget -- counted, not timed. Each keystroke is
-/// one search request to the store's owner and nothing else; what that
+/// index, and within its budget -- counted, not timed. Each keystroke is at
+/// most one search request to the store's owner and nothing else; what that
 /// request costs at the store is the index's own budget, a flat four
 /// statements a page whatever it matches (postio-index
 /// `search_statement_budget.rs`).
@@ -238,10 +238,58 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
             .map(|(family, count)| (*family, count - before.get(family).copied().unwrap_or(0)))
             .filter(|(_, count)| *count > 0)
             .collect();
+        // "f" to "from" are plain words, which search nothing until asked;
+        // "from:" to "from:ada" name an operator, and each is one search.
         assert_eq!(
             asked,
-            [("SearchHits", 8)],
-            "eight keystrokes, eight searches, and nothing else asked for"
+            [("SearchHits", 4)],
+            "one search a keystroke that names an operator, and nothing else asked for"
+        );
+    });
+}
+
+/// Screen 09: a plain word is answered with the commands and places it
+/// names and one search row, not a search; the search runs when that row
+/// is chosen. Words that lower to operators (screen 07) search at once.
+pub fn a_plain_word_offers_commands_and_searches_only_when_asked() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Archive plan",
+                "Boxes.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        type_in(&bar, "arch").await;
+        // Long enough for a search to have answered, had one been asked.
+        crate::settle_for(std::time::Duration::from_millis(500)).await;
+        let said = bar.texts();
+        assert!(
+            said.iter().any(|line| line == "Archive"),
+            "the command: {said:?}"
+        );
+        assert!(
+            said.iter().any(|line| line.starts_with("Search mail for")),
+            "the search row: {said:?}"
+        );
+        assert!(bar.result_subjects().is_empty(), "no search until asked");
+        bar.run_search();
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,
+            "choosing the search row did not search: {:?}",
+            bar.result_subjects()
         );
     });
 }

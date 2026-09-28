@@ -311,6 +311,12 @@ impl Bar {
         self.generation.set(self.generation.get() + 1);
     }
 
+    /// Run the search row: search for what is typed, as choosing
+    /// "Search mail for …" does.
+    pub fn run_search(&self) {
+        self.search_typed();
+    }
+
     /// Whether the places the bar can go have been read since it opened.
     pub fn places_known(&self) -> bool {
         self.places_known.get()
@@ -432,7 +438,30 @@ impl Bar {
             .map(|token| token.raw.clone())
             .collect();
         self.show_chips(&chips);
-        self.search(parsed, generation);
+        // Words that name what they want -- an operator, or a partial one
+        // on its way -- are a search (screen 07). A plain word is answered
+        // with the commands and places it names and one search row, and
+        // searches when that row is chosen (screen 09).
+        if parsed.filters().next().is_some() || parsed.partials().next().is_some() {
+            self.search(parsed, generation);
+        } else {
+            self.heading.set_visible(false);
+        }
+    }
+
+    /// Search for what is typed now.
+    fn search_typed(&self) {
+        let typed = self.entry.text();
+        let typed = typed.trim();
+        if typed.is_empty() {
+            return;
+        }
+        let parsed =
+            postio_search::natural::lower(typed, chrono::Local::now().date_naive(), &|_: &str| {
+                None
+            });
+        self.clear_rows();
+        self.search(parsed, self.generation.get());
     }
 
     /// The chips the words were lowered to, in order.
@@ -845,7 +874,11 @@ impl Bar {
             return;
         };
         let action = match row {
-            Row::Heading | Row::Search => return,
+            Row::Heading => return,
+            Row::Search => {
+                self.search_typed();
+                return;
+            }
             Row::Message { message, subject } => BarAction::Open { message, subject },
             Row::Command(ActionId::Builtin(command)) => BarAction::Command(command),
             Row::Command(ActionId::Ext(_)) => return,
