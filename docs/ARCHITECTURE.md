@@ -17,12 +17,14 @@ in [`docs/archive/`](archive/); every finding it raised has since landed.
 graph TD
     app["<b>postio-app</b><br/><i>GTK binary</i><br/>a window, and the presenters that join the two halves"]
     tui["<b>postio-tui</b><br/><i>terminal binary</i><br/>ratatui · crossterm · Markdown in and out"]
+    focus["<b>postio-focus</b><br/><i>Postio Focus's GTK binary</i><br/>one dense inbox · markers · digests · filtering<br/><i>never the classic app's crates — CI enforced</i>"]
     host["<b>postio-host</b><br/><i>in each app's process</i><br/>every store operation, once · sync · upkeep"]
     client["<b>postio-client</b><br/>Req/Resp · commands down, events up<br/><i>no engine — CI enforced</i>"]
     session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
 
     subgraph view ["frontend"]
         gtk["<b>postio-gtk</b><br/>GTK4 · libadwaita · WebKitGTK<br/><i>no SQL · no protocol</i>"]
+        widgets["<b>postio-widgets</b><br/>what both desktop apps draw with<br/>message view · composer · keycaps · chips<br/><i>no store · no protocol · no host</i>"]
     end
 
     subgraph engine ["the database half"]
@@ -45,14 +47,27 @@ graph TD
         model["<b>postio-model</b><br/>domain types · JWZ threading"]
     end
 
+    subgraph focusdomain ["Focus's engine work"]
+        classify["<b>postio-classify</b><br/>filter · hold · mark, in layers<br/><i>no send path · no network</i>"]
+        calendar["<b>postio-calendar</b><br/>invitations · RSVP replies<br/><i>pure leaf</i>"]
+        ai["<b>postio-ai</b><br/>the user's own model, on this computer<br/><i>no send path · no store · no model</i>"]
+        vault["<b>postio-vault</b><br/>Obsidian tasks and notes<br/><i>files only · no network</i>"]
+    end
+
     app --> session
     app --> gtk
     app --> host
     app --> client
     tui --> client
     tui --> host
+    focus --> widgets
+    focus --> host
+    focus --> client
+    focus --> session
     host --> session
     host --> client
+    host --> ai
+    host --> calendar
     client --> core
     session --> runtime
     session --> core
@@ -60,6 +75,10 @@ graph TD
     gtk --> search
     gtk --> body
     gtk --> config
+    gtk --> widgets
+    widgets --> core
+    widgets --> client
+    widgets --> body
     runtime --> sync
     runtime --> index
     runtime --> core
@@ -67,6 +86,12 @@ graph TD
     sync --> imap
     sync --> smtp
     sync --> storage
+    sync --> classify
+    ai --> classify
+    ai --> config
+    classify --> search
+    calendar --> model
+    vault --> model
     index --> search
     index --> model
     core --> config
@@ -79,8 +104,8 @@ graph TD
 
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
-    class model,search pure
-    class core,gtk,session,client,tui guard
+    class model,search,calendar pure
+    class core,gtk,session,client,tui,widgets,focus,classify,ai,vault guard
 ```
 
 Arrows are "depends on", and every arrow drawn is a real direct dependency.
@@ -89,6 +114,17 @@ edges to most leaves (it is the composition root — it assembles them, which
 says nothing about rank), and edges already implied by a path through the
 diagram, such as `postio-runtime -> postio-search` or the fact that very
 nearly everything depends on `postio-model`.
+
+**Postio Focus added six crates** (`specs/007-postio-focus`). `postio-focus`
+is the second desktop app, a sibling of `postio-app` that never depends on it
+or on `postio-gtk`. `postio-widgets` is what both desktop apps draw with
+([ADR 0043](decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md)).
+The other four are Focus's engine work, and the classic app could use each
+of them too. `postio-classify` decides what is filtered, held and marked.
+The filing pass in `postio-sync` and the host's body-stage task call it.
+`postio-calendar` reads invitations and writes their replies. `postio-ai`
+asks the user's own model. `postio-vault` writes to an Obsidian vault, and
+nothing links it yet: the capture sheet that will is still to be built.
 
 `postio-app` and `postio-session` are one rank, split along one line: does it
 name a toolkit. Everything the application *is* — the store, the runtime, the
@@ -103,7 +139,7 @@ Dashed borders mark the crates whose dependency closure CI polices
 (`scripts/checks/check-crate-boundaries.py`).
 
 **One app opens the store at a time** ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
-The desktop, terminal and macOS apps each run `postio-host` inside their own
+The two desktop apps, the terminal and the macOS app each run `postio-host` inside their own
 process and reach mail only through `postio-client`, whose in-process
 transport is a spawn and a oneshot. The host is where every store operation
 is written once -- paging, reading, search, compose, settings, onboarding,
@@ -324,6 +360,25 @@ hide inside the thing meant to catch it.
   free of what any one of them draws with; the terminal opens the store
   through the host like every app, and is held to being small
   (`specs/005-tui-frontend` FR-051) by leaving GTK and WebKit out.
+- **`postio-widgets` must not depend on the database engine, the protocol,
+  the host or either desktop app**, and **`postio-focus` must not depend on
+  `postio-gtk` or `postio-app`, nor `postio-gtk` on `postio-focus`.** The
+  widgets reach mail only through `postio-client`, and neither desktop app
+  stands on the other
+  ([ADR 0043](decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md)).
+- **`postio-classify` links nothing that sends mail or reaches the network**,
+  and **`postio-calendar` is a pure leaf**: no database engine, toolkit,
+  async runtime or network. The classifier's answer is a fixed schema, and it
+  cannot send mail by construction (ADR 0009).
+- **`postio-ai` links no send path, no store, no toolkit, no inference engine
+  and no HTTP client but `io-http`.** It speaks to the user's own model, and
+  its endpoint can only name this computer (`specs/007-postio-focus` FR-165,
+  FR-168).
+- **`postio-vault` links no network crate, toolkit or database engine**, and
+  no async runtime. It appends Markdown to a folder on this computer.
+- **No app binary links an inference engine**: not `postio-app`,
+  `postio-focus`, `postio-tui` or `postio-ffi`. The model is the user's own,
+  run beside Postio, and optional.
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an
@@ -348,10 +403,11 @@ searches and pages mail; compose is deferred, and it is not yet released.
 The invariant is what made that possible, and it was not a theory: measured on
 2026-08-27, when the workspace had fifteen crates, **thirteen of them built and
 tested on macOS with no changes at all** — everything but `postio-gtk` and
-`postio-app`, which is still the exclusion set today at twenty crates.
-`cargo check --workspace --all-targets --exclude postio-gtk --exclude
-postio-app` exits 0 there; the whole-workspace run fails only on `glib-sys`
-wanting `glib-2.0` from `pkg-config`. The boundary this section describes
+`postio-app`. `cargo check --workspace --all-targets --exclude postio-gtk
+--exclude postio-app` exited 0 there; the whole-workspace run failed only on
+`glib-sys` wanting `glib-2.0` from `pkg-config`. The GTK crates are still the
+exclusion set, and Focus added two to it, `postio-widgets` and
+`postio-focus`, which link GTK as well. The boundary this section describes
 turns out to be exactly where the portable half ends.
 
 `scripts/issue-land.sh` enforces the same line at landing time: a changed crate
@@ -427,6 +483,15 @@ Two constraints already decided, before any of it is built:
   and the body contains instructions. This is an actively exploited class of
   attack against mail-reading agents, and it is the dominant design constraint
   on `postio-z3b.2` rather than an afterthought.
+
+**The one exception is Postio Focus's model** (the constitution's Scope,
+`specs/007-postio-focus` research R16). `postio-ai` is built, and narrower
+than ADR 0009's provider trait: it is a client for one model the user runs
+on this computer and names in `[focus.model]`. Both constraints above hold
+by construction. It has no send path in its graph (§9), and it asks questions
+in a fixed schema whose answers are checked before they are believed: a quote
+or excerpt that is not found in the mail is dropped. Without the model, a
+built-in detector answers.
 
 ### 13. The composer's document is not the toolkit's buffer
 

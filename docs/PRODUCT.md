@@ -99,6 +99,34 @@ as its own package, smaller than the desktop one. Images are labelled
 placeholders that open in the system viewer; drawing them in the terminal is
 the next iteration.
 
+**Postio Focus is a second desktop app on the same store** —
+`postio-focus`, [`specs/007-postio-focus`](../specs/007-postio-focus/spec.md).
+It has no folder sidebar and no reading pane. Home is one dense inbox, driven
+from the keyboard, that shows mail as it arrived, and a message opens in a
+dialog over it, one message at a time. Beside what the classic app does, it
+does four things to mail:
+
+- it calls out real actions: an invitation, a direct question, a to-do;
+- it holds some mail back into digests, on a cadence the user sets;
+- it files spam and automated updates away, each with its reason and one key
+  from restored;
+- it captures mail into an Obsidian vault as a task or a note.
+
+Its filing and digest rules act only while Focus runs. It has the same
+commands and keys as the classic app, and both desktop apps draw with the
+same widgets, from `postio-widgets`
+([ADR 0043](decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md)).
+It is one app at a time with the others, like the terminal. It ships in the
+desktop Flatpak as a second launcher, not as a package of its own. Its
+settings are `[focus]` in [`config.toml`](config.md).
+
+**Focus may use a model the user runs on this computer**, named in
+`[focus.model]`. It is optional and off until named, it is reached only on
+this computer, and it is never required: without it, a built-in rule-based
+detector marks questions and to-dos, and a digest opens on its list of mail
+instead of a summary. Postio ships, downloads and starts no model (the
+constitution's Scope).
+
 ---
 
 ## 3. Accounts and providers
@@ -422,8 +450,9 @@ has the measurements and the policy.
 
 ## 12. AI
 
-**Deferred to post-v1 by decision, not by accident** (§23). The two constraints
-that bind whenever it does arrive are already fixed:
+**Deferred to post-v1 by decision, not by accident** (§23). The one exception
+is the model a user may run for Postio Focus (§2). The two constraints that
+bind whenever it does arrive are already fixed:
 
 - **AI must never silently modify or send mail.** Read and search may be
   exposed relatively freely; every externally visible action — send, forward,
@@ -449,7 +478,8 @@ See [ADR 0009](decisions/0009-ai-subsystem.md). In short: a `postio-ai` crate
 behind a provider trait covering local and cloud models, with per-account and
 per-feature data-sharing permissions — and with no send path in its dependency
 closure, so "AI cannot send mail" is a fact CI checks rather than a rule
-somebody remembers.
+somebody remembers. What is built so far is narrower: Focus's client for the
+user's own local model (§2, `ARCHITECTURE.md` §12).
 
 ---
 
@@ -660,15 +690,18 @@ full-text search with operators, an instant search box, and saved searches
 pinned in the sidebar; vim-style navigation, a command palette and
 configurable shortcuts; an encrypted local store, background sync, offline
 reading, undo, desktop notifications. All of it in a terminal too, on the
-same store as the desktop app (§2).
+same store as the desktop app (§2). And a second desktop app, Postio Focus
+(§2): one dense inbox with action markers, digests, filtering with reasons,
+and Obsidian capture, with a local model the user may bring for questions,
+to-dos and digest summaries.
 
 **Out, deliberately:** Rules — the language is shared and the design is
 [ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
 contacts management surface, and vCard import and export — the tables are
 there, the screen is not. Microsoft Graph. PGP and S/MIME, phishing and link
 warnings. Windows. Images drawn inside the terminal (placeholders there
-for now). **And AI** — a founding principle, deferred so that core
-mail, search and the keyboard land excellently first. Shipping AI over a
+for now). **And AI**, beyond Focus's optional model — a founding principle,
+deferred so that core mail, search and the keyboard land excellently first. Shipping AI over a
 mediocre mail client would produce a mediocre mail client with AI in it.
 
 Each of these has an issue and an ADR; none of them is forgotten.
