@@ -111,11 +111,11 @@ impl Req {
             Req::StoredBody(_) => "StoredBody",
             Req::ExportMessages(_) => "ExportMessages",
             Req::Account(_) => "Account",
-            Req::Discover(_) => "Discover",
-            Req::BeginOAuth(_) => "BeginOAuth",
+            Req::Discover { .. } => "Discover",
+            Req::BeginOAuth { .. } => "BeginOAuth",
             Req::FinishOAuth(_) => "FinishOAuth",
             Req::CancelOAuth(_) => "CancelOAuth",
-            Req::AddAccount(_) => "AddAccount",
+            Req::AddAccount { .. } => "AddAccount",
             Req::AccountSettings { .. } => "AccountSettings",
             Req::EditAccount(..) => "EditAccount",
             Req::SaveSignature { .. } => "SaveSignature",
@@ -685,7 +685,19 @@ impl Client {
         &self,
         address: String,
     ) -> Result<postio_ui::onboarding::Status, StoreError> {
-        self.read(Req::Discover(address), "discovery", |answer| match answer {
+        self.discover_until(address, crate::protocol::Stop::new())
+            .await
+    }
+
+    /// [`discover`](Self::discover), stopped where it stands when `stop` is
+    /// pulled; a stopped probe answers as one that found nothing.
+    pub async fn discover_until(
+        &self,
+        address: String,
+        stop: crate::protocol::Stop,
+    ) -> Result<postio_ui::onboarding::Status, StoreError> {
+        let request = Req::Discover { address, stop };
+        self.read(request, "discovery", |answer| match answer {
             Resp::Onboarding(status) => Some(*status),
             _ => None,
         })
@@ -693,11 +705,26 @@ impl Client {
     }
 
     /// Begin a browser sign-in; the answer is the consent URL, unopened.
+    /// Once the sign-in is proved and saved, the account's sync starts.
     pub async fn begin_oauth(
         &self,
         submission: postio_ui::onboarding::Submission,
     ) -> Result<postio_ui::onboarding::BrowserSignIn, StoreError> {
-        let request = Req::BeginOAuth(Box::new(submission));
+        self.begin_oauth_then(submission, crate::protocol::AfterSave::Sync)
+            .await
+    }
+
+    /// [`begin_oauth`](Self::begin_oauth), doing `then` once the account is
+    /// saved.
+    pub async fn begin_oauth_then(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+        then: crate::protocol::AfterSave,
+    ) -> Result<postio_ui::onboarding::BrowserSignIn, StoreError> {
+        let request = Req::BeginOAuth {
+            submission: Box::new(submission),
+            then,
+        };
         self.read(request, "a sign-in", |answer| match answer {
             Resp::Consent(consent) => Some(*consent),
             _ => None,
@@ -732,14 +759,28 @@ impl Client {
         .await
     }
 
-    /// Prove and save a new account. The error is the sentence the first-run
-    /// screen shows.
+    /// Prove and save a new account, and start its sync. The error is the
+    /// sentence the first-run screen shows.
     pub async fn add_account(
         &self,
         submission: postio_ui::onboarding::Submission,
     ) -> Result<(), StoreError> {
+        self.add_account_then(submission, crate::protocol::AfterSave::Sync)
+            .await
+    }
+
+    /// Prove and save an account, then do `then`. The error is the sentence
+    /// the form shows; a refused proof writes nothing.
+    pub async fn add_account_then(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+        then: crate::protocol::AfterSave,
+    ) -> Result<(), StoreError> {
         self.read(
-            Req::AddAccount(Box::new(submission)),
+            Req::AddAccount {
+                submission: Box::new(submission),
+                then,
+            },
             "a new account",
             |answer| match answer {
                 Resp::Done => Some(()),

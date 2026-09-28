@@ -263,11 +263,22 @@ pub enum Req {
     /// Change an account the way the settings' account commands do.
     Account(AccountOp),
     /// Look up the servers for a new account's address.
-    Discover(String),
+    Discover {
+        /// The address as typed.
+        address: String,
+        /// How the frontend stops the probe: the person typed another
+        /// address, pressed Connect, or walked away from the form (#57).
+        stop: Stop,
+    },
     /// Begin a browser sign-in for a new account; answered with the consent
     /// URL, which nothing opens: the frontend shows it, and opens it only
     /// when asked.
-    BeginOAuth(Box<postio_ui::onboarding::Submission>),
+    BeginOAuth {
+        /// What the form held.
+        submission: Box<postio_ui::onboarding::Submission>,
+        /// What the host does once the account is saved.
+        then: AfterSave,
+    },
     /// Wait for the sign-in for this address to finish, and the account to
     /// be saved.
     FinishOAuth(String),
@@ -275,7 +286,12 @@ pub enum Req {
     CancelOAuth(String),
     /// Prove a new account's credentials and save it (the password goes to
     /// the keyring and nowhere else).
-    AddAccount(Box<postio_ui::onboarding::Submission>),
+    AddAccount {
+        /// What the form held.
+        submission: Box<postio_ui::onboarding::Submission>,
+        /// What the host does once the account is saved.
+        then: AfterSave,
+    },
     /// Every account the settings show -- all but those being removed --
     /// each with its folders and role map, and, when `weights`, what its
     /// mail weighs. One read for the whole panel.
@@ -642,6 +658,103 @@ pub struct PrivacyLog {
     /// How many messages, in every account, asked for a read receipt.
     pub read_receipts: u64,
 }
+
+/// What the host does with a new account once it is saved.
+///
+/// The terminal's first run syncs at once. A desktop app starts the sync
+/// itself: its first run asks how far back to sync after the account is
+/// saved and before any mail is fetched, its add-account dialog brings the
+/// new account into a window that is already running, and a credential
+/// update is over an account whose sync is running already. A second engine
+/// for one account, or one started under the wrong sync window, is what
+/// [`AfterSave::Wait`] keeps out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AfterSave {
+    /// Start the account's sync.
+    #[default]
+    Sync,
+    /// Save it and nothing more: the frontend starts what it needs.
+    Wait,
+}
+
+/// A frontend's way to stop work it asked the host for, where it stands.
+///
+/// A discovery probe opens connections to servers the person has not named
+/// yet, so one the person has moved on from -- another address typed,
+/// Connect pressed, the form closed -- must stop at once rather than hold a
+/// socket open for an answer nobody reads (#57, ADR 0012 Q3). The host is in
+/// the frontend's process (ADR 0041), so this is shared, not sent: whatever
+/// the host hangs on [`Stop::on_stop`] runs inside [`Stop::stop`], on the
+/// frontend's own thread, before `stop` returns.
+#[derive(Clone, Default)]
+pub struct Stop(std::sync::Arc<std::sync::Mutex<Stopping>>);
+
+/// Whether a [`Stop`] has fired, and what runs when it does.
+#[derive(Default)]
+struct Stopping {
+    stopped: bool,
+    hooks: Vec<Box<dyn FnOnce() + Send>>,
+}
+
+impl Stop {
+    /// A stop nobody has pulled.
+    pub fn new() -> Stop {
+        Stop::default()
+    }
+
+    /// Stop the work, now: every hook runs before this returns. Pulling it
+    /// again does nothing.
+    pub fn stop(&self) {
+        let hooks = {
+            let mut stopping = self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            stopping.stopped = true;
+            std::mem::take(&mut stopping.hooks)
+        };
+        for hook in hooks {
+            hook();
+        }
+    }
+
+    /// Whether it has been pulled.
+    pub fn is_stopped(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stopped
+    }
+
+    /// Run `hook` when the stop is pulled, or now, if it already has been.
+    pub fn on_stop(&self, hook: impl FnOnce() + Send + 'static) {
+        let mut stopping = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if stopping.stopped {
+            drop(stopping);
+            hook();
+        } else {
+            stopping.hooks.push(Box::new(hook));
+        }
+    }
+}
+
+impl std::fmt::Debug for Stop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Stop").field(&self.is_stopped()).finish()
+    }
+}
+
+/// Two stops are equal when they are the same stop.
+impl PartialEq for Stop {
+    fn eq(&self, other: &Stop) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Stop {}
 
 /// A browser sign-in a frontend completed and proved, to be saved.
 ///

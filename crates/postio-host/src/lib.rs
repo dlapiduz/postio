@@ -851,7 +851,8 @@ impl Inner {
                 Ok(()) => Resp::Done,
                 Err(error) => Resp::Failed(error),
             },
-            Req::BeginOAuth(submission) => match self.begin_oauth(*submission).await {
+            Req::BeginOAuth { submission, then } => match self.begin_oauth(*submission, then).await
+            {
                 Ok(consent) => Resp::Consent(Box::new(consent)),
                 Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
             },
@@ -870,8 +871,11 @@ impl Inner {
                 }
                 Resp::Done
             }
-            Req::Discover(address) => Resp::Onboarding(Box::new(self.discover(&address).await)),
-            Req::AddAccount(submission) => match self.add_account(*submission).await {
+            Req::Discover { address, stop } => {
+                Resp::Onboarding(Box::new(self.discover(&address, stop).await))
+            }
+            Req::AddAccount { submission, then } => match self.add_account(*submission, then).await
+            {
                 Ok(()) => Resp::Done,
                 Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
             },
@@ -1178,12 +1182,24 @@ impl Inner {
     /// the desktop's probe, options and reading of it
     /// (`postio_session::onboarding`). What the probe offered for JMAP is
     /// kept for the submission that follows.
-    async fn discover(&self, address: &str) -> postio_ui::onboarding::Status {
+    ///
+    /// `stop` is the frontend's: pulling it cancels the probe's token on
+    /// the spot, so a probe the person has moved on from holds no socket
+    /// open (#57), and it answers as one that found nothing.
+    async fn discover(
+        &self,
+        address: &str,
+        stop: postio_client::protocol::Stop,
+    ) -> postio_ui::onboarding::Status {
         let probe = postio_account::discovery::Probe::with_options(
             self.wiring.discovery.clone(),
             postio_session::onboarding::probe_options(),
         );
         let cancel = postio_account::discovery::CancelToken::new();
+        stop.on_stop({
+            let cancel = cancel.clone();
+            move || cancel.cancel()
+        });
         match probe.run(address, &cancel).await {
             Ok(report) => {
                 let jmap = report.settings().and_then(|settings| {
@@ -1225,15 +1241,20 @@ impl Inner {
     async fn begin_oauth(
         &self,
         submission: postio_ui::onboarding::Submission,
+        then: postio_client::protocol::AfterSave,
     ) -> Result<postio_ui::onboarding::BrowserSignIn, String> {
         let key = submission.address.to_ascii_lowercase();
-        let offer = self
+        let probed = self
             .oauth_offers
             .lock()
             .expect("never poisoned")
             .get(&key)
-            .cloned()
-            .ok_or_else(|| "This address's provider has no browser sign-in.".to_owned())?;
+            .cloned();
+        let offer = match probed {
+            Some(offer) => Some(offer),
+            None => self.stored_offers(&key).await.1,
+        }
+        .ok_or_else(|| "This address's provider has no browser sign-in.".to_owned())?;
         let client = submission
             .oauth_client
             .clone()
@@ -1254,7 +1275,9 @@ impl Inner {
         let scopes = offer.scopes.clone();
         let refresh = offer.refresh_token_lifetime_days;
         let provider = postio_session::onboarding::provider_name(&submission.settings);
+        let saved_scopes = scopes.clone();
         self.runtime().spawn(async move {
+            let scopes = saved_scopes;
             let settings = postio_session::onboarding::connection_settings(&submission);
             let signed_in = postio_session::onboarding::run_sign_in(
                 &settings, &client, &offer, &opener, &cancel,
@@ -1278,7 +1301,7 @@ impl Inner {
                 }
                 Err(postio_session::onboarding::SignInError::Failed(reason)) => Err(reason),
             };
-            if outcome.is_ok() {
+            if outcome.is_ok() && then == postio_client::protocol::AfterSave::Sync {
                 start_engine_for(&wiring, &engines, &submission.address).await;
             }
             let _ = finished.send(Some(outcome));
@@ -1293,13 +1316,7 @@ impl Inner {
             .unwrap_or_default();
         Ok(postio_ui::onboarding::BrowserSignIn {
             provider,
-            scopes: self
-                .oauth_offers
-                .lock()
-                .expect("never poisoned")
-                .get(&key)
-                .map(|offer| offer.scopes.clone())
-                .unwrap_or_default(),
+            scopes,
             redirect_uri,
             authorize_url: url.to_string(),
         })
@@ -1333,17 +1350,25 @@ impl Inner {
     /// Prove `submission`'s credentials, save the account, and start its
     /// sync: the desktop's order, so a refused sign-in writes nothing. The
     /// error is the first-run screen's sentence.
+    ///
+    /// `then` says whether the host starts the account's sync or leaves it
+    /// to the frontend (`AfterSave`).
     async fn add_account(
         &self,
         submission: postio_ui::onboarding::Submission,
+        then: postio_client::protocol::AfterSave,
     ) -> Result<(), String> {
-        let jmap = self
+        let key = submission.address.to_ascii_lowercase();
+        let probed = self
             .offers
             .lock()
             .expect("never poisoned")
-            .get(&submission.address.to_ascii_lowercase())
-            .cloned()
-            .flatten();
+            .get(&key)
+            .cloned();
+        let jmap = match probed {
+            Some(offer) => offer,
+            None => self.stored_offers(&key).await.0,
+        };
         let backend = match &self.wiring.mail {
             // Handed a mail server (a test's), the proof is signing in to it.
             Some(mail) => postio_account::backend::MailBackend::connect(mail.backend.as_ref())
@@ -1360,8 +1385,57 @@ impl Inner {
         )
         .await?;
         // Its engine, and only its: the others are already running.
-        start_engine_for(&self.wiring, &self.engines, &submission.address).await;
+        if then == postio_client::protocol::AfterSave::Sync {
+            start_engine_for(&self.wiring, &self.engines, &submission.address).await;
+        }
         Ok(())
+    }
+
+    /// What an account already saved at `address` was signed in with: its
+    /// JMAP session and its browser sign-in's endpoints. A credential
+    /// update proves over what the account already uses, with no probe
+    /// first -- the form arrives filled in from the account's own row.
+    async fn stored_offers(
+        &self,
+        address: &str,
+    ) -> (
+        Option<postio_account::discovery::JmapOffer>,
+        Option<postio_account::discovery::OAuthOffer>,
+    ) {
+        let Ok(connection) = self.wiring.database.read().await else {
+            return (None, None);
+        };
+        let Some(account) = postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .ok()
+            .and_then(|accounts| {
+                accounts
+                    .into_iter()
+                    .find(|account| account.address.address.eq_ignore_ascii_case(address))
+            })
+        else {
+            return (None, None);
+        };
+        let jmap = match &account.backend {
+            postio_model::account::Backend::Jmap { session_url } => {
+                Some(postio_account::discovery::JmapOffer {
+                    session_url: session_url.clone(),
+                })
+            }
+            postio_model::account::Backend::Imap | postio_model::account::Backend::Gmail => None,
+        };
+        let oauth = account
+            .oauth
+            .as_ref()
+            .map(|oauth| postio_account::discovery::OAuthOffer {
+                issuer: None,
+                authorize: Some(oauth.authorize_url.clone()),
+                token: Some(oauth.token_url.clone()),
+                scopes: oauth.scopes.split_whitespace().map(str::to_owned).collect(),
+                refresh_token_lifetime_days: oauth.refresh_token_lifetime_days,
+            });
+        (jmap, oauth)
     }
 
     /// A search, as the desktop's bar runs it: in the scope asked (every

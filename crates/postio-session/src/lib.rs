@@ -397,9 +397,15 @@ impl Wiring {
         events: EventSink,
         commands: postio_core::bridge::CommandSender,
     ) -> Self {
+        let egress = egress::EgressRecorder::start(database.clone());
         Wiring {
             store: Arc::new(LocalStore::new(&database)),
-            egress: egress::EgressRecorder::start(database.clone()),
+            // A probe opens connections too, and they go in the same log as
+            // the engines' (#151).
+            discovery: Arc::new(
+                postio_account::discovery::PimalayaTransport::new().with_egress(egress.clone()),
+            ),
+            egress,
             database,
             blobs,
             runtime,
@@ -412,7 +418,6 @@ impl Wiring {
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
             mail: None,
-            discovery: Arc::new(postio_account::discovery::PimalayaTransport::new()),
             filing: postio_runtime::FilingSlot::default(),
             focus: focus::FocusSettings::default(),
         }

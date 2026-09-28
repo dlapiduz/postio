@@ -994,6 +994,154 @@ fn a_refused_password_is_said_as_the_desktop_says_it() {
     );
 }
 
+/// Whether the host has an engine syncing the account at `address`.
+fn syncing(world: &World, client: &Client, address: &str) -> bool {
+    let account = world
+        .rt
+        .block_on(client.accounts())
+        .expect("accounts")
+        .into_iter()
+        .find(|account| account.address.address == address)
+        .expect("the account was saved");
+    world
+        .host()
+        .inner
+        .engines
+        .running
+        .lock()
+        .expect("never poisoned")
+        .contains_key(&account.id)
+}
+
+#[test]
+fn a_desktop_add_saves_the_account_and_leaves_its_sync_to_the_app() {
+    // T165: the desktop apps start a new account's sync themselves -- the
+    // first run once the person has chosen how far back, the add-account
+    // dialog through the running window -- so an engine the host started
+    // here would be a second one, or one under the wrong window.
+    let world = onboarding_world(postio_account::backend::MockBackend::new());
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    world
+        .rt
+        .block_on(client.add_account_then(
+            submission("correct horse"),
+            postio_client::protocol::AfterSave::Wait,
+        ))
+        .expect("added");
+    assert!(
+        !syncing(&world, &client, "grace@example.test"),
+        "the host started a sync the desktop app starts itself"
+    );
+
+    // The terminal's add, beside it, syncs at once.
+    let mut terminal = submission("correct horse");
+    terminal.address = "lena@example.test".into();
+    world
+        .rt
+        .block_on(client.add_account(terminal))
+        .expect("added");
+    assert!(syncing(&world, &client, "lena@example.test"));
+}
+
+/// Holds every discovery step open until the probe is stopped, keeping the
+/// token it was handed so a test can ask afterwards whether the stop
+/// reached it.
+#[derive(Default)]
+struct Hanging(std::sync::Mutex<Option<postio_account::discovery::CancelToken>>);
+
+impl Hanging {
+    async fn hold(
+        &self,
+        cancel: &postio_account::discovery::CancelToken,
+    ) -> postio_account::discovery::TransportError {
+        *self.0.lock().expect("never poisoned") = Some(cancel.clone());
+        cancel.cancelled().await;
+        postio_account::discovery::TransportError::new("stopped")
+    }
+}
+
+/// [`Hanging`], shared with the test that reads its token.
+struct Held(std::sync::Arc<Hanging>);
+
+#[async_trait::async_trait]
+impl postio_account::discovery::DiscoveryTransport for Held {
+    async fn autoconfig(
+        &self,
+        _endpoint: postio_account::discovery::AutoconfigEndpoint<'_>,
+        cancel: &postio_account::discovery::CancelToken,
+    ) -> Result<
+        postio_account::discovery::DiscoveryAutoconfig,
+        postio_account::discovery::TransportError,
+    > {
+        Err(self.0.hold(cancel).await)
+    }
+
+    async fn srv(
+        &self,
+        _domain: &str,
+        cancel: &postio_account::discovery::CancelToken,
+    ) -> Result<
+        postio_account::discovery::DiscoverySrvReport,
+        postio_account::discovery::TransportError,
+    > {
+        Err(self.0.hold(cancel).await)
+    }
+
+    async fn mx(
+        &self,
+        _domain: &str,
+        cancel: &postio_account::discovery::CancelToken,
+    ) -> Result<Vec<String>, postio_account::discovery::TransportError> {
+        Err(self.0.hold(cancel).await)
+    }
+}
+
+#[test]
+fn a_stopped_discovery_has_stopped_its_connections_when_the_stop_returns() {
+    // #57, through the host (T165): a probe the person walked away from
+    // holds no socket open. The form checks its token the moment it pulls
+    // the stop, so the stop reaches the transport before it returns.
+    let hanging = std::sync::Arc::new(Hanging::default());
+    let transport = Held(hanging.clone());
+    let world =
+        World::configured(move |wiring| wiring.with_discovery(std::sync::Arc::new(transport)));
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let stop = postio_client::protocol::Stop::new();
+    let asked = world.rt.spawn({
+        let client = client.clone();
+        let stop = stop.clone();
+        async move { client.discover_until("ada@example.com".into(), stop).await }
+    });
+    let token = world.rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(token) = hanging.0.lock().expect("never poisoned").clone() {
+                    return token;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the probe reached the transport")
+    });
+    assert!(!token.is_cancelled(), "the probe began already stopped");
+
+    stop.stop();
+    assert!(
+        token.is_cancelled(),
+        "the stop returned with the probe's connections still open"
+    );
+    let answer = world
+        .rt
+        .block_on(asked)
+        .expect("the ask finished")
+        .expect("a stopped probe still answers");
+    assert!(
+        matches!(answer, postio_ui::onboarding::Status::Manual { .. }),
+        "{answer:?}"
+    );
+}
+
 #[test]
 fn a_submission_never_shows_its_password() {
     let shown = format!("{:?}", submission("correct horse"));
