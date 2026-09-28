@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gio, glib};
 
 use crate::startup::{self, Session};
 use crate::window::FocusWindow;
@@ -29,7 +29,13 @@ pub fn application() -> adw::Application {
     // `StartupWMClass` names the same id (postio-gtk's `app.rs` has the
     // history).
     glib::set_prgname(Some(APP_ID));
-    adw::Application::builder().application_id(APP_ID).build()
+    adw::Application::builder()
+        .application_id(APP_ID)
+        // The desktop entry registers `x-scheme-handler/postio` with `%U`,
+        // so a `postio://` link clicked elsewhere arrives as a file to
+        // open; without this flag GApplication drops it (T159).
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .build()
 }
 
 /// The whole program: open the store, show the inbox, run until closed.
@@ -119,8 +125,20 @@ pub fn run() -> glib::ExitCode {
         }
     });
 
-    // No arguments for GTK to parse: Focus takes none yet.
-    let code = application.run_with_args::<&str>(&[]);
+    // A `postio://` link: the window first, as a launch would bring it,
+    // then the message the link names -- gone to, never acted on.
+    application.connect_open(|application, files, _| {
+        application.activate();
+        let window = application.active_window().and_downcast::<FocusWindow>();
+        if let Some(window) = window {
+            for file in files {
+                window.open_link(&file.uri());
+            }
+        }
+    });
+
+    // The command line's only arguments are links to open.
+    let code = application.run();
 
     // The engines first, then the clean-shutdown mark, before the host's
     // runtime goes with it.

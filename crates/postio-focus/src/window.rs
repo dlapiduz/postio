@@ -132,6 +132,8 @@ mod imp {
         pub remind: RefCell<Option<Rc<WhenPicker>>>,
         /// The label picker, built the first time `l` opens it.
         pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
+        /// A `postio://` link that arrived before the store was open.
+        pub pending_link: RefCell<Option<String>>,
         /// The move picker, built the first time `m` opens it.
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
     }
@@ -182,6 +184,7 @@ mod imp {
                 remind: RefCell::default(),
                 labels: RefCell::default(),
                 moves: RefCell::default(),
+                pending_link: RefCell::default(),
             }
         }
     }
@@ -948,6 +951,9 @@ impl FocusWindow {
         ));
         imp.pane.replace(Some(pane));
         imp.client.replace(Some(client.clone()));
+        if let Some(uri) = imp.pending_link.take() {
+            self.open_link(&uri);
+        }
         imp.pages.set_visible_child_name(INBOX);
         feed.open(ListScope::Focus(FocusScope::Inbox));
 
@@ -1250,14 +1256,44 @@ impl FocusWindow {
         });
     }
 
-    /// `Enter`: the conversation under the cursor, over the list (screen 04).
-    fn open_message(&self) {
-        let (Some(pane), Some(row)) = (self.pane(), self.cursor_row()) else {
+    /// Go to the message a `postio://` link names (T159, US15 scenario 2):
+    /// open it over the list and do nothing else to it. A link that is not
+    /// one of Postio's, or names a message not in this store, is refused
+    /// with a sentence. A link that arrives before the store is open waits
+    /// for it.
+    pub fn open_link(&self, uri: &str) {
+        let Some(message) = postio_ui::links::message(uri) else {
+            self.imp().toast.show_notice(postio_ui::links::UNKNOWN);
+            self.follow_toast();
             return;
         };
         let Some(client) = self.imp().client.borrow().clone() else {
+            self.imp().pending_link.replace(Some(uri.to_owned()));
             return;
         };
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                use postio_model::listing::MailStore as _;
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
+                // host answers on its own runtime (ADR 0041).
+                let found = client.message_rows(vec![message]).await;
+                let Some(row) = found.ok().and_then(|rows| rows.into_iter().next()) else {
+                    window.imp().toast.show_notice(postio_ui::links::GONE);
+                    window.follow_toast();
+                    return;
+                };
+                if let Some(reading) = window.reading_dialog() {
+                    reading.show_found(&window, message, &row.subject.unwrap_or_default());
+                }
+            }
+        ));
+    }
+
+    /// The open-email dialog, built the first time anything opens.
+    fn reading_dialog(&self) -> Option<Rc<crate::open::OpenMessage>> {
+        let client = self.imp().client.borrow().clone()?;
         let reading = self
             .imp()
             .reading
@@ -1277,6 +1313,17 @@ impl FocusWindow {
                 reading
             })
             .clone();
+        Some(reading)
+    }
+
+    /// `Enter`: the conversation under the cursor, over the list (screen 04).
+    fn open_message(&self) {
+        let (Some(pane), Some(row)) = (self.pane(), self.cursor_row()) else {
+            return;
+        };
+        let Some(reading) = self.reading_dialog() else {
+            return;
+        };
         let position = crate::open::Position {
             index: pane.cursor().selected(),
             total: pane.feed().list().n_items(),

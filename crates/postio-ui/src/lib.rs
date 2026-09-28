@@ -27,6 +27,7 @@ pub mod hints;
 pub mod keymap;
 pub mod keymap_sheet;
 pub mod label_colour;
+pub mod links;
 pub mod list;
 pub mod list_state;
 pub mod notify;

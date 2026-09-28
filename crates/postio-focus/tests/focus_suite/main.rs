@@ -27,8 +27,8 @@ mod bar;
 mod chrome;
 mod colours;
 mod corrections;
-mod desktop;
 mod cursor;
+mod desktop;
 mod empty;
 mod harness;
 mod has_action;
@@ -91,6 +91,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once",
         surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once as fn(),
+    ),
+    (
+        "desktop::a_postio_link_opens_its_message_and_an_unknown_one_is_refused",
+        desktop::a_postio_link_opens_its_message_and_an_unknown_one_is_refused as fn(),
     ),
     (
         "desktop::focus_says_which_application_it_is",
