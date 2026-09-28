@@ -194,6 +194,8 @@ const NAMED_KEYS: &[(&str, &str)] = &[
 /// `?` and `question` have to be the same chord, or a binding copied out of a
 /// GDK key table would never match a key the user can actually press.
 const PUNCTUATION_NAMES: &[(&str, char)] = &[
+    // Focus's has-action toggle (specs/007-postio-focus FR-017).
+    ("exclam", '!'),
     ("plus", '+'),
     ("minus", '-'),
     ("equal", '='),

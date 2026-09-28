@@ -191,3 +191,51 @@ fn a_picker_digest_and_filtered_view_fall_back_to_global_only() {
         "`x` in a picker reached through to the list underneath it"
     );
 }
+
+/// `!` is Focus's has-action toggle (specs/007-postio-focus T028). A
+/// punctuation key has two spellings -- the character a binding is written
+/// as, and the keysym name a key table, a `[keys]` override or a menu
+/// accelerator uses -- and both have to be one chord, or a menu draws no key
+/// for the command and an override spelled by name is refused.
+#[test]
+fn an_exclamation_mark_parses_by_either_name_and_resolves() {
+    use postio_ui::keymap::Outcome;
+
+    assert_eq!(
+        "exclam".parse::<Chord>(),
+        Ok(chord("!")),
+        "the keysym name is not the key"
+    );
+    assert_eq!(
+        Key::Char('!').keysym_name(),
+        "exclam",
+        "a menu cannot draw `!` from a name GTK has no keyval for"
+    );
+    assert_eq!(
+        postio_config::keys::binding_problem("exclam"),
+        None,
+        "the settings validator refuses a spelling the resolver accepts"
+    );
+    // Shift is how `!` is typed; with a character and without one, the
+    // press is the chord the binding was written as.
+    for character in [Some('!'), None] {
+        assert_eq!(
+            Chord::from_platform_key(character, Some("exclam"), Modifiers::SHIFT),
+            Some(chord("!")),
+            "{character:?}"
+        );
+    }
+
+    let mut keymap = Keymap::new();
+    keymap
+        .bind(KeyContext::List, "!", "toggle_has_action")
+        .unwrap();
+    let mut resolver = Resolver::new(keymap);
+    let pressed =
+        Chord::from_platform_key(Some('!'), Some("exclam"), Modifiers::SHIFT).expect("a chord");
+    assert_eq!(
+        resolver.press(&pressed, KeyContext::List, false, std::time::Instant::now()),
+        Outcome::Command("toggle_has_action".to_owned()),
+        "pressing `!` did not reach the command bound to it"
+    );
+}

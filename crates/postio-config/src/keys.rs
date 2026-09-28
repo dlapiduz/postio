@@ -62,6 +62,7 @@ pub const KEY_NAMES: &[&str] = &[
     "kp_add",
     "kp_subtract",
     "kp_0",
+    "exclam",
     "plus",
     "minus",
     "equal",
