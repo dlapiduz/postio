@@ -13,9 +13,6 @@ use crate::support;
 /// control. Every one misses its command-bar row until the command bar
 /// exists (US4); the rest wait for the surfaces their stories build.
 const NOT_YET: &[&str] = &[
-    // The commands lane's verbs, with no Focus surface yet.
-    "dismiss_marker",
-    "sweep_inbox",
     "next_message",
     "prev_message",
     "first_message",
