@@ -41,9 +41,21 @@ At most one per message; the row draws one.
 | `answer` | `TEXT CHECK (answer IN ('accepting','accepted','declining','declined'))` | `accepting`/`declining` last while the RSVP's window is open |
 | `dismissed_at` | `INTEGER` | Set when the user dismisses the marker. It then never returns on this message (FR-108) |
 
-Index: `idx_markers_open (message_id) WHERE dismissed_at IS NULL AND answer IS
-NULL AND coalesce(invite_state,'open') = 'open'`. The has-action scope and its
-count use it.
+Indexes, as built (T109):
+
+- **`idx_markers_invite`** finds an invitation's markers by UID for an update
+  or a cancellation (`MarkerRepository::invitations`).
+- **`idx_markers_open` is not built.** It was planned as a partial index,
+  `WHERE dismissed_at IS NULL AND answer IS NULL AND …`, and this engine's
+  planner does not read partial indexes. The has-action scope (T048) needs
+  its own seek, counted.
+
+What the repository does:
+
+- `insert` never overwrites.
+- `replace` keeps a dismissal.
+- `dismiss(None)` undoes a dismissal.
+- A page draws the conversation's newest marker that is not dismissed.
 
 ### `filter_decisions`
 
@@ -107,6 +119,15 @@ It is maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and
 when Sent syncs. It answers the "written to" guard with one lookup (FR-111),
 and gives completion its "wrote N times" (FR-052).
 
+As built (T075):
+
+- A send that fails takes its one back.
+- A Sent folder's sync counts only the rows its upsert inserted
+  (`UpsertReport.inserted_ids`), so a local copy the sync adopts by
+  Message-ID is not counted twice.
+- A Sent folder enumerated again after a UIDVALIDITY reset does count its
+  messages again. The contacts' `times_seen` shares that inflation.
+
 ### `focus_classified`
 
 | Column | Type | Meaning |
@@ -122,6 +143,10 @@ start reads: rows with no record, newest first (FR-141).
 
 - `settings`: the key `focus.move_recent` holds the last few Move
   destinations as JSON (R6).
+- `drafts.label_ids`: the labels chosen for a draft (`Draft.labels`, T077), a
+  list column on the draft's row, so loading a draft stays at three
+  statements. The send job applies them to the Sent copy and to the rest of
+  the conversation, as `add_label` does.
 - `egress_log.subsystem` gains `'model'` in milestone 2 (FR-168).
 
 ## Persisted: `config.toml`
@@ -175,13 +200,17 @@ rule for several senders still has to mean what search means.
 | `Delivery(DeliveryId)` | Messages | A digest delivery's messages (FR-125) |
 | `Held(rule)` | Messages | What a rule holds now (`g d`, FR-126) |
 
-`ThreadSummary` gains `marker: Option<MarkerSummary>`. It is filled only for
+`ThreadSummary` gains `copies`: the other accounts' threads a folded row
+stands for, filled for Focus and Unified (T161). Acting on the row aims at
+`MessageTarget::Threads(id + copies)`, so every copy moves (#1701 is the
+classic Unified row's gap). It also gains `marker: Option<MarkerSummary>`. It is filled only for
 Focus scopes, by one batched statement per page, so the classic app's reads
 are unchanged.
 
 ### `MarkerSummary` (what a row draws, no body needed)
 
-`{ kind, when: Option<When>, excerpt: Option<String>, answer: Option<Answer> }`.
+`{ kind, when: Option<When>, excerpt: Option<String>, answer: Option<Answer>, cancelled }`.
+`cancelled` is true for a cancelled invitation, which offers no answer (T109).
 `When` is either an event's start and end, or a due date. There is no
 `action`: `postio-model` cannot depend on `postio-core`, so a frontend derives
 the row's action from the kind and the answer (T033).

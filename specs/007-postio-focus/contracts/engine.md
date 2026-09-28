@@ -160,9 +160,13 @@ no toolkit, no network, no tokio.
 
 | Backend | Change |
 |---|---|
-| IMAP | The existing `HEADER.FIELDS` item gains `LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED` on incremental fetches only (`crates/postio-account/src/imap/fetch.rs:213-248`) |
-| JMAP | The header request asks for the same three fields |
-| Gmail | The metadata headers include the same three fields |
+| IMAP | A separate `BODY.PEEK[HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)]` item in the same FETCH, on incremental fetches only (`MailBackend::fetch_headers_for_filing`), so still one round trip |
+| JMAP | Not promoted. io-jmap 0.3's `JmapEmailProperty` has no `header:<name>` form, only every header, which is the cost ADR 0025 refused. JMAP mail learns the three from the body. Survey io-jmap again before landing |
+| Gmail | The metadata it already fetches carries them |
+
+`postio_model::promoted::PromotedHeaders` is the one reader of the three
+headers. An unknown value is `NULL`, and writing an unknown value never erases
+a known one.
 
 For everything else, `index_headers` fills the two columns when the body
 arrives (`crates/postio-index/src/index.rs:565`). Search gains `is:bulk` and
