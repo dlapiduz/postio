@@ -329,6 +329,10 @@ const CASES: &[(&str, fn())] = &[
         state::offline_a_label_shows_at_once_and_queues_and_search_answers as fn(),
     ),
     (
+        "state::during_a_first_sync_what_has_arrived_opens_and_is_found",
+        state::during_a_first_sync_what_has_arrived_opens_and_is_found as fn(),
+    ),
+    (
         "state::each_sync_state_shows_its_banner_and_label",
         state::each_sync_state_shows_its_banner_and_label as fn(),
     ),
