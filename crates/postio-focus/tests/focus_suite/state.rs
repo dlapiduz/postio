@@ -121,6 +121,90 @@ pub fn each_sync_state_shows_its_banner_and_label() {
     });
 }
 
+/// US6 scenario 3 (T055): "Update password…" on the sign-in banner opens
+/// the credential dialog both desktop apps share, for the account the
+/// server refused, filled in from its row.
+pub fn update_password_on_the_sign_in_banner_opens_the_credential_dialog() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || !window.rows_on_screen().is_empty()).await,
+            "the inbox never reached the screen"
+        );
+        assert!(sink.emit(Event::ConnectionChanged {
+            account: fixture.account.id,
+            state: ConnectionState::Failing {
+                reason: FailureReason::Auth,
+            },
+        }));
+        assert!(
+            crate::settle_until(async || {
+                window.banner_showing().is_some_and(|(_, button, _)| {
+                    button.as_deref() == Some("Update password\u{2026}")
+                })
+            })
+            .await,
+            "no sign-in banner: {:?}",
+            window.banner_showing()
+        );
+
+        // The banner's button, pressed.
+        support::only(&window, "focus-banner")
+            .downcast::<adw::Banner>()
+            .expect("the banner")
+            .emit_by_name::<()>("button-clicked", &[]);
+
+        let form = || form_in(window.upcast_ref());
+        assert!(
+            crate::settle_until(async || form().is_some()).await,
+            "Update password\u{2026} opened no credential dialog"
+        );
+        let form = form().expect("the credential form");
+        assert_eq!(form.address(), fixture.account.address.address);
+        assert!(
+            matches!(
+                form.status(),
+                postio_widgets::onboarding::Status::Reauthenticate(ref settings)
+                    if settings.imap.host == fixture.account.incoming.host
+            ),
+            "the form is not a repair of the refused account: {:?}",
+            form.status()
+        );
+    });
+}
+
+/// The account form anywhere under `widget`, dialogs included.
+fn form_in(widget: &gtk::Widget) -> Option<postio_widgets::onboarding::Onboarding> {
+    if let Ok(form) = widget
+        .clone()
+        .downcast::<postio_widgets::onboarding::Onboarding>()
+    {
+        return Some(form);
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(form) = form_in(&current) {
+            return Some(form);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
 /// US6 scenario 1, the archive half: with no network, `a` takes the row
 /// away at once and queues the move for sync. Labelling and searching wait
 /// for their surfaces (the label picker, the command bar).

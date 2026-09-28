@@ -111,6 +111,10 @@ const CASES: &[(&str, fn())] = &[
         state::each_sync_state_shows_its_banner_and_label as fn(),
     ),
     (
+        "state::update_password_on_the_sign_in_banner_opens_the_credential_dialog",
+        state::update_password_on_the_sign_in_banner_opens_the_credential_dialog as fn(),
+    ),
+    (
         "rows::the_inbox_opens_with_its_first_heading_on_screen",
         rows::the_inbox_opens_with_its_first_heading_on_screen as fn(),
     ),

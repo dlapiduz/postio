@@ -401,6 +401,7 @@ impl FocusWindow {
             CommandId::ToggleHasAction => self.toggle_has_action(),
             CommandId::Quit => self.close(),
             CommandId::Refresh => self.post(Command::Refresh),
+            CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
@@ -1041,6 +1042,44 @@ impl FocusWindow {
         self.chrome()
             .map(|chrome| chrome.sync_said())
             .unwrap_or_default()
+    }
+
+    /// "Update password…": the credential dialog both desktop apps share,
+    /// for the account the sign-in banner names (US6 scenario 3). Once the
+    /// new password is saved, sync tries again at once.
+    fn update_credential(&self) {
+        let imp = self.imp();
+        let Some(client) = imp.client.borrow().clone() else {
+            return;
+        };
+        let statuses = imp.trackers.borrow().statuses(&imp.tracked.borrow());
+        let Some(postio_ui::focus_state::Banner::SignIn { address, .. }) =
+            postio_ui::focus_state::banner(&statuses, &imp.facts.borrow())
+        else {
+            return;
+        };
+        let window = self.clone();
+        glib::spawn_future_local(async move {
+            let open_link = postio_widgets::present::onboarding::open_in_browser(&window);
+            let retry = {
+                let window = window.downgrade();
+                move || {
+                    if let Some(window) = window.upgrade() {
+                        window.post(Command::Refresh);
+                    }
+                }
+            };
+            // POSTIO-GLIB-SAFE: reading the account is a client call, a
+            // oneshot receive; the host answers on its own runtime.
+            postio_widgets::present::onboarding::update_credential(
+                &window,
+                &client,
+                move |account| account.address.address.eq_ignore_ascii_case(&address),
+                open_link,
+                retry,
+            )
+            .await;
+        });
     }
 
     /// `?`: the key map, over the window (screen 20).
