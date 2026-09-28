@@ -94,6 +94,11 @@ impl Session {
 /// here dials a server; [`Session::start_syncing`] does, after the first
 /// frame.
 pub fn adopt(window: &FocusWindow, host: Host, config: &postio_config::Config) -> Session {
+    // TODO(integration): pass config.toml's path with
+    // `FocusSetup::with_config_path` once the commands lane's host is
+    // merged here; without it the verbs that write `[focus]` (stop markers,
+    // never-filter, digest rules) refuse with a sentence. `app::run` has the
+    // path. `Host::stop` already runs on quit, through `Session::stop`.
     let focus = host.enable_focus(FocusSetup::default().with_config(config.focus.clone()));
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
