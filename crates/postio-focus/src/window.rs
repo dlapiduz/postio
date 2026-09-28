@@ -138,6 +138,9 @@ mod imp {
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
         /// The composer, in its dialog (US3), once an account is known.
         pub compose: RefCell<Option<Rc<crate::compose::Compose>>>,
+        /// Whether this window's last command answered an invitation: its
+        /// toast lasts the answer's window (FR-102), not an ordinary one's.
+        pub answering: Cell<bool>,
         /// Whether the composer's editing surface should start as soon as
         /// the composer is mounted: asked for before an account was known.
         pub warm: Cell<bool>,
@@ -192,6 +195,7 @@ mod imp {
                 pending_link: RefCell::default(),
                 compose: RefCell::default(),
                 warm: Cell::default(),
+                answering: Cell::default(),
             }
         }
     }
@@ -658,6 +662,12 @@ impl FocusWindow {
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
             CommandId::Move => self.open_moves(),
+            // Answered from the row (US8): the invitation the cursor is on.
+            CommandId::AcceptInvite | CommandId::DeclineInvite => {
+                if let Some(row) = self.cursor_row() {
+                    self.answer(&row, id);
+                }
+            }
             // The classic app's composer, in its dialog (US3).
             CommandId::Compose | CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 if let Some(compose) = self.compose() {
@@ -966,6 +976,23 @@ impl FocusWindow {
             move || window.list_landed()
         ));
         let pane = ListPane::new(feed.clone(), self.keymap(), imp.picked.clone());
+        // A row's drawn action does what its key does, for that row.
+        pane.connect_row_action(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |row, command| match command {
+                CommandId::AcceptInvite | CommandId::DeclineInvite => window.answer(row, command),
+                _ => {
+                    if let Some(position) = window
+                        .pane()
+                        .and_then(|pane| pane.feed().list().position_of(row.id()))
+                    {
+                        window.cursor_to(Some(position));
+                    }
+                    window.act(command);
+                }
+            }
+        ));
         let empty = crate::empty::EmptyInbox::new();
         empty.connect_command(glib::clone!(
             #[weak(rename_to = window)]
@@ -1159,6 +1186,18 @@ impl FocusWindow {
         });
     }
 
+    /// Answer the invitation `row` carries, as `id` says: through the host,
+    /// which queues the reply for the answer's window (FR-102).
+    fn answer(&self, row: &FocusRow, id: CommandId) {
+        let message = Some(row.id());
+        let command = match id {
+            CommandId::DeclineInvite => Command::DeclineInvite { message },
+            _ => Command::AcceptInvite { message },
+        };
+        self.imp().answering.set(true);
+        self.post(command);
+    }
+
     /// Say the counts the host last gave: the strip's, the toggle's, and
     /// how many of how many the filter is showing.
     fn show_counts(&self) {
@@ -1242,9 +1281,20 @@ impl FocusWindow {
                 description,
                 undoable,
             } => {
-                self.imp()
-                    .toast
-                    .show_action_completed(description, *undoable);
+                // An answer's Undo works while its reply waits, so its toast
+                // stays exactly that long (FR-102).
+                if self.imp().answering.replace(false) {
+                    let window = postio_session::actions::RSVP_WINDOW.as_secs();
+                    self.imp().toast.show_action_completed_for(
+                        description,
+                        *undoable,
+                        u32::try_from(window).unwrap_or(u32::MAX),
+                    );
+                } else {
+                    self.imp()
+                        .toast
+                        .show_action_completed(description, *undoable);
+                }
                 self.follow_toast();
             }
             Event::UndoPerformed { description } => {
@@ -1252,6 +1302,7 @@ impl FocusWindow {
                 self.follow_toast();
             }
             Event::CommandRejected { reason, .. } => {
+                self.imp().answering.set(false);
                 self.imp().toast.show_notice(reason);
                 self.follow_toast();
             }
@@ -1765,6 +1816,8 @@ impl FocusWindow {
         commands.extend(crate::bar::Bar::controls());
         commands.push(CommandId::Undo);
         commands.extend(crate::compose::Compose::controls());
+        // The answering actions a marked row draws, each a button.
+        commands.extend([CommandId::AcceptInvite, CommandId::DeclineInvite]);
         commands.sort_by_key(|command| command.as_str());
         commands.dedup();
         commands
@@ -2035,6 +2088,12 @@ impl FocusWindow {
             .borrow()
             .as_ref()
             .and_then(|toast| toast.title().map(|title| title.to_string()))
+    }
+
+    /// The toast on screen, if one is: its words, its button and how long
+    /// it stays.
+    pub fn toast(&self) -> Option<adw::Toast> {
+        self.imp().on_screen.borrow().clone()
     }
 
     /// Take the toast on screen away, as its timeout would.

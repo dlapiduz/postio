@@ -34,6 +34,7 @@ mod drafts;
 mod empty;
 mod harness;
 mod has_action;
+mod invitations;
 mod keymap;
 mod list_contract;
 mod marked_rows;
@@ -167,6 +168,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
+    ),
+    (
+        "invitations::y_accepts_from_the_row_and_the_toast_lasts_the_window",
+        invitations::y_accepts_from_the_row_and_the_toast_lasts_the_window as fn(),
+    ),
+    (
+        "invitations::a_click_on_the_row_s_decline_declines",
+        invitations::a_click_on_the_row_s_decline_declines as fn(),
+    ),
+    (
+        "invitations::a_cancelled_or_past_invitation_offers_no_answer",
+        invitations::a_cancelled_or_past_invitation_offers_no_answer as fn(),
     ),
     (
         "offline_send::offline_a_send_is_in_the_outbox_at_once_and_leaves_once",

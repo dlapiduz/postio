@@ -10,7 +10,7 @@ use gtk::{glib, graphene};
 use super::feed::Feed;
 use super::heading::DayHeading;
 use super::model::RowObject;
-use super::row::{RowWidget, SharedKeymap};
+use super::row::{ActionHandler, RowWidget, SharedKeymap};
 
 /// The list pane: what scrolls, what draws, and where its rows come from.
 #[derive(Clone)]
@@ -22,6 +22,8 @@ pub struct ListPane {
     keymap: SharedKeymap,
     /// Whether the list is held at its top, first heading showing.
     pinned: Rc<Cell<bool>>,
+    /// What a press on a row's drawn action runs, once the window says.
+    on_action: Rc<std::cell::RefCell<Option<ActionHandler>>>,
 }
 
 /// The selection a list's rows draw their boxes from.
@@ -32,10 +34,12 @@ impl ListPane {
     /// and their selection boxes from `picked`.
     pub fn new(feed: Feed, keymap: postio_core::Keymap, picked: SharedSelection) -> Self {
         let keymap: SharedKeymap = std::rc::Rc::new(std::cell::RefCell::new(keymap));
+        let on_action: Rc<std::cell::RefCell<Option<ActionHandler>>> = Rc::default();
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup({
             let keymap = keymap.clone();
             let picked = picked.clone();
+            let on_action = Rc::clone(&on_action);
             move |_, item| {
                 let item = item
                     .downcast_ref::<gtk::ListItem>()
@@ -43,6 +47,13 @@ impl ListPane {
                 let row = RowWidget::default();
                 row.set_keymap(keymap.clone());
                 row.set_selection(picked.clone());
+                let on_action = Rc::clone(&on_action);
+                row.set_on_action(Rc::new(move |item, command| {
+                    let handler = on_action.borrow().clone();
+                    if let Some(handler) = handler {
+                        handler(item, command);
+                    }
+                }));
                 item.set_child(Some(&row));
             }
         });
@@ -99,7 +110,17 @@ impl ListPane {
             feed,
             keymap,
             pinned,
+            on_action,
         }
+    }
+
+    /// Run `handler` when a row's drawn action is pressed, with the row's
+    /// item and the action's command.
+    pub fn connect_row_action(
+        &self,
+        handler: impl Fn(&super::FocusRow, postio_core::CommandId) + 'static,
+    ) {
+        self.on_action.replace(Some(Rc::new(handler)));
     }
 
     /// Scroll to the very top, first heading showing, and hold it there

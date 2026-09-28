@@ -38,8 +38,6 @@ const NOT_YET: &[&str] = &[
     "delete",
     "move",
     "unsnooze",
-    "accept_invite",
-    "decline_invite",
     "stop_digesting_sender",
     // The commands lane's verbs (T118, T128): the engine answers them, and
     // nothing draws them until the bar (US4) and the marker card do.

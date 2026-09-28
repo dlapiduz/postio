@@ -83,9 +83,18 @@ impl Toast {
     /// [`postio_core::CommandId::Undo`] — one path, whichever one the user
     /// takes.
     pub fn show_action_completed(&self, description: &str, undoable: bool) {
+        self.show_action_completed_for(description, undoable, TOAST_TIMEOUT);
+    }
+
+    /// [`Self::show_action_completed`], staying `seconds` rather than
+    /// [`TOAST_TIMEOUT`]: for an action whose undo lasts a window of its own
+    /// -- an answer to an invitation, taken back only until its reply leaves
+    /// (specs/007-postio-focus FR-102) -- so the toast offers Undo exactly as
+    /// long as Undo works.
+    pub fn show_action_completed_for(&self, description: &str, undoable: bool, seconds: u32) {
         let toast = adw::Toast::builder()
             .title(description)
-            .timeout(TOAST_TIMEOUT)
+            .timeout(seconds)
             .build();
         if undoable {
             toast.set_button_label(Some("Undo"));

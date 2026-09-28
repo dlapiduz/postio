@@ -52,6 +52,31 @@ pub struct Drawn {
     pub ink: gdk::RGBA,
     /// The accent a marker was drawn in, when the row has one.
     pub accent: Option<gdk::RGBA>,
+    /// Each answering action drawn on the second line: its command, its
+    /// words and where its button is (x, y, width, height), so a click there
+    /// runs what its key runs.
+    pub actions: Vec<(postio_core::CommandId, String, [f32; 4])>,
+}
+
+impl Drawn {
+    /// Where the action button saying `words` was drawn: its centre, in the
+    /// row's coordinates.
+    pub fn action(&self, words: &str) -> Option<(f32, f32)> {
+        self.actions
+            .iter()
+            .find(|(_, said, _)| said == words)
+            .map(|(_, _, [x, y, width, height])| (x + width / 2.0, y + height / 2.0))
+    }
+
+    /// The action whose button covers `x`, `y`, if one does.
+    pub fn action_at(&self, x: f32, y: f32) -> Option<postio_core::CommandId> {
+        self.actions
+            .iter()
+            .find(|(_, _, [left, top, width, height])| {
+                (*left..=left + width).contains(&x) && (*top..=top + height).contains(&y)
+            })
+            .map(|(command, _, _)| *command)
+    }
 }
 
 impl Default for Drawn {
@@ -63,6 +88,7 @@ impl Default for Drawn {
             picked: false,
             ink: gdk::RGBA::TRANSPARENT,
             accent: None,
+            actions: Vec::new(),
         }
     }
 }
@@ -105,6 +131,10 @@ const KEYCAP_PAD: f32 = 4.0;
 /// and replaced when `[keys]` changes.
 pub type SharedKeymap = Rc<RefCell<Keymap>>;
 
+/// What a click on a row's drawn action runs: the command, for the row's
+/// item.
+pub type ActionHandler = Rc<dyn Fn(&FocusRow, postio_core::CommandId)>;
+
 mod imp {
     use super::*;
 
@@ -115,6 +145,7 @@ mod imp {
         pub drawn: RefCell<Drawn>,
         pub keymap: RefCell<Option<SharedKeymap>>,
         pub picked: RefCell<Option<postio_ui::selection::SelectionState>>,
+        pub on_action: RefCell<Option<ActionHandler>>,
     }
 
     #[glib::object_subclass]
@@ -130,6 +161,25 @@ mod imp {
     }
 
     impl ObjectImpl for RowWidget {
+        fn constructed(&self) {
+            self.parent_constructed();
+            // The answering actions on the second line are buttons a person
+            // can press, as the keys beside them say (constitution II): a
+            // press on one runs its command for this row, and nothing
+            // else takes the click.
+            let click = gtk::GestureClick::new();
+            click.connect_pressed(glib::clone!(
+                #[weak(rename_to = row)]
+                self.obj(),
+                move |gesture, _, x, y| {
+                    if row.press_at(x as f32, y as f32) {
+                        gesture.set_state(gtk::EventSequenceState::Claimed);
+                    }
+                }
+            ));
+            self.obj().add_controller(click);
+        }
+
         fn dispose(&self) {
             self.obj().unbind();
         }
@@ -278,6 +328,28 @@ impl RowWidget {
     /// What the row drew in its last snapshot.
     pub fn drawn(&self) -> Drawn {
         self.imp().drawn.borrow().clone()
+    }
+
+    /// Run what a click on an action at `x`, `y` runs; whether one was
+    /// there. Public, as the window's `handle_key` is, so a test presses
+    /// the button a person presses without synthesizing a pointer event.
+    pub fn press_at(&self, x: f32, y: f32) -> bool {
+        let Some(command) = self.imp().drawn.borrow().action_at(x, y) else {
+            return false;
+        };
+        let (Some(item), Some(handler)) = (
+            self.imp().item.borrow().clone(),
+            self.imp().on_action.borrow().clone(),
+        ) else {
+            return false;
+        };
+        handler(&item, command);
+        true
+    }
+
+    /// Run `handler` when one of the row's drawn actions is pressed.
+    pub fn set_on_action(&self, handler: ActionHandler) {
+        self.imp().on_action.replace(Some(handler));
     }
 
     /// The item shown, if its page has arrived.
@@ -558,6 +630,16 @@ impl RowWidget {
                 button,
                 ACTION_HEIGHT,
             );
+            drawn.actions.push((
+                *command,
+                (*words).to_owned(),
+                [
+                    right,
+                    SECOND_LINE - ACTION_HEIGHT / 2.0,
+                    button,
+                    ACTION_HEIGHT,
+                ],
+            ));
             let outline = gtk::gsk::RoundedRect::from_rect(frame, 5.0);
             snapshot.push_rounded_clip(&outline);
             snapshot.append_color(&palette.raised, &frame);
