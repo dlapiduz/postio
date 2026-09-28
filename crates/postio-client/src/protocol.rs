@@ -192,6 +192,17 @@ pub enum Req {
     RecipientDirectory(AccountId),
     /// The account's labels, for the finder's `+` and the label picker.
     Labels(AccountId),
+    /// How many conversations carry each of the account's labels, for
+    /// Focus's label picker (spec 007 US5, screen 13).
+    LabelCounts(AccountId),
+    /// Make a label the account does not have yet, or answer the one it
+    /// has by that name in any case: the label picker's "Create label".
+    CreateLabel {
+        /// Whose label.
+        account: AccountId,
+        /// Its name, as typed.
+        name: String,
+    },
     /// The labels on each of these conversations, for a page of Focus's
     /// list: its label pills (spec 007 T043).
     ThreadLabels(Vec<postio_model::ThreadId>),
@@ -338,6 +349,11 @@ pub enum Req {
     OrientationSeen,
     /// Write down that this installation is done with the orientation.
     RetireOrientation,
+    /// Where mail was last moved, newest first: the move picker's Recent
+    /// (spec 007 T098).
+    MoveRecent,
+    /// Put this folder first in the move picker's Recent.
+    NoteMove(MailboxId),
     /// Fetch this message's body ahead of the backfill: a person opened it.
     /// Posted; the body arrives as `BodyLoaded`.
     FetchBody(MessageId),
@@ -503,6 +519,13 @@ pub enum Resp {
     RecipientDirectory(RecipientDirectory),
     /// Labels, by name.
     Labels(Vec<postio_model::Label>),
+    /// Folders, newest first: the move picker's Recent.
+    MoveRecent(Vec<MailboxId>),
+    /// Each label with how many conversations carry it; a label nothing
+    /// carries is left out.
+    LabelCounts(Vec<(postio_model::LabelId, u32)>),
+    /// One label, or none when it could not be made.
+    Label(Option<postio_model::Label>),
     /// Each conversation's labels, in the order they were made.
     ThreadLabels(Vec<(postio_model::ThreadId, postio_model::Label)>),
     /// Focus's counts.

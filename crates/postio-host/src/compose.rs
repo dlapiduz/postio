@@ -526,6 +526,57 @@ pub async fn labels(database: &Store, account: AccountId) -> Vec<postio_model::L
     })
 }
 
+/// How many conversations carry each of `account`'s labels: the label
+/// picker's counts. Nothing, said in the log, when the store cannot answer:
+/// a label without its count is still the label.
+pub async fn label_counts(
+    database: &Store,
+    account: AccountId,
+) -> Vec<(postio_model::LabelId, u32)> {
+    let found = async {
+        let connection = database.read().await?;
+        postio_storage::repository::LabelRepository::new(&connection)
+            .counts(account)
+            .await
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not count the labels");
+        Vec::new()
+    })
+}
+
+/// The label `name` in `account`: the one it has by that name in any case,
+/// or a new one. A store write, local like every label change; the label
+/// reaches the server as the keyword on the first message it goes on.
+pub async fn create_label(
+    database: &Store,
+    account: AccountId,
+    name: &str,
+) -> Option<postio_model::Label> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let made = async {
+        let (connection, _permit) = database.interactive_write().await?;
+        let labels = postio_storage::repository::LabelRepository::new(&connection);
+        let existing = labels
+            .list(account)
+            .await?
+            .into_iter()
+            .find(|label| label.name.to_lowercase() == name.to_lowercase());
+        if let Some(existing) = existing {
+            return Ok::<_, postio_storage::Error>(existing);
+        }
+        let mut label = postio_model::Label::new(account, name);
+        labels.create(&mut label).await?;
+        Ok(label)
+    };
+    made.await
+        .map_err(|error| tracing::warn!(%error, "could not make a label"))
+        .ok()
+}
+
 /// The labels on each of `threads`: a Focus page's pills, read for the page
 /// in one statement (spec 007 T043). Nothing, said in the log, when the
 /// store cannot answer: a row without its pills is still the row.

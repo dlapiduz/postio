@@ -764,6 +764,12 @@ impl Inner {
             Req::Labels(account) => {
                 Resp::Labels(compose::labels(&self.wiring.database, account).await)
             }
+            Req::LabelCounts(account) => {
+                Resp::LabelCounts(compose::label_counts(&self.wiring.database, account).await)
+            }
+            Req::CreateLabel { account, name } => {
+                Resp::Label(compose::create_label(&self.wiring.database, account, &name).await)
+            }
             Req::ThreadLabels(threads) => {
                 Resp::ThreadLabels(compose::thread_labels(&self.wiring.database, &threads).await)
             }
@@ -923,6 +929,12 @@ impl Inner {
                 .map_or_else(Resp::Failed, Resp::Seen),
             Req::RetireOrientation => {
                 done(settings::retire_orientation(&self.wiring.database).await)
+            }
+            Req::MoveRecent => settings::move_recent(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::MoveRecent),
+            Req::NoteMove(mailbox) => {
+                done(settings::note_move(&self.wiring.database, mailbox).await)
             }
             Req::SaveAccount {
                 submission,

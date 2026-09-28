@@ -94,6 +94,8 @@ impl Req {
             Req::Correspondents(_) => "Correspondents",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
+            Req::LabelCounts(_) => "LabelCounts",
+            Req::CreateLabel { .. } => "CreateLabel",
             Req::ThreadLabels(_) => "ThreadLabels",
             Req::FocusCounts => "FocusCounts",
             Req::ReplySource(_) => "ReplySource",
@@ -126,6 +128,8 @@ impl Req {
             Req::SetBackfillExcluded { .. } => "SetBackfillExcluded",
             Req::OrientationSeen => "OrientationSeen",
             Req::RetireOrientation => "RetireOrientation",
+            Req::MoveRecent => "MoveRecent",
+            Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
             Req::StorageCeiling(_) => "StorageCeiling",
             Req::SaveAccount { .. } => "SaveAccount",
@@ -500,6 +504,41 @@ impl Client {
             Resp::Labels(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// How many conversations carry each of the account's labels: the
+    /// label picker's counts. A label nothing carries is left out.
+    pub async fn label_counts(
+        &self,
+        account: AccountId,
+    ) -> Result<Vec<(postio_model::LabelId, u32)>, StoreError> {
+        self.read(
+            Req::LabelCounts(account),
+            "label counts",
+            |answer| match answer {
+                Resp::LabelCounts(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Make the label `name` in `account`, or answer the one it already
+    /// has by that name in any case; `None` when the store refused.
+    pub async fn create_label(
+        &self,
+        account: AccountId,
+        name: String,
+    ) -> Result<Option<postio_model::Label>, StoreError> {
+        self.read(
+            Req::CreateLabel { account, name },
+            "a new label",
+            |answer| match answer {
+                Resp::Label(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 
@@ -988,6 +1027,20 @@ impl Client {
     /// Write down that the orientation is done with, for every later run.
     pub async fn retire_orientation(&self) -> Result<(), StoreError> {
         self.done(Req::RetireOrientation, "the orientation").await
+    }
+
+    /// Where mail was last moved, newest first: the move picker's Recent.
+    pub async fn move_recent(&self) -> Result<Vec<MailboxId>, StoreError> {
+        self.read(Req::MoveRecent, "recent moves", |answer| match answer {
+            Resp::MoveRecent(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Put `mailbox` first in the move picker's Recent.
+    pub async fn note_move(&self, mailbox: MailboxId) -> Result<(), StoreError> {
+        self.done(Req::NoteMove(mailbox), "a recent move").await
     }
 
     /// Save an account whose credentials were proved: the password to the

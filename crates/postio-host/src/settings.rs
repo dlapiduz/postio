@@ -262,6 +262,23 @@ pub async fn orientation_seen(database: &Store) -> Result<bool, StoreError> {
     Ok(seen.is_some())
 }
 
+/// Where mail was last moved, newest first: the move picker's Recent.
+pub async fn move_recent(database: &Store) -> Result<Vec<MailboxId>, StoreError> {
+    let reader = database.read().await?;
+    Ok(SettingsRepository::new(&reader.checkout())
+        .move_recent()
+        .await?)
+}
+
+/// Put `mailbox` first in the move picker's Recent.
+pub async fn note_move(database: &Store, mailbox: MailboxId) -> Result<(), StoreError> {
+    let connection = database.connect().await?;
+    SettingsRepository::new(&connection)
+        .note_move(mailbox)
+        .await?;
+    Ok(())
+}
+
 /// Write down that this installation is done with the orientation.
 ///
 /// The value is when, rather than `"true"`: a row that says only that

@@ -162,6 +162,41 @@ impl<'a> LabelRepository<'a> {
         )
     }
 
+    /// How many conversations carry each of `account`'s labels: a
+    /// conversation once however many of its messages carry the label, a
+    /// message in no conversation as one of its own, and a label nothing
+    /// carries left out.
+    ///
+    /// One statement for every label, sought through the account's labels
+    /// and each label's own index into its messages
+    /// (`idx_message_labels_label`): it reads one row per labelled message,
+    /// which is what counting them costs, and walks no table.
+    pub async fn counts(&self, account: AccountId) -> Result<Vec<(LabelId, u32)>> {
+        sql::all(
+            self.connection,
+            Self::explain_counts(),
+            [account.get()],
+            |row| {
+                let count: i64 = row.col(1)?;
+                Ok((
+                    LabelId::new(row.col(0)?),
+                    u32::try_from(count).unwrap_or(u32::MAX),
+                ))
+            },
+        )
+        .await
+    }
+
+    /// The SQL [`Self::counts`] runs, for `EXPLAIN QUERY PLAN`.
+    pub fn explain_counts() -> &'static str {
+        "SELECT ml.label_id, COUNT(DISTINCT COALESCE(m.thread_id, -m.id))
+           FROM labels l
+           JOIN message_labels ml ON ml.label_id = l.id
+           JOIN messages m ON m.id = ml.message_id
+          WHERE l.account_id = ?1
+          GROUP BY ml.label_id"
+    }
+
     /// Removes a label entirely. Answers whether there was one.
     ///
     /// `message_labels` cascades, so this takes it off every message carrying
