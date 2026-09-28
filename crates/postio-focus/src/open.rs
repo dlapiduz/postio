@@ -98,6 +98,20 @@ pub struct OpenMessage {
 }
 
 impl OpenMessage {
+    /// The commands the dialog has a control for: its toolbar, Close and
+    /// the two steps.
+    pub fn controls() -> Vec<CommandId> {
+        TOOLBAR
+            .iter()
+            .map(|action| action.command)
+            .chain([
+                CommandId::Back,
+                CommandId::PrevMessage,
+                CommandId::NextMessage,
+            ])
+            .collect()
+    }
+
     /// The dialog, reading through `client`, with the remote-image allow
     /// list at `allowlist` and its keys from `keymap`.
     ///

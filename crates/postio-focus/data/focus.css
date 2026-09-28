@@ -375,10 +375,18 @@ banner.focus-banner button {
 }
 
 .focus-bar-saved-pill {
+  min-height: 0;
   padding: 0 var(--postio-space-2);
   border: 1px solid var(--postio-hairline);
   border-radius: 999px;
+  background: none;
+  box-shadow: none;
   font-size: var(--postio-text-ui);
+  font-weight: normal;
+}
+
+.focus-bar-saved-pill:hover {
+  background-color: var(--postio-hover-bg);
 }
 
 .focus-bar-input {

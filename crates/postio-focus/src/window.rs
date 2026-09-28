@@ -1561,6 +1561,9 @@ impl FocusWindow {
             .into_iter()
             .map(|(_, _, command)| command),
         );
+        commands.extend(crate::open::OpenMessage::controls());
+        commands.extend(crate::places::Places::controls());
+        commands.extend(crate::bar::Bar::controls());
         commands.push(CommandId::Undo);
         commands.sort_by_key(|command| command.as_str());
         commands.dedup();

@@ -1,6 +1,8 @@
 //! The command bar (US4, T086; screens 07-09): `/` opens one bar for
 //! search, places and commands.
 
+use gtk::prelude::*;
+
 use crate::support::{self, Fixture};
 
 /// Open the bar over `window` with `/`.
@@ -172,6 +174,19 @@ pub fn alt_2_runs_the_second_saved_search() {
         assert!(
             said.contains(&"From Ada".to_owned()) && said.contains(&"alt+2".to_owned()),
             "the saved row names it with its key: {said:?}"
+        );
+        // Each pill is the control for its search: a click on the first
+        // runs it, as Alt+1 does.
+        let pills = support::with_class(bar.widget(), "focus-bar-saved-pill");
+        let first = pills
+            .first()
+            .and_then(|pill| pill.downcast_ref::<gtk::Button>())
+            .expect("a pill that can be pressed");
+        first.emit_clicked();
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Train ticket"]).await,
+            "pressing the first pill did not run it: {:?}",
+            bar.result_subjects()
         );
     });
 }

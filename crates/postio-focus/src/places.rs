@@ -92,6 +92,22 @@ pub struct Places {
 }
 
 impl Places {
+    /// The commands the popover has a row for: going to each mailbox that
+    /// has a key of its own.
+    pub fn controls() -> Vec<CommandId> {
+        [
+            MailboxRole::Inbox,
+            MailboxRole::Drafts,
+            MailboxRole::Sent,
+            MailboxRole::Archive,
+            MailboxRole::Snoozed,
+            MailboxRole::Flagged,
+        ]
+        .into_iter()
+        .filter_map(go_to)
+        .collect()
+    }
+
     /// A closed popover, anchored to `anchor`, reading through `client`.
     pub fn new(client: Client, keymap: &Keymap, anchor: &impl IsA<gtk::Widget>) -> Rc<Self> {
         let entry = gtk::SearchEntry::new();

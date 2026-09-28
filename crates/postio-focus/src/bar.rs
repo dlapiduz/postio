@@ -108,6 +108,12 @@ pub struct Bar {
 }
 
 impl Bar {
+    /// The commands the bar has a control for beyond its command rows: a
+    /// pill for each saved search, and a row for each message found.
+    pub fn controls() -> Vec<CommandId> {
+        SAVED.into_iter().chain([CommandId::OpenMessage]).collect()
+    }
+
     /// A closed bar, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let icon = gtk::Image::from_icon_name("system-search-symbolic");
@@ -304,15 +310,24 @@ impl Bar {
         self.saved_row.append(&title);
         let keymap = self.keymap.borrow();
         for (index, (name, _)) in saved.iter().enumerate() {
-            let pill = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-            pill.add_css_class("focus-bar-saved-pill");
-            pill.append(&gtk::Label::new(Some(name)));
+            let said = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+            said.append(&gtk::Label::new(Some(name)));
             if let Some(key) = SAVED
                 .get(index)
                 .and_then(|command| postio_ui::hints::key(&keymap, *command))
             {
-                pill.append(&keyhint::cap(&key));
+                said.append(&keyhint::cap(&key));
             }
+            let pill = gtk::Button::new();
+            pill.add_css_class("focus-bar-saved-pill");
+            pill.set_child(Some(&said));
+            pill.set_focus_on_click(false);
+            let weak = self.self_weak();
+            pill.connect_clicked(move |_| {
+                if let Some(bar) = weak.upgrade() {
+                    bar.open_saved(index);
+                }
+            });
             self.saved_row.append(&pill);
         }
     }
