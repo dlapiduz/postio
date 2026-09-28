@@ -262,6 +262,45 @@ pub async fn locate_part(
     Ok(row.raw_blob_id.map(PartSource::Raw))
 }
 
+/// `message`'s raw RFC 822 source, every byte as the server sent it: from the
+/// blob store when it is here, or fetched now when it is not.
+///
+/// Fetching is justified the way saving a never-downloaded part is: the
+/// person asked for these bytes by name (`view_source`, an export). Every
+/// byte, not the text axis: under ADR 0017 the background lane stores no raw
+/// source, so `request_body` would fetch the words, leave `raw_blob_id`
+/// empty, and the wait would run out its deadline for bytes nothing was
+/// fetching.
+pub async fn raw_source(
+    database: &Store,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    message: MessageId,
+) -> Result<Vec<u8>, String> {
+    let raw = match raw_blob(database, message).await? {
+        Some(raw) => raw,
+        None => {
+            let engine =
+                engine.ok_or("This account is not syncing, so that message cannot be fetched")?;
+            if engine
+                .request_whole_message(message)
+                .await
+                .map_err(|error| error.message().to_string())?
+            {
+                wait_for_body(database, message).await?
+            } else {
+                // "Nothing to fetch" may be a fetch that landed between the
+                // look above and the queue's answer (#109's race, as in
+                // `part_bytes`): one re-read settles it.
+                raw_blob(database, message)
+                    .await?
+                    .ok_or("There is nothing to fetch for that message")?
+            }
+        }
+    };
+    blobs.get(&raw).map_err(|error| error.to_string())
+}
+
 /// Just the raw-message blob key. What the wait watches for.
 pub async fn raw_blob(database: &Store, message: MessageId) -> Result<Option<BlobId>, String> {
     Ok(read_message(database, message).await?.raw_blob_id)

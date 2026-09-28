@@ -129,6 +129,7 @@ impl Req {
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
             Req::SweepPreview => "SweepPreview",
+            Req::RawSource(_) => "RawSource",
             Req::Surfaced => "Surfaced",
             Req::DigestPreview { .. } => "DigestPreview",
             Req::SaveDigestRule { .. } => "SaveDigestRule",
@@ -950,6 +951,22 @@ impl Client {
             "a sweep's count",
             |answer| match answer {
                 Resp::Count(count) => Some(count),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `message`'s raw RFC 822 source, every byte as the server sent it:
+    /// what `view_source` shows (spec 007 FR-033). Read from this machine
+    /// when it is here; otherwise fetched from the server on this call, and
+    /// on no other -- the person asked for these bytes by name.
+    pub async fn raw_source(&self, message: MessageId) -> Result<Vec<u8>, StoreError> {
+        self.read(
+            Req::RawSource(message),
+            "the message's source",
+            |answer| match answer {
+                Resp::RawSource(bytes) => Some(bytes),
                 _ => None,
             },
         )

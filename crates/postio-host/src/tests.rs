@@ -1853,7 +1853,7 @@ fn the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up() {
 
 /// A mail server holding one message in `INBOX`, as a synced account's
 /// would.
-fn server_with_one_message() -> postio_account::backend::MockBackend {
+pub(crate) fn server_with_one_message() -> postio_account::backend::MockBackend {
     use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     let raw = "Message-ID: <tide@example.com>\r\nFrom: Ada <ada@example.com>\r\nTo: Test User \
                <test@example.com>\r\nSubject: Tide gate\r\nDate: Tue, 22 Sep 2026 09:00:00 \
@@ -1868,7 +1868,7 @@ fn server_with_one_message() -> postio_account::backend::MockBackend {
 
 /// A host whose account can sync from `mock`, with no background body
 /// fetching: a body arrives only because somebody asked for it.
-fn syncing_world(mock: postio_account::backend::MockBackend) -> World {
+pub(crate) fn syncing_world(mock: postio_account::backend::MockBackend) -> World {
     use postio_account::secret::{AccountKey, Password, SecretStore};
     let secrets = std::sync::Arc::new(MemorySecretStore::new());
     tokio::runtime::Builder::new_current_thread()
@@ -1896,7 +1896,7 @@ fn syncing_world(mock: postio_account::backend::MockBackend) -> World {
 }
 
 /// The inbox row with `subject`, once there is one.
-fn row_titled(world: &World, client: &Client, subject: &str) -> Option<MessageId> {
+pub(crate) fn row_titled(world: &World, client: &Client, subject: &str) -> Option<MessageId> {
     let page = world
         .rt
         .block_on(client.list_page(PageRequest {

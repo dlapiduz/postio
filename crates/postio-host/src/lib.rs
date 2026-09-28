@@ -1042,6 +1042,17 @@ impl Inner {
             Req::DeleteDigestRule(name) => focus::rules::delete(self, name)
                 .await
                 .map_or_else(Resp::Failed, Resp::Count),
+            Req::RawSource(message) => match parts::raw_source(
+                &self.wiring.database,
+                &self.wiring.blobs,
+                self.wiring.engine.get().cloned(),
+                message,
+            )
+            .await
+            {
+                Ok(bytes) => Resp::RawSource(bytes),
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
             Req::Surfaced => focus::surfaced(self)
                 .await
                 .map_or_else(Resp::Failed, Resp::Surfaced),

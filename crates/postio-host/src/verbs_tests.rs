@@ -1767,3 +1767,42 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
     assert!(focus_in(&path).digests.is_empty(), "gone from the file");
     assert!(holds(&world).is_empty(), "and its mail rejoined the inbox");
 }
+
+#[test]
+fn view_source_fetches_the_raw_message_when_asked_and_not_before() {
+    // Spec 007 US2 scenario 5, T068: `v` shows the raw message's header
+    // lines. The background lane stores no raw source (ADR 0017), so the
+    // bytes come from the server on the key press -- and only then.
+    use crate::tests::{eventually, row_titled, server_with_one_message, syncing_world};
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, _events) = world.frontend(ClientKind::Gtk);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    assert!(mock.body_fetches().is_empty(), "nothing fetched before `v`");
+
+    let raw = world
+        .rt
+        .block_on(client.raw_source(message))
+        .expect("the raw source");
+    let text = String::from_utf8(raw).expect("the fixture is text");
+    assert!(text.contains("Subject: Tide gate\r\n"), "{text}");
+    assert!(text.contains("From: Ada <ada@example.com>\r\n"), "{text}");
+    assert!(
+        text.contains("Message-ID: <tide@example.com>\r\n"),
+        "{text}"
+    );
+    assert_eq!(
+        mock.body_fetches(),
+        vec!["INBOX".to_owned()],
+        "fetched once, on the request"
+    );
+
+    // Asked again, the source is on this machine and nothing is fetched.
+    let again = world
+        .rt
+        .block_on(client.raw_source(message))
+        .expect("the raw source again");
+    assert_eq!(String::from_utf8(again).expect("text"), text);
+    assert_eq!(mock.body_fetches().len(), 1, "read from the blob store");
+}

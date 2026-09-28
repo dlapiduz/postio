@@ -329,6 +329,10 @@ pub enum Req {
     /// Focus's filtering rules (spec 007 FR-118): what the sweep says before
     /// it moves anything. Answered as a count.
     SweepPreview,
+    /// A message's raw RFC 822 source, as `view_source` shows it: read from
+    /// the blob store, or fetched from the server on this request when it
+    /// was never downloaded (spec 007 FR-033). Answered as bytes.
+    RawSource(MessageId),
     /// The rows Focus's inbox surfaces among its conversations: the digests
     /// delivered and not archived, and the reminders that fired, each with
     /// its time and position (spec 007, contracts/engine.md).
@@ -480,6 +484,8 @@ pub enum Resp {
     Surfaced(Vec<postio_model::listing::Surfaced>),
     /// A digest rule's preview.
     DigestPreview(DigestPreview),
+    /// A message's raw source, every byte as the server sent it.
+    RawSource(Vec<u8>),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }
