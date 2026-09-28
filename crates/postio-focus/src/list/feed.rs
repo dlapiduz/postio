@@ -114,8 +114,12 @@ impl Feed {
             // Which folders are inboxes: what lets Focus's inbox ignore mail
             // moving anywhere else rather than re-read on every arrival.
             let mut folders = Vec::new();
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
             if let Ok(accounts) = inner.client.accounts().await {
                 for account in accounts.iter().filter(|account| account.enabled) {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+                    // answers on its own runtime (ADR 0041).
                     if let Ok(mailboxes) = inner.client.mailboxes(account.id).await {
                         folders.extend(
                             mailboxes
@@ -126,6 +130,8 @@ impl Feed {
                 }
             }
             inner.paging.borrow_mut().set_folders(folders);
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
             let total = match inner.client.list_count(scope).await {
                 Ok(total) => total,
                 Err(error) => {
@@ -203,6 +209,8 @@ impl Inner {
                         .iter()
                         .flat_map(|row| row.id.into_iter().chain(row.copies.iter().copied()))
                         .collect();
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+                    // answers on its own runtime (ADR 0041).
                     let mut labelled = match client.thread_labels(threads).await {
                         Ok(labelled) => labelled,
                         Err(error) => {
