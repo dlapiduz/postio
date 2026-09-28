@@ -155,6 +155,31 @@ impl<'a> CorrespondentRepository<'a> {
         )
     }
 
+    /// Every address the person has written to, normalised, with how many
+    /// messages each: recipient completion's "wrote N times" for a whole
+    /// directory at once (spec 007 FR-052, T076). One statement, over the
+    /// correspondents -- the people the person writes to, a few hundred --
+    /// never over the contacts.
+    pub async fn sent_counts(&self) -> Result<std::collections::HashMap<String, u32>> {
+        let rows: Vec<(String, i64)> =
+            sql::all(self.connection, &Self::explain_sent_counts(), (), |row| {
+                Ok((row.col(0)?, row.col(1)?))
+            })
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(address, sent)| (address, sent.max(0) as u32))
+            .collect())
+    }
+
+    /// The SQL [`Self::sent_counts`] runs.
+    pub fn explain_sent_counts() -> String {
+        "SELECT a.address_normalized, c.sent_count
+           FROM correspondents c JOIN addresses a ON a.id = c.address_id
+          WHERE c.sent_count > 0"
+            .to_owned()
+    }
+
     /// The SQL [`Self::get`] runs: a seek on the address, then the key.
     pub fn explain_get(&self) -> String {
         "SELECT c.sent_count, c.last_sent_at

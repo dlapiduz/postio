@@ -125,3 +125,130 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
         bridge.shutdown();
     });
 }
+
+/// Seen on `seen` messages, the last `days_ago`: a correspondent completion
+/// knows of.
+async fn sighted(
+    connection: &postio_storage::Connection,
+    account: postio_model::AccountId,
+    address: &str,
+    seen: u32,
+    days_ago: i64,
+) {
+    let contacts = ContactRepository::new(connection);
+    let at = chrono::Utc::now() - chrono::Duration::days(days_ago);
+    for _ in 0..seen {
+        contacts
+            .record(
+                Some(account),
+                &EmailAddress::new(None::<String>, address),
+                at,
+            )
+            .await
+            .expect("a sighting");
+    }
+}
+
+/// Spec 007 US3 scenario 6, in the classic composer (T076): an address the
+/// user wrote to 42 times is offered before one seen on a hundred messages,
+/// more lately, and never written to -- the one rule both apps share,
+/// `postio_ui::recipients::suggest`.
+pub fn an_address_written_to_is_offered_before_one_only_seen() {
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
+
+        let database = test_support::memory().await;
+        seed_small(&database, 11).await;
+        {
+            let connection = database.connect().await.expect("checkout");
+            let account = postio_storage::repository::AccountRepository::new(&connection)
+                .list()
+                .await
+                .expect("accounts")
+                .into_iter()
+                .next()
+                .expect("the seed made an account");
+            sighted(&connection, account.id, "quill.often@example.com", 100, 0).await;
+            sighted(&connection, account.id, "quill.wrote@example.net", 50, 30).await;
+            postio_storage::sql::execute(
+                &connection,
+                "INSERT INTO addresses (address, address_normalized)
+                 VALUES ('quill.wrote@example.net', 'quill.wrote@example.net')",
+                (),
+            )
+            .await
+            .expect("the address");
+            postio_storage::sql::execute(
+                &connection,
+                "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
+                 SELECT id, 42, NULL FROM addresses
+                  WHERE address_normalized = 'quill.wrote@example.net'",
+                (),
+            )
+            .await
+            .expect("written to 42 times");
+        }
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+        let window = Window::default();
+        window.present();
+        settle();
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+        settle();
+
+        window.handle_key(gdk::Key::c, gdk::ModifierType::empty());
+        let composer = window.composer();
+        assert!(composer.is_open(), "`c` did not open the composer");
+        let flip = std::cell::Cell::new(false);
+        let offered = settle_until(async || {
+            composer.test_set_to(if flip.replace(!flip.get()) {
+                "quill"
+            } else {
+                "quill."
+            });
+            composer.test_recipient_suggestion_count() >= 2
+        })
+        .await;
+        assert!(offered, "the composer never offered both addresses");
+
+        assert!(
+            composer.test_click_recipient_suggestion(0),
+            "no first suggestion"
+        );
+        settle();
+        let chosen: Vec<String> = composer
+            .draft()
+            .to
+            .iter()
+            .map(|address| address.address.clone())
+            .collect();
+        assert_eq!(
+            chosen,
+            ["quill.wrote@example.net"],
+            "the first suggestion was not the address written to 42 times"
+        );
+
+        bridge.shutdown();
+    });
+}

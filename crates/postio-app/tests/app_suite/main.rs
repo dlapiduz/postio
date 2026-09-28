@@ -272,6 +272,10 @@ const CASES: &[(&str, fn())] = &[
         compose_recipients::typing_a_recipient_opens_no_connections_and_still_completes as fn(),
     ),
     (
+        "compose_recipients::an_address_written_to_is_offered_before_one_only_seen",
+        compose_recipients::an_address_written_to_is_offered_before_one_only_seen as fn(),
+    ),
+    (
         "compose_typing::every_letter_can_be_typed_into_the_composer_body",
         compose_typing::every_letter_can_be_typed_into_the_composer_body as fn(),
     ),

@@ -45,7 +45,7 @@ use postio_model::ids::AccountId;
 use postio_model::{DraftId, DraftState};
 use postio_storage::{BlobStore, Store};
 
-use crate::recipients::Directory;
+use postio_client::protocol::RecipientDirectory;
 
 /// How many recipient suggestions to offer at once — a popover, not a list
 /// the user scrolls.
@@ -530,15 +530,19 @@ fn install_send_later(composer: &Composer, client: &Client, last_id: Rc<Cell<Opt
     });
 }
 
-/// Recipient completion, answered from memory (see [`crate::recipients`]).
+/// Recipient completion, answered from memory.
 ///
-/// The directory is read from the store's owner when this is installed and
-/// again each time the composer opens, so a contact first seen in mail that
+/// The composer asks for candidates on every keystroke in `To`, `Cc` and
+/// `Bcc`, synchronously, on the GTK thread, so the directory -- the
+/// account's groups and contacts, each with the letters the user wrote to
+/// it -- is read from the store's owner when this is installed and again
+/// each time the composer opens, so a contact first seen in mail that
 /// arrived meanwhile is offered in the next composition. Every keystroke is
-/// then [`Directory::suggest`] over what was read: no call, no query,
+/// then `postio_ui::recipients::suggest` over what was read -- the one rule
+/// every app ranks by (spec 007 T076) -- with no call, no query, and
 /// nothing on the thread that draws.
 fn install_recipient_suggestions(composer: &Composer, client: Client, account: AccountId) {
-    let directory: Rc<RefCell<Rc<Directory>>> = Rc::default();
+    let directory: Rc<RefCell<Rc<RecipientDirectory>>> = Rc::default();
     let reload = {
         let directory = Rc::clone(&directory);
         move || {
@@ -548,10 +552,7 @@ fn install_recipient_suggestions(composer: &Composer, client: Client, account: A
                 // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
                 // host answers on its own runtime.
                 match client.recipient_directory(account).await {
-                    Ok(read) => {
-                        let contacts = read.contacts.into_iter().map(|row| row.contact).collect();
-                        *directory.borrow_mut() = Rc::new(Directory::new(read.groups, contacts));
-                    }
+                    Ok(read) => *directory.borrow_mut() = Rc::new(read),
                     Err(error) => tracing::warn!(%error, "could not read the contacts"),
                 }
             });
@@ -561,7 +562,12 @@ fn install_recipient_suggestions(composer: &Composer, client: Client, account: A
     composer.connect_opened(reload);
     composer.connect_recipient_suggestions(move |prefix| {
         let directory = Rc::clone(&directory.borrow());
-        directory.suggest(prefix, SUGGESTION_LIMIT as usize)
+        postio_ui::recipients::suggest(
+            &directory.groups,
+            &directory.contacts,
+            prefix,
+            SUGGESTION_LIMIT as usize,
+        )
     });
 }
 

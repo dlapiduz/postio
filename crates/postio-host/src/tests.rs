@@ -3703,3 +3703,70 @@ fn the_catch_up_leaves_the_row_under_the_cursor_where_it_is() {
         "the row under the cursor stayed"
     );
 }
+
+/// Spec 007 US3 scenario 6, in the terminal's completion (T076): the host
+/// ranks by the one rule both apps share, so an address written to 42
+/// times comes before one seen on a hundred messages and never written to;
+/// and the directory the desktop composer holds carries the count.
+#[test]
+fn an_address_written_to_is_offered_before_one_only_seen() {
+    let world = World::new();
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let contacts = postio_storage::repository::ContactRepository::new(&connection);
+        for (address, seen, days_ago) in [
+            ("quill.often@example.com", 100, 0),
+            ("quill.wrote@example.net", 50, 30),
+        ] {
+            let at = Utc::now() - chrono::Duration::days(days_ago);
+            for _ in 0..seen {
+                contacts
+                    .record(
+                        Some(world.account),
+                        &postio_model::EmailAddress::new(None::<String>, address),
+                        at,
+                    )
+                    .await
+                    .expect("a sighting");
+            }
+        }
+        for statement in [
+            "INSERT INTO addresses (address, address_normalized)
+             VALUES ('quill.wrote@example.net', 'quill.wrote@example.net')",
+            "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
+             SELECT id, 42, NULL FROM addresses
+              WHERE address_normalized = 'quill.wrote@example.net'",
+        ] {
+            postio_storage::sql::execute(&connection, statement, ())
+                .await
+                .expect("written to 42 times");
+        }
+    });
+    let (terminal, _) = world.frontend(ClientKind::Tui);
+    let offered: Vec<String> = world
+        .rt
+        .block_on(terminal.recipients(world.account, "quill".into()))
+        .expect("suggestions")
+        .into_iter()
+        .map(|candidate| match candidate {
+            postio_model::contact_group::RecipientCandidate::Contact(address) => address.address,
+            postio_model::contact_group::RecipientCandidate::Group { name, .. } => name,
+        })
+        .collect();
+    assert_eq!(
+        offered,
+        ["quill.wrote@example.net", "quill.often@example.com"],
+        "the address written to comes first"
+    );
+
+    let directory = world
+        .rt
+        .block_on(terminal.recipient_directory(world.account))
+        .expect("the directory");
+    let wrote = directory
+        .contacts
+        .iter()
+        .find(|row| row.contact.address.address == "quill.wrote@example.net")
+        .expect("in the directory");
+    assert_eq!(wrote.sent_count, 42, "the directory carries the letters");
+}

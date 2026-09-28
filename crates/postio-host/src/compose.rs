@@ -22,7 +22,8 @@ use postio_model::{
 };
 use postio_storage::repository::{
     AccountRepository, CancelSendOutcome, ContactGroupRepository, ContactRepository,
-    DraftRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
+    CorrespondentRepository, DraftRepository, MailboxRepository, MessageRepository,
+    OperationQueueRepository,
 };
 use postio_storage::{BlobStore, Store};
 
@@ -496,10 +497,12 @@ pub async fn recipient_directory(
         let contacts = ContactRepository::new(&connection)
             .search(Some(account), "", CORRESPONDENT_LIMIT)
             .await?;
+        let written = CorrespondentRepository::new(&connection)
+            .sent_counts()
+            .await?;
         Ok::<_, postio_storage::Error>(postio_client::protocol::RecipientDirectory {
             groups: named,
-            // No letters counted yet: the correspondents table is T075's.
-            contacts: contacts.into_iter().map(Into::into).collect(),
+            contacts: with_letters(contacts, &written),
         })
     };
     found.await.unwrap_or_else(|error| {
@@ -580,64 +583,67 @@ pub async fn focus_counts(
     })
 }
 
-/// Recipient completion: contact groups whose name matches `prefix`, then
-/// contacts ranked by [`ContactRepository::search`] — groups first, since a
-/// group is a deliberate choice the user is more likely typing towards.
+/// Recipient completion for `prefix`, as the terminal asks it: the account's
+/// groups and the contacts the prefix matches, each with the letters the
+/// user wrote to it, ranked by the one rule every app shares,
+/// `postio_ui::recipients::suggest` (spec 007 T076, research R15) -- the
+/// rule the desktop composer applies to its directory in memory.
 pub async fn recipients(
     database: &Store,
     account: AccountId,
     prefix: &str,
 ) -> Vec<RecipientCandidate> {
-    let connection = match database.read().await {
-        Ok(connection) => connection,
-        Err(error) => {
-            tracing::warn!(%error, "could not search contacts");
-            return Vec::new();
-        }
-    };
-
-    let mut candidates: Vec<RecipientCandidate> = Vec::new();
-    let groups = ContactGroupRepository::new(&connection);
-    match groups.list(Some(account)).await {
-        Ok(list) => {
-            let prefix_lower = prefix.to_lowercase();
-            for group in list {
-                if !group.name.to_lowercase().starts_with(&prefix_lower) {
-                    continue;
-                }
-                match groups.members(group.id).await {
-                    // A group with no members yet expands to nothing, so
-                    // offering it would be a suggestion that does nothing
-                    // when accepted.
-                    Ok(members) if !members.is_empty() => {
-                        candidates.push(RecipientCandidate::Group {
-                            name: group.name,
-                            members: members.iter().map(resolved_address).collect(),
-                        });
-                    }
-                    Ok(_) => {}
-                    Err(error) => tracing::warn!(%error, "could not read group members"),
-                }
+    let found = async {
+        let connection = database.read().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let mut named = Vec::new();
+        for group in groups.list(Some(account)).await? {
+            let members = groups.members(group.id).await?;
+            if !members.is_empty() {
+                named.push((group.name, members.iter().map(resolved_address).collect()));
             }
         }
-        Err(error) => tracing::warn!(%error, "could not search contact groups"),
-    }
+        // The store's prefix match, wide enough that its own order -- by
+        // how lately and how often each was seen -- cannot push an address
+        // the user writes to out before the rule has ranked it.
+        let contacts = ContactRepository::new(&connection)
+            .search(Some(account), prefix, PREFIX_POOL)
+            .await?;
+        let written = CorrespondentRepository::new(&connection)
+            .sent_counts()
+            .await?;
+        Ok::<_, postio_storage::Error>(postio_ui::recipients::suggest(
+            &named,
+            &with_letters(contacts, &written),
+            prefix,
+            SUGGESTION_LIMIT as usize,
+        ))
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not search contacts");
+        Vec::new()
+    })
+}
 
-    match ContactRepository::new(&connection)
-        .search(Some(account), prefix, SUGGESTION_LIMIT)
-        .await
-    {
-        Ok(contacts) => candidates.extend(
-            contacts
-                .iter()
-                .map(resolved_address)
-                .map(RecipientCandidate::Contact),
-        ),
-        Err(error) => tracing::warn!(%error, "could not search contacts"),
-    }
+/// How many contacts a prefix's completion ranks: the store's match, before
+/// the rule orders it.
+const PREFIX_POOL: u32 = 500;
 
-    candidates.truncate(SUGGESTION_LIMIT as usize);
-    candidates
+/// `contacts`, each with the letters the user wrote to its address.
+fn with_letters(
+    contacts: Vec<postio_model::Contact>,
+    written: &std::collections::HashMap<String, u32>,
+) -> Vec<postio_ui::recipients::Correspondent> {
+    contacts
+        .into_iter()
+        .map(|contact| postio_ui::recipients::Correspondent {
+            sent_count: written
+                .get(&contact.address.normalized())
+                .copied()
+                .unwrap_or_default(),
+            contact,
+        })
+        .collect()
 }
 
 /// The address a contact offers: the name the user set, or the last one seen
