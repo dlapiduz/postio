@@ -472,10 +472,16 @@ mod tests {
             }),
         );
         let screen = screen(160, 16, &app);
+        // The evening's words depend on the hour: "Later today" until 6pm,
+        // "Tomorrow evening" after.
+        let evening = format!(
+            "2 {}",
+            postio_ui::schedule::schedule_presets(chrono::Local::now())[1].0
+        );
         for wanted in [
             "Send later",
             "1 In 1 hour",
-            "2 This evening",
+            evening.as_str(),
             "3 Tomorrow morning",
             "4 Monday morning",
         ] {

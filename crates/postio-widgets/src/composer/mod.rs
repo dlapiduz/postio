@@ -4560,7 +4560,7 @@ mod tests {
 
         assert_eq!(preset(&presets, "In 1 hour"), local_at(2024, 1, 1, 10, 0));
         assert_eq!(
-            preset(&presets, "This evening"),
+            preset(&presets, "Later today"),
             local_at(2024, 1, 1, 18, 0),
             "6pm is still ahead of a 9am picker"
         );
@@ -4576,12 +4576,12 @@ mod tests {
     }
 
     #[test]
-    fn this_evening_rolls_to_tomorrow_once_this_evening_has_passed() {
+    fn the_evening_rolls_to_tomorrow_and_says_so_once_it_has_passed() {
         let now = local_at(2024, 1, 1, 19, 0);
         let presets = schedule_presets(now);
 
         assert_eq!(
-            preset(&presets, "This evening"),
+            preset(&presets, "Tomorrow evening"),
             local_at(2024, 1, 2, 18, 0),
             "6pm today is behind a 7pm picker"
         );

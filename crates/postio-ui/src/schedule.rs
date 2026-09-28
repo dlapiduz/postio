@@ -12,11 +12,9 @@
 //! and through `parse_when`'s rule for a wall-clock time, so that it keeps
 //! its time across a change of the clocks.
 //!
-//! Two of those shared moments are still worded two ways: the schedule-send
-//! picker says "This evening" where the snooze picker says "Later today"
-//! (spec C14). Which one both say is `/ux-architect`'s call; until it is
-//! made, a test holds them to the same instant, so making it changes words
-//! and nothing else.
+//! A moment both tables offer is worded once, here, too (spec C14): 6pm is
+//! "Later today" in the snooze picker and the schedule-send picker alike,
+//! and "Tomorrow evening" once today's has passed ([`evening`]).
 
 use chrono::{DateTime, Datelike, Days, Duration, Local, Months, NaiveDate, TimeZone, Weekday};
 use postio_config::Due;
@@ -44,13 +42,14 @@ fn at_local_time(day: DateTime<Local>, hour: u32, minute: u32) -> DateTime<Local
 /// against `now` — recomputed every time the picker opens rather than once,
 /// since "in 1 hour" a picker opened yesterday is not "in 1 hour" today.
 ///
-/// "This evening" rolls to tomorrow once 6pm today is behind `now`.
+/// "Later today" rolls to tomorrow's evening, and says so, once 6pm today
+/// is behind `now`.
 /// "Monday morning" always means a Monday strictly after today: opening the
 /// picker on a Monday offers next week's, not the one already underway.
 pub fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
     [
         ("In 1 hour", now + Duration::hours(1)),
-        ("This evening", this_evening(now)),
+        evening(now),
         ("Tomorrow morning", tomorrow_morning(now)),
         ("Monday morning", monday_morning(now)),
     ]
@@ -58,13 +57,12 @@ pub fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>
 
 /// The snooze picker's four times (spec US5 scenario 1, screen 11).
 ///
-/// Snoozed mail leaves the inbox and comes back at the chosen time. "Later
-/// today" is the schedule-send picker's "This evening" under another name
-/// (spec C14), rolling to tomorrow's once 6pm is behind `now`; "Next week"
-/// is this weekday a week on, in the morning.
+/// Snoozed mail leaves the inbox and comes back at the chosen time. The
+/// first is the schedule-send picker's evening, in its words ([`evening`]);
+/// "Next week" is this weekday a week on, in the morning.
 pub fn snooze_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
     [
-        ("Later today", this_evening(now)),
+        evening(now),
         ("Tomorrow morning", tomorrow_morning(now)),
         ("Monday morning", monday_morning(now)),
         ("Next week", at_local_time(now + Duration::days(7), 8, 0)),
@@ -89,8 +87,24 @@ pub fn remind_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>);
     ]
 }
 
-/// 6pm today, or tomorrow's once today's is behind `now`: the schedule-send
-/// picker's "This evening" and the snooze picker's "Later today".
+/// The evening preset both pickers offer, worded as what it is: "Later
+/// today" while 6pm today is still ahead, and "Tomorrow evening" once it
+/// is not.
+///
+/// Spec C14 asked for one wording. "Later today" is the screen's and the
+/// spec's own (screen 11, US5 scenario 1), and the schedule-send picker had
+/// the other; the words were chosen to match the design, and the roll, so
+/// that neither picker names today for a time that is tomorrow.
+fn evening(now: DateTime<Local>) -> (&'static str, DateTime<Local>) {
+    let at = this_evening(now);
+    if at.date_naive() == now.date_naive() {
+        ("Later today", at)
+    } else {
+        ("Tomorrow evening", at)
+    }
+}
+
+/// 6pm today, or tomorrow's once today's is behind `now`.
 fn this_evening(now: DateTime<Local>) -> DateTime<Local> {
     let evening = at_local_time(now, 18, 0);
     if evening < now + MIN_SCHEDULE_LEAD {
@@ -261,23 +275,33 @@ mod tests {
     }
 
     #[test]
-    fn later_today_is_the_schedule_pickers_this_evening_in_other_words() {
-        // Spec C14: one table, one wording still to choose. Until
-        // `/ux-architect` chooses it, the two labels must at least name the
-        // same instant -- including when the evening has passed and both
-        // roll to tomorrow's -- so choosing is a change of words only.
+    fn the_evening_is_worded_alike_in_both_tables() {
+        // Spec C14, settled: one table, one wording. Snooze's first preset
+        // and schedule-send's second are the same moment, and say so in
+        // the same words, whether the evening is still ahead or has passed.
         for now in [
             local_at(2026, 9, 26, 9, 0),
             local_at(2026, 9, 26, 17, 56),
             local_at(2026, 9, 26, 19, 0),
             local_at(2026, 9, 26, 23, 55),
         ] {
-            assert_eq!(
-                preset(&snooze_presets(now), "Later today"),
-                preset(&schedule_presets(now), "This evening"),
-                "at {now}"
-            );
+            assert_eq!(snooze_presets(now)[0], schedule_presets(now)[1], "at {now}");
         }
+    }
+
+    #[test]
+    fn a_passed_evening_is_tomorrows_and_says_so() {
+        // "Later today" for an instant tomorrow would be wrong about the
+        // one thing it names.
+        let now = local_at(2026, 9, 26, 19, 0);
+        assert_eq!(
+            snooze_presets(now)[0],
+            ("Tomorrow evening", local_at(2026, 9, 27, 18, 0))
+        );
+        assert_eq!(
+            schedule_presets(local_at(2026, 9, 26, 9, 0))[1],
+            ("Later today", local_at(2026, 9, 26, 18, 0))
+        );
     }
 
     #[test]
