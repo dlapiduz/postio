@@ -365,8 +365,9 @@ const GRAPHICAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requireme
 /// has-action filter, Filtered, digests and reminders (specs/007-postio-focus
 /// research R4). Every other app keeps the key free and offers nothing on it.
 const FOCUS_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Focus]);
-/// Mail on a surface only the three-pane apps have: flags and the parts
-/// panel. Focus has neither.
+/// Mail on a surface only the three-pane apps have: flags, the folder
+/// list, the account list, the parts panel and the conversation rail.
+/// Focus has none of them (T166).
 const THREE_PANE_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::ThreePane]);
 /// Chrome only the three-pane apps have: the sidebar and the panes.
 const THREE_PANE_CHROME: RequirementSet = needs(&[Requirement::ThreePane]);
@@ -798,7 +799,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::Reply,
@@ -1753,7 +1754,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::PrevFolder,
@@ -1763,7 +1764,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleFolder,
@@ -1779,7 +1780,7 @@ static SPECS: &[CommandSpec] = &[
         // Which folders are open is view state, not durable data — nothing
         // here for undo to reach.
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::RenameSavedSearch,
@@ -1795,7 +1796,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::MoveSavedSearchUp,
@@ -1810,7 +1811,7 @@ static SPECS: &[CommandSpec] = &[
         // A reorder destroys nothing; moving it back is the same action
         // once more, same as the mouse menu's version of this verb.
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::MoveSavedSearchDown,
@@ -1820,7 +1821,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::DeleteSavedSearch,
@@ -1834,7 +1835,7 @@ static SPECS: &[CommandSpec] = &[
         // so like `DiscardDraft` this asks first rather than offering undo.
         destructive: true,
         recovery: Recovery::Confirm,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleAccountEnabled,
@@ -1846,7 +1847,7 @@ static SPECS: &[CommandSpec] = &[
         // Pressing it again is the reversal, so there is nothing for the undo
         // stack to hold (ADR 0005 Q6c).
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::RemoveAccount,
@@ -1862,7 +1863,7 @@ static SPECS: &[CommandSpec] = &[
         // is something to undo for as long as the toast is up, and declaring
         // it here is what the registry enforces a keyboard path for.
         recovery: Recovery::Undo,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::UpdateCredential,
@@ -1895,7 +1896,7 @@ static SPECS: &[CommandSpec] = &[
         // Rewriting a derived table -- postio_session::reindex_account's own
         // doc explains why there is nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::SetDefaultAccount,
@@ -1917,7 +1918,7 @@ static SPECS: &[CommandSpec] = &[
         // hold. Nothing is lost either -- the previous holder is still there,
         // unmarked.
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::MapMailboxRole,
@@ -1935,7 +1936,7 @@ static SPECS: &[CommandSpec] = &[
         // The previous mapping is the inverse, and a wrong pick costs one
         // keystroke rather than a dialog (ADR 0035).
         recovery: Recovery::Undo,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::NextScope,
@@ -1994,7 +1995,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::PrevPart,
@@ -2004,7 +2005,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::OpenPart,
@@ -2014,7 +2015,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::SavePart,
@@ -2024,7 +2025,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::SaveAllParts,
@@ -2034,7 +2035,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::OpenPartExternally,
@@ -2044,7 +2045,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::RenderPartOnce,
@@ -2054,7 +2055,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: THREE_PANE_MAIL,
     },
     // -- Reader --------------------------------------------------------
     CommandSpec {

@@ -70,7 +70,7 @@ command from inside a text field.
 | `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader (not the terminal) |  | `zoom_out` |
 | `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader (not the terminal) |  | `zoom_reset` |
 | `O` | Expand all | Conversation |  | `expand_all` |
-| `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
+| `I` | Hide or show the conversation rail | Conversation (not Postio Focus) |  | `toggle_rail` |
 | `e` | Reply | List, conversation, reader, composer |  | `reply` |
 | `E` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` | Forward | List, conversation, reader, composer |  | `forward` |
@@ -141,29 +141,29 @@ command from inside a text field.
 | `!` | Show only what has an action | List (Postio Focus) |  | `toggle_has_action` |
 | `tab` | Next pane | List, conversation, reader, folder list (not Postio Focus) |  | `cycle_pane` |
 | `shift+tab` | Previous pane | List, conversation, reader, folder list (not Postio Focus) |  | `cycle_pane_back` |
-| `j` or `Down` | Next folder | Folder list |  | `next_folder` |
-| `k` or `Up` | Previous folder | Folder list |  | `prev_folder` |
-| `space` | Expand or collapse folder | Folder list |  | `toggle_folder` |
-| `r` | Rename saved search | Folder list |  | `rename_saved_search` |
-| `shift+Up` | Move saved search up | Folder list |  | `move_saved_search_up` |
-| `shift+Down` | Move saved search down | Folder list |  | `move_saved_search_down` |
-| `Delete` | Delete saved search | Folder list | Asks first | `delete_saved_search` |
-| `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
-| `Delete` | Remove account | Account list | Undoable | `remove_account` |
+| `j` or `Down` | Next folder | Folder list (not Postio Focus) |  | `next_folder` |
+| `k` or `Up` | Previous folder | Folder list (not Postio Focus) |  | `prev_folder` |
+| `space` | Expand or collapse folder | Folder list (not Postio Focus) |  | `toggle_folder` |
+| `r` | Rename saved search | Folder list (not Postio Focus) |  | `rename_saved_search` |
+| `shift+Up` | Move saved search up | Folder list (not Postio Focus) |  | `move_saved_search_up` |
+| `shift+Down` | Move saved search down | Folder list (not Postio Focus) |  | `move_saved_search_down` |
+| `Delete` | Delete saved search | Folder list (not Postio Focus) | Asks first | `delete_saved_search` |
+| `Return` | Enable or disable account | Account list (not Postio Focus) |  | `toggle_account_enabled` |
+| `Delete` | Remove account | Account list (not Postio Focus) | Undoable | `remove_account` |
 | `c` | Update account credential | Account list |  | `update_credential` |
-| `r` | Rebuild search index | Account list |  | `rebuild_account_index` |
-| `m` | Set as default account | Account list |  | `set_default_account` |
-| `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
+| `r` | Rebuild search index | Account list (not Postio Focus) |  | `rebuild_account_index` |
+| `m` | Set as default account | Account list (not Postio Focus) |  | `set_default_account` |
+| `M` | Map mailbox role | Account list (not Postio Focus) | Undoable | `map_mailbox_role` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` | Refresh | List, conversation, reader |  | `refresh` |
 | `p` | Show message parts | Reader (not Postio Focus) |  | `open_parts` |
-| `j` or `Down` | Next part | Parts panel |  | `next_part` |
-| `k` or `Up` | Previous part | Parts panel |  | `prev_part` |
-| `Return` | Open part | Parts panel |  | `open_part` |
-| `s` | Save part | Parts panel |  | `save_part` |
-| `S` | Save all parts | Parts panel |  | `save_all_parts` |
-| `x` | Open part externally | Parts panel |  | `open_part_externally` |
-| `H` | Render part once | Parts panel |  | `render_part_once` |
+| `j` or `Down` | Next part | Parts panel (not Postio Focus) |  | `next_part` |
+| `k` or `Up` | Previous part | Parts panel (not Postio Focus) |  | `prev_part` |
+| `Return` | Open part | Parts panel (not Postio Focus) |  | `open_part` |
+| `s` | Save part | Parts panel (not Postio Focus) |  | `save_part` |
+| `S` | Save all parts | Parts panel (not Postio Focus) |  | `save_all_parts` |
+| `x` | Open part externally | Parts panel (not Postio Focus) |  | `open_part_externally` |
+| `H` | Render part once | Parts panel (not Postio Focus) |  | `render_part_once` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
 | `1` | Choose option 1 | Picker (Postio Focus) |  | `picker_choose_1` |
