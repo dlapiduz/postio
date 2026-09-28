@@ -3,8 +3,8 @@ Sync Impact Report
 ==================
 Version change: 1.2.1 → 1.3.0 (was: 1.2.0 → 1.2.1; 1.1.0 → 1.2.0; 1.0.0 → 1.1.0;
   unversioned scaffold → 1.0.0)
-Bump rationale (1.3.0): MINOR. DRAFT: it waits for the maintainer's approval
-  and does not land without it (specs/007-postio-focus, T146).
+Bump rationale (1.3.0): MINOR. Approved by the maintainer on 2026-09-27
+  ("approve as drafted"), for specs/007-postio-focus (T146).
   - Additional Constraints → Scope names a second desktop app, Postio Focus,
     on the same store, one app at a time (ADR 0041).
   - "No AI" is replaced with what it has meant in practice. Postio itself
@@ -23,8 +23,8 @@ Bump rationale (1.3.0): MINOR. DRAFT: it waits for the maintainer's approval
     - `postio-calendar` is a pure leaf;
     - no app links an inference engine, directly or through a dependency.
 
-  This expands both sections and narrows no principle. But it changes what
-  "no AI" permits, and that is the maintainer's call.
+  This expands both sections and narrows no principle. It changes what "no AI"
+  permits, which is why it waited for the maintainer's approval.
 Bump rationale (1.2.1): PATCH. Principle VI's reader clause is reworded from
   the mechanism it named ("the reader's WebKit view has JavaScript and network
   off") to the guarantee: the reader's renderer cannot run script or reach the
@@ -379,4 +379,4 @@ architecture call an agent can make is labelled `needs-architecture`.
 the skills it names. `CLAUDE.md` elaborates this constitution and MUST NOT
 contradict it.
 
-**Version**: 1.3.0 (draft, awaiting the maintainer's approval) | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-27
+**Version**: 1.3.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-27
