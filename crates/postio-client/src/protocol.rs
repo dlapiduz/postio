@@ -48,6 +48,8 @@ pub struct FocusCounts {
     pub unread: u32,
     /// Of those, the ones that draw a marker.
     pub has_action: u32,
+    /// Messages filed away since local midnight: "186 filtered today".
+    pub filtered_today: u32,
 }
 
 /// The host's name for one connection.

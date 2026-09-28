@@ -554,10 +554,24 @@ pub async fn focus_counts(
         let connection = database.read().await?;
         let threads = postio_storage::repository::ThreadRepository::new(&connection);
         let inboxes = threads.unified_inboxes().await?;
+        // "Today" is the person's: local midnight, as the filing records
+        // are bounded (filter_decisions.decided_at).
+        let midnight = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .and_then(|midnight| {
+                chrono::TimeZone::from_local_datetime(&chrono::Local, &midnight).earliest()
+            })
+            .map_or_else(chrono::Utc::now, |midnight| {
+                midnight.with_timezone(&chrono::Utc)
+            });
         Ok::<_, postio_storage::Error>(postio_client::protocol::FocusCounts {
             conversations: threads.focus_count(&inboxes).await?,
             unread: threads.focus_unread(&inboxes).await?,
             has_action: threads.focus_marked(&inboxes).await?.len(),
+            filtered_today: postio_storage::repository::FilterDecisionRepository::new(&connection)
+                .count_since(midnight)
+                .await?,
         })
     };
     counted.await.map_err(|error| {

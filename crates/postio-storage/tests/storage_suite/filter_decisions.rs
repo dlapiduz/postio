@@ -149,3 +149,42 @@ async fn a_decision_is_recorded_once_per_message_and_a_restore_deletes_it() {
         Some(notification)
     );
 }
+
+#[tokio::test]
+async fn filtered_today_counts_the_decisions_since_midnight_in_one_statement() {
+    // The empty inbox's "186 filtered today" (spec 007 screen 16): one
+    // counted read, sought through `decided_at`'s index, never a walk.
+    use postio_storage::test_support::counting::{counted_async, scans};
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let decisions = FilterDecisionRepository::new(&connection);
+    for hour in [2, 9, 11, 23] {
+        let message = message(&connection).await;
+        decisions
+            .record(&FilterDecision {
+                message,
+                reason: FilterReason::Notification,
+                source: None,
+                layer: FilterLayer::Header,
+                decided_at: at(hour),
+            })
+            .await
+            .expect("recorded");
+    }
+    let midnight = at(8);
+    let _ = decisions.count_since(midnight).await.expect("warm");
+    let mut filtered = 0;
+    let counts = counted_async(|| async {
+        filtered = decisions.count_since(midnight).await.expect("counted");
+    })
+    .await;
+    assert_eq!(filtered, 3, "the three decided since, not the one before");
+    assert_eq!(counts.statements, 1, "one statement: {counts:?}");
+    assert!(
+        scans(&connection, FilterDecisionRepository::EXPLAIN_COUNT_SINCE)
+            .await
+            .is_empty(),
+        "counted through the index on decided_at"
+    );
+}

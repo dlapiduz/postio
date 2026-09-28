@@ -223,6 +223,13 @@ banner.focus-banner button {
   background-color: var(--postio-ink-secondary);
 }
 
+/* ── The empty inbox (screen 16) ────────────────────────────────────── */
+.focus-empty-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+  color: var(--postio-ink);
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

@@ -11,6 +11,7 @@ pub mod app;
 pub mod banner;
 pub mod bulk;
 pub mod chrome;
+pub mod empty;
 pub mod keys;
 pub mod list;
 pub mod startup;

@@ -1320,6 +1320,7 @@ mod tests {
             conversations: 312,
             unread: 41,
             has_action: 7,
+            filtered_today: 186,
         };
         let (client, fake) = client(vec![Ok(Resp::FocusCounts(counts))]);
         assert_eq!(client.focus_counts().await, Ok(counts));

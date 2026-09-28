@@ -9,7 +9,8 @@
 //! draws what it is told.
 
 use chrono::{DateTime, Local, TimeZone};
-use postio_core::{ConnectionState, FailureReason};
+use postio_config::FocusConfig;
+use postio_core::{CommandId, ConnectionState, FailureReason, Keymap};
 use postio_model::AccountId;
 
 use crate::status::SyncStatus;
@@ -237,6 +238,86 @@ pub fn sync_label_here(
     sync_label(statuses, last_synced, &Local)
 }
 
+/// What the empty inbox says under "Inbox is empty" (screen 16): when the
+/// next digest comes, if there are digests, and shortcuts to only what
+/// exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmptyInbox {
+    /// "Next digest: Weekly · Newsletters, Saturday 16:00", when a digest
+    /// rule names a time.
+    pub next_digest: Option<String>,
+    /// Each shortcut: its key under the keymap in force, what it says, and
+    /// the command a click runs.
+    pub shortcuts: Vec<(Option<String>, String, CommandId)>,
+}
+
+/// The empty inbox for `focus`'s rules, `filtered_today` messages filed
+/// away since midnight, and `keymap`'s keys, as of `now`.
+pub fn empty_inbox<Tz: TimeZone>(
+    focus: &FocusConfig,
+    filtered_today: u32,
+    keymap: &Keymap,
+    now: &DateTime<Tz>,
+) -> EmptyInbox
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let next_digest = focus
+        .digests
+        .iter()
+        .filter_map(|rule| {
+            let due = rule.due().ok()?;
+            let when = crate::schedule::next_due(&due, now)?;
+            Some((when, rule))
+        })
+        .min_by_key(|(when, _)| when.clone())
+        .map(|(when, rule)| {
+            // A week ahead or less, the weekday says it; further, the date.
+            let day = if when.clone() - now.clone() < chrono::Duration::days(7) {
+                when.format("%A %H:%M").to_string()
+            } else {
+                when.format("%A %-d %B %H:%M").to_string()
+            };
+            format!(
+                "Next digest: {} \u{b7} {}, {day}",
+                cadence(&rule.cadence),
+                rule.name
+            )
+        });
+    let mut shortcuts = Vec::new();
+    if focus.filtering {
+        shortcuts.push((
+            crate::hints::key(keymap, CommandId::GoToFiltered),
+            format!("{} filtered today", count(filtered_today)),
+            CommandId::GoToFiltered,
+        ));
+    }
+    shortcuts.push((
+        crate::hints::key(keymap, CommandId::GoToArchive),
+        "archive".to_owned(),
+        CommandId::GoToArchive,
+    ));
+    shortcuts.push((
+        crate::hints::key(keymap, CommandId::Compose),
+        "compose".to_owned(),
+        CommandId::Compose,
+    ));
+    EmptyInbox {
+        next_digest,
+        shortcuts,
+    }
+}
+
+/// A rule's cadence as the line says it: "Weekly".
+fn cadence(written: &str) -> String {
+    let written = written.trim().to_ascii_lowercase();
+    let mut letters = written.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => written,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{FixedOffset, TimeZone, Utc};
@@ -429,6 +510,96 @@ mod tests {
             &zone,
         );
         assert_eq!(idle.text, "Not synced yet");
+    }
+
+    fn rule(name: &str, cadence: &str, day: Option<&str>, at: &str) -> postio_config::DigestRule {
+        let day = day.map(|day| match day.parse::<i64>() {
+            Ok(number) => format!("day = {number}\n"),
+            Err(_) => format!("day = \"{day}\"\n"),
+        });
+        let text = format!(
+            "[[focus.digests]]\nname = \"{name}\"\nqueries = [\"from:news@example.com\"]\n\
+             cadence = \"{cadence}\"\n{}at = \"{at}\"\n",
+            day.unwrap_or_default()
+        );
+        postio_config::Config::from_toml_str(&text)
+            .expect("a digest rule")
+            .focus
+            .digests
+            .remove(0)
+    }
+
+    fn wednesday() -> DateTime<FixedOffset> {
+        FixedOffset::east_opt(0)
+            .expect("UTC")
+            .with_ymd_and_hms(2026, 9, 23, 10, 0, 0)
+            .single()
+            .expect("a date")
+    }
+
+    #[test]
+    fn the_empty_inbox_names_only_what_exists() {
+        let keymap = Keymap::defaults();
+        let plain = FocusConfig {
+            filtering: false,
+            ..FocusConfig::default()
+        };
+        let empty = empty_inbox(&plain, 0, keymap, &wednesday());
+        assert_eq!(empty.next_digest, None, "no digests, no next digest");
+        assert_eq!(
+            empty.shortcuts,
+            vec![
+                (
+                    Some("g r".to_owned()),
+                    "archive".to_owned(),
+                    CommandId::GoToArchive
+                ),
+                (
+                    Some("c".to_owned()),
+                    "compose".to_owned(),
+                    CommandId::Compose
+                ),
+            ],
+            "no filtering, no filtered count"
+        );
+
+        let everything = FocusConfig {
+            filtering: true,
+            digests: vec![
+                rule("Receipts", "monthly", Some("15"), "09:00"),
+                rule("Newsletters", "weekly", Some("saturday"), "16:00"),
+                rule("Broken", "fortnightly", None, "08:00"),
+            ],
+            ..FocusConfig::default()
+        };
+        let empty = empty_inbox(&everything, 186, keymap, &wednesday());
+        assert_eq!(
+            empty.next_digest.as_deref(),
+            Some("Next digest: Weekly \u{b7} Newsletters, Saturday 16:00"),
+            "the soonest rule that names a time"
+        );
+        assert_eq!(
+            empty.shortcuts[0],
+            (
+                Some("g f".to_owned()),
+                "186 filtered today".to_owned(),
+                CommandId::GoToFiltered
+            )
+        );
+        assert_eq!(empty.shortcuts.len(), 3);
+    }
+
+    #[test]
+    fn a_digest_more_than_a_week_off_names_its_date() {
+        let focus = FocusConfig {
+            digests: vec![rule("Receipts", "monthly", Some("15"), "09:00")],
+            ..FocusConfig::default()
+        };
+        let empty = empty_inbox(&focus, 0, Keymap::defaults(), &wednesday());
+        assert_eq!(
+            empty.next_digest.as_deref(),
+            Some("Next digest: Monthly \u{b7} Receipts, Thursday 15 October 09:00")
+        );
     }
 
     #[test]

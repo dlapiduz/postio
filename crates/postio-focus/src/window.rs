@@ -32,6 +32,9 @@ const BLANK: &str = "blank";
 const OPENING: &str = "opening";
 const UNAVAILABLE: &str = "unavailable";
 const INBOX: &str = "inbox";
+/// The inbox's list, and the empty inbox in its place.
+const LIST: &str = "list";
+const EMPTY: &str = "empty";
 
 mod imp {
     use super::*;
@@ -94,6 +97,12 @@ mod imp {
         pub last_synced: Cell<Option<chrono::DateTime<chrono::Utc>>>,
         /// The banner slot under the header strip.
         pub state_banner: RefCell<Option<Rc<crate::banner::StateBanner>>>,
+        /// `[focus]`: whether filtering is on, and the digest rules.
+        pub focus_config: RefCell<postio_config::FocusConfig>,
+        /// The list, or the empty inbox in its place.
+        pub list_or_empty: RefCell<Option<gtk::Stack>>,
+        /// The empty inbox's page.
+        pub empty: RefCell<Option<Rc<crate::empty::EmptyInbox>>>,
     }
 
     impl Default for FocusWindow {
@@ -127,6 +136,9 @@ mod imp {
                 facts: RefCell::default(),
                 last_synced: Cell::default(),
                 state_banner: RefCell::default(),
+                focus_config: RefCell::default(),
+                list_or_empty: RefCell::default(),
+                empty: RefCell::default(),
             }
         }
     }
@@ -672,7 +684,20 @@ impl FocusWindow {
             move || window.list_landed()
         ));
         let pane = ListPane::new(feed.clone(), self.keymap(), imp.picked.clone());
-        imp.inbox.append(pane.widget());
+        let empty = crate::empty::EmptyInbox::new();
+        empty.connect_command(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |id| window.act(id)
+        ));
+        let list_or_empty = gtk::Stack::new();
+        list_or_empty.set_vexpand(true);
+        list_or_empty.add_named(pane.widget(), Some(LIST));
+        list_or_empty.add_named(empty.widget(), Some(EMPTY));
+        list_or_empty.set_visible_child_name(LIST);
+        imp.inbox.append(&list_or_empty);
+        imp.list_or_empty.replace(Some(list_or_empty));
+        imp.empty.replace(Some(empty));
         let bulk = Rc::new(Bulk::new(&self.keymap()));
         bulk.connect_command(glib::clone!(
             #[weak(rename_to = window)]
@@ -854,12 +879,45 @@ impl FocusWindow {
             _ => None,
         };
         chrome.set_has_action(on, &label, showing.as_deref());
+        self.show_empty_or_list();
         if on
             && let Some(pane) = self.pane()
             && pane.feed().list().single_heading().as_deref() != Some(label.as_str())
         {
             pane.feed().list().set_single_heading(Some(label));
         }
+    }
+
+    /// The empty inbox when there is nothing in it, the list otherwise
+    /// (screen 16). Only the inbox: the has-action filter showing nothing
+    /// is the list's own business.
+    fn show_empty_or_list(&self) {
+        let imp = self.imp();
+        let Some(stack) = imp.list_or_empty.borrow().clone() else {
+            return;
+        };
+        let empty = match imp.counts.get() {
+            Some(counts) if counts.conversations == 0 && !imp.has_action.get() => Some(counts),
+            _ => None,
+        };
+        match (empty, imp.empty.borrow().as_ref()) {
+            (Some(counts), Some(page)) => {
+                page.show(&postio_ui::focus_state::empty_inbox(
+                    &imp.focus_config.borrow(),
+                    counts.filtered_today,
+                    &self.keymap(),
+                    &chrono::Local::now(),
+                ));
+                stack.set_visible_child_name(EMPTY);
+            }
+            _ => stack.set_visible_child_name(LIST),
+        }
+    }
+
+    /// `[focus]`, for what the empty inbox names.
+    pub fn set_focus_config(&self, focus: postio_config::FocusConfig) {
+        self.imp().focus_config.replace(focus);
+        self.show_empty_or_list();
     }
 
     /// The window's chrome, once the inbox is showing.

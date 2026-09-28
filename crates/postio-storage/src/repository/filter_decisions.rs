@@ -212,6 +212,22 @@ impl<'a> FilterDecisionRepository<'a> {
           WHERE a.address_normalized = ?1 AND d.restored_at IS NOT NULL"
     }
 
+    /// The SQL [`Self::count_since`] runs, for `EXPLAIN QUERY PLAN`.
+    pub const EXPLAIN_COUNT_SINCE: &'static str =
+        "SELECT COUNT(*) FROM filter_decisions WHERE decided_at >= ?1";
+
+    /// How many messages were filed away at or after `since`: "186
+    /// filtered today", with `since` local midnight (spec 007 screen 16).
+    pub async fn count_since(&self, since: DateTime<Utc>) -> Result<u32> {
+        let count = sql::scalar(
+            self.connection,
+            Self::EXPLAIN_COUNT_SINCE,
+            [to_millis(since)],
+        )
+        .await?;
+        Ok(u32::try_from(count.max(0)).unwrap_or(u32::MAX))
+    }
+
     /// Deletes the decision on `message`, and answers whether there was one:
     /// what taking back a sweep of the inbox does, since the person never
     /// saw that decision stand.

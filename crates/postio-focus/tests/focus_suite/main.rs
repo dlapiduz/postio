@@ -25,6 +25,7 @@
 mod chrome;
 mod colours;
 mod cursor;
+mod empty;
 mod harness;
 mod has_action;
 mod list_contract;
@@ -46,6 +47,14 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "empty::with_filtering_the_empty_inbox_counts_what_was_filtered_today",
+        empty::with_filtering_the_empty_inbox_counts_what_was_filtered_today as fn(),
+    ),
+    (
+        "empty::without_filtering_the_empty_inbox_names_the_next_digest_and_no_count",
+        empty::without_filtering_the_empty_inbox_names_the_next_digest_and_no_count as fn(),
+    ),
     (
         "state::during_a_first_sync_what_has_arrived_is_listed",
         state::during_a_first_sync_what_has_arrived_is_listed as fn(),
