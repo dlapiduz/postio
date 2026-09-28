@@ -356,6 +356,20 @@ CREATE TABLE filter_decisions (
     decided_at  INTEGER NOT NULL
 );
 
+-- What Focus has classified (spec 007): one record per message and stage,
+-- at the version of the classifier that did it. The catch-up at Focus's
+-- start reads the rows with none at the current version, newest first
+-- (FR-141), so a newer classifier makes every one of them due again.
+-- Recomputed by a resync, like the markers and decisions it leads to.
+CREATE TABLE focus_classified (
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    -- 'filing': as the mail was filed, or caught up for mail another app
+    -- filed; 'body': the body stage, once the body is here.
+    stage       TEXT    NOT NULL CHECK (stage IN ('filing', 'body')),
+    version     INTEGER NOT NULL,
+    PRIMARY KEY (message_id, stage)
+);
+
 CREATE TABLE identities (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id        INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

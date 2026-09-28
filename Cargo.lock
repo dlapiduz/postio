@@ -4861,6 +4861,7 @@ dependencies = [
  "chrono",
  "postio-account",
  "postio-body",
+ "postio-classify",
  "postio-client",
  "postio-config",
  "postio-core",

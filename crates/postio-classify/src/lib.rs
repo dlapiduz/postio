@@ -17,6 +17,12 @@
 //! - [`ModelLayer`] is where the user's own model will answer, in milestone
 //!   2, for what the built-in layers leave open, and in the detector's place.
 
+/// The classifier's version: what `focus_classified` records a message was
+/// classified by. Raise it when a change to the rules should classify the
+/// mail already stored again: every record at an older version is then due,
+/// and the catch-up at Focus's start takes it (FR-141).
+pub const VERSION: u32 = 1;
+
 mod digests;
 mod facts;
 mod filters;

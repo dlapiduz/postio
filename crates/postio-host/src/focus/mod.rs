@@ -14,16 +14,20 @@
 //!    It is Focus's own ([`postio_sync::FocusFiling`]), built from `[focus]`:
 //!    spam and updates filed away with their reasons, guarded mail left
 //!    alone.
-//! 2. **A body-stage task**, on the body indexer's pattern: it hears every
+//! 2. **A body stage**, on the body indexer's pattern ([`body`]): it
+//!    catches up on recent inbox mail whose body is here, then hears every
 //!    `BodyLoaded`, for invitations and the needs-action detector to read
-//!    the bodies that land. It listens, and reads nothing yet.
+//!    the bodies that land.
 //! 3. **A due timer** on the engine's tick
 //!    ([`postio_runtime::POLL_INTERVAL`]), for digest deliveries, reminders
 //!    and RSVP windows. One for the store rather than one per account, so it
 //!    keeps time whether or not an engine is running. It ticks, and nothing
 //!    is due yet.
 
+mod body;
+
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use postio_config::FocusConfig;
 use postio_sync::{FilingPass, FocusFiling};
@@ -71,12 +75,20 @@ impl FocusSetup {
 pub struct FocusHandle {
     body_stage: tokio::task::AbortHandle,
     due_timer: tokio::task::AbortHandle,
+    caught_up: Arc<AtomicBool>,
 }
 
 impl FocusHandle {
     /// Whether the body stage and the due timer are both still running.
     pub fn running(&self) -> bool {
         !self.body_stage.is_finished() && !self.due_timer.is_finished()
+    }
+
+    /// Whether the body stage has caught up on the mail that was here when
+    /// Focus started: every recent inbox body it found is classified
+    /// (FR-141). From then on it classifies bodies as they land.
+    pub fn caught_up(&self) -> bool {
+        self.caught_up.load(Ordering::Acquire)
     }
 }
 
@@ -97,32 +109,15 @@ impl Host {
         if let Some(running) = &*focus {
             return running.clone();
         }
+        let caught_up = Arc::new(AtomicBool::new(false));
         let handle = FocusHandle {
-            body_stage: body_stage(&self.inner),
+            body_stage: body::spawn(&self.inner, Arc::clone(&caught_up)),
             due_timer: due_timer(&self.inner),
+            caught_up,
         };
         *focus = Some(handle.clone());
         handle
     }
-}
-
-/// The body-stage task: every `BodyLoaded` the host hears.
-///
-/// Over a wiring whose events go to a single reader rather than a hub,
-/// there is nothing to hear, and the task ends at once.
-fn body_stage(inner: &Inner) -> tokio::task::AbortHandle {
-    let events = inner.hub.subscribe("focus:body-stage");
-    inner
-        .runtime()
-        .spawn(async move {
-            let Some(events) = events else {
-                return;
-            };
-            // Drained, so the hub never queues for a reader that is not
-            // reading; nothing reads a body for Focus yet.
-            while events.next().await.is_some() {}
-        })
-        .abort_handle()
 }
 
 /// The due timer: the engine's tick, kept by the host for the whole store.

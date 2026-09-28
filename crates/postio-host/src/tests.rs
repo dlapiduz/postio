@@ -2287,3 +2287,134 @@ fn focus_mode_files_nothing_away_when_filtering_is_off() {
     );
     assert!(row_titled(&world, &client, "Build 2231 passed").is_some());
 }
+
+// ── Focus's body stage (spec 007, T103) ─────────────────────────────────────
+
+/// A message in the world's folder `mailbox`, received `ago` before now,
+/// with `text` as its body when there is one.
+fn received(
+    world: &World,
+    mailbox: MailboxId,
+    ago: chrono::TimeDelta,
+    text: Option<&str>,
+) -> MessageId {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let mut message = Message::new(world.account, mailbox, Utc::now() - ago);
+        message.subject = Some("A note".to_owned());
+        let id = messages.create(&mut message).await.expect("a message");
+        if let Some(text) = text {
+            messages
+                .set_body(
+                    id,
+                    &postio_storage::repository::StoredBody {
+                        text: Some(text.to_owned()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    postio_model::BodyState::Full,
+                )
+                .await
+                .expect("its body");
+        }
+        id
+    })
+}
+
+/// The world's folder with `role`.
+fn folder(world: &World, role: postio_model::MailboxRole) -> MailboxId {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .by_role(world.account, role)
+            .await
+            .expect("a read")
+            .expect("the folder")
+            .id
+    })
+}
+
+/// The classifier version `message`'s body stage is recorded at.
+fn body_classified_at(world: &World, message: MessageId) -> Option<i64> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::first(
+            &connection,
+            "SELECT version FROM focus_classified WHERE message_id = ?1 AND stage = 'body'",
+            [message.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a read")
+    })
+}
+
+#[test]
+fn the_body_stage_catches_up_on_recent_inbox_mail_it_has_not_classified() {
+    // FR-141: at Focus's start, recent inbox mail whose body is here and
+    // that has no record at this classifier's version is classified, in the
+    // background. A record an older classifier left is not this one's: a
+    // version bump runs it again. Mail older than 30 days, out of the inbox,
+    // or with no body here is not read.
+    let world = World::new();
+    let inbox = folder(&world, postio_model::MailboxRole::Inbox);
+    let archive = folder(&world, postio_model::MailboxRole::Archive);
+    let hour = chrono::TimeDelta::hours(1);
+    let fresh = received(&world, inbox, hour, Some("Minutes attached."));
+    let stale = received(&world, inbox, hour * 2, Some("The agenda."));
+    let old = received(&world, inbox, chrono::TimeDelta::days(40), Some("Old."));
+    let bodiless = received(&world, inbox, hour, None);
+    let archived = received(&world, archive, hour, Some("Filed."));
+    let version = postio_classify::VERSION;
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::FocusClassifiedRepository::new(&connection)
+            .record(
+                &[stale],
+                postio_storage::repository::FocusStage::Body,
+                version - 1,
+            )
+            .await
+            .expect("an older classifier's record");
+    });
+
+    let focus = world.host().enable_focus(crate::FocusSetup::default());
+    eventually(&world, || focus.caught_up().then_some(()));
+
+    assert_eq!(body_classified_at(&world, fresh), Some(i64::from(version)));
+    assert_eq!(
+        body_classified_at(&world, stale),
+        Some(i64::from(version)),
+        "a newer classifier runs it again"
+    );
+    for (message, why) in [
+        (old, "older than 30 days"),
+        (bodiless, "no body here"),
+        (archived, "not in the inbox"),
+    ] {
+        assert_eq!(body_classified_at(&world, message), None, "{why}");
+    }
+}
+
+#[test]
+fn a_body_that_lands_while_focus_runs_is_classified() {
+    // The body stage hears `BodyLoaded` for every body that lands, and
+    // classifies it once the burst is over.
+    let world = World::new();
+    let inbox = folder(&world, postio_model::MailboxRole::Inbox);
+    let focus = world.host().enable_focus(crate::FocusSetup::default());
+    eventually(&world, || focus.caught_up().then_some(()));
+
+    // After the catch-up: only hearing of it can classify it now.
+    let landed = received(&world, inbox, chrono::TimeDelta::minutes(5), Some("Hello."));
+    world.host().inner.hub.emit(Event::BodyLoaded {
+        account: world.account,
+        message: landed,
+    });
+
+    let version = eventually(&world, || body_classified_at(&world, landed));
+    assert_eq!(version, i64::from(postio_classify::VERSION));
+}
