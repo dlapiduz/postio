@@ -181,6 +181,13 @@ pub struct Draft {
     /// writes.
     #[serde(default)]
     pub calendar_reply: Option<String>,
+    /// "Remind if no reply" (spec 007 US3 scenario 5, FR-044): when set,
+    /// sending the message sets a reminder on its conversation, due then.
+    /// If nobody but the person has written in it by that time, the
+    /// conversation comes back to the top of Focus's inbox, marked "No
+    /// reply since". `None` for a draft that asks for no reminder.
+    #[serde(default)]
+    pub remind_at: Option<DateTime<Utc>>,
     /// Attachments added so far. These carry
     /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
     /// until the draft becomes a sent message.
@@ -233,6 +240,7 @@ impl Draft {
             body_markdown: None,
             labels: Vec::new(),
             calendar_reply: None,
+            remind_at: None,
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,

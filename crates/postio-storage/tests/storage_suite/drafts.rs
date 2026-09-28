@@ -2379,3 +2379,29 @@ async fn a_draft_keeps_the_labels_chosen_for_it_until_it_is_sent() {
         "an autosave writes the set the composer holds"
     );
 }
+
+#[tokio::test]
+async fn a_draft_keeps_its_remind_if_no_reply_until_it_is_sent() {
+    // Spec 007 US3 scenario 5 (T096): "Remind if no reply" set in the
+    // composer becomes a reminder when the message is sent, so the draft
+    // carries its time until then -- across autosaves, and cleared when the
+    // person takes it off.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+    let tuesday = chrono::DateTime::parse_from_rfc3339("2026-09-29T07:00:00Z")
+        .expect("a time")
+        .to_utc();
+
+    let mut draft = a_draft(account.id);
+    draft.remind_at = Some(tuesday);
+    let id = drafts.save(&mut draft).await.expect("save");
+    let read = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(read.remind_at, Some(tuesday));
+
+    draft.remind_at = None;
+    drafts.save(&mut draft).await.expect("save again");
+    let read = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(read.remind_at, None, "taken off, it stays off");
+}

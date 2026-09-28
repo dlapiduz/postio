@@ -63,6 +63,31 @@ pub fn saved_at(at: DateTime<Utc>) -> String {
     )
 }
 
+/// What the footer's reminder control says: "Remind if no reply", and the
+/// day once one is chosen ("Remind if no reply · Tue 29 Sep"), in the
+/// person's own time zone.
+pub fn remind_words(at: Option<DateTime<Utc>>) -> String {
+    match at {
+        Some(at) => format!(
+            "Remind if no reply \u{b7} {}",
+            at.with_timezone(&Local).format("%a %-d %b")
+        ),
+        None => "Remind if no reply".to_owned(),
+    }
+}
+
+/// The key a composer control shows for `command`: the one of its keys
+/// that carries a modifier, since a bare letter is typed in the composer
+/// (contracts/keymap.md: `mod+h` is the composer's key for `h`).
+fn composer_key(keymap: &Keymap, command: CommandId) -> Option<String> {
+    let bindings = keymap.bindings(command);
+    bindings
+        .iter()
+        .find(|binding| binding.contains('+'))
+        .or_else(|| bindings.first())
+        .cloned()
+}
+
 /// The frame's widgets.
 pub struct Frame {
     pub header: gtk::CenterBox,
@@ -77,6 +102,11 @@ pub struct Frame {
     labels: gtk::Box,
     from_thread: gtk::Label,
     attach: gtk::Button,
+    /// "Remind if no reply", and when (US3 scenario 5).
+    pub remind: gtk::Button,
+    /// The key the reminder control shows, and the time it says.
+    remind_key: RefCell<Option<String>>,
+    remind_at: Cell<Option<DateTime<Utc>>>,
     words: gtk::Label,
     /// The labels whose names the Labels row can draw, by id.
     known: RefCell<HashMap<LabelId, Label>>,
@@ -152,6 +182,9 @@ impl Frame {
 
         let attach = gtk::Button::new();
         postio_widgets::widgets::button::style(&attach, Kind::Ghost, Size::Small);
+        let remind = gtk::Button::new();
+        postio_widgets::widgets::button::style(&remind, Kind::Ghost, Size::Small);
+        remind.add_css_class("focus-compose-remind");
         let words = gtk::Label::new(None);
         words.add_css_class("dim-label");
         words.add_css_class("focus-compose-words");
@@ -160,6 +193,7 @@ impl Frame {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         footer.add_css_class("focus-compose-footer");
         footer.append(&attach);
+        footer.append(&remind);
         footer.append(&words);
 
         let frame = Rc::new(Frame {
@@ -175,6 +209,9 @@ impl Frame {
             labels,
             from_thread,
             attach,
+            remind,
+            remind_key: RefCell::default(),
+            remind_at: Cell::default(),
             words,
             known: RefCell::default(),
             thread_labels: Cell::new(false),
@@ -273,12 +310,25 @@ impl Frame {
             "Attach",
             key(CommandId::AttachFile).as_deref(),
         )));
+        self.remind_key
+            .replace(composer_key(keymap, CommandId::RemindIfNoReply));
+        self.draw_remind(self.remind_at.get());
+    }
+
+    /// The reminder control, saying `at` when one is chosen.
+    fn draw_remind(&self, at: Option<DateTime<Utc>>) {
+        self.remind_at.set(at);
+        self.remind.set_child(Some(&keyhint::labelled(
+            &remind_words(at),
+            self.remind_key.borrow().as_deref(),
+        )));
     }
 
     /// The heading and the footer, for `draft` as it stands.
     fn follow(&self, draft: &Draft) {
         self.title.set_text(title(draft.kind));
         self.words.set_text(&summary(draft));
+        self.draw_remind(draft.remind_at);
     }
 
     /// A save landed at `at`.
@@ -366,13 +416,14 @@ impl Frame {
     }
 
     /// The commands the frame's controls run, for registry parity.
-    pub fn commands() -> [CommandId; 5] {
+    pub fn commands() -> [CommandId; 6] {
         [
             CommandId::Back,
             CommandId::Send,
             CommandId::ScheduleSend,
             CommandId::AttachFile,
             CommandId::DetachComposer,
+            CommandId::RemindIfNoReply,
         ]
     }
 }

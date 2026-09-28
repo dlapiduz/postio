@@ -2755,6 +2755,8 @@ impl FocusWindow {
                     .as_ref()
                     .map(|moves| Rc::clone(moves.picker())),
             )
+            // The composer's remind picker, at its footer (US3).
+            .chain(self.compose().and_then(|compose| compose.open_picker()))
             .find(|picker| picker.is_open())
     }
 

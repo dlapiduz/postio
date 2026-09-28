@@ -20,7 +20,7 @@ use postio_storage::BlobStore;
 use crate::support::{self, Fixture};
 
 /// An SMTP server that accepts everything, on 587 with STARTTLS.
-fn accepting() -> SmtpScript {
+pub(crate) fn accepting() -> SmtpScript {
     SmtpScript::new("220 mail.example.com ESMTP ready")
         .on(
             "EHLO",
@@ -44,7 +44,7 @@ fn delivered(connector: &ScriptedConnector) -> usize {
 
 /// Drain the account's queue over `connector` as of `at`, as the engine
 /// does when there is a link.
-async fn drain(
+pub(crate) async fn drain(
     fixture: &Fixture,
     backend: &MockBackend,
     secrets: &std::sync::Arc<MemorySecretStore>,

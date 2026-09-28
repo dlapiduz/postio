@@ -19,8 +19,9 @@ use postio_client::Client;
 use postio_core::{CommandId, Keymap};
 use postio_model::ids::AccountId;
 use postio_widgets::composer::Composer;
+use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 
-pub use frame::{saved_at, summary, title};
+pub use frame::{remind_words, saved_at, summary, title};
 pub use seams::Current;
 
 use crate::window::FocusWindow;
@@ -37,6 +38,10 @@ pub struct Compose {
     frame: Rc<frame::Frame>,
     host: Rc<host::DialogHost>,
     resume: seams::Resume,
+    /// "Remind if no reply", opened at the footer by `mod+h` or a click
+    /// (US3 scenario 5): the remind picker the row uses, choosing for the
+    /// draft instead of for a conversation.
+    remind: Rc<WhenPicker>,
 }
 
 impl Compose {
@@ -85,12 +90,44 @@ impl Compose {
             move |_| composer.dispatch(CommandId::Back)
         ));
         let resume = seams::wire(&composer, &frame, client, account, current);
-        Rc::new(Compose {
+        let remind = WhenPicker::new(&keymap, When::Remind);
+        remind.connect_chosen(glib::clone!(
+            #[weak]
+            composer,
+            move |at| composer.set_remind_at(Some(at.to_utc()))
+        ));
+        let compose = Rc::new(Compose {
             composer,
             frame,
             host,
             resume,
-        })
+            remind,
+        });
+        let weak = Rc::downgrade(&compose);
+        compose.frame.remind.connect_clicked(move |_| {
+            if let Some(compose) = weak.upgrade() {
+                compose.dispatch(CommandId::RemindIfNoReply);
+            }
+        });
+        compose
+    }
+
+    /// The remind picker at the footer, while it is open.
+    pub fn open_picker(&self) -> Option<Rc<Picker>> {
+        let picker = self.remind.picker();
+        picker.is_open().then(|| Rc::clone(picker))
+    }
+
+    /// Open the remind picker at the footer's control, naming the draft.
+    fn open_remind(&self) {
+        let subject = self.composer.draft().subject;
+        let target = if subject.trim().is_empty() {
+            "This message".to_owned()
+        } else {
+            subject
+        };
+        self.remind
+            .open(&self.frame.remind, None, &target, chrono::Local::now());
     }
 
     /// The composer.
@@ -108,6 +145,7 @@ impl Compose {
     pub fn dispatch(&self, id: CommandId) {
         match id {
             CommandId::ScheduleSend if self.composer.is_open() => self.frame.pop_send_later(),
+            CommandId::RemindIfNoReply if self.composer.is_open() => self.open_remind(),
             _ => self.host.run(id),
         }
     }
@@ -121,6 +159,7 @@ impl Compose {
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.composer.set_keymap(keymap);
         self.frame.set_keymap(keymap);
+        self.remind.set_keymap(keymap);
     }
 
     /// Start the editing surface before anybody asks to write (#1216).

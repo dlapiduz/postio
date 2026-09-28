@@ -2258,6 +2258,19 @@ impl Composer {
         self.refresh();
     }
 
+    /// When the draft asks to be reminded if nobody replies (spec 007 US3
+    /// scenario 5): sending it sets that reminder on its conversation.
+    pub fn remind_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.imp().draft.borrow().remind_at
+    }
+
+    /// Ask for a reminder at `at` if nobody replies, or for none: an edit,
+    /// which autosaves like any other.
+    pub fn set_remind_at(&self, at: Option<chrono::DateTime<chrono::Utc>>) {
+        self.imp().draft.borrow_mut().remind_at = at;
+        self.refresh();
+    }
+
     /// Start the composition just opened with `labels`, as a reply starts
     /// with its conversation's (FR-053): part of what it opened with, not an
     /// edit, so nothing is saved for it until the person writes something.

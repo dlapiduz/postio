@@ -50,6 +50,7 @@ mod pickers;
 mod places;
 mod registry_parity;
 mod reload;
+mod remind_on_send;
 mod remote_images;
 mod rows;
 mod selection;
@@ -254,6 +255,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "offline_send::offline_a_send_is_in_the_outbox_at_once_and_leaves_once",
         offline_send::offline_a_send_is_in_the_outbox_at_once_and_leaves_once as fn(),
+    ),
+    (
+        "remind_on_send::mod_h_in_the_composer_sets_a_reminder_that_sending_keeps",
+        remind_on_send::mod_h_in_the_composer_sets_a_reminder_that_sending_keeps as fn(),
     ),
     (
         "one_composer::the_same_content_from_either_app_leaves_as_the_same_message",

@@ -214,6 +214,7 @@ fn sample_draft() -> Draft {
         labels: vec![LabelId::new(2), LabelId::new(4)],
         // Populated, for the reason `rfc_message_id` is below.
         calendar_reply: Some("BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n".into()),
+        remind_at: Some(Utc.with_ymd_and_hms(2026, 9, 29, 7, 0, 0).unwrap()),
         attachments: vec![],
         state: DraftState::Editing,
         // Populated rather than `None`: this test exists to prove a field

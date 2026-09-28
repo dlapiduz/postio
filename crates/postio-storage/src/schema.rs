@@ -325,7 +325,11 @@ CREATE TABLE "drafts" (
     -- The iCalendar answer an invitation's reply carries (spec 007 FR-102):
     -- a METHOD:REPLY object, sent as the text/calendar alternative beside
     -- the words. NULL for every draft a person writes.
-    calendar_reply          TEXT
+    calendar_reply          TEXT,
+    -- "Remind if no reply" (spec 007 US3, FR-044), in milliseconds: when
+    -- the message is sent, its conversation gets a reminder due then. NULL
+    -- when the draft asks for none.
+    remind_at               INTEGER
 );
 
 CREATE TABLE egress_log (

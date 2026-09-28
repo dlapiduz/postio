@@ -69,7 +69,8 @@ pub struct DraftRepository<'a> {
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
 body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
-rfc_message_id, forwarded_message_id, body_markdown, label_ids, calendar_reply";
+rfc_message_id, forwarded_message_id, body_markdown, label_ids, calendar_reply,
+remind_at";
 
 impl<'a> DraftRepository<'a> {
     /// Borrows a connection.
@@ -111,7 +112,8 @@ impl<'a> DraftRepository<'a> {
                             forwarded_message_id = ?17,
                             body_markdown = ?18,
                             label_ids = ?19,
-                            calendar_reply = ?20
+                            calendar_reply = ?20,
+                            remind_at = ?21
                       WHERE id = ?1",
                     bind![
                         draft.id.get(),
@@ -141,6 +143,7 @@ impl<'a> DraftRepository<'a> {
                         draft.body_markdown,
                         label_ids(draft),
                         draft.calendar_reply,
+                        draft.remind_at.map(to_millis),
                     ],
                 )
                 .await?;
@@ -158,9 +161,9 @@ impl<'a> DraftRepository<'a> {
                                          thread_id, subject, body_text, body_html, state, uid,
                                          uid_validity, mod_seq, remote_id, created_at, updated_at,
                                          rfc_message_id, forwarded_message_id, body_markdown,
-                                         label_ids, calendar_reply)
+                                         label_ids, calendar_reply, remind_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16, ?17, ?18, ?19, ?20)",
+                             ?16, ?17, ?18, ?19, ?20, ?21)",
                     bind![
                         account_id,
                         optional_identity(draft.identity_id),
@@ -189,6 +192,7 @@ impl<'a> DraftRepository<'a> {
                         draft.body_markdown,
                         label_ids(draft),
                         draft.calendar_reply,
+                        draft.remind_at.map(to_millis),
                     ],
                 )
                 .await?;
@@ -1216,6 +1220,7 @@ fn read_draft(row: &Row) -> Result<Draft> {
             .map(LabelId::new)
             .collect(),
         calendar_reply: row.col(20)?,
+        remind_at: row.col::<Option<i64>>(21)?.map(from_millis),
         created_at: from_millis(row.col(14)?),
         updated_at: from_millis(row.col(15)?),
     })

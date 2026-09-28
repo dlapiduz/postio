@@ -146,6 +146,9 @@ pub(crate) struct SendJob {
     /// draft that names them is deleted by the time they are applied, and
     /// a label deleted meanwhile is simply not among them.
     labels: Vec<(LabelId, String)>,
+    /// "Remind if no reply" (spec 007 US3 scenario 5): the time the
+    /// conversation's reminder falls due, set as the sent copy is filed.
+    remind_at: Option<chrono::DateTime<Utc>>,
 }
 
 /// What resolving a `Send` operation against local storage found.
@@ -347,6 +350,7 @@ pub(crate) async fn resolve(
         sent_mailbox_path: sent.path,
         drafts_copy,
         labels,
+        remind_at: draft.remind_at,
     })))
 }
 
@@ -593,6 +597,7 @@ async fn file_sent_locally(
         Err(error) => tracing::warn!(%error, "could not thread the sent copy"),
     }
     label_the_conversation(connection, job, &message).await;
+    remind_on_the_conversation(connection, job, &message).await;
     // No recount needed: `messages_count_insert` already moved Sent's cached
     // counts when `create` inserted the row.
 
@@ -653,6 +658,25 @@ async fn label_the_conversation(connection: &Connection, job: &SendJob, copy: &M
     };
     if let Err(error) = label_members(connection, job, thread, copy.id).await {
         tracing::warn!(%error, "could not label a sent message's conversation");
+    }
+}
+
+/// Sets the reminder the draft asked for (spec 007 US3 scenario 5,
+/// FR-044): on the sent copy's conversation, waiting on a reply to the copy,
+/// due at the draft's `remind_at`. Local, before the network, like the
+/// labels; Focus's filing pass cancels it when somebody else writes in the
+/// conversation, and its due timer fires it otherwise. Best-effort: a
+/// reminder that could not be set is never a reason to fail, or repeat, a
+/// send.
+async fn remind_on_the_conversation(connection: &Connection, job: &SendJob, copy: &Message) {
+    let (Some(due), Some(thread)) = (job.remind_at, copy.thread_id) else {
+        return;
+    };
+    if let Err(error) = postio_storage::repository::ReminderRepository::new(connection)
+        .set(thread, copy.id, due, Utc::now())
+        .await
+    {
+        tracing::warn!(%error, "could not set a sent message's reminder");
     }
 }
 
@@ -824,6 +848,7 @@ async fn confirm_sent_copy(
                 message.thread_id = Some(threaded.thread_id);
             }
             label_the_conversation(connection, job, &message).await;
+            remind_on_the_conversation(connection, job, &message).await;
             let block = postio_model::headers::block_of(&job.raw);
             let body = StoredBody {
                 text: stored_text(message.body.text.as_deref()),
