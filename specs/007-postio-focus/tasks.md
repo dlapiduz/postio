@@ -310,7 +310,7 @@ maintainer asks.
 - [X] T109 [US8] The `markers` table and its repository, and markers read in one batched statement per Focus page. Test first: a page with markers is still at most 3 statements, with no scans. The runtime layer adds the inbox witness to the page's statements (contracts/engine.md)
 - [X] T110 [US8] The body task turns an invitation into a marker: open, updated, cancelled or past. Test first: scenarios 1, 4 and 5. Place floating and all-day times with `Invitation`'s `instant_in`, in the user's zone. Add the series' last occurrence to the adapter for a recurring "past". Delete the `instant_in` and `supersedes` lines in `scripts/checks/uncalled-pub-fn-baseline.txt`. `MarkerRepository::invitations(uid)` is built. Delete its line in `scripts/checks/uncalled-pub-fn-baseline.txt`
 - [X] T111 [US8] A calendar part in `outgoing::build` (`crates/postio-model/src/outgoing.rs`). Test first: the REPLY sits in the `multipart/alternative`
-- [ ] T112 [US8] `accept_invite` and `decline_invite`: a reply from the matching identity, `queue_send_at(now + 10 s)`, the marker `accepting`, and a window entry on the undo stack that expires with the window. Test first:. The due timer does not expire an RSVP window yet
+- [ ] T112 [US8] `accept_invite` and `decline_invite`: a reply from the matching identity, `queue_send_at(now + 10 s)`, the marker `accepting`, and a window entry on the undo stack that expires with the window. The due timer does not expire an RSVP window yet. Test first:
   - nothing reaches the transport before the window ends (scenario 2);
   - undo within it sends nothing;
   - after it, exactly one reply leaves (scenario 3)
