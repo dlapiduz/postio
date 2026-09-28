@@ -105,3 +105,95 @@ pub fn a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once() {
         );
     });
 }
+
+/// T136, US10 scenario 3: a delivered digest is one row among the
+/// conversations, where it came due -- below the conversations newer than
+/// that -- saying its cadence, its rule, its count and its senders. What
+/// it holds is not listed besides.
+pub fn a_delivered_digest_is_one_row_where_it_came_due() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        for (from, subject, minutes) in [
+            (("Ada Moreno", "ada@example.com"), "Atlas budget", 30),
+            (("Lena Park", "lena@example.org"), "Harbor draft", 20),
+            (("Tomás Reyes", "tomas@example.net"), "Staffing plan", 10),
+        ] {
+            fixture.file(from, subject, "Hello.", minutes).await;
+        }
+        let mut held = Vec::new();
+        for (subject, minutes) in [("The weekly numbers", 40), ("The rate decision", 50)] {
+            let (message, _) = fixture
+                .file(("Ledger", "news@ledger.test"), subject, "Rates.", minutes)
+                .await;
+            held.push(message);
+        }
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            let digests = postio_storage::repository::DigestRepository::new(&connection);
+            for message in &held {
+                digests
+                    .hold(*message, "Newsletters", support::now())
+                    .await
+                    .expect("held");
+            }
+            digests
+                .deliver(
+                    "Newsletters",
+                    support::now() - Duration::minutes(15),
+                    support::now() - Duration::minutes(15),
+                )
+                .await
+                .expect("delivered")
+                .expect("a delivery");
+        }
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || {
+                support::subjects(&window)
+                    == [
+                        "Staffing plan",
+                        "digest: Newsletters",
+                        "Harbor draft",
+                        "Atlas budget",
+                    ]
+            })
+            .await,
+            "the digest is not one row where it came due: {:?}",
+            support::subjects(&window)
+        );
+        let pane = window.pane().expect("the list");
+        let digest_said = || {
+            pane.rows_on_screen()
+                .get(1)
+                .map(|row| row.drawn().texts)
+                .unwrap_or_default()
+        };
+        assert!(
+            crate::settle_until(async || !digest_said().is_empty()).await,
+            "the digest row never drew"
+        );
+        let said = digest_said();
+        for wanted in ["Digest", "Newsletters \u{b7} 2 messages", "From Ledger"] {
+            assert!(
+                said.iter().any(|text| text.starts_with(wanted)),
+                "the digest row does not say {wanted:?}: {said:?}"
+            );
+        }
+
+        // `a` on the digest's row archives the whole delivery, and the row
+        // goes; what it held does not come back to the inbox.
+        support::keys(&window, &["j", "j"]);
+        support::press(&window, "a", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || {
+                support::subjects(&window) == ["Staffing plan", "Harbor draft", "Atlas budget"]
+            })
+            .await,
+            "archiving the digest left: {:?}",
+            support::subjects(&window)
+        );
+    });
+}

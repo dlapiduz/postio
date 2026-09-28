@@ -357,7 +357,9 @@ impl OpenMessage {
     /// Show `row`, at `position` in the list, over `parent`: at once, from
     /// what the row says, then the body from the store.
     pub fn show(&self, parent: &impl IsA<gtk::Widget>, row: &FocusRow, position: Position) {
-        let conversation = row.row();
+        let Some(conversation) = row.as_conversation() else {
+            return;
+        };
         let summary = &conversation.summary;
         let message = summary.representative.id;
         let subject = summary

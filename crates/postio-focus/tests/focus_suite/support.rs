@@ -571,13 +571,19 @@ pub fn subjects(window: &postio_focus::window::FocusWindow) -> Vec<String> {
             pane.rows_on_screen()
                 .iter()
                 .filter_map(|row| row.item())
-                .map(|item| {
-                    item.row()
+                .map(|item| match item.as_conversation() {
+                    Some(row) => row
                         .summary
                         .representative
                         .subject
                         .clone()
-                        .unwrap_or_default()
+                        .unwrap_or_default(),
+                    None => match &item {
+                        postio_focus::list::FocusRow::Digest(digest) => {
+                            format!("digest: {}", digest.rule)
+                        }
+                        _ => String::new(),
+                    },
                 })
                 .collect()
         })

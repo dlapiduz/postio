@@ -107,6 +107,10 @@ const CASES: &[(&str, fn())] = &[
         pickers::m_moves_three_to_receipts_and_ctrl_z_returns_them as fn(),
     ),
     (
+        "surfaced::a_delivered_digest_is_one_row_where_it_came_due",
+        surfaced::a_delivered_digest_is_one_row_where_it_came_due as fn(),
+    ),
+    (
         "surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once",
         surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once as fn(),
     ),

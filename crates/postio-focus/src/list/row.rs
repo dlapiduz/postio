@@ -420,7 +420,12 @@ impl RowWidget {
             self.draw_skeleton(snapshot);
             return;
         };
-        let row = item.row();
+        let Some(row) = item.as_conversation() else {
+            if let FocusRow::Digest(digest) = &item {
+                self.draw_digest(snapshot, digest);
+            }
+            return;
+        };
         let summary = &row.summary;
         let palette = Palette::of(self);
         let width = self.width() as f32;
@@ -769,6 +774,106 @@ impl RowWidget {
 
     /// Draw the symbolic icon `name`, `ICON` pixels square, at `x`, `y`, in
     /// `colour`.
+    /// A digest's row (T136): one line, bold, standing for everything it
+    /// holds -- the stack in the gutter, "Weekly · digest", "Newsletters ·
+    /// 14 messages", who it is from or its summary's opening, its count and
+    /// when it came due.
+    fn draw_digest(&self, snapshot: &gtk::Snapshot, digest: &super::item::Digest) {
+        let palette = Palette::of(self);
+        let width = self.width() as f32;
+        let middle = ONE_LINE as f32 / 2.0;
+        let mut drawn = Drawn {
+            bold: true,
+            picked: self.is_picked(),
+            ink: palette.ink,
+            ..Drawn::default()
+        };
+        self.draw_icon(
+            snapshot,
+            "view-continuous-symbolic",
+            GUTTER_CENTRE - ICON / 2.0,
+            middle - ICON / 2.0,
+            &palette.dim,
+        );
+
+        let time = postio_ui::row::timestamp(digest.at, chrono::Local::now());
+        let time_layout = self.layout(&time, true, 1.0);
+        let (time_width, _) = time_layout.pixel_size();
+        let mut trailing = width - TRAILING - time_width as f32;
+        self.put(
+            snapshot,
+            &time_layout,
+            trailing,
+            middle,
+            time_width as f32,
+            &palette.ink,
+        );
+        let mut trailing_texts = vec![time];
+        let count = digest.count.to_string();
+        let badge = self.layout(&count, false, 0.8);
+        let (badge_width, badge_height) = badge.pixel_size();
+        let boxed = badge_width as f32 + 10.0;
+        trailing -= GAP + boxed;
+        let frame = graphene::Rect::new(
+            trailing,
+            middle - (badge_height as f32 + 4.0) / 2.0,
+            boxed,
+            badge_height as f32 + 4.0,
+        );
+        snapshot.append_border(
+            &gtk::gsk::RoundedRect::from_rect(frame, 4.0),
+            &[1.0; 4],
+            &[palette.rule; 4],
+        );
+        self.put(
+            snapshot,
+            &badge,
+            trailing + 5.0,
+            middle,
+            badge_width as f32,
+            &palette.dim,
+        );
+        trailing_texts.push(count);
+        let end = trailing - GAP;
+
+        let title = postio_ui::focus_row::digest_title(digest.cadence);
+        let title_layout = self.layout(&title, true, 1.0);
+        self.put(
+            snapshot,
+            &title_layout,
+            SENDER_X,
+            middle,
+            SENDER_WIDTH.min(end - SENDER_X),
+            &palette.ink,
+        );
+        drawn.texts.push(title);
+        let subject = postio_ui::focus_row::digest_subject(&digest.rule, digest.count);
+        let subject_layout = self.layout(&subject, true, 1.0);
+        let mut x = SUBJECT_X;
+        x += self.put(snapshot, &subject_layout, x, middle, end - x, &palette.ink);
+        drawn.texts.push(subject);
+        let senders: Vec<String> = digest
+            .senders
+            .iter()
+            .map(|sender| sender.display().to_owned())
+            .collect();
+        let line = postio_ui::focus_row::digest_line(digest.summary_line.as_deref(), &senders);
+        if !line.is_empty() && end - (x + GAP) >= LEAST_FIRST_LINE {
+            let line_layout = self.layout(&line, false, 1.0);
+            self.put(
+                snapshot,
+                &line_layout,
+                x + GAP,
+                middle,
+                end - (x + GAP),
+                &palette.dim,
+            );
+            drawn.texts.push(line);
+        }
+        drawn.texts.extend(trailing_texts.into_iter().rev());
+        self.imp().drawn.replace(drawn);
+    }
+
     fn draw_icon(&self, snapshot: &gtk::Snapshot, name: &str, x: f32, y: f32, colour: &gdk::RGBA) {
         let theme = gtk::IconTheme::for_display(&self.display());
         let icon = theme.lookup_icon(
@@ -802,7 +907,16 @@ impl RowWidget {
 /// What a row says, in the order a screen reader should say it: the sender,
 /// the subject, the first line, and whether it is unread (FR-096).
 pub fn spoken(item: &FocusRow) -> String {
-    let row = item.row();
+    let Some(row) = item.as_conversation() else {
+        let FocusRow::Digest(digest) = item else {
+            return String::new();
+        };
+        return [
+            postio_ui::focus_row::digest_title(digest.cadence),
+            postio_ui::focus_row::digest_subject(&digest.rule, digest.count),
+        ]
+        .join(", ");
+    };
     let summary = &row.summary;
     let mut parts = Vec::new();
     if let Some(from) = &summary.representative.from {

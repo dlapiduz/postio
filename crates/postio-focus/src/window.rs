@@ -635,7 +635,10 @@ impl FocusWindow {
                 self.cursor_to(last);
             }
             CommandId::ToggleSelection => {
-                if let Some(row) = self.cursor_row() {
+                if let Some(row) = self
+                    .cursor_row()
+                    .filter(|row| !matches!(row, FocusRow::Digest(_)))
+                {
                     self.imp()
                         .reach
                         .borrow_mut()
@@ -683,6 +686,11 @@ impl FocusWindow {
                     bar.open();
                 }
             }
+            CommandId::Archive if self.digest_at_cursor().is_some() => {
+                if let Some(digest) = self.digest_at_cursor() {
+                    self.archive_digest(digest.delivery);
+                }
+            }
             CommandId::Archive | CommandId::Delete | CommandId::ToggleRead => {
                 self.send(Command::default_for(id));
             }
@@ -694,7 +702,10 @@ impl FocusWindow {
             CommandId::Refresh => self.post(Command::Refresh),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
-            CommandId::OpenMessage => self.open_message(),
+            CommandId::OpenMessage => match self.digest_at_cursor() {
+                Some(digest) => self.open_digest(digest),
+                None => self.open_message(),
+            },
             CommandId::GoToFolders => self.open_places(),
             CommandId::GoToInbox => self.go_to_inbox(),
             CommandId::ViewSource => self.view_source(),
@@ -880,6 +891,9 @@ impl FocusWindow {
                 aims
             }
             Selection::These(_) => match self.cursor_row() {
+                // A digest stands for its delivery, which its own verbs
+                // name; a message verb has nothing to aim at there.
+                Some(FocusRow::Digest(_)) => Vec::new(),
                 Some(row) if !row.threads().is_empty() => {
                     vec![MessageTarget::Threads(row.threads())]
                 }
@@ -1521,6 +1535,27 @@ impl FocusWindow {
             target: MessageTarget::Selection,
             dismissed: true,
         });
+    }
+
+    /// The digest the cursor is on, when it is on one.
+    fn digest_at_cursor(&self) -> Option<crate::list::Digest> {
+        match self.cursor_row()? {
+            FocusRow::Digest(digest) => Some(digest),
+            _ => None,
+        }
+    }
+
+    /// Archive a whole delivery: one undo (FR-125).
+    fn archive_digest(&self, delivery: postio_model::DeliveryId) {
+        self.post(Command::ArchiveDigest {
+            delivery,
+            archived: true,
+        });
+    }
+
+    /// Open `digest`'s window (T137).
+    fn open_digest(&self, digest: crate::list::Digest) {
+        let _ = digest;
     }
 
     /// The sweep's confirmation, while it is up.
@@ -2370,7 +2405,9 @@ impl FocusWindow {
         let Some(item) = self.cursor_row() else {
             return String::new();
         };
-        let row = item.row();
+        let Some(row) = item.as_conversation() else {
+            return String::new();
+        };
         let representative = &row.summary.representative;
         let sender = representative
             .from

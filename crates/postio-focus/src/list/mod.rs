@@ -9,7 +9,7 @@ pub mod pane;
 pub mod row;
 
 pub use feed::Feed;
-pub use item::{Conversation, FocusRow};
+pub use item::{Conversation, Digest, FocusRow};
 pub use model::{FocusList, RowObject};
 pub use pane::ListPane;
 pub use row::RowWidget;

@@ -42,7 +42,8 @@ pub fn a_postio_link_opens_its_message_and_an_unknown_one_is_refused() {
             .find_map(|widget| widget.item())
             .expect("a row");
         let subject = row
-            .row()
+            .as_conversation()
+            .expect("a conversation")
             .summary
             .representative
             .subject

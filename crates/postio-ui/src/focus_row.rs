@@ -34,6 +34,41 @@ pub fn count_badge(message_count: u32) -> Option<String> {
     (message_count > 1).then(|| message_count.to_string())
 }
 
+/// A digest row's first column: "Weekly · digest", or "Digest" when its
+/// rule's cadence is not known (screen 01, T136).
+pub fn digest_title(cadence: Option<postio_model::listing::Cadence>) -> String {
+    use postio_model::listing::Cadence;
+    match cadence {
+        Some(Cadence::Daily) => "Daily \u{b7} digest".to_owned(),
+        Some(Cadence::Weekly) => "Weekly \u{b7} digest".to_owned(),
+        Some(Cadence::Monthly) => "Monthly \u{b7} digest".to_owned(),
+        None => "Digest".to_owned(),
+    }
+}
+
+/// A digest row's subject: "Newsletters · 14 messages".
+pub fn digest_subject(rule: &str, count: u32) -> String {
+    let messages = if count == 1 { "message" } else { "messages" };
+    format!("{rule} \u{b7} {count} {messages}")
+}
+
+/// A digest row's line: its summary's opening once one is written, and
+/// until then who it is from -- "From Ledger, Forge and 4 others".
+pub fn digest_line(summary: Option<&str>, senders: &[String]) -> String {
+    if let Some(summary) = summary.map(str::trim).filter(|summary| !summary.is_empty()) {
+        return summary.to_owned();
+    }
+    match senders {
+        [] => String::new(),
+        [one] => format!("From {one}"),
+        [one, two] => format!("From {one} and {two}"),
+        [one, two, rest @ ..] => {
+            let others = if rest.len() == 1 { "other" } else { "others" };
+            format!("From {one}, {two} and {} {others}", rest.len())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,6 +394,42 @@ mod strip_tests {
             showing(7, 312, None),
             "Showing 7 of 312",
             "no key, no promise"
+        );
+    }
+
+    #[test]
+    fn a_digest_row_says_its_cadence_its_count_and_who_it_is_from() {
+        use postio_model::listing::Cadence;
+        assert_eq!(digest_title(Some(Cadence::Weekly)), "Weekly \u{b7} digest");
+        assert_eq!(digest_title(None), "Digest");
+        assert_eq!(
+            digest_subject("Newsletters", 14),
+            "Newsletters \u{b7} 14 messages"
+        );
+        assert_eq!(
+            digest_subject("Newsletters", 1),
+            "Newsletters \u{b7} 1 message"
+        );
+        let names = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(digest_line(None, &names(&["Ledger"])), "From Ledger");
+        assert_eq!(
+            digest_line(
+                None,
+                &names(&["Ledger", "Forge", "Rates", "Tides", "Rail", "Soil"])
+            ),
+            "From Ledger, Forge and 4 others"
+        );
+        assert_eq!(
+            digest_line(
+                Some("Rail funding vote, CRDT libraries"),
+                &names(&["Ledger"])
+            ),
+            "Rail funding vote, CRDT libraries"
         );
     }
 }

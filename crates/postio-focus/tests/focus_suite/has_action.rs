@@ -56,7 +56,8 @@ pub fn has_action_narrows_to_the_marked_rows_and_back() {
             "the filter clears the selection"
         );
         let cursor = window.cursor_row().map(|row| {
-            row.row()
+            row.as_conversation()
+                .expect("a conversation")
                 .summary
                 .representative
                 .subject
