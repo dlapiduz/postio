@@ -666,3 +666,8 @@ banner.focus-banner button {
   border-top: 1px solid var(--postio-hairline);
   background-color: var(--postio-header);
 }
+
+.focus-filtered-day {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  background-color: var(--postio-ground);
+}

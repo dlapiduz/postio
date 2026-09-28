@@ -75,6 +75,91 @@ use postio_storage::repository::{
 };
 use postio_storage::{BlobStore, Store};
 
+/// Screen 21's filtered mail: the sender, the subject, the first line, the
+/// reason and its source, and how many minutes before 16:09 it was filed.
+type Filtered = (
+    (&'static str, &'static str),
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    i64,
+);
+const FILTERED: &[Filtered] = &[
+    (
+        ("Forge", "notifications@forge.example"),
+        "[postio/engine] Review requested: search index rebuild (#412)",
+        "grace-o requested your review on this pull request.",
+        "notification",
+        Some("Forge"),
+        2,
+    ),
+    (
+        ("Harbor CI", "ci@harbor.example"),
+        "main: build 1182 passed",
+        "All 3 jobs passed in 6m 12s.",
+        "notification",
+        Some("CI"),
+        6,
+    ),
+    (
+        ("Outdoor Supply", "deals@outdoor.example"),
+        "End-of-season sale: 30% off tents",
+        "Through Sunday only. Free shipping over $50.",
+        "promotion",
+        None,
+        11,
+    ),
+    (
+        ("Pantry Co.", "orders@pantry.example"),
+        "Your order 4821 has been delivered",
+        "Left at the front door at 15:41.",
+        "shipping",
+        None,
+        25,
+    ),
+    (
+        ("Forge", "notifications@forge.example"),
+        "[postio/engine] Merged: IMAP IDLE reconnect (#409)",
+        "lena-p merged 3 commits into main.",
+        "notification",
+        Some("Forge"),
+        39,
+    ),
+    (
+        ("Calendar", "calendar@calendar.example"),
+        "Updated: Harbor design review",
+        "The time of this event changed to Tue 29 Sep 10:00.",
+        "notification",
+        Some("Calendar"),
+        57,
+    ),
+    (
+        ("Account Security Team", "security@verify.example"),
+        "Your mailbox is almost full, verify now",
+        "Click here within 24 hours to keep your account active.",
+        "spam",
+        None,
+        72,
+    ),
+    (
+        ("Metro Power", "billing@power.example"),
+        "Payment received, thank you",
+        "We received your payment of $142.17.",
+        "receipt",
+        None,
+        89,
+    ),
+    (
+        ("Social Circle", "notify@social.example"),
+        "Rita mentioned you in a comment",
+        "See what Rita said about your post.",
+        "social",
+        None,
+        107,
+    ),
+];
+
 /// The screens this tool can render, and what each is.
 const SCREENS: &[(&str, &str)] = &[
     ("01", "the inbox, light, three selected"),
@@ -97,6 +182,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("12", "the remind picker at the row"),
     ("13", "the label picker at the row"),
     ("14", "the move picker at the row"),
+    ("21", "the Filtered view"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -717,6 +803,16 @@ fn stage(
                 return Err(format!("the picker never listed {wanted:?}"));
             }
         }
+        "21" => {
+            window.act(CommandId::GoToFiltered);
+            if !settle_until(|| {
+                window
+                    .filtered()
+                    .is_some_and(|view| view.subjects().len() == FILTERED.len())
+            }) {
+                return Err("Filtered never listed the demo's filtered mail".into());
+            }
+        }
         "20" => {
             pick_three();
             window.act(CommandId::CheatSheet);
@@ -1130,6 +1226,34 @@ pub async fn demo() -> (Store, AccountId) {
             today - chrono::Duration::days(days),
         )
         .await;
+    }
+    // Screen 21: what filing archived today, each with its reason.
+    for (index, (from, subject, preview, reason, source, minutes)) in FILTERED.iter().enumerate() {
+        let at = today - chrono::Duration::minutes(*minutes);
+        let mut message = Message::new(report.account.id, archive, at);
+        message.date = Some(at);
+        message.from = vec![EmailAddress::new(Some(from.0), from.1)];
+        message.subject = Some((*subject).to_owned());
+        message.preview = Some((*preview).to_owned());
+        message.flags = [Flag::Seen].into_iter().collect();
+        message.rfc_message_id = Some(RfcMessageId::new(format!(
+            "<filtered.{index}@example.test>"
+        )));
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a filtered message");
+        postio_storage::repository::FilterDecisionRepository::new(&connection)
+            .record(&postio_storage::repository::FilterDecision {
+                message: id,
+                reason: postio_storage::repository::FilterReason::from_name(reason)
+                    .expect("a reason"),
+                source: source.map(str::to_owned),
+                layer: postio_storage::repository::FilterLayer::Header,
+                decided_at: at,
+            })
+            .await
+            .expect("a decision");
     }
     // Screen 14: mail was last moved to Receipts.
     postio_storage::repository::SettingsRepository::new(&connection)

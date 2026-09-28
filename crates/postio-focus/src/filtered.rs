@@ -18,7 +18,7 @@ use postio_core::{CommandId, Keymap};
 use postio_model::MessageId;
 use postio_ui::filtered;
 use postio_widgets::widgets::keyhint::{self, KeyLine};
-use postio_widgets::widgets::space::{S1, S2, S3};
+use postio_widgets::widgets::space::{S1, S3};
 
 /// How many rows a page reads.
 const PAGE: u32 = 50;
@@ -59,6 +59,9 @@ pub struct FilteredView {
     counts: Cell<[u32; 7]>,
     /// The rows listed, in order.
     rows: RefCell<Vec<FilteredRow>>,
+    /// What each row of the list is: a day's heading, or the row at that
+    /// index of `rows`.
+    shown: RefCell<Vec<Option<usize>>>,
     /// Whether the last page read was full: there may be more.
     more: Cell<bool>,
     /// Moves with every re-read, so a page for an earlier one is dropped.
@@ -139,6 +142,7 @@ impl FilteredView {
             tab: Cell::new(0),
             counts: Cell::new([0; 7]),
             rows: RefCell::default(),
+            shown: RefCell::default(),
             more: Cell::new(false),
             generation: Cell::new(0),
             handler: RefCell::default(),
@@ -310,7 +314,7 @@ impl FilteredView {
     /// Give the list the keyboard, on its first row.
     pub fn focus_list(&self) {
         if self.list.selected_row().is_none()
-            && let Some(first) = self.list.row_at_index(0)
+            && let Some(first) = self.list_row(0)
         {
             self.list.select_row(Some(&first));
         }
@@ -332,8 +336,19 @@ impl FilteredView {
     }
 
     fn row_at(&self, index: i32) -> Option<FilteredRow> {
-        let index = usize::try_from(index).ok()?;
+        let at = usize::try_from(index).ok()?;
+        let index = self.shown.borrow().get(at).copied().flatten()?;
         self.rows.borrow().get(index).cloned()
+    }
+
+    /// The list row that shows the `index`th of `rows`.
+    fn list_row(&self, index: usize) -> Option<gtk::ListBoxRow> {
+        let at = self
+            .shown
+            .borrow()
+            .iter()
+            .position(|shown| *shown == Some(index))?;
+        self.list.row_at_index(i32::try_from(at).ok()?)
     }
 
     /// Read the tabs' counts.
@@ -401,10 +416,7 @@ impl FilteredView {
                         .position(|row| row.message.id == message)
                 })
                 .unwrap_or(0);
-            if let Some(row) = i32::try_from(index)
-                .ok()
-                .and_then(|index| view.list.row_at_index(index))
-            {
+            if let Some(row) = view.list_row(index) {
                 view.list.select_row(Some(&row));
             }
         });
@@ -453,9 +465,31 @@ impl FilteredView {
         let now = chrono::Local::now();
         let today = now.date_naive();
         let restore_key = postio_ui::hints::key(&self.keymap.borrow(), CommandId::RestoreFiltered);
+        let rows = self.rows.borrow();
+        let day_of = |row: &FilteredRow| row.at.with_timezone(&chrono::Local).date_naive();
+        let mut shown = Vec::new();
         let mut day = None;
-        for row in self.rows.borrow().iter() {
-            let local = row.at.with_timezone(&chrono::Local).date_naive();
+        for (index, row) in rows.iter().enumerate() {
+            let local = day_of(row);
+            if day != Some(local) {
+                day = Some(local);
+                // "Today · 9": the day, and how many of its rows are here.
+                let count = rows.iter().filter(|other| day_of(other) == local).count();
+                let heading = gtk::Label::new(Some(&format!(
+                    "{} \u{b7} {count}",
+                    postio_ui::focus_row::day_heading(local, today)
+                )));
+                heading.add_css_class("focus-day-heading");
+                heading.add_css_class("focus-filtered-day");
+                heading.set_xalign(0.0);
+                let item = gtk::ListBoxRow::new();
+                item.set_child(Some(&heading));
+                item.set_selectable(false);
+                item.set_activatable(false);
+                item.set_can_focus(false);
+                self.list.append(&item);
+                shown.push(None);
+            }
             let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
             line.add_css_class("focus-filtered-row");
             let sender = gtk::Label::new(Some(
@@ -489,6 +523,7 @@ impl FilteredView {
                 restore_key.as_deref(),
             )));
             restore.set_visible(false);
+            restore.set_valign(gtk::Align::Center);
             let message = row.message.id;
             let weak = self.me.borrow().clone();
             restore.connect_clicked(move |_| {
@@ -499,27 +534,19 @@ impl FilteredView {
             line.append(&restore);
             let pill = gtk::Label::new(Some(&filtered::pill(&row.reason, row.source.as_deref())));
             pill.add_css_class("focus-filtered-pill");
+            pill.set_valign(gtk::Align::Center);
             line.append(&pill);
             let time = gtk::Label::new(Some(&postio_ui::row::timestamp(row.at, now)));
             time.add_css_class("focus-filtered-time");
             line.append(&time);
 
             let item = gtk::ListBoxRow::new();
-            if day == Some(local) {
-                item.set_child(Some(&line));
-            } else {
-                day = Some(local);
-                let heading =
-                    gtk::Label::new(Some(&postio_ui::focus_row::day_heading(local, today)));
-                heading.add_css_class("focus-day-heading");
-                heading.set_xalign(0.0);
-                let holder = gtk::Box::new(gtk::Orientation::Vertical, S2);
-                holder.append(&heading);
-                holder.append(&line);
-                item.set_child(Some(&holder));
-            }
+            item.set_child(Some(&line));
             self.list.append(&item);
+            shown.push(Some(index));
         }
+        drop(rows);
+        self.shown.replace(shown);
     }
 }
 
