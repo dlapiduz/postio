@@ -255,6 +255,60 @@ async fn a_bcc_recipient_is_an_envelope_address_and_never_a_header() {
     );
 }
 
+#[tokio::test]
+async fn a_bcc_header_handed_to_the_transport_never_reaches_the_wire() {
+    // The test above holds because `outgoing::build` never writes `Bcc`.
+    // This one holds the transport to the same rule on its own: whatever
+    // bytes reach it -- a stored copy sent again, a Drafts copy, anything a
+    // later caller builds -- DATA goes to every envelope recipient as-is, so
+    // a `Bcc` header there discloses the bcc'd list to all of them. The
+    // header is folded, because a filter that only drops its first line
+    // would leave the second one naming an address.
+    let raw = "From: ada@example.com\r\n\
+               To: grace@example.net\r\n\
+               Bcc: quiet@example.org,\r\n \
+               other@example.org\r\n\
+               Subject: Draft review\r\n\
+               \r\n\
+               Looking now.\r\n";
+    let recipients = vec![
+        "grace@example.net".to_owned(),
+        "quiet@example.org".to_owned(),
+        "other@example.org".to_owned(),
+    ];
+
+    let (mut session, connector) = open(happy_script()).await;
+    session
+        .send_message(
+            "ada@example.com",
+            &recipients,
+            raw.as_bytes(),
+            &CancelToken::new(),
+        )
+        .await
+        .expect("the scripted send");
+
+    let written = wire(&connector);
+    let payload = payload(&written);
+    assert!(
+        !payload.to_ascii_lowercase().contains("bcc:"),
+        "the transport sent a Bcc header, which hands every recipient the \
+         list of people who were bcc'd: {payload:?}"
+    );
+    assert!(
+        !payload.contains("quiet@example.org") && !payload.contains("other@example.org"),
+        "a bcc'd address reached the bytes every recipient receives, the \
+         folded line included: {payload:?}"
+    );
+    // The control: the rest of the message went out untouched.
+    assert!(
+        payload.contains("To: grace@example.net\r\n")
+            && payload.contains("Subject: Draft review\r\n")
+            && payload.contains("Looking now."),
+        "the rest of the message did not go out as it was given: {payload:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // §4.5.3.1.6 — line length
 // ---------------------------------------------------------------------------
