@@ -106,9 +106,15 @@ pub fn run() -> glib::ExitCode {
                     if let Some(window) = window.upgrade() {
                         // The network after the frame the stored mail is
                         // drawn in, never before it.
+                        let warm = window.downgrade();
                         startup::after_first_frame(&window, move || {
                             if let Some(session) = session.borrow().as_ref() {
                                 session.start_syncing();
+                            }
+                            // The composer's web process, while nobody is
+                            // waiting on it (#1216).
+                            if let Some(window) = warm.upgrade() {
+                                window.warm_composer();
                             }
                         });
                     }

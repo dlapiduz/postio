@@ -1,0 +1,190 @@
+//! Compose and reply in Focus (US3, screens 05 and 06): the classic app's
+//! composer, in a dialog over the list.
+//!
+//! What is asserted is what the dialog shows -- the heading, the fields as
+//! their entries read, the Labels row, the quote in the body -- never what
+//! the composer was handed.
+
+use adw::prelude::*;
+use postio_model::{EmailAddress, Message, MessageId};
+use postio_storage::repository::{MessageRepository, StoredBody, ThreadingRepository};
+
+use crate::support::{self, Fixture};
+
+/// The user's own address in the fixture's account: `reply_all` leaves it
+/// out of the recipients.
+pub const ME: &str = "test@example.com";
+
+impl Fixture {
+    /// File Lena's "Harbor API draft v3" into the inbox, to the user and
+    /// Ben, copying Grace and the Harbor list, with a body to quote.
+    pub async fn harbor_thread(&self) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut message = Message::new(
+            self.account.id,
+            self.inbox,
+            support::now() - chrono::Duration::minutes(47),
+        );
+        message.from = vec![EmailAddress::new(Some("Lena Park"), "lena@example.org")];
+        message.to = vec![
+            EmailAddress::new(Some("Test User"), ME),
+            EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net"),
+        ];
+        message.cc = vec![
+            EmailAddress::new(Some("Grace Oyelaran"), "grace@example.org"),
+            EmailAddress::new(None::<String>, "harbor-api@example.org"),
+        ];
+        message.subject = Some("Harbor API draft v3".to_owned());
+        message.preview = Some("v3 is up for review.".to_owned());
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new("<harbor.v3@example.org>"));
+        let messages = MessageRepository::new(&connection);
+        let id = messages.create(&mut message).await.expect("a message");
+        messages
+            .set_body(
+                id,
+                &StoredBody {
+                    text: Some(
+                        "v3 is up for review.\n\nThe rate-limit headers moved to the appendix."
+                            .to_owned(),
+                    ),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("its body");
+        ThreadingRepository::new(&connection, self.account.id)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        id
+    }
+}
+
+/// The text of the composer field labelled `name` ("To", "Cc", "Subject"),
+/// as its entry shows it.
+pub fn field(root: &impl IsA<gtk::Widget>, name: &str) -> Option<String> {
+    support::with_class(root, "postio-compose-row")
+        .into_iter()
+        .filter(|row| row.is_visible())
+        .find(|row| {
+            row.first_child()
+                .and_downcast::<gtk::Label>()
+                .is_some_and(|label| label.text() == name)
+        })
+        .and_then(|row| {
+            let mut stack = vec![row];
+            while let Some(widget) = stack.pop() {
+                if let Some(entry) = widget.downcast_ref::<gtk::Entry>() {
+                    return Some(entry.text().to_string());
+                }
+                let mut child = widget.first_child();
+                while let Some(next) = child {
+                    child = next.next_sibling();
+                    stack.push(next);
+                }
+            }
+            None
+        })
+}
+
+/// US3 scenario 1 (T078): `E` on a conversation opens the composer, in its
+/// dialog over the list, with every recipient from the thread, a "Re:"
+/// subject, the thread's labels marked as its, and the quote folded; `Esc`
+/// returns to where the person was.
+pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let message = fixture.harbor_thread().await;
+        fixture.label(message, &["Harbor"]).await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["j"]);
+        let cursor = window.cursor_row().map(|row| row.id());
+        assert_eq!(cursor, Some(message), "the cursor is on the thread");
+
+        support::keys(&window, &["E"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "E opened no composer over the list"
+        );
+        let dialog = window.compose_dialog().expect("the compose dialog");
+        assert_eq!(
+            (dialog.content_width(), dialog.content_height()),
+            (980, 820),
+            "screen 06's frame"
+        );
+        assert!(
+            crate::settle_until(async || {
+                support::texts(&dialog)
+                    .iter()
+                    .any(|text| text == "Reply to all")
+            })
+            .await,
+            "the header names the composition: {:?}",
+            support::texts(&dialog)
+        );
+        assert_eq!(
+            field(&dialog, "To").as_deref(),
+            Some("Lena Park <lena@example.org>"),
+            "the sender, as screen 06 draws it"
+        );
+        assert_eq!(
+            field(&dialog, "Cc").as_deref(),
+            Some(
+                "Ben Adeyemi <ben@example.net>, Grace Oyelaran <grace@example.org>, \
+                 harbor-api@example.org"
+            ),
+            "everyone else it went to, the user left out"
+        );
+        assert_eq!(
+            field(&dialog, "Subject").as_deref(),
+            Some("Re: Harbor API draft v3")
+        );
+        assert!(
+            crate::settle_until(async || {
+                let labels = support::with_class(&dialog, "focus-compose-labels");
+                labels.len() == 1 && {
+                    let said = support::texts(&labels[0]);
+                    said.contains(&"Harbor".to_owned())
+                        && said.contains(&"from the thread".to_owned())
+                }
+            })
+            .await,
+            "the thread's labels, marked as the thread's: {:?}",
+            support::with_class(&dialog, "focus-compose-labels")
+                .first()
+                .map(support::texts)
+        );
+        let composer = window.composer().expect("the composer");
+        let quote = || {
+            composer.test_body_eval(
+                "(() => { const fold = document.querySelector('details.postio-quote'); \
+                 if (!fold) return 'no fold'; \
+                 return fold.open ? 'open' : 'folded'; })()",
+            )
+        };
+        // The editing surface loads the reply on its own time.
+        assert!(
+            crate::settle_until(async || quote() == "folded").await,
+            "the quote is folded under the draft: {}",
+            quote()
+        );
+
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_none()).await,
+            "Esc did not close the composer"
+        );
+        assert_eq!(
+            window.cursor_row().map(|row| row.id()),
+            cursor,
+            "Esc returns to where the person was"
+        );
+    });
+}

@@ -720,6 +720,13 @@ mod imp {
         /// the entry's signal connections to be the only thing keeping it
         /// alive) so tests can reach it; see `test_accept_recipient_suggestion`.
         pub(crate) to_completion: RefCell<Option<Rc<Completion>>>,
+        /// The field rows, which a host may add a row of its own to
+        /// ([`super::Composer::add_field_row`]: Focus's Labels).
+        pub fields: gtk::Box,
+        /// The heading row and the action row: the composer's own chrome,
+        /// which a host that draws a frame of its own hides
+        /// ([`super::Composer::set_framed`]).
+        pub chrome: RefCell<Vec<gtk::Widget>>,
     }
 
     impl Default for Composer {
@@ -789,6 +796,8 @@ mod imp {
                 filling: Cell::new(false),
                 autosave_source: Cell::new(None),
                 to_completion: RefCell::new(None),
+                fields: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                chrome: RefCell::default(),
             }
         }
     }
@@ -2180,6 +2189,52 @@ impl Composer {
         self.imp().draft.borrow_mut().account_id = account_id;
     }
 
+    // -- A host's frame (spec 007 T078) ---------------------------------------
+
+    /// Hide the composer's own heading row and action row, for a host that
+    /// draws a frame of its own around it: Focus's compose dialog carries the
+    /// heading, Send and Send later in its header (screens 05 and 06). The
+    /// verbs are the same ones -- the frame's controls call
+    /// [`send`](Self::send), [`send_later`](Self::send_later) and
+    /// [`dispatch`](Self::dispatch) -- so nothing about what a composition
+    /// does changes with where its buttons are drawn.
+    pub fn set_framed(&self, framed: bool) {
+        for widget in self.imp().chrome.borrow().iter() {
+            widget.set_visible(!framed);
+        }
+    }
+
+    /// Add `row` under the composer's own fields, above the body: a field a
+    /// host offers that the composer does not draw itself, as Focus's Labels
+    /// row is (screen 05).
+    pub fn add_field_row(&self, row: &impl IsA<gtk::Widget>) {
+        self.imp().fields.append(row);
+    }
+
+    /// The labels the draft carries (spec 007 FR-053): applied to its
+    /// conversation once it is sent.
+    pub fn labels(&self) -> Vec<postio_model::LabelId> {
+        self.imp().draft.borrow().labels.clone()
+    }
+
+    /// Put `labels` on the draft, as the person choosing them: an edit, which
+    /// autosaves like any other.
+    pub fn set_labels(&self, labels: Vec<postio_model::LabelId>) {
+        self.imp().draft.borrow_mut().labels = labels;
+        self.refresh();
+    }
+
+    /// Start the composition just opened with `labels`, as a reply starts
+    /// with its conversation's (FR-053): part of what it opened with, not an
+    /// edit, so nothing is saved for it until the person writes something.
+    pub fn start_with_labels(&self, labels: Vec<postio_model::LabelId>) {
+        let imp = self.imp();
+        imp.draft.borrow_mut().labels = labels;
+        let was_filling = imp.filling.replace(true);
+        self.refresh();
+        imp.filling.set(was_filling);
+    }
+
     // -- Attachments ------------------------------------------------------
 
     /// Opens the platform file chooser for `ctrl+shift+a` and the "attach
@@ -2757,7 +2812,7 @@ impl Composer {
         imp.status.set_hexpand(true);
         title.append(&imp.detach);
 
-        let fields = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let fields = &imp.fields;
         fields.add_css_class("postio-compose-fields");
         fields.append(&self.build_to_row());
         fields.append(&self.build_row(&imp.cc_row, "Cc", &imp.cc));
@@ -2900,13 +2955,16 @@ impl Composer {
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&title);
-        column.append(&fields);
+        column.append(fields);
         column.append(&imp.tracking_notice);
         column.append(&self.build_toolbar());
         column.append(imp.body.widget());
         column.append(&imp.warning);
         column.append(&self.build_attachments());
-        column.append(&self.build_actions());
+        let actions = self.build_actions();
+        column.append(&actions);
+        imp.chrome
+            .replace(vec![title.clone().upcast(), actions.upcast()]);
         self.set_child(Some(&column));
         self.install_drop_target();
 

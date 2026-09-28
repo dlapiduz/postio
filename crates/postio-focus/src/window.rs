@@ -136,6 +136,11 @@ mod imp {
         pub pending_link: RefCell<Option<String>>,
         /// The move picker, built the first time `m` opens it.
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
+        /// The composer, in its dialog (US3), once an account is known.
+        pub compose: RefCell<Option<Rc<crate::compose::Compose>>>,
+        /// Whether the composer's editing surface should start as soon as
+        /// the composer is mounted: asked for before an account was known.
+        pub warm: Cell<bool>,
     }
 
     impl Default for FocusWindow {
@@ -185,6 +190,8 @@ mod imp {
                 labels: RefCell::default(),
                 moves: RefCell::default(),
                 pending_link: RefCell::default(),
+                compose: RefCell::default(),
+                warm: Cell::default(),
             }
         }
     }
@@ -350,6 +357,9 @@ impl FocusWindow {
         if let Some(moves) = imp.moves.borrow().as_ref() {
             moves.set_keymap(&keymap);
         }
+        if let Some(compose) = imp.compose.borrow().as_ref() {
+            compose.set_keymap(&keymap);
+        }
         imp.keymap.replace(keymap);
         // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
@@ -383,7 +393,8 @@ impl FocusWindow {
             return glib::Propagation::Proceed;
         };
         let typing = gtk::prelude::GtkWindowExt::focus(self)
-            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>());
+            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
+            || self.composer_body_has_keyboard();
         let outcome = {
             let mut resolver = self.imp().resolver.borrow_mut();
             let Some(resolver) = resolver.as_mut() else {
@@ -396,6 +407,21 @@ impl FocusWindow {
                 std::time::Instant::now(),
             )
         };
+        // The composer's dialog has the keyboard for the composer's own
+        // commands: Send, Esc keeping the draft, and the rest (US3).
+        if let Some(compose) = self.compose().filter(|compose| compose.dialog().is_some()) {
+            return match outcome {
+                Outcome::Command(id) => match id.parse::<CommandId>() {
+                    Ok(id) => {
+                        compose.dispatch(id);
+                        glib::Propagation::Stop
+                    }
+                    Err(_) => glib::Propagation::Proceed,
+                },
+                Outcome::Pending(_) => glib::Propagation::Stop,
+                Outcome::Unhandled => glib::Propagation::Proceed,
+            };
+        }
         // A dialog over the window has the keyboard: only the keys that
         // close it are the window's, and the rest go on to the dialog
         // rather than moving the list underneath.
@@ -439,6 +465,12 @@ impl FocusWindow {
     /// Which surface owns the keyboard: the open message, or the list.
     fn key_context(&self) -> KeyContext {
         if self
+            .compose()
+            .is_some_and(|compose| compose.dialog().is_some())
+        {
+            return KeyContext::Composer;
+        }
+        if self
             .visible_dialog()
             .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
         {
@@ -478,6 +510,66 @@ impl FocusWindow {
             _ => return glib::Propagation::Proceed,
         }
         glib::Propagation::Stop
+    }
+
+    /// Whether the composer's body has the keyboard: a `WebView`, which no
+    /// type test says is being typed in (the classic window's #602).
+    pub(crate) fn composer_body_has_keyboard(&self) -> bool {
+        self.compose().is_some_and(|compose| {
+            compose.composer().focused_field() == Some(postio_widgets::composer::Field::Body)
+        })
+    }
+
+    /// The command `key` runs in `context`, resolved against the keys in
+    /// force, without running it: what a detached composer's window asks.
+    pub fn command_in(
+        &self,
+        key: gdk::Key,
+        state: gdk::ModifierType,
+        context: KeyContext,
+        typing: bool,
+    ) -> Option<CommandId> {
+        let chord = postio_widgets::keys::chord(key, state)?;
+        let mut resolver = self.imp().resolver.borrow_mut();
+        match resolver
+            .as_mut()?
+            .press(&chord, context, typing, std::time::Instant::now())
+        {
+            Outcome::Command(id) => id.parse::<CommandId>().ok(),
+            _ => None,
+        }
+    }
+
+    /// The composer and its dialog, once an account is known.
+    fn compose(&self) -> Option<Rc<crate::compose::Compose>> {
+        self.imp().compose.borrow().clone()
+    }
+
+    /// Mount the composer for `account`, writing through `client`.
+    fn mount_compose(&self, client: &Client, account: AccountId) {
+        if self.imp().compose.borrow().is_some() {
+            return;
+        }
+        let window = self.downgrade();
+        let current: crate::compose::Current = Rc::new(move || {
+            window
+                .upgrade()
+                .and_then(|window| window.cursor_row())
+                .map(|row| row.id())
+        });
+        let compose = crate::compose::Compose::new(self, client, account, current);
+        if self.imp().warm.get() {
+            compose.warm();
+        }
+        self.imp().compose.replace(Some(compose));
+    }
+
+    /// Start the composer's editing surface, while nobody is waiting on it.
+    pub fn warm_composer(&self) {
+        self.imp().warm.set(true);
+        if let Some(compose) = self.compose() {
+            compose.warm();
+        }
     }
 
     /// Run the command `id` means here: the cursor and the selection are the
@@ -557,6 +649,12 @@ impl FocusWindow {
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
             CommandId::Move => self.open_moves(),
+            // The classic app's composer, in its dialog (US3).
+            CommandId::Compose | CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
+                if let Some(compose) = self.compose() {
+                    compose.dispatch(id);
+                }
+            }
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -915,6 +1013,11 @@ impl FocusWindow {
                         .imp()
                         .accounts
                         .replace(enabled.iter().map(|account| account.id).collect());
+                    // A new message is written from the first account, as the
+                    // classic app's is.
+                    if let Some(account) = enabled.first() {
+                        window.mount_compose(&client, account.id);
+                    }
                     window.imp().facts.replace(
                         enabled
                             .iter()
@@ -1652,6 +1755,7 @@ impl FocusWindow {
         commands.extend(crate::places::Places::controls());
         commands.extend(crate::bar::Bar::controls());
         commands.push(CommandId::Undo);
+        commands.extend(crate::compose::Compose::controls());
         commands.sort_by_key(|command| command.as_str());
         commands.dedup();
         commands
@@ -1868,6 +1972,16 @@ impl FocusWindow {
     pub fn key_map(&self) -> Option<adw::Dialog> {
         self.visible_dialog()
             .filter(|dialog| dialog.widget_name() == KEY_MAP)
+    }
+
+    /// The compose dialog, while it is over the window (screens 05, 06).
+    pub fn compose_dialog(&self) -> Option<adw::Dialog> {
+        self.compose().and_then(|compose| compose.dialog())
+    }
+
+    /// The composer Focus writes in: the classic app's, in a dialog.
+    pub fn composer(&self) -> Option<postio_widgets::composer::Composer> {
+        self.compose().map(|compose| compose.composer().clone())
     }
 
     /// The list pane, once the inbox is showing.

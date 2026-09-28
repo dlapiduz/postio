@@ -26,6 +26,7 @@ mod across_apps;
 mod bar;
 mod chrome;
 mod colours;
+mod compose;
 mod corrections;
 mod cursor;
 mod desktop;
@@ -163,6 +164,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
+    ),
+    (
+        "compose::reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote",
+        compose::reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote as fn(),
     ),
     (
         "across_apps::what_focus_archives_the_classic_app_sees_archived",

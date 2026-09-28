@@ -13,6 +13,7 @@ pub mod bar;
 pub mod bulk;
 pub mod chooser;
 pub mod chrome;
+pub mod compose;
 pub mod empty;
 pub mod keymap_dialog;
 pub mod keys;
