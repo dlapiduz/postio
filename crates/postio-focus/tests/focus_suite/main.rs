@@ -38,6 +38,7 @@ mod keymap;
 mod list_contract;
 mod marked_rows;
 mod marker_card;
+mod one_composer;
 mod one_keymap;
 mod open_choice;
 mod open_message;
@@ -165,6 +166,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
+    ),
+    (
+        "one_composer::the_same_content_from_either_app_leaves_as_the_same_message",
+        one_composer::the_same_content_from_either_app_leaves_as_the_same_message as fn(),
     ),
     (
         "drafts::escape_keeps_the_draft_and_the_classic_app_opens_it",
