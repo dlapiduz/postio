@@ -261,8 +261,8 @@ pub fn group(command: CommandId) -> Option<Group> {
 /// the keymap in force binds it to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyMapRow {
-    /// The command.
-    pub command: CommandId,
+    /// The command: built in, or registered at run time.
+    pub action: postio_core::ActionId,
     /// What the registry calls it.
     pub title: &'static str,
     /// Its keys, the default first, as `[keys]` spells them.
@@ -271,18 +271,26 @@ pub struct KeyMapRow {
 
 /// Focus's key map under `keymap`: each group with a row, in the key map's
 /// order, and in each group the commands Focus offers in the key map's
-/// contexts, in the registry's order. A group with no rows is left out, so
+/// contexts, in the registry's order -- built-ins first, then commands
+/// registered at run time, which join Act. A group with no rows is left out, so
 /// Obsidian appears when its commands do (spec C9).
 pub fn key_map(keymap: &postio_core::Keymap) -> Vec<(Group, Vec<KeyMapRow>)> {
     let shown = postio_core::ContextSet::from_slice(KEY_MAP_CONTEXTS);
-    let mut rows: Vec<(Group, KeyMapRow)> = postio_core::registry::all()
+    let mut rows: Vec<(Group, KeyMapRow)> = postio_core::registry::every_action()
         .filter(|spec| spec.requires.offered_by(postio_core::Frontend::Focus))
         .filter(|spec| spec.contexts.intersects(shown))
         .filter_map(|spec| {
+            // A built-in sits where the table puts it. A command registered
+            // at run time joins the verbs: it is a thing done to mail, and
+            // it needs no word from Focus to be taught (US7 scenario 2).
+            let placed = match spec.id {
+                postio_core::ActionId::Builtin(command) => group(command)?,
+                postio_core::ActionId::Ext(_) => Group::Act,
+            };
             Some((
-                group(spec.id)?,
+                placed,
                 KeyMapRow {
-                    command: spec.id,
+                    action: spec.id,
                     title: spec.title,
                     keys: keymap.bindings(spec.id).to_vec(),
                 },
@@ -316,7 +324,7 @@ mod tests {
             for row in rows {
                 assert_eq!(
                     row.keys,
-                    keymap.bindings(row.command).to_vec(),
+                    keymap.bindings(row.action).to_vec(),
                     "{} shows the keymap's keys",
                     row.title
                 );
@@ -325,7 +333,7 @@ mod tests {
         let archive = map
             .iter()
             .flat_map(|(_, rows)| rows)
-            .find(|row| row.command == CommandId::Archive)
+            .find(|row| row.action == CommandId::Archive.into())
             .expect("archive is in the key map");
         assert_eq!(archive.title, "Archive");
         assert_eq!(archive.keys, ["a"]);
@@ -340,9 +348,35 @@ mod tests {
         let archive = map
             .iter()
             .flat_map(|(_, rows)| rows)
-            .find(|row| row.command == CommandId::Archive)
+            .find(|row| row.action == CommandId::Archive.into())
             .expect("archive is in the key map");
         assert_eq!(archive.keys, ["w"]);
+    }
+
+    #[test]
+    fn a_registered_command_joins_the_verbs_with_no_code_of_focus_s() {
+        // US7 scenario 2: a command registered at run time is in the key map
+        // with its key, through the registry alone.
+        let ext = registry::register(registry::ExtCommand {
+            id: "test:sort-by-sender".to_owned(),
+            title: "Sort by sender".to_owned(),
+            default_binding: Some("alt+z".to_owned()),
+            alternate_bindings: Vec::new(),
+            contexts: postio_core::ContextSet::from_slice(&[postio_core::Context::List]),
+            destructive: false,
+            recovery: postio_core::Recovery::None,
+        })
+        .expect("it registers");
+        let keymap = postio_core::Keymap::resolve(&postio_config::KeyBindings::default());
+        let map = key_map(&keymap);
+        let (group, row) = map
+            .iter()
+            .flat_map(|(group, rows)| rows.iter().map(move |row| (*group, row)))
+            .find(|(_, row)| row.action == postio_core::ActionId::Ext(ext))
+            .expect("the registered command is in the key map");
+        assert_eq!(group, Group::Act);
+        assert_eq!(row.title, "Sort by sender");
+        assert_eq!(row.keys, ["alt+z"]);
     }
 
     #[test]
@@ -359,25 +393,27 @@ mod tests {
         for (group, rows) in &map {
             assert!(!rows.is_empty(), "{group:?} has rows");
             for row in rows {
-                let spec = registry::spec(row.command.into()).expect("a registered command");
+                let spec = registry::spec(row.action).expect("a registered command");
                 assert!(
                     spec.requires.offered_by(Frontend::Focus),
                     "{} is not Focus's",
                     row.title
                 );
-                assert_eq!(super::group(row.command), Some(*group));
+                if let postio_core::ActionId::Builtin(command) = row.action {
+                    assert_eq!(super::group(command), Some(*group));
+                }
             }
         }
-        let rows: Vec<CommandId> = map
+        let rows: Vec<postio_core::ActionId> = map
             .iter()
-            .flat_map(|(_, rows)| rows.iter().map(|row| row.command))
+            .flat_map(|(_, rows)| rows.iter().map(|row| row.action))
             .collect();
-        assert!(!rows.contains(&CommandId::Flag), "a three-pane verb");
+        assert!(!rows.contains(&CommandId::Flag.into()), "a three-pane verb");
         assert!(
-            !rows.contains(&CommandId::Send),
+            !rows.contains(&CommandId::Send.into()),
             "the composer teaches its own"
         );
-        assert!(rows.contains(&CommandId::ToggleHasAction));
-        assert!(rows.contains(&CommandId::Undo));
+        assert!(rows.contains(&CommandId::ToggleHasAction.into()));
+        assert!(rows.contains(&CommandId::Undo.into()));
     }
 }
