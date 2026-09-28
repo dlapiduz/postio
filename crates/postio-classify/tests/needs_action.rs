@@ -303,11 +303,9 @@ impl Rules for BuiltIn {
     }
 }
 
-/// The headers each kind of addressing arrives with.
+/// The item as mail, with the headers its addressing arrives with.
 struct Addressed {
     message: Message,
-    unsubscribe_offered: Option<bool>,
-    automation: Option<u8>,
 }
 
 /// Who writes to the user in the dataset: one invented correspondent, since
@@ -324,7 +322,7 @@ fn message_for(item: &Item, user: &EmailAddress, sent: DateTime<Utc>) -> Address
     let (unsubscribe_offered, automation) = match item.addressing.as_str() {
         "direct" => {
             message.to = vec![user.clone()];
-            (Some(false), Some(0))
+            (false, 0)
         }
         "copied" => {
             message.to = vec![EmailAddress::new(
@@ -332,13 +330,13 @@ fn message_for(item: &Item, user: &EmailAddress, sent: DateTime<Utc>) -> Address
                 "colleague@example.org",
             )];
             message.cc = vec![user.clone()];
-            (Some(false), Some(0))
+            (false, 0)
         }
         "list" => {
             message.to = vec![EmailAddress::new(None::<&str>, "team@lists.example.org")];
             message.list_id = Some("team.lists.example.org".to_owned());
             // `Precedence: list`, and the list's own unsubscribe link.
-            (Some(true), Some(2))
+            (true, 2)
         }
         "automated" => {
             message.from = vec![EmailAddress::new(
@@ -347,15 +345,15 @@ fn message_for(item: &Item, user: &EmailAddress, sent: DateTime<Utc>) -> Address
             )];
             message.to = vec![user.clone()];
             // `Auto-Submitted: auto-generated`.
-            (Some(false), Some(8))
+            (false, 8)
         }
         other => panic!("{}: addressing {other}", item.id),
     };
-    Addressed {
-        message,
+    message.promoted = Some(postio_model::promoted::PromotedHeaders {
         unsubscribe_offered,
         automation,
-    }
+    });
+    Addressed { message }
 }
 
 fn identity(data: &Dataset) -> Identity {
@@ -392,10 +390,8 @@ fn classify(item: &Item, data: &Dataset) -> Option<Marked> {
     let body = BodyMessage {
         filed: FiledMessage {
             message: &addressed.message,
-            mailbox: Some(MailboxRole::Inbox),
-            unsubscribe_offered: addressed.unsubscribe_offered,
-            automation: addressed.automation,
-            has_calendar: false,
+            thread: None,
+            role: MailboxRole::Inbox,
         },
         identities: &identities,
     };

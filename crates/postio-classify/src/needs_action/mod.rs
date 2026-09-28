@@ -38,20 +38,18 @@ pub(crate) fn considered(message: &BodyMessage<'_>, rules: &dyn Rules) -> bool {
             .any(|identity| identity.address.same_address(address))
     };
     let own_folder = matches!(
-        filed.mailbox,
-        Some(
-            MailboxRole::Junk
-                | MailboxRole::Sent
-                | MailboxRole::Drafts
-                | MailboxRole::Outbox
-                | MailboxRole::Trash
-        )
+        filed.role,
+        MailboxRole::Junk
+            | MailboxRole::Sent
+            | MailboxRole::Drafts
+            | MailboxRole::Outbox
+            | MailboxRole::Trash
     );
     mail.to.iter().any(mine)
         && !mail.from.iter().any(mine)
         && mail.list_id.is_none()
-        && filed.unsubscribe_offered != Some(true)
-        && filed.automation.unwrap_or(0) & BULK_OR_AUTOMATED == 0
+        && filed.unsubscribe_offered() != Some(true)
+        && filed.automation().unwrap_or(0) & BULK_OR_AUTOMATED == 0
         && !mail.flags.contains(&Flag::Junk)
         && !own_folder
         && !mail
@@ -481,6 +479,7 @@ fn starts_with_words(text: &str, phrase: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use chrono::{FixedOffset, NaiveDate};
+    use postio_model::promoted::PromotedHeaders;
     use postio_model::{AccountId, EmailAddress, Flag, Identity, MailboxId, MailboxRole, Message};
 
     use super::*;
@@ -875,20 +874,28 @@ mod tests {
         vec![identity]
     }
 
+    /// A person writing to the user, with headers known to say nothing of
+    /// lists or machines.
     fn direct() -> Message {
         let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
         message.from = vec![EmailAddress::new(Some("Tove"), "tove@example.org")];
         message.to = vec![user()];
+        message.promoted = Some(PromotedHeaders::default());
+        message
+    }
+
+    /// `direct()` with its promoted headers saying `said`.
+    fn saying(said: Option<PromotedHeaders>) -> Message {
+        let mut message = direct();
+        message.promoted = said;
         message
     }
 
     fn filed(message: &Message) -> FiledMessage<'_> {
         FiledMessage {
             message,
-            mailbox: Some(MailboxRole::Inbox),
-            unsubscribe_offered: Some(false),
-            automation: Some(0),
-            has_calendar: false,
+            thread: message.thread_id,
+            role: MailboxRole::Inbox,
         }
     }
 
@@ -918,14 +925,7 @@ mod tests {
     fn mail_sent_directly_to_the_user_is_considered() {
         assert!(considered_with(&direct(), |_| {}, &identities()));
         // A header not yet known is no evidence against it.
-        assert!(considered_with(
-            &direct(),
-            |filed| {
-                filed.automation = None;
-                filed.unsubscribe_offered = None;
-            },
-            &identities()
-        ));
+        assert!(considered_with(&saying(None), |_| {}, &identities()));
     }
 
     #[test]
@@ -954,19 +954,19 @@ mod tests {
         listed.list_id = Some("team.lists.example.org".to_owned());
         assert!(!considered_with(&listed, |_| {}, &identities()));
 
-        assert!(!considered_with(
-            &direct(),
-            |filed| filed.unsubscribe_offered = Some(true),
-            &identities()
-        ));
+        let offered = saying(Some(PromotedHeaders {
+            unsubscribe_offered: true,
+            automation: 0,
+        }));
+        assert!(!considered_with(&offered, |_| {}, &identities()));
         // Precedence bulk, list and junk; Auto-Submitted and auto-replied.
         for bit in [1, 2, 4, 8, 16] {
+            let automated = saying(Some(PromotedHeaders {
+                unsubscribe_offered: false,
+                automation: bit,
+            }));
             assert!(
-                !considered_with(
-                    &direct(),
-                    |filed| filed.automation = Some(bit),
-                    &identities()
-                ),
+                !considered_with(&automated, |_| {}, &identities()),
                 "automation {bit}"
             );
         }
@@ -1014,7 +1014,7 @@ mod tests {
             MailboxRole::Trash,
         ] {
             assert!(
-                !considered_with(&direct(), |filed| filed.mailbox = Some(role), &identities()),
+                !considered_with(&direct(), |filed| filed.role = role, &identities()),
                 "{role:?}"
             );
         }

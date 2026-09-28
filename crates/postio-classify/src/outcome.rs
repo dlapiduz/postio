@@ -63,6 +63,16 @@ pub enum ReasonKind {
 }
 
 impl ReasonKind {
+    /// Every reason, in the order the Filtered view's tabs list them.
+    pub const ALL: [ReasonKind; 6] = [
+        ReasonKind::Spam,
+        ReasonKind::Promotion,
+        ReasonKind::Notification,
+        ReasonKind::Receipt,
+        ReasonKind::Shipping,
+        ReasonKind::Social,
+    ];
+
     /// The reason as the store spells it.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -90,6 +100,9 @@ pub enum Layer {
 }
 
 impl Layer {
+    /// Every layer.
+    pub const ALL: [Layer; 4] = [Layer::Header, Layer::Senders, Layer::Server, Layer::Model];
+
     /// The layer as the store spells it.
     pub const fn as_str(self) -> &'static str {
         match self {

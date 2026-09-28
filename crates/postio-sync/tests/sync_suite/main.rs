@@ -27,6 +27,7 @@ mod discover;
 mod drafts;
 mod drain;
 mod filing;
+mod focus_filing;
 mod initial;
 mod interactive_under_load;
 mod loopback;

@@ -5065,6 +5065,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "postio-account",
+ "postio-classify",
  "postio-index",
  "postio-model",
  "postio-smtp",

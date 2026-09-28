@@ -48,6 +48,7 @@ pub mod contact;
 pub mod contact_group;
 pub mod draft;
 pub mod egress;
+pub mod filing;
 pub mod flag;
 pub mod fold;
 pub mod headers;

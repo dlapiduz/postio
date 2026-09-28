@@ -217,6 +217,7 @@ async fn enumerate_the_shortfall(
         mailbox,
         initial::DEFAULT_BATCH_SIZE,
         initial::Coverage::Missing,
+        None,
         cancel,
         on_progress,
     )
@@ -333,12 +334,22 @@ pub async fn resync_mailbox_filing(
             sync_state
                 .observe(mailbox.id, &reported, Utc::now())
                 .await?;
+            // A backend with no MODSEQ re-reads the folder on every pass
+            // after the first, and this is its incremental pass: what it
+            // inserts arrived since the last one, and goes to the filing
+            // pass as an incremental pull's arrivals do (spec 007). Every
+            // other full pass files the backlog, and none (FR-118).
+            let filing = match reason {
+                FullResyncReason::NoModSeq => filing,
+                _ => None,
+            };
             let report = initial::enumerate(
                 connection,
                 backend,
                 mailbox,
                 initial::DEFAULT_BATCH_SIZE,
                 coverage,
+                filing,
                 cancel,
                 on_progress,
             )
@@ -483,6 +494,7 @@ async fn rebuild(
         mailbox,
         initial::DEFAULT_BATCH_SIZE,
         coverage,
+        None,
         cancel,
         on_progress,
     )
@@ -583,6 +595,7 @@ async fn incremental(
             // The permit, the transaction and the sizing clock, and another
             // try when the engine says busy: see `initial::write_unit`.
             let account_id = mailbox.account_id;
+            let mailbox_id = mailbox.id;
             let role = mailbox.role;
             let account_ref = account.as_ref();
             let known_ref = &known_set;
@@ -631,10 +644,9 @@ async fn incremental(
 
                     // The arrivals, to the filing pass a host in Focus mode
                     // installs, in this same transaction: after the upsert
-                    // and the threading, before any event (spec 007). Its
-                    // error fails the unit today, which a pass that files
-                    // nothing cannot do; one that writes brings the
-                    // contract's "errors never lose mail" with it.
+                    // and the threading, before any event (spec 007). A
+                    // pass that fails takes back only its own writes: the
+                    // mail stays in the inbox and the insert commits.
                     if let Some(filing) = filing
                         && !arrivals.is_empty()
                     {
@@ -644,11 +656,11 @@ async fn incremental(
                             .filter(|(message, _)| arrivals.contains(&message.id))
                             .map(|(message, thread)| FiledMessage {
                                 message,
-                                thread: *thread,
+                                thread: Some(*thread),
                                 role,
                             })
                             .collect();
-                        filing.file(&connection, &filed).await?;
+                        crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed).await;
                     }
                     Ok::<_, SyncError>(arrivals)
                 })

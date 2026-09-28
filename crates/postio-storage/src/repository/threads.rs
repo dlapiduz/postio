@@ -606,6 +606,22 @@ impl<'a> ThreadRepository<'a> {
         recompute_in(self.connection, id).await
     }
 
+    /// Whether the person took part in conversation `id`: a message of
+    /// theirs is in it, filed in a Sent folder (spec 007 FR-111, FR-122).
+    ///
+    /// One `EXISTS`: a seek on `idx_messages_thread_mailbox` for the
+    /// conversation's messages, each one's folder by its key, and it stops at
+    /// the first that is Sent.
+    pub async fn took_part(&self, id: ThreadId) -> Result<bool> {
+        sql::exists(self.connection, Self::explain_took_part(), [id.get()]).await
+    }
+
+    /// The SQL [`Self::took_part`] runs.
+    pub fn explain_took_part() -> &'static str {
+        "SELECT 1 FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id
+          WHERE m.thread_id = ?1 AND b.role = 'sent' LIMIT 1"
+    }
+
     /// Moves every message from `absorb` into `keep` and deletes `absorb`.
     ///
     /// This is what a late-arriving parent does: two conversations turn out to

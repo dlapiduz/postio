@@ -124,6 +124,37 @@ impl<'a> CorrespondentRepository<'a> {
             .is_some_and(|correspondent| correspondent.sent_count > 0))
     }
 
+    /// Which of `addresses` the person has written to, normalised: the
+    /// filter's "wrote to" guard for every sender of one message at once
+    /// (FR-111), one statement whatever their number.
+    pub async fn written_to(&self, addresses: &[EmailAddress]) -> Result<Vec<String>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let normalized: Vec<String> = addresses.iter().map(EmailAddress::normalized).collect();
+        sql::all(
+            self.connection,
+            &Self::explain_written_to(normalized.len()),
+            normalized
+                .into_iter()
+                .map(turso::Value::Text)
+                .collect::<Vec<_>>(),
+            |row| row.col(0),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::written_to`] runs for `count` addresses: a seek on
+    /// each address, then the key.
+    pub fn explain_written_to(count: usize) -> String {
+        format!(
+            "SELECT a.address_normalized
+               FROM addresses a JOIN correspondents c ON c.address_id = a.id
+              WHERE a.address_normalized IN ({}) AND c.sent_count > 0",
+            placeholders(count.max(1), 1)
+        )
+    }
+
     /// The SQL [`Self::get`] runs: a seek on the address, then the key.
     pub fn explain_get(&self) -> String {
         "SELECT c.sent_count, c.last_sent_at

@@ -1,27 +1,14 @@
 //! What the classifier is handed: the message at filing, then again with its
 //! body's own text (`contracts/engine.md`, "The filing pass").
 
-use postio_model::{Identity, MailboxRole, Message};
+use postio_model::Identity;
 
-/// A message as the filing pass knows it, before any body: the envelope,
-/// `References` and `List-Id`, the flags (`$Junk` among them), and what the
-/// promoted headers said (research R8).
-#[derive(Debug, Clone, Copy)]
-pub struct FiledMessage<'a> {
-    /// The message as filed: envelope, addresses, flags, thread.
-    pub message: &'a Message,
-    /// The role of the mailbox it was filed into, when it has one.
-    pub mailbox: Option<MailboxRole>,
-    /// Whether it carries `List-Unsubscribe` (`messages.unsubscribe_offered`),
-    /// or `None` while that is not known.
-    pub unsubscribe_offered: Option<bool>,
-    /// `messages.automation`: 1 `Precedence: bulk`, 2 `list`, 4 `junk`, 8
-    /// `Auto-Submitted: auto-generated`, 16 `auto-replied`; `None` while not
-    /// known.
-    pub automation: Option<u8>,
-    /// Its structure holds a `text/calendar` part.
-    pub has_calendar: bool,
-}
+/// A message as filing knows it, before any body: the envelope,
+/// `References` and `List-Id`, the flags (`$Junk` among them), what the
+/// promoted headers said (research R8), its structure, its folder's role and
+/// its conversation. The model's one type: sync hands the classifier exactly
+/// what it filed, with nothing copied in between (tasks.md T102).
+pub use postio_model::filing::FiledMessage;
 
 /// A message whose body has arrived: what the body stage classifies.
 #[derive(Debug, Clone, Copy)]

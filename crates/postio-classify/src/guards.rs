@@ -1,11 +1,10 @@
 //! Layer 1, the guards (FR-111): mail from somebody the user deals with is
 //! never filtered, whatever a rule or a classifier says of it.
 
-use postio_model::Message;
-
 use crate::facts::Facts;
+use crate::input::FiledMessage;
 
-/// Whether `message` is guarded against filtering (FR-111): the user
+/// Whether `filed` is guarded against filtering (FR-111): the user
 /// pinned a sender of it or restored mail from one (`[focus.filter]
 /// never`), a sender is at one of the user's own domains, the user has
 /// written to a sender, or the user took part in its conversation. Any one
@@ -20,11 +19,11 @@ use crate::facts::Facts;
 /// filing pass pays for each on every new message: the config and the
 /// identities are in memory, `correspondents` is a seek, and the
 /// conversation is an `EXISTS` (research R8).
-pub(crate) fn guarded(message: &Message, facts: &dyn Facts) -> bool {
-    let Some(thread) = message.thread_id else {
+pub(crate) fn guarded(filed: &FiledMessage<'_>, facts: &dyn Facts) -> bool {
+    let Some(thread) = filed.thread else {
         return true;
     };
-    let senders = &message.from;
+    let senders = &filed.message.from;
     senders.is_empty()
         || senders.iter().any(|sender| facts.never_filter(sender))
         || senders.iter().any(|sender| facts.own_domain(sender))
@@ -37,7 +36,7 @@ mod tests {
     use std::cell::RefCell;
 
     use chrono::Utc;
-    use postio_model::{AccountId, EmailAddress, MailboxId, ThreadId};
+    use postio_model::{AccountId, EmailAddress, MailboxId, MailboxRole, Message, ThreadId};
 
     use super::*;
 
@@ -99,6 +98,16 @@ mod tests {
     }
 
     const THREAD: ThreadId = ThreadId::new(7);
+
+    /// `message` as filing hands it over: into the inbox, in the
+    /// conversation the row says.
+    fn filed(message: &Message) -> FiledMessage<'_> {
+        FiledMessage {
+            message,
+            thread: message.thread_id,
+            role: MailboxRole::Inbox,
+        }
+    }
 
     /// Mail from `from`, in thread 7.
     fn from(addresses: &[&str]) -> Message {
@@ -162,7 +171,7 @@ mod tests {
 
         for (case, known, expected) in rows {
             assert_eq!(
-                guarded(&from(&["deals@shop.example"]), &known),
+                guarded(&filed(&from(&["deals@shop.example"])), &known),
                 expected,
                 "{case}"
             );
@@ -177,7 +186,7 @@ mod tests {
         };
 
         assert!(guarded(
-            &from(&["deals@shop.example", "tove@example.org"]),
+            &filed(&from(&["deals@shop.example", "tove@example.org"])),
             &known
         ));
     }
@@ -186,7 +195,7 @@ mod tests {
     fn a_store_that_cannot_answer_keeps_mail_in_the_inbox() {
         // Facts says a failed read answers true: every question is a reason
         // not to act, so when in doubt mail goes to the inbox (FR-112).
-        assert!(guarded(&from(&["deals@shop.example"]), &Unreadable));
+        assert!(guarded(&filed(&from(&["deals@shop.example"])), &Unreadable));
     }
 
     #[test]
@@ -194,11 +203,44 @@ mod tests {
         // No sender to ask after, or no conversation yet: the guards cannot
         // say it is safe to filter, so it is not filtered.
         let anonymous = from(&[]);
-        let mut unthreaded = from(&["deals@shop.example"]);
-        unthreaded.thread_id = None;
+        let unthreaded = from(&["deals@shop.example"]);
 
-        assert!(guarded(&anonymous, &Known::default()));
-        assert!(guarded(&unthreaded, &Known::default()));
+        assert!(guarded(&filed(&anonymous), &Known::default()));
+        assert!(guarded(
+            &FiledMessage {
+                thread: None,
+                ..filed(&unthreaded)
+            },
+            &Known::default()
+        ));
+    }
+
+    #[test]
+    fn the_conversation_is_the_one_filing_says_it_joined() {
+        // Sync threads an arrival after it is stored, so the row it hands
+        // over has no `thread_id` of its own; the conversation comes with
+        // the filed message (T102). A guard that read the row instead would
+        // guard every arrival, and nothing would ever be filtered.
+        let mut arrival = from(&["deals@shop.example"]);
+        arrival.thread_id = None;
+
+        assert!(!guarded(
+            &FiledMessage {
+                thread: Some(THREAD),
+                ..filed(&arrival)
+            },
+            &Known::default()
+        ));
+        assert!(guarded(
+            &FiledMessage {
+                thread: Some(THREAD),
+                ..filed(&arrival)
+            },
+            &Known {
+                took_part: vec![THREAD],
+                ..Known::default()
+            }
+        ));
     }
 
     #[test]
@@ -210,11 +252,11 @@ mod tests {
             never: vec!["deals@shop.example"],
             ..Known::default()
         };
-        guarded(&from(&["deals@shop.example"]), &pinned);
+        guarded(&filed(&from(&["deals@shop.example"])), &pinned);
         assert_eq!(*pinned.asked.borrow(), ["never_filter"]);
 
         let stranger = Known::default();
-        guarded(&from(&["deals@shop.example"]), &stranger);
+        guarded(&filed(&from(&["deals@shop.example"])), &stranger);
         assert_eq!(
             *stranger.asked.borrow(),
             ["never_filter", "own_domain", "wrote_to", "took_part"]

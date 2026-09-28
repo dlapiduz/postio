@@ -157,7 +157,7 @@ impl Stage for Guards {
         _rules: &dyn Rules,
         decisions: &mut Decisions,
     ) {
-        if guards::guarded(message.message, facts) {
+        if guards::guarded(message, facts) {
             decisions.filter.decide(None);
         }
     }
@@ -304,6 +304,7 @@ fn believable(answer: &NeedsAction, text: &OwnText<'_>) -> bool {
 mod tests {
     use std::cell::Cell;
 
+    use postio_model::promoted::{AUTO_GENERATED, PromotedHeaders};
     use postio_model::{
         AccountId, EmailAddress, Identity, MailboxId, MailboxRole, Message, ThreadId,
     };
@@ -352,41 +353,40 @@ mod tests {
     }
 
     /// A notifier's mail to Ada: every later rule would have something to
-    /// say about it.
+    /// say about it -- `List-Unsubscribe`, `Auto-Submitted`.
     fn message() -> Message {
         let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
         message.from = vec![EmailAddress::new(Some("Forge"), "notify@forge.example.com")];
         message.to = vec![ada()];
+        message.promoted = Some(PromotedHeaders {
+            unsubscribe_offered: true,
+            automation: AUTO_GENERATED,
+        });
         message
     }
 
+    /// `message` as filing hands it over: into the inbox, in the
+    /// conversation the row says.
     fn filed(message: &Message) -> FiledMessage<'_> {
         FiledMessage {
             message,
-            mailbox: Some(MailboxRole::Inbox),
-            unsubscribe_offered: Some(true),
-            automation: Some(8),
-            has_calendar: false,
+            thread: message.thread_id,
+            role: MailboxRole::Inbox,
         }
     }
 
     /// A person writing to Ada directly: the mail FR-106 lets a detector
-    /// read.
+    /// read. Its headers are known, and say nothing of lists or machines.
     fn letter() -> Message {
         let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
         message.from = vec![EmailAddress::new(Some("Tove"), "tove@example.org")];
         message.to = vec![ada()];
+        message.promoted = Some(PromotedHeaders::default());
         message
     }
 
     fn filed_letter(message: &Message) -> FiledMessage<'_> {
-        FiledMessage {
-            message,
-            mailbox: Some(MailboxRole::Inbox),
-            unsubscribe_offered: Some(false),
-            automation: Some(0),
-            has_calendar: false,
-        }
+        filed(message)
     }
 
     const TEXT: &str = "Can you approve these by Friday so finance can close the quarter?";

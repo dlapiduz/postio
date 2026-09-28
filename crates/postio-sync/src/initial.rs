@@ -67,6 +67,7 @@ use postio_storage::repository::{
 use postio_storage::{Checkout, WritePriority};
 
 use crate::drain::SyncError;
+use crate::filing::{FiledMessage, FilingPass};
 use postio_account::cancel::CancelToken;
 
 /// This module's result type.
@@ -250,6 +251,7 @@ pub async fn sync_mailbox_with_batch_size(
         mailbox,
         batch_size,
         Coverage::Missing,
+        None,
         cancel,
         on_progress,
     )
@@ -274,12 +276,21 @@ pub(crate) enum Coverage {
 }
 
 /// The body of an enumeration pass. See [`sync_mailbox_with_batch_size`].
+///
+/// `filing` is handed the rows the pass inserts, and is `None` on every
+/// pass but a modseq-less backend's steady-state one: there, and only
+/// there, what a re-enumeration inserts is new mail (`crate::filing`).
+// Eight, because the filing pass joined the seven an enumeration already
+// needed, each its own -- the same count, for the same reason, as
+// `resync::incremental`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn enumerate(
     connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     batch_size: usize,
     coverage: Coverage,
+    filing: Option<&dyn FilingPass>,
     cancel: &CancelToken,
     mut on_progress: impl FnMut(Progress),
 ) -> Result<Report> {
@@ -456,8 +467,15 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
-        let batch =
-            commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages).await?;
+        let batch = commit_batch_filing(
+            connection,
+            mailbox,
+            account.as_ref(),
+            &known,
+            &mut messages,
+            filing,
+        )
+        .await?;
         report.inserted += batch.inserted;
         report.updated += batch.updated;
         report.threaded += batch.threaded;
@@ -634,6 +652,21 @@ pub async fn commit_batch(
     known: &BTreeSet<u32>,
     messages: &mut [Message],
 ) -> Result<Report> {
+    commit_batch_filing(connection, mailbox, account, known, messages, None).await
+}
+
+/// [`commit_batch`], handing the rows each unit inserts to `filing` inside
+/// the unit's transaction, as the incremental pull hands its arrivals
+/// (`crate::filing`): what a modseq-less backend's steady-state pass needs,
+/// and nothing else asks for.
+pub(crate) async fn commit_batch_filing(
+    connection: &Checkout,
+    mailbox: &Mailbox,
+    account: Option<&Account>,
+    known: &BTreeSet<u32>,
+    messages: &mut [Message],
+    filing: Option<&dyn FilingPass>,
+) -> Result<Report> {
     let mut report = Report::default();
 
     let mut rest: &mut [Message] = messages;
@@ -647,6 +680,7 @@ pub async fn commit_batch(
         // The permit, the transaction and the sizing clock, and another try
         // when the engine says busy: see [`write_unit`].
         let account_id = mailbox.account_id;
+        let mailbox_id = mailbox.id;
         let role = mailbox.role;
         let known_uids = &known;
         let ((upsert, written), held) = write_unit(connection, || {
@@ -663,8 +697,9 @@ pub async fn commit_batch(
                     .await?;
 
                 let threading = ThreadingRepository::new(&connection, account_id);
+                let mut threads = Vec::with_capacity(written.len());
                 for message in &written {
-                    threading.thread(message).await?;
+                    threads.push(threading.thread(message).await?.thread_id);
                 }
 
                 // Only messages that were not already known before this pass:
@@ -685,6 +720,25 @@ pub async fn commit_batch(
                     }
                 }
                 crate::correspondents::record(&connection, role, account_id, &upsert).await?;
+
+                // What this unit inserted, to the filing pass when there is
+                // one, in this same transaction: the rows it only refreshed
+                // were here before, and are not arrivals.
+                if let Some(filing) = filing
+                    && !upsert.inserted_ids.is_empty()
+                {
+                    let filed: Vec<FiledMessage<'_>> = written
+                        .iter()
+                        .zip(&threads)
+                        .filter(|(message, _)| upsert.inserted_ids.contains(&message.id))
+                        .map(|(message, thread)| FiledMessage {
+                            message,
+                            thread: Some(*thread),
+                            role,
+                        })
+                        .collect();
+                    crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed).await;
+                }
 
                 Ok::<_, SyncError>((upsert, written))
             })

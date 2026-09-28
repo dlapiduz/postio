@@ -62,8 +62,12 @@ impl Rules for BuiltIn {
     }
 }
 
+/// The fixture, as a person's mail whose headers are known: no list, and
+/// nothing automated.
 fn message() -> Message {
-    test_corpus::load("untrusted-instructions").parse()
+    let mut message = test_corpus::load("untrusted-instructions").parse();
+    message.promoted = Some(postio_model::promoted::PromotedHeaders::default());
+    message
 }
 
 /// Ada, whom the fixture is sent to.
@@ -76,15 +80,12 @@ fn ada() -> Vec<Identity> {
     vec![identity]
 }
 
-/// As filed in Ada's inbox: a person's mail, with no list or automated
-/// headers.
+/// As filed in Ada's inbox.
 fn filed(message: &Message) -> FiledMessage<'_> {
     FiledMessage {
         message,
-        mailbox: Some(MailboxRole::Inbox),
-        unsubscribe_offered: Some(false),
-        automation: Some(0),
-        has_calendar: false,
+        thread: message.thread_id,
+        role: MailboxRole::Inbox,
     }
 }
 

@@ -486,6 +486,24 @@ impl<'a> IdentityRepository<'a> {
         .await
     }
 
+    /// Every address the person sends as, on every account: each account's
+    /// own and each identity's. What says which domains are the person's
+    /// own (spec 007 FR-111).
+    ///
+    /// One statement, and a read of two small tables whole: an account and
+    /// its identities are a handful of rows, whatever the mailbox holds.
+    pub async fn own_addresses(&self) -> Result<Vec<EmailAddress>> {
+        sql::all(self.connection, Self::explain_own_addresses(), (), |row| {
+            Ok(EmailAddress::new(None::<String>, row.col::<String>(0)?))
+        })
+        .await
+    }
+
+    /// The SQL [`Self::own_addresses`] runs.
+    pub fn explain_own_addresses() -> &'static str {
+        "SELECT address FROM accounts UNION SELECT address FROM identities"
+    }
+
     /// An account's identities, in the order the picker shows them.
     pub async fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Identity>> {
         sql::all(

@@ -94,20 +94,10 @@ impl Senders {
     }
 }
 
-/// FR-113's vocabulary, as the crate's type.
-const REASONS: [ReasonKind; 6] = [
-    ReasonKind::Spam,
-    ReasonKind::Promotion,
-    ReasonKind::Notification,
-    ReasonKind::Receipt,
-    ReasonKind::Shipping,
-    ReasonKind::Social,
-];
-
 /// A reason the table spelled, as the crate's type. `table::parse` accepts
 /// only [`table::REASONS`], and a test holds those to these.
 fn reason(spelled: &str) -> ReasonKind {
-    REASONS
+    ReasonKind::ALL
         .into_iter()
         .find(|kind| kind.as_str() == spelled)
         .expect("table::parse accepts only the vocabulary's spellings")
@@ -305,7 +295,7 @@ mod tests {
     fn the_table_s_reasons_are_the_vocabulary_s() {
         // The parser spells the vocabulary itself, because build.rs compiles
         // it with nothing else of the crate; this holds the two together.
-        assert_eq!(table::REASONS, REASONS.map(ReasonKind::as_str));
+        assert_eq!(table::REASONS, ReasonKind::ALL.map(ReasonKind::as_str));
     }
 
     // --- The classifier's source holds no provider (FR-114) ---------------------
