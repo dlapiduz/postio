@@ -727,6 +727,9 @@ mod imp {
         /// which a host that draws a frame of its own hides
         /// ([`super::Composer::set_framed`]).
         pub chrome: RefCell<Vec<gtk::Widget>>,
+        /// `To`, `Cc` and `Bcc` drawn as chips, once a host asks for them
+        /// ([`super::Composer::set_recipient_chips`]).
+        pub chips: RefCell<Option<[Rc<crate::widgets::recipients::RecipientChips>; 3]>>,
     }
 
     impl Default for Composer {
@@ -798,6 +801,7 @@ mod imp {
                 to_completion: RefCell::new(None),
                 fields: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 chrome: RefCell::default(),
+                chips: RefCell::default(),
             }
         }
     }
@@ -1080,9 +1084,18 @@ impl Composer {
     pub fn draft(&self) -> Draft {
         let imp = self.imp();
         let mut draft = imp.draft.borrow().clone();
-        draft.to = parse_list(&imp.to.text());
-        draft.cc = parse_list(&imp.cc.text());
-        draft.bcc = parse_list(&imp.bcc.text());
+        match imp.chips.borrow().as_ref() {
+            Some([to, cc, bcc]) => {
+                draft.to = to.addresses();
+                draft.cc = cc.addresses();
+                draft.bcc = bcc.addresses();
+            }
+            None => {
+                draft.to = parse_list(&imp.to.text());
+                draft.cc = parse_list(&imp.cc.text());
+                draft.bcc = parse_list(&imp.bcc.text());
+            }
+        }
         draft.subject = imp.subject.text().to_string();
         draft.body = self.body();
         // This composer writes HTML, not Markdown: once it holds the body, any
@@ -2191,6 +2204,27 @@ impl Composer {
 
     // -- A host's frame (spec 007 T078) ---------------------------------------
 
+    /// Draw `To`, `Cc` and `Bcc` as recipient chips (T079, FR-052): each
+    /// finished recipient a chip with its name, its address and a ×, and the
+    /// address being typed after them. Opt-in, for the composer's life:
+    /// Focus asks for it; the fields are otherwise the plain text they were.
+    pub fn set_recipient_chips(&self, on: bool) {
+        let imp = self.imp();
+        if !on || imp.chips.borrow().is_some() {
+            return;
+        }
+        let chips = [&imp.to, &imp.cc, &imp.bcc].map(|entry| {
+            let chips = crate::widgets::recipients::RecipientChips::around(entry);
+            chips.connect_changed(glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move || composer.refresh()
+            ));
+            chips
+        });
+        imp.chips.replace(Some(chips));
+    }
+
     /// Hide the composer's own heading row and action row, for a host that
     /// draws a frame of its own around it: Focus's compose dialog carries the
     /// heading, Send and Send later in its header (screens 05 and 06). The
@@ -2566,9 +2600,19 @@ impl Composer {
         // content must not fire against this one.
         self.cancel_autosave();
 
-        imp.to.set_text(&format_list(&draft.to));
-        imp.cc.set_text(&format_list(&draft.cc));
-        imp.bcc.set_text(&format_list(&draft.bcc));
+        let chips = imp.chips.borrow().clone();
+        match chips {
+            Some([to, cc, bcc]) => {
+                to.set_addresses(&draft.to);
+                cc.set_addresses(&draft.cc);
+                bcc.set_addresses(&draft.bcc);
+            }
+            None => {
+                imp.to.set_text(&format_list(&draft.to));
+                imp.cc.set_text(&format_list(&draft.cc));
+                imp.bcc.set_text(&format_list(&draft.bcc));
+            }
+        }
         imp.subject.set_text(&draft.subject);
         // The document first, then the view over it. An HTML body is parsed
         // rather than shown raw -- which is what makes a reply to an

@@ -33,6 +33,7 @@ mod present_onboarding;
 mod present_reading;
 mod quote_folds;
 mod reader_verbs;
+mod recipient_chips;
 mod support;
 mod widgets_css;
 
@@ -64,6 +65,14 @@ const CASES: &[(&str, fn())] = &[
         "body_view_highlight::a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view",
         body_view_highlight::a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view
             as fn(),
+    ),
+    (
+        "recipient_chips::choosing_a_suggestion_adds_a_chip_with_the_name_and_the_address",
+        recipient_chips::choosing_a_suggestion_adds_a_chip_with_the_name_and_the_address as fn(),
+    ),
+    (
+        "recipient_chips::a_chip_s_remove_button_takes_the_recipient_off",
+        recipient_chips::a_chip_s_remove_button_takes_the_recipient_off as fn(),
     ),
     (
         "list_contract::the_list_output_stays_libtest_shaped",

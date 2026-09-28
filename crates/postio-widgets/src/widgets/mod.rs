@@ -24,6 +24,7 @@ pub mod notes;
 pub mod notice;
 pub mod pickers;
 pub mod plate;
+pub mod recipients;
 pub mod screen;
 pub mod segmented;
 pub mod toast;

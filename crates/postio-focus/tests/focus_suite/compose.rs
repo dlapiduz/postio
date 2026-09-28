@@ -64,31 +64,52 @@ impl Fixture {
     }
 }
 
-/// The text of the composer field labelled `name` ("To", "Cc", "Subject"),
-/// as its entry shows it.
+/// What the composer field labelled `name` ("To", "Cc", "Subject") shows:
+/// each recipient chip as "Name <address>" (T079), then what its entry
+/// holds, joined as a list is written.
 pub fn field(root: &impl IsA<gtk::Widget>, name: &str) -> Option<String> {
-    support::with_class(root, "postio-compose-row")
+    let row = support::with_class(root, "postio-compose-row")
         .into_iter()
         .filter(|row| row.is_visible())
         .find(|row| {
             row.first_child()
                 .and_downcast::<gtk::Label>()
                 .is_some_and(|label| label.text() == name)
-        })
-        .and_then(|row| {
-            let mut stack = vec![row];
-            while let Some(widget) = stack.pop() {
-                if let Some(entry) = widget.downcast_ref::<gtk::Entry>() {
-                    return Some(entry.text().to_string());
-                }
-                let mut child = widget.first_child();
-                while let Some(next) = child {
-                    child = next.next_sibling();
-                    stack.push(next);
-                }
+        })?;
+    let mut shown: Vec<String> = support::with_class(&row, "postio-recipient-chip")
+        .iter()
+        .map(|chip| {
+            let words = |class: &str| {
+                support::with_class(chip, class)
+                    .first()
+                    .and_then(|label| label.downcast_ref::<gtk::Label>().map(|label| label.text()))
+                    .map(|text| text.to_string())
+            };
+            match (
+                words("postio-recipient-chip-name"),
+                words("postio-recipient-chip-address"),
+            ) {
+                (Some(name), Some(address)) => format!("{name} <{address}>"),
+                (None, Some(address)) => address,
+                _ => String::new(),
             }
-            None
         })
+        .collect();
+    let mut stack = vec![row];
+    while let Some(widget) = stack.pop() {
+        if let Some(entry) = widget.downcast_ref::<gtk::Entry>() {
+            if !entry.text().is_empty() {
+                shown.push(entry.text().to_string());
+            }
+            break;
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    Some(shown.join(", "))
 }
 
 /// US3 scenario 1 (T078): `E` on a conversation opens the composer, in its

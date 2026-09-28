@@ -53,6 +53,8 @@ impl Compose {
         // The frame carries the heading and the verbs; the composer's own
         // rows for them would say everything twice.
         composer.set_framed(true);
+        // Recipients as chips, name and address (T079, screens 05 and 06).
+        composer.set_recipient_chips(true);
         composer.set_keymap(&keymap);
         let frame = frame::Frame::new(&composer, &keymap);
         composer.add_field_row(&frame.labels_row);
