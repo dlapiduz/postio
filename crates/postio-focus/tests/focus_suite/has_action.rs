@@ -56,8 +56,12 @@ pub fn has_action_narrows_to_the_marked_rows_and_back() {
             "the filter clears the selection"
         );
         let cursor = window.cursor_row().map(|row| {
-            let postio_focus::list::FocusRow::Conversation(row) = row;
-            row.summary.representative.subject.unwrap_or_default()
+            row.row()
+                .summary
+                .representative
+                .subject
+                .clone()
+                .unwrap_or_default()
         });
         assert_eq!(
             cursor.as_deref(),

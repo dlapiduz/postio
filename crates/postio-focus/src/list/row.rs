@@ -348,7 +348,7 @@ impl RowWidget {
             self.draw_skeleton(snapshot);
             return;
         };
-        let FocusRow::Conversation(row) = &item;
+        let row = item.row();
         let summary = &row.summary;
         let palette = Palette::of(self);
         let width = self.width() as f32;
@@ -720,7 +720,7 @@ impl RowWidget {
 /// What a row says, in the order a screen reader should say it: the sender,
 /// the subject, the first line, and whether it is unread (FR-096).
 pub fn spoken(item: &FocusRow) -> String {
-    let FocusRow::Conversation(row) = item;
+    let row = item.row();
     let summary = &row.summary;
     let mut parts = Vec::new();
     if let Some(from) = &summary.representative.from {

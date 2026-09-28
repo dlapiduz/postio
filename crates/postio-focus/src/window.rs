@@ -1795,9 +1795,10 @@ impl FocusWindow {
         if selected == usize::MAX {
             return "Every conversation".to_owned();
         }
-        let Some(FocusRow::Conversation(row)) = self.cursor_row() else {
+        let Some(item) = self.cursor_row() else {
             return String::new();
         };
+        let row = item.row();
         let representative = &row.summary.representative;
         let sender = representative
             .from

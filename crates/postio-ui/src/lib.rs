@@ -46,6 +46,7 @@ pub mod sending;
 pub mod settings;
 pub mod sidebar;
 pub mod status;
+pub mod surfaced;
 pub mod terminal;
 pub mod test_support;
 pub mod tokens;

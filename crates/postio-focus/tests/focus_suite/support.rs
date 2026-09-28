@@ -530,8 +530,12 @@ pub fn subjects(window: &postio_focus::window::FocusWindow) -> Vec<String> {
                 .iter()
                 .filter_map(|row| row.item())
                 .map(|item| {
-                    let postio_focus::list::FocusRow::Conversation(row) = item;
-                    row.summary.representative.subject.unwrap_or_default()
+                    item.row()
+                        .summary
+                        .representative
+                        .subject
+                        .clone()
+                        .unwrap_or_default()
                 })
                 .collect()
         })

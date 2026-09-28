@@ -17,10 +17,11 @@ use std::rc::Rc;
 use gtk::glib;
 use postio_client::Client;
 use postio_core::Event;
-use postio_model::ListScope;
 use postio_model::listing::{ListPage, MailStore, PageRequest};
 use postio_model::mailbox::MailboxRole;
+use postio_model::{FocusScope, ListScope};
 use postio_ui::paging::{Fetch, Paging, Plan};
+use postio_ui::surfaced::{Slot, Spliced};
 use postio_widgets::list_model::{PageSource, WindowedModel};
 
 use super::item::FocusRow;
@@ -45,6 +46,13 @@ struct Inner {
     landed: Cell<bool>,
     /// Called when a page lands or the list is re-read.
     on_filled: RefCell<Vec<Box<dyn Fn()>>>,
+    /// The rows Focus's inbox surfaces among its conversations, in the
+    /// order the host gave them: fired reminders (T095).
+    surfaced: RefCell<Vec<FocusRow>>,
+    /// Where they sit.
+    spliced: RefCell<Spliced>,
+    /// How many conversations the store holds, without the surfaced rows.
+    stored: Cell<u32>,
 }
 
 /// The `PageSource` the model holds: a handle on the feed, so a request can
@@ -73,6 +81,9 @@ impl Feed {
                 pages_asked: RefCell::new(Vec::new()),
                 landed: Cell::new(false),
                 on_filled: RefCell::new(Vec::new()),
+                surfaced: RefCell::default(),
+                spliced: RefCell::default(),
+                stored: Cell::new(0),
             }),
         }
     }
@@ -139,11 +150,13 @@ impl Feed {
                     0
                 }
             };
+            Rc::clone(&inner).read_surfaced().await;
             if inner.paging.borrow().scope() != Some(scope) {
                 // Another place was opened while this one was being counted.
                 return;
             }
-            inner.total.set(total);
+            inner.stored.set(total);
+            inner.total.set(inner.spliced.borrow().total(total));
             let source: Rc<dyn PageSource> = Rc::new(Source(Rc::clone(&inner)));
             inner.list.replace_source(source, false);
             // Asked for here rather than left to the view: rows already on
@@ -176,8 +189,20 @@ impl Feed {
             // already let go of what left.
             self.inner.client.note_removed(*mailbox, messages.clone());
         }
+        let surfaced_moved = matches!(event, Event::SurfacedChanged);
         let plan = self.inner.paging.borrow().plan(event);
         match plan {
+            Plan::Ignore if !surfaced_moved => {}
+            _ if self.inner.splices() => {
+                // What is surfaced may have moved with the mail -- an
+                // archived reminder's row goes with its conversation -- so
+                // it is read again before the pages are.
+                let inner = Rc::clone(&self.inner);
+                glib::spawn_future_local(async move {
+                    Rc::clone(&inner).read_surfaced().await;
+                    inner.list.refresh();
+                });
+            }
             Plan::Ignore => {}
             Plan::InsertAtTop(_) | Plan::Refetch(_) | Plan::Reload => self.inner.list.refresh(),
         }
@@ -185,6 +210,41 @@ impl Feed {
 }
 
 impl Inner {
+    /// Whether the scope in view has rows spliced among its conversations:
+    /// Focus's own inbox.
+    fn splices(&self) -> bool {
+        self.paging.borrow().scope() == Some(ListScope::Focus(FocusScope::Inbox))
+    }
+
+    /// Read the surfaced rows, when the scope in view has them, and place
+    /// them; none otherwise.
+    async fn read_surfaced(self: Rc<Self>) {
+        let mut rows = Vec::new();
+        let mut positions = Vec::new();
+        if self.splices() {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let read = self.client.surfaced().await;
+            match read {
+                Ok(surfaced) => {
+                    for row in &surfaced {
+                        if let Some(focus_row) = FocusRow::surfaced(row) {
+                            positions.push(row.position());
+                            rows.push(focus_row);
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "Focus could not read its surfaced rows: {error}");
+                }
+            }
+        }
+        self.spliced.replace(Spliced::new(&positions));
+        self.surfaced.replace(rows);
+        self.total
+            .set(self.spliced.borrow().total(self.stored.get()));
+    }
+
     /// Ask the store for `page` of the scope in view, and deliver the answer
     /// when it lands.
     fn request(self: Rc<Self>, page: u32) {
@@ -192,14 +252,22 @@ impl Inner {
             self.list.give_up(self.list.generation(), page);
             return;
         };
+        // The page's positions, in the store's terms: which of them are
+        // surfaced rows, and which run of conversations fills the rest.
+        // The store's total may have moved since it was last read, so the
+        // run asked for assumes conversations fill every position that is
+        // not a surfaced row, and the answer's own total places them.
+        let (start, count) = (request.offset, request.limit);
+        let asked = self.spliced.borrow().page(start, count, u32::MAX);
+        let surfaced = self.surfaced.borrow().clone();
         self.list.note_pending(page);
         self.pages_asked.borrow_mut().push(page);
         let generation = self.list.generation();
         let client = self.client.clone();
         let wanted = PageRequest {
             scope: request.scope,
-            offset: request.offset,
-            limit: request.limit,
+            offset: asked.offset,
+            limit: asked.limit.max(1),
         };
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: the client's in-process transport runs the
@@ -223,7 +291,7 @@ impl Inner {
                             Vec::new()
                         }
                     };
-                    let rows = answer
+                    let stored: Vec<FocusRow> = answer
                         .rows
                         .into_iter()
                         .map(|summary| {
@@ -249,10 +317,21 @@ impl Inner {
                             FocusRow::Conversation(super::item::Conversation { summary, labels })
                         })
                         .collect();
+                    let placed = self.spliced.borrow().page(start, count, answer.total);
+                    let rows: Vec<FocusRow> = placed
+                        .slots
+                        .iter()
+                        .filter_map(|slot| match slot {
+                            Slot::Surfaced(index) => surfaced.get(*index).cloned(),
+                            Slot::Stored(index) => stored.get(*index).cloned(),
+                        })
+                        .collect();
+                    let total = self.spliced.borrow().total(answer.total);
                     if generation == self.list.generation() {
-                        self.total.set(answer.total);
+                        self.stored.set(answer.total);
+                        self.total.set(total);
                     }
-                    self.list.deliver_page(generation, answer.total, page, rows);
+                    self.list.deliver_page(generation, total, page, rows);
                     self.landed.set(true);
                     self.filled();
                 }

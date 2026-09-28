@@ -50,6 +50,7 @@ mod starts_offline;
 mod state;
 mod store_in_use;
 mod support;
+mod surfaced;
 mod undo;
 mod view_source;
 mod visible_window;
@@ -85,6 +86,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "pickers::m_moves_three_to_receipts_and_ctrl_z_returns_them",
         pickers::m_moves_three_to_receipts_and_ctrl_z_returns_them as fn(),
+    ),
+    (
+        "surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once",
+        surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once as fn(),
     ),
     (
         "pickers::s_then_2_snoozes_the_row_until_tomorrow_morning",

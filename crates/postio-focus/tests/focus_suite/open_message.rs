@@ -187,11 +187,9 @@ pub fn j_and_k_step_the_list_behind_the_dialog() {
         assert_eq!(reading.title(), "Subject 4");
         assert_eq!(reading.subtitle(), "Message 4 of 5");
         assert_eq!(
-            window.cursor_row().and_then(|row| match row {
-                postio_focus::list::FocusRow::Conversation(conversation) => {
-                    conversation.summary.subject
-                }
-            }),
+            window
+                .cursor_row()
+                .and_then(|row| row.row().summary.subject.clone()),
             Some("Subject 4".to_owned()),
             "the list's cursor moved with the dialog"
         );
