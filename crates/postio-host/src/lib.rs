@@ -533,6 +533,16 @@ impl Host {
     /// engine to recover (`postio-app`'s `run` says the same, and did this).
     pub fn stop(&self) {
         postio_runtime::stop_retained();
+        self.close();
+    }
+
+    /// What [`Host::stop`] does once nothing is syncing: Focus's mark kept
+    /// current, so nothing that landed since its last tick is sorted again
+    /// at the next open, and the store's clean end. Apart so a test can
+    /// close one host of several in a process -- the engines
+    /// [`postio_runtime::stop_retained`] stops are the whole process's.
+    pub(crate) fn close(&self) {
+        self.keep_focus_mark();
         postio_session::blocking::now(postio_session::end_session(&self.inner.wiring.database));
     }
 

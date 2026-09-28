@@ -84,6 +84,23 @@ impl World {
         &self.database
     }
 
+    /// Quit, as a frontend's last window closing stops its host, and launch
+    /// again over the same store and blobs: the next session.
+    pub(crate) fn reopen(&mut self) {
+        if let Some(host) = self.host.take() {
+            host.close();
+        }
+        let blobs =
+            postio_storage::BlobStore::open(self.blob_dir.clone(), &test_support::blob_keys())
+                .expect("a blob store");
+        self.host = Some(
+            Host::start(self.database.clone(), blobs, |wiring| {
+                wiring.with_secrets(std::sync::Arc::new(MemorySecretStore::new()))
+            })
+            .expect("a host"),
+        );
+    }
+
     /// The host.
     pub(crate) fn host(&self) -> &Host {
         self.host.as_ref().expect("running")

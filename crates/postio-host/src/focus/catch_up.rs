@@ -13,9 +13,10 @@
 //! A mark in the store's settings says how far Focus had accounted for the
 //! mail: the newest message id when it last ran. Ids only grow, so what
 //! another app filed since is exactly what is past the mark. Focus keeps the
-//! mark current while it runs ([`keep_mark`], on the due timer's tick),
-//! which also covers a new account's first sync: a first sync files the
-//! backlog, never new mail, and is never filtered (FR-118).
+//! mark current while it runs ([`keep_mark`], on the due timer's tick, and
+//! [`mark_newest`] as it stops), which also covers a new account's first
+//! sync: a first sync files the backlog, never new mail, and is never
+//! filtered (FR-118).
 //!
 //! On Focus's first open there is no mark, and nothing is caught up on:
 //! filtering applies to mail filed after it is turned on, and the first
@@ -97,6 +98,14 @@ pub(crate) async fn keep_mark(
         *marked = Some(newest);
     }
     Ok(())
+}
+
+/// Move the mark to the newest message now: what stopping Focus does, so
+/// mail that landed since the last tick -- a first sync's backlog above
+/// all, which is never filtered (FR-118) -- is not sorted at the next open
+/// as if another app had filed it.
+pub(crate) async fn mark_newest(database: &Store) -> Result<(), Failure> {
+    keep_mark(database, &mut None).await
 }
 
 async fn set_mark(database: &Store, newest: MessageId) -> Result<(), Failure> {

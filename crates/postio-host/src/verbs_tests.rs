@@ -1806,3 +1806,30 @@ fn view_source_fetches_the_raw_message_when_asked_and_not_before() {
     assert_eq!(String::from_utf8(again).expect("text"), text);
     assert_eq!(mock.body_fetches().len(), 1, "read from the blob store");
 }
+
+#[test]
+fn a_first_sync_that_lands_between_ticks_is_not_sorted_at_the_next_open() {
+    // Spec 007 T164, FR-118: a first sync files its backlog, which is never
+    // filtered. Focus keeps its mark on its tick, so a first sync that lands
+    // after one tick and before the next, then a quit, left its rows past
+    // the mark -- and the next open sorted them as if another app had
+    // filed them. Stopping keeps the mark current.
+    let mut world = World::new();
+    world.host().enable_focus(crate::FocusSetup::default());
+    sorted_through(&world, world.message());
+    // The first tick, at once after the catch-up, has moved the mark.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // A new account's first sync, between two ticks: no filing pass sees it.
+    let first_sync =
+        crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build passed");
+    world.reopen();
+    world.host().enable_focus(crate::FocusSetup::default());
+    sorted_through(&world, first_sync);
+
+    assert_eq!(
+        crate::tests::filed_where(&world, "Build passed"),
+        Some((postio_model::MailboxRole::Inbox, None)),
+        "the first sync's row stays in the inbox"
+    );
+}

@@ -97,6 +97,10 @@ pub struct FocusHandle {
     body_stage: tokio::task::AbortHandle,
     due_timer: tokio::task::AbortHandle,
     caught_up: Arc<AtomicBool>,
+    /// Whether the catch-up has sorted what was filed while Focus was
+    /// closed, so the mark may move: before then, moving it would forget
+    /// what the catch-up had yet to sort.
+    marking: Arc<AtomicBool>,
     /// `[focus]` as the tasks read it, replaced by each call to
     /// [`Host::enable_focus`].
     config: Arc<RwLock<FocusConfig>>,
@@ -117,6 +121,30 @@ impl FocusHandle {
 }
 
 impl Host {
+    /// As Focus stops, after the engines have: move the mark that says how
+    /// far it has accounted for the mail to where the store is now, rather
+    /// than where its last tick left it (T164). Nothing when Focus mode is
+    /// off, or when the catch-up had not finished and the mark still says
+    /// where it has to start.
+    pub(crate) fn keep_focus_mark(&self) {
+        let marking = self
+            .inner
+            .focus
+            .lock()
+            .expect("never poisoned")
+            .as_ref()
+            .is_some_and(|focus| focus.marking.load(Ordering::Acquire));
+        if !marking {
+            return;
+        }
+        let database = self.inner.wiring.database.clone();
+        if let Err(error) =
+            postio_session::blocking::now(async move { catch_up::mark_newest(&database).await })
+        {
+            tracing::warn!(%error, "Focus could not keep its mark as it stopped: {error}");
+        }
+    }
+
     /// Turn on Focus's pipeline in this process (spec 007).
     ///
     /// Called by `postio-focus` at startup, after the host starts and
@@ -137,6 +165,7 @@ impl Host {
             }
             None => {
                 let caught_up = Arc::new(AtomicBool::new(false));
+                let marking = Arc::new(AtomicBool::new(false));
                 let config = Arc::new(RwLock::new(setup.config.clone()));
                 let handle = FocusHandle {
                     body_stage: body::spawn(
@@ -144,8 +173,9 @@ impl Host {
                         Arc::clone(&config),
                         Arc::clone(&caught_up),
                     ),
-                    due_timer: due_timer(&self.inner, Arc::clone(&config)),
+                    due_timer: due_timer(&self.inner, Arc::clone(&config), Arc::clone(&marking)),
                     caught_up,
+                    marking,
                     config,
                 };
                 *focus = Some(handle.clone());
@@ -187,13 +217,20 @@ impl Host {
 /// ([`due`]) -- the first tick is at once, so what came due while Focus was
 /// closed is delivered as it opens -- and keeps the mark that says how far
 /// Focus has accounted for the mail.
-fn due_timer(inner: &Arc<Inner>, config: Arc<RwLock<FocusConfig>>) -> tokio::task::AbortHandle {
+fn due_timer(
+    inner: &Arc<Inner>,
+    config: Arc<RwLock<FocusConfig>>,
+    marking: Arc<AtomicBool>,
+) -> tokio::task::AbortHandle {
     let inner = Arc::clone(inner);
     let runtime = inner.runtime().clone();
     runtime
         .spawn(async move {
-            if let Err(error) = catch_up::catch_up(&inner).await {
-                tracing::warn!(%error, "Focus could not sort what was filed while it was closed: {error}");
+            match catch_up::catch_up(&inner).await {
+                Ok(_) => marking.store(true, Ordering::Release),
+                Err(error) => {
+                    tracing::warn!(%error, "Focus could not sort what was filed while it was closed: {error}");
+                }
             }
             let database = inner.wiring.database.clone();
             let mut marked = None;
