@@ -39,6 +39,7 @@ mod selection;
 mod shot;
 mod starts_offline;
 mod state;
+mod store_in_use;
 mod support;
 mod undo;
 mod visible_window;
@@ -51,6 +52,11 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone",
+        store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone
+            as fn(),
+    ),
     (
         "one_keymap::a_registered_command_reaches_the_key_map_with_its_key",
         one_keymap::a_registered_command_reaches_the_key_map_with_its_key as fn(),
