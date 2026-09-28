@@ -34,6 +34,7 @@ mod keymap;
 mod list_contract;
 mod marked_rows;
 mod one_keymap;
+mod open_message;
 mod registry_parity;
 mod reload;
 mod rows;
@@ -54,6 +55,14 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "open_message::enter_opens_the_conversation_over_the_list_at_once",
+        open_message::enter_opens_the_conversation_over_the_list_at_once as fn(),
+    ),
+    (
+        "open_message::a_hundredth_open_builds_no_second_message_view",
+        open_message::a_hundredth_open_builds_no_second_message_view as fn(),
+    ),
     (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),

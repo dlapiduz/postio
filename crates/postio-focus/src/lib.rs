@@ -15,6 +15,7 @@ pub mod empty;
 pub mod keymap_dialog;
 pub mod keys;
 pub mod list;
+pub mod open;
 pub mod startup;
 pub mod style;
 pub mod window;

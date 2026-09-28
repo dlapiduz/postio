@@ -105,6 +105,8 @@ mod imp {
         pub list_or_empty: RefCell<Option<gtk::Stack>>,
         /// The empty inbox's page.
         pub empty: RefCell<Option<Rc<crate::empty::EmptyInbox>>>,
+        /// The open-email dialog, built on the first open and reused.
+        pub reading: RefCell<Option<Rc<crate::open::OpenMessage>>>,
     }
 
     impl Default for FocusWindow {
@@ -141,6 +143,7 @@ mod imp {
                 focus_config: RefCell::default(),
                 list_or_empty: RefCell::default(),
                 empty: RefCell::default(),
+                reading: RefCell::default(),
             }
         }
     }
@@ -286,6 +289,9 @@ impl FocusWindow {
         if let Some(bulk) = imp.bulk.borrow().as_ref() {
             bulk.set_keymap(&keymap);
         }
+        if let Some(reading) = imp.reading.borrow().as_ref() {
+            reading.set_keymap(&keymap);
+        }
         imp.keymap.replace(keymap);
         // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
@@ -403,6 +409,7 @@ impl FocusWindow {
             CommandId::Refresh => self.post(Command::Refresh),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
+            CommandId::OpenMessage => self.open_message(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -1080,6 +1087,44 @@ impl FocusWindow {
             // oneshot receive; the host answers on its own runtime.
             opening.await;
         });
+    }
+
+    /// `Enter`: the conversation under the cursor, over the list (screen 04).
+    fn open_message(&self) {
+        let (Some(pane), Some(row)) = (self.pane(), self.cursor_row()) else {
+            return;
+        };
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let reading = self
+            .imp()
+            .reading
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                let reading = crate::open::OpenMessage::new(
+                    client,
+                    &self.keymap(),
+                    &crate::open::allowlist_path(),
+                );
+                reading.connect_command(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |id| window.act(id)
+                ));
+                reading
+            })
+            .clone();
+        let position = crate::open::Position {
+            index: pane.cursor().selected(),
+            total: pane.feed().list().n_items(),
+        };
+        reading.show(self, &row, position);
+    }
+
+    /// The open-email dialog, once a message has been opened.
+    pub fn reading(&self) -> Option<Rc<crate::open::OpenMessage>> {
+        self.imp().reading.borrow().clone()
     }
 
     /// `?`: the key map, over the window (screen 20).

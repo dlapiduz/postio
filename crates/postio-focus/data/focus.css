@@ -274,6 +274,63 @@ banner.focus-banner button {
   border-top: 1px solid var(--postio-hairline);
 }
 
+/* ── The open-email dialog (screen 04) ──────────────────────────────── */
+.focus-open {
+  background-color: var(--postio-surface);
+}
+
+.focus-open-header {
+  min-height: 50px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-open-title {
+  font-weight: bold;
+  color: var(--postio-ink);
+}
+
+.focus-open-subtitle {
+  font-size: var(--postio-text-meta);
+}
+
+.focus-open-toolbar {
+  min-height: 42px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-open-column {
+  padding: var(--postio-space-4) 0;
+}
+
+.focus-open-thread {
+  padding: var(--postio-space-1) var(--postio-space-2);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-raised-bg);
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-ui);
+}
+
+.focus-open-subject {
+  font-weight: bold;
+  font-size: var(--postio-text-title);
+  color: var(--postio-ink);
+}
+
+.focus-open-label-pill {
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 999px;
+  font-size: var(--postio-text-meta);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-open-fold-line label {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-meta);
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

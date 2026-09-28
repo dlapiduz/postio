@@ -292,6 +292,27 @@ impl Fixture {
 }
 
 impl Fixture {
+    /// Store `text` as `message`'s body, fetched in full.
+    pub async fn write_body(&self, message: MessageId, text: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        MessageRepository::new(&connection)
+            .set_body(
+                message,
+                &postio_storage::repository::StoredBody {
+                    text: Some(text.to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("a body");
+    }
+}
+
+impl Fixture {
     /// Mark `message` with a question quoting `sentence`, as the built-in
     /// detector would have.
     pub async fn ask(&self, message: MessageId, sentence: &str) {
