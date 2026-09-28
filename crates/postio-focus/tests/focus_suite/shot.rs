@@ -59,7 +59,7 @@ pub fn the_demo_inbox_opens_with_its_first_heading_on_screen() {
         if !support::display() {
             return;
         }
-        let database = example::demo().await;
+        let (database, _) = example::demo().await;
         let blobs = tempfile::tempdir().expect("a blob directory");
         let store = postio_storage::BlobStore::open(
             blobs.path().to_path_buf(),

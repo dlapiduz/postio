@@ -196,6 +196,7 @@ focusdayheading {
    opacity for a refused password. */
 banner.focus-banner > revealer > widget {
   min-height: 42px;
+  padding: 0 var(--postio-space-3);
   background-color: var(--postio-raised-bg);
   color: var(--postio-ink);
   border-bottom: 1px solid var(--postio-hairline);
@@ -205,7 +206,19 @@ banner.focus-banner-error > revealer > widget {
   background-color: color-mix(in srgb, var(--postio-error) 12%, transparent);
 }
 
+/* The heading is bold through its markup; the sentence after it is not,
+   where libadwaita would set the whole title bold. */
+banner.focus-banner label {
+  font-weight: normal;
+}
+
+banner.focus-banner button label {
+  font-weight: bold;
+}
+
 banner.focus-banner button {
+  min-height: 28px;
+  margin: var(--postio-space-1) 0;
   border: 1px solid var(--postio-hairline-strong);
   background-color: var(--postio-surface);
   color: var(--postio-ink);

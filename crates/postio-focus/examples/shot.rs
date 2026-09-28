@@ -15,6 +15,8 @@
 //! | `02` | The same, in dark |
 //! | `03` | The has-action filter on |
 //! | `15` | The three archived, and the undo toast |
+//! | `16` | The empty inbox: a store with nothing in it, a digest rule, a morning's filtering |
+//! | `17`, `18`, `19` | Screen 01 under the first sync's, the offline and the sign-in error's banner |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -31,7 +33,10 @@
 //! than through the host: nothing in the host writes one yet (the detector
 //! pass is milestone 1's no-op), and the rows read them the same way either
 //! way. Today is 16:09 local, the time the references were drawn at, so the
-//! times on the rows are theirs.
+//! times on the rows are theirs, and the inbox last synced then. The config
+//! has one digest rule, weekly on Saturday at 16:00. Screens 17 to 19 are
+//! said through the host's event sink, as the engine says them: the store
+//! has no server behind it.
 //!
 //! Every name is invented and every address is on a reserved domain.
 //! Nothing touches the network: the store is in memory and sync never
@@ -69,6 +74,10 @@ const SCREENS: &[(&str, &str)] = &[
     ("02", "the inbox, dark, three selected"),
     ("03", "the has-action filter"),
     ("15", "the undo toast after archiving three"),
+    ("16", "the empty inbox"),
+    ("17", "the first sync's banner"),
+    ("18", "the offline banner"),
+    ("19", "the sign-in error's banner"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -346,6 +355,10 @@ const TODAY: &[Row] = &[
     },
 ];
 
+/// The demo's config.toml: filtering on, and one digest rule.
+const CONFIG: &str = "[focus]\nfiltering = true\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
+queries = [\"from:news@example.com\"]\ncadence = \"weekly\"\nday = \"saturday\"\nat = \"16:00\"\n";
+
 /// What the command line asked for.
 struct Request {
     path: String,
@@ -422,21 +435,35 @@ fn render(args: &[String]) -> Result<String, String> {
         .build()
         .map_err(|error| format!("no runtime: {error}"))?;
     let blobs_dir = tempfile::tempdir().map_err(|error| format!("no scratch: {error}"))?;
-    let database = runtime.block_on(demo());
+    let (database, account) = if request.screen == "16" {
+        runtime.block_on(empty_demo())
+    } else {
+        runtime.block_on(demo())
+    };
     let blobs = BlobStore::open(
         blobs_dir.path().to_path_buf(),
         &postio_storage::test_support::blob_keys(),
     )
     .map_err(|error| format!("no blob store: {error}"))?;
-    let host = postio_host::Host::start(database, blobs, |wiring| wiring)
-        .map_err(|error| format!("the host did not start: {error}"))?;
+    let sink = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let host = postio_host::Host::start(database, blobs, {
+        let sink = std::rc::Rc::clone(&sink);
+        move |wiring| {
+            sink.replace(Some(wiring.events.clone()));
+            wiring
+        }
+    })
+    .map_err(|error| format!("the host did not start: {error}"))?;
+    let sink = sink.take().ok_or("the host kept its events to itself")?;
+    let config = postio_config::Config::from_toml_str(CONFIG)
+        .map_err(|error| format!("the demo's config: {error}"))?;
 
     let window = FocusWindow::new(None);
     window.set_default_size(request.size.0, request.size.1);
     window.present();
-    let session = postio_focus::startup::adopt(&window, host, &postio_config::Config::default());
+    let session = postio_focus::startup::adopt(&window, host, &config);
 
-    let outcome = stage(&window, &request.screen).and_then(|()| {
+    let outcome = stage(&window, &request.screen, &sink, account).and_then(|()| {
         postio_widgets::capture::png(&window, std::path::Path::new(&request.path))
             .map_err(|error| error.to_string())
     });
@@ -510,7 +537,18 @@ fn settled(window: &FocusWindow) -> bool {
 }
 
 /// Put the window in the state `screen` shows.
-fn stage(window: &FocusWindow, screen: &str) -> Result<(), String> {
+fn stage(
+    window: &FocusWindow,
+    screen: &str,
+    sink: &postio_core::bridge::EventSink,
+    account: AccountId,
+) -> Result<(), String> {
+    if screen == "16" {
+        if !settle_until(|| counted(window) && empty_shown(window)) {
+            return Err("the empty inbox never showed".into());
+        }
+        return Ok(());
+    }
     if !settle_until(|| settled(window)) {
         return Err("the demo store's inbox never reached the screen".into());
     }
@@ -521,6 +559,17 @@ fn stage(window: &FocusWindow, screen: &str) -> Result<(), String> {
             window.act(CommandId::ToggleSelection);
         }
         pane.cursor().set_selected(CURSOR);
+    };
+    let tell = |state| {
+        sink.emit(postio_core::Event::ConnectionChanged { account, state });
+    };
+    let banner = |starts: &str| {
+        settle_until(|| {
+            window
+                .banner_showing()
+                .is_some_and(|(title, ..)| title.starts_with(starts))
+                && settled(window)
+        })
     };
     match screen {
         "01" | "02" => pick_three(),
@@ -546,6 +595,34 @@ fn stage(window: &FocusWindow, screen: &str) -> Result<(), String> {
                 return Err("archiving the three never raised the undo toast".into());
             }
         }
+        "17" => {
+            tell(postio_core::ConnectionState::Online);
+            sink.emit(postio_core::Event::SyncProgress {
+                account,
+                done: 12_408,
+                total: 18_204,
+            });
+            pick_three();
+            if !banner("First sync") {
+                return Err("the first sync's banner never showed".into());
+            }
+        }
+        "18" => {
+            tell(postio_core::ConnectionState::Offline);
+            pick_three();
+            if !banner("You're offline") {
+                return Err("the offline banner never showed".into());
+            }
+        }
+        "19" => {
+            tell(postio_core::ConnectionState::Failing {
+                reason: postio_core::FailureReason::Auth,
+            });
+            pick_three();
+            if !banner("Can't sign in") {
+                return Err("the sign-in banner never showed".into());
+            }
+        }
         _ => unreachable!("checked against SCREENS"),
     }
     // Once more, so what the last change queued is drawn.
@@ -553,21 +630,90 @@ fn stage(window: &FocusWindow, screen: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the empty inbox is what the window shows.
+fn empty_shown(window: &FocusWindow) -> bool {
+    let mut stack = vec![window.clone().upcast::<gtk::Widget>()];
+    while let Some(widget) = stack.pop() {
+        if widget.has_css_class("focus-empty") {
+            return widget.is_mapped();
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    false
+}
+
+/// 16:09 today, local: when the references were drawn.
+fn today() -> DateTime<Utc> {
+    Local::now()
+        .date_naive()
+        .and_hms_opt(16, 9, 0)
+        .and_then(|at| Local.from_local_datetime(&at).single())
+        .map(|at| at.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now)
+}
+
+/// Say the inbox last synced at `at`, as a completed pass would.
+async fn synced(connection: &postio_storage::Connection, inbox: MailboxId, at: DateTime<Utc>) {
+    let mailboxes = postio_storage::repository::MailboxRepository::new(connection);
+    if let Ok(Some(mut mailbox)) = mailboxes.get(inbox).await {
+        mailbox.last_synced_at = Some(at);
+        mailboxes
+            .update(&mailbox)
+            .await
+            .expect("the inbox's sync time");
+    }
+}
+
+/// The empty inbox's store (screen 16): an account and its folders, no mail
+/// in the inbox, and a morning's worth of mail filed away.
+pub async fn empty_demo() -> (Store, AccountId) {
+    let database = postio_storage::test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
+    for folder in ["Archive", "Sent", "Drafts", "Trash"] {
+        postio_storage::test_support::mailbox(&connection, &account, folder).await;
+    }
+    let filtered = postio_storage::test_support::mailbox(&connection, &account, "Filtered").await;
+    let morning = today() - chrono::Duration::hours(7);
+    for step in 0..186_i64 {
+        let at = morning + chrono::Duration::minutes(step * 2);
+        let mut message = Message::new(account.id, filtered.id, at);
+        message.flags = [Flag::Seen].into_iter().collect();
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a filtered message");
+        postio_storage::repository::FilterDecisionRepository::new(&connection)
+            .record(&postio_storage::repository::FilterDecision {
+                message: message.id,
+                reason: postio_storage::repository::FilterReason::Promotion,
+                source: None,
+                layer: postio_storage::repository::FilterLayer::Header,
+                decided_at: at,
+            })
+            .await
+            .expect("a decision");
+    }
+    synced(&connection, inbox, today()).await;
+    drop(connection);
+    (database, account.id)
+}
+
 /// The demo store: the storage seed, and today's inbox on top of it.
-pub async fn demo() -> Store {
+pub async fn demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let report = postio_storage::seed::seed_small(&database, 1).await;
     let inbox = report
         .mailbox(MailboxRole::Inbox)
         .expect("the seed files an inbox")
         .id;
-    let today = Local::now()
-        .date_naive()
-        .and_hms_opt(16, 9, 0)
-        .and_then(|at| Local.from_local_datetime(&at).single())
-        .map(|at| at.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+    let today = today();
     let connection = database.connect().await.expect("a connection");
+    synced(&connection, inbox, today).await;
     let mut labels: HashMap<&str, postio_model::LabelId> = HashMap::new();
     for (index, row) in TODAY.iter().enumerate() {
         let at = today - chrono::Duration::minutes(row.minutes);
@@ -617,7 +763,7 @@ pub async fn demo() -> Store {
         }
     }
     drop(connection);
-    database
+    (database, report.account.id)
 }
 
 fn message(
