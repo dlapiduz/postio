@@ -24,6 +24,7 @@
 
 mod chrome;
 mod colours;
+mod cursor;
 mod harness;
 mod list_contract;
 mod marked_rows;
@@ -54,6 +55,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key",
         chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key as fn(),
+    ),
+    (
+        "cursor::j_and_k_move_only_the_cursor",
+        cursor::j_and_k_move_only_the_cursor as fn(),
     ),
     (
         "colours::the_roles_resolve_and_follow_the_system_into_dark",
