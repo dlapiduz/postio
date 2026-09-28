@@ -17,6 +17,9 @@ chrono = { workspace = true, features = ["std"] }
 # Focus mode's body stage asks the classifier what a body says (spec 007):
 # the classifier sends nothing and reaches nothing, by its boundary rule.
 postio-classify.workspace = true
+# The newest message's own words, which is all the needs-action detector
+# reads and all a marker may quote (spec 007 FR-104).
+postio-body.workspace = true
 postio-client.workspace = true
 postio-core.workspace = true
 postio-config.workspace = true
@@ -34,7 +37,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
-postio-body.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-smtp.workspace = true
 postio-storage = { workspace = true, features = ["test-support"] }

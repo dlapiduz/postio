@@ -36,7 +36,8 @@ mod senders;
 
 pub use digests::Digests;
 pub use facts::Facts;
-pub use input::{BodyMessage, FiledMessage, OwnText};
+pub use input::{BodyMessage, EXCERPT_CHARS, FiledMessage, OwnText};
+pub use needs_action::considered;
 pub use outcome::{
     InviteIdentity, InviteUid, Layer, MarkerCandidate, MarkerKind, Outcome, Reason, ReasonKind,
     RuleName, SourceName, Span,

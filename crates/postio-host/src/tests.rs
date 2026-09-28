@@ -2418,3 +2418,232 @@ fn a_body_that_lands_while_focus_runs_is_classified() {
     let version = eventually(&world, || body_classified_at(&world, landed));
     assert_eq!(version, i64::from(postio_classify::VERSION));
 }
+
+// ── Questions and to-dos, marked (spec 007, T117) ───────────────────────────
+
+/// A message to the world's inbox from Tove, received an hour ago and dated
+/// `date`, shaped by `shape`, with `text` as its body.
+fn letter_from_tove(
+    world: &World,
+    date: chrono::DateTime<Utc>,
+    text: &str,
+    shape: impl FnOnce(&mut Message),
+) -> MessageId {
+    let inbox = folder(world, postio_model::MailboxRole::Inbox);
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let mut message = Message::new(
+            world.account,
+            inbox,
+            Utc::now() - chrono::TimeDelta::hours(1),
+        );
+        message.subject = Some("Q3 approvals".to_owned());
+        message.date = Some(date);
+        message.from = vec![postio_model::EmailAddress::new(
+            Some("Tove"),
+            "tove@example.org",
+        )];
+        message.to = vec![postio_model::EmailAddress::new(
+            Some("Test User"),
+            "test@example.com",
+        )];
+        message.promoted = Some(postio_model::promoted::PromotedHeaders::default());
+        shape(&mut message);
+        let id = messages.create(&mut message).await.expect("a message");
+        messages
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some(text.to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("its body");
+        id
+    })
+}
+
+/// The marker on `message`, once the body stage has had it.
+fn marker_on(world: &World, message: MessageId) -> Option<postio_storage::repository::Marker> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::MarkerRepository::new(&connection)
+            .get(message)
+            .await
+            .expect("a read")
+    })
+}
+
+/// Focus mode on, and the catch-up done.
+fn focus_caught_up(world: &World) -> crate::FocusHandle {
+    let focus = world.host().enable_focus(crate::FocusSetup::default());
+    eventually(world, || focus.caught_up().then_some(()));
+    focus
+}
+
+/// Every connection Postio has opened, by subsystem.
+fn egress(world: &World) -> Vec<String> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::all(&connection, "SELECT subsystem FROM egress_log", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("a read")
+    })
+}
+
+const APPROVE: &str = "Can you approve these by Friday so finance can close the quarter?";
+
+fn saturday_noon() -> chrono::DateTime<Utc> {
+    use chrono::TimeZone as _;
+    chrono::Local
+        .with_ymd_and_hms(2026, 9, 26, 12, 0, 0)
+        .single()
+        .expect("a real local time")
+        .with_timezone(&Utc)
+}
+
+#[test]
+fn a_question_sent_to_the_user_is_marked_with_its_sentence_and_nothing_connects() {
+    // US12 scenarios 1 and 7: no model configured, and the built-in
+    // detector marks the question, quoting it exactly as written -- and
+    // Postio opens no connection to anything to do it.
+    let world = World::new();
+    let question = letter_from_tove(
+        &world,
+        saturday_noon(),
+        &format!("Hi,\n\n{APPROVE}\n\nThanks,\nTove"),
+        |_| {},
+    );
+
+    focus_caught_up(&world);
+
+    let marker = marker_on(&world, question).expect("a marker");
+    assert_eq!(marker.kind, postio_model::listing::MarkerKind::Question);
+    assert_eq!(marker.excerpt.as_deref(), Some(APPROVE));
+    assert_eq!(
+        marker.source,
+        postio_storage::repository::MarkerSource::Detector
+    );
+    assert!(
+        marker.span.is_some(),
+        "the sentence, as offsets into the text"
+    );
+    assert_eq!(marker.due_at, None, "a question carries no due date");
+    assert!(egress(&world).is_empty(), "{:?}", egress(&world));
+}
+
+#[test]
+fn a_to_do_with_a_deadline_is_marked_due_that_day() {
+    // US12 scenario 2: sent on Saturday 26 September, "by Wednesday" is
+    // Wednesday 30 September, and the quote is the ask, not its reason.
+    let world = World::new();
+    let todo = letter_from_tove(
+        &world,
+        saturday_noon(),
+        "Please leave comments by Wednesday; I'd like to freeze it Thursday.",
+        |_| {},
+    );
+
+    focus_caught_up(&world);
+
+    let marker = marker_on(&world, todo).expect("a marker");
+    assert_eq!(marker.kind, postio_model::listing::MarkerKind::Todo);
+    assert_eq!(
+        marker.excerpt.as_deref(),
+        Some("Please leave comments by Wednesday")
+    );
+    let due = marker
+        .due_at
+        .expect("a due date")
+        .with_timezone(&chrono::Local)
+        .date_naive();
+    assert_eq!(
+        due,
+        chrono::NaiveDate::from_ymd_opt(2026, 9, 30).expect("a date")
+    );
+}
+
+#[test]
+fn the_question_quoted_signed_listed_or_copied_is_not_marked() {
+    // US12 scenario 3: in quoted history, in a signature, in a newsletter,
+    // or in mail the user is only copied on, no marker appears.
+    let world = World::new();
+    let quoted = letter_from_tove(
+        &world,
+        saturday_noon(),
+        &format!("Done, sent them over.\n\nOn Fri, Tove wrote:\n> {APPROVE}\n"),
+        |_| {},
+    );
+    let signed = letter_from_tove(
+        &world,
+        saturday_noon(),
+        &format!("See you Monday.\n\n-- \nTove Lund\n{APPROVE}\n"),
+        |_| {},
+    );
+    let listed = letter_from_tove(&world, saturday_noon(), APPROVE, |message| {
+        message.list_id = Some("finance.lists.example.org".to_owned());
+    });
+    let copied = letter_from_tove(&world, saturday_noon(), APPROVE, |message| {
+        message.cc = std::mem::take(&mut message.to);
+        message.to = vec![postio_model::EmailAddress::new(
+            Some("Oren"),
+            "oren@example.org",
+        )];
+    });
+
+    focus_caught_up(&world);
+
+    for (message, why) in [
+        (quoted, "quoted history"),
+        (signed, "a signature"),
+        (listed, "a newsletter"),
+        (copied, "copied only"),
+    ] {
+        assert_eq!(
+            body_classified_at(&world, message),
+            Some(i64::from(postio_classify::VERSION)),
+            "{why}: the body stage had it"
+        );
+        assert_eq!(marker_on(&world, message), None, "{why}");
+    }
+}
+
+#[test]
+fn a_question_brings_its_message_out_of_a_digest_hold() {
+    // FR-122: mail with a question or a to-do is never held. Filing holds
+    // by the headers before any body is here; once the body shows an ask,
+    // the hold is let go and the message rejoins the inbox.
+    let world = World::new();
+    let question = letter_from_tove(&world, saturday_noon(), APPROVE, |_| {});
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::DigestRepository::new(&connection)
+            .hold(question, "Newsletters", Utc::now())
+            .await
+            .expect("held at filing");
+    });
+
+    focus_caught_up(&world);
+
+    assert!(marker_on(&world, question).is_some());
+    let held: Option<String> = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::first(
+            &connection,
+            "SELECT rule FROM digest_holds WHERE message_id = ?1",
+            [question.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a read")
+    });
+    assert_eq!(held, None, "the hold was let go");
+}

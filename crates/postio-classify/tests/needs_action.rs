@@ -13,9 +13,9 @@
 //!
 //! The dataset and the rules have one author, so read the numbers as a best
 //! case: real mail will do worse (spike S4, research R10). Two numbers depend
-//! on more than the detector: the own text is cut by a stand-in until T115
-//! lands (below), and each item's addressing is modelled by the headers
-//! [`message_for`] gives it.
+//! on more than the detector: the own text is cut by `postio_body::own_text`,
+//! as the body stage cuts it (below), and each item's addressing is modelled
+//! by the headers [`message_for`] gives it.
 //!
 //! `cargo test -p postio-classify --test needs_action -- --nocapture` prints
 //! the report.
@@ -203,75 +203,20 @@ fn every_address_in_the_dataset_is_reserved() {
     }
 }
 
-// --- The own text, until T115 -------------------------------------------------------
+// --- The own text -------------------------------------------------------------
 //
-// The detector reads the newest message's own words, which T115 cuts in
-// postio-body ("the same boundaries the reader folds", research R10). Until it
-// lands, this stands in for it: the approximation spike S4 measured with,
-// unchanged, so the gate's number is not flattered by a cutter written after
-// reading the data. When T115 lands, the gate reads own text through
-// postio-body's extraction, and this goes.
+// The detector reads the newest message's own words: postio-body's
+// extraction, the one the body stage uses (T115, T117), with quoted history
+// and the signature out, by the same boundaries the reader folds. The gate
+// measured with the spike's stand-in for it until the body stage existed;
+// this is the cutter the detector meets in production.
 
-/// A line that closes the message: what follows is the signature.
-const CLOSINGS: &[&str] = &[
-    "thanks",
-    "thank you",
-    "many thanks",
-    "thanks!",
-    "best",
-    "best wishes",
-    "best regards",
-    "kind regards",
-    "regards",
-    "warm regards",
-    "warmly",
-    "cheers",
-    "love",
-    "all the best",
-];
-
-/// Quoted lines, forwarded and original messages, the signature and
-/// everything after a closing are dropped.
+/// `text`'s own words, as the body stage cuts them from a plain-text body.
 fn own_text(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut kept = Vec::new();
-    let mut index = 0;
-    while index < lines.len() {
-        let line = lines[index];
-        let trimmed = line.trim();
-        let lower = trimmed.to_lowercase();
-        let separator = lower.starts_with("-----original message")
-            || (lower.starts_with("---") && lower.contains("forwarded message"))
-            || (trimmed.len() >= 10 && trimmed.chars().all(|c| c == '_'))
-            || lower.starts_with("sent from my")
-            || trimmed == "--"
-            || line == "-- "
-            || CLOSINGS.contains(&lower.trim_end_matches([',', '!', '.']))
-            || (lower.starts_with("from: ")
-                && lines
-                    .get(index + 1)
-                    .is_some_and(|next| next.starts_with("Sent:") || next.starts_with("Date:")));
-        if separator {
-            break;
-        }
-        if lower.starts_with("on ") && lower.ends_with("wrote:") {
-            // Top-posted over a quote: skip the attribution and let the quoted
-            // lines drop one by one. Over unquoted text, stop here.
-            let next = lines[index + 1..]
-                .iter()
-                .find(|next| !next.trim().is_empty());
-            if next.is_some_and(|next| next.trim_start().starts_with('>')) {
-                index += 1;
-                continue;
-            }
-            break;
-        }
-        if !trimmed.starts_with('>') {
-            kept.push(line);
-        }
-        index += 1;
-    }
-    kept.join("\n")
+    postio_body::own_text(&postio_model::MessageBody {
+        text: Some(text.to_owned()),
+        html: None,
+    })
 }
 
 // --- Each item as a message ------------------------------------------------------

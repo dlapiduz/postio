@@ -55,6 +55,20 @@ impl<'a> DigestRepository<'a> {
         Ok(released > 0)
     }
 
+    /// Releases `message` if it is still waiting for its digest, and answers
+    /// whether it was: once its body shows a question or a to-do, a message
+    /// is not held (FR-122). One already delivered stays in its digest,
+    /// where the person can see it.
+    pub async fn release_waiting(&self, message: MessageId) -> Result<bool> {
+        let released = sql::execute(
+            self.connection,
+            "DELETE FROM digest_holds WHERE message_id = ?1 AND delivery_id IS NULL",
+            [message.get()],
+        )
+        .await?;
+        Ok(released > 0)
+    }
+
     /// Releases everything `rule` holds and has not delivered, as removing
     /// the rule does (FR-126), and answers how many.
     pub async fn release_rule(&self, rule: &str) -> Result<usize> {

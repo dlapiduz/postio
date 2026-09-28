@@ -19,6 +19,16 @@
 //! one to classify it, and it takes only recent inbox mail: FR-141's bound on
 //! what the needs-action detector may read.
 //!
+//! # What it finds
+//!
+//! - **Questions and to-dos** (FR-104 to FR-106, T117), in mail sent
+//!   directly to the user: the built-in detector reads the newest message's
+//!   own words and the marker quotes its sentence verbatim, cut to a plain
+//!   prefix of 200 characters. With no model configured nothing else is
+//!   asked, and nothing connects anywhere. A message that asks something is
+//!   not held for a digest: filing held it on its headers, and the stage
+//!   lets it go while it still waits (FR-122).
+//!
 //! # Records
 //!
 //! Every message the stage takes is recorded at the classifier's version
@@ -30,9 +40,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, TimeDelta, Utc};
-use postio_model::MessageId;
-use postio_storage::repository::{FocusClassifiedRepository, FocusStage, ThreadRepository};
+use postio_classify::{BodyMessage, Facts, FiledMessage, MarkerCandidate, OwnText, Rules, Senders};
+use postio_model::listing::MarkerKind;
+use postio_model::{
+    AccountId, EmailAddress, Identity, MailboxRole, Message, MessageBody, MessageId, ThreadId,
+};
+use postio_storage::repository::{
+    AccountRepository, DigestRepository, FocusClassifiedRepository, FocusStage, Marker,
+    MarkerRepository, MarkerSource, MessageRepository, ThreadRepository,
+};
 use postio_storage::{Checkout, Store, WritePriority};
 
 use crate::Inner;
@@ -166,16 +185,188 @@ async fn landed_bodies(
     Ok(())
 }
 
-/// Classify `batch` and record it at `version`.
+/// Classify `batch` and record it at `version`: the reads first, with no
+/// write permit held, then every write in one background transaction.
 async fn classify(connection: &Checkout, batch: &[MessageId], version: u32) -> Result<(), Failure> {
     if batch.is_empty() {
         return Ok(());
+    }
+    let mut people: HashMap<AccountId, Arc<Vec<Identity>>> = HashMap::new();
+    let mut markers = Vec::new();
+    for &message in batch {
+        match needs_action(connection, message, &mut people).await {
+            Ok(Some(marker)) => markers.push(marker),
+            Ok(None) => {}
+            // Recorded all the same, so it is not taken again and again;
+            // said by id and outcome, never by what it says.
+            Err(error) => tracing::warn!(
+                message = message.get(),
+                %error,
+                "Focus's body stage could not classify a message: {error}"
+            ),
+        }
     }
     let _permit = connection
         .write_gate()
         .acquire(WritePriority::Background)
         .await;
-    FocusClassifiedRepository::new(connection)
-        .record(batch, FocusStage::Body, version)
-        .await
+    postio_storage::transaction(connection, |transaction| async move {
+        let written = MarkerRepository::new(&transaction);
+        let digests = DigestRepository::new(&transaction);
+        for marker in &markers {
+            written.insert(marker).await?;
+            // FR-122: mail that asks something of the user is not held.
+            // Filing held it on its headers alone; its body says otherwise.
+            digests.release_waiting(marker.message).await?;
+        }
+        FocusClassifiedRepository::new(&transaction)
+            .record(batch, FocusStage::Body, version)
+            .await
+    })
+    .await
+}
+
+/// The question or to-do `message` puts to the user, if the built-in
+/// detector finds one (FR-104 to FR-106).
+///
+/// Its body is read only when FR-106's gate would let the detector consider
+/// it -- mail sent directly to the user -- and it is read from this machine,
+/// never fetched (FR-141). What the detector reads is the newest message's
+/// own words (`postio_body::own_text`), and the marker quotes a span of them.
+async fn needs_action(
+    connection: &Checkout,
+    message: MessageId,
+    people: &mut HashMap<AccountId, Arc<Vec<Identity>>>,
+) -> Result<Option<Marker>, Failure> {
+    let messages = MessageRepository::new(connection);
+    let Some(row) = messages.get(message).await? else {
+        return Ok(None);
+    };
+    let identities = match people.get(&row.account_id) {
+        Some(identities) => Arc::clone(identities),
+        None => {
+            let identities = Arc::new(identities_of(connection, row.account_id).await?);
+            people.insert(row.account_id, Arc::clone(&identities));
+            identities
+        }
+    };
+    let asked = BodyMessage {
+        filed: filed_in_the_inbox(&row),
+        identities: &identities,
+    };
+    if !postio_classify::considered(&asked, &Shipped) {
+        return Ok(None);
+    }
+    let Some(stored) = messages.body(message).await? else {
+        return Ok(None);
+    };
+    // Cutting the own text parses and sanitises HTML, and the detector reads
+    // every clause: work for one core, off the runtime's own threads.
+    let body = MessageBody {
+        text: stored.text,
+        html: stored.html,
+    };
+    let marker = tokio::task::spawn_blocking(move || {
+        let own = postio_body::own_text(&body);
+        let text = OwnText::new(&own);
+        let asked = BodyMessage {
+            filed: filed_in_the_inbox(&row),
+            identities: &identities,
+        };
+        postio_classify::at_body(&asked, &text, &NoGuards, &Shipped)
+            .marker
+            .and_then(|candidate| detected(message, &text, candidate))
+    })
+    .await
+    .unwrap_or(None);
+    Ok(marker)
+}
+
+/// `row` as the classifier is handed it: filed in the inbox, which is all
+/// the body stage takes.
+fn filed_in_the_inbox(row: &Message) -> FiledMessage<'_> {
+    FiledMessage {
+        message: row,
+        thread: row.thread_id,
+        role: MailboxRole::Inbox,
+    }
+}
+
+/// Who "you" are on `account`: its identities, and its own address when no
+/// identity carries it, since that is where its mail is sent.
+async fn identities_of(
+    connection: &Checkout,
+    account: AccountId,
+) -> Result<Vec<Identity>, Failure> {
+    let Some(account) = AccountRepository::new(connection).get(account).await? else {
+        return Ok(Vec::new());
+    };
+    let mut identities = account.identities.clone();
+    if !identities
+        .iter()
+        .any(|identity| identity.address.same_address(&account.address))
+    {
+        identities.push(Identity::new(account.id, account.address.clone()));
+    }
+    Ok(identities)
+}
+
+/// The marker a detected question or to-do becomes: its sentence as
+/// offsets into the own text, and the excerpt cut from it (research R2).
+/// An invitation is not the detector's to find: it comes from the calendar
+/// part.
+fn detected(message: MessageId, text: &OwnText<'_>, candidate: MarkerCandidate) -> Option<Marker> {
+    let kind = match candidate.kind {
+        postio_classify::MarkerKind::Question => MarkerKind::Question,
+        postio_classify::MarkerKind::Todo => MarkerKind::Todo,
+        postio_classify::MarkerKind::Invite => return None,
+    };
+    let span = candidate.span?;
+    Some(Marker {
+        message,
+        kind,
+        source: MarkerSource::Detector,
+        span: Some((
+            u32::try_from(span.start).ok()?,
+            u32::try_from(span.end).ok()?,
+        )),
+        excerpt: Some(text.excerpt(&span)),
+        starts_at: None,
+        ends_at: None,
+        due_at: candidate.due_at,
+        invite: None,
+        invite_state: None,
+        answer: None,
+        dismissed_at: None,
+    })
+}
+
+/// What the detector decides by: the automated-senders table Postio ships,
+/// as data (FR-114).
+struct Shipped;
+
+impl Rules for Shipped {
+    fn senders(&self) -> &Senders {
+        Senders::shipped()
+    }
+}
+
+/// The body stage asks nothing of the guards: nothing it does files or
+/// holds mail. A classifier that asked anyway would be told what a store
+/// that cannot answer says.
+struct NoGuards;
+
+impl Facts for NoGuards {
+    fn wrote_to(&self, _: &EmailAddress) -> bool {
+        true
+    }
+    fn took_part(&self, _: ThreadId) -> bool {
+        true
+    }
+    fn own_domain(&self, _: &EmailAddress) -> bool {
+        true
+    }
+    fn never_filter(&self, _: &EmailAddress) -> bool {
+        true
+    }
 }

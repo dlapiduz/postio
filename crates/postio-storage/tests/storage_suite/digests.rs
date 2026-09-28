@@ -152,3 +152,38 @@ async fn a_release_or_an_archived_delivery_lets_the_mail_go() {
     .expect("a read");
     assert!(archived.is_some());
 }
+
+#[tokio::test]
+async fn letting_go_of_what_waits_leaves_delivered_mail_in_its_digest() {
+    // FR-122: a message whose body shows a question or a to-do is let go of
+    // while it waits for its digest. Once delivered it is in a digest row
+    // the person can already see, and stays there.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages(&connection, 2).await;
+    let digests = DigestRepository::new(&connection);
+    digests
+        .hold(ids[0], "Newsletters", at(23, 9))
+        .await
+        .expect("held");
+    let delivery = digests
+        .deliver("Newsletters", at(27, 9), at(27, 9))
+        .await
+        .expect("delivered")
+        .expect("a delivery");
+    digests
+        .hold(ids[1], "Newsletters", at(28, 9))
+        .await
+        .expect("held");
+
+    assert!(
+        digests.release_waiting(ids[1]).await.expect("released"),
+        "waiting: let go"
+    );
+    assert!(
+        !digests.release_waiting(ids[0]).await.expect("a write"),
+        "delivered: kept"
+    );
+    assert_eq!(hold_of(&connection, ids[1]).await, None);
+    assert_eq!(hold_of(&connection, ids[0]).await, Some(Some(delivery)));
+}

@@ -4726,6 +4726,7 @@ name = "postio-classify"
 version = "0.3.0"
 dependencies = [
  "chrono",
+ "postio-body",
  "postio-model",
  "postio-search",
  "serde",

@@ -28,6 +28,10 @@ serde = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+# The own-text extraction the body stage feeds the detector (T115, T117),
+# which SC-013's gate measures through: a test's own cutter would measure a
+# detector production never runs.
+postio-body = { workspace = true }
 # The corpus: `untrusted-instructions` holds the text ADR 0009 Q4 is about.
 postio-model = { workspace = true, features = ["test-corpus"] }
 

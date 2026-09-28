@@ -28,7 +28,11 @@ const BULK_OR_AUTOMATED: u8 = 1 | 2 | 4 | 8 | 16;
 /// the automated-senders table), or mail filed as junk or in their own Sent
 /// and Drafts. A header not yet known is no evidence either way (research
 /// R10).
-pub(crate) fn considered(message: &BodyMessage<'_>, rules: &dyn Rules) -> bool {
+///
+/// It reads headers only, so the body stage asks it before reading a body:
+/// the detector may read only the bodies of mail sent directly to the user
+/// (FR-141).
+pub fn considered(message: &BodyMessage<'_>, rules: &dyn Rules) -> bool {
     let filed = &message.filed;
     let mail = filed.message;
     let mine = |address: &EmailAddress| {
