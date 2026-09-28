@@ -20,6 +20,18 @@ use crate::window::FocusWindow;
 /// which a sandboxed app may own (research R3).
 pub const APP_ID: &str = "dev.postio.Postio.Focus";
 
+/// Focus's application, as `run` starts it.
+pub fn application() -> adw::Application {
+    // Tell the compositor which application this is: GNOME matches a
+    // window to its desktop entry by the Wayland `app_id`, which GDK takes
+    // from the program name -- the binary's, `postio-focus`, unless it is
+    // set. Focus's entry is `dev.postio.Postio.Focus.desktop`, and its
+    // `StartupWMClass` names the same id (postio-gtk's `app.rs` has the
+    // history).
+    glib::set_prgname(Some(APP_ID));
+    adw::Application::builder().application_id(APP_ID).build()
+}
+
 /// The whole program: open the store, show the inbox, run until closed.
 pub fn run() -> glib::ExitCode {
     let config_path = postio_config::paths::config_path().ok();
@@ -62,7 +74,7 @@ pub fn run() -> glib::ExitCode {
     }
 
     let session: Rc<RefCell<Option<Session>>> = Rc::default();
-    let application = adw::Application::builder().application_id(APP_ID).build();
+    let application = application();
     application.connect_activate({
         let session = Rc::clone(&session);
         move |application| {
