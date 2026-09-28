@@ -56,6 +56,11 @@
   --postio-accent-fg: var(--accent-fg-color);
   --postio-accent-text: var(--accent-color);
 
+  /* Shadows: libadwaita's own shade, so a lifted surface follows the
+     scheme. The command bar floats over the list on the large one. */
+  --postio-shadow-md: 0 2px 8px var(--shade-color);
+  --postio-shadow-lg: 0 12px 32px var(--shade-color);
+
   /* Errors: the sign-in banner, at low opacity (screen 19). */
   --postio-error: var(--error-color);
   --postio-error-bg: color-mix(in srgb, var(--error-bg-color) 14%, transparent);

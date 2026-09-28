@@ -292,6 +292,47 @@ impl Fixture {
 }
 
 impl Fixture {
+    /// Index everything filed so far, as sync indexes what it files.
+    pub async fn index(&self) {
+        let connection = self.database.connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("indexed");
+    }
+
+    /// A folder named `name` in the fixture's account.
+    pub async fn folder(&self, name: &str) -> MailboxId {
+        let connection = self.database.connect().await.expect("a connection");
+        test_support::mailbox(&connection, &self.account, name)
+            .await
+            .id
+    }
+
+    /// File a message from Ada about `subject` into `mailbox`, `minutes`
+    /// before the fixture's now.
+    pub async fn file_in(&self, mailbox: MailboxId, subject: &str, minutes: i64) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut message =
+            Message::new(self.account.id, mailbox, now() - Duration::minutes(minutes));
+        message.from = vec![EmailAddress::new(Some("Ada Moreno"), "ada@example.com")];
+        message.subject = Some(subject.to_owned());
+        message.preview = Some(format!("About {subject}."));
+        static FILED_IN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = FILED_IN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<filed-in.{serial}@example.test>"
+        )));
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        ThreadingRepository::new(&connection, self.account.id)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        message.id
+    }
+
     /// Store `html` as `message`'s body, fetched in full.
     pub async fn write_html_body(&self, message: MessageId, html: &str) {
         let connection = self.database.connect().await.expect("a connection");

@@ -117,6 +117,8 @@ mod imp {
         pub choices: RefCell<Vec<crate::chooser::Choice>>,
         /// Where remote images are fetched: the host's runtime.
         pub runtime: RefCell<Option<tokio::runtime::Handle>>,
+        /// The command bar, over the list.
+        pub bar: RefCell<Option<Rc<crate::bar::Bar>>>,
     }
 
     impl Default for FocusWindow {
@@ -157,6 +159,7 @@ mod imp {
                 launcher: RefCell::default(),
                 choices: RefCell::default(),
                 runtime: RefCell::default(),
+                bar: RefCell::default(),
             }
         }
     }
@@ -305,6 +308,9 @@ impl FocusWindow {
         if let Some(reading) = imp.reading.borrow().as_ref() {
             reading.set_keymap(&keymap);
         }
+        if let Some(bar) = imp.bar.borrow().as_ref() {
+            bar.set_keymap(&keymap);
+        }
         imp.keymap.replace(keymap);
         // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
@@ -452,7 +458,15 @@ impl FocusWindow {
                 accounts: self.imp().accounts.borrow().clone(),
                 omitted: Vec::new(),
             }),
-            CommandId::Back => self.clear_selection(),
+            CommandId::Back => match self.bar().filter(|bar| bar.is_open()) {
+                Some(bar) => bar.close(),
+                None => self.clear_selection(),
+            },
+            CommandId::Search | CommandId::CommandPalette => {
+                if let Some(bar) = self.bar() {
+                    bar.open();
+                }
+            }
             CommandId::Archive | CommandId::Delete | CommandId::ToggleRead => {
                 self.send(Command::default_for(id));
             }
@@ -779,7 +793,19 @@ impl FocusWindow {
         list_or_empty.add_named(pane.widget(), Some(LIST));
         list_or_empty.add_named(empty.widget(), Some(EMPTY));
         list_or_empty.set_visible_child_name(LIST);
-        imp.inbox.append(&list_or_empty);
+        // The command bar lies over the list, never beside it.
+        let bar = crate::bar::Bar::new(client.clone(), &self.keymap());
+        bar.connect_action(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |action| window.bar_action(action)
+        ));
+        let over_list = gtk::Overlay::new();
+        over_list.set_child(Some(&list_or_empty));
+        over_list.add_overlay(bar.widget());
+        over_list.set_vexpand(true);
+        imp.inbox.append(&over_list);
+        imp.bar.replace(Some(bar));
         imp.list_or_empty.replace(Some(list_or_empty));
         imp.empty.replace(Some(empty));
         let bulk = Rc::new(Bulk::new(&self.keymap()));
@@ -1326,6 +1352,27 @@ impl FocusWindow {
         self.imp().runtime.replace(Some(runtime));
     }
 
+    /// The command bar, once the inbox is showing.
+    pub fn bar(&self) -> Option<Rc<crate::bar::Bar>> {
+        self.imp().bar.borrow().clone()
+    }
+
+    /// What a row of the bar asked for.
+    fn bar_action(&self, action: crate::bar::BarAction) {
+        match action {
+            crate::bar::BarAction::Open { message, subject } => {
+                self.open_message();
+                if let Some(reading) = self.reading() {
+                    reading.show_found(self, message, &subject);
+                }
+            }
+            crate::bar::BarAction::Command(command) => self.act(command),
+            crate::bar::BarAction::Go { .. } => {
+                tracing::debug!("going to a place from the bar waits for the folders popover");
+            }
+        }
+    }
+
     /// The open-email dialog, once a message has been opened.
     pub fn reading(&self) -> Option<Rc<crate::open::OpenMessage>> {
         self.imp().reading.borrow().clone()
@@ -1338,10 +1385,9 @@ impl FocusWindow {
         dialog.present(Some(self));
     }
 
-    /// The rows the command bar lists. None: the command bar is US4's, and
-    /// registry parity (T059) counts every command without one.
+    /// Every command the command bar can list, by typing its name.
     pub fn command_bar_rows(&self) -> Vec<CommandId> {
-        Vec::new()
+        self.bar().map(|bar| bar.commands()).unwrap_or_default()
     }
 
     /// Every command a person can reach with the mouse somewhere in the

@@ -45,6 +45,8 @@ postio-render.workspace = true
 # The remote-image fetcher, run on the host's runtime for a sender the
 # person allowed (US2 scenario 4), as the desktop app runs it.
 postio-runtime.workspace = true
+# The one query language, and plain English lowered into it (US4).
+postio-search.workspace = true
 # Logging, as the other apps set it up.
 postio-session.workspace = true
 postio-ui.workspace = true
@@ -55,6 +57,9 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+# The search index, which sync fills as it files mail: a fixture fills it
+# the same way, so the command bar has something to find.
+postio-index.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
 # A throwaway store with mail in it, for the suite to open.
 postio-storage = { workspace = true, features = ["test-support"] }

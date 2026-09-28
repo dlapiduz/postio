@@ -368,6 +368,26 @@ impl OpenMessage {
         }
     }
 
+    /// Show `message`, found by a search rather than a row of the list:
+    /// its subject, no position in the list, and no marker or labels until
+    /// the reading has them.
+    pub fn show_found(&self, parent: &impl IsA<gtk::Widget>, message: MessageId, subject: &str) {
+        self.title.set_text(subject);
+        self.subject.set_text(subject);
+        self.subtitle.set_text("Found by search");
+        self.messages.set(1);
+        self.thread.borrow_mut().clear();
+        self.at.set(0);
+        self.show_thread_chip(1);
+        self.show_labels(&[]);
+        self.marker.replace(None);
+        if !self.open.get() {
+            self.dialog.present(Some(parent));
+            self.open.set(true);
+        }
+        self.show_message(message);
+    }
+
     /// Show `message` of the conversation on screen: clear what the last
     /// one left, and read this one.
     fn show_message(&self, message: MessageId) {

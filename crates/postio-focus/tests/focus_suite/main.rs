@@ -23,6 +23,7 @@
 //! when several cases fail at once, trust the first.
 
 mod across_apps;
+mod bar;
 mod chrome;
 mod colours;
 mod corrections;
@@ -59,6 +60,14 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "bar::half_typed_operators_show_no_error_and_results_keep_updating",
+        bar::half_typed_operators_show_no_error_and_results_keep_updating as fn(),
+    ),
+    (
+        "bar::in_rec_lists_receipts_newest_first",
+        bar::in_rec_lists_receipts_newest_first as fn(),
+    ),
     (
         "marker_card::a_marked_message_opens_with_its_card_and_its_sentence_highlighted",
         marker_card::a_marked_message_opens_with_its_card_and_its_sentence_highlighted as fn(),

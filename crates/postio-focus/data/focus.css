@@ -359,6 +359,68 @@ banner.focus-banner button {
   font-style: italic;
 }
 
+/* ── The command bar (screens 07-09) ─────────────────────────────────── */
+.focus-bar {
+  margin-top: var(--postio-space-3);
+  padding: var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-surface);
+  box-shadow: var(--postio-shadow-lg);
+}
+
+.focus-bar-input {
+  min-height: 36px;
+  padding: 0 var(--postio-space-2);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-bar-entry {
+  background: none;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-bar-chip {
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-md);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-ink);
+}
+
+.focus-bar-heading,
+.focus-bar-section {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-bar-subject {
+  font-weight: bold;
+}
+
+.focus-bar-place {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.focus-bar-results > row {
+  min-height: 32px;
+  padding: 0 var(--postio-space-2);
+  border-radius: var(--postio-radius-md);
+}
+
+.focus-bar-results > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
+.focus-bar-footer {
+  font-size: var(--postio-text-meta);
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

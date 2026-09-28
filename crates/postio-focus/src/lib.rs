@@ -9,6 +9,7 @@
 
 pub mod app;
 pub mod banner;
+pub mod bar;
 pub mod bulk;
 pub mod chooser;
 pub mod chrome;
