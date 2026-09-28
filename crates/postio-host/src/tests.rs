@@ -79,6 +79,11 @@ impl World {
         }
     }
 
+    /// The store under the host, for a test to read what a verb wrote.
+    pub(crate) fn database(&self) -> &postio_storage::Store {
+        &self.database
+    }
+
     /// The host.
     pub(crate) fn host(&self) -> &Host {
         self.host.as_ref().expect("running")
@@ -158,7 +163,7 @@ impl World {
     }
 
     /// Everything that arrives within a short quiet period.
-    fn drain(&self, events: &async_channel::Receiver<EventEnvelope>) -> Vec<Event> {
+    pub(crate) fn drain(&self, events: &async_channel::Receiver<EventEnvelope>) -> Vec<Event> {
         self.rt.block_on(async {
             let mut heard = Vec::new();
             while let Ok(Ok(envelope)) =
@@ -170,7 +175,7 @@ impl World {
         })
     }
 
-    fn send(&self, client: &Client, command: Command) {
+    pub(crate) fn send(&self, client: &Client, command: Command) {
         self.rt.block_on(client.send(command)).expect("sent");
     }
 }
@@ -1782,7 +1787,7 @@ fn a_window_opens_on_an_account_whose_password_the_keyring_has() {
 
 /// Ask `read` until it answers `Some`, failing after a while: for work the
 /// host does on its own time.
-fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) -> T {
+pub(crate) fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) -> T {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         if let Some(found) = read() {

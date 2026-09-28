@@ -1576,3 +1576,5 @@ pub mod startup;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod verbs_tests;

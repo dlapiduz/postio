@@ -25,6 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
 };
@@ -597,15 +598,18 @@ pub enum Command {
         /// The state to set; `None` toggles.
         unread: Option<bool>,
     },
-    /// Hide the selection from every ordinary list for a while.
+    /// Hide the selection from every ordinary list until a time.
     ///
-    /// No duration here: unlike [`Command::Move`]'s destination, "for how
-    /// long" is a UI decision the handler makes, not one this registry-level
-    /// shape carries — the same reason [`Command::ScheduleSend`] opens a
-    /// picker rather than embedding a time.
+    /// The time is the picker's (specs/007-postio-focus research R6): one of
+    /// the shared presets, or a date typed and read by `parse_when`. `None`
+    /// is what a keystroke with no picker behind it sends -- the classic
+    /// app's `s` -- and the handler's own default answers it, as it always
+    /// has.
     Snooze {
         /// What to snooze.
         target: MessageTarget,
+        /// When it comes back; `None` for the handler's default.
+        until: Option<DateTime<Utc>>,
     },
     /// Cancel a snooze immediately.
     Unsnooze {
@@ -1054,7 +1058,7 @@ impl Command {
             | Command::Move { target, .. }
             | Command::Flag { target, .. }
             | Command::ToggleRead { target, .. }
-            | Command::Snooze { target }
+            | Command::Snooze { target, .. }
             | Command::Unsnooze { target }
             | Command::RemindIfNoReply { target }
             | Command::AddLabel { target, .. }
@@ -1085,7 +1089,7 @@ impl Command {
             Command::Move { to, .. } => Command::Move { target, to },
             Command::Flag { flagged, .. } => Command::Flag { target, flagged },
             Command::ToggleRead { unread, .. } => Command::ToggleRead { target, unread },
-            Command::Snooze { .. } => Command::Snooze { target },
+            Command::Snooze { until, .. } => Command::Snooze { target, until },
             Command::Unsnooze { .. } => Command::Unsnooze { target },
             Command::RemindIfNoReply { .. } => Command::RemindIfNoReply { target },
             Command::AddLabel { label, on, .. } => Command::AddLabel { target, label, on },
@@ -1303,6 +1307,7 @@ impl Command {
             },
             CommandId::Snooze => Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             },
             CommandId::Unsnooze => Command::Unsnooze {
                 target: MessageTarget::Selection,

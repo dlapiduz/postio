@@ -81,14 +81,15 @@ pub const WIRED: &[CommandId] = &[
     CommandId::MapMailboxRole,
 ];
 
-/// How long [`Command::Snooze`] hides a message for, with no duration picker
-/// yet to ask for anything else.
+/// How long [`Command::Snooze`] hides a message for when it names no time:
+/// a keystroke with no picker behind it, which is the classic app's `s`.
 ///
 /// #493's own scope note: a picker mirroring `ScheduleMenu`
 /// (`crates/postio-gtk/src/composer.rs`) is natural follow-up work once a
 /// single sensible default has proven the rest of the feature out — the same
 /// sequencing #6 already used to split scheduled send from snooze in the
-/// first place.
+/// first place. Focus's picker is that work (specs/007-postio-focus research
+/// R6), and it names its time, so this is only ever the default.
 const DEFAULT_SNOOZE: Duration = Duration::hours(3);
 
 /// Whether a verb is being performed or replayed backwards.
@@ -340,8 +341,9 @@ impl Actions {
                 let label = label.ok_or_else(|| CommandError::rejected("Pick a label to add"))?;
                 vec![self.set_label(target, label, *on).await?]
             }
-            Command::Snooze { target } => {
-                vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE).await?]
+            Command::Snooze { target, until } => {
+                let until = until.unwrap_or_else(|| Utc::now() + DEFAULT_SNOOZE);
+                vec![self.snooze(target, until).await?]
             }
             Command::Unsnooze { target } => vec![self.unsnooze(target).await?],
             // Deliberately `Some(true)` rather than a toggle: a dwell says
@@ -1076,19 +1078,34 @@ impl Actions {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
+        // The way back puts each message to sleep until the time it had, not
+        // a default: a snooze chosen from a picker is somebody's plan, and
+        // undoing its cancellation has to give the plan back. Grouped by
+        // that time, one snooze each; a message that was not asleep is not
+        // put to sleep by taking this back.
+        let mut asleep: BTreeMap<chrono::DateTime<Utc>, Vec<MessageId>> = BTreeMap::new();
+        for message in &rows {
+            if let Some(until) = message.snoozed_until {
+                asleep.entry(until).or_default().push(message.id);
+            }
+        }
         Ok(Applied {
             account,
             kind: UndoKind::Unsnooze,
             count: ids.len(),
-            messages: ids.clone(),
+            messages: ids,
             removed: Vec::new(),
             arrived: None,
             reloaded,
             changed: Vec::new(),
             mailboxes_changed: false,
-            inverse: vec![Command::Snooze {
-                target: MessageTarget::Messages(ids),
-            }],
+            inverse: asleep
+                .into_iter()
+                .map(|(until, ids)| Command::Snooze {
+                    target: MessageTarget::Messages(ids),
+                    until: Some(until),
+                })
+                .collect(),
         })
     }
 
@@ -3048,6 +3065,7 @@ mod tests {
         world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect("snooze");
@@ -3080,6 +3098,7 @@ mod tests {
         world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect("snooze");
@@ -3102,6 +3121,7 @@ mod tests {
         world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect("snooze");
@@ -3140,6 +3160,7 @@ mod tests {
         let error = world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect_err("a whole-mailbox snooze is not offered");
