@@ -1,0 +1,209 @@
+//! One binary for Postio Focus's GTK cases -- the custom harness of
+//! postio-app's `app_suite` and postio-widgets' `widgets_suite`, for the same
+//! two reasons:
+//!
+//!   * GTK may be initialized from exactly one thread per process (#41), and
+//!     libtest runs `#[test]` functions on a thread pool;
+//!   * every extra test *binary* links the whole GTK stack, and linking was
+//!     once the dominant cost of a GTK crate's tests (#329).
+//!
+//! So: `harness = false`, one `adw::init`, every case a plain `pub fn` in
+//! `focus_suite/`, run in sequence under `catch_unwind` so one failure does
+//! not hide the rest. The cases run on the headless compositor the cargo
+//! runner puts test binaries on, and assert on the widget tree -- what a
+//! person would see -- never on what a layer was handed.
+//!
+//! **A new case is a module here and a row in `CASES`.** `--list` and name
+//! filtering behave enough like libtest for `cargo test`, nextest and the
+//! tooling's test counting to work, and that output is a contract:
+//! `list_contract.rs` is what notices when it breaks, because a runner that
+//! misreads it runs nothing and reports success.
+//!
+//! A panicking case can leave toolkit state behind that fails a later case:
+//! when several cases fail at once, trust the first.
+
+mod harness;
+mod list_contract;
+mod starts_offline;
+mod support;
+
+/// Cases held out of a default run, by name -- the table-driven spelling of
+/// `#[ignore]`, which means one thing here: this machine may not have what
+/// the case needs. A name here still runs when asked for explicitly, and still
+/// appears in `--list`, exactly as an ignored libtest case does. Say in a
+/// comment beside the name which issue or task takes it back.
+const IGNORED: &[&str] = &[]; // nothing held out
+
+const CASES: &[(&str, fn())] = &[
+    (
+        "list_contract::the_list_output_stays_libtest_shaped",
+        list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
+    ("harness::an_empty_case", harness::an_empty_case as fn()),
+    (
+        "harness::an_empty_case_is_listed_and_runs",
+        harness::an_empty_case_is_listed_and_runs as fn(),
+    ),
+    (
+        "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
+        starts_offline::the_inbox_is_listed_from_the_store_with_no_network as fn(),
+    ),
+];
+
+use gtk::glib;
+
+/// Turn the GTK main loop until there is nothing left to do.
+pub fn settle() {
+    while glib::MainContext::default().iteration(false) {}
+}
+
+/// Turn the loop until `done`, or give up after ten seconds (scaled by
+/// `POSTIO_TEST_PATIENCE`). Returns whether it happened, because every call
+/// site is already inside an `assert!` that says what was expected.
+pub async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while std::time::Instant::now() < deadline {
+        settle();
+        if done().await {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    done().await
+}
+
+/// Turn the loop while `held` stays true, for half a second (scaled): the
+/// inverse of `settle_until`, for proving something does *not* happen.
+pub async fn settle_while<F, Fut>(held: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = std::time::Instant::now()
+        + postio_test_support::scaled(std::time::Duration::from_millis(500));
+    while std::time::Instant::now() < deadline {
+        settle();
+        if !held().await {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    held().await
+}
+
+/// Run a case's body, which is async because the store is.
+///
+/// On **this** thread, because everything in it touches GTK; on a
+/// multi-threaded runtime, because a synchronous store read reached from
+/// inside it (`block_in_place`) panics on a current-thread one. One runtime
+/// per thread, not per case. See app_suite's `gtk_case` for the whole story.
+pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
+    thread_local! {
+        static RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime for the Focus suite");
+    }
+    RUNTIME.with(|runtime| runtime.block_on(body));
+}
+
+/// Destroy every window a case left open, let the teardown run, then drop
+/// what the case kept (`support::keep`): outside every runtime, which is the
+/// one place a host's own runtime may be dropped.
+fn tidy_up() {
+    use gtk::prelude::*;
+    if gtk::is_initialized() {
+        let toplevels = gtk::Window::toplevels();
+        let windows: Vec<gtk::Window> = (0..toplevels.n_items())
+            .filter_map(|item| toplevels.item(item))
+            .filter_map(|object| object.downcast::<gtk::Window>().ok())
+            .collect();
+        for window in windows {
+            window.destroy();
+        }
+        settle();
+    }
+    support::drop_kept();
+}
+
+fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.iter().any(|a| a == "--list") {
+        // Two questions, and a libtest-compatible runner asks both: every
+        // test, then `--ignored` for the ignored subset. Answering the second
+        // with the full list tells a process-per-test runner that everything
+        // is ignored -- it then runs nothing and reports success.
+        let only_ignored = arguments.iter().any(|a| a == "--ignored");
+        for (name, _) in CASES {
+            if !only_ignored || IGNORED.contains(name) {
+                println!("{name}: test");
+            }
+        }
+        // `--format terse` is a machine-readable contract: real libtest emits
+        // the names and nothing else. The count is for the non-terse form.
+        if !arguments.iter().any(|a| a == "terse") {
+            println!();
+            println!("{} tests, 0 benchmarks", CASES.len());
+        }
+        return;
+    }
+    // `--exact` means the argument is a whole test name, not a substring: a
+    // process-per-test runner passes it for every case, and without it a name
+    // that is a prefix of another would run both.
+    let exact = arguments.iter().any(|a| a == "--exact");
+    let run_ignored_only = arguments.iter().any(|a| a == "--ignored");
+    let filters: Vec<&str> = arguments
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(|s| s.as_str())
+        .collect();
+
+    // One initialisation for the process, before any case. No display is not
+    // an error here; a case that needs one says so itself.
+    let _ = adw::init();
+
+    let mut failed = Vec::new();
+    let mut ran = 0usize;
+    for (name, case) in CASES {
+        let matched = filters
+            .iter()
+            .any(|f| if exact { *name == *f } else { name.contains(f) });
+        if !filters.is_empty() && !matched {
+            continue;
+        }
+        // An ignored case runs only when it is asked for by name, or when
+        // `--ignored` asks for exactly those -- same rule libtest uses.
+        if IGNORED.contains(name) && filters.is_empty() && !run_ignored_only {
+            continue;
+        }
+        ran += 1;
+        println!("test {name} ...");
+        if std::panic::catch_unwind(case).is_err() {
+            println!("test {name} ... FAILED");
+            failed.push(*name);
+        } else {
+            println!("test {name} ... ok");
+        }
+        tidy_up();
+    }
+    if failed.is_empty() {
+        println!("\ntest result: ok. {ran} passed; 0 failed");
+    } else {
+        println!("\nfailures:");
+        for name in &failed {
+            println!("    {name}");
+        }
+        println!(
+            "\ntest result: FAILED. {} passed; {} failed",
+            ran - failed.len(),
+            failed.len()
+        );
+        std::process::exit(101);
+    }
+}

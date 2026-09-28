@@ -1,0 +1,113 @@
+//! The application: its id, its one window, and the order things start in.
+//!
+//! The store starts opening on a thread before GTK does anything, as the
+//! desktop app's does (#1604): the keyring and the engine's open of an
+//! encrypted file need nothing from the window. The window then comes up at
+//! once and says what it waits for if the wait is long; the inbox fills from
+//! the store; and sync starts after the first frame.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use adw::prelude::*;
+use gtk::glib;
+
+use crate::startup::{self, Session};
+use crate::window::FocusWindow;
+
+/// Focus's application id: a name inside the desktop app's own namespace,
+/// which a sandboxed app may own (research R3).
+pub const APP_ID: &str = "dev.postio.Postio.Focus";
+
+/// The whole program: open the store, show the inbox, run until closed.
+pub fn run() -> glib::ExitCode {
+    let config_path = postio_config::paths::config_path().ok();
+    // Before anything else can have anything to say: a store that will not
+    // open and a keyring that will not answer both happen before there is
+    // any UI to report them in.
+    let logging = postio_session::logging::init(
+        &config_path
+            .as_deref()
+            .map(postio_session::logging::config_at)
+            .unwrap_or_default(),
+    );
+    // Held for the life of the process: dropping it stops the watch, and
+    // `[logging]` exists to retune a running Postio.
+    let _log_watch = config_path.as_deref().and_then(|path| logging.watch(path));
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio-focus starting");
+
+    let config = Rc::new(
+        config_path
+            .as_deref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+            .unwrap_or_default(),
+    );
+
+    // One keyring for the installation, read on the opening thread.
+    let secrets: Arc<dyn postio_account::secret::SecretStore> =
+        Arc::new(postio_account::secret::KeyringSecretStore::default());
+    let reopen: Rc<dyn Fn() -> async_channel::Receiver<startup::Progress>> = {
+        let config_path = config_path.clone();
+        let secrets = Arc::clone(&secrets);
+        Rc::new(move || startup::open_on_a_thread(config_path.clone(), Arc::clone(&secrets)))
+    };
+    // Before GTK: the open overlaps the whole of GTK's own start.
+    let early = RefCell::new(Some(reopen()));
+
+    if adw::init().is_err() {
+        tracing::error!("no display; Focus needs a Wayland or X11 session");
+        return glib::ExitCode::FAILURE;
+    }
+
+    let session: Rc<RefCell<Option<Session>>> = Rc::default();
+    let application = adw::Application::builder().application_id(APP_ID).build();
+    application.connect_activate({
+        let session = Rc::clone(&session);
+        move |application| {
+            // A second launch raises the window it already has.
+            if let Some(window) = application.active_window() {
+                window.present();
+                return;
+            }
+            let window = FocusWindow::new(Some(application));
+            window.present();
+            let progress = early.borrow_mut().take().unwrap_or_else(|| reopen());
+            let opened: Rc<dyn Fn(Session)> = {
+                let session = Rc::clone(&session);
+                let window = window.downgrade();
+                Rc::new(move |opened: Session| {
+                    let session = Rc::clone(&session);
+                    session.replace(Some(opened));
+                    if let Some(window) = window.upgrade() {
+                        // The network after the frame the stored mail is
+                        // drawn in, never before it.
+                        startup::after_first_frame(&window, move || {
+                            if let Some(session) = session.borrow().as_ref() {
+                                session.start_syncing();
+                            }
+                        });
+                    }
+                })
+            };
+            startup::open(
+                &window,
+                progress,
+                Rc::clone(&config),
+                Rc::clone(&reopen),
+                opened,
+            );
+        }
+    });
+
+    // No arguments for GTK to parse: Focus takes none yet.
+    let code = application.run_with_args::<&str>(&[]);
+
+    // The engines first, then the clean-shutdown mark, before the host's
+    // runtime goes with it.
+    if let Some(session) = session.borrow_mut().take() {
+        session.stop();
+    }
+    code
+}

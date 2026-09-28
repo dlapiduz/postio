@@ -8,15 +8,58 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
+# The app is a library with a thin binary over it, as postio-app is: a
+# composition root that only launching the binary can reach is one nothing
+# can check (postio-app's `lib.rs` tells that story). `tests/focus_suite`
+# drives the same startup the binary runs.
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "postio-focus"
 path = "src/main.rs"
 
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+# The store opens on a thread of its own, and its progress and its answer
+# come back to the main loop over a channel both sides can wait on.
+async-channel = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
 gio = "0.22.9"
 glib = { version = "0.22.9", features = ["v2_72"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+pango = { version = "0.22.9", features = ["v1_56"] }
+# The keyring the store key is read from: this process opens the store.
+postio-account.workspace = true
+postio-client.workspace = true
+postio-config.workspace = true
+postio-core.workspace = true
+# The store's host, in this process: one Postio at a time has the store
+# (ADR 0041), and Focus turns on its own mode in it.
+postio-host.workspace = true
+postio-model.workspace = true
+# Logging, as the other apps set it up.
+postio-session.workspace = true
+postio-ui.workspace = true
+# What both desktop apps draw with (ADR 0043).
+postio-widgets.workspace = true
+tracing = { workspace = true }
+
+[dev-dependencies]
+postio-model = { workspace = true, features = ["test-corpus"] }
+# A throwaway store with mail in it, for the suite to open.
+postio-storage = { workspace = true, features = ["test-support"] }
+postio-test-support.workspace = true
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
+
+# Focus's GTK suite: the custom harness of postio-app's app_suite, for its
+# reasons -- GTK initializes on exactly one thread per process (#41), and
+# libtest runs tests on a pool. See tests/focus_suite/main.rs.
+[[test]]
+name = "focus_suite"
+path = "tests/focus_suite/main.rs"
+harness = false
 
 [lints]
 workspace = true

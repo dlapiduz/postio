@@ -4811,10 +4811,27 @@ dependencies = [
 name = "postio-focus"
 version = "0.3.0"
 dependencies = [
+ "async-channel",
+ "chrono",
  "gio",
  "glib",
  "gtk4",
  "libadwaita",
+ "pango",
+ "postio-account",
+ "postio-client",
+ "postio-config",
+ "postio-core",
+ "postio-host",
+ "postio-model",
+ "postio-session",
+ "postio-storage",
+ "postio-test-support",
+ "postio-ui",
+ "postio-widgets",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
