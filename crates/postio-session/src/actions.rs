@@ -80,6 +80,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::AddLabel,
     CommandId::AcceptInvite,
     CommandId::DeclineInvite,
+    CommandId::StopDigestingSender,
     CommandId::DismissMarker,
     CommandId::MarkSent,
     CommandId::RetrySend,
@@ -411,6 +412,14 @@ impl Actions {
             Command::RestoreFiltered { target, restored } => {
                 self.restore(target, *restored).await?
             }
+            Command::ArchiveDigest { delivery, archived } => {
+                self.archive_digest(*delivery, *archived).await?
+            }
+            Command::StopDigestingSender {
+                target,
+                stopped,
+                kept,
+            } => vec![self.stop_digesting(target, *stopped, kept.as_ref()).await?],
             Command::SweepInbox => self.sweep().await?,
             Command::UnsweepInbox { target } => self.unsweep(target).await?,
             // Deliberately `Some(true)` rather than a toggle: a dwell says

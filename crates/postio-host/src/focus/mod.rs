@@ -28,6 +28,7 @@
 mod body;
 mod catch_up;
 mod due;
+pub(crate) mod rules;
 mod surfaced;
 
 use std::sync::atomic::{AtomicBool, Ordering};

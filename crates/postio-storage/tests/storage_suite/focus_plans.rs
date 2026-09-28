@@ -130,3 +130,19 @@ async fn a_surfaced_row_s_position_is_one_statement() {
     );
     assert_eq!(cost.statements, 1, "{cost:?}");
 }
+
+#[tokio::test]
+async fn a_digest_s_verbs_find_its_mail_without_a_walk() {
+    // Spec 007 FR-124, FR-125: archiving a delivery reads what it holds,
+    // and stopping a sender finds and releases that sender's held mail --
+    // a seek on the holds' own indexes, however much the rule has held.
+    use postio_storage::repository::DigestRepository;
+    for sql in [
+        DigestRepository::explain_delivery_messages(),
+        DigestRepository::explain_held_from(),
+        DigestRepository::explain_release_sender(),
+    ] {
+        let walked = scans(sql).await;
+        assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
+    }
+}

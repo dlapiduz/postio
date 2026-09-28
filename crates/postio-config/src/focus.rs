@@ -270,6 +270,29 @@ impl fmt::Display for DueError {
 }
 
 impl DigestRule {
+    /// A rule called `name`, holding what any of `queries` matches, coming
+    /// `due`: what the rule dialog writes (spec 007 FR-120), spelled as a
+    /// person would write it by hand.
+    pub fn from_due(name: impl Into<String>, queries: Vec<String>, due: Due) -> Self {
+        let (cadence, day, at) = match due {
+            Due::Daily { at } => ("daily", None, at),
+            Due::Weekly { day, at } => (
+                "weekly",
+                Some(toml::Value::String(weekday_name(day).to_owned())),
+                at,
+            ),
+            Due::Monthly { day, at } => ("monthly", Some(toml::Value::Integer(i64::from(day))), at),
+        };
+        DigestRule {
+            name: name.into(),
+            queries,
+            cadence: cadence.to_owned(),
+            day,
+            at: at.format("%H:%M").to_string(),
+            extras: Extras::default(),
+        }
+    }
+
     /// When this rule comes due, read from its cadence, day and time: the
     /// one reading of them, which validation reports on and the due timer
     /// computes from (`postio_ui::schedule::next_due`).
@@ -342,6 +365,19 @@ fn time_of_day(text: &str) -> Option<NaiveTime> {
             .flatten()
     };
     NaiveTime::from_hms_opt(digits(hour, 1..=2)?, digits(minute, 2..=2)?, 0)
+}
+
+/// A weekday's name, as a rule spells it.
+fn weekday_name(day: Weekday) -> &'static str {
+    match day {
+        Weekday::Mon => "monday",
+        Weekday::Tue => "tuesday",
+        Weekday::Wed => "wednesday",
+        Weekday::Thu => "thursday",
+        Weekday::Fri => "friday",
+        Weekday::Sat => "saturday",
+        Weekday::Sun => "sunday",
+    }
 }
 
 /// A weekday by its name, or its first three letters, in any case.

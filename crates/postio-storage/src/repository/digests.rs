@@ -84,6 +84,75 @@ impl<'a> DigestRepository<'a> {
         Ok(released > 0)
     }
 
+    /// Releases what `rule` holds of `sender`'s mail (an address, as
+    /// `EmailAddress::normalized` spells it) and has not delivered, as
+    /// stopping the sender does (`D`, FR-125), and answers which messages
+    /// rejoined the inbox. What a delivery already holds stays in it, where
+    /// the person can see it. Two statements, however many it releases.
+    pub async fn release_sender(&self, rule: &str, sender: &str) -> Result<Vec<MessageId>> {
+        sql::in_scope(self.connection, |scope| async move {
+            let released: Vec<MessageId> =
+                sql::all(&scope, Self::explain_held_from(), [rule, sender], |row| {
+                    Ok(MessageId::new(row.col(0)?))
+                })
+                .await?;
+            if !released.is_empty() {
+                sql::execute(&scope, Self::explain_release_sender(), [rule, sender]).await?;
+            }
+            Ok(released)
+        })
+        .await
+    }
+
+    /// The SQL [`Self::release_sender`] reads what it releases with.
+    pub fn explain_held_from() -> &'static str {
+        "SELECT h.message_id FROM digest_holds h
+          WHERE h.rule = ?1 AND h.delivery_id IS NULL
+            AND EXISTS (SELECT 1 FROM recipients r JOIN addresses a ON a.id = r.address_id
+                         WHERE r.message_id = h.message_id AND r.kind = 'from'
+                           AND a.address_normalized = ?2)
+          ORDER BY h.message_id"
+    }
+
+    /// The SQL [`Self::release_sender`] releases with: the same holds.
+    pub fn explain_release_sender() -> &'static str {
+        "DELETE FROM digest_holds
+          WHERE rule = ?1 AND delivery_id IS NULL
+            AND EXISTS (SELECT 1 FROM recipients r JOIN addresses a ON a.id = r.address_id
+                         WHERE r.message_id = digest_holds.message_id AND r.kind = 'from'
+                           AND a.address_normalized = ?2)"
+    }
+
+    /// The messages `delivery` holds, oldest first: what archiving the whole
+    /// digest (`⇧A`) archives. One statement.
+    pub async fn delivery_messages(&self, delivery: DeliveryId) -> Result<Vec<MessageId>> {
+        sql::all(
+            self.connection,
+            Self::explain_delivery_messages(),
+            [delivery.get()],
+            |row| Ok(MessageId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::delivery_messages`] runs.
+    pub fn explain_delivery_messages() -> &'static str {
+        "SELECT message_id FROM digest_holds WHERE delivery_id = ?1 ORDER BY message_id"
+    }
+
+    /// Takes back the archiving of `delivery`, as undo does, and answers
+    /// whether it was archived: its row is back among the inbox's.
+    pub async fn reopen_delivery(&self, delivery: DeliveryId) -> Result<bool> {
+        let reopened = sql::execute(
+            self.connection,
+            "UPDATE digest_deliveries SET archived_at = NULL
+              WHERE id = ?1 AND archived_at IS NOT NULL",
+            [delivery.get()],
+        )
+        .await?;
+        Ok(reopened > 0)
+    }
+
     /// Releases everything `rule` holds and has not delivered, as removing
     /// the rule does (FR-126), and answers how many.
     pub async fn release_rule(&self, rule: &str) -> Result<usize> {

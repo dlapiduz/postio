@@ -5021,6 +5021,7 @@ dependencies = [
  "secrecy",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
  "tracing-journald",
  "tracing-log",

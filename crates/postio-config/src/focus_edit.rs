@@ -24,6 +24,27 @@ fn document(text: &str) -> Result<DocumentMut> {
         .map_err(|err| ConfigError::parse(None, &err))
 }
 
+/// `doc` as text, for a file that said `text` before the edit.
+///
+/// A file of nothing but comments holds them as the document's trailing
+/// text, which `toml_edit` writes after every table -- so a table added to
+/// it would land above what the person wrote. Such a file keeps its text on
+/// top, and the edit follows it.
+fn render(text: &str, mut doc: DocumentMut) -> String {
+    let had_nothing = text
+        .parse::<DocumentMut>()
+        .is_ok_and(|before| before.as_table().is_empty());
+    if !had_nothing || text.trim().is_empty() {
+        return doc.to_string();
+    }
+    doc.set_trailing("");
+    let mut lead = text.to_owned();
+    if !lead.ends_with('\n') {
+        lead.push('\n');
+    }
+    format!("{lead}{doc}")
+}
+
 /// `[focus.filter]`, made when it is not there. `[focus]` is made implicit
 /// when it has to be made at all, so a file that says nothing else of Focus
 /// gains a `[focus.filter]` header and not an empty `[focus]` above it.
@@ -81,7 +102,7 @@ pub fn set_never(text: &str, entry: &str, present: bool) -> Result<Option<String
             never.remove(at);
         }
     }
-    Ok(Some(doc.to_string()))
+    Ok(Some(render(text, doc)))
 }
 
 /// `[focus.filter] stop_markers` with `{ sender, kind }` in it, or without
@@ -120,7 +141,7 @@ pub fn set_stop_marker(
             stops.remove(at);
         }
     }
-    Ok(Some(doc.to_string()))
+    Ok(Some(render(text, doc)))
 }
 
 /// `[[focus.digests]]`, made when it is not there.
@@ -213,7 +234,7 @@ pub fn put_digest_rule(
             None => rules.push(table),
         },
     }
-    Ok(doc.to_string())
+    Ok(render(text, doc))
 }
 
 /// `[[focus.digests]]` without the rule called `name`, and the rule as it
@@ -340,6 +361,18 @@ at = \"16:00\"
             at: "09:00".to_owned(),
             extras: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_rule_added_to_a_file_of_only_a_comment_keeps_the_comment_on_top() {
+        let made = put_digest_rule(
+            "# Mine.\n",
+            None,
+            &weekly("Receipts", &["from:shop@example.com"]),
+            None,
+        )
+        .expect("an edit");
+        assert!(made.starts_with("# Mine.\n"), "{made}");
     }
 
     #[test]

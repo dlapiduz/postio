@@ -1349,3 +1349,421 @@ fn a_fired_reminder_is_announced_and_listed_with_its_conversation() {
         "the conversation's latest message"
     );
 }
+
+// ── The digest verbs (T137, T138, T139) ─────────────────────────────────────
+
+/// Every message a digest rule holds, and whether each is delivered yet.
+fn holds(world: &World) -> Vec<(MessageId, String, bool)> {
+    world.rt.block_on(async {
+        let reader = world.database().read().await.expect("a reader");
+        postio_storage::sql::all(
+            &reader,
+            "SELECT message_id, rule, delivery_id IS NOT NULL FROM digest_holds ORDER BY message_id",
+            (),
+            |row| {
+                use postio_storage::sql::RowExt as _;
+                Ok((MessageId::new(row.col(0)?), row.col(1)?, row.col(2)?))
+            },
+        )
+        .await
+        .expect("a read")
+    })
+}
+
+/// The one digest row surfaced, as a Focus client reads it.
+fn the_digest(world: &World, client: &postio_client::Client) -> postio_model::DeliveryId {
+    match surfaced(world, client).as_slice() {
+        [postio_model::listing::Surfaced::Digest { delivery, .. }] => *delivery,
+        other => panic!("one digest row: {other:?}"),
+    }
+}
+
+/// Where the message is: its folder's role.
+fn role_of(world: &World, message: MessageId) -> postio_model::MailboxRole {
+    world.rt.block_on(async {
+        let reader = world.database().read().await.expect("a reader");
+        let row = MessageRepository::new(&reader)
+            .get(message)
+            .await
+            .expect("a read")
+            .expect("the message");
+        postio_storage::repository::MailboxRepository::new(&reader)
+            .get(row.mailbox_id)
+            .await
+            .expect("a read")
+            .expect("its folder")
+            .role
+    })
+}
+
+#[test]
+fn archiving_a_digest_archives_every_message_in_it_as_one_undo() {
+    // US10 scenario 4, FR-125: `⇧A` in the digest archives all its messages
+    // as one action, its row leaves the inbox, and one `Ctrl+Z` puts both
+    // back.
+    let world = World::new();
+    let first = newsletter(
+        &world,
+        "news@ledger.example",
+        "The weekly numbers",
+        chrono::TimeDelta::days(2),
+    );
+    let second = newsletter(
+        &world,
+        "news@ledger.example",
+        "The rate decision",
+        chrono::TimeDelta::days(1),
+    );
+    let (client, events) = world.frontend(ClientKind::Focus);
+    world.host().enable_focus(
+        crate::FocusSetup::default().with_config(crate::tests::digesting(
+            "cadence = \"daily\"\nat = \"00:00\"",
+        )),
+    );
+    world.hear(&events, |event| matches!(event, Event::SurfacedChanged));
+    let delivery = the_digest(&world, &client);
+
+    world.send(
+        &client,
+        Command::ArchiveDigest {
+            delivery,
+            archived: true,
+        },
+    );
+    let said = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::ActionCompleted { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert_eq!(
+        said,
+        Event::ActionCompleted {
+            description: "Archived 2 messages".to_owned(),
+            undoable: true,
+        }
+    );
+    let archive = postio_model::MailboxRole::Archive;
+    assert_eq!(
+        (role_of(&world, first), role_of(&world, second)),
+        (archive, archive)
+    );
+    world.hear(&events, |event| matches!(event, Event::SurfacedChanged));
+    assert!(
+        surfaced(&world, &client).is_empty(),
+        "its row left the inbox"
+    );
+
+    world.send(&client, Command::Undo);
+    let undone = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::UndoPerformed { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert!(matches!(undone, Event::UndoPerformed { .. }), "{undone:?}");
+    let inbox = postio_model::MailboxRole::Inbox;
+    assert_eq!(
+        (role_of(&world, first), role_of(&world, second)),
+        (inbox, inbox)
+    );
+    assert_eq!(the_digest(&world, &client), delivery, "and its row is back");
+}
+
+/// `[[focus.digests]]` "Newsletters" for two senders, weekly, so nothing
+/// comes due in a test.
+const TWO_SENDERS: &str = "[[focus.digests]]
+name = \"Newsletters\"
+match = [\"from:news@ledger.example\", \"from:editor@ledger.example\"]
+cadence = \"weekly\"
+day = \"sunday\"
+at = \"09:00\"
+";
+
+#[test]
+fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back() {
+    // US10 scenario 5, FR-125: `D` stops digesting the sender -- the rule
+    // in config.toml loses them, what it held of theirs rejoins the inbox,
+    // and their next message goes to the inbox -- and one undo takes it all
+    // back.
+    let world = World::new();
+    let (_directory, path) = config_file(TWO_SENDERS);
+    let news = newsletter(
+        &world,
+        "news@ledger.example",
+        "The weekly numbers",
+        chrono::TimeDelta::days(2),
+    );
+    let more = newsletter(
+        &world,
+        "news@ledger.example",
+        "The rate decision",
+        chrono::TimeDelta::days(1),
+    );
+    let editor = newsletter(
+        &world,
+        "editor@ledger.example",
+        "A letter",
+        chrono::TimeDelta::days(1),
+    );
+    world.host().enable_focus(
+        crate::FocusSetup::default()
+            .with_config(focus_in(&path))
+            .with_config_path(path.clone()),
+    );
+    let (client, events) = world.frontend(ClientKind::Focus);
+
+    world.send(
+        &client,
+        Command::StopDigestingSender {
+            target: MessageTarget::Messages(vec![news]),
+            stopped: true,
+            kept: None,
+        },
+    );
+    let said = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::ActionCompleted { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert_eq!(
+        said,
+        Event::ActionCompleted {
+            description: "Stopped digesting 1 sender".to_owned(),
+            undoable: true,
+        }
+    );
+    assert_eq!(
+        focus_in(&path).digests[0].queries,
+        ["from:editor@ledger.example"],
+        "the rule no longer holds the sender"
+    );
+    assert_eq!(
+        holds(&world),
+        vec![(editor, "Newsletters".to_owned(), false)],
+        "what it held of theirs rejoined the inbox"
+    );
+    let next = newsletter_unheld(&world, "news@ledger.example", "The next issue");
+    file_now(&world, next);
+    assert!(
+        holds(&world).iter().all(|(held, _, _)| *held != next),
+        "their next message goes to the inbox"
+    );
+
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert_eq!(
+        focus_in(&path).digests[0].queries,
+        ["from:news@ledger.example", "from:editor@ledger.example"],
+        "the rule is as it was"
+    );
+    let held: Vec<MessageId> = holds(&world).into_iter().map(|(held, _, _)| held).collect();
+    for message in [news, more, editor] {
+        assert!(held.contains(&message), "{message:?} is held again");
+    }
+}
+
+#[test]
+fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() {
+    // A rule made by "Digest this sender" names one sender. Stopping them
+    // leaves a rule that holds nothing, which is no rule: it goes, and undo
+    // puts it back exactly, cadence and all.
+    let world = World::new();
+    let (_directory, path) =
+        config_file(&TWO_SENDERS.replace(", \"from:editor@ledger.example\"", ""));
+    let news = newsletter(
+        &world,
+        "news@ledger.example",
+        "The weekly numbers",
+        chrono::TimeDelta::days(1),
+    );
+    world.host().enable_focus(
+        crate::FocusSetup::default()
+            .with_config(focus_in(&path))
+            .with_config_path(path.clone()),
+    );
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let before = focus_in(&path).digests;
+
+    world.send(
+        &client,
+        Command::StopDigestingSender {
+            target: MessageTarget::Messages(vec![news]),
+            stopped: true,
+            kept: None,
+        },
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert!(focus_in(&path).digests.is_empty(), "the rule went");
+    assert!(holds(&world).is_empty(), "and holds nothing");
+
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert_eq!(focus_in(&path).digests, before, "back exactly");
+    assert_eq!(holds(&world).len(), 1, "holding its mail again");
+}
+
+/// A message from `from` in the world's inbox, received now, held by
+/// nothing.
+fn newsletter_unheld(world: &World, from: &str, subject: &str) -> MessageId {
+    letter(
+        world,
+        from,
+        subject,
+        &format!(
+            "<{}@ledger.example>",
+            subject.to_lowercase().replace(' ', "-")
+        ),
+        None,
+        Utc::now(),
+    )
+    .0
+}
+
+#[test]
+fn a_rule_s_preview_counts_what_the_executor_finds_in_the_last_ninety_days() {
+    // US10 scenario 1, FR-120, FR-127: the rule dialog's preview is the
+    // rule's query run through the executor over the last 90 days -- its
+    // count, and the newest four rows -- so it means what the same query
+    // means in search.
+    let world = World::new();
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+    });
+    let mut recent = Vec::new();
+    for days in 1..=5 {
+        let (id, _) = letter(
+            &world,
+            "news@ledger.example",
+            &format!("Issue {days}"),
+            &format!("<issue-{days}@ledger.example>"),
+            None,
+            Utc::now() - chrono::TimeDelta::days(days),
+        );
+        recent.push(id);
+    }
+    letter(
+        &world,
+        "news@ledger.example",
+        "An old issue",
+        "<old-issue@ledger.example>",
+        None,
+        Utc::now() - chrono::TimeDelta::days(100),
+    );
+    letter(
+        &world,
+        "tove@example.org",
+        "Lunch?",
+        "<lunch@example.org>",
+        None,
+        Utc::now() - chrono::TimeDelta::days(1),
+    );
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let since = Utc::now() - chrono::TimeDelta::days(90);
+
+    let preview = world
+        .rt
+        .block_on(client.digest_preview(vec!["from:news@ledger.example".to_owned()], since))
+        .expect("a preview");
+
+    assert_eq!(preview.count, 5, "the five in the last 90 days");
+    assert_eq!(
+        preview.first.iter().map(|row| row.id).collect::<Vec<_>>(),
+        recent[..4],
+        "the newest four"
+    );
+    let found = world
+        .rt
+        .block_on(client.search(postio_client::protocol::Search {
+            account: postio_model::AccountScope::Unified,
+            query: format!(
+                "from:news@ledger.example after:{}",
+                since.format("%Y-%m-%d")
+            ),
+            newest_first: true,
+            scope: postio_search::facets::Scope::default(),
+        }))
+        .expect("a search")
+        .expect("it ran");
+    assert_eq!(
+        u64::from(preview.count),
+        found.hits,
+        "the same count the executor gives the same query"
+    );
+}
+
+#[test]
+fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_mail() {
+    // FR-120, FR-126: the dialog's Create writes the rule to config.toml,
+    // an edit rewrites it where it stands, and removing it at `g d` takes
+    // it out of the file and releases what it held into the inbox.
+    let world = World::new();
+    let (_directory, path) = config_file("# Mine.\n");
+    world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config_path(path.clone()));
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let weekly = |name: &str| postio_client::protocol::DigestRuleDraft {
+        name: name.to_owned(),
+        queries: vec!["from:news@ledger.example".to_owned()],
+        cadence: postio_model::listing::Cadence::Weekly,
+        day: Some(postio_client::protocol::RuleDay::Weekday(
+            chrono::Weekday::Sun,
+        )),
+        at: chrono::NaiveTime::from_hms_opt(9, 0, 0).expect("a time"),
+    };
+
+    world
+        .rt
+        .block_on(client.save_digest_rule(None, weekly("Ledger")))
+        .expect("written");
+    let written = focus_in(&path).digests;
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0].name, "Ledger");
+    assert_eq!(written[0].queries, ["from:news@ledger.example"]);
+    assert_eq!(written[0].cadence, "weekly");
+    assert_eq!(written[0].at, "09:00");
+    assert!(
+        std::fs::read_to_string(&path)
+            .expect("the file")
+            .starts_with("# Mine.\n"),
+        "nothing else moved"
+    );
+
+    world
+        .rt
+        .block_on(client.save_digest_rule(Some("Ledger".to_owned()), weekly("The Ledger")))
+        .expect("edited");
+    let names: Vec<String> = focus_in(&path)
+        .digests
+        .into_iter()
+        .map(|rule| rule.name)
+        .collect();
+    assert_eq!(names, ["The Ledger"], "edited, not added");
+
+    let held = newsletter_unheld(&world, "news@ledger.example", "The weekly numbers");
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        postio_storage::repository::DigestRepository::new(&connection)
+            .hold(held, "The Ledger", Utc::now())
+            .await
+            .expect("held");
+    });
+    let released = world
+        .rt
+        .block_on(client.delete_digest_rule("The Ledger".to_owned()))
+        .expect("removed");
+    assert_eq!(released, 1);
+    assert!(focus_in(&path).digests.is_empty(), "gone from the file");
+    assert!(holds(&world).is_empty(), "and its mail rejoined the inbox");
+}

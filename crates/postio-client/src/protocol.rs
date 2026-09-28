@@ -333,6 +333,63 @@ pub enum Req {
     /// delivered and not archived, and the reminders that fired, each with
     /// its time and position (spec 007, contracts/engine.md).
     Surfaced,
+    /// What a digest rule matching `queries` would have caught since
+    /// `since`: the rule dialog's preview, through the executor (spec 007
+    /// FR-120, FR-127).
+    DigestPreview {
+        /// The rule's queries, in the one query language; any matching holds.
+        queries: Vec<String>,
+        /// How far back: the last 90 days, in the dialog.
+        since: DateTime<Utc>,
+    },
+    /// Write a digest rule to `config.toml`: a new one, or `replacing` the
+    /// rule of that name where it stands (spec 007 FR-120).
+    SaveDigestRule {
+        /// The rule being edited, by its name as it was.
+        replacing: Option<String>,
+        /// The rule as the dialog says it.
+        rule: DigestRuleDraft,
+    },
+    /// Take a digest rule out of `config.toml` and release what it held into
+    /// the inbox (spec 007 FR-126); answered with how many it released.
+    DeleteDigestRule(String),
+}
+
+/// A digest rule as the rule dialog writes it (spec 007 screen 24): what
+/// becomes one `[[focus.digests]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DigestRuleDraft {
+    /// What the digest is called; unique among the rules.
+    pub name: String,
+    /// Queries in the one query language; the rule holds a message when
+    /// any of them matches. The dialog writes `from:<address>`.
+    pub queries: Vec<String>,
+    /// How often it comes.
+    pub cadence: postio_model::listing::Cadence,
+    /// On which day: a weekday for a weekly digest, a day of the month for a
+    /// monthly one, none for a daily one.
+    pub day: Option<RuleDay>,
+    /// At what time, on this machine's clock.
+    pub at: chrono::NaiveTime,
+}
+
+/// The day a digest comes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleDay {
+    /// A weekday, for a weekly digest.
+    Weekday(chrono::Weekday),
+    /// A day of the month, 1 to 28, for a monthly digest.
+    OfMonth(u32),
+}
+
+/// What a digest rule would have caught (spec 007 screen 24): "Would have
+/// caught 9 messages in the last 90 days", then the first four.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DigestPreview {
+    /// How many messages its queries match in the window.
+    pub count: u32,
+    /// The newest of them, at most four.
+    pub first: Vec<MessageSummary>,
 }
 
 /// The host's answer to one [`Req`].
@@ -421,6 +478,8 @@ pub enum Resp {
     Consent(Box<postio_ui::onboarding::BrowserSignIn>),
     /// The rows Focus's inbox surfaces, newest first.
     Surfaced(Vec<postio_model::listing::Surfaced>),
+    /// A digest rule's preview.
+    DigestPreview(DigestPreview),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

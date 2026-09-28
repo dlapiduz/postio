@@ -130,6 +130,9 @@ impl Req {
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
             Req::SweepPreview => "SweepPreview",
             Req::Surfaced => "Surfaced",
+            Req::DigestPreview { .. } => "DigestPreview",
+            Req::SaveDigestRule { .. } => "SaveDigestRule",
+            Req::DeleteDigestRule(_) => "DeleteDigestRule",
         }
     }
 }
@@ -962,6 +965,53 @@ impl Client {
             Resp::Surfaced(rows) => Some(rows),
             _ => None,
         })
+        .await
+    }
+
+    /// What a digest rule matching `queries` would have caught since
+    /// `since` -- its count and newest four rows -- through the executor, so
+    /// it means what the same queries mean in search (spec 007 FR-120,
+    /// FR-127).
+    pub async fn digest_preview(
+        &self,
+        queries: Vec<String>,
+        since: DateTime<Utc>,
+    ) -> Result<crate::protocol::DigestPreview, StoreError> {
+        let request = Req::DigestPreview { queries, since };
+        self.read(request, "a digest's preview", |answer| match answer {
+            Resp::DigestPreview(preview) => Some(preview),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Write `rule` to `config.toml`'s `[[focus.digests]]`: a new rule, or,
+    /// `replacing` a name, that rule edited where it stands. The error is a
+    /// sentence for the dialog.
+    pub async fn save_digest_rule(
+        &self,
+        replacing: Option<String>,
+        rule: crate::protocol::DigestRuleDraft,
+    ) -> Result<(), StoreError> {
+        self.done(
+            Req::SaveDigestRule { replacing, rule },
+            "a saved digest rule",
+        )
+        .await
+    }
+
+    /// Take the digest rule called `name` out of `config.toml`, and release
+    /// what it held into the inbox (spec 007 FR-126): answered with how many
+    /// messages it released.
+    pub async fn delete_digest_rule(&self, name: String) -> Result<u32, StoreError> {
+        self.read(
+            Req::DeleteDigestRule(name),
+            "a removed digest rule",
+            |answer| match answer {
+                Resp::Count(released) => Some(released),
+                _ => None,
+            },
+        )
         .await
     }
 

@@ -85,6 +85,11 @@ pub enum UndoKind {
     /// What was already in the inbox was filed away by Focus's filtering
     /// rules (specs/007-postio-focus FR-118).
     Sweep,
+    /// A sender was taken out of a digest rule (specs/007-postio-focus
+    /// FR-125).
+    StopDigesting,
+    /// A sender was put back in a digest rule.
+    ResumeDigesting,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
     /// A send that had stopped was put back on the queue (spec 003).
@@ -131,6 +136,9 @@ impl UndoKind {
             UndoKind::Restore => format!("Restored {count} {messages}"),
             UndoKind::Refilter => format!("Filtered {count} {messages} again"),
             UndoKind::Sweep => format!("Filtered {count} {messages} out of the inbox"),
+            // Counted in senders: the verb is about who, not which mail.
+            UndoKind::StopDigesting => format!("Stopped digesting {count} {}", senders(count)),
+            UndoKind::ResumeDigesting => format!("Digesting {count} {} again", senders(count)),
         }
     }
 }
@@ -142,6 +150,11 @@ fn conversations(count: usize) -> &'static str {
     } else {
         "conversations"
     }
+}
+
+/// "sender", or its plural, for `count` of them.
+fn senders(count: usize) -> &'static str {
+    if count == 1 { "sender" } else { "senders" }
 }
 
 /// "marker", or its plural, for `count` of them.

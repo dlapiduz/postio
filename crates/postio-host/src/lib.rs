@@ -1033,6 +1033,15 @@ impl Inner {
                 .draft_counts(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
+            Req::DigestPreview { queries, since } => focus::rules::preview(self, &queries, since)
+                .await
+                .map_or_else(Resp::Failed, Resp::DigestPreview),
+            Req::SaveDigestRule { replacing, rule } => {
+                done(focus::rules::save(self, replacing, rule).await)
+            }
+            Req::DeleteDigestRule(name) => focus::rules::delete(self, name)
+                .await
+                .map_or_else(Resp::Failed, Resp::Count),
             Req::Surfaced => focus::surfaced(self)
                 .await
                 .map_or_else(Resp::Failed, Resp::Surfaced),

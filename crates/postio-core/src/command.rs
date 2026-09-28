@@ -452,6 +452,18 @@ pub enum MessageTarget {
     },
 }
 
+/// A digest rule as it stood, kept by the undo entry of a verb that
+/// changed it, so taking the verb back puts the rule back exactly (spec 007
+/// FR-125): `[[focus.digests]]`'s own TOML for it, and where it stood in the
+/// file, whose order is the order rules match in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptRule {
+    /// Its place among the rules.
+    pub position: u32,
+    /// The rule, as `config.toml` spells it.
+    pub toml: String,
+}
+
 /// One invocation of a command.
 ///
 /// Payload fields that a keystroke cannot supply are `Option`al: `None` means
@@ -704,6 +716,25 @@ pub enum Command {
         target: MessageTarget,
         /// `true` stops the digest; `false` is undo's way back.
         stopped: bool,
+        /// Undo's memory, `None` from a keystroke: the rule as it stood
+        /// before the sender was taken out of it, so taking that back puts
+        /// the rule back exactly -- a rule left holding nobody is removed,
+        /// and undo has to be able to write it again.
+        kept: Option<KeptRule>,
+    },
+    /// Archive a whole digest, or bring it back (spec 007 FR-125): `⇧A` in
+    /// the digest window. Every message it holds is archived, and its row
+    /// leaves the inbox.
+    ///
+    /// The same verb as `A` everywhere else -- "archive everything this row
+    /// stands for" -- so [`Command::id`] answers
+    /// [`CommandId::ArchiveThread`], as [`Command::MarkReadOnDwell`] answers
+    /// `ToggleRead`'s: one row in the registry, one key.
+    ArchiveDigest {
+        /// Which delivery.
+        delivery: postio_model::DeliveryId,
+        /// `true` archives it; `false` is undo's way back.
+        archived: bool,
     },
     /// Show the message as it arrived: its raw RFC 822 text (research R2).
     ViewSource {
@@ -1133,9 +1164,11 @@ impl Command {
             Command::RemindIfNoReply { at, .. } => Command::RemindIfNoReply { target, at },
             Command::AddLabel { label, on, .. } => Command::AddLabel { target, label, on },
             Command::DigestRule { .. } => Command::DigestRule { target },
-            Command::StopDigestingSender { stopped, .. } => {
-                Command::StopDigestingSender { target, stopped }
-            }
+            Command::StopDigestingSender { stopped, kept, .. } => Command::StopDigestingSender {
+                target,
+                stopped,
+                kept,
+            },
             Command::RestoreFiltered { restored, .. } => {
                 Command::RestoreFiltered { target, restored }
             }
@@ -1179,7 +1212,9 @@ impl Command {
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
             Command::Archive { .. } => CommandId::Archive,
-            Command::ArchiveThread { .. } => CommandId::ArchiveThread,
+            Command::ArchiveThread { .. } | Command::ArchiveDigest { .. } => {
+                CommandId::ArchiveThread
+            }
             Command::Delete { .. } => CommandId::Delete,
             Command::Move { .. } => CommandId::Move,
             Command::Flag { .. } => CommandId::Flag,
@@ -1373,6 +1408,7 @@ impl Command {
             CommandId::StopDigestingSender => Command::StopDigestingSender {
                 target: MessageTarget::Selection,
                 stopped: true,
+                kept: None,
             },
             CommandId::ViewSource => Command::ViewSource { message: None },
             CommandId::OpenAttachmentOrLink => Command::OpenAttachmentOrLink { message: None },

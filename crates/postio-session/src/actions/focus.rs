@@ -21,8 +21,8 @@ use postio_model::{
 };
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, DraftRepository, FilterDecisionRepository, InviteState, MailboxRepository,
-    MarkerRepository, ReminderRepository, ThreadRepository,
+    AccountRepository, DigestRepository, DraftRepository, FilterDecisionRepository, InviteState,
+    MailboxRepository, MarkerRepository, ReminderRepository, ThreadRepository,
 };
 
 use super::{Actions, Aim, Applied, Destination, RSVP_WINDOW, mailbox_for, store_failure};
@@ -731,6 +731,266 @@ impl Actions {
         }
         Ok(applied)
     }
+}
+
+impl Actions {
+    /// Archive every message a digest holds, and the digest's row with
+    /// them, or with `archived` false put the row back (spec 007 FR-125, US10
+    /// scenario 4).
+    ///
+    /// The messages move as `a` moves them -- the Archive, with the server's
+    /// move queued -- and the delivery is marked archived, so its row
+    /// leaves the inbox: one undo unit, whose way back moves each message
+    /// back where it was and then reopens the row.
+    pub(super) async fn archive_digest(
+        &self,
+        delivery: postio_model::DeliveryId,
+        archived: bool,
+    ) -> Result<Vec<Applied>, CommandError> {
+        // Its own connection and permit, let go before the move takes its
+        // own: the write gate is not re-entrant.
+        let messages = {
+            let (connection, _permit) = self.connect().await?;
+            let digests = DigestRepository::new(&connection);
+            if !archived {
+                digests
+                    .reopen_delivery(delivery)
+                    .await
+                    .map_err(store_failure)?;
+                return Ok(Vec::new());
+            }
+            digests
+                .delivery_messages(delivery)
+                .await
+                .map_err(store_failure)?
+        };
+        let mut applied = if messages.is_empty() {
+            Vec::new()
+        } else {
+            match self
+                .relocate(
+                    &MessageTarget::Messages(messages),
+                    Destination::Role(MailboxRole::Archive),
+                    UndoKind::Archive,
+                )
+                .await
+            {
+                Ok(applied) => applied,
+                // Everything in it was archived already: the row still goes.
+                Err(CommandError::Rejected(_)) => Vec::new(),
+                Err(error) => return Err(error),
+            }
+        };
+        let (connection, _permit) = self.connect().await?;
+        if !DigestRepository::new(&connection)
+            .archive_delivery(delivery, Utc::now())
+            .await
+            .map_err(store_failure)?
+        {
+            return Err(CommandError::rejected("That digest is no longer here"));
+        }
+        // The row leaves the inbox, and the way back reopens it after the
+        // messages are back.
+        match applied.last_mut() {
+            Some(last) => {
+                last.inverse.push(Command::ArchiveDigest {
+                    delivery,
+                    archived: false,
+                });
+                for unit in &mut applied {
+                    unit.surfaced = true;
+                }
+            }
+            None => {
+                return Err(CommandError::rejected(
+                    "That digest's messages are archived already",
+                ));
+            }
+        }
+        Ok(applied)
+    }
+
+    /// Stop gathering the targeted message's sender into its digest, or with
+    /// `stopped` false put them back (spec 007 FR-125, US10 scenario 5).
+    ///
+    /// The rule in `config.toml` loses the sender's `from:` query, written
+    /// as an editor saves it; a rule left holding nobody is removed. What
+    /// the rule held of the sender's mail and had not delivered rejoins the
+    /// inbox, and the filing pass reads the file as written, so their next
+    /// message goes to the inbox too. The undo entry keeps the rule as it
+    /// stood ([`postio_core::KeptRule`]), so its way back writes it again
+    /// exactly and holds the released mail again.
+    pub(super) async fn stop_digesting(
+        &self,
+        target: &MessageTarget,
+        stopped: bool,
+        kept: Option<&postio_core::KeptRule>,
+    ) -> Result<Applied, CommandError> {
+        if !self.focus.is_on() {
+            return Err(CommandError::rejected("Digests need Postio Focus"));
+        }
+        let (connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, target).await? {
+            Aim::Rows(rows) => rows,
+            Aim::Bulk(_) => {
+                return Err(CommandError::rejected("Pick a message from the sender"));
+            }
+        };
+        let account = rows[0].account_id;
+        if !stopped {
+            let kept = kept.ok_or_else(|| {
+                CommandError::rejected("There is no rule to put the sender back in")
+            })?;
+            let rule: postio_config::DigestRule = toml::from_str(&kept.toml)
+                .map_err(|_| CommandError::failed("Postio could not read the rule it kept"))?;
+            let name = rule.name.clone();
+            let position = kept.position as usize;
+            self.write_rule(move |text| {
+                postio_config::focus_edit::put_digest_rule(
+                    text,
+                    Some(rule.name.as_str()),
+                    &rule,
+                    Some(position),
+                )
+                .map(Some)
+            })
+            .await?;
+            let now = Utc::now();
+            let digests = DigestRepository::new(&connection);
+            for row in &rows {
+                digests
+                    .hold(row.id, &name, now)
+                    .await
+                    .map_err(store_failure)?;
+            }
+            return Ok(Applied {
+                lasts: None,
+                surfaced: false,
+                account,
+                kind: UndoKind::ResumeDigesting,
+                count: 1,
+                messages: Vec::new(),
+                removed: Vec::new(),
+                arrived: None,
+                reloaded: inboxes_of(&rows),
+                changed: Vec::new(),
+                mailboxes_changed: false,
+                inverse: Vec::new(),
+            });
+        }
+
+        let sender = rows[0]
+            .from
+            .first()
+            .map(EmailAddress::normalized)
+            .ok_or_else(|| CommandError::rejected("That message has no sender to stop"))?;
+        let config = self
+            .focus
+            .config()
+            .ok_or_else(|| CommandError::rejected("Digests need Postio Focus"))?;
+        let Some((position, rule)) = config.digests.iter().enumerate().find(|(_, rule)| {
+            rule.queries
+                .iter()
+                .any(|query| names_sender(query, &sender))
+        }) else {
+            return Err(CommandError::rejected(
+                "That sender is not in a digest rule",
+            ));
+        };
+        let kept = postio_core::KeptRule {
+            position: u32::try_from(position).unwrap_or(u32::MAX),
+            toml: toml::to_string(rule)
+                .map_err(|_| CommandError::failed("Postio could not keep the rule to put back"))?,
+        };
+        let name = rule.name.clone();
+        let mut narrowed = rule.clone();
+        narrowed
+            .queries
+            .retain(|query| !names_sender(query, &sender));
+        self.write_rule(move |text| {
+            if narrowed.queries.is_empty() {
+                Ok(
+                    postio_config::focus_edit::remove_digest_rule(text, &narrowed.name)?
+                        .map(|(text, _, _)| text),
+                )
+            } else {
+                postio_config::focus_edit::put_digest_rule(
+                    text,
+                    Some(narrowed.name.as_str()),
+                    &narrowed,
+                    None,
+                )
+                .map(Some)
+            }
+        })
+        .await?;
+        let released = DigestRepository::new(&connection)
+            .release_sender(&name, &sender)
+            .await
+            .map_err(store_failure)?;
+        let back = if released.is_empty() {
+            rows.iter().map(|row| row.id).collect()
+        } else {
+            released
+        };
+        Ok(Applied {
+            lasts: None,
+            surfaced: false,
+            account,
+            kind: UndoKind::StopDigesting,
+            // One sender; the mail released is named by the way back.
+            count: 1,
+            messages: Vec::new(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: inboxes_of(&rows),
+            changed: Vec::new(),
+            mailboxes_changed: false,
+            inverse: vec![Command::StopDigestingSender {
+                target: MessageTarget::Messages(back),
+                stopped: false,
+                kept: Some(kept),
+            }],
+        })
+    }
+
+    /// Write `[[focus.digests]]` through `edit`, as an editor saves the file.
+    async fn write_rule(
+        &self,
+        edit: impl FnOnce(&str) -> postio_config::Result<Option<String>> + Send + 'static,
+    ) -> Result<(), CommandError> {
+        self.focus
+            .write(move |text| {
+                edit(text).map_err(|_| "Postio could not write that rule to config.toml".to_owned())
+            })
+            .await
+            .map(|_| ())
+            .map_err(CommandError::rejected)
+    }
+}
+
+/// Whether `query` is a `from:` naming `sender` (an address, as
+/// `EmailAddress::normalized` spells it): what a sender rule the dialog
+/// wrote says.
+fn names_sender(query: &str, sender: &str) -> bool {
+    let query = query.trim();
+    let Some(prefix) = query.get(..5) else {
+        return false;
+    };
+    prefix.eq_ignore_ascii_case("from:")
+        && query[5..]
+            .trim()
+            .trim_matches('"')
+            .eq_ignore_ascii_case(sender)
+}
+
+/// The mailboxes `rows` are in: what repaints when mail rejoins Focus's
+/// inbox or leaves it.
+fn inboxes_of(rows: &[Message]) -> Vec<MailboxId> {
+    let mut mailboxes: Vec<MailboxId> = rows.iter().map(|row| row.mailbox_id).collect();
+    mailboxes.sort_unstable();
+    mailboxes.dedup();
+    mailboxes
 }
 
 /// The name `[focus.filter] stop_markers` gives a marker kind whose
