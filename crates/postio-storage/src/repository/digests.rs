@@ -31,6 +31,9 @@ pub struct OpenDelivery {
     pub delivered_at: DateTime<Utc>,
     /// How many messages it holds.
     pub count: u32,
+    /// Its summary's statements and references, as JSON, once one is
+    /// written (spec 007 T154): the row's line comes from it.
+    pub summary: Option<String>,
 }
 
 /// Reads and writes digest holds and deliveries.
@@ -244,6 +247,7 @@ impl<'a> DigestRepository<'a> {
                     due_at: super::from_millis(row.col(2)?),
                     delivered_at: super::from_millis(row.col(3)?),
                     count: u32::try_from(row.col::<i64>(4)?).unwrap_or(u32::MAX),
+                    summary: row.col(5)?,
                 })
             },
         )
@@ -253,10 +257,57 @@ impl<'a> DigestRepository<'a> {
     /// The SQL [`Self::open_deliveries`] runs.
     pub fn explain_open_deliveries() -> &'static str {
         "SELECT d.id, d.rule, d.due_at, d.delivered_at,
-                (SELECT count(*) FROM digest_holds h WHERE h.delivery_id = d.id)
+                (SELECT count(*) FROM digest_holds h WHERE h.delivery_id = d.id),
+                d.summary
            FROM digest_deliveries d
           WHERE d.archived_at IS NULL
           ORDER BY d.due_at DESC, d.id DESC LIMIT 256"
+    }
+
+    /// The open deliveries no summary has been written for, newest first, at
+    /// most `limit`: what the summariser takes next (spec 007 T154). One
+    /// statement, a seek on `idx_digest_deliveries_open`.
+    pub async fn unsummarised(&self, limit: u32) -> Result<Vec<DeliveryId>> {
+        sql::all(
+            self.connection,
+            "SELECT id FROM digest_deliveries
+              WHERE archived_at IS NULL AND summary IS NULL
+              ORDER BY id DESC LIMIT ?1",
+            [limit],
+            |row| Ok(DeliveryId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// Keep `summary` -- statements and references, as JSON -- with
+    /// `delivery`, written at `at`. One statement. An empty summary is
+    /// kept too: the model answered and nothing resolved, and it is not
+    /// asked again.
+    pub async fn set_summary(
+        &self,
+        delivery: DeliveryId,
+        summary: &str,
+        at: DateTime<Utc>,
+    ) -> Result<bool> {
+        let written = sql::execute(
+            self.connection,
+            "UPDATE digest_deliveries SET summary = ?2, summary_written_at = ?3 WHERE id = ?1",
+            bind![delivery.get(), summary, to_millis(at)],
+        )
+        .await?;
+        Ok(written > 0)
+    }
+
+    /// `delivery`'s summary, as JSON, when one is written. One statement.
+    pub async fn summary(&self, delivery: DeliveryId) -> Result<Option<String>> {
+        Ok(sql::first(
+            self.connection,
+            "SELECT summary FROM digest_deliveries WHERE id = ?1",
+            [delivery.get()],
+            |row| row.col::<Option<String>>(0),
+        )
+        .await?
+        .flatten())
     }
 
     /// Who sent the mail each of `deliveries` holds, each sender once with

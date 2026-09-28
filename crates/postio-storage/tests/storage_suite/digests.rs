@@ -239,3 +239,72 @@ async fn a_rule_waits_since_its_oldest_undelivered_hold_in_one_seek() {
         "{plan}"
     );
 }
+
+#[tokio::test]
+async fn a_delivery_keeps_its_summary_and_its_row_reads_it_in_the_same_statement() {
+    // Spec 007 T154, data-model.md: `summary` and `summary_written_at` on the
+    // delivery. The digest row's line comes from it, so the open deliveries
+    // read it with no statement more; what still waits for a summary is one
+    // seek on the open deliveries.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages(&connection, 2).await;
+    let digests = DigestRepository::new(&connection);
+    for (id, rule) in ids.iter().zip(["Newsletters", "School"]) {
+        digests.hold(*id, rule, at(23, 9)).await.expect("held");
+    }
+    let first = digests
+        .deliver("Newsletters", at(24, 9), at(24, 9))
+        .await
+        .expect("delivered")
+        .expect("a delivery");
+    let second = digests
+        .deliver("School", at(24, 10), at(24, 10))
+        .await
+        .expect("delivered")
+        .expect("a delivery");
+
+    let mut waiting = Vec::new();
+    let counts = postio_storage::test_support::counting::counted_async(|| async {
+        waiting = digests.unsummarised(8).await.expect("a read");
+    })
+    .await;
+    assert_eq!(waiting, [second, first], "newest first");
+    assert_eq!(counts.statements, 1, "{counts:?}");
+
+    // One `UPDATE`; the counting seam counts reads, not writes.
+    assert!(
+        digests
+            .set_summary(first, r#"{"statements":[]}"#, at(24, 11))
+            .await
+            .expect("written")
+    );
+    assert_eq!(
+        digests.unsummarised(8).await.expect("a read"),
+        [second],
+        "a written summary, even an empty one, is not asked for again"
+    );
+    assert_eq!(
+        digests.summary(first).await.expect("a read").as_deref(),
+        Some(r#"{"statements":[]}"#)
+    );
+    assert_eq!(digests.summary(second).await.expect("a read"), None);
+
+    let mut open = Vec::new();
+    let counts = postio_storage::test_support::counting::counted_async(|| async {
+        open = digests.open_deliveries().await.expect("a read");
+    })
+    .await;
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    let summaries: Vec<_> = open
+        .iter()
+        .map(|delivery| (delivery.id, delivery.summary.clone()))
+        .collect();
+    assert_eq!(
+        summaries,
+        [
+            (second, None),
+            (first, Some(r#"{"statements":[]}"#.to_owned()))
+        ]
+    );
+}

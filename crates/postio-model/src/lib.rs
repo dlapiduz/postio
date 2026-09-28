@@ -70,6 +70,7 @@ pub mod signature;
 pub mod signature_default;
 pub mod size;
 pub mod subject;
+pub mod summary;
 pub mod sync;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;

@@ -134,6 +134,7 @@ impl Req {
             Req::RawSource(_) => "RawSource",
             Req::Surfaced => "Surfaced",
             Req::DigestPreview { .. } => "DigestPreview",
+            Req::DigestSummary(_) => "DigestSummary",
             Req::SaveDigestRule { .. } => "SaveDigestRule",
             Req::DeleteDigestRule(_) => "DeleteDigestRule",
         }
@@ -1011,6 +1012,26 @@ impl Client {
             Resp::Surfaced(rows) => Some(rows),
             _ => None,
         })
+        .await
+    }
+
+    /// `delivery`'s summary, as the digest window's Summary tab draws it:
+    /// statements grouped by topic, each ending in a numbered reference to a
+    /// message and a passage of it, every one resolved again as it is read.
+    /// `None` when no summary is written or none is left to show: the
+    /// digest opens on its plain list (spec 007 FR-172 to FR-175).
+    pub async fn digest_summary(
+        &self,
+        delivery: postio_model::DeliveryId,
+    ) -> Result<Option<postio_model::summary::DigestSummary>, StoreError> {
+        self.read(
+            Req::DigestSummary(delivery),
+            "a digest's summary",
+            |answer| match answer {
+                Resp::DigestSummary(summary) => Some(summary),
+                _ => None,
+            },
+        )
         .await
     }
 

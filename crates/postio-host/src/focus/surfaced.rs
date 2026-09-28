@@ -4,7 +4,7 @@
 //! stands, with when it came due and where it goes.
 //!
 //! What it reads, whatever the inbox holds: the open deliveries with their
-//! counts (one statement), their senders (one), the surfaced reminders
+//! counts and kept summaries (one statement), their senders (one), the surfaced reminders
 //! (one), and for each row its place (one) -- and for a reminder its
 //! conversation's latest message (one, and its row). No body is read.
 
@@ -46,7 +46,7 @@ pub(crate) async fn surfaced(inner: &Inner) -> Result<Vec<Surfaced>, StoreError>
             rule: delivery.rule,
             count: delivery.count,
             senders: named,
-            summary_line: None,
+            summary_line: super::summary::line_of(delivery.summary.as_deref()),
             at: delivery.due_at,
             position: threads.focus_position(&inboxes, delivery.due_at).await?,
         });

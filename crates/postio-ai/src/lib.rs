@@ -31,11 +31,13 @@ mod client;
 pub mod fake;
 mod needs_action;
 mod schema;
+mod summary;
 mod transport;
 
 pub use client::{AiError, Client, Question, RETRY_AFTER};
 pub use needs_action::NeedsActionModel;
 pub use schema::{Field, Kind, Schema, SchemaError};
+pub use summary::{MAX_SOURCES, SOURCE_CHARS, Source, Summariser, resolve};
 pub use transport::{LocalTransport, Stream, TIMEOUT, Transport};
 
 #[cfg(test)]

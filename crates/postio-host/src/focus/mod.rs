@@ -30,6 +30,7 @@ mod catch_up;
 mod due;
 mod model;
 pub(crate) mod rules;
+mod summary;
 mod surfaced;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +39,7 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 pub(crate) use catch_up::FILED_THROUGH;
 pub(crate) use due::{deliver_due, fire_reminders, settle_answers};
+pub(crate) use summary::digest_summary;
 pub(crate) use surfaced::surfaced;
 
 use postio_config::FocusConfig;
@@ -191,7 +193,12 @@ impl Host {
                         Arc::clone(&models),
                         Arc::clone(&caught_up),
                     ),
-                    due_timer: due_timer(&self.inner, Arc::clone(&config), Arc::clone(&marking)),
+                    due_timer: due_timer(
+                        &self.inner,
+                        Arc::clone(&config),
+                        Arc::clone(&models),
+                        Arc::clone(&marking),
+                    ),
                     caught_up,
                     marking,
                     config,
@@ -233,14 +240,17 @@ impl Host {
 /// closed ([`catch_up`]), so a digest that comes due at once holds that mail
 /// too. Then, each tick, it delivers the digests `config` says have come due
 /// ([`due`]) -- the first tick is at once, so what came due while Focus was
-/// closed is delivered as it opens -- and keeps the mark that says how far
-/// Focus has accounted for the mail.
+/// closed is delivered as it opens -- hands what is delivered to the
+/// summariser when the person's model writes summaries ([`summary`]), and
+/// keeps the mark that says how far Focus has accounted for the mail.
 fn due_timer(
     inner: &Arc<Inner>,
     config: Arc<RwLock<FocusConfig>>,
+    models: Arc<model::Models>,
     marking: Arc<AtomicBool>,
 ) -> tokio::task::AbortHandle {
     let inner = Arc::clone(inner);
+    let summarising = Arc::new(AtomicBool::new(false));
     let runtime = inner.runtime().clone();
     runtime
         .spawn(async move {
@@ -294,6 +304,10 @@ fn due_timer(
                 if surfaced_changed {
                     inner.hub.emit(postio_core::Event::SurfacedChanged);
                 }
+                // What is delivered gains its summary in the background,
+                // when the person's model writes them: the row never waits
+                // for it (FR-142, FR-175).
+                summary::summarise_in_background(&inner, &models, &config, &summarising);
                 match settle_answers(&database, chrono::Utc::now()).await {
                     Ok(settled) => {
                         // The rows repaint with the answer as it now stands.

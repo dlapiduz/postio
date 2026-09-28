@@ -359,6 +359,10 @@ pub enum Req {
     /// delivered and not archived, and the reminders that fired, each with
     /// its time and position (spec 007, contracts/engine.md).
     Surfaced,
+    /// A digest's summary, with every reference resolved again as it is
+    /// read: `None` when none is written, or none is left to show (spec 007
+    /// FR-172 to FR-175).
+    DigestSummary(postio_model::DeliveryId),
     /// What a digest rule matching `queries` would have caught since
     /// `since`: the rule dialog's preview, through the executor (spec 007
     /// FR-120, FR-127).
@@ -510,6 +514,8 @@ pub enum Resp {
     Surfaced(Vec<postio_model::listing::Surfaced>),
     /// A digest rule's preview.
     DigestPreview(DigestPreview),
+    /// A digest's summary, if it has one to show.
+    DigestSummary(Option<postio_model::summary::DigestSummary>),
     /// A message's raw source, every byte as the server sent it.
     RawSource(Vec<u8>),
     /// The read could not be answered; the sentence is for the user.

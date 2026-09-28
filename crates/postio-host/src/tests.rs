@@ -24,7 +24,7 @@ pub(crate) struct World {
     inbox: MailboxId,
     message: MessageId,
     pub(crate) account: postio_model::AccountId,
-    database: postio_storage::Store,
+    pub(crate) database: postio_storage::Store,
     blob_dir: std::path::PathBuf,
     _blobs: tempfile::TempDir,
 }

@@ -4920,6 +4920,7 @@ dependencies = [
  "postio-test-support",
  "postio-ui",
  "serde-xml-rs",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
