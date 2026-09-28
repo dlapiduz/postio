@@ -300,7 +300,10 @@ impl SmtpSession {
         if cancel.is_cancelled() {
             return Err(SmtpError::Cancelled);
         }
-        self.send_payload(raw.to_vec()).await
+        // Whatever bytes reach the transport, a `Bcc` field in them would go
+        // to every recipient (RFC 5322 §3.6.3). See [`crate::bcc`].
+        self.send_payload(crate::bcc::strip_bcc(raw).into_owned())
+            .await
     }
 
     /// Runs the `DATA` exchange, tagging whatever fails once the message

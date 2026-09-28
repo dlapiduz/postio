@@ -24,6 +24,7 @@
 //! Development in this repository is test-first: write the failing test,
 //! then the implementation. See `CLAUDE.md`.
 
+mod bcc;
 pub mod cancel;
 pub mod error;
 mod reply;
