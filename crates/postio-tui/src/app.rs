@@ -2848,6 +2848,14 @@ impl App {
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
             "go_to_drafts" => return self.go_to(postio_model::mailbox::MailboxRole::Drafts),
             "go_to_flagged" => return self.go_to(postio_model::mailbox::MailboxRole::Flagged),
+            // The one keymap's two new destinations (specs/007-postio-focus
+            // T162), by role like the others, as the desktop reaches them.
+            "go_to_archive" => return self.go_to(postio_model::mailbox::MailboxRole::Archive),
+            "go_to_snoozed" => return self.go_to(postio_model::mailbox::MailboxRole::Snoozed),
+            "saved_search_1" => return self.pinned_search(0),
+            "saved_search_2" => return self.pinned_search(1),
+            "saved_search_3" => return self.pinned_search(2),
+            "saved_search_4" => return self.pinned_search(3),
             "prev_view" => {
                 let Some(scope) = self.history.pop() else {
                     return self.say("There is no earlier view");
@@ -2921,7 +2929,9 @@ impl App {
             return Vec::new();
         };
         let scope = match role {
+            // Views, not folders (ADR 0036): opened by their role.
             MailboxRole::Flagged => Some(ListScope::Flagged(account)),
+            MailboxRole::Snoozed => Some(ListScope::Snoozed(account)),
             role => self
                 .folders
                 .iter()
@@ -2932,6 +2942,29 @@ impl App {
             Some(scope) => self.open_there(scope),
             None => self.say(&format!("This account has no {} folder", role_name(role))),
         }
+    }
+
+    /// The saved search pinned `index`th in the sidebar, run as activating
+    /// its line runs it: `alt+1`...`alt+4`, as the desktop's are (specs/007-
+    /// postio-focus T162). A place with nothing pinned in it is said.
+    fn pinned_search(&mut self, index: usize) -> Vec<Effect> {
+        let Some(line) = self
+            .sidebar
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.searches.is_some())
+            .map(|(line, _)| line)
+            .nth(index)
+        else {
+            return self.say(&format!("No saved search {} is pinned", index + 1));
+        };
+        self.sidebar_cursor = line;
+        let query = self.sidebar[line].searches.clone().unwrap_or_default();
+        self.search = Some(SearchBar {
+            input: tui_input::Input::default().with_value(query),
+            ..SearchBar::default()
+        });
+        self.run_search()
     }
 
     /// Each account's inbox in turn, then every account at once when there
@@ -3417,10 +3450,30 @@ impl App {
     }
 
     /// A key in an account's signatures: Enter writes the one under the
-    /// cursor in the person's editor, `n` starts one, `r` renames, `d`
-    /// deletes once asked twice, and Escape goes back to the accounts.
+    /// cursor in the person's editor, `n` starts one, `r` renames, the
+    /// keymap's remove key (`remove_account`, as the privacy pane's allowed
+    /// senders use it) deletes once asked twice, and Escape goes back to
+    /// the accounts.
     fn signatures_key(&mut self, account: postio_model::AccountId, key: &KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
+        // Asked of the keymap only for a key the list does not use itself,
+        // so a letter it moves or names with never reaches a chord.
+        let listed = matches!(
+            key.code,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Char('k' | 'j' | 'n' | 'r')
+                | KeyCode::Esc
+                | KeyCode::Tab
+                | KeyCode::BackTab
+                | KeyCode::Enter
+        );
+        let deleting = !listed
+            && matches!(
+                self.keys.press(key, KeyContext::Accounts, false),
+                Outcome::Command(id) if id == "remove_account"
+            );
+        let remove_key = self.keys.key_for(KeyContext::Accounts, "remove_account");
         let signatures = self
             .accounts
             .iter()
@@ -3433,7 +3486,7 @@ impl App {
         let here = signatures
             .get(settings.signature(signatures.len()))
             .cloned();
-        if key.code != KeyCode::Char('d') {
+        if !deleting {
             settings.keep();
         }
         match key.code {
@@ -3474,14 +3527,15 @@ impl App {
                     return effects;
                 }
             }
-            KeyCode::Char('d') => {
+            _ if deleting => {
                 if let Some(signature) = here {
                     if settings.confirm_delete(signature.id) {
                         return vec![Effect::DeleteSignature(signature.id), Effect::Redraw];
                     }
                     let name = postio_ui::terminal::SafeText::new(&signature.name);
+                    let again = remove_key.unwrap_or_else(|| "it".to_owned());
                     return self.say(&format!(
-                        "Delete the signature “{name}”? Press d again to delete it; \
+                        "Delete the signature “{name}”? Press {again} again to delete it; \
                          anything else keeps it"
                     ));
                 }
@@ -4545,16 +4599,6 @@ pub(crate) mod tests {
         "find_in_message",
         "find_next",
         "find_previous",
-        // The one keymap's new destinations and pinned searches, which every
-        // app offers (specs/007-postio-focus contracts/keymap.md). The
-        // classic app's handlers are that spec's T032; the terminal's are
-        // not built yet.
-        "go_to_archive",
-        "go_to_snoozed",
-        "saved_search_1",
-        "saved_search_2",
-        "saved_search_3",
-        "saved_search_4",
     ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
@@ -4597,6 +4641,68 @@ pub(crate) mod tests {
             "{:?}",
             app.notice()
         );
+    }
+
+    #[test]
+    fn g_r_and_g_z_open_the_archive_and_the_snoozed_view_as_the_desktop_does() {
+        // specs/007-postio-focus T162: the one keymap's two new
+        // destinations, by role, as the classic app's `act` reaches them.
+        let mut app = app((160, 40));
+        update(&mut app, Input::Sidebar(sidebar_contents()));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+        let account = postio_model::AccountId::new(1);
+
+        update(&mut app, press('g'));
+        let effects = update(&mut app, press('r'));
+        assert_eq!(opens(&effects), vec![ListScope::Mailbox(MailboxId::new(2))]);
+        update(
+            &mut app,
+            Input::Opened {
+                scope: ListScope::Mailbox(MailboxId::new(2)),
+                total: 0,
+            },
+        );
+
+        update(&mut app, press('g'));
+        let effects = update(&mut app, press('z'));
+        assert_eq!(opens(&effects), vec![ListScope::Snoozed(account)]);
+    }
+
+    #[test]
+    fn alt_and_a_number_runs_that_pinned_saved_search_or_says_none_is_there() {
+        // specs/007-postio-focus T162: `alt+1`...`alt+4` run the saved
+        // searches by their place in the sidebar, as activating the line
+        // does; a place with nothing pinned is said, as on the desktop.
+        let mut app = app((160, 40));
+        let mut contents = sidebar_contents();
+        contents.saved = vec![
+            crate::sidebar::Saved {
+                key: "unread-from-ada".into(),
+                name: "Unread from Ada".into(),
+                query: "from:ada is:unread".into(),
+            },
+            crate::sidebar::Saved {
+                key: "tides".into(),
+                name: "Tides".into(),
+                query: "subject:tide".into(),
+            },
+        ];
+        update(&mut app, Input::Sidebar(contents));
+        let opening = opened(&mut app, 3);
+        serve(&mut app, opening);
+
+        let effects = update(&mut app, key(KeyCode::Char('2'), KeyModifiers::ALT));
+        assert_eq!(
+            searches(&effects).last().map(|(_, query)| query.as_str()),
+            Some("subject:tide"),
+            "{effects:?}"
+        );
+        assert_eq!(app.search_query(), Some("subject:tide"));
+
+        let effects = update(&mut app, key(KeyCode::Char('3'), KeyModifiers::ALT));
+        assert!(searches(&effects).is_empty(), "{effects:?}");
+        assert_eq!(app.notice(), Some("No saved search 3 is pinned"));
     }
 
     #[test]
@@ -6637,10 +6743,21 @@ pub(crate) mod tests {
             Some("There is already a signature called Office")
         );
 
-        // d asks first; d again deletes.
+        // The keymap's remove key asks first, naming itself, and deletes
+        // when pressed again (T162: it was a hard-coded `d`, which the
+        // keymap could neither rebind nor show). A letter deletes nothing.
         let effects = update(&mut app, press('d'));
+        let effects = [effects, update(&mut app, press('d'))].concat();
         assert!(!effects.contains(&Effect::DeleteSignature(SignatureId::new(5))));
-        let effects = update(&mut app, press('d'));
+        let effects = update(&mut app, key(KeyCode::Delete, KeyModifiers::NONE));
+        assert!(!effects.contains(&Effect::DeleteSignature(SignatureId::new(5))));
+        assert!(
+            app.notice()
+                .is_some_and(|notice| notice.contains("Press Delete again")),
+            "{:?}",
+            app.notice()
+        );
+        let effects = update(&mut app, key(KeyCode::Delete, KeyModifiers::NONE));
         assert!(
             effects.contains(&Effect::DeleteSignature(SignatureId::new(5))),
             "{effects:?}"
