@@ -650,16 +650,17 @@ impl Bar {
                 let read = client.mailboxes(account.id).await;
                 if let Ok(mailboxes) = read {
                     for mailbox in mailboxes {
-                        names.push((mailbox.id, mailbox.name.clone()));
+                        let name = crate::places::place_name(&mailbox);
+                        names.push((mailbox.id, name.clone()));
                         found.push(Place {
                             kind: if mailbox.role == MailboxRole::Regular {
                                 PlaceKind::Folder
                             } else {
                                 PlaceKind::Mailbox
                             },
-                            name: mailbox.name.clone(),
+                            name,
                             count: None,
-                            go: go_to(mailbox.role).map(ActionId::from),
+                            go: crate::places::go_to(mailbox.role).map(ActionId::from),
                             destination: Destination::Mailbox(mailbox.id),
                         });
                     }
@@ -851,19 +852,6 @@ const SAVED: [CommandId; 4] = [
     CommandId::SavedSearch3,
     CommandId::SavedSearch4,
 ];
-
-/// The command that goes to a mailbox of `role` directly.
-fn go_to(role: MailboxRole) -> Option<CommandId> {
-    Some(match role {
-        MailboxRole::Inbox => CommandId::GoToInbox,
-        MailboxRole::Drafts => CommandId::GoToDrafts,
-        MailboxRole::Sent => CommandId::GoToSent,
-        MailboxRole::Archive => CommandId::GoToArchive,
-        MailboxRole::Snoozed => CommandId::GoToSnoozed,
-        MailboxRole::Flagged => CommandId::GoToFlagged,
-        _ => return None,
-    })
-}
 
 /// A sender as a result row names them: their name, or their address.
 fn said_of(from: &postio_model::EmailAddress) -> String {

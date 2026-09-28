@@ -38,6 +38,7 @@ mod marker_card;
 mod one_keymap;
 mod open_choice;
 mod open_message;
+mod places;
 mod registry_parity;
 mod reload;
 mod remote_images;
@@ -60,6 +61,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "places::g_o_then_trav_and_enter_shows_travel",
+        places::g_o_then_trav_and_enter_shows_travel as fn(),
+    ),
     (
         "bar::alt_2_runs_the_second_saved_search",
         bar::alt_2_runs_the_second_saved_search as fn(),

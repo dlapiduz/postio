@@ -161,6 +161,11 @@ impl Feed {
         self.inner.landed.get()
     }
 
+    /// Whether `mailbox` is one of the inboxes Focus's own inbox is made of.
+    pub fn is_inbox(&self, mailbox: postio_model::MailboxId) -> bool {
+        self.inner.paging.borrow().is_inbox(mailbox)
+    }
+
     /// Bring the list into step with `event`, by `postio_ui::paging`'s table.
     pub fn handle(&self, event: &Event) {
         if let Event::MessagesRemoved {

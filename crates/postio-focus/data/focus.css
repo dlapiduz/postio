@@ -428,6 +428,22 @@ banner.focus-banner button {
   font-size: var(--postio-text-meta);
 }
 
+/* ── The folders popover (screen 10) ─────────────────────────────────── */
+.focus-places {
+  padding: var(--postio-space-2);
+}
+
+.focus-places-section {
+  margin-top: var(--postio-space-2);
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-places-footer {
+  font-size: var(--postio-text-meta);
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

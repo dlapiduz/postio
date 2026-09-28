@@ -121,6 +121,10 @@ mod imp {
         pub bar: RefCell<Option<Rc<crate::bar::Bar>>>,
         /// The pinned saved searches, in order: each name and its query.
         pub saved: RefCell<Vec<(String, String)>>,
+        /// The folders popover, built the first time it opens.
+        pub places: RefCell<Option<Rc<crate::places::Places>>>,
+        /// Whether the list shows Focus's own inbox, rather than a folder.
+        pub at_inbox: Cell<bool>,
     }
 
     impl Default for FocusWindow {
@@ -163,6 +167,8 @@ mod imp {
                 runtime: RefCell::default(),
                 bar: RefCell::default(),
                 saved: RefCell::default(),
+                places: RefCell::default(),
+                at_inbox: Cell::new(true),
             }
         }
     }
@@ -314,6 +320,9 @@ impl FocusWindow {
         if let Some(bar) = imp.bar.borrow().as_ref() {
             bar.set_keymap(&keymap);
         }
+        if let Some(places) = imp.places.borrow().as_ref() {
+            places.set_keymap(&keymap);
+        }
         imp.keymap.replace(keymap);
         // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
@@ -461,10 +470,15 @@ impl FocusWindow {
                 accounts: self.imp().accounts.borrow().clone(),
                 omitted: Vec::new(),
             }),
-            CommandId::Back => match self.bar().filter(|bar| bar.is_open()) {
-                Some(bar) => bar.close(),
-                None => self.clear_selection(),
-            },
+            CommandId::Back => {
+                if let Some(places) = self.places().filter(|places| places.is_open()) {
+                    places.close();
+                } else if let Some(bar) = self.bar().filter(|bar| bar.is_open()) {
+                    bar.close();
+                } else {
+                    self.clear_selection();
+                }
+            }
             CommandId::SavedSearch1
             | CommandId::SavedSearch2
             | CommandId::SavedSearch3
@@ -500,6 +514,8 @@ impl FocusWindow {
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
             CommandId::OpenMessage => self.open_message(),
+            CommandId::GoToFolders => self.open_places(),
+            CommandId::GoToInbox => self.go_to_inbox(),
             CommandId::ViewSource => self.view_source(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
@@ -1029,7 +1045,11 @@ impl FocusWindow {
             return;
         };
         let empty = match imp.counts.get() {
-            Some(counts) if counts.conversations == 0 && !imp.has_action.get() => Some(counts),
+            Some(counts)
+                if counts.conversations == 0 && !imp.has_action.get() && imp.at_inbox.get() =>
+            {
+                Some(counts)
+            }
             _ => None,
         };
         match (empty, imp.empty.borrow().as_ref()) {
@@ -1383,6 +1403,99 @@ impl FocusWindow {
         self.imp().saved.replace(saved);
     }
 
+    /// The folders popover, once it has been opened.
+    pub fn places(&self) -> Option<Rc<crate::places::Places>> {
+        self.imp().places.borrow().clone()
+    }
+
+    /// What the header strip names the list: the place it shows.
+    pub fn place_name(&self) -> String {
+        self.chrome()
+            .map(|chrome| chrome.place())
+            .unwrap_or_default()
+    }
+
+    /// `g o`, or a click on "Inbox ▾": the folders popover (screen 10).
+    fn open_places(&self) {
+        let (Some(chrome), Some(client)) = (self.chrome(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let places = self
+            .imp()
+            .places
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                let places =
+                    crate::places::Places::new(client, &self.keymap(), chrome.place_button());
+                places.connect_go(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |destination, name| window.go_to(destination, &name)
+                ));
+                places
+            })
+            .clone();
+        places.open();
+    }
+
+    /// Show `destination` in the list, and name it in the header strip. A
+    /// label is its search: Focus lists no label on its own.
+    fn go_to(&self, destination: postio_ui::finder::Destination, name: &str) {
+        use postio_ui::finder::Destination;
+        let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
+            return;
+        };
+        match destination {
+            Destination::Mailbox(mailbox) => {
+                let inbox = self.is_focus_inbox(mailbox);
+                self.imp().at_inbox.set(inbox);
+                self.clear_selection();
+                if inbox {
+                    self.go_to_inbox();
+                    return;
+                }
+                self.imp().has_action.set(false);
+                pane.feed().list().set_single_heading(None);
+                pane.feed().open(ListScope::Mailbox(mailbox));
+                chrome.set_place(name);
+                self.show_counts();
+            }
+            Destination::Label(_) => {
+                if let Some(bar) = self.bar() {
+                    bar.open();
+                    bar.set_text(&format!("label:\"{name}\""));
+                }
+            }
+            Destination::Search(query) => {
+                if let Some(bar) = self.bar() {
+                    bar.open();
+                    bar.set_text(&query);
+                }
+            }
+        }
+    }
+
+    /// Back to Focus's own inbox: `g i`.
+    fn go_to_inbox(&self) {
+        let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
+            return;
+        };
+        self.imp().at_inbox.set(true);
+        self.imp().has_action.set(false);
+        self.clear_selection();
+        pane.feed().list().set_single_heading(None);
+        pane.feed().open(ListScope::Focus(FocusScope::Inbox));
+        chrome.set_place("Inbox");
+        self.show_counts();
+    }
+
+    /// Whether `mailbox` is an inbox: going there is going to Focus's.
+    fn is_focus_inbox(&self, mailbox: postio_model::MailboxId) -> bool {
+        self.pane()
+            .is_some_and(|pane| pane.feed().is_inbox(mailbox))
+    }
+
     /// The command bar, once the inbox is showing.
     pub fn bar(&self) -> Option<Rc<crate::bar::Bar>> {
         self.imp().bar.borrow().clone()
@@ -1398,9 +1511,7 @@ impl FocusWindow {
                 }
             }
             crate::bar::BarAction::Command(command) => self.act(command),
-            crate::bar::BarAction::Go { .. } => {
-                tracing::debug!("going to a place from the bar waits for the folders popover");
-            }
+            crate::bar::BarAction::Go { destination, name } => self.go_to(destination, &name),
         }
     }
 

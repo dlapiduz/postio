@@ -48,6 +48,8 @@ pub struct Chrome {
     field_keys: gtk::Box,
     sync: gtk::Label,
     sync_icon: gtk::Image,
+    place: gtk::Button,
+    place_name: gtk::Label,
     place_key: gtk::Box,
     counts: gtk::Label,
     has_action: gtk::ToggleButton,
@@ -222,6 +224,8 @@ impl Chrome {
             field_keys,
             sync,
             sync_icon,
+            place: place.clone(),
+            place_name,
             place_key,
             counts,
             has_action: has_action.clone(),
@@ -296,6 +300,21 @@ impl Chrome {
         }
         caps_for(&self.place_key, keymap, CommandId::GoToFolders);
         caps_for(&self.has_action_key, keymap, CommandId::ToggleHasAction);
+    }
+
+    /// Name the place the list shows: "Inbox", or a folder.
+    pub fn set_place(&self, name: &str) {
+        self.place_name.set_text(name);
+    }
+
+    /// What the strip names the list.
+    pub fn place(&self) -> String {
+        self.place_name.text().to_string()
+    }
+
+    /// "Inbox ▾": what the folders popover hangs from.
+    pub fn place_button(&self) -> &gtk::Button {
+        &self.place
     }
 
     /// The counts the strip shows: the conversations and the unread.
