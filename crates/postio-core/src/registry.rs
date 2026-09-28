@@ -2276,6 +2276,21 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
     },
+    CommandSpec {
+        id: CommandId::SweepInbox,
+        title: "Filter what is in the inbox…",
+        // `F` for filter, on the inbox list: no app binds it there, and the
+        // one keymap's enumeration holds it so (specs/007-postio-focus T128;
+        // contracts/keymap.md names no key for it). The ellipsis says the
+        // count comes first.
+        default_binding: "F",
+        alternate_bindings: &[],
+        contexts: Context::List.as_set(),
+        // It files mail away, many at a time: one undo takes it back.
+        destructive: true,
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.

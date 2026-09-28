@@ -1123,3 +1123,86 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
         "the sender's mail is filtered again"
     );
 }
+
+// ── Sweeping the inbox (T128) ───────────────────────────────────────────────
+
+#[test]
+fn a_sweep_says_what_it_would_move_then_moves_exactly_that_as_one_undo() {
+    // FR-118: filtering applies to mail filed after it is turned on, so the
+    // mail already in the inbox when Focus first opens stays there. Moving
+    // it is a deliberate command, which says first how much would move,
+    // then moves exactly that, and is one undoable action.
+    let world = World::new();
+    crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build passed");
+    crate::tests::filed_elsewhere(&world, "alerts@builds.example", "Deploy finished");
+    let (letter, _) = letter(
+        &world,
+        "tove@example.org",
+        "Lunch?",
+        "<lunch@example.org>",
+        None,
+        Utc::now() - chrono::TimeDelta::hours(1),
+    );
+    world.host().enable_focus(crate::FocusSetup::default());
+    sorted_through(&world, letter);
+    let inbox = postio_model::MailboxRole::Inbox;
+    for subject in ["Build passed", "Deploy finished", "Lunch?"] {
+        assert_eq!(
+            crate::tests::filed_where(&world, subject),
+            Some((inbox, None)),
+            "{subject}: Focus's first open moved nothing already in the inbox"
+        );
+    }
+    let (client, events) = world.frontend(ClientKind::Focus);
+
+    let preview = world
+        .rt
+        .block_on(client.sweep_preview())
+        .expect("a preview");
+    assert_eq!(preview, 2, "the two automated messages would move");
+
+    world.send(&client, Command::SweepInbox);
+    let said = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::ActionCompleted { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert_eq!(
+        said,
+        Event::ActionCompleted {
+            description: "Filtered 2 messages out of the inbox".to_owned(),
+            undoable: true,
+        }
+    );
+    let archive = postio_model::MailboxRole::Archive;
+    let mut moved = 0;
+    for subject in ["Build passed", "Deploy finished"] {
+        let (role, reason) = crate::tests::filed_where(&world, subject).expect("still here");
+        assert_eq!(role, archive, "{subject}");
+        assert!(reason.is_some(), "{subject}: filed away with its reason");
+        moved += 1;
+    }
+    assert_eq!(moved, preview, "the sweep moved what the preview counted");
+    assert_eq!(
+        crate::tests::filed_where(&world, "Lunch?"),
+        Some((inbox, None)),
+        "a letter stays"
+    );
+
+    world.send(&client, Command::Undo);
+    let undone = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::UndoPerformed { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert!(matches!(undone, Event::UndoPerformed { .. }), "{undone:?}");
+    for subject in ["Build passed", "Deploy finished"] {
+        assert_eq!(
+            crate::tests::filed_where(&world, subject),
+            Some((inbox, None)),
+            "{subject}: one undo put it back, unfiltered"
+        );
+    }
+}

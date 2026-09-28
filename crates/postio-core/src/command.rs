@@ -338,6 +338,8 @@ command_ids! {
     FilteredTab6 => "filtered_tab_6",
     /// Show Filtered's seventh reason tab.
     FilteredTab7 => "filtered_tab_7",
+    /// File away what is already in the inbox by Focus's filtering rules.
+    SweepInbox => "sweep_inbox",
 }
 
 impl fmt::Display for CommandId {
@@ -1060,6 +1062,23 @@ pub enum Command {
     FilteredTab6,
     /// Show Filtered's seventh reason tab.
     FilteredTab7,
+    /// File away what is already in the inbox, by the rules that file
+    /// arrivals away (spec 007 FR-118): the deliberate command that applies
+    /// filtering to mail filed before it was turned on. The frontend shows
+    /// what would move first (`Client::sweep_preview`).
+    SweepInbox,
+    /// Undo's way back from a sweep: the messages return to their inboxes,
+    /// and the decisions that filed them away go with the sweep that made
+    /// them.
+    ///
+    /// The same verb, the other direction, as [`Command::MarkReadOnDwell`]
+    /// is [`CommandId::ToggleRead`]'s other provenance: [`Command::id`]
+    /// answers [`CommandId::SweepInbox`], so it routes to the same handler
+    /// and needs no key or registry row of its own.
+    UnsweepInbox {
+        /// What the sweep moved.
+        target: MessageTarget,
+    },
 }
 
 impl Command {
@@ -1271,6 +1290,7 @@ impl Command {
             Command::FilteredTab5 => CommandId::FilteredTab5,
             Command::FilteredTab6 => CommandId::FilteredTab6,
             Command::FilteredTab7 => CommandId::FilteredTab7,
+            Command::SweepInbox | Command::UnsweepInbox { .. } => CommandId::SweepInbox,
         }
     }
 
@@ -1460,6 +1480,7 @@ impl Command {
             CommandId::FilteredTab5 => Command::FilteredTab5,
             CommandId::FilteredTab6 => Command::FilteredTab6,
             CommandId::FilteredTab7 => Command::FilteredTab7,
+            CommandId::SweepInbox => Command::SweepInbox,
         }
     }
 

@@ -254,7 +254,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::FilteredTab4
         | C::FilteredTab5
         | C::FilteredTab6
-        | C::FilteredTab7 => None,
+        | C::FilteredTab7
+        | C::SweepInbox => None,
     }
 }
 

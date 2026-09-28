@@ -184,6 +184,7 @@ command from inside a text field.
 | `5` | Reason 5 | Filtered view (Postio Focus) |  | `filtered_tab_5` |
 | `6` | Reason 6 | Filtered view (Postio Focus) |  | `filtered_tab_6` |
 | `7` | Reason 7 | Filtered view (Postio Focus) |  | `filtered_tab_7` |
+| `F` | Filter what is in the inbox… | List (Postio Focus) | Undoable | `sweep_inbox` |
 
 ## The one box
 

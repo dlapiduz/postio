@@ -87,6 +87,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::Undo,
     CommandId::MapMailboxRole,
     CommandId::RestoreFiltered,
+    CommandId::SweepInbox,
 ];
 
 /// How long [`Command::Snooze`] hides a message for when it names no time:
@@ -407,6 +408,8 @@ impl Actions {
             Command::RestoreFiltered { target, restored } => {
                 self.restore(target, *restored).await?
             }
+            Command::SweepInbox => self.sweep().await?,
+            Command::UnsweepInbox { target } => self.unsweep(target).await?,
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
             Command::MarkSent { draft } => vec![self.mark_sent(*draft).await?],

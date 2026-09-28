@@ -1033,6 +1033,21 @@ impl Inner {
                 .draft_counts(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
+            Req::SweepPreview => match self.wiring.focus.config() {
+                Some(config) => {
+                    postio_session::focus::sweep_preview(&self.wiring.database, &config)
+                        .await
+                        .map_or_else(
+                            |sentence| {
+                                Resp::Failed(postio_model::listing::StoreError::new(sentence))
+                            },
+                            Resp::Count,
+                        )
+                }
+                None => Resp::Failed(postio_model::listing::StoreError::new(
+                    "Filtering the inbox needs Postio Focus",
+                )),
+            },
         }
     }
 

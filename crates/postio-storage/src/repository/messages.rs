@@ -955,6 +955,38 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
+    /// A window of `mailbox`'s mail as Focus's inbox holds it -- what the
+    /// list shows, less the mail a digest holds -- newest first, after
+    /// `after` (a row's `sort_at` and id): what a sweep of the inbox walks,
+    /// a window at a time, so the inbox is never read whole (spec 007
+    /// FR-118). One statement, a seek on `idx_messages_list`.
+    pub async fn focus_inbox_window(
+        &self,
+        mailbox: MailboxId,
+        after: Option<(DateTime<Utc>, MessageId)>,
+        limit: u32,
+    ) -> Result<Vec<(MessageId, DateTime<Utc>)>> {
+        let (at, id) = after.map_or((i64::MAX, i64::MAX), |(at, id)| (to_millis(at), id.get()));
+        sql::all(
+            self.connection,
+            &Self::explain_focus_inbox_window(),
+            bind![mailbox.get(), at, id, i64::from(limit)],
+            |row| Ok((MessageId::new(row.col(0)?), from_millis(row.col(1)?))),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::focus_inbox_window`] runs.
+    pub fn explain_focus_inbox_window() -> String {
+        format!(
+            "SELECT id, sort_at FROM messages
+              WHERE mailbox_id = ?1 AND {}{} AND (sort_at, id) < (?2, ?3)
+              ORDER BY sort_at DESC, id DESC LIMIT ?4",
+            super::VISIBLE,
+            super::focus_excludes("messages.")
+        )
+    }
+
     /// One window of the message list, newest first.
     pub async fn page(&self, query: &ListQuery) -> Result<Vec<MessageListRow>> {
         let sql = self.explain(query);

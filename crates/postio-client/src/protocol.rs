@@ -325,6 +325,10 @@ pub enum Req {
         /// Its type, `image/…`.
         mime_type: String,
     },
+    /// How many messages a sweep of the inbox would file away now, by
+    /// Focus's filtering rules (spec 007 FR-118): what the sweep says before
+    /// it moves anything. Answered as a count.
+    SweepPreview,
 }
 
 /// The host's answer to one [`Req`].

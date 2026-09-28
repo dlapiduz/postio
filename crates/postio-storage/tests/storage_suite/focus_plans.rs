@@ -63,3 +63,13 @@ async fn asking_whether_a_restore_still_stands_behind_a_pin_walks_no_table() {
     let walked = scans(sql).await;
     assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
 }
+
+#[tokio::test]
+async fn a_sweep_walks_the_inbox_a_window_at_a_time_by_its_index() {
+    // FR-118: a sweep reads the inbox in windows, each a seek on the
+    // list's own index -- never the whole inbox at once, and never a walk
+    // of the mail to find where the next window starts.
+    let sql = postio_storage::repository::MessageRepository::explain_focus_inbox_window();
+    let walked = scans(&sql).await;
+    assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
+}

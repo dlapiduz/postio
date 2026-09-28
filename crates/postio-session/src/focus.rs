@@ -140,3 +140,77 @@ fn write_file(
         .map_err(|_| "Postio could not save config.toml".to_owned())?;
     Ok(Some(config.focus))
 }
+
+/// How many messages one window of a sweep takes: a background batch, so a
+/// sweep never holds the store's writer for long.
+pub(crate) const SWEEP_WINDOW: u32 = 50;
+
+/// The next window of `inbox`'s mail as Focus's inbox holds it, after
+/// `after`, read as the filing pass reads a message: what a sweep and its
+/// preview both walk, so they walk the same mail.
+pub(crate) async fn sweep_window(
+    connection: &postio_storage::Connection,
+    inbox: postio_model::MailboxId,
+    after: &mut Option<(chrono::DateTime<chrono::Utc>, postio_model::MessageId)>,
+) -> Result<Vec<postio_model::Message>, postio_storage::Error> {
+    let messages = postio_storage::repository::MessageRepository::new(connection);
+    let window = messages
+        .focus_inbox_window(inbox, *after, SWEEP_WINDOW)
+        .await?;
+    if let Some(last) = window.last() {
+        *after = Some((last.1, last.0));
+    }
+    let mut rows = Vec::with_capacity(window.len());
+    for (id, _) in window {
+        if let Some(row) = messages.get(id).await? {
+            rows.push(row);
+        }
+    }
+    Ok(rows)
+}
+
+/// `rows` as the filing pass is handed them: in the inbox.
+pub(crate) fn in_the_inbox(rows: &[postio_model::Message]) -> Vec<postio_sync::FiledMessage<'_>> {
+    rows.iter()
+        .map(|row| postio_sync::FiledMessage {
+            message: row,
+            thread: row.thread_id,
+            role: postio_model::MailboxRole::Inbox,
+        })
+        .collect()
+}
+
+/// How many messages a sweep of every inbox would file away now, by
+/// `config`'s filtering (spec 007 FR-118): the count the person sees before
+/// `Command::SweepInbox` moves exactly that. Read only, a window at a
+/// time, through the pass the sweep itself files with.
+pub async fn sweep_preview(
+    database: &postio_storage::Store,
+    config: &FocusConfig,
+) -> Result<u32, String> {
+    let pass = postio_sync::FocusFiling::sweeping(config);
+    let failed = |_| "Postio could not read the inbox to count what would move".to_owned();
+    let reader = database.read().await.map_err(failed)?;
+    let inboxes = postio_storage::repository::ThreadRepository::new(&reader)
+        .unified_inboxes()
+        .await
+        .map_err(failed)?;
+    let mut count = 0u32;
+    for (_, inbox) in inboxes {
+        let mut after = None;
+        loop {
+            let rows = sweep_window(&reader, inbox, &mut after)
+                .await
+                .map_err(failed)?;
+            if rows.is_empty() {
+                break;
+            }
+            let moving = pass
+                .would_file_away(&reader, &in_the_inbox(&rows))
+                .await
+                .map_err(|_| "Postio could not count what would move".to_owned())?;
+            count = count.saturating_add(u32::try_from(moving.len()).unwrap_or(u32::MAX));
+        }
+    }
+    Ok(count)
+}

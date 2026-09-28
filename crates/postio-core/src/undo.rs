@@ -82,6 +82,9 @@ pub enum UndoKind {
     Restore,
     /// Restored messages were filed away again, with their reasons.
     Refilter,
+    /// What was already in the inbox was filed away by Focus's filtering
+    /// rules (specs/007-postio-focus FR-118).
+    Sweep,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
     /// A send that had stopped was put back on the queue (spec 003).
@@ -127,6 +130,7 @@ impl UndoKind {
             UndoKind::UndismissMarker => format!("Brought back {count} {}", markers(count)),
             UndoKind::Restore => format!("Restored {count} {messages}"),
             UndoKind::Refilter => format!("Filtered {count} {messages} again"),
+            UndoKind::Sweep => format!("Filtered {count} {messages} out of the inbox"),
         }
     }
 }

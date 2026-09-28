@@ -202,6 +202,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::FilteredTab5
         | C::FilteredTab6
         | C::FilteredTab7
+        | C::SweepInbox
         | C::NextReference
         | C::PrevReference
         | C::ToggleDigestSummary => Some(G::DigestsAndFiltering),

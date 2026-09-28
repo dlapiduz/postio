@@ -137,3 +137,4 @@ filtered_tab_4	4
 filtered_tab_5	5
 filtered_tab_6	6
 filtered_tab_7	7
+sweep_inbox	F

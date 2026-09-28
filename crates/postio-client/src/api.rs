@@ -128,6 +128,7 @@ impl Req {
             Req::StorageCeiling(_) => "StorageCeiling",
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
+            Req::SweepPreview => "SweepPreview",
         }
     }
 }
@@ -934,6 +935,21 @@ impl Client {
     ) -> Result<(), StoreError> {
         self.done(Req::SaveOAuthAccount(Box::new(grant)), "a saved account")
             .await
+    }
+
+    /// How many messages a sweep of the inbox would file away now (spec 007
+    /// FR-118): what `Command::SweepInbox` then moves, asked first so the
+    /// person sees it before anything moves.
+    pub async fn sweep_preview(&self) -> Result<u32, StoreError> {
+        self.read(
+            Req::SweepPreview,
+            "a sweep's count",
+            |answer| match answer {
+                Resp::Count(count) => Some(count),
+                _ => None,
+            },
+        )
+        .await
     }
 
     /// A write answered with [`Resp::Done`].

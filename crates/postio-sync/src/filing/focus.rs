@@ -236,30 +236,74 @@ async fn written_to(
         .collect())
 }
 
-#[async_trait::async_trait]
-impl FilingPass for FocusFiling {
-    async fn file(
+/// What the pass decided for a call's messages, read and decided with
+/// nothing written yet.
+#[derive(Default)]
+struct Plan<'m> {
+    /// Held for a digest rule: the message, and the rule.
+    holds: Vec<(MessageId, postio_classify::RuleName)>,
+    /// Filed away: the message, why, and its account's Archive.
+    filings: Vec<(
+        &'m postio_model::Message,
+        postio_classify::Reason,
+        MailboxId,
+    )>,
+}
+
+impl FocusFiling {
+    /// Focus's pass as a sweep of the inbox runs it (spec 007 FR-118):
+    /// `config`'s filtering, with every guard, and no digest rule -- a rule
+    /// holds what arrives after it, not what is already in the inbox.
+    pub fn sweeping(config: &FocusConfig) -> Self {
+        let mut config = config.clone();
+        config.digests.clear();
+        FocusFiling::from_config(&config)
+    }
+
+    /// Which of `filed` this pass would file away, and nothing written: what
+    /// a sweep's preview counts. It decides exactly as [`Self::file_away`]
+    /// does, so the count is what the sweep then moves.
+    pub async fn would_file_away(
+        &self,
+        connection: &Connection,
+        filed: &[FiledMessage<'_>],
+    ) -> Result<Vec<MessageId>, SyncError> {
+        let plan = self.plan(connection, filed).await?;
+        Ok(plan
+            .filings
+            .iter()
+            .map(|(message, _, _)| message.id)
+            .collect())
+    }
+
+    /// File `filed` away by this pass's reasons, in `transaction`, and hold
+    /// nothing and answer no reminder: what a sweep of mail already in the
+    /// inbox does, where [`FilingPass::file`] is for arrivals.
+    pub async fn file_away(
         &self,
         transaction: &Connection,
         filed: &[FiledMessage<'_>],
     ) -> Result<FilingEffects, SyncError> {
-        let now = Utc::now();
+        let plan = self.plan(transaction, filed).await?;
+        self.carry_out(transaction, plan, false, Utc::now()).await
+    }
+
+    /// What this pass would do with `filed`: read from the store only what
+    /// the classifier asks, each at most once, and decide.
+    async fn plan<'m>(
+        &self,
+        transaction: &Connection,
+        filed: &[FiledMessage<'m>],
+    ) -> Result<Plan<'m>, SyncError> {
         let mut own: Option<Arc<BTreeSet<String>>> = None;
         let mut archives: BTreeMap<AccountId, Option<MailboxId>> = BTreeMap::new();
-        // Filtered arrivals by account and the folder they leave: one move
-        // per folder, as a multi-select archive is.
-        let mut leaving: BTreeMap<AccountId, BTreeMap<MailboxId, Vec<MessageId>>> = BTreeMap::new();
-        let mut effects = FilingEffects::default();
-
+        let mut plan = Plan::default();
         for message in filed {
             let outcome = self.decide(transaction, message, &mut own).await?;
             // A rule the user wrote wins over a reason Postio guessed: held
             // mail stays filed in the inbox, out of Focus's own (FR-121).
-            if let Some(rule) = &outcome.hold {
-                DigestRepository::new(transaction)
-                    .hold(message.message.id, rule.as_str(), now)
-                    .await?;
-                effects.held.push(message.message.id);
+            if let Some(rule) = outcome.hold {
+                plan.holds.push((message.message.id, rule));
                 continue;
             }
             let Some(reason) = outcome.filter.filter(|_| self.filtering) else {
@@ -283,9 +327,37 @@ impl FilingPass for FocusFiling {
             if message.message.mailbox_id == archive {
                 continue;
             }
+            plan.filings.push((message.message, reason, archive));
+        }
+        Ok(plan)
+    }
+
+    /// Write what `plan` decided, as of `now`: its holds when `holding`,
+    /// and its filings -- each decision with its reason, and the archive
+    /// with the server's move queued, one move per folder left, as a
+    /// multi-select archive is.
+    async fn carry_out(
+        &self,
+        transaction: &Connection,
+        plan: Plan<'_>,
+        holding: bool,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<FilingEffects, SyncError> {
+        let mut effects = FilingEffects::default();
+        if holding {
+            for (message, rule) in plan.holds {
+                DigestRepository::new(transaction)
+                    .hold(message, rule.as_str(), now)
+                    .await?;
+                effects.held.push(message);
+            }
+        }
+        let mut leaving: BTreeMap<(AccountId, MailboxId), BTreeMap<MailboxId, Vec<MessageId>>> =
+            BTreeMap::new();
+        for (message, reason, archive) in plan.filings {
             FilterDecisionRepository::new(transaction)
                 .record(&FilterDecision {
-                    message: message.message.id,
+                    message: message.id,
                     reason: stored_reason(reason.kind),
                     source: reason.source.as_ref().map(|name| name.as_str().to_owned()),
                     layer: stored_layer(reason.layer),
@@ -293,20 +365,14 @@ impl FilingPass for FocusFiling {
                 })
                 .await?;
             leaving
-                .entry(account)
+                .entry((message.account_id, archive))
                 .or_default()
-                .entry(message.message.mailbox_id)
+                .entry(message.mailbox_id)
                 .or_default()
-                .push(message.message.id);
-            effects.filtered.push(message.message.id);
+                .push(message.id);
+            effects.filtered.push(message.id);
         }
-
-        answer_reminders(transaction, filed, now).await?;
-
-        for (account, by_source) in &leaving {
-            let Some(Some(archive)) = archives.get(account) else {
-                continue;
-            };
+        for ((account, archive), by_source) in &leaving {
             actions::relocate(
                 transaction,
                 *account,
@@ -317,6 +383,21 @@ impl FilingPass for FocusFiling {
             )
             .await?;
         }
+        Ok(effects)
+    }
+}
+
+#[async_trait::async_trait]
+impl FilingPass for FocusFiling {
+    async fn file(
+        &self,
+        transaction: &Connection,
+        filed: &[FiledMessage<'_>],
+    ) -> Result<FilingEffects, SyncError> {
+        let now = Utc::now();
+        let plan = self.plan(transaction, filed).await?;
+        let effects = self.carry_out(transaction, plan, true, now).await?;
+        answer_reminders(transaction, filed, now).await?;
         if !effects.filtered.is_empty() || !effects.held.is_empty() {
             tracing::debug!(
                 arrivals = filed.len(),

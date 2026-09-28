@@ -21,8 +21,8 @@ use postio_model::{
 };
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, DraftRepository, FilterDecisionRepository, InviteState, MarkerRepository,
-    ReminderRepository,
+    AccountRepository, DraftRepository, FilterDecisionRepository, InviteState, MailboxRepository,
+    MarkerRepository, ReminderRepository, ThreadRepository,
 };
 
 use super::{Actions, Aim, Applied, Destination, RSVP_WINDOW, mailbox_for, store_failure};
@@ -573,6 +573,149 @@ impl Actions {
                     tracing::warn!(%reason, "Focus could not write a restored sender: {reason}");
                 }
             }
+        }
+        Ok(applied)
+    }
+}
+
+impl Actions {
+    /// File away what is already in every inbox, by Focus's filtering rules
+    /// and guards (spec 007 FR-118): the deliberate command that applies
+    /// filtering to mail filed before it was turned on. What it moves is
+    /// what `sweep_preview` counted, since both walk the inbox the same way
+    /// through the same pass.
+    ///
+    /// A window at a time, each its own transaction and write permit, so a
+    /// large inbox never holds the writer for long; and one undo unit for
+    /// all of it, naming what moved, whose way back returns each message to
+    /// its inbox and withdraws the decisions the sweep made.
+    pub(super) async fn sweep(&self) -> Result<Vec<Applied>, CommandError> {
+        let config = self
+            .focus
+            .config()
+            .ok_or_else(|| CommandError::rejected("Filtering the inbox needs Postio Focus"))?;
+        let pass = postio_sync::FocusFiling::sweeping(&config);
+        let inboxes = {
+            let reader = self.database.read().await.map_err(store_failure)?;
+            ThreadRepository::new(&reader)
+                .unified_inboxes()
+                .await
+                .map_err(store_failure)?
+        };
+        let mut applied = Vec::new();
+        for (account, inbox) in inboxes {
+            let mut moved = Vec::new();
+            let mut archive = None;
+            let mut after = None;
+            loop {
+                let (mut connection, _permit) = self.connect().await?;
+                let rows = crate::focus::sweep_window(&connection, inbox, &mut after)
+                    .await
+                    .map_err(store_failure)?;
+                if rows.is_empty() {
+                    break;
+                }
+                if archive.is_none() {
+                    archive = MailboxRepository::new(&connection)
+                        .by_role(account, MailboxRole::Archive)
+                        .await
+                        .map_err(store_failure)?
+                        .map(|mailbox| mailbox.id);
+                }
+                let transaction = connection.transaction().await.map_err(store_failure)?;
+                let effects = pass
+                    .file_away(&transaction, &crate::focus::in_the_inbox(&rows))
+                    .await
+                    .map_err(|_| CommandError::failed("Postio could not filter the inbox"))?;
+                transaction.commit().await.map_err(store_failure)?;
+                moved.extend(effects.filtered);
+            }
+            let Some(archive) = archive.filter(|_| !moved.is_empty()) else {
+                continue;
+            };
+            applied.push(Applied {
+                lasts: None,
+                account,
+                kind: UndoKind::Sweep,
+                count: moved.len(),
+                messages: moved.clone(),
+                removed: vec![(inbox, moved.clone())],
+                arrived: Some(archive),
+                reloaded: Vec::new(),
+                changed: Vec::new(),
+                mailboxes_changed: false,
+                inverse: vec![Command::UnsweepInbox {
+                    target: MessageTarget::Messages(moved),
+                }],
+            });
+        }
+        if applied.is_empty() {
+            return Err(CommandError::rejected(
+                "Nothing in the inbox would be filtered",
+            ));
+        }
+        Ok(applied)
+    }
+
+    /// Undo's way back from a sweep: each message returns to its account's
+    /// inbox, with the server's move queued, and the decision the sweep
+    /// made for it is withdrawn -- the person never saw it stand.
+    pub(super) async fn unsweep(
+        &self,
+        target: &MessageTarget,
+    ) -> Result<Vec<Applied>, CommandError> {
+        let (mut connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, target).await? {
+            Aim::Rows(rows) => rows,
+            Aim::Bulk(_) => return Err(CommandError::rejected("Nothing to put back")),
+        };
+        let mut by_account: BTreeMap<AccountId, Vec<Message>> = BTreeMap::new();
+        for row in rows {
+            by_account.entry(row.account_id).or_default().push(row);
+        }
+        let now = Utc::now();
+        let mut applied = Vec::new();
+        for (account, rows) in by_account {
+            let inbox =
+                mailbox_for(&connection, account, Destination::Role(MailboxRole::Inbox)).await?;
+            let mut moved: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
+            let transaction = connection.transaction().await.map_err(store_failure)?;
+            {
+                let decisions = FilterDecisionRepository::new(&transaction);
+                for row in &rows {
+                    decisions.delete(row.id).await.map_err(store_failure)?;
+                    if row.mailbox_id != inbox {
+                        moved.entry(row.mailbox_id).or_default().push(row.id);
+                    }
+                }
+                if !moved.is_empty() {
+                    postio_storage::actions::relocate(
+                        &transaction,
+                        account,
+                        &moved,
+                        inbox,
+                        postio_storage::actions::Relocation::Move,
+                        now,
+                    )
+                    .await
+                    .map_err(store_failure)?;
+                }
+            }
+            transaction.commit().await.map_err(store_failure)?;
+            let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
+            applied.push(Applied {
+                lasts: None,
+                account,
+                kind: UndoKind::Sweep,
+                count: ids.len(),
+                messages: ids,
+                removed: moved.into_iter().collect(),
+                arrived: Some(inbox),
+                reloaded: Vec::new(),
+                changed: Vec::new(),
+                mailboxes_changed: false,
+                inverse: Vec::new(),
+            });
         }
         Ok(applied)
     }
