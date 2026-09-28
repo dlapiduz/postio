@@ -1470,15 +1470,38 @@ fn archiving_a_digest_archives_every_message_in_it_as_one_undo() {
     assert_eq!(the_digest(&world, &client), delivery, "and its row is back");
 }
 
-/// `[[focus.digests]]` "Newsletters" for two senders, weekly, so nothing
-/// comes due in a test.
-const TWO_SENDERS: &str = "[[focus.digests]]
+/// `[[focus.digests]]` "Newsletters" for two senders, weekly, on the day
+/// three days from now, so nothing comes due in a test.
+///
+/// The day is computed, not written down: the tests hold mail from one and
+/// two days ago, and a rule comes due at its first time after the oldest
+/// hold. A fixed "sunday" came due on any Monday or Tuesday run, and the due
+/// timer's first tick, which is immediate, then raced the test's own verbs.
+fn two_senders() -> String {
+    use chrono::Datelike as _;
+    let day = (Utc::now() + chrono::TimeDelta::days(3))
+        .weekday()
+        .to_string()
+        .to_lowercase();
+    let day = match day.as_str() {
+        "mon" => "monday",
+        "tue" => "tuesday",
+        "wed" => "wednesday",
+        "thu" => "thursday",
+        "fri" => "friday",
+        "sat" => "saturday",
+        _ => "sunday",
+    };
+    format!(
+        "[[focus.digests]]
 name = \"Newsletters\"
 match = [\"from:news@ledger.example\", \"from:editor@ledger.example\"]
 cadence = \"weekly\"
-day = \"sunday\"
+day = \"{day}\"
 at = \"09:00\"
-";
+"
+    )
+}
 
 #[test]
 fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back() {
@@ -1487,7 +1510,7 @@ fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back(
     // and their next message goes to the inbox -- and one undo takes it all
     // back.
     let world = World::new();
-    let (_directory, path) = config_file(TWO_SENDERS);
+    let (_directory, path) = config_file(&two_senders());
     let news = newsletter(
         &world,
         "news@ledger.example",
@@ -1573,7 +1596,7 @@ fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() 
     // puts it back exactly, cadence and all.
     let world = World::new();
     let (_directory, path) =
-        config_file(&TWO_SENDERS.replace(", \"from:editor@ledger.example\"", ""));
+        config_file(&two_senders().replace(", \"from:editor@ledger.example\"", ""));
     let news = newsletter(
         &world,
         "news@ledger.example",
