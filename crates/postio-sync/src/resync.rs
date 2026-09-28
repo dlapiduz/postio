@@ -81,7 +81,7 @@ use postio_storage::repository::{
 };
 
 use crate::drain::SyncError;
-use crate::filing::{FiledMessage, FilingPass};
+use crate::filing::{FiledMessage, FilingEffects, FilingPass};
 use crate::initial::{self, Progress};
 
 /// This module's result type.
@@ -125,6 +125,12 @@ pub enum Outcome {
         /// This is what a desktop notification is about; `changed` alone
         /// cannot tell the two apart.
         arrived: Vec<MessageId>,
+        /// Of `arrived`, the ones a filing pass took out of the inbox's view
+        /// as it filed them (spec 007): filtered into the archive, or held
+        /// for a digest. Focus never announces these (FR-153), and they are
+        /// not in its inbox to splice in. Empty unless a host in Focus mode
+        /// gave the pass one.
+        filed_away: Vec<MessageId>,
     },
 }
 
@@ -561,6 +567,7 @@ async fn incremental(
     let changed_count = changed.len();
 
     let mut arrived: Vec<MessageId> = Vec::new();
+    let mut filed_away: Vec<MessageId> = Vec::new();
     if !changed.is_empty() {
         let batch: Vec<Message> = changed
             .into_iter()
@@ -599,7 +606,7 @@ async fn incremental(
             let role = mailbox.role;
             let account_ref = account.as_ref();
             let known_ref = &known_set;
-            let (newly, held) = initial::write_unit(connection, || {
+            let ((newly, effects), held) = initial::write_unit(connection, || {
                 // IMMEDIATE for the reason `initial.rs` gives at its own
                 // transaction (#79): the first statement here is a SELECT,
                 // and a deferred transaction that has to promote a read lock
@@ -647,6 +654,7 @@ async fn incremental(
                     // and the threading, before any event (spec 007). A
                     // pass that fails takes back only its own writes: the
                     // mail stays in the inbox and the insert commits.
+                    let mut effects = FilingEffects::default();
                     if let Some(filing) = filing
                         && !arrivals.is_empty()
                     {
@@ -660,13 +668,17 @@ async fn incremental(
                                 role,
                             })
                             .collect();
-                        crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed).await;
+                        effects =
+                            crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed)
+                                .await;
                     }
-                    Ok::<_, SyncError>(arrivals)
+                    Ok::<_, SyncError>((arrivals, effects))
                 })
             })
             .await?;
             arrived.extend(newly);
+            filed_away.extend(effects.filtered);
+            filed_away.extend(effects.held);
             initial::unit_wrote(slice.len(), held);
             // One real yield per unit, for the reason `initial.rs` gives at
             // its own batch loop: an uncontended gate and a commit whose work
@@ -704,6 +716,7 @@ async fn incremental(
         changed: changed_count,
         vanished: vanished_count,
         arrived,
+        filed_away,
     })
 }
 

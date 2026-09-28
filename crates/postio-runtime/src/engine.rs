@@ -3583,11 +3583,18 @@ async fn sync_pass(
                 arrived: ids,
                 changed,
                 vanished,
-                ..
+                filed_away,
             } = &outcome
             {
-                arrived = ids.clone();
-                only_arrivals = *vanished == 0 && *changed == ids.len();
+                // What Focus's filing pass filtered or held is not new mail
+                // anybody is told of (FR-153), and not in the inbox a view
+                // would splice it into: the view re-reads instead.
+                arrived = ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !filed_away.contains(id))
+                    .collect();
+                only_arrivals = *vanished == 0 && *changed == ids.len() && filed_away.is_empty();
             }
             summarise_resync(outcome)
         })

@@ -3144,3 +3144,59 @@ fn focus_mode_delivers_what_came_due_when_it_starts() {
     assert_eq!(delivered.len(), 1);
     assert_eq!(delivered[0].2, vec![held]);
 }
+
+// ── Arrivals Focus filed away are not announced (spec 007, T129) ────────────
+
+#[test]
+fn focus_mode_announces_no_arrival_it_filtered_or_held() {
+    // FR-153: Focus never notifies for mail it filtered or held. The new
+    // mail the host passes on names only what reached Focus's inbox, so a
+    // frontend that notifies for it -- and splices it into its list --
+    // stays silent about the rest.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let config = postio_config::Config::from_toml_str(
+        "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.example\"]\n\
+         cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
+    )
+    .expect("a config");
+    world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config(config.focus));
+    let (client, events) = world.frontend(ClientKind::Focus);
+    world.host().start_syncing();
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    world.drain(&events);
+
+    let newsletter = "Message-ID: <issue@ledger.example>\r\nFrom: Ledger <news@ledger.example>\r\n\
+                      To: Test User <test@example.com>\r\nSubject: The weekly numbers\r\n\
+                      Date: Wed, 23 Sep 2026 08:00:00 +0000\r\n\r\nNumbers.\r\n"
+        .to_owned();
+    deliver_all(
+        &world,
+        &mock,
+        &client,
+        &[notification(), newsletter, letter()],
+    );
+    let letter = eventually(&world, || row_titled(&world, &client, "Weir level"));
+    assert_eq!(
+        filed_where(&world, "Build 2231 passed").map(|(role, _)| role),
+        Some(postio_model::MailboxRole::Archive),
+        "the fixture filters the notification"
+    );
+
+    let announced: Vec<MessageId> = world
+        .drain(&events)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::NewMail { messages, .. } => Some(messages),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(
+        announced,
+        vec![letter],
+        "only the letter reached Focus's inbox"
+    );
+}
