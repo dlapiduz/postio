@@ -80,6 +80,12 @@ pub struct OpenMessage {
     generation: Rc<Cell<u64>>,
     open: Rc<Cell<bool>>,
     handler: RefCell<Option<Handler>>,
+    /// The conversation's messages, oldest first, once read, and which of
+    /// them is on screen; the row's place in the list.
+    thread: Rc<RefCell<Vec<MessageId>>>,
+    at: Rc<Cell<usize>>,
+    position: Cell<Position>,
+    messages: Cell<u32>,
 }
 
 impl OpenMessage {
@@ -219,6 +225,10 @@ impl OpenMessage {
             generation: Rc::default(),
             open,
             handler: RefCell::default(),
+            thread: Rc::default(),
+            at: Rc::default(),
+            position: Cell::new(Position { index: 0, total: 0 }),
+            messages: Cell::new(1),
         });
 
         let weak = Rc::downgrade(&page);
@@ -309,14 +319,26 @@ impl OpenMessage {
             .unwrap_or_else(|| "(no subject)".to_owned());
         self.title.set_text(&subject);
         self.subject.set_text(&subject);
-        let mut said = format!("Message {} of {}", position.index + 1, position.total);
-        if summary.message_count > 1 {
-            said.push_str(&format!(" \u{b7} thread of {}", summary.message_count));
-        }
-        self.subtitle.set_text(&said);
-        self.show_thread_chip(summary.message_count);
+        self.position.set(position);
+        self.messages.set(summary.message_count.max(1));
+        self.thread.borrow_mut().clear();
+        self.at.set(0);
+        self.show_position(true);
         self.show_labels(&conversation.labels);
 
+        if !self.open.get() {
+            self.dialog.present(Some(parent));
+            self.open.set(true);
+        }
+        self.show_message(message);
+        if let (Some(thread), true) = (summary.id, summary.message_count > 1) {
+            self.read_thread(thread, message);
+        }
+    }
+
+    /// Show `message` of the conversation on screen: clear what the last
+    /// one left, and read this one.
+    fn show_message(&self, message: MessageId) {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
         // The inline-image source reads this same cell.
@@ -325,12 +347,72 @@ impl OpenMessage {
         self.fold_line.set_visible(false);
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
-
-        if !self.open.get() {
-            self.dialog.present(Some(parent));
-            self.open.set(true);
-        }
         self.load(message, generation);
+    }
+
+    /// Read the conversation's messages, so `[` and `]` can step through
+    /// them, and find `showing` among them.
+    fn read_thread(&self, thread: postio_model::ThreadId, showing: MessageId) {
+        let client = self.client.clone();
+        let (messages, at) = (Rc::clone(&self.thread), Rc::clone(&self.at));
+        let generation = Rc::clone(&self.generation);
+        let asked = generation.get();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let read = client.conversation(thread).await;
+            let Ok(rows) = read else { return };
+            if generation.get() != asked {
+                return;
+            }
+            let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
+            at.set(
+                ids.iter()
+                    .position(|id| *id == showing)
+                    .unwrap_or(ids.len().saturating_sub(1)),
+            );
+            messages.replace(ids);
+        });
+    }
+
+    /// Step `by` messages through the conversation: `[` is -1, `]` is 1.
+    /// Nothing happens past either end, or before the conversation is read.
+    pub fn step_thread(&self, by: isize) {
+        let (next, message) = {
+            let thread = self.thread.borrow();
+            let Some(next) = self.at.get().checked_add_signed(by) else {
+                return;
+            };
+            match thread.get(next) {
+                Some(message) => (next, *message),
+                None => return,
+            }
+        };
+        self.at.set(next);
+        self.show_position(false);
+        self.show_message(message);
+    }
+
+    /// The position line and the thread chip, for where the dialog is: the
+    /// row's place in the list, and the message's in the conversation.
+    fn show_position(&self, latest: bool) {
+        let position = self.position.get();
+        let messages = self.messages.get();
+        let thread_len = self.thread.borrow().len();
+        let latest = latest || thread_len == 0 || self.at.get() + 1 == thread_len;
+        let mut said = format!("Message {} of {}", position.index + 1, position.total);
+        if messages > 1 {
+            if latest {
+                said.push_str(&format!(" \u{b7} thread of {messages}"));
+            } else {
+                said.push_str(&format!(
+                    " \u{b7} {} of {messages} in the thread",
+                    self.at.get() + 1
+                ));
+            }
+        }
+        self.subtitle.set_text(&said);
+        self.show_thread_chip(messages);
     }
 
     /// Read `message` from the store, and draw it if it is still the one on
@@ -492,6 +574,12 @@ impl OpenMessage {
     /// The header's position line.
     pub fn subtitle(&self) -> String {
         self.subtitle.text().to_string()
+    }
+
+    /// How many of the conversation's messages `[` and `]` can step
+    /// through: none until the conversation has been read.
+    pub fn thread_known(&self) -> usize {
+        self.thread.borrow().len()
     }
 
     /// The message on screen.

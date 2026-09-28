@@ -56,6 +56,18 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "open_message::escape_closes_and_keeps_the_cursor_and_the_selection",
+        open_message::escape_closes_and_keeps_the_cursor_and_the_selection as fn(),
+    ),
+    (
+        "open_message::j_and_k_step_the_list_behind_the_dialog",
+        open_message::j_and_k_step_the_list_behind_the_dialog as fn(),
+    ),
+    (
+        "open_message::brackets_step_through_the_thread",
+        open_message::brackets_step_through_the_thread as fn(),
+    ),
+    (
         "open_message::enter_opens_the_conversation_over_the_list_at_once",
         open_message::enter_opens_the_conversation_over_the_list_at_once as fn(),
     ),

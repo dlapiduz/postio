@@ -292,6 +292,49 @@ impl Fixture {
 }
 
 impl Fixture {
+    /// A conversation of `count` messages about `subject`, each a reply to
+    /// the one before, the newest `minutes` ago and each earlier one an hour
+    /// before it; the body of the nth (from 1, oldest first) is "Message n".
+    /// Answers the messages, oldest first.
+    pub async fn thread_of(&self, subject: &str, count: usize, minutes: i64) -> Vec<MessageId> {
+        let connection = self.database.connect().await.expect("a connection");
+        static THREADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let thread = THREADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut previous: Option<postio_model::RfcMessageId> = None;
+        let mut ids = Vec::new();
+        for n in 1..=count {
+            let at = now() - Duration::minutes(minutes + 60 * (count - n) as i64);
+            let mut message = Message::new(self.account.id, self.inbox, at);
+            message.from = vec![EmailAddress::new(Some("Ada Moreno"), "ada@example.com")];
+            message.subject = Some(if n == 1 {
+                subject.to_owned()
+            } else {
+                format!("Re: {subject}")
+            });
+            message.preview = Some(format!("Message {n}"));
+            let id = postio_model::RfcMessageId::new(format!("<thread.{thread}.{n}@example.test>"));
+            message.rfc_message_id = Some(id.clone());
+            if let Some(parent) = previous.replace(id) {
+                message.in_reply_to = Some(parent.clone());
+                message.references = vec![parent];
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+            ThreadingRepository::new(&connection, self.account.id)
+                .thread(&message)
+                .await
+                .expect("threaded");
+            ids.push(message.id);
+        }
+        drop(connection);
+        for (n, id) in ids.iter().enumerate() {
+            self.write_body(*id, &format!("Message {}", n + 1)).await;
+        }
+        ids
+    }
+
     /// Store `text` as `message`'s body, fetched in full.
     pub async fn write_body(&self, message: MessageId, text: &str) {
         let connection = self.database.connect().await.expect("a connection");

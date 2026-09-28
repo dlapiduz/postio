@@ -333,6 +333,9 @@ impl FocusWindow {
         // close it are the window's, and the rest go on to the dialog
         // rather than moving the list underneath.
         if let Some(dialog) = self.visible_dialog() {
+            if dialog.widget_name() == crate::open::DIALOG_NAME {
+                return self.reading_key(outcome);
+            }
             return match outcome {
                 Outcome::Command(id)
                     if matches!(
@@ -366,9 +369,46 @@ impl FocusWindow {
         }
     }
 
-    /// Which surface owns the keyboard.
+    /// Which surface owns the keyboard: the open message, or the list.
     fn key_context(&self) -> KeyContext {
-        KeyContext::List
+        if self
+            .visible_dialog()
+            .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
+        {
+            KeyContext::Reader
+        } else {
+            KeyContext::List
+        }
+    }
+
+    /// A key while a message is open over the list (US2 scenarios 1-3):
+    /// `Esc` closes it and leaves the list as it was, `j`/`k` step the list
+    /// and move its cursor behind the dialog, and `[`/`]` step the thread.
+    fn reading_key(&self, outcome: Outcome) -> glib::Propagation {
+        let Outcome::Command(id) = outcome else {
+            return match outcome {
+                Outcome::Pending(_) => glib::Propagation::Stop,
+                _ => glib::Propagation::Proceed,
+            };
+        };
+        let Some(reading) = self.reading() else {
+            return glib::Propagation::Proceed;
+        };
+        match id.parse::<CommandId>() {
+            Ok(CommandId::Back) => reading.close(),
+            Ok(CommandId::NextMessage) => {
+                self.move_cursor(1);
+                self.open_message();
+            }
+            Ok(CommandId::PrevMessage) => {
+                self.move_cursor(-1);
+                self.open_message();
+            }
+            Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
+            Ok(CommandId::NextInConversation) => reading.step_thread(1),
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
     }
 
     /// Run the command `id` means here: the cursor and the selection are the
