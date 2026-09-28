@@ -19,6 +19,8 @@
 //! | `17`, `18`, `19` | Screen 01 under the first sync's, the offline and the sign-in error's banner |
 //! | `20` | The key map, over screen 01 |
 //! | `04` | The to-do about the API draft, opened over screen 01 |
+//! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
+//! | `10` | The folders popover over screen 01 |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -66,7 +68,8 @@ use postio_model::{
     MessageId, RfcMessageId,
 };
 use postio_storage::repository::{
-    LabelRepository, Marker, MarkerRepository, MarkerSource, MessageRepository, ThreadingRepository,
+    ContactRepository, LabelRepository, Marker, MarkerRepository, MarkerSource, MessageRepository,
+    ThreadingRepository,
 };
 use postio_storage::{BlobStore, Store};
 
@@ -82,6 +85,10 @@ const SCREENS: &[(&str, &str)] = &[
     ("19", "the sign-in error's banner"),
     ("20", "the key map over the inbox"),
     ("04", "a message opened over the inbox"),
+    ("07", "the command bar: plain English, lowered to chips"),
+    ("08", "the command bar: in:Rec, a folder listed"),
+    ("09", "the command bar: a word, its commands and places"),
+    ("10", "the folders popover"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -361,7 +368,11 @@ const TODAY: &[Row] = &[
 
 /// The demo's config.toml: filtering on, and one digest rule.
 const CONFIG: &str = "[focus]\nfiltering = true\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
-queries = [\"from:news@example.com\"]\ncadence = \"weekly\"\nday = \"saturday\"\nat = \"16:00\"\n";
+queries = [\"from:news@example.com\"]\ncadence = \"weekly\"\nday = \"saturday\"\nat = \"16:00\"\n\n\
+[filters.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\nname = \"Waiting on reply\"\n\n\
+[filters.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\nname = \"Atlas\"\n\n\
+[filters.receipts]\nquery = \"in:Receipts\"\npinned = true\norder = 3\nname = \"Receipts this month\"\n\n\
+[filters.school]\nquery = \"from:northfield\"\npinned = true\norder = 4\nname = \"From school\"\n";
 
 /// What the command line asked for.
 struct Request {
@@ -646,6 +657,37 @@ fn stage(
                 return Err("the opened message never drew with its sentence lit".into());
             }
         }
+        "07" | "08" | "09" => {
+            pick_three();
+            window.act(CommandId::Search);
+            let bar = window.bar().ok_or("no command bar")?;
+            if !settle_until(|| bar.places_known()) {
+                return Err("the bar never read its places".into());
+            }
+            let (typed, done): (&str, Box<dyn Fn() -> bool>) = match screen {
+                "07" => (
+                    "the invoice Marisol sent last month",
+                    Box::new(|| !bar.chips().is_empty()),
+                ),
+                "08" => ("in:Rec", Box::new(|| !bar.result_subjects().is_empty())),
+                _ => ("arch", Box::new(|| !bar.texts().is_empty())),
+            };
+            bar.set_text(typed);
+            if !settle_until(&done) {
+                return Err(format!("the bar never answered {typed:?}"));
+            }
+            // What arrives after the first answer: the search's rows.
+            let started = Instant::now();
+            settle_until(|| started.elapsed() > Duration::from_millis(400));
+        }
+        "10" => {
+            pick_three();
+            window.act(CommandId::GoToFolders);
+            let places = window.places().ok_or("no folders popover")?;
+            if !settle_until(|| places.names().len() > 3) {
+                return Err("the popover never listed the places".into());
+            }
+        }
         "20" => {
             pick_three();
             window.act(CommandId::CheatSheet);
@@ -814,6 +856,12 @@ pub async fn demo() -> (Store, AccountId) {
                 .create(&mut message)
                 .await
                 .expect("a message");
+            // Sync records every address it sees; the bar reads names from
+            // them (screen 07).
+            ContactRepository::new(&connection)
+                .record_message(&message)
+                .await
+                .expect("its correspondents");
             ThreadingRepository::new(&connection, report.account.id)
                 .thread(&message)
                 .await
@@ -859,8 +907,112 @@ pub async fn demo() -> (Store, AccountId) {
                 .expect("a marker");
         }
     }
+    // Screens 07 and 08: invoices from Marisol filed in three places, and
+    // a folder of receipts.
+    let receipts = postio_storage::test_support::mailbox(&connection, &report.account, "Receipts")
+        .await
+        .id;
+    let archive = report
+        .mailbox(MailboxRole::Archive)
+        .map_or(inbox, |mailbox| mailbox.id);
+    // The 19th of last month, whatever today is: "last month" is a
+    // calendar month.
+    let last_month = {
+        use chrono::Datelike as _;
+        let first = today.date_naive().with_day(1).unwrap_or(today.date_naive());
+        let first = first
+            .checked_sub_months(chrono::Months::new(1))
+            .unwrap_or(first);
+        let nineteenth = first.with_day(19).unwrap_or(first);
+        today - (today.date_naive() - nineteenth)
+    };
+    for (mailbox, subject, preview, days) in [
+        (
+            inbox,
+            "Invoice 2026-08, Atlas contractor hours",
+            "Attached is the invoice for August.",
+            0,
+        ),
+        (
+            receipts,
+            "Re: Invoice 2026-08 (corrected)",
+            "Fixed the PO number, same total.",
+            5,
+        ),
+        (
+            archive,
+            "Invoice for July (late)",
+            "Sorry for the delay. This one covers three weeks.",
+            11,
+        ),
+    ] {
+        filed(
+            &connection,
+            report.account.id,
+            mailbox,
+            ("Marisol Quint", "marisol@example.com"),
+            subject,
+            preview,
+            last_month + chrono::Duration::days(days),
+        )
+        .await;
+    }
+    for (subject, days) in [
+        ("Your coffee order", 2),
+        ("Bookshop receipt", 9),
+        ("Train ticket", 16),
+    ] {
+        filed(
+            &connection,
+            report.account.id,
+            receipts,
+            ("Receipts", "receipts@shop.example"),
+            subject,
+            "Thank you for your order.",
+            today - chrono::Duration::days(days),
+        )
+        .await;
+    }
+    // The command bar searches this machine's index, as sync fills it.
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("the search index");
     drop(connection);
     (database, report.account.id)
+}
+
+/// File one message from `from` about `subject` into `mailbox` at `at`.
+async fn filed(
+    connection: &postio_storage::Connection,
+    account: AccountId,
+    mailbox: MailboxId,
+    from: (&str, &str),
+    subject: &str,
+    preview: &str,
+    at: DateTime<Utc>,
+) {
+    let mut message = Message::new(account, mailbox, at);
+    message.date = Some(at);
+    message.from = vec![EmailAddress::new(Some(from.0), from.1)];
+    message.subject = Some(subject.to_owned());
+    message.preview = Some(preview.to_owned());
+    message.flags = [Flag::Seen].into_iter().collect();
+    message.rfc_message_id = Some(RfcMessageId::new(format!(
+        "<filed.{}@example.test>",
+        subject.to_lowercase().replace(' ', ".")
+    )));
+    MessageRepository::new(connection)
+        .create(&mut message)
+        .await
+        .expect("a filed message");
+    ContactRepository::new(connection)
+        .record_message(&message)
+        .await
+        .expect("its correspondents");
+    ThreadingRepository::new(connection, account)
+        .thread(&message)
+        .await
+        .expect("threaded");
 }
 
 fn message(
