@@ -123,6 +123,10 @@ const CASES: &[(&str, fn())] = &[
         filtered::the_strip_counts_what_was_filtered_today as fn(),
     ),
     (
+        "filtered::focus_never_notifies_for_mail_it_filtered_or_held",
+        filtered::focus_never_notifies_for_mail_it_filtered_or_held as fn(),
+    ),
+    (
         "filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back",
         filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
     ),

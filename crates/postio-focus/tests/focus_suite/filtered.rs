@@ -260,3 +260,93 @@ pub fn the_strip_counts_what_was_filtered_today() {
         );
     });
 }
+
+/// FR-153 (T129): Focus notifies about new mail in its inbox as the
+/// classic app would, and never about mail it filtered or held -- even
+/// when an arrival names them.
+pub fn focus_never_notifies_for_mail_it_filtered_or_held() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (kept, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        let (held, _) = fixture
+            .file(
+                ("Ledger", "news@ledger.test"),
+                "The weekly numbers",
+                "Rates.",
+                6,
+            )
+            .await;
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::DigestRepository::new(&connection)
+                .hold(held, "Newsletters", support::now())
+                .await
+                .expect("held");
+        }
+        let filtered = fixture
+            .filtered(
+                ("Outdoor Supply", "deals@outdoor.test"),
+                "30% off tents",
+                "promotion",
+                None,
+                7,
+            )
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let told: std::rc::Rc<std::cell::RefCell<Vec<String>>> = std::rc::Rc::default();
+        window.set_notification_sink({
+            let told = std::rc::Rc::clone(&told);
+            move |notification| told.borrow_mut().push(notification.body.clone())
+        });
+        // Looking at Filtered, not the inbox: an arrival there is news.
+        support::keys(&window, &["g", "f"]);
+
+        assert!(sink.emit(postio_core::Event::NewMail {
+            account: fixture.account.id,
+            mailbox: fixture.inbox,
+            messages: vec![held, filtered],
+        }));
+        crate::settle_for(std::time::Duration::from_millis(500)).await;
+        assert!(
+            told.borrow().is_empty(),
+            "notified about {:?}",
+            told.borrow()
+        );
+
+        assert!(sink.emit(postio_core::Event::NewMail {
+            account: fixture.account.id,
+            mailbox: fixture.inbox,
+            messages: vec![kept],
+        }));
+        assert!(
+            crate::settle_until(async || !told.borrow().is_empty()).await,
+            "no notification for mail that stayed in the inbox"
+        );
+        assert!(
+            told.borrow()[0].contains("Atlas budget"),
+            "it names what stayed: {:?}",
+            told.borrow()
+        );
+    });
+}

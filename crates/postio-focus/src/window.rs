@@ -36,6 +36,21 @@ const BLANK: &str = "blank";
 const OPENING: &str = "opening";
 const UNAVAILABLE: &str = "unavailable";
 const INBOX: &str = "inbox";
+/// What decides a notification for new mail: the mailbox, the messages
+/// an arrival names, and where the person is looking.
+pub type Notifier = Rc<
+    dyn Fn(
+        postio_model::MailboxId,
+        Vec<MessageId>,
+        postio_ui::notify::Attention,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<postio_ui::notify::Notification>>>,
+    >,
+>;
+
+/// Where a test takes notifications instead of the desktop.
+type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
+
 /// The Filtered view's page (screen 21).
 const FILTERED: &str = "filtered";
 /// The inbox's list, and the empty inbox in its place.
@@ -134,6 +149,10 @@ mod imp {
         pub remind: RefCell<Option<Rc<WhenPicker>>>,
         /// The label picker, built the first time `l` opens it.
         pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
+        /// Decides a notification for new mail: the host's (FR-153).
+        pub notifier: RefCell<Option<super::Notifier>>,
+        /// Where a test takes notifications instead of the desktop.
+        pub notification_sink: RefCell<Option<super::NotificationSink>>,
         /// The Filtered view, built the first time `g f` opens it.
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         /// A `postio://` link that arrived before the store was open.
@@ -201,6 +220,8 @@ mod imp {
                 warm: Cell::default(),
                 answering: Cell::default(),
                 filtered: RefCell::default(),
+                notifier: RefCell::default(),
+                notification_sink: RefCell::default(),
             }
         }
     }
@@ -1285,13 +1306,14 @@ impl FocusWindow {
         let counts = imp.counts.get();
         if let Some(counts) = counts {
             chrome.set_counts(counts.conversations, counts.unread);
-            // Filtering off files nothing new, and says nothing about it.
+            // Filtering off files nothing new, and says nothing about it;
+            // the strip says nothing of a day with nothing filtered (C10).
             let filtered = imp
                 .focus_config
                 .borrow()
                 .filtering
                 .then_some(counts.filtered_today);
-            chrome.set_filtered_today(filtered);
+            chrome.set_filtered_today(filtered.filter(|count| *count > 0));
             if let Some(places) = imp.places.borrow().as_ref() {
                 places.set_filtered_today(filtered);
             }
@@ -1393,6 +1415,9 @@ impl FocusWindow {
                 self.imp().toast.show_notice(reason);
                 self.follow_toast();
             }
+            Event::NewMail {
+                mailbox, messages, ..
+            } => self.announce(*mailbox, messages.clone()),
             _ => {}
         }
         self.hear_sync(event);
@@ -1410,6 +1435,66 @@ impl FocusWindow {
         {
             view.refresh();
         }
+    }
+
+    /// Hand every notification to `sink` instead of the desktop: what a
+    /// test records.
+    pub fn set_notification_sink(&self, sink: impl Fn(&postio_ui::notify::Notification) + 'static) {
+        self.imp().notification_sink.replace(Some(Rc::new(sink)));
+    }
+
+    /// Decide notifications with `notifier`: the host's, which names only
+    /// what stayed in Focus's inbox (FR-153).
+    pub fn set_notifier(&self, notifier: Notifier) {
+        self.imp().notifier.replace(Some(notifier));
+    }
+
+    /// New mail in `mailbox`: a notification, if the host decides it is
+    /// worth one while the person is looking where they are.
+    fn announce(&self, mailbox: postio_model::MailboxId, messages: Vec<MessageId>) {
+        let Some(notifier) = self.imp().notifier.borrow().clone() else {
+            return;
+        };
+        let imp = self.imp();
+        // Looking at Focus's inbox is looking at every inbox it is made of.
+        let looking = imp.pages.visible_child_name().as_deref() == Some(INBOX)
+            && imp.at_inbox.get()
+            && self
+                .pane()
+                .is_some_and(|pane| pane.feed().is_inbox(mailbox));
+        let attention = postio_ui::notify::Attention {
+            showing: looking.then_some(mailbox),
+            active: gtk::prelude::GtkWindowExt::is_active(self),
+        };
+        let deciding = notifier(mailbox, messages, attention);
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                // POSTIO-GLIB-SAFE: the notifier's future awaits the host's
+                // runtime through a join handle, a oneshot.
+                let decided = deciding.await;
+                if let Some(notification) = decided {
+                    window.deliver(&notification);
+                }
+            }
+        ));
+    }
+
+    /// Post `notification`, replacing the one already showing for its
+    /// folder, or hand it to the test's sink.
+    fn deliver(&self, notification: &postio_ui::notify::Notification) {
+        let sink = self.imp().notification_sink.borrow().clone();
+        if let Some(sink) = sink {
+            sink(notification);
+            return;
+        }
+        let Some(application) = gtk::prelude::GtkWindowExt::application(self) else {
+            return;
+        };
+        let built = gio::Notification::new(&notification.title);
+        built.set_body(Some(&notification.body));
+        application.send_notification(Some(&notification.identifier), &built);
     }
 
     /// The Filtered view, while it is the page on screen.

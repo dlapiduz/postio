@@ -93,12 +93,13 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
             "the has-action toggle names its key: {toggle:?}"
         );
 
-        // What waits for its feature: the filtered-today and digest-rule
-        // counts are there to be shown, and are not shown yet.
+        // What says nothing when there is nothing to say: no mail was
+        // filtered today (C10), and the digest-rule count waits for its
+        // feature (FR-018).
         for class in ["focus-filtered-today", "focus-digest-rules"] {
             assert!(
                 !only(&window, class).is_mapped(),
-                "{class} waits for its feature (FR-018)"
+                "{class} is shown with nothing to count"
             );
         }
     });

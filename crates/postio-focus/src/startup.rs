@@ -103,6 +103,9 @@ impl Session {
             if update.changed.filters {
                 window.set_saved_searches(saved_searches(service.config()));
             }
+            if update.changed.sync {
+                host.notify_with(service.config().sync.clone());
+            }
             if update.changed.focus {
                 let focus = service.config().focus.clone();
                 host.enable_focus(setup(focus.clone(), Some(service.path())));
@@ -161,18 +164,33 @@ pub fn adopt_at(
     // Focus's corrections (stop markers, never-filter, digest rules) are
     // written to this file: the host has to know where it is.
     let focus = host.enable_focus(setup(config.focus.clone(), config_path));
+    let host = std::rc::Rc::new(host);
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
     window.set_focus_config(config.focus.clone());
     window.set_saved_searches(saved_searches(config));
     window.set_remote_runtime(host.runtime());
+    // Focus's notifications follow the classic app's `[sync]` settings,
+    // and are only ever about mail that stayed in its inbox (FR-153).
+    host.notify_with(config.sync.clone());
+    window.set_notifier({
+        // Weakly: the session owns the host, and a notification decided
+        // after it has stopped is none.
+        let deciding = std::rc::Rc::downgrade(&host);
+        std::rc::Rc::new(
+            move |mailbox, messages, attention| match deciding.upgrade() {
+                Some(host) => Box::pin(host.focus_notification(mailbox, messages, attention)),
+                None => Box::pin(std::future::ready(None)),
+            },
+        )
+    });
     window.show_inbox(
         client.clone(),
         state.clone(),
         postio_core::Keymap::resolve(&config.keys),
     );
     Session {
-        host: std::rc::Rc::new(host),
+        host,
         client,
         state,
         focus,
