@@ -341,6 +341,140 @@ pub async fn seed_large(database: &Store, seed: u64, message_count: usize) -> Se
     }
 }
 
+/// Adds `count` messages to `report`'s inbox, received over the 30 days
+/// before `now` and sent to the account, each with a plain-text body here --
+/// the mail Focus's needs-action pass reads (spec 007 FR-141, SC-011).
+/// Answers their ids.
+///
+/// [`seed_large`] anchors its mail months back and stores no body, which is
+/// right for a list and wrong for this pass: it reads only recent inbox mail
+/// whose body is on this machine. The bodies are shaped like a working
+/// person's mail -- a greeting, an ask or an update, a signature, and often
+/// quoted history -- so the pass cuts own text and reads sentences as it
+/// would in a real store. About a third ask something; the rest do not.
+///
+/// # Panics
+///
+/// If a write fails.
+pub async fn seed_recent_with_bodies(
+    database: &Store,
+    report: &SeedReport,
+    count: usize,
+    now: DateTime<Utc>,
+    seed: u64,
+) -> Vec<MessageId> {
+    let inbox = report
+        .mailbox(MailboxRole::Inbox)
+        .expect("the seed made an inbox")
+        .clone();
+    let account = report.account.clone();
+    let connection = database.connect().await.expect("a checked-out connection");
+    let mut rng = Rng::new(seed);
+    let mut ids = Vec::with_capacity(count);
+    let mut made = 0;
+    while made < count {
+        let end = (made + BATCH_SIZE / 2).min(count);
+        let batch: Vec<_> = (made..end)
+            .map(|n| recent_message(n, &account, &inbox, now, &mut rng))
+            .collect();
+        let written = sql::in_scope(&connection, move |scope| async move {
+            let mut written = Vec::with_capacity(batch.len());
+            for (message, body) in batch {
+                let id = file_message(&scope, message.account_id, message).await;
+                write_body(&scope, id, &body).await;
+                written.push(id);
+            }
+            Ok::<_, crate::Error>(written)
+        })
+        .await
+        .expect("commit a batch of recent mail");
+        ids.extend(written);
+        made = end;
+    }
+    ids
+}
+
+/// One recent message and its body, for [`seed_recent_with_bodies`].
+fn recent_message(
+    n: usize,
+    account: &Account,
+    inbox: &Mailbox,
+    now: DateTime<Utc>,
+    rng: &mut Rng,
+) -> (Message, postio_model::MessageBody) {
+    let received_at = now - Duration::minutes(i64::from(rng.below(30 * 24 * 60 - 60)));
+    let mut message = Message::new(account.id, inbox.id, received_at);
+    message.date = Some(received_at);
+    let (name, address) = RECENT_SENDERS[rng.below(RECENT_SENDERS.len() as u32) as usize];
+    let topic = TOPICS[rng.below(TOPICS.len() as u32) as usize].to_lowercase();
+    message.from = vec![EmailAddress::new(Some(name), address)];
+    message.to = vec![account.address.clone()];
+    message.subject = Some(format!("{topic} #{n}"));
+    message.rfc_message_id = Some(RfcMessageId::new(format!("recent-{n}@example.invalid")));
+    let reader = account
+        .address
+        .name
+        .as_deref()
+        .and_then(|name| name.split_whitespace().next())
+        .unwrap_or("there");
+    let first = name.split_whitespace().next().unwrap_or(name);
+    let pick = |from: &[&str], rng: &mut Rng| {
+        from[rng.below(from.len() as u32) as usize].replace("{t}", &topic)
+    };
+    let lead = if rng.chance(33) {
+        pick(RECENT_ASKS, rng)
+    } else {
+        pick(RECENT_UPDATES, rng)
+    };
+    let news = pick(RECENT_UPDATES, rng);
+    let mut text = format!(
+        "Hi {reader},\n\n{lead}\n\n{news}\n\nThanks,\n{first}\n\n-- \n{name}\nExample Co.\n"
+    );
+    if rng.chance(60) {
+        text.push_str(&format!(
+            "\nOn Mon, 7 Sep 2026 at 09:12, {reader} <{}> wrote:\n\
+             > Could you look at the {topic} when you have a moment?\n\
+             > It is the one we spoke about on Friday.\n",
+            account.address.address,
+        ));
+    }
+    message.preview = Some(text.chars().take(120).collect());
+    message.size = text.len() as u64;
+    message.flags = FlagSet::new();
+    message.sync.body_state = BodyState::NotFetched;
+    let body = postio_model::MessageBody {
+        text: Some(text),
+        html: None,
+    };
+    (message, body)
+}
+
+/// Who writes the recent mail: invented people, at reserved domains.
+const RECENT_SENDERS: &[(&str, &str)] = &[
+    ("Quinn Abara", "quinn.abara@example.net"),
+    ("Tove Bergstrom", "tove.bergstrom@example.com"),
+    ("Yoko Tanaka", "tanaka.yoko@jp.example"),
+    ("Remy Okafor", "remy@example.org"),
+    ("Ines Varga", "ines.varga@example.test"),
+];
+
+/// What a third of the recent mail asks of the reader.
+const RECENT_ASKS: &[&str] = &[
+    "Can you approve the {t} figures by Friday so finance can close the quarter?",
+    "Please leave comments on the {t} by Wednesday; I'd like to freeze it Thursday.",
+    "Could you send me the {t} before the end of the week?",
+    "Would you review the {t} and let me know what you think?",
+    "Are you free to go over the {t} on Tuesday afternoon?",
+];
+
+/// What the rest says: news, with nothing asked.
+const RECENT_UPDATES: &[&str] = &[
+    "Just a note that the {t} went out this morning.",
+    "The {t} is in the shared folder now, for when it is useful.",
+    "We moved the {t} to next month, so nothing is needed this week.",
+    "Everything on the {t} is on track, and the numbers look good.",
+];
+
 /// How many messages the next seeded conversation holds.
 ///
 /// Shaped like a working mailbox rather than measured from one: most mail

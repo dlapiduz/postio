@@ -53,7 +53,7 @@
 # that never answers, a compositor that went away mid-test.
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + binary(first_sync_memory) + binary(body_index_memory) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-app) & test(/^navigation_cost::/)) + binary(startup_budget) + binary(excerpt_locate))'
+default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + binary(first_sync_memory) + binary(body_index_memory) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-app) & test(/^navigation_cost::/)) + binary(startup_budget) + binary(excerpt_locate) + binary(first_classification))'
 
 # Retries are OFF by default, deliberately. A retry turns a real failure into
 # a slow pass, and this project's characteristic bug is something that works
@@ -253,6 +253,15 @@ fail-fast = false
 filter = 'binary(cache_pressure)'
 slow-timeout = { period = "120s", terminate-after = 10 }
 
+# Focus's first classification pass (specs/007-postio-focus T147) seeds a
+# hundred thousand messages before it measures anything, and the pass itself
+# sorts sixty thousand of them in the background at one batch per breather.
+# The profile's 720s was sized for tests that are slow; this one is slow and
+# then does a long job, so it gets cache_pressure's workstation clock.
+[[profile.nightly.overrides]]
+filter = 'binary(first_classification)'
+slow-timeout = { period = "120s", terminate-after = 10 }
+
 # What a *shared runner* runs: the nightly profile's reach, minus the one
 # measurement that asserts on a stopwatch.
 #
@@ -290,3 +299,11 @@ fail-fast = false
 filter = 'binary(gtk_accessibility)'
 slow-timeout = { period = "60s", terminate-after = 2 }
 retries = 2
+
+# The same clock for Focus's first classification pass as the nightly
+# profile gives it (see there): it asserts on no stopwatch, so a shared
+# runner may run it, but its seeding alone outlasts this profile's 720s on
+# a slow one.
+[[profile.ci-full.overrides]]
+filter = 'binary(first_classification)'
+slow-timeout = { period = "120s", terminate-after = 10 }
