@@ -102,7 +102,7 @@ impl Session {
             }
             if update.changed.focus {
                 let focus = service.config().focus.clone();
-                host.enable_focus(FocusSetup::default().with_config(focus.clone()));
+                host.enable_focus(setup(focus.clone(), Some(service.path())));
                 window.set_focus_config(focus);
             }
             std::ops::ControlFlow::Continue(())
@@ -115,6 +115,15 @@ impl Session {
     }
 }
 
+/// Focus mode as `focus` says, writing its corrections to `config_path`.
+fn setup(focus: postio_config::FocusConfig, config_path: Option<&std::path::Path>) -> FocusSetup {
+    let setup = FocusSetup::default().with_config(focus);
+    match config_path {
+        Some(path) => setup.with_config_path(path.to_path_buf()),
+        None => setup,
+    }
+}
+
 /// Take a host over an open store and show its inbox in `window`.
 ///
 /// Focus mode first, before anything could sync: the filing pass has to be
@@ -123,12 +132,19 @@ impl Session {
 /// here dials a server; [`Session::start_syncing`] does, after the first
 /// frame.
 pub fn adopt(window: &FocusWindow, host: Host, config: &postio_config::Config) -> Session {
-    // TODO(integration): pass config.toml's path with
-    // `FocusSetup::with_config_path` once the commands lane's host is
-    // merged here; without it the verbs that write `[focus]` (stop markers,
-    // never-filter, digest rules) refuse with a sentence. `app::run` has the
-    // path. `Host::stop` already runs on quit, through `Session::stop`.
-    let focus = host.enable_focus(FocusSetup::default().with_config(config.focus.clone()));
+    adopt_at(window, host, config, None)
+}
+
+/// [`adopt`], for a store opened under the `config.toml` at `config_path`.
+pub fn adopt_at(
+    window: &FocusWindow,
+    host: Host,
+    config: &postio_config::Config,
+    config_path: Option<&std::path::Path>,
+) -> Session {
+    // Focus's corrections (stop markers, never-filter, digest rules) are
+    // written to this file: the host has to know where it is.
+    let focus = host.enable_focus(setup(config.focus.clone(), config_path));
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
     window.set_focus_config(config.focus.clone());
@@ -186,6 +202,7 @@ pub fn open(
     window: &FocusWindow,
     progress: async_channel::Receiver<Progress>,
     config: Rc<postio_config::Config>,
+    config_path: Option<PathBuf>,
     open_again: Rc<dyn Fn() -> async_channel::Receiver<Progress>>,
     opened: Rc<dyn Fn(Session)>,
 ) {
@@ -208,7 +225,7 @@ pub fn open(
         }
         match answer {
             Ok(host) => {
-                let session = adopt(&window, host, &config);
+                let session = adopt_at(&window, host, &config, config_path.as_deref());
                 opened(session);
             }
             Err(reason) => {
@@ -224,6 +241,7 @@ pub fn open(
                                 &window,
                                 open_again(),
                                 Rc::clone(&config),
+                                config_path.clone(),
                                 Rc::clone(&open_again),
                                 Rc::clone(&opened),
                             );

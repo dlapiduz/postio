@@ -25,6 +25,7 @@
 mod across_apps;
 mod chrome;
 mod colours;
+mod corrections;
 mod cursor;
 mod empty;
 mod harness;
@@ -53,6 +54,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
+        corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
+    ),
     (
         "across_apps::what_focus_archives_the_classic_app_sees_archived",
         across_apps::what_focus_archives_the_classic_app_sees_archived as fn(),

@@ -107,6 +107,7 @@ fn open_focus(hex: &str) {
             &window,
             open_again(),
             Rc::new(postio_config::Config::default()),
+            None,
             Rc::clone(&open_again),
             {
                 let opened = Rc::clone(&opened);

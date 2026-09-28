@@ -100,6 +100,7 @@ pub fn run() -> glib::ExitCode {
                 &window,
                 progress,
                 Rc::clone(&config),
+                config_path.clone(),
                 Rc::clone(&open_again),
                 opened,
             );
