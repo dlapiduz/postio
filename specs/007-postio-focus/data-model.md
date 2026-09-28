@@ -324,9 +324,21 @@ reminder.
 archived (`⇧A`). Held → released when the rule is removed, or its sender is
 stopped (`D`). A release deletes the hold, and the message rejoins the inbox.
 
-**Filter decision:** decided → restored (`R`). Restoring deletes the
-decision, moves the message to the inbox, and adds the sender to
-`[focus.filter] never`. Undo reverses all three.
+**Filter decision:** decided → restored (`R`). Restoring moves the message
+to the inbox and adds the sender to `[focus.filter] never`. Undo reverses
+both. As built (T125), the decision is not deleted: it gains `restored_at`.
+Undo removes the sender from `never` only if no other restore from that
+sender still stands.
+
+**What the commands lane added:**
+
+- the columns `drafts.calendar_reply`, which is the RSVP's calendar part, and
+  `markers.answer_until`, when the answer's undo window closes (T112);
+- the `reminders` index `idx_reminders_standing (settled_at, cancelled_at,
+  fired_at)`, because `(fired_at, settled_at)` scanned (T094).
+
+No `no_reply` marker is written. A fired reminder is a surfaced row that
+carries `since` (T136).
 
 **RSVP send:** queued with not-before = keypress + 10 s → cancelled (undo
 within the window) | sending → sent.

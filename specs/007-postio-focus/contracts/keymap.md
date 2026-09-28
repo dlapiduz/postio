@@ -104,6 +104,8 @@ The `>` prefix in the command bar is the finder's mode prefix, not a key.
 | `Digest`, `Reader` | `D` | `stop_digesting_sender` | Focus |
 | `Digest`, `Reader` | `U` | `unsubscribe` | All |
 | `Filtered` | `R` | `restore_filtered` | Focus |
+| message surfaces | `-` | `dismiss_marker` | Focus (T118) |
+| `List` | `F` | `sweep_inbox`: shows a count, then acts | Focus (T128) |
 | `Filtered` | `1` … `7` | `filtered_tab_1` … `filtered_tab_7` | Focus |
 | `Digest` | `]` / `[` | `next_reference` / `prev_reference` | Focus, milestone 2 |
 | `Digest` | `Tab` | `toggle_digest_summary` | Focus, milestone 2 |
