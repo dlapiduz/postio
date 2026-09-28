@@ -145,6 +145,13 @@ impl Client {
     /// Ask `question`, and answer the model's reply if it keeps to the
     /// question's schema.
     pub fn ask(&self, question: &Question<'_>) -> Result<Map<String, Value>, AiError> {
+        // Research R16: schemas stay flat, which is what small local models
+        // keep to and what `Schema::check` can hold completely.
+        if !question.schema.is_flat() {
+            return Err(AiError::Malformed(
+                "the question's schema is not flat".to_owned(),
+            ));
+        }
         if self.resting() {
             return Err(AiError::Down);
         }

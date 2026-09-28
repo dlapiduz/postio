@@ -24,7 +24,6 @@ postio-classify.workspace = true
 postio-config.workspace = true
 # Message types and the egress log's vocabulary.
 postio-model.workspace = true
-serde = { workspace = true }
 # The request and response bodies.
 serde_json = { workspace = true }
 thiserror = { workspace = true }
