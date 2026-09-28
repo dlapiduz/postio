@@ -58,21 +58,23 @@ pub fn what_focus_archives_the_classic_app_sees_archived() {
         );
 
         // The classic app hears it leave the inbox, as its window would.
-        let mut removed = false;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !removed && std::time::Instant::now() < deadline {
-            crate::settle();
+        let removed = std::cell::Cell::new(false);
+        let heard_it = crate::settle_until(async || {
             while let Ok(envelope) = heard.try_recv() {
                 if let postio_core::Event::MessagesRemoved {
                     mailbox, messages, ..
                 } = envelope.event
+                    && mailbox == fixture.inbox
+                    && messages.contains(&message)
                 {
-                    removed |= mailbox == fixture.inbox && messages.contains(&message);
+                    removed.set(true);
                 }
             }
-        }
+            removed.get()
+        })
+        .await;
         assert!(
-            removed,
+            heard_it,
             "the classic app was not told the message left the inbox"
         );
         assert_eq!(
