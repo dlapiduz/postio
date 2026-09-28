@@ -4840,6 +4840,7 @@ dependencies = [
  "postio-core",
  "postio-host",
  "postio-model",
+ "postio-render",
  "postio-session",
  "postio-storage",
  "postio-test-support",

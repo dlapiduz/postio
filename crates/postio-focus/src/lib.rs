@@ -10,6 +10,7 @@
 pub mod app;
 pub mod banner;
 pub mod bulk;
+pub mod chooser;
 pub mod chrome;
 pub mod empty;
 pub mod keymap_dialog;

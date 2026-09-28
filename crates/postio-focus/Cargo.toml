@@ -38,6 +38,8 @@ postio-core.workspace = true
 # (ADR 0041), and Focus turns on its own mode in it.
 postio-host.workspace = true
 postio-model.workspace = true
+# The rendered document's links and text, which `o` offers (US2).
+postio-render.workspace = true
 # Logging, as the other apps set it up.
 postio-session.workspace = true
 postio-ui.workspace = true

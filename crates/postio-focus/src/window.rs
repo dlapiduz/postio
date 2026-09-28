@@ -27,6 +27,9 @@ use crate::chrome::Chrome;
 use crate::list::{Feed, FocusRow, ListPane, RowObject};
 use postio_widgets::list_model::WindowedModel;
 
+/// Where a chosen link or part is opened.
+type Launcher = Rc<dyn Fn(&str)>;
+
 /// The window's pages, by name.
 const BLANK: &str = "blank";
 const OPENING: &str = "opening";
@@ -107,6 +110,11 @@ mod imp {
         pub empty: RefCell<Option<Rc<crate::empty::EmptyInbox>>>,
         /// The open-email dialog, built on the first open and reused.
         pub reading: RefCell<Option<Rc<crate::open::OpenMessage>>>,
+        /// Where a chosen link or part is opened: the desktop, unless a
+        /// test has said otherwise.
+        pub launcher: RefCell<Option<super::Launcher>>,
+        /// What the open-with chooser on screen offers.
+        pub choices: RefCell<Vec<crate::chooser::Choice>>,
     }
 
     impl Default for FocusWindow {
@@ -144,6 +152,8 @@ mod imp {
                 list_or_empty: RefCell::default(),
                 empty: RefCell::default(),
                 reading: RefCell::default(),
+                launcher: RefCell::default(),
+                choices: RefCell::default(),
             }
         }
     }
@@ -405,6 +415,7 @@ impl FocusWindow {
                 self.open_message();
             }
             Ok(CommandId::ViewSource) => self.view_source(),
+            Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(),
             Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
             Ok(CommandId::NextInConversation) => reading.step_thread(1),
             _ => return glib::Propagation::Proceed,
@@ -1162,6 +1173,110 @@ impl FocusWindow {
             total: pane.feed().list().n_items(),
         };
         reading.show(self, &row, position);
+    }
+
+    /// Open URIs through `launch` rather than the desktop: what a test
+    /// records instead of starting a browser.
+    pub fn set_launcher(&self, launch: impl Fn(&str) + 'static) {
+        self.imp().launcher.replace(Some(Rc::new(launch)));
+    }
+
+    /// Open `uri` outside Postio: a deliberate choice's only consequence.
+    fn launch(&self, uri: &str) {
+        let launch = self.imp().launcher.borrow().clone();
+        match launch {
+            Some(launch) => launch(uri),
+            None => {
+                gtk::UriLauncher::new(uri).launch(Some(self), None::<&gio::Cancellable>, |_| {})
+            }
+        }
+    }
+
+    /// `o`: offer the open message's links and parts (US2 scenario 9).
+    fn offer_choices(&self) {
+        let Some(reading) = self.reading().filter(|reading| reading.is_open()) else {
+            return;
+        };
+        let choices = reading.choices();
+        if choices.is_empty() {
+            self.imp()
+                .toast
+                .show_notice("This message has no links or attachments to open");
+            self.follow_toast();
+            return;
+        }
+        self.imp().choices.replace(choices.clone());
+        let window = self.downgrade();
+        crate::chooser::dialog(&choices, move |index| {
+            if let Some(window) = window.upgrade() {
+                window.open_choice(index);
+            }
+        })
+        .present(Some(self));
+    }
+
+    /// What the open-with chooser offers, each as its words and its target
+    /// or size; empty while it is not shown.
+    pub fn choices_shown(&self) -> Vec<(String, String)> {
+        let shown = self
+            .visible_dialog()
+            .is_some_and(|dialog| dialog.widget_name() == crate::chooser::DIALOG_NAME);
+        if !shown {
+            return Vec::new();
+        }
+        self.imp()
+            .choices
+            .borrow()
+            .iter()
+            .map(crate::chooser::Choice::said)
+            .collect()
+    }
+
+    /// Choose the `index`th thing the chooser offers, as a click on it does.
+    pub fn choose(&self, index: usize) {
+        if let Some(dialog) = self
+            .visible_dialog()
+            .filter(|dialog| dialog.widget_name() == crate::chooser::DIALOG_NAME)
+        {
+            dialog.close();
+        }
+        self.open_choice(index);
+    }
+
+    /// Open what the chooser offered at `index`: a link as it is, a part
+    /// written out by the host first.
+    fn open_choice(&self, index: usize) {
+        let Some(choice) = self.imp().choices.borrow().get(index).cloned() else {
+            return;
+        };
+        self.imp().choices.borrow_mut().clear();
+        match choice {
+            crate::chooser::Choice::Link { target, .. } => self.launch(&target),
+            crate::chooser::Choice::Part { id, .. } => {
+                let (Some(message), Some(client)) = (
+                    self.reading().and_then(|reading| reading.shown()),
+                    self.imp().client.borrow().clone(),
+                ) else {
+                    return;
+                };
+                let window = self.downgrade();
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive;
+                    // the host answers on its own runtime (ADR 0041).
+                    let written = client.open_part(message, id).await;
+                    let Some(window) = window.upgrade() else {
+                        return;
+                    };
+                    match written {
+                        Ok(path) => window.launch(&gio::File::for_path(path).uri()),
+                        Err(error) => {
+                            window.imp().toast.show_notice(&error.to_string());
+                            window.follow_toast();
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// The raw source on screen, while it is shown.

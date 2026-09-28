@@ -86,6 +86,8 @@ pub struct OpenMessage {
     at: Rc<Cell<usize>>,
     position: Cell<Position>,
     messages: Cell<u32>,
+    /// The parts of the message on screen, as its row lists them.
+    parts: Rc<RefCell<Vec<Attachment>>>,
 }
 
 impl OpenMessage {
@@ -229,6 +231,7 @@ impl OpenMessage {
             at: Rc::default(),
             position: Cell::new(Position { index: 0, total: 0 }),
             messages: Cell::new(1),
+            parts: Rc::default(),
         });
 
         let weak = Rc::downgrade(&page);
@@ -421,6 +424,8 @@ impl OpenMessage {
         let client = self.client.clone();
         let reader = self.reader.clone();
         let current = Rc::clone(&self.generation);
+        let shown_parts = Rc::clone(&self.parts);
+        shown_parts.borrow_mut().clear();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
@@ -451,6 +456,7 @@ impl OpenMessage {
                 .as_deref()
                 .map(|row| row.attachments.clone())
                 .unwrap_or_default();
+            shown_parts.replace(parts.clone());
             match reading.body {
                 Body::Ready {
                     body,
@@ -576,6 +582,47 @@ impl OpenMessage {
         self.subtitle.text().to_string()
     }
 
+    /// What `o` offers for the message on screen: its links, each with the
+    /// words it was written behind and its full target, then its parts.
+    pub fn choices(&self) -> Vec<crate::chooser::Choice> {
+        use crate::chooser::Choice;
+        let mut choices: Vec<Choice> = Vec::new();
+        if let Some(document) = self.reader.view().document() {
+            for link in &document.links {
+                let postio_render::LinkTarget::External(url) = &link.target else {
+                    continue;
+                };
+                let target = url.to_string();
+                if choices
+                    .iter()
+                    .any(|choice| matches!(choice, Choice::Link { target: t, .. } if *t == target))
+                {
+                    continue;
+                }
+                let words = words_in(&document, link.rect);
+                choices.push(Choice::Link {
+                    words: if words.is_empty() {
+                        target.clone()
+                    } else {
+                        words
+                    },
+                    target,
+                });
+            }
+        }
+        for part in self.parts.borrow().iter() {
+            let Some(name) = part.filename.clone() else {
+                continue;
+            };
+            choices.push(Choice::Part {
+                name,
+                size: postio_ui::format::human_size(part.size),
+                id: part.id,
+            });
+        }
+        choices
+    }
+
     /// How many of the conversation's messages `[` and `]` can step
     /// through: none until the conversation has been read.
     pub fn thread_known(&self) -> usize {
@@ -623,4 +670,26 @@ fn root_type(stored: Option<&str>, body: &MessageBody, parts: &[Attachment]) -> 
 /// `RemoteImageAllowList`'s own file: the one every reader of the app shares.
 pub fn allowlist_path() -> std::path::PathBuf {
     RemoteImageAllowList::path()
+}
+
+/// The words drawn inside `rect`.
+fn words_in(document: &postio_render::RenderedDocument, rect: postio_render::Rect) -> String {
+    let inside: Vec<&postio_render::Cluster> = document
+        .text
+        .clusters
+        .iter()
+        .filter(|cluster| {
+            rect.contains(postio_render::Point::new(
+                (cluster.rect.x0 + cluster.rect.x1) / 2.0,
+                (cluster.rect.y0 + cluster.rect.y1) / 2.0,
+            ))
+        })
+        .collect();
+    match (
+        inside.iter().map(|c| c.range.start).min(),
+        inside.iter().map(|c| c.range.end).max(),
+    ) {
+        (Some(start), Some(end)) => document.text.slice(start..end).trim().to_owned(),
+        _ => String::new(),
+    }
 }

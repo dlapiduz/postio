@@ -292,6 +292,50 @@ impl Fixture {
 }
 
 impl Fixture {
+    /// Store `html` as `message`'s body, fetched in full.
+    pub async fn write_html_body(&self, message: MessageId, html: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        MessageRepository::new(&connection)
+            .set_body(
+                message,
+                &postio_storage::repository::StoredBody {
+                    text: None,
+                    html: Some(html.to_owned()),
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("a body");
+    }
+
+    /// A message from Ada with one attached file, `name`, in the inbox.
+    pub async fn file_with_attachment(&self, subject: &str, name: &str) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut message = Message::new(self.account.id, self.inbox, now() - Duration::minutes(5));
+        message.from = vec![EmailAddress::new(Some("Ada Moreno"), "ada@example.com")];
+        message.subject = Some(subject.to_owned());
+        message.preview = Some("See attached.".to_owned());
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<attached.{name}@example.test>"
+        )));
+        let mut attachment =
+            postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", 48_000);
+        attachment.filename = Some(name.to_owned());
+        message.attachments.push(attachment);
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        ThreadingRepository::new(&connection, self.account.id)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        message.id
+    }
+
     /// Keep `raw` as `message`'s raw source, as a fetched message is kept.
     pub async fn write_raw(&self, message: MessageId, raw: &[u8]) {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())

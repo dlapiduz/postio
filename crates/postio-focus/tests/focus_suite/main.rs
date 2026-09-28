@@ -34,6 +34,7 @@ mod keymap;
 mod list_contract;
 mod marked_rows;
 mod one_keymap;
+mod open_choice;
 mod open_message;
 mod registry_parity;
 mod reload;
@@ -56,6 +57,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "open_choice::o_offers_the_links_and_parts_and_opens_only_what_is_chosen",
+        open_choice::o_offers_the_links_and_parts_and_opens_only_what_is_chosen as fn(),
+    ),
     (
         "view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message",
         view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message as fn(),
