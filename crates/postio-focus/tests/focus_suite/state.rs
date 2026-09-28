@@ -111,8 +111,10 @@ pub fn each_sync_state_shows_its_banner_and_label() {
             "the banner stayed: {:?}",
             window.banner_showing()
         );
+        // The label follows the same events on its own handler, so it is
+        // waited for too rather than read the instant the banner goes.
         assert!(
-            window.sync_said().starts_with("Synced "),
+            crate::settle_until(async || window.sync_said().starts_with("Synced ")).await,
             "the label says when it synced: {}",
             window.sync_said()
         );
