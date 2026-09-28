@@ -130,6 +130,10 @@ mod imp {
         pub snooze: RefCell<Option<Rc<WhenPicker>>>,
         /// The remind picker, built the first time `h` opens it.
         pub remind: RefCell<Option<Rc<WhenPicker>>>,
+        /// The label picker, built the first time `l` opens it.
+        pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
+        /// The move picker, built the first time `m` opens it.
+        pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
     }
 
     impl Default for FocusWindow {
@@ -176,6 +180,8 @@ mod imp {
                 at_inbox: Cell::new(true),
                 snooze: RefCell::default(),
                 remind: RefCell::default(),
+                labels: RefCell::default(),
+                moves: RefCell::default(),
             }
         }
     }
@@ -334,6 +340,12 @@ impl FocusWindow {
             if let Some(picker) = picker.borrow().as_ref() {
                 picker.set_keymap(&keymap);
             }
+        }
+        if let Some(labels) = imp.labels.borrow().as_ref() {
+            labels.set_keymap(&keymap);
+        }
+        if let Some(moves) = imp.moves.borrow().as_ref() {
+            moves.set_keymap(&keymap);
         }
         imp.keymap.replace(keymap);
         // An open key map is drawn from the keymap: draw it again.
@@ -540,6 +552,8 @@ impl FocusWindow {
             CommandId::ViewSource => self.view_source(),
             CommandId::Snooze => self.open_when(When::Snooze),
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
+            CommandId::AddLabel => self.open_labels(),
+            CommandId::Move => self.open_moves(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -1604,7 +1618,107 @@ impl FocusWindow {
                     .as_ref()
                     .map(|picker| Rc::clone(picker.picker()))
             })
+            .chain(
+                imp.labels
+                    .borrow()
+                    .as_ref()
+                    .map(|labels| Rc::clone(labels.picker())),
+            )
+            .chain(
+                imp.moves
+                    .borrow()
+                    .as_ref()
+                    .map(|moves| Rc::clone(moves.picker())),
+            )
             .find(|picker| picker.is_open())
+    }
+
+    /// Open the move picker at the cursor's row (US5 scenario 6): the
+    /// move goes where every verb goes, and the selection with it.
+    fn open_moves(&self) {
+        let imp = self.imp();
+        let Some(client) = imp.client.borrow().clone() else {
+            return;
+        };
+        let picker = imp.moves.borrow().clone();
+        let picker = picker.unwrap_or_else(|| {
+            let picker = crate::move_picker::MovePicker::new(client, &self.keymap());
+            imp.moves.replace(Some(Rc::clone(&picker)));
+            picker
+        });
+        let Some((anchor, rect)) = self.at_the_row() else {
+            return;
+        };
+        let target = self.picker_target();
+        picker.open(
+            &anchor,
+            Some(&rect),
+            &target,
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |command| window.send(command)
+            ),
+        );
+    }
+
+    /// Open the label picker at the cursor's row, over what a verb would
+    /// aim at now (US5 scenario 5). Each change it makes is sent to those
+    /// same conversations, and the selection goes when it closes.
+    fn open_labels(&self) {
+        let imp = self.imp();
+        let Some(client) = imp.client.borrow().clone() else {
+            return;
+        };
+        let Some(account) = imp.accounts.borrow().first().copied() else {
+            return;
+        };
+        let aims = self.aims();
+        if aims.is_empty() {
+            return;
+        }
+        let picker = imp.labels.borrow().clone();
+        let picker = picker.unwrap_or_else(|| {
+            let picker = crate::label_picker::LabelPicker::new(client.clone(), &self.keymap());
+            picker.picker().connect_closed(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move || window.clear_selection()
+            ));
+            imp.labels.replace(Some(Rc::clone(&picker)));
+            picker
+        });
+        let threads = aims
+            .iter()
+            .filter_map(|aim| match aim {
+                MessageTarget::Threads(threads) => Some(threads.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let Some((anchor, rect)) = self.at_the_row() else {
+            return;
+        };
+        let target = self.picker_target();
+        picker.open(
+            &anchor,
+            Some(&rect),
+            &target,
+            account,
+            threads,
+            move |command| {
+                let (client, aims) = (client.clone(), aims.clone());
+                glib::spawn_future_local(async move {
+                    for aim in aims {
+                        // POSTIO-GLIB-SAFE: as `send`'s.
+                        let sent = client.send(command.clone().with_target(aim)).await;
+                        if let Err(error) = sent {
+                            tracing::warn!(%error, "Focus could not send a command: {error}");
+                        }
+                    }
+                });
+            },
+        );
     }
 
     /// Open the snooze or remind picker at the cursor's row, aimed at the

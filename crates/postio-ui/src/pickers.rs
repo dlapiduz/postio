@@ -67,6 +67,65 @@ pub fn remind_footnote(now: DateTime<Local>) -> String {
     )
 }
 
+/// The label picker's filter placeholder.
+pub const LABEL_FILTER: &str = "Filter, or type a new label";
+/// The move picker's filter placeholder.
+pub const MOVE_FILTER: &str = "Filter folders";
+/// What a label row says when the target already carries it.
+pub const APPLIED: &str = "\u{2713} applied";
+
+/// The row that makes a label nobody has: `Create label “Receipts”`.
+pub fn create_label(name: &str) -> String {
+    format!("Create label \u{201c}{}\u{201d}", name.trim())
+}
+
+/// The label picker's footnote, with its keys.
+pub fn label_footnote(keymap: &Keymap) -> String {
+    let mut said = Vec::new();
+    if let Some(key) = crate::hints::key(keymap, CommandId::PickerToggle) {
+        said.push(format!("{key} toggles a label"));
+    }
+    if let Some(key) = crate::hints::key(keymap, CommandId::PickerConfirm) {
+        said.push(format!("{key} closes"));
+    }
+    said.push(
+        "typing a name that doesn\u{2019}t exist offers \u{201c}Create label\u{201d}.".to_owned(),
+    );
+    said.join(" \u{b7} ")
+}
+
+/// The move picker's footnote, with its keys.
+pub fn move_footnote(keymap: &Keymap) -> String {
+    let mut said = Vec::new();
+    match crate::hints::key(keymap, CommandId::PickerConfirm) {
+        Some(key) => said.push(format!("{key} moves the message and it leaves the inbox")),
+        None => said.push("The message leaves the inbox".to_owned()),
+    }
+    if let Some(key) = crate::hints::key(keymap, CommandId::Undo) {
+        said.push(format!("{key} undoes."));
+    }
+    said.join(" \u{b7} ")
+}
+
+/// Which of `names` a filter keeps, in order: every name containing
+/// `filter`, in any case.
+pub fn filtered<'a>(names: impl IntoIterator<Item = &'a str>, filter: &str) -> Vec<usize> {
+    let wanted = filter.trim().to_lowercase();
+    names
+        .into_iter()
+        .enumerate()
+        .filter(|(_, name)| wanted.is_empty() || name.to_lowercase().contains(&wanted))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Whether `filter` names a label none of `names` is, in any case: when
+/// the label picker offers to create it.
+pub fn offers_create<'a>(names: impl IntoIterator<Item = &'a str>, filter: &str) -> bool {
+    let wanted = filter.trim().to_lowercase();
+    !wanted.is_empty() && !names.into_iter().any(|name| name.to_lowercase() == wanted)
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
@@ -116,6 +175,34 @@ mod tests {
         assert_eq!(
             target(3, "Ada Moreno", "Atlas Q3 budget"),
             "3 conversations"
+        );
+    }
+
+    #[test]
+    fn a_filter_keeps_what_contains_it_and_offers_what_nobody_has() {
+        let names = ["Atlas", "Harbor", "Kitchen reno"];
+        assert_eq!(filtered(names, ""), [0, 1, 2]);
+        assert_eq!(filtered(names, "AR"), [1]);
+        assert_eq!(filtered(names, "re"), [2]);
+        assert!(!offers_create(names, ""), "nothing typed, nothing to make");
+        assert!(!offers_create(names, "atlas"), "Atlas exists, in any case");
+        assert!(offers_create(names, "Receipts"));
+        assert_eq!(
+            create_label(" Receipts "),
+            "Create label \u{201c}Receipts\u{201d}"
+        );
+    }
+
+    #[test]
+    fn the_list_pickers_footnotes_name_their_keys() {
+        assert_eq!(
+            label_footnote(Keymap::defaults()),
+            "space toggles a label \u{b7} Return closes \u{b7} typing a name that \
+             doesn\u{2019}t exist offers \u{201c}Create label\u{201d}."
+        );
+        assert_eq!(
+            move_footnote(Keymap::defaults()),
+            "Return moves the message and it leaves the inbox \u{b7} ctrl+z undoes."
         );
     }
 

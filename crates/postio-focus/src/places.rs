@@ -435,6 +435,21 @@ fn mark(mark: &Mark, name: &str, accent_hue: f64) -> gtk::Widget {
     }
 }
 
+/// A label's colour, as its pill and its dot draw it.
+pub(crate) fn label_rgba(label: &postio_model::Label) -> gtk::gdk::RGBA {
+    let colour = label_colour(
+        &label.name,
+        label.color.as_deref().and_then(Rgb::from_hex),
+        accent_hue(),
+    );
+    gtk::gdk::RGBA::new(
+        f32::from(colour.r) / 255.0,
+        f32::from(colour.g) / 255.0,
+        f32::from(colour.b) / 255.0,
+        1.0,
+    )
+}
+
 /// The hue labels without a colour of their own are spread around.
 fn accent_hue() -> f64 {
     let manager = adw::StyleManager::default();

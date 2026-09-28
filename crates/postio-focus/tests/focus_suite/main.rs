@@ -71,8 +71,20 @@ const CASES: &[(&str, fn())] = &[
         bar::offline_search_answers_locally_one_request_a_keystroke as fn(),
     ),
     (
+        "pickers::escape_closes_a_picker_and_changes_nothing",
+        pickers::escape_closes_a_picker_and_changes_nothing as fn(),
+    ),
+    (
         "pickers::h_then_3_reminds_at_the_end_of_the_week",
         pickers::h_then_3_reminds_at_the_end_of_the_week as fn(),
+    ),
+    (
+        "pickers::l_toggles_a_label_and_creates_a_new_one",
+        pickers::l_toggles_a_label_and_creates_a_new_one as fn(),
+    ),
+    (
+        "pickers::m_moves_three_to_receipts_and_ctrl_z_returns_them",
+        pickers::m_moves_three_to_receipts_and_ctrl_z_returns_them as fn(),
     ),
     (
         "pickers::s_then_2_snoozes_the_row_until_tomorrow_morning",
