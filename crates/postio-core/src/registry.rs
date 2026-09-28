@@ -120,21 +120,43 @@ pub enum Requirement {
     /// research R4). The one keymap reserves their keys in every app; only
     /// Focus offers them.
     Focus,
+    /// The frontend has to be one of the three-pane apps -- the classic
+    /// desktop app, the terminal and macOS -- because the command works on
+    /// what they have and Postio Focus does not: a folder sidebar, panes to
+    /// move between, the parts panel, and flags. Focus shows one list and
+    /// opens mail in dialogs, and "Has action" plays the part flags play
+    /// (specs/007-postio-focus, spec C13). The one keymap keeps these keys
+    /// free in Focus.
+    ThreePane,
 }
 
 impl Requirement {
     /// Every requirement, in declaration order. What [`RequirementSet`] is
     /// built over.
-    pub const ALL: [Requirement; 5] = [
+    pub const ALL: [Requirement; 6] = [
         Requirement::SingleAccount,
         Requirement::StoreOpen,
         Requirement::Terminal,
         Requirement::Graphical,
         Requirement::Focus,
+        Requirement::ThreePane,
     ];
 
     const fn bit(self) -> u8 {
         1 << (self as u8)
+    }
+
+    /// Whether this requirement is about which app is asking -- settled
+    /// once, when the app starts -- rather than about its state, which
+    /// changes while it runs.
+    pub const fn is_about_the_app(self) -> bool {
+        matches!(
+            self,
+            Requirement::Terminal
+                | Requirement::Graphical
+                | Requirement::Focus
+                | Requirement::ThreePane
+        )
     }
 }
 
@@ -181,6 +203,26 @@ impl RequirementSet {
         Requirement::ALL
             .iter()
             .all(|need| !self.contains(*need) || need.met_by(state))
+    }
+
+    /// Whether `frontend` offers a command with these requirements at all,
+    /// whatever state it is in.
+    ///
+    /// The question a keymap asks when it decides which keys an app binds:
+    /// a key the one keymap keeps for another app is bound to nothing here,
+    /// rather than reaching a command this app never offers
+    /// (specs/007-postio-focus research R4). State is not the keymap's to
+    /// judge -- a key bound to something that needs the store says so out
+    /// loud while the store is shut (#1114) -- so only the requirements
+    /// [about the app](Requirement::is_about_the_app) are asked.
+    pub fn offered_by(self, frontend: Frontend) -> bool {
+        let app = Availability {
+            frontend,
+            ..Availability::open(Scope::Unified)
+        };
+        self.iter()
+            .filter(|need| need.is_about_the_app())
+            .all(|need| need.met_by(app))
     }
 
     /// The requirements in the set, for a failure message that has to name
@@ -253,6 +295,7 @@ impl Requirement {
             Requirement::Terminal => state.frontend == Frontend::Terminal,
             Requirement::Graphical => state.frontend != Frontend::Terminal,
             Requirement::Focus => state.frontend == Frontend::Focus,
+            Requirement::ThreePane => state.frontend != Frontend::Focus,
         }
     }
 }
@@ -318,6 +361,15 @@ const MAIL: RequirementSet = needs(&[Requirement::StoreOpen]);
 const TERMINAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Terminal]);
 /// Mail drawn as pixels: zoom and darken (spec 006).
 const GRAPHICAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Graphical]);
+/// Works on what only Postio Focus has: invitations from the row, the
+/// has-action filter, Filtered, digests and reminders (specs/007-postio-focus
+/// research R4). Every other app keeps the key free and offers nothing on it.
+const FOCUS_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Focus]);
+/// Mail on a surface only the three-pane apps have: flags and the parts
+/// panel. Focus has neither.
+const THREE_PANE_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::ThreePane]);
+/// Chrome only the three-pane apps have: the sidebar and the panes.
+const THREE_PANE_CHROME: RequirementSet = needs(&[Requirement::ThreePane]);
 
 /// Chrome: it means the same thing with an empty window as with a full one.
 const CHROME: RequirementSet = RequirementSet::NONE;
@@ -434,10 +486,12 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::OpenMessage,
         title: "Open message",
-        // `Return` is what config.toml documents; `l` is the canvas's
-        // vim-style open, and both reach the same command.
+        // `Return` is what config.toml documents, and `Right` goes one level
+        // in the way `Left` comes back out. `l` was the vim-style open until
+        // the one keymap gave it to labels (specs/007-postio-focus
+        // contracts/keymap.md).
         default_binding: "Return",
-        alternate_bindings: &["l", "Right"],
+        alternate_bindings: &["Right"],
         contexts: ctx(&[Context::List, Context::Conversation, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
@@ -462,10 +516,10 @@ static SPECS: &[CommandSpec] = &[
         title: "Extend selection down",
         default_binding: "J",
         alternate_bindings: &["shift+Down"],
-        // `LIST_SURFACES` minus the conversation: `J` walks the open
-        // conversation's messages there (#1007), and there is no row
-        // selection to extend while the keyboard is inside the pane.
-        // `shift+Down` still reaches this everywhere it ever did.
+        // `LIST_SURFACES` minus the conversation: there is no row selection
+        // to extend while the keyboard is inside the pane, which walks one
+        // thread's messages on `]` and `[` (#1007). `shift+Down` still
+        // reaches this everywhere it ever did.
         contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -485,8 +539,12 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::SelectAll,
         title: "Select all",
-        default_binding: "mod+a",
-        alternate_bindings: &[],
+        // Shifted `x`, the key that selects one row: the same verb, for all
+        // of them (specs/007-postio-focus contracts/keymap.md). `mod+a`
+        // stays, for the hand that reaches for it from every other
+        // application.
+        default_binding: "X",
+        alternate_bindings: &["mod+a"],
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -495,8 +553,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::PrevView,
         title: "Previous view",
-        default_binding: "h",
-        alternate_bindings: &["Left"],
+        // `Left`, the way back out that `Right` goes in. `h` is Focus's
+        // remind key under the one keymap.
+        default_binding: "Left",
+        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -515,11 +575,11 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::ToggleResultOrder,
-        // The same title and key as the thread's own toggle, deliberately:
-        // "the order of what I am looking at" is one idea, and `o` means it
-        // in both places (#499).
+        // The same title as the thread's own toggle, deliberately: "the
+        // order of what I am looking at" is one idea (#499). Shifted since
+        // the one keymap gave `o` to opening an attachment or a link.
         title: "Toggle result order",
-        default_binding: "o",
+        default_binding: "O",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Search]),
         destructive: false,
@@ -530,13 +590,14 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::NextInConversation,
         title: "Next message in conversation",
-        // Shifted `j`, because it is the same verb one level in: `j` walks
-        // the list of conversations, `J` walks the messages of the one that
-        // is open. The pair `a`/`A` already means "this, and this whole
-        // thread" -- the shift is the level, not a different action.
-        default_binding: "J",
+        // `]` and `[`: `j` walks the list of conversations, and these walk
+        // the messages of the one that is open -- in the classic pane, and
+        // in Focus's reading dialog, which steps through the thread
+        // (specs/007-postio-focus contracts/keymap.md). `J`/`K` extend the
+        // list's selection.
+        default_binding: "]",
         alternate_bindings: &[],
-        contexts: ctx(&[Context::Conversation]),
+        contexts: ctx(&[Context::Conversation, Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -544,9 +605,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::PrevInConversation,
         title: "Previous message in conversation",
-        default_binding: "K",
+        default_binding: "[",
         alternate_bindings: &[],
-        contexts: ctx(&[Context::Conversation]),
+        contexts: ctx(&[Context::Conversation, Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -615,8 +676,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::DarkenMessage,
         title: "Darken this message",
-        // `D` is unbound (`d` is taken); shifted letters are this app's idiom for a stronger form. The title reads "Show as sent" while the message is darkened -- the command is its own undo.
-        default_binding: "D",
+        // `alt+d`: `D` stops digesting a sender under the one keymap
+        // (specs/007-postio-focus contracts/keymap.md). The title reads "Show
+        // as sent" while the message is darkened -- the command is its own
+        // undo.
+        default_binding: "alt+d",
         alternate_bindings: &[],
         // Wherever `View original` is (spec 006 contracts/registry-commands).
         contexts: ctx(MESSAGE_SURFACES),
@@ -783,7 +847,9 @@ static SPECS: &[CommandSpec] = &[
         title: "Archive thread",
         default_binding: "A",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        // In a digest it archives the whole digest: "archive everything this
+        // row stands for" (specs/007-postio-focus research R4).
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
         destructive: true,
         recovery: Recovery::Undo,
         requires: MAIL,
@@ -791,7 +857,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Delete,
         title: "Delete",
-        default_binding: "d",
+        // The key that says it. `d` is Focus's digest key under the one
+        // keymap, and "delete" has one key everywhere it is offered.
+        default_binding: "Delete",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
@@ -815,20 +883,24 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Flag,
         title: "Flag",
-        default_binding: "s",
+        // `*`, a star: `s` snoozes under the one keymap
+        // (specs/007-postio-focus contracts/keymap.md).
+        default_binding: "*",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        // Focus offers no flag verb: "Has action" plays that part there
+        // (spec C13), and the key stays for the other apps.
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
-        id: CommandId::MarkUnread,
-        title: "Mark unread",
-        // `u` belongs to undo (docs/PRODUCT.md §16), so mark-unread is
-        // shifted, like the other second-choice actions. The original brief
-        // proposed `u` here and lost that argument to the canvas.
-        default_binding: "U",
+        id: CommandId::ToggleRead,
+        title: "Mark read or unread",
+        // `r` for read, one key for both directions: the verb toggles
+        // (`Command::ToggleRead` with no state). `U` unsubscribes under the
+        // one keymap (specs/007-postio-focus contracts/keymap.md).
+        default_binding: "r",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -838,9 +910,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Snooze,
         title: "Snooze",
-        // `b`, matching the mnemonic every other snooze-shaped mail client
-        // already trained a person on.
-        default_binding: "b",
+        // `s`, the one keymap's snooze (specs/007-postio-focus
+        // contracts/keymap.md); `B` still unsnoozes.
+        default_binding: "s",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -858,9 +930,23 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::RemindIfNoReply,
+        // The ellipsis says a picker opens, as it does for `Schedule send…`.
+        title: "Remind if no reply…",
+        default_binding: "h",
+        // The composer's key, where `h` is a letter being typed.
+        alternate_bindings: &["mod+h"],
+        contexts: ctx(REPLY_SURFACES),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
         id: CommandId::AddLabel,
         title: "Add label…",
-        default_binding: "L",
+        // `l` for label, unshifted now that it no longer opens a message
+        // (specs/007-postio-focus contracts/keymap.md).
+        default_binding: "l",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -868,6 +954,76 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     // -- Search ----------------------------------------------------------
+    CommandSpec {
+        id: CommandId::AcceptInvite,
+        title: "Accept invitation",
+        // `y` for yes, and its shift for no.
+        default_binding: "y",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        // The reply is on its way once a short window closes, the way a send
+        // is (research R9), so it is undone inside the window and not from
+        // the undo stack.
+        recovery: Recovery::Window,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::DeclineInvite,
+        title: "Decline invitation",
+        default_binding: "Y",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::Window,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::DigestRule,
+        title: "Digest rule…",
+        default_binding: "d",
+        alternate_bindings: &[],
+        // From a message, a new rule for its sender; in a digest, that
+        // digest's own rule and cadence.
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
+        destructive: false,
+        // It opens the rule dialog, whose Create is the act, and a rule is
+        // removed where rules are listed (`g d`).
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::StopDigestingSender,
+        title: "Stop digesting this sender",
+        default_binding: "D",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Digest, Context::Reader]),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ViewSource,
+        title: "View source",
+        // Focus's for now. The other apps adopt it with a source view of
+        // their own, and the key is kept free for them.
+        default_binding: "v",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::OpenAttachmentOrLink,
+        title: "Open attachment or link…",
+        default_binding: "o",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
     CommandSpec {
         id: CommandId::Search,
         title: "Search",
@@ -897,6 +1053,18 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     // -- Compose ---------------------------------------------------------
+    CommandSpec {
+        id: CommandId::BackToWords,
+        title: "Back to words",
+        // Beside the word-erasing `mod+BackSpace` every text field knows:
+        // this takes the chips back to the words they were typed as.
+        default_binding: "mod+BackSpace",
+        alternate_bindings: &[],
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
     CommandSpec {
         id: CommandId::Compose,
         title: "Compose",
@@ -1184,14 +1352,17 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Undo,
         title: "Undo",
-        default_binding: "u",
+        // `mod+z`, the undo every other application has taught
+        // (specs/007-postio-focus contracts/keymap.md). A terminal delivers
+        // it as `ctrl+z`, and nothing there suspends.
+        default_binding: "mod+z",
         alternate_bindings: &[],
         // Plus the account list. #464 built account removal as a soft delete
         // with a toast wired straight to AccountRepository::restore rather
         // than through the global stack, and said so because Remove was not a
         // command then. Registering it with Recovery::Undo makes that a
         // declaration, and a declaration nothing backs from the keyboard is
-        // what ADR 0005 keeps refusing to ship -- so `u` reaches the toast
+        // what ADR 0005 keeps refusing to ship -- so undo reaches the toast
         // while it is up. Context-local state, context-local binding; the
         // global stack is untouched (ADR 0005 Q6c).
         contexts: ctx(MESSAGE_SURFACES).with(Context::Accounts),
@@ -1297,10 +1468,11 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Unsubscribe,
         title: "Unsubscribe from this list",
         // Shifted and deliberate: an unsubscribe tells the sender the address
-        // is read, so it is never one stray keystroke away.
-        default_binding: "X",
+        // is read, so it is never one stray keystroke away. `U`, and in a
+        // digest too (specs/007-postio-focus contracts/keymap.md).
+        default_binding: "U",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1321,14 +1493,16 @@ static SPECS: &[CommandSpec] = &[
         ]),
         destructive: false,
         recovery: Recovery::None,
-        requires: CHROME,
+        requires: THREE_PANE_CHROME,
     },
     CommandSpec {
-        id: CommandId::FocusSidebar,
-        title: "Focus the folder list",
+        id: CommandId::GoToFolders,
+        title: "Go to folders",
         // `g` is already the "go to" prefix — `g g` is the first message — so
-        // "go to folders" reads as one idiom rather than a second one.
-        default_binding: "g f",
+        // "go to folders" reads as one idiom rather than a second one. The
+        // classic app puts the keyboard in its folder list; Focus opens its
+        // folders popover. `g f` is Focus's Filtered.
+        default_binding: "g o",
         alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
         destructive: false,
@@ -1339,7 +1513,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::GoToInbox,
         title: "Go to inbox",
         // `g` is already this app's "go to" prefix -- `g g` is the first
-        // message, `g f` the folder list -- so a destination reads as the
+        // message, `g o` the folders -- so a destination reads as the
         // same idiom rather than a second one. `i` for inbox, which is what every mail client on the web binds it to.
         //
         // Targets the *role*, not a name: an inbox a provider calls something
@@ -1361,30 +1535,8 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::GoToDrafts,
         title: "Go to drafts",
         // `g` is already this app's "go to" prefix -- `g g` is the first
-        // message, `g f` the folder list -- so a destination reads as the
-        // same idiom rather than a second one. `d` for drafts, the same.
-        //
-        // Targets the *role*, not a name: an inbox a provider calls something
-        // else, or names in another language, is still where `g i` goes.
-        default_binding: "g d",
-        alternate_bindings: &[],
-        // The surfaces a person is standing on when they want to be somewhere
-        // else -- the folder list included. Not the composer, where `g` is a
-        // letter being typed.
-        contexts: ctx(GO_SURFACES),
-        destructive: false,
-        // Going somewhere destroys nothing, so there is nothing to get back.
-        recovery: Recovery::None,
-        // The store, like every other way of moving between folders: there
-        // are no folders to go to without one.
-        requires: MAIL,
-    },
-    CommandSpec {
-        id: CommandId::GoToSent,
-        title: "Go to sent",
-        // `g` is already this app's "go to" prefix -- `g g` is the first
-        // message, `g f` the folder list -- so a destination reads as the
-        // same idiom rather than a second one. `t`, not `s`: the convention being copied spells sent mail that way, and `s` is taken below by the flagged folder for the same reason.
+        // message, `g o` the folders -- so a destination reads as the
+        // same idiom rather than a second one. `t`, since `g d` is Focus's digest rules (specs/007-postio-focus contracts/keymap.md).
         //
         // Targets the *role*, not a name: an inbox a provider calls something
         // else, or names in another language, is still where `g i` goes.
@@ -1402,11 +1554,11 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
-        id: CommandId::GoToFlagged,
-        title: "Go to flagged",
+        id: CommandId::GoToSent,
+        title: "Go to sent",
         // `g` is already this app's "go to" prefix -- `g g` is the first
-        // message, `g f` the folder list -- so a destination reads as the
-        // same idiom rather than a second one. `s` is what the convention binds to starred mail, and the sidebar says Flagged (docs/PRODUCT.md).
+        // message, `g o` the folders -- so a destination reads as the
+        // same idiom rather than a second one. `s` for sent, now that the drafts have `t` (specs/007-postio-focus contracts/keymap.md).
         //
         // Targets the *role*, not a name: an inbox a provider calls something
         // else, or names in another language, is still where `g i` goes.
@@ -1424,6 +1576,126 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::GoToFlagged,
+        title: "Go to flagged",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g o` the folders -- so a destination reads as the
+        // same idiom rather than a second one. `*`, a star, the key flagging has (specs/007-postio-focus contracts/keymap.md), and the sidebar says Flagged (docs/PRODUCT.md).
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g *",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToArchive,
+        title: "Go to archive",
+        // `r` for the archive, which had no letter until the one keymap
+        // (specs/007-postio-focus contracts/keymap.md). A role, like the rest.
+        default_binding: "g r",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToSnoozed,
+        title: "Go to snoozed",
+        // `z`, the sleeping letter.
+        default_binding: "g z",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToFiltered,
+        title: "Go to Filtered",
+        // What Focus filtered out of the inbox, and why.
+        default_binding: "g f",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToDigestRules,
+        title: "Go to digest rules",
+        default_binding: "g d",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SavedSearch1,
+        title: "Saved search 1",
+        // The pinned `[filters]` entries, in their order: a saved search is a
+        // place a person goes, so the four come with the destinations.
+        default_binding: "alt+1",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SavedSearch2,
+        title: "Saved search 2",
+        default_binding: "alt+2",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SavedSearch3,
+        title: "Saved search 3",
+        default_binding: "alt+3",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SavedSearch4,
+        title: "Saved search 4",
+        default_binding: "alt+4",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ToggleHasAction,
+        title: "Show only what has an action",
+        // Pressed again, everything is back. The inbox list is where the
+        // filter is, and where its toggle is drawn (FR-017).
+        default_binding: "!",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
         id: CommandId::CyclePane,
         title: "Next pane",
         // The top-level meaning of bare Tab, which had none: it was not a
@@ -1439,7 +1711,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: CHROME,
+        requires: THREE_PANE_CHROME,
     },
     CommandSpec {
         id: CommandId::CyclePaneBack,
@@ -1449,7 +1721,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: CHROME,
+        requires: THREE_PANE_CHROME,
     },
     CommandSpec {
         id: CommandId::NextFolder,
@@ -1535,7 +1807,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::DeleteSavedSearch,
         title: "Delete saved search",
-        default_binding: "d",
+        // `Delete`, the key the message verb has: "delete" has one key.
+        default_binding: "Delete",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Sidebar]),
         // Deleting a saved search is a config-file edit with no undo stack
@@ -1560,7 +1833,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::RemoveAccount,
         title: "Remove account",
-        default_binding: "d",
+        // `Delete`, the key the message verb has: "delete" has one key.
+        default_binding: "Delete",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
         destructive: true,
@@ -1667,11 +1941,12 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Refresh,
         title: "Refresh",
+        // Also the retry for the empty and error states in
+        // `postio-gtk::list_state`: "retry now" and "check for new mail now"
+        // are the same command from the user's chair. `R` was its second key
+        // until the one keymap gave it to restoring from Filtered.
         default_binding: "F5",
-        // The canvas' own retry key, for the empty and error states in
-        // `postio-gtk::list_state`: "retry now" and "check for new mail
-        // now" are the same command from the user's chair.
-        alternate_bindings: &["R"],
+        alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -1686,7 +1961,9 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        // The parts panel is the three-pane apps'; Focus's `o` chooses among
+        // a message's links and parts instead.
+        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::NextPart,
@@ -1799,6 +2076,192 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
+    },
+    // -- Pickers (specs/007-postio-focus) ---------------------------------
+    CommandSpec {
+        id: CommandId::PickerChoose1,
+        title: "Choose option 1",
+        // A picker's options are numbered, and a digit takes one.
+        default_binding: "1",
+        alternate_bindings: &[],
+        contexts: Context::Picker.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickerChoose2,
+        title: "Choose option 2",
+        default_binding: "2",
+        alternate_bindings: &[],
+        contexts: Context::Picker.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickerChoose3,
+        title: "Choose option 3",
+        default_binding: "3",
+        alternate_bindings: &[],
+        contexts: Context::Picker.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickerChoose4,
+        title: "Choose option 4",
+        default_binding: "4",
+        alternate_bindings: &[],
+        contexts: Context::Picker.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickerTypeDate,
+        title: "Type a date",
+        default_binding: "Tab",
+        alternate_bindings: &[],
+        contexts: Context::Picker.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickerToggle,
+        title: "Toggle option",
+        default_binding: "space",
+        alternate_bindings: &[],
+        contexts: Context::Picker.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickerConfirm,
+        title: "Confirm",
+        default_binding: "Return",
+        alternate_bindings: &[],
+        contexts: Context::Picker.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    // -- Digests (specs/007-postio-focus milestone 2) ----------------------
+    CommandSpec {
+        id: CommandId::NextReference,
+        title: "Next reference",
+        default_binding: "]",
+        alternate_bindings: &[],
+        contexts: Context::Digest.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PrevReference,
+        title: "Previous reference",
+        default_binding: "[",
+        alternate_bindings: &[],
+        contexts: Context::Digest.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ToggleDigestSummary,
+        title: "Summary or messages",
+        default_binding: "Tab",
+        alternate_bindings: &[],
+        contexts: Context::Digest.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    // -- Filtered (specs/007-postio-focus) ---------------------------------
+    CommandSpec {
+        id: CommandId::RestoreFiltered,
+        title: "Restore to inbox",
+        // And never filter the sender again (FR-116).
+        default_binding: "R",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FilteredTab1,
+        title: "Reason 1",
+        // Filtered's reason tabs, numbered like a picker's options.
+        default_binding: "1",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FilteredTab2,
+        title: "Reason 2",
+        default_binding: "2",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FilteredTab3,
+        title: "Reason 3",
+        default_binding: "3",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FilteredTab4,
+        title: "Reason 4",
+        default_binding: "4",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FilteredTab5,
+        title: "Reason 5",
+        default_binding: "5",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FilteredTab6,
+        title: "Reason 6",
+        default_binding: "6",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::FilteredTab7,
+        title: "Reason 7",
+        default_binding: "7",
+        alternate_bindings: &[],
+        contexts: Context::Filtered.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
     },
 ];
 
@@ -2285,19 +2748,20 @@ mod tests {
         // #1227: this check used to ask `postio-config`'s `DEFAULT_BINDINGS`,
         // which lists 23 commands out of 79. `Flag` is one of the 56 it never
         // knew about, so proposing its key read as free -- and the settings
-        // pane let a rebind silently take `s` away from a command that was
-        // using it, with no "Already used by" to stop it.
+        // pane let a rebind silently take `s` (its key then; `*` since the
+        // one keymap) away from a command that was using it, with no
+        // "Already used by" to stop it.
         let bindings = postio_config::KeyBindings::default();
         assert_eq!(
             binding_conflict(
                 CommandId::NextMessage,
-                "s",
+                "*",
                 &bindings,
                 Platform::Freedesktop
             )
             .map(|spec| spec.id),
             Some(CommandId::Flag),
-            "`s` is Flag's default and Flag shares a context with NextMessage"
+            "`*` is Flag's default and Flag shares a context with NextMessage"
         );
     }
 
@@ -2358,7 +2822,7 @@ mod tests {
             Some(CommandId::Archive)
         );
         assert_eq!(
-            lookup_binding(Context::List, "l").map(|spec| spec.id),
+            lookup_binding(Context::List, "Right").map(|spec| spec.id),
             Some(CommandId::OpenMessage),
             "alternate bindings resolve too"
         );

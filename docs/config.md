@@ -78,7 +78,7 @@ Overrides a command's binding, keyed by the command id. See the
 
 ```toml
 [keys]
-archive = "y"
+archive = "w"
 first_message = "g g"
 command_palette = "mod+p"
 ```

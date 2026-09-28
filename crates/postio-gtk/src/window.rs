@@ -2184,7 +2184,10 @@ impl Window {
     /// Builds the resolver from the registry defaults and starts listening.
     fn install_keyboard(&self) {
         let keymap = postio_core::Keymap::defaults().clone();
-        let (resolver, problems) = Resolver::from_commands(&keymap);
+        // This app's commands only: a key the one keymap keeps for Postio
+        // Focus is bound to nothing here (specs/007-postio-focus R4).
+        let (resolver, problems) =
+            Resolver::from_commands_for(&keymap, postio_core::Frontend::Classic);
         report(&problems);
         self.settings().set_keymap_problems(&problems);
         let _ = self.imp().resolver.set(std::cell::RefCell::new(resolver));
@@ -2773,7 +2776,7 @@ impl Window {
             // The folders. `j`/`k` reach these only in `Context::Sidebar`,
             // which is why the sidebar had to become a real context rather
             // than a focus flag — see `postio-cfd.2`.
-            CommandId::FocusSidebar => self.enter_sidebar(),
+            CommandId::GoToFolders => self.enter_sidebar(),
             CommandId::CyclePane => self.cycle_pane(true),
             CommandId::CyclePaneBack => self.cycle_pane(false),
             CommandId::NextFolder => {
@@ -2874,7 +2877,7 @@ impl Window {
             // Reuses the sidebar's own entry path, which brings a hidden
             // sidebar back before focusing it -- otherwise the cycle would
             // silently skip a pane at the narrow breakpoint (#494's
-            // acceptance says handled the same way `FocusSidebar` does).
+            // acceptance says handled the same way `GoToFolders` does).
             Context::Sidebar => self.enter_sidebar(),
             // The conversation is inside the reading pane, so the keyboard
             // going there is the reading pane taking it.

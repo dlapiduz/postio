@@ -286,7 +286,7 @@ fn render() -> String {
          \n\
          ```toml\n\
          [keys]\n\
-         archive = \"y\"\n\
+         archive = \"w\"\n\
          first_message = \"g g\"\n\
          command_palette = \"mod+p\"\n\
          ```\n\

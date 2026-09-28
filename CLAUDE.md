@@ -536,9 +536,9 @@ and `/steward` (the two loops that watch the backlog and the execution).
 
 Product truth: `docs/PRODUCT.md`. Visual truth: the design canvas
 (`Design/Mail Client.dc.html`, direction PLATE 1b) — spacing, color,
-proportion defer to it. Keys: `e` reply, `a`/`A` archive, `u` undo,
-`J`/`K` walk a thread; all rebindable, table generated into
-`docs/keybindings.md`. Compose
+proportion defer to it. Keys: `e` reply, `a`/`A` archive, `mod+z` undo,
+`]`/`[` walk a thread, one keymap for every app; all rebindable, table
+generated into `docs/keybindings.md`. Compose
 takes over the reading pane. The sidebar says "Flagged". v1 scope: Linux,
 IMAP+SMTP, one provider preset table, and no AI in Postio itself. Postio Focus
 may use a local model the user runs and connects, which is optional and never

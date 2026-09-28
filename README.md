@@ -222,7 +222,7 @@ check_for_mail = "idle"   # idle (push) | poll
 attachment_fetch = "on_open"
 
 [keys]
-archive = "y"             # overrides the default binding for `archive`
+archive = "w"             # overrides the default binding for `archive`
 
 [filters.needs-reply]
 query  = "is:unread from:team"

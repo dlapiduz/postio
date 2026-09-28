@@ -69,12 +69,12 @@ pub fn the_sort_control_tells_the_truth_over_results() {
     // -- the key reaches the command, in the search context ----------------
 
     window.set_context(Context::Search);
-    press(&window, "o");
+    press(&window, "O");
     assert_eq!(
         delivered.borrow().as_slice(),
         [CommandId::ToggleResultOrder],
-        "`o` over results means the same thing it means in a thread: toggle \
-         the order of what I am looking at"
+        "`O` over results toggles the order of what I am looking at -- `o` is \
+         Focus's attachment-or-link key under the one keymap"
     );
 
     // -- and the control is clickable, dispatching the same command --------

@@ -1288,8 +1288,8 @@ impl App {
         };
         if settings.current() == postio_ui::settings::Section::Privacy && settings.in_list() {
             // The one thing to do to an allowed sender is what the desktop's
-            // trash button does: ask again. Removing is `d` here as it is
-            // for an account.
+            // trash button does: ask again. Removing is the account list's
+            // remove key here as it is for an account.
             if id == "remove_account" {
                 let row = settings.row(self.allowlist.senders().count());
                 let sender = self.allowlist.senders().nth(row).map(str::to_owned);
@@ -1324,8 +1324,13 @@ impl App {
             }),
             ("remove_account", Some(account)) => {
                 settings.removed(account.id);
-                let mut effects =
-                    self.say(&format!("{} removed — u to undo", account.display_name));
+                // The key undo has, not a letter typed here: the one keymap
+                // moved it (specs/007-postio-focus contracts/keymap.md).
+                let sentence = match self.keys.key_for(KeyContext::Accounts, "undo") {
+                    Some(key) => format!("{} removed — {key} to undo", account.display_name),
+                    None => format!("{} removed", account.display_name),
+                };
+                let mut effects = self.say(&sentence);
                 effects.push(Effect::Account(AccountOp::Remove(account.id)));
                 return effects;
             }
@@ -2713,7 +2718,7 @@ impl App {
                     return self.compose(postio_model::Draft::new(account));
                 }
             }
-            "focus_sidebar" => self.focus = Focus::Sidebar,
+            "go_to_folders" => self.focus = Focus::Sidebar,
             "search" => return self.open_search(),
             "command_palette" => return self.open_palette(Finding::Commands),
             "cheat_sheet" => self.cheatsheet = Some(self.focus),
@@ -4278,7 +4283,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_undoable_action_is_announced_and_u_sends_undo() {
+    fn an_undoable_action_is_announced_and_ctrl_z_sends_undo() {
         let mut app = app((120, 30));
         let opening = opened(&mut app, 10);
         serve(&mut app, opening);
@@ -4289,9 +4294,9 @@ pub(crate) mod tests {
                 undoable: true,
             }),
         );
-        assert_eq!(app.notice(), Some("Archived 12 messages — u to undo"));
+        assert_eq!(app.notice(), Some("Archived 12 messages — ctrl+z to undo"));
 
-        let effects = update(&mut app, press('u'));
+        let effects = update(&mut app, key(KeyCode::Char('z'), KeyModifiers::CONTROL));
         assert!(
             effects.contains(&Effect::Send(postio_core::Command::Undo)),
             "{effects:?}"
@@ -4540,6 +4545,16 @@ pub(crate) mod tests {
         "find_in_message",
         "find_next",
         "find_previous",
+        // The one keymap's new destinations and pinned searches, which every
+        // app offers (specs/007-postio-focus contracts/keymap.md). The
+        // classic app's handlers are that spec's T032; the terminal's are
+        // not built yet.
+        "go_to_archive",
+        "go_to_snoozed",
+        "saved_search_1",
+        "saved_search_2",
+        "saved_search_3",
+        "saved_search_4",
     ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
@@ -5690,11 +5705,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn over_the_results_o_reorders_and_ctrl_s_saves_the_search() {
+    fn over_the_results_shift_o_reorders_and_ctrl_s_saves_the_search() {
         let mut app = app((160, 40));
         showing_results(&mut app);
 
-        let effects = update(&mut app, press('o'));
+        let effects = update(&mut app, press('O'));
         let again: Vec<_> = effects
             .iter()
             .filter_map(|effect| match effect {
@@ -5904,7 +5919,7 @@ pub(crate) mod tests {
         let opening = opened(&mut app, 3);
         serve(&mut app, opening);
 
-        let effects = update(&mut app, press('L'));
+        let effects = update(&mut app, press('l'));
         assert_eq!(added_label(&effects), None, "{effects:?}");
         assert_eq!(app.palette().expect("the label picker").marker, "+");
         update(&mut app, Input::Labels(vec![labelled(7, "Work")]));
@@ -6486,7 +6501,8 @@ pub(crate) mod tests {
         );
 
         // Delete asks first; anything else between is a no.
-        assert!(edits(update(&mut app, press('d'))).is_empty());
+        let delete = || key(KeyCode::Delete, KeyModifiers::NONE);
+        assert!(edits(update(&mut app, delete())).is_empty());
         assert!(
             app.notice().unwrap_or_default().contains("again"),
             "{:?}",
@@ -6494,12 +6510,9 @@ pub(crate) mod tests {
         );
         update(&mut app, press(' '));
         assert_eq!(app.focus(), Focus::Sidebar);
-        assert!(
-            edits(update(&mut app, press('d'))).is_empty(),
-            "asked again"
-        );
+        assert!(edits(update(&mut app, delete())).is_empty(), "asked again");
         assert_eq!(
-            edits(update(&mut app, press('d'))),
+            edits(update(&mut app, delete())),
             [SearchEdit::Delete {
                 key: "from-ada".into()
             }]
@@ -6539,7 +6552,7 @@ pub(crate) mod tests {
 
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         assert!(app.settings().unwrap().in_list(), "on the senders");
-        let effects = update(&mut app, press('d'));
+        let effects = update(&mut app, key(KeyCode::Delete, KeyModifiers::NONE));
         assert!(
             effects.iter().any(|effect| matches!(
                 effect,
@@ -6755,11 +6768,19 @@ pub(crate) mod tests {
             vec![AccountOp::RebuildIndex(account)]
         );
         assert_eq!(
-            ops(update(&mut app, press('d'))),
+            ops(update(&mut app, key(KeyCode::Delete, KeyModifiers::NONE))),
             vec![AccountOp::Remove(account)]
         );
         assert_eq!(
-            ops(update(&mut app, press('u'))),
+            app.notice(),
+            Some("ada removed — ctrl+z to undo"),
+            "the key the removal names is the key undo has"
+        );
+        assert_eq!(
+            ops(update(
+                &mut app,
+                key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+            )),
             vec![AccountOp::Restore(account)],
             "undo takes the removal back"
         );
@@ -6926,8 +6947,8 @@ pub(crate) mod tests {
         serve(&mut app, opening);
         update(&mut app, Input::Sidebar(sidebar_contents()));
         update(&mut app, press('g'));
-        update(&mut app, press('f'));
-        assert_eq!(app.focus(), Focus::Sidebar, "g f focuses the sidebar");
+        update(&mut app, press('o'));
+        assert_eq!(app.focus(), Focus::Sidebar, "g o focuses the sidebar");
 
         let effects = update(&mut app, press('j'));
         let opened_scope = effects.iter().find_map(|effect| match effect {
@@ -6961,7 +6982,7 @@ pub(crate) mod tests {
         let opening = opened(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('g'));
-        update(&mut app, press('f'));
+        update(&mut app, press('o'));
         let mut asked = Vec::new();
         for _ in 0..20 {
             asked.extend(searches(&update(&mut app, press('j'))));
@@ -7303,18 +7324,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn j_and_k_in_the_reader_walk_the_conversation() {
+    fn brackets_in_the_reader_walk_the_conversation() {
         let mut app = app((160, 40));
         reading_a_conversation(&mut app);
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.reading().unwrap().current, 2, "it opens on the newest");
-        update(&mut app, press('K'));
+        update(&mut app, press('['));
         assert_eq!(app.reading().unwrap().current, 1);
         let at_second = app.reader_top();
-        update(&mut app, press('K'));
+        update(&mut app, press('['));
         assert_eq!(app.reading().unwrap().current, 0);
         assert!(app.reader_top() < at_second, "the reader moved up to it");
-        update(&mut app, press('J'));
+        update(&mut app, press(']'));
         assert_eq!(app.reading().unwrap().current, 1);
     }
 
@@ -7363,11 +7384,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn x_asks_to_leave_the_list_of_the_message_being_read() {
+    fn shift_u_asks_to_leave_the_list_of_the_message_being_read() {
         let mut app = app((160, 40));
         reading_a_conversation(&mut app);
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        let effects = update(&mut app, key(KeyCode::Char('X'), KeyModifiers::SHIFT));
+        let effects = update(&mut app, key(KeyCode::Char('U'), KeyModifiers::SHIFT));
         assert!(
             effects.contains(&Effect::Unsubscribe(MessageId::new(3))),
             "the message being read, the newest: {effects:?}"

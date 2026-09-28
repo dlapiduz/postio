@@ -74,7 +74,10 @@ impl Keys {
     /// The registry's bindings with `[keys]` applied, and whatever could not
     /// be honoured.
     pub fn new(commands: &postio_core::Keymap) -> (Keys, Vec<String>) {
-        let (resolver, problems) = Resolver::from_commands(commands);
+        // The terminal's commands only: a key the one keymap keeps for
+        // another app is bound to nothing here (specs/007-postio-focus R4).
+        let (resolver, problems) =
+            Resolver::from_commands_for(commands, postio_core::Frontend::Terminal);
         (
             Keys {
                 resolver,

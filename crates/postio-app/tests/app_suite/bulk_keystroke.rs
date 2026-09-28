@@ -79,7 +79,7 @@ pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
         .build();
         let wired: Vec<CommandId> = bus.wired().collect();
         assert!(
-            wired.contains(&CommandId::MarkUnread),
+            wired.contains(&CommandId::ToggleRead),
             "the bus does not answer mark-unread, so this test cannot mean anything"
         );
 
@@ -137,18 +137,18 @@ pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
         );
         while glib::MainContext::default().iteration(false) {}
 
-        // `U`, not `u` — `u` is undo (docs/PRODUCT.md §16). The keymap folds the
-        // shift into the character, so this is the chord the registry spells "U".
+        // `r`, the one keymap's read-or-unread toggle (specs/007-postio-focus
+        // contracts/keymap.md): over a selection that is all unread, it reads.
         window.handle_key(
-            gdk::Key::from_name("U").unwrap(),
-            gdk::ModifierType::SHIFT_MASK,
+            gdk::Key::from_name("r").unwrap(),
+            gdk::ModifierType::empty(),
         );
 
         let read = settle_until(async || unread_in(&database, mailbox).await == 0).await;
 
         assert!(
             read,
-            "`Ctrl+A` then `U` resolved through the keymap, the registry, the \
+            "`Ctrl+A` then `r` resolved through the keymap, the registry, the \
              selection model and the mirror, and {} of {before} messages are still \
              unread. Until postio-t3u9 this path answered `Rejected` instead of \
              acting; a test that only asks whether the verb works cannot tell the \

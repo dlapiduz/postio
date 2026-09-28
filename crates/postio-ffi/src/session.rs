@@ -301,7 +301,10 @@ fn config_source(_options: &SessionOptions) -> ConfigSource {
 /// preferences file, which is the same call `load_key_bindings` makes above.
 fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap::Resolver {
     let keymap = postio_core::Keymap::resolve(keys);
-    let (resolver, problems) = postio_ui::keymap::Resolver::from_commands(&keymap);
+    // The macOS app's commands only: a key the one keymap keeps for another
+    // app is bound to nothing here (specs/007-postio-focus R4).
+    let (resolver, problems) =
+        postio_ui::keymap::Resolver::from_commands_for(&keymap, postio_core::Frontend::Macos);
     for problem in &problems {
         tracing::warn!(%problem, "a key binding could not be used");
     }
@@ -1717,7 +1720,7 @@ impl Session {
     ///
     /// **Not `invoke`, and the difference matters.** `MarkReadOnDwell` is
     /// deliberately not a registry command: it routes to
-    /// `CommandId::MarkUnread`'s handler so there is one "mark read" in the
+    /// `CommandId::ToggleRead`'s handler so there is one "mark read" in the
     /// vocabulary, and it is the one dispatch that is *not* recorded on the
     /// undo stack — `u` takes back what you did, and reading a mailbox
     /// produces one of these per message rested on. Going through `invoke`

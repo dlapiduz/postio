@@ -301,7 +301,9 @@ pub fn archiving_and_deleting_walk_down_a_folder() {
         for press in 1..=3 {
             remove_and_walk(&triage, Gesture::Key(gdk::Key::a), press).await;
         }
-        remove_and_walk(&triage, Gesture::Key(gdk::Key::d), 4).await;
+        // Delete is `Delete` under the one keymap (specs/007-postio-focus
+        // contracts/keymap.md).
+        remove_and_walk(&triage, Gesture::Key(gdk::Key::Delete), 4).await;
     });
 }
 
@@ -384,8 +386,8 @@ pub fn two_presses_back_to_back_take_two_messages() {
         let first = list.cursor_id().expect("the cursor is on a message");
         let second = below(window, first);
         let third = below(window, second);
-        window.handle_key(gdk::Key::d, gdk::ModifierType::empty());
-        window.handle_key(gdk::Key::d, gdk::ModifierType::empty());
+        window.handle_key(gdk::Key::Delete, gdk::ModifierType::empty());
+        window.handle_key(gdk::Key::Delete, gdk::ModifierType::empty());
         assert!(
             settle_until(
                 async || model.position_of(first).is_none() && model.position_of(second).is_none()

@@ -438,7 +438,7 @@ final class Engine {
             focus(pane.next())
         case Intercepted.cyclePaneBack:
             focus(pane.next(false))
-        case Intercepted.focusSidebar:
+        case Intercepted.goToFolders:
             focus(.sidebar)
         case Intercepted.settings:
             // AppKit's own action for the `Settings` scene, rather than

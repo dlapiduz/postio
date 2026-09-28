@@ -297,14 +297,18 @@ but absent from every way a user could discover it.
 from the registry by a test that fails when the file drifts. They are not
 repeated here, for the same reason they are not repeated anywhere else.
 
-Worth knowing before reading that table: `e` replies and `a` archives, `A`
-archives a thread, `u` undoes, and `J`/`K` walk a thread in the reading pane
-— `t` was the drill-in column's key and went with it (ADR 0015 Q4's
-supersession note, #1003). The original brief proposed
-`r` for reply and `u` for mark-unread; the design canvas is newer and won, and
-that is now simply what the bindings are. Every one is overridable from
-`[keys]` in `config.toml`, keyed by command id — which makes command ids a file
-format that cannot be renamed casually (`ARCHITECTURE.md` §3).
+Worth knowing before reading that table: every Postio app — the desktop app,
+the terminal, Focus and macOS — has one keymap, the registry's
+(`specs/007-postio-focus/contracts/keymap.md`). `e` replies and `a` archives,
+`A` archives a thread, `mod+z` undoes, `r` marks read or unread, `s` snoozes,
+and `]`/`[` walk a thread in the reading pane. A command only one app offers
+keeps its key there and leaves it free in the others. The original brief
+proposed `r` for reply; the design canvas is newer and won that, and the one
+keymap settled the rest. Every one is overridable from `[keys]` in
+`config.toml`, keyed by command id — which makes command ids a file format
+that is not renamed casually (`ARCHITECTURE.md` §3): the one keymap renamed
+two, `mark_unread` to `toggle_read` and `focus_sidebar` to `go_to_folders`,
+and kept no alias.
 
 ---
 
@@ -500,7 +504,7 @@ Destructive operations are undoable, and undo is **local and immediate** — it
 does not wait for the server, which catches up afterwards.
 
 Two properties make the promise honest: a burst of actions is **one unit**, so
-twelve keystrokes are one toast and one `u`; and the stack **forgets**, because
+twelve keystrokes are one toast and one `mod+z`; and the stack **forgets**, because
 putting back something archived an hour ago is a surprise rather than a mercy.
 `ARCHITECTURE.md` §5.
 

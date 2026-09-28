@@ -266,9 +266,9 @@ pub fn keyboard_reaches_saved_searches_and_their_move_verbs() {
         move |id| commands.borrow_mut().push(id)
     });
 
-    // ── `g f`, then `j` crosses from the one folder into the searches ─────
+    // ── `g o`, then `j` crosses from the one folder into the searches ─────
     press(&window, "g", gdk::ModifierType::empty());
-    press(&window, "f", gdk::ModifierType::empty());
+    press(&window, "o", gdk::ModifierType::empty());
     assert_eq!(window.context(), Context::Sidebar);
     press(&window, "j", gdk::ModifierType::empty()); // onto INBOX
     press(&window, "j", gdk::ModifierType::empty()); // onto alpha

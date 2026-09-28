@@ -63,8 +63,11 @@ fn a_bound_key_answers_the_command_it_is_bound_to() {
         },
         "`a` in the list is archive"
     );
+    // Undo is the primary accelerator's `z` under the one keymap
+    // (specs/007-postio-focus contracts/keymap.md): ⌘Z here as everywhere
+    // else on a Mac.
     assert_eq!(
-        typed(&session, "u", UiContext::List, false),
+        session.key(Some("z"), None, PRIMARY, UiContext::List, false),
         KeyOutcomeFfi::Command {
             id: "undo".to_string()
         }

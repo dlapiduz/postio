@@ -7,7 +7,7 @@
 //! project's second principal.
 //!
 //! What is asserted here is the round trip a keyboard user actually makes:
-//! `g f` to reach the folders, `j` and `k` to move between them, `Esc` to come
+//! `g o` to reach the folders, `j` and `k` to move between them, `Esc` to come
 //! back to the messages. The commands themselves are registry entries, so the
 //! palette and the `?` sheet pick them up without being told — that half is
 //! covered by `postio-core`'s own registry tests and by
@@ -102,13 +102,13 @@ pub fn a_mailbox_can_be_chosen_without_touching_the_mouse() {
         "the list starts with the keyboard"
     );
 
-    // ── `g f` — go to folders ───────────────────────────────────────────
+    // ── `g o` — go to folders ───────────────────────────────────────────
     press(&window, "g");
-    press(&window, "f");
+    press(&window, "o");
     assert_eq!(
         window.context(),
         Context::Sidebar,
-        "`g f` did not put the keyboard in the folder list, so nothing below \
+        "`g o` did not put the keyboard in the folder list, so nothing below \
          this can mean anything"
     );
 
@@ -167,7 +167,7 @@ pub fn a_mailbox_can_be_chosen_without_touching_the_mouse() {
 ///
 /// Not by a key of its own. No folder in this application has one — not the
 /// Inbox, not Drafts — because a folder is a row, not a verb, and the verbs
-/// that reach rows are already in the registry: `FocusSidebar` puts the
+/// that reach rows are already in the registry: `GoToFolders` puts the
 /// keyboard in the column, `NextFolder` and `PrevFolder` walk it, `Return`
 /// opens what it lands on. Giving the Outbox a dedicated binding would make
 /// it the only folder in the sidebar with one.
@@ -223,7 +223,7 @@ pub fn the_keyboard_walks_onto_the_outbox_and_opens_it() {
     // Into the column, then walk until the Outbox reports itself. Bounded so
     // a row that never reports fails here rather than hanging the suite.
     press(&window, "g");
-    press(&window, "f");
+    press(&window, "o");
     for _ in 0..24 {
         if opened.borrow().contains(&MailboxRole::Outbox) {
             break;

@@ -67,7 +67,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::Delete,
     CommandId::Move,
     CommandId::Flag,
-    CommandId::MarkUnread,
+    CommandId::ToggleRead,
     CommandId::Snooze,
     CommandId::Unsnooze,
     // After Unsnooze, matching the registry's own order: `bus.wired()`
@@ -329,7 +329,7 @@ impl Actions {
             }
             // `\Seen` is stored the other way up from how the verb reads:
             // marking unread is clearing a flag, not setting one.
-            Command::MarkUnread { target, unread } => {
+            Command::ToggleRead { target, unread } => {
                 self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))
                     .await?
             }
@@ -1354,7 +1354,7 @@ impl Actions {
     ) -> Result<Applied, CommandError> {
         // Only the two flags with a column of their own can be written this
         // way; nothing reaches here with another, because `Flag` and
-        // `MarkUnread` are the only verbs that flag anything.
+        // `ToggleRead` are the only verbs that flag anything.
         let column = ColumnFlag::of(&flag)
             .ok_or_else(|| CommandError::rejected("That flag does not work on a whole mailbox"))?;
         let repository = MessageRepository::new(connection);
@@ -1426,7 +1426,7 @@ impl Actions {
             from,
         };
         let inverse = match flag {
-            Flag::Seen => Command::MarkUnread {
+            Flag::Seen => Command::ToggleRead {
                 target,
                 unread: Some(wanted),
             },
@@ -1500,7 +1500,7 @@ impl Actions {
         // Every touched row held the opposite value — that is what "touched"
         // means here — so one command takes all of them back.
         let inverse = match flag {
-            Flag::Seen => Command::MarkUnread {
+            Flag::Seen => Command::ToggleRead {
                 target: MessageTarget::Messages(changed.clone()),
                 unread: Some(wanted),
             },
@@ -3019,7 +3019,7 @@ mod tests {
         world.looking_at(world.inbox, &[], Some(message)).await;
 
         world
-            .run(Command::MarkUnread {
+            .run(Command::ToggleRead {
                 target: MessageTarget::Selection,
                 unread: None,
             })
@@ -4163,7 +4163,7 @@ mod tests {
         world.everything_in(world.inbox).await;
 
         world
-            .run(Command::MarkUnread {
+            .run(Command::ToggleRead {
                 target: MessageTarget::Selection,
                 unread: Some(false),
             })
@@ -4344,7 +4344,7 @@ mod tests {
         world.everything_in(world.inbox).await;
 
         world
-            .run(Command::MarkUnread {
+            .run(Command::ToggleRead {
                 target: MessageTarget::Selection,
                 unread: Some(false),
             })

@@ -60,7 +60,7 @@ fn service_with(toml: &str) -> ConfigService {
 fn an_override_that_takes_a_default_key_is_reported() {
     for (taker, victim, key) in [
         (CommandId::Reply, "archive", "a"),
-        (CommandId::Reply, "flag", "s"),
+        (CommandId::Reply, "flag", "*"),
     ] {
         let mut overrides = KeyBindings::default();
         overrides
@@ -138,7 +138,10 @@ fn without_a_file_the_registry_defaults_are_the_keymap() {
     let keymap = Keymap::resolve(&KeyBindings::default());
 
     assert_eq!(keymap.binding(CommandId::Archive), Some("a"));
-    assert_eq!(keymap.binding(CommandId::Undo), Some("u"));
+    assert_eq!(
+        keymap.binding(CommandId::Undo),
+        Some(postio_config::keys::expand_mod("mod+z", Platform::host()).as_str())
+    );
     assert!(keymap.problems().is_empty());
 
     for command in CommandId::ALL {
@@ -157,7 +160,7 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
     assert!(
         keymap
             .bindings(CommandId::OpenMessage)
-            .contains(&"l".into()),
+            .contains(&"Right".into()),
         "the registry's alternates are not the file's to replace"
     );
     assert_eq!(
@@ -283,7 +286,7 @@ fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
     );
     assert_eq!(
         keymap.binding(CommandId::Delete),
-        Some("d"),
+        Some("Delete"),
         "the loser falls back to its own default, which nobody took"
     );
     assert!(

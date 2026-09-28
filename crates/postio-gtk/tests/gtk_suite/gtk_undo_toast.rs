@@ -1,4 +1,4 @@
-//! Undo toasts: `u` and the toast's own button reach the same
+//! Undo toasts: `ctrl+z` and the toast's own button reach the same
 //! `CommandId::Undo`, and showing a completion does not crash the window.
 //!
 //! `AdwToastOverlay` does not expose which toasts are showing, so
@@ -21,7 +21,7 @@ use postio_core::CommandId;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 
-pub fn u_and_the_toasts_button_both_reach_command_id_undo() {
+pub fn ctrl_z_and_the_toasts_button_both_reach_command_id_undo() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
@@ -45,16 +45,16 @@ pub fn u_and_the_toasts_button_both_reach_command_id_undo() {
         move |id| seen.borrow_mut().push(id)
     });
 
-    // ── `u`, through the keymap ────────────────────────────────────────
+    // ── `ctrl+z`, through the keymap (the one keymap's undo) ───────────
     window.handle_key(
-        gdk::Key::from_name("u").unwrap(),
-        gdk::ModifierType::empty(),
+        gdk::Key::from_name("z").unwrap(),
+        gdk::ModifierType::CONTROL_MASK,
     );
     settle();
     assert_eq!(
         *seen.borrow(),
         vec![CommandId::Undo],
-        "u did not reach dispatch"
+        "ctrl+z did not reach dispatch"
     );
     seen.borrow_mut().clear();
 
@@ -68,7 +68,7 @@ pub fn u_and_the_toasts_button_both_reach_command_id_undo() {
     assert_eq!(
         *seen.borrow(),
         vec![CommandId::Undo],
-        "the toast's button must reach the exact command `u` does, not a parallel path"
+        "the toast's button must reach the exact command `ctrl+z` does, not a parallel path"
     );
 
     // ── a completion with nothing to undo, and undo's own confirmation ─

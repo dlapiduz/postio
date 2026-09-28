@@ -124,11 +124,15 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // has ever clicked, and seven of them crowd out the ones people do.
         C::NextMessage | C::PrevMessage | C::ExtendSelectionDown | C::ExtendSelectionUp => None,
         C::FirstMessage | C::LastMessage => Some(M::Go),
-        C::NextFolder | C::PrevFolder | C::FocusSidebar => Some(M::Go),
+        C::NextFolder | C::PrevFolder | C::GoToFolders => Some(M::Go),
         // The destinations belong in the Go menu for the same reason they
         // belong in the palette: a person who does not know `g i` still wants
         // the inbox, and this is where they look for it.
         C::GoToInbox | C::GoToDrafts | C::GoToSent | C::GoToFlagged => Some(M::Go),
+        C::GoToArchive | C::GoToSnoozed => Some(M::Go),
+        // The pinned searches are places too, and a person who does not know
+        // `alt+1` looks for them where the other places are.
+        C::SavedSearch1 | C::SavedSearch2 | C::SavedSearch3 | C::SavedSearch4 => Some(M::Go),
         C::CyclePane | C::CyclePaneBack => Some(M::Go),
         C::NextScope => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
@@ -203,7 +207,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // ── Message ──────────────────────────────────────────────────────
         C::Reply | C::ReplyAll | C::Forward => Some(M::Message),
         C::Archive | C::ArchiveThread | C::Delete | C::Move => Some(M::Message),
-        C::Flag | C::MarkUnread | C::AddLabel => Some(M::Message),
+        C::Flag | C::ToggleRead | C::AddLabel => Some(M::Message),
         C::Snooze | C::Unsnooze => Some(M::Message),
         C::OpenMessage | C::OpenPart => Some(M::Message),
 
@@ -216,6 +220,40 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // The terminal composer's own (`Requirement::Terminal`), and the
         // terminal has no menu bar: no menu anywhere offers them.
         C::EditExternally | C::TogglePreview => None,
+
+        // ── Postio Focus's own (`Requirement::Focus`) ────────────────────
+        // Focus has no menu bar, and no other app offers these: a menu
+        // item for one would be a row that can never run. Its key map
+        // (screen 20) and its command bar are where they are listed.
+        C::RemindIfNoReply
+        | C::AcceptInvite
+        | C::DeclineInvite
+        | C::DigestRule
+        | C::StopDigestingSender
+        | C::ViewSource
+        | C::OpenAttachmentOrLink
+        | C::BackToWords
+        | C::GoToFiltered
+        | C::GoToDigestRules
+        | C::ToggleHasAction
+        | C::PickerChoose1
+        | C::PickerChoose2
+        | C::PickerChoose3
+        | C::PickerChoose4
+        | C::PickerTypeDate
+        | C::PickerToggle
+        | C::PickerConfirm
+        | C::NextReference
+        | C::PrevReference
+        | C::ToggleDigestSummary
+        | C::RestoreFiltered
+        | C::FilteredTab1
+        | C::FilteredTab2
+        | C::FilteredTab3
+        | C::FilteredTab4
+        | C::FilteredTab5
+        | C::FilteredTab6
+        | C::FilteredTab7 => None,
     }
 }
 

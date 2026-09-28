@@ -2120,7 +2120,7 @@ fn is_message_action(id: CommandId) -> bool {
             | Command::Delete { .. }
             | Command::Move { .. }
             | Command::Flag { .. }
-            | Command::MarkUnread { .. }
+            | Command::ToggleRead { .. }
             | Command::Snooze { .. }
             | Command::Unsnooze { .. }
             | Command::AddLabel { .. }

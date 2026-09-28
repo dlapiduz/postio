@@ -47,16 +47,18 @@ fn problems(service: &ConfigService) -> String {
 #[test]
 fn editing_the_keys_section_rebinds_immediately() {
     let directory = TempDir::new().expect("a temporary directory");
-    let path = write(directory.path(), "[keys]\narchive = \"y\"\n");
+    // `w`, a key no app binds: `y` was, until the one keymap gave it to
+    // Focus's invitations (specs/007-postio-focus contracts/keymap.md).
+    let path = write(directory.path(), "[keys]\narchive = \"w\"\n");
     let mut service = ConfigService::load(&path);
 
     let (mut resolver, startup_problems) = Resolver::from_commands(service.keymap());
     assert!(startup_problems.is_empty(), "{startup_problems:?}");
-    assert_eq!(command(&mut resolver, "y").as_deref(), Some("archive"));
+    assert_eq!(command(&mut resolver, "w").as_deref(), Some("archive"));
     assert_eq!(command(&mut resolver, "a"), None, "the default moved");
 
     // The user edits the file and saves.
-    write(directory.path(), "[keys]\narchive = \"a\"\nflag = \"y\"\n");
+    write(directory.path(), "[keys]\narchive = \"a\"\nflag = \"w\"\n");
     let update = service.reload();
 
     assert!(update.applied());
@@ -69,7 +71,7 @@ fn editing_the_keys_section_rebinds_immediately() {
         Some("archive"),
         "back to the default, with no restart"
     );
-    assert_eq!(command(&mut resolver, "y").as_deref(), Some("flag"));
+    assert_eq!(command(&mut resolver, "w").as_deref(), Some("flag"));
 }
 
 /// `/` and the go-to family resolve while the keyboard is in the folder list.
@@ -96,9 +98,11 @@ fn the_folder_list_reaches_search_and_the_go_to_family() {
     );
     for (keys, command) in [
         ("g i", "go_to_inbox"),
-        ("g d", "go_to_drafts"),
-        ("g t", "go_to_sent"),
-        ("g s", "go_to_flagged"),
+        ("g t", "go_to_drafts"),
+        ("g s", "go_to_sent"),
+        ("g r", "go_to_archive"),
+        ("g z", "go_to_snoozed"),
+        ("g *", "go_to_flagged"),
     ] {
         resolver.clear_pending();
         assert_eq!(

@@ -180,9 +180,11 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
         settle_until(async || list.cursor_id() == Some(message_id)).await;
         settle();
 
+        // `*`, flag's key under the one keymap (specs/007-postio-focus
+        // contracts/keymap.md), shifted as a keyboard delivers it.
         window.handle_key(
-            gdk::Key::from_name("s").unwrap(),
-            gdk::ModifierType::empty(),
+            gdk::Key::from_name("asterisk").unwrap(),
+            gdk::ModifierType::SHIFT_MASK,
         );
         settle();
 
@@ -198,7 +200,7 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
         };
         assert!(
             settle_until(flagged).await,
-            "pressing `s` once should flag the message. If it did not, two \
+            "pressing `*` once should flag the message. If it did not, two \
              independent `connect_action` listeners (one per `open_or_onboard` \
              call) each toggled it -- true, then straight back to false -- which \
              is exactly what a second, unguarded `activate` used to cause"

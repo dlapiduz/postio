@@ -1613,16 +1613,22 @@ mod tests {
         );
         let (text, cells, theme) = status_of(&app, Colour::TrueColor);
         assert!(
-            text.starts_with("✓ Archived 1 message — u to undo"),
+            text.starts_with("✓ Archived 1 message — ctrl+z to undo"),
             "{text}"
         );
         assert_eq!(cells[0].fg, theme.style(Role::Success).fg.unwrap());
-        let key = text.chars().position(|c| c == 'u').expect("the key");
-        assert_eq!(
-            cells[key].fg,
-            theme.style(Role::Accent).fg.unwrap(),
-            "the undo key in the accent: {text}"
-        );
+        let characters: Vec<char> = text.chars().collect();
+        let key = characters
+            .windows(6)
+            .position(|window| window.iter().collect::<String>() == "ctrl+z")
+            .expect("the key");
+        for cell in &cells[key..key + 6] {
+            assert_eq!(
+                cell.fg,
+                theme.style(Role::Accent).fg.unwrap(),
+                "the undo key in the accent: {text}"
+            );
+        }
         // Without colour the marks still say it.
         let (text, _, _) = status_of(&app, Colour::None);
         assert!(text.starts_with('✓'), "{text}");

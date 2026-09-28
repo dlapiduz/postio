@@ -74,13 +74,16 @@ fn command_ids_are_unique() {
 
 #[test]
 fn bindings_are_the_ones_the_canvas_settled_on() {
-    // docs/PRODUCT.md §8 records these as the resolved bindings; the canvas is
-    // where they were settled, over an earlier brief that proposed `r` reply.
+    // docs/PRODUCT.md §8 records these as the resolved bindings. The canvas
+    // settled them first, over an earlier brief that proposed `r` reply; the
+    // one keymap every app shares (specs/007-postio-focus
+    // contracts/keymap.md) moved undo to `mod+z` and the previous view to
+    // `Left`.
     let expected = [
         ("reply", "e"),
         ("archive", "a"),
         ("archive_thread", "A"),
-        ("undo", "u"),
+        ("undo", "ctrl+z"),
         ("compose", "c"),
         ("search", "/"),
         ("command_palette", "ctrl+k"),
@@ -88,7 +91,7 @@ fn bindings_are_the_ones_the_canvas_settled_on() {
         ("back", "Escape"),
         ("next_message", "j"),
         ("prev_message", "k"),
-        ("prev_view", "h"),
+        ("prev_view", "Left"),
         ("first_message", "g g"),
         ("last_message", "G"),
     ];
@@ -100,33 +103,43 @@ fn bindings_are_the_ones_the_canvas_settled_on() {
         let parsed: CommandId = id.parse().expect("known command id");
         assert_eq!(keymap.binding(parsed), Some(key), "binding for {id}");
     }
-    // `l` opens, as the canvas navigation set requires, without displacing the
-    // `Return` default that config.toml already documents.
+    // `Right` opens, the way `Left` comes back, without displacing the
+    // `Return` default that config.toml already documents. `l` no longer
+    // does: it is the label key.
     assert!(
         registry::get(CommandId::OpenMessage)
             .bindings()
+            .any(|b| b == "Right"),
+        "`Right` must open the focused message"
+    );
+    assert!(
+        !registry::get(CommandId::OpenMessage)
+            .bindings()
             .any(|b| b == "l"),
-        "`l` must open the focused message"
+        "`l` is the label key, and opens nothing"
     );
 }
 
 #[test]
 fn the_places_people_go_most_answer_to_two_keys() {
     // `g` is already this app's "go to" prefix -- `g g` is the first message,
-    // `g f` the folder list, `g a` the next scope -- and these extend it to
-    // the destinations a person visits dozens of times a day. The letters are
-    // the ones somebody arrives from another mail client already holding.
+    // `g o` the folders, `g a` the next scope -- and these extend it to the
+    // destinations a person visits dozens of times a day.
     //
     // `g a` is deliberately not among them. It means "next scope" here and
     // "all mail" in the convention being copied, which is not even the same
     // destination, so an existing command is not given up for an imperfect
-    // match. The archive has no good letter and is left for the design
-    // authority rather than being assigned one here.
+    // match. The letters are the one keymap's (specs/007-postio-focus
+    // contracts/keymap.md), which gave the archive `g r` and moved the
+    // drafts, the sent mail and the flagged mail along to make room for
+    // Focus's `g d` and `g f`.
     let expected = [
         ("go_to_inbox", "g i"),
-        ("go_to_drafts", "g d"),
-        ("go_to_sent", "g t"),
-        ("go_to_flagged", "g s"),
+        ("go_to_drafts", "g t"),
+        ("go_to_sent", "g s"),
+        ("go_to_archive", "g r"),
+        ("go_to_snoozed", "g z"),
+        ("go_to_flagged", "g *"),
     ];
     let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     for (id, key) in expected {
@@ -447,9 +460,10 @@ fn the_account_row_actions_are_commands_in_the_account_list() {
             Recovery::None,
         ),
         // Destructive, and the only one of the three that is: it soft-deletes
-        // an account. `d` matches DeleteSavedSearch's spelling in the
-        // neighbouring list, which is the same verb on the same shape of row.
-        (CommandId::RemoveAccount, "d", true, Recovery::Undo),
+        // an account. `Delete` matches DeleteSavedSearch's spelling in the
+        // neighbouring list, which is the same verb on the same shape of row,
+        // and the message verb's: "delete" has one key.
+        (CommandId::RemoveAccount, "Delete", true, Recovery::Undo),
         // `c` for credential. ADR 0005 Q6c asked for no binding at all; that
         // rested on "ten commands already have none", and none do. PRODUCT.md
         // §8 requires one of every command, so it has one.
@@ -478,7 +492,7 @@ fn the_account_row_actions_are_commands_in_the_account_list() {
 /// The default-account marker is set from a keyboard row like the other four
 /// account commands (#960).
 ///
-/// `Context::Accounts` already carries `Return`, `d`, `c` and `r`, so this is
+/// `Context::Accounts` already carries `Return`, `Delete`, `c` and `r`, so this is
 /// a fifth row in the registry rather than a new surface — which is what makes
 /// the palette entry, the cheat-sheet row and the focused-row key hint come
 /// from one place and stay in step. `m` for "make default", free within this
@@ -734,7 +748,8 @@ fn the_reading_commands_are_registered_as_the_contract_says() {
             CommandId::DarkenMessage,
             "darken_message",
             "Darken this message",
-            "D",
+            // `D` until the one keymap gave it to Focus's "stop digesting".
+            "alt+d",
             &[][..],
         ),
         (
@@ -822,5 +837,11 @@ fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
         offered_to(Requirement::Graphical),
         [Frontend::Classic, Frontend::Focus, Frontend::Macos],
         "every app that draws a message as pixels can zoom and darken it"
+    );
+    assert_eq!(
+        offered_to(Requirement::ThreePane),
+        [Frontend::Classic, Frontend::Terminal, Frontend::Macos],
+        "a folder sidebar, panes, the parts panel and flags are the three-pane \
+         apps'; Focus has one list and dialogs"
     );
 }

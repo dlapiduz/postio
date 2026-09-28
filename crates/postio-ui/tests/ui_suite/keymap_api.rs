@@ -239,3 +239,49 @@ fn an_exclamation_mark_parses_by_either_name_and_resolves() {
         "pressing `!` did not reach the command bound to it"
     );
 }
+
+/// A key the one keymap keeps for another app is bound to nothing here
+/// (specs/007-postio-focus research R4). `y` accepts an invitation in
+/// Focus; in the classic app, the terminal and macOS it has to do nothing
+/// at all -- not reach a command the app never offers, which the dispatcher
+/// would refuse as "not wired up" -- and a command every app has still
+/// answers its key in each.
+#[test]
+fn a_key_another_app_keeps_is_bound_to_nothing_here() {
+    use postio_core::{Context, Frontend, Keymap as Commands};
+    use postio_ui::keymap::Outcome;
+
+    let now = std::time::Instant::now();
+    let press = |frontend: Frontend, context: Context, key: &str| {
+        let (mut resolver, problems) = Resolver::from_commands_for(Commands::defaults(), frontend);
+        assert!(problems.is_empty(), "{frontend:?}: {problems:?}");
+        resolver.press(&chord(key), KeyContext::from(context), false, now)
+    };
+
+    for app in [Frontend::Classic, Frontend::Terminal, Frontend::Macos] {
+        assert_eq!(
+            press(app, Context::List, "y"),
+            Outcome::Unhandled,
+            "{app:?} answered Focus's `y`"
+        );
+        assert_eq!(
+            press(app, Context::List, "a"),
+            Outcome::Command("archive".to_owned()),
+            "{app:?} lost a key every app has"
+        );
+    }
+    assert_eq!(
+        press(Frontend::Focus, Context::List, "y"),
+        Outcome::Command("accept_invite".to_owned())
+    );
+    // And the other way: Focus has no sidebar to toggle.
+    assert_eq!(
+        press(Frontend::Focus, Context::List, "ctrl+b"),
+        Outcome::Unhandled,
+        "Focus answered the three-pane apps' `ctrl+b`"
+    );
+    assert_eq!(
+        press(Frontend::Classic, Context::List, "ctrl+b"),
+        Outcome::Command("toggle_sidebar".to_owned())
+    );
+}

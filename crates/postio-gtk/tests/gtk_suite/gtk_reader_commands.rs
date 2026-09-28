@@ -64,11 +64,12 @@ pub fn the_keys_darken_zoom_and_find_in_the_message_on_screen() {
         })
     });
 
-    // ── darken: `D`, and the palette's title is the undo ────────────────
+    // ── darken: `alt+d`, and the palette's title is the undo ────────────
+    // `D` until the one keymap gave it to Focus's "stop digesting".
     assert_eq!(reader.darken_title(), Some("Darken this message"));
     assert!(
-        press(&window, gdk::Key::D, gdk::ModifierType::SHIFT_MASK),
-        "D is claimed"
+        press(&window, gdk::Key::d, gdk::ModifierType::ALT_MASK),
+        "alt+d is claimed"
     );
     crate::settle_until("the message to be darkened", || {
         reader

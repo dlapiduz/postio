@@ -154,15 +154,25 @@ mod tests {
 
     #[test]
     fn a_preferred_key_is_named_only_while_it_is_bound() {
+        // The list's failure plates prefer `R` for "Retry now". Under the one
+        // keymap `R` restores from Filtered and Refresh keeps `F5`
+        // (specs/007-postio-focus contracts/keymap.md), so the plate names
+        // the key Refresh has.
         let retry = |keymap: &Keymap| {
             hint_as(keymap, CommandId::Refresh, "R", "Retry now").map(|hint| hint.key)
         };
-        assert_eq!(retry(Keymap::defaults()).as_deref(), Some("R"));
-        // Giving `R` to archive takes it from Refresh; the plate falls back
-        // to the key Refresh still has.
+        assert_eq!(retry(Keymap::defaults()).as_deref(), Some("F5"));
+
+        // An alternate is preferred over the primary while it is bound...
+        let next = |keymap: &Keymap| {
+            hint_as(keymap, CommandId::NextMessage, "Down", "next").map(|hint| hint.key)
+        };
+        assert_eq!(next(Keymap::defaults()).as_deref(), Some("Down"));
+        // ...and giving it to archive takes it from NextMessage, so the hint
+        // falls back to the key NextMessage still has.
         assert_eq!(
-            retry(&rebound(CommandId::Archive, "R")).as_deref(),
-            Some("F5")
+            next(&rebound(CommandId::Archive, "Down")).as_deref(),
+            Some("j")
         );
     }
 

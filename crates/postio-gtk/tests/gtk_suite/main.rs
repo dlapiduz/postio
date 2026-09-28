@@ -1588,8 +1588,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_unavailable::the_screen_shows_what_it_was_told_and_asks_to_try_again_once as fn(),
     ),
     (
-        "gtk_undo_toast::u_and_the_toasts_button_both_reach_command_id_undo",
-        gtk_undo_toast::u_and_the_toasts_button_both_reach_command_id_undo as fn(),
+        "gtk_undo_toast::ctrl_z_and_the_toasts_button_both_reach_command_id_undo",
+        gtk_undo_toast::ctrl_z_and_the_toasts_button_both_reach_command_id_undo as fn(),
     ),
     (
         "gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside",

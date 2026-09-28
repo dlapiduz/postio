@@ -269,7 +269,7 @@ nothing is unreachable; it is only not on the *stack*.
 
 Two shapes follow from it and are worth copying:
 - **The command is the same verb, not a new one.**
-  `Command::MarkReadOnDwell` answers `CommandId::MarkUnread` from
+  `Command::MarkReadOnDwell` answers `CommandId::ToggleRead` from
   `Command::id()`, so it routes to the same handler and the registry still
   holds one "mark read". A registry entry of its own would also have needed a
   key binding it could never be reached by —

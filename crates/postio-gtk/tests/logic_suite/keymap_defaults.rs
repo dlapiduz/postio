@@ -143,8 +143,8 @@ fn the_canvas_navigation_set_works_in_the_list() {
     for (keys, expected) in [
         ("j", CommandId::NextMessage),
         ("k", CommandId::PrevMessage),
-        ("h", CommandId::PrevView),
-        ("l", CommandId::OpenMessage),
+        ("Left", CommandId::PrevView),
+        ("Right", CommandId::OpenMessage),
         ("Return", CommandId::OpenMessage),
         ("g g", CommandId::FirstMessage),
         ("G", CommandId::LastMessage),
@@ -168,10 +168,14 @@ fn the_canvas_action_set_works_in_the_list() {
         ("f", CommandId::Forward),
         ("a", CommandId::Archive),
         ("A", CommandId::ArchiveThread),
-        ("u", CommandId::Undo),
-        ("s", CommandId::Flag),
+        // The one keymap's (specs/007-postio-focus contracts/keymap.md).
+        ("ctrl+z", CommandId::Undo),
+        ("*", CommandId::Flag),
+        ("s", CommandId::Snooze),
+        ("r", CommandId::ToggleRead),
+        ("l", CommandId::AddLabel),
         ("m", CommandId::Move),
-        ("d", CommandId::Delete),
+        ("Delete", CommandId::Delete),
         ("c", CommandId::Compose),
     ] {
         assert_eq!(

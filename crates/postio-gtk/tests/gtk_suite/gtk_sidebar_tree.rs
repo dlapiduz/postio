@@ -250,7 +250,7 @@ pub fn folders_nest_collapse_and_a_noselect_parent_only_toggles() {
         }
     });
     press(&second, "g");
-    press(&second, "f");
+    press(&second, "o");
     assert_eq!(second.context(), Context::Sidebar);
     press(&second, "j");
     assert_eq!(*opened_via_keyboard.borrow(), vec![1], "landed on Clients");

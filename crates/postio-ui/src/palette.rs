@@ -54,7 +54,12 @@ use postio_core::{ActionId, Availability, Context, Keymap, registry};
 /// the two image commands, unsubscribe) took `Context::List` to 51, and
 /// `refresh` and the reader's scrolling fell off the end of an empty query.
 /// 64, for the same reason as before.
-pub const MAX_ROWS: usize = 64;
+///
+/// And at 64: the one keymap (specs/007-postio-focus) gave every app the
+/// archive, the snoozed mail and four saved searches, which took the
+/// classic app's `Context::List` to 66, and Focus's own commands take its
+/// list further. 96, still for headroom.
+pub const MAX_ROWS: usize = 96;
 
 // ---------------------------------------------------------------------------
 // Matching
@@ -312,7 +317,9 @@ mod tests {
     #[test]
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
         let listed = entries(&defaults(), Context::List, an_account(), "");
-        let expected: Vec<ActionId> = registry::reachable(Context::List)
+        // Reachable for this app: Focus's own commands are rows of the
+        // registry the classic app does not offer.
+        let expected: Vec<ActionId> = registry::reachable_in(Context::List, an_account())
             .map(|spec| spec.id)
             .collect();
 
@@ -325,13 +332,17 @@ mod tests {
     #[test]
     fn every_registry_command_is_reachable_from_some_context() {
         // In some context of some app: the terminal composer's own commands
-        // are in the terminal's palette only.
+        // are in the terminal's palette only, and Focus's in Focus's.
         let terminal = Availability {
             frontend: postio_core::Frontend::Terminal,
             ..an_account()
         };
+        let focus = Availability {
+            frontend: postio_core::Frontend::Focus,
+            ..an_account()
+        };
         for spec in registry::all() {
-            let reachable = [an_account(), terminal].into_iter().any(|state| {
+            let reachable = [an_account(), terminal, focus].into_iter().any(|state| {
                 Context::ALL.iter().any(|context| {
                     entries(&defaults(), *context, state, spec.title)
                         .iter()

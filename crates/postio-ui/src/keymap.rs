@@ -714,6 +714,27 @@ impl Keymap {
     /// cannot read costs its command a key and is reported; it never stops the
     /// application, which would leave the user with no way to fix it.
     pub fn from_commands(commands: &postio_core::Keymap) -> (Self, Vec<String>) {
+        Self::build(commands, None)
+    }
+
+    /// [`from_commands`](Self::from_commands) for one app: only the commands
+    /// `frontend` offers are bound.
+    ///
+    /// Every app shares one keymap, and a command only another app offers
+    /// keeps its key there (specs/007-postio-focus research R4). Here that
+    /// key is bound to nothing, so it does what an unbound key does, rather
+    /// than reaching a command this app would refuse as "not wired up".
+    pub fn from_commands_for(
+        commands: &postio_core::Keymap,
+        frontend: postio_core::Frontend,
+    ) -> (Self, Vec<String>) {
+        Self::build(commands, Some(frontend))
+    }
+
+    fn build(
+        commands: &postio_core::Keymap,
+        frontend: Option<postio_core::Frontend>,
+    ) -> (Self, Vec<String>) {
         let mut keymap = Self::new();
         let mut problems = Vec::new();
 
@@ -722,6 +743,9 @@ impl Keymap {
         // `bind` already takes the id as a string, so nothing below this line
         // cares which half it came from.
         for spec in registry::every_action() {
+            if frontend.is_some_and(|app| !spec.requires.offered_by(app)) {
+                continue;
+            }
             for binding in commands.bindings(spec.id) {
                 let contexts: Vec<KeyContext> = if spec.contexts == ContextSet::ANY {
                     vec![KeyContext::Global]
@@ -827,6 +851,9 @@ pub struct Resolver {
     pending: Vec<Chord>,
     /// When the pending sequence stops being pending.
     expires_at: Option<Instant>,
+    /// The app whose commands are bound, when it is one app's; `None` binds
+    /// every command. Remembered so a reload binds the same ones.
+    frontend: Option<postio_core::Frontend>,
 }
 
 impl Resolver {
@@ -837,6 +864,7 @@ impl Resolver {
             timeout: CHORD_TIMEOUT,
             pending: Vec::new(),
             expires_at: None,
+            frontend: None,
         }
     }
 
@@ -850,6 +878,22 @@ impl Resolver {
         (Self::new(keymap), problems)
     }
 
+    /// [`from_commands`](Self::from_commands) for one app: the resolver an
+    /// app presses keys through, binding only the commands `frontend`
+    /// offers (see [`Keymap::from_commands_for`]).
+    pub fn from_commands_for(
+        commands: &postio_core::Keymap,
+        frontend: postio_core::Frontend,
+    ) -> (Self, Vec<String>) {
+        let (keymap, problems) = Keymap::from_commands_for(commands, frontend);
+        let problems = Self::all_problems(commands, &keymap, problems);
+        let resolver = Self {
+            frontend: Some(frontend),
+            ..Self::new(keymap)
+        };
+        (resolver, problems)
+    }
+
     /// Rebuilds the table after `config.toml` changed, without a restart.
     ///
     /// Called when a reload reports `ConfigChange { keys: true }`. Returns the
@@ -861,7 +905,7 @@ impl Resolver {
     /// reads [`postio_core::Keymap`] directly and so follows on its own; this
     /// is only the half that has to be reparsed into chords.
     pub fn apply_commands(&mut self, commands: &postio_core::Keymap) -> Vec<String> {
-        let (keymap, problems) = Keymap::from_commands(commands);
+        let (keymap, problems) = Keymap::build(commands, self.frontend);
         let problems = Self::all_problems(commands, &keymap, problems);
         self.set_keymap(keymap);
         problems
