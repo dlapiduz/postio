@@ -114,6 +114,8 @@ impl FocusWindow {
     }
 
     fn build(&self) {
+        crate::style::install(&WidgetExt::display(self));
+        self.add_css_class("focus-window");
         let imp = self.imp();
         imp.opening.add_css_class("focus-opening");
         imp.unavailable.add_css_class("focus-unavailable");

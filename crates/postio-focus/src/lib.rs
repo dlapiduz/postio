@@ -12,4 +12,5 @@ pub mod chrome;
 pub mod keys;
 pub mod list;
 pub mod startup;
+pub mod style;
 pub mod window;

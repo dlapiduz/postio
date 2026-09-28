@@ -14,6 +14,7 @@ use gtk::prelude::*;
 use postio_core::{CommandId, Keymap};
 use postio_ui::hints;
 use postio_widgets::widgets::keyhint;
+use postio_widgets::widgets::space::{S1, S2, S3};
 use postio_widgets::widgets::{Kind, Size, icon_button};
 
 /// What a control asks the window to do.
@@ -60,7 +61,12 @@ impl Chrome {
         postio_widgets::widgets::button::style(&field, Kind::Secondary, Size::Regular);
         field.add_css_class("focus-command-field");
         field.set_width_request(480);
-        let field_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        // Its own width, not the bar's: the prompt inside expands, and an
+        // expanding child would otherwise widen the field to the bar.
+        field.set_hexpand(false);
+        field.set_halign(gtk::Align::Center);
+        field.set_valign(gtk::Align::Center);
+        let field_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         let search_icon = gtk::Image::from_icon_name("system-search-symbolic");
         search_icon.set_accessible_role(gtk::AccessibleRole::Presentation);
         field_row.append(&search_icon);
@@ -70,14 +76,15 @@ impl Chrome {
         prompt.set_hexpand(true);
         prompt.set_ellipsize(pango::EllipsizeMode::End);
         field_row.append(&prompt);
-        let field_keys = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let field_keys = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        field_keys.set_valign(gtk::Align::Center);
         field_row.append(&field_keys);
         field.set_child(Some(&field_row));
         field.update_property(&[gtk::accessible::Property::Label(
             "Search mail, go to a folder, or run a command",
         )]);
 
-        let sync_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let sync_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         sync_row.add_css_class("focus-sync");
         let sync_icon = gtk::Image::from_icon_name("emblem-synchronizing-symbolic");
         sync_icon.set_accessible_role(gtk::AccessibleRole::Presentation);
@@ -103,7 +110,7 @@ impl Chrome {
         close.add_css_class("focus-close");
         close.add_css_class("circular");
 
-        let end = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let end = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         end.append(&sync_row);
         end.append(&menu_button);
         end.append(&close);
@@ -119,12 +126,14 @@ impl Chrome {
         let place = gtk::Button::new();
         postio_widgets::widgets::button::style(&place, Kind::Ghost, Size::Regular);
         place.add_css_class("focus-place");
-        let place_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        place.set_valign(gtk::Align::Center);
+        let place_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         let place_name = gtk::Label::new(Some("Inbox"));
-        place_name.add_css_class("heading");
+        place_name.add_css_class("focus-place-name");
         let place_arrow = gtk::Image::from_icon_name("pan-down-symbolic");
         place_arrow.set_accessible_role(gtk::AccessibleRole::Presentation);
         let place_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        place_key.set_valign(gtk::Align::Center);
         place_row.append(&place_name);
         place_row.append(&place_arrow);
         place_row.append(&place_key);
@@ -142,11 +151,14 @@ impl Chrome {
         let has_action = gtk::ToggleButton::new();
         postio_widgets::widgets::button::style(&has_action, Kind::Ghost, Size::Regular);
         has_action.add_css_class("focus-has-action");
-        let has_action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let flag = gtk::Image::from_icon_name("flag-outline-thin-symbolic");
+        has_action.set_valign(gtk::Align::Center);
+        let has_action_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        let flag = gtk::Image::from_icon_name("emoji-flags-symbolic");
         flag.set_accessible_role(gtk::AccessibleRole::Presentation);
         let has_action_label = gtk::Label::new(Some("Has action"));
+        has_action_label.add_css_class("focus-has-action-label");
         let has_action_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        has_action_key.set_valign(gtk::Align::Center);
         has_action_row.append(&flag);
         has_action_row.append(&has_action_label);
         has_action_row.append(&has_action_key);
@@ -161,14 +173,14 @@ impl Chrome {
         spacer.set_hexpand(true);
 
         // Shown once filtering and digests have their surfaces (FR-018).
-        let filtered_today = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let filtered_today = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         filtered_today.add_css_class("focus-filtered-today");
         filtered_today.set_visible(false);
-        let digest_rules = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let digest_rules = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         digest_rules.add_css_class("focus-digest-rules");
         digest_rules.set_visible(false);
 
-        let strip = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let strip = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         strip.add_css_class("focus-header-strip");
         strip.append(&place);
         strip.append(&counts_holder);

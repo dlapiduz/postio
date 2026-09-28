@@ -1,0 +1,69 @@
+/* Focus's colour roles (specs/007-postio-focus research R11, FR-090).
+ *
+ * The shared widgets and Focus's own surfaces read `--postio-*` roles, and
+ * each app defines them. The classic app defines them from its generated
+ * `tokens.css`, with its steel accent. Focus defines them from libadwaita's
+ * own named colours, so the system's accent and its light and dark arrive
+ * through AdwStyleManager, with nothing of Focus's in between: switching the
+ * system to dark repaints Focus at once (US1 scenario 6).
+ *
+ * No hex, no rgba literal: every role is one of libadwaita's colours, or a
+ * mix of one with transparency (ARCHITECTURE §10).
+ *
+ * THE ACCENT IS RESERVED (FR-091): action markers, the keyboard focus ring
+ * and the has-action toggle. `--postio-accent` is defined because the shared
+ * widgets' focus rings read it; every other rule that would paint with it
+ * is re-dressed in focus.css, and `style.rs`'s test holds that line. The
+ * selection is neutral: a selected row has a neutral background and a
+ * checked box, never the accent.
+ */
+
+:root {
+  /* Grounds and surfaces. */
+  --postio-ground: var(--window-bg-color);
+  --postio-surface: var(--view-bg-color);
+  --postio-header: var(--headerbar-bg-color);
+  --postio-card: var(--card-bg-color);
+
+  /* Text: the ink, and quieter steps of it. Dim is libadwaita's own
+     dim-label step (55%). */
+  --postio-ink: var(--view-fg-color);
+  --postio-ink-secondary: color-mix(in srgb, var(--view-fg-color) 80%, transparent);
+  --postio-dim: color-mix(in srgb, var(--view-fg-color) 55%, transparent);
+  --postio-faint: color-mix(in srgb, var(--view-fg-color) 40%, transparent);
+
+  /* Rules. */
+  --postio-hairline: var(--border-color);
+  --postio-hairline-strong: color-mix(in srgb, var(--view-fg-color) 22%, transparent);
+
+  /* Pointer states, and a raised button's face: tints of the ink, so they
+     follow the scheme. */
+  --postio-hover-bg: color-mix(in srgb, var(--view-fg-color) 6%, transparent);
+  --postio-active-bg: color-mix(in srgb, var(--view-fg-color) 12%, transparent);
+  --postio-raised-bg: color-mix(in srgb, var(--view-fg-color) 8%, transparent);
+
+  /* The selection, neutral (contracts/focus-surface.md, Rows). */
+  --postio-selected-bg: color-mix(in srgb, var(--view-fg-color) 7%, transparent);
+  --postio-selected-strong-bg: color-mix(in srgb, var(--view-fg-color) 12%, transparent);
+  --postio-selected-fg: var(--view-fg-color);
+  --postio-selected-border: var(--border-color);
+  --postio-selected-accent-text: var(--view-fg-color);
+
+  /* The accent, for the three things FR-091 gives it. */
+  --postio-accent: var(--accent-color);
+  --postio-accent-hover: var(--accent-color);
+  --postio-accent-bg: var(--accent-bg-color);
+  --postio-accent-fg: var(--accent-fg-color);
+  --postio-accent-text: var(--accent-color);
+
+  /* Errors: the sign-in banner, at low opacity (screen 19). */
+  --postio-error: var(--error-color);
+  --postio-error-bg: color-mix(in srgb, var(--error-bg-color) 14%, transparent);
+
+  /* Type (FR-093): Adwaita Sans for text, Adwaita Mono for keys, addresses
+     and operators. */
+  --postio-font-heading: "Adwaita Sans", sans-serif;
+  --postio-font-heading-weight: 700;
+  --postio-font-body: "Adwaita Sans", sans-serif;
+  --postio-font-mono: "Adwaita Mono", monospace;
+}

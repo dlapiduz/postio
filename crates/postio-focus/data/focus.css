@@ -1,0 +1,167 @@
+/* Focus's own surfaces (contracts/focus-surface.md), over the shared
+ * widgets' rules.
+ *
+ * The shared sheet is imported first, so both are one provider: GTK compares
+ * specificity only inside one, and a rule here that repeats a shared
+ * selector wins by coming later (postio_widgets::style). Every value is a
+ * role from focus-colours.css or the shared metrics; nothing is typed in.
+ *
+ * TYPE IS IN `rem`, NEVER `px`, so GNOME's text scaling moves it.
+ * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent.
+ */
+
+@import url("resource:///dev/postio/Widgets/widgets.css");
+
+/* ── The window ──────────────────────────────────────────────────────── */
+window.focus-window {
+  font-family: var(--postio-font-body);
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+}
+
+/* The top bar (46 px): compose, the command-bar field, the sync label, the
+   main menu and close. */
+.focus-top-bar {
+  min-height: 46px;
+  padding: 0 var(--postio-space-4);
+  background-color: var(--postio-header);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-command-field {
+  min-height: 32px;
+  padding: 0 var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  border-color: var(--postio-hairline);
+  background-color: var(--postio-raised-bg);
+  font-family: var(--postio-font-body);
+  font-weight: normal;
+  font-size: var(--postio-text-ui);
+}
+
+/* A keycap: the key a control runs, framed and in mono, wherever Focus
+   draws one -- inside a control or standing alone. Every one comes from
+   the keymap (postio_widgets::widgets::keyhint). */
+.postio-keyhint,
+.postio-key {
+  min-height: 16px;
+  min-width: 8px;
+  padding: 0 4px;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-md);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-micro);
+  color: var(--postio-dim);
+  opacity: 1;
+}
+
+.focus-sync {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-ui);
+}
+
+/* The header strip (36 px): where the person is, the counts, the
+   has-action toggle. */
+.focus-header-strip {
+  min-height: 36px;
+  padding: 0 var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+button.focus-place {
+  color: var(--postio-ink);
+  padding: 0 var(--postio-space-2);
+}
+
+.focus-place-name {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-counts label,
+.focus-showing {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-ui);
+}
+
+.focus-strip-divider {
+  margin: var(--postio-space-2) 0;
+  background-color: var(--postio-hairline);
+}
+
+/* The has-action toggle: a quiet pill while it is off; the one control the
+   accent dresses, and only while it is on (FR-091). */
+button.focus-has-action {
+  color: var(--postio-ink);
+  border-color: var(--postio-hairline);
+  padding: 0 var(--postio-space-2);
+}
+
+.focus-has-action-label {
+  font-weight: bold;
+}
+
+button.focus-has-action:checked {
+  color: var(--postio-accent);
+  border-color: var(--postio-accent);
+  background-color: color-mix(in srgb, var(--postio-accent-bg) 10%, transparent);
+}
+
+/* ── The list ────────────────────────────────────────────────────────── */
+.focus-list {
+  background-color: var(--postio-surface);
+}
+
+.focus-list > row {
+  padding: 0;
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: transparent;
+}
+
+/* GTK's own `:selected` on a list row is the cursor here -- where the keyboard
+   is -- and the cursor is drawn as the focus ring: a 2 px accent border that
+   changes nothing about the row's height. What `a` would archive is drawn by
+   the row itself, neutral. */
+.focus-list > row:selected {
+  background-color: transparent;
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-list > row:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+focusrow {
+  color: var(--postio-ink);
+  font-family: var(--postio-font-body);
+}
+
+/* ── Re-dressed for Focus: the shared sheet's accent uses (FR-091) ───────
+   A default button is a plain raised button with a bold label, never the
+   accent's fill, and a hover is a tint, never an accent border. */
+button.postio-button-primary {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-raised-bg);
+  color: var(--postio-ink);
+  font-weight: bold;
+}
+
+button.postio-button-primary:hover {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-active-bg);
+}
+
+button.postio-button-secondary:hover {
+  border-color: var(--postio-hairline-strong);
+}
+
+.postio-refine-chip:hover {
+  border-color: var(--postio-hairline-strong);
+  color: var(--postio-ink);
+}
+
+.postio-chip {
+  color: var(--postio-ink);
+}

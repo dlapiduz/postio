@@ -23,6 +23,7 @@
 //! when several cases fail at once, trust the first.
 
 mod chrome;
+mod colours;
 mod harness;
 mod list_contract;
 mod starts_offline;
@@ -48,6 +49,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key",
         chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key as fn(),
+    ),
+    (
+        "colours::the_roles_resolve_and_follow_the_system_into_dark",
+        colours::the_roles_resolve_and_follow_the_system_into_dark as fn(),
     ),
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
@@ -137,8 +142,40 @@ fn tidy_up() {
     support::drop_kept();
 }
 
+/// Set once the suite is running in a configuration of its own.
+const HERMETIC: &str = "POSTIO_FOCUS_SUITE_HERMETIC";
+
+/// Run this binary again with a configuration directory of its own, and exit
+/// as it does -- unless this is that run.
+///
+/// GTK loads the person's own `gtk-4.0/gtk.css` from `XDG_CONFIG_HOME`, and a
+/// desktop can put its whole palette there: COSMIC writes its dark colours as
+/// `@define-color`s, at a priority above any application's, whatever the
+/// colour scheme. A case asserting what Focus's colours resolve to would then
+/// be asserting the developer's theme. An empty directory is the machine CI
+/// is. It also keeps every case away from the person's `config.toml`.
+/// Setting the variable in this process would need `unsafe`, which the
+/// workspace forbids; a child is given it instead.
+fn hermetic(arguments: &[String]) {
+    if std::env::var_os(HERMETIC).is_some() {
+        return;
+    }
+    let config = tempfile::tempdir().expect("an empty configuration directory");
+    let status = std::process::Command::new(std::env::current_exe().expect("this suite"))
+        .args(arguments)
+        .env(HERMETIC, "1")
+        .env("XDG_CONFIG_HOME", config.path())
+        .status()
+        .expect("the suite runs again in its own configuration");
+    drop(config);
+    std::process::exit(status.code().unwrap_or(101));
+}
+
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if !arguments.iter().any(|a| a == "--list") {
+        hermetic(&arguments);
+    }
     if arguments.iter().any(|a| a == "--list") {
         // Two questions, and a libtest-compatible runner asks both: every
         // test, then `--ignored` for the ignored subset. Answering the second
