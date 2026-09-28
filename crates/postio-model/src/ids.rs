@@ -148,6 +148,11 @@ local_id!(
     /// until it came due, surfaced as one row of the inbox.
     DeliveryId
 );
+local_id!(
+    /// Identifies a Focus reminder (spec 007 US5): a conversation that comes
+    /// back to the top of the inbox if nobody has replied by a time.
+    ReminderId
+);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {

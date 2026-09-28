@@ -457,3 +457,134 @@ async fn a_sender_the_user_never_filters_is_not_filtered() {
     let (_, decision) = world.where_is("Arrival 3").await;
     assert!(decision.is_some(), "and a sender nobody pinned is filed");
 }
+
+// --- Reminders: a reply from somebody else answers one (spec 007 T094) ------------
+
+/// The conversation of the message whose `Message-ID` is `<arrival-{n}@example.com>`.
+async fn conversation_of(world: &World, n: u32) -> (MessageId, postio_model::ThreadId) {
+    let id: i64 = postio_storage::sql::first(
+        &world.connection,
+        "SELECT id FROM messages WHERE rfc_message_id = ?1",
+        [format!("<arrival-{n}@example.com>")],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("a read")
+    .expect("the message");
+    let message = MessageRepository::new(&world.connection)
+        .get(MessageId::new(id))
+        .await
+        .expect("a read")
+        .expect("the message");
+    (message.id, message.thread_id.expect("threaded"))
+}
+
+/// A reply to the message `<arrival-{to}@example.com>`, from `from`.
+fn reply(n: u32, to: u32, from: &str) -> Vec<u8> {
+    mail(
+        n,
+        from,
+        &format!(
+            "In-Reply-To: <arrival-{to}@example.com>\r\nReferences: <arrival-{to}@example.com>\r\n"
+        ),
+    )
+}
+
+/// A reminder on the old message's conversation, due in a day.
+async fn waiting_on_the_old_message(world: &World) -> postio_model::ThreadId {
+    let (anchor, thread) = conversation_of(world, 0).await;
+    postio_storage::repository::ReminderRepository::new(&world.connection)
+        .set(
+            thread,
+            anchor,
+            chrono::Utc::now() + chrono::TimeDelta::days(1),
+            chrono::Utc::now(),
+        )
+        .await
+        .expect("a reminder");
+    thread
+}
+
+/// Every reminder on `thread`, as (cancelled, fired, settled).
+async fn reminder_states(world: &World, thread: postio_model::ThreadId) -> Vec<(bool, bool, bool)> {
+    postio_storage::sql::all(
+        &world.connection,
+        "SELECT cancelled_at IS NOT NULL, fired_at IS NOT NULL, settled_at IS NOT NULL
+           FROM reminders WHERE thread_id = ?1 ORDER BY id",
+        [thread.get()],
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+        },
+    )
+    .await
+    .expect("a read")
+}
+
+#[tokio::test]
+async fn a_reply_from_somebody_else_cancels_the_reminder_waiting_on_it() {
+    // FR-044, in the transaction that files the reply.
+    let world = world(true).await;
+    let thread = waiting_on_the_old_message(&world).await;
+    world.deliver(reply(1, 0, "Old <old@example.org>")).await;
+
+    let arrived = world.pass(&FocusFiling::default()).await;
+    assert_eq!(arrived.len(), 1);
+    assert_eq!(
+        conversation_of(&world, 1).await.1,
+        thread,
+        "the reply joined it"
+    );
+    assert_eq!(
+        reminder_states(&world, thread).await,
+        vec![(true, false, false)],
+        "cancelled, before it fired"
+    );
+}
+
+#[tokio::test]
+async fn the_person_s_own_follow_up_leaves_the_reminder_waiting() {
+    // A reply from anyone *but the user* cancels it (FR-044).
+    let world = world(true).await;
+    let thread = waiting_on_the_old_message(&world).await;
+    world
+        .deliver(reply(1, 0, "Test User <test@example.com>"))
+        .await;
+
+    world.pass(&FocusFiling::default()).await;
+    assert_eq!(
+        reminder_states(&world, thread).await,
+        vec![(false, false, false)],
+        "still waiting"
+    );
+}
+
+#[tokio::test]
+async fn a_reply_to_a_surfaced_reminder_settles_it() {
+    // The conversation came back marked "No reply since"; then the reply
+    // came after all, and the surfaced row stops standing.
+    let world = world(true).await;
+    let thread = waiting_on_the_old_message(&world).await;
+    let reminders = postio_storage::repository::ReminderRepository::new(&world.connection);
+    let standing = reminders
+        .standing(thread)
+        .await
+        .expect("a read")
+        .expect("the reminder");
+    reminders
+        .fire(standing.id, chrono::Utc::now())
+        .await
+        .expect("fired");
+    world.deliver(reply(1, 0, "Old <old@example.org>")).await;
+
+    world.pass(&FocusFiling::default()).await;
+    assert_eq!(
+        reminder_states(&world, thread).await,
+        vec![(false, true, true)],
+        "settled, having fired"
+    );
+    assert!(
+        reminders.surfaced().await.expect("a read").is_empty(),
+        "and no longer surfaced"
+    );
+}

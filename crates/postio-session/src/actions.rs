@@ -53,6 +53,8 @@ use postio_storage::repository::{
 };
 use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
+mod focus;
+
 /// The commands this module answers.
 ///
 /// Named once so that the registration and the match in [`Actions::act`]
@@ -70,6 +72,8 @@ pub const WIRED: &[CommandId] = &[
     CommandId::ToggleRead,
     CommandId::Snooze,
     CommandId::Unsnooze,
+    // Postio Focus's (specs/007-postio-focus), answered in `focus`.
+    CommandId::RemindIfNoReply,
     // After Unsnooze, matching the registry's own order: `bus.wired()`
     // reports in registry order and `every_wired_command_has_a_handler_and_an_arm`
     // compares the two lists directly.
@@ -346,6 +350,7 @@ impl Actions {
                 vec![self.snooze(target, until).await?]
             }
             Command::Unsnooze { target } => vec![self.unsnooze(target).await?],
+            Command::RemindIfNoReply { target, at } => vec![self.remind(target, *at).await?],
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
             Command::MarkSent { draft } => vec![self.mark_sent(*draft).await?],

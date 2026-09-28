@@ -616,13 +616,20 @@ pub enum Command {
         /// What to unsnooze.
         target: MessageTarget,
     },
-    /// Bring the conversation back if nobody has replied by a time.
+    /// Bring the conversation back if nobody has replied by a time, or stop
+    /// waiting for a reply.
     ///
-    /// No time here yet, for [`Command::Snooze`]'s reason: the picker asks
-    /// for it (specs/007-postio-focus contracts/engine.md).
+    /// The time is the remind picker's, one of the shared presets or a typed
+    /// date (specs/007-postio-focus research R6). `None` clears the
+    /// conversation's reminder: it is the value rather than a toggle, so
+    /// undo can dispatch the inverse, as [`Command::AddLabel`]'s `on` does.
+    /// Focus opens the picker on the key; nothing sends a keystroke's
+    /// `None` meaning "ask".
     RemindIfNoReply {
-        /// What to be reminded about.
+        /// Which conversations: each targeted message's.
         target: MessageTarget,
+        /// When to bring it back; `None` clears the reminder.
+        at: Option<DateTime<Utc>>,
     },
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
@@ -1060,7 +1067,7 @@ impl Command {
             | Command::ToggleRead { target, .. }
             | Command::Snooze { target, .. }
             | Command::Unsnooze { target }
-            | Command::RemindIfNoReply { target }
+            | Command::RemindIfNoReply { target, .. }
             | Command::AddLabel { target, .. }
             | Command::DigestRule { target }
             | Command::StopDigestingSender { target, .. }
@@ -1091,7 +1098,7 @@ impl Command {
             Command::ToggleRead { unread, .. } => Command::ToggleRead { target, unread },
             Command::Snooze { until, .. } => Command::Snooze { target, until },
             Command::Unsnooze { .. } => Command::Unsnooze { target },
-            Command::RemindIfNoReply { .. } => Command::RemindIfNoReply { target },
+            Command::RemindIfNoReply { at, .. } => Command::RemindIfNoReply { target, at },
             Command::AddLabel { label, on, .. } => Command::AddLabel { target, label, on },
             Command::DigestRule { .. } => Command::DigestRule { target },
             Command::StopDigestingSender { stopped, .. } => {
@@ -1314,6 +1321,7 @@ impl Command {
             },
             CommandId::RemindIfNoReply => Command::RemindIfNoReply {
                 target: MessageTarget::Selection,
+                at: None,
             },
             CommandId::AddLabel => Command::AddLabel {
                 target: MessageTarget::Selection,

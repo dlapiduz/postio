@@ -17,7 +17,8 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use postio_config::FocusConfig;
-use postio_storage::repository::DigestRepository;
+use postio_model::EmailAddress;
+use postio_storage::repository::{DigestRepository, IdentityRepository, ReminderRepository};
 use postio_storage::{Store, WritePriority};
 use postio_ui::schedule::next_due;
 
@@ -70,4 +71,53 @@ where
         delivered += usize::from(made.is_some());
     }
     Ok(delivered)
+}
+
+/// Fire every reminder that has come due by `now` with no reply (spec 007
+/// US5): each surfaces at the top of Focus's inbox, marked "No reply
+/// since" the day it was set. Answers how many fired.
+///
+/// - **At start too**: the timer's first tick is at once, so a reminder that
+///   came due while Focus was closed surfaces as it opens (FR-045). It needs
+///   nothing but the store, so it fires offline as well.
+/// - **Never over a reply** (FR-044): Focus's filing pass cancels a reminder
+///   as a reply from somebody else is filed, but a reply can reach the store
+///   by a way that pass never sees -- a folder another app synced, a first
+///   sync. So before firing, the timer asks who has written in the
+///   conversation since the reminder was set, and one who is not the person
+///   cancels it instead.
+pub(crate) async fn fire_reminders(database: &Store, now: DateTime<Utc>) -> Result<usize, Failure> {
+    let due = {
+        let reader = database.read().await?;
+        ReminderRepository::new(&reader).due(now).await?
+    };
+    if due.is_empty() {
+        return Ok(0);
+    }
+    let connection = database.connect_background().await?;
+    let own: Vec<String> = IdentityRepository::new(&connection)
+        .own_addresses()
+        .await?
+        .iter()
+        .map(EmailAddress::normalized)
+        .collect();
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+    let reminders = ReminderRepository::new(&connection);
+    let mut fired = 0;
+    for reminder in due {
+        let replied = reminders
+            .writers_since(reminder.thread, reminder.set_at)
+            .await?
+            .iter()
+            .any(|writer| !own.contains(writer));
+        if replied {
+            reminders.cancel(reminder.id, now).await?;
+        } else if reminders.fire(reminder.id, now).await? {
+            fired += 1;
+        }
+    }
+    Ok(fired)
 }

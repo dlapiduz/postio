@@ -34,12 +34,13 @@ use std::sync::Arc;
 use chrono::{Local, Utc};
 use postio_classify::{Digests, Facts, Layer, Outcome, ReasonKind, Rules, Senders};
 use postio_config::{FocusConfig, FocusFilter};
-use postio_model::{AccountId, EmailAddress, MailboxId, MailboxRole, MessageId};
+use postio_model::{AccountId, EmailAddress, MailboxId, MailboxRole, MessageId, ThreadId};
 use postio_storage::Connection;
 use postio_storage::actions::{self, Relocation};
 use postio_storage::repository::{
     CorrespondentRepository, DigestRepository, FilterDecision, FilterDecisionRepository,
-    FilterLayer, FilterReason, IdentityRepository, MailboxRepository, ThreadRepository,
+    FilterLayer, FilterReason, IdentityRepository, MailboxRepository, ReminderRepository,
+    ThreadRepository,
 };
 
 use super::facts::Known;
@@ -160,6 +161,7 @@ impl FocusFiling {
             CorrespondentRepository::explain_written_to(1),
             ThreadRepository::explain_took_part().to_owned(),
             MailboxRepository::explain_by_role(),
+            ReminderRepository::explain_standing_on(2),
         ]
     }
 
@@ -299,6 +301,8 @@ impl FilingPass for FocusFiling {
             effects.filtered.push(message.message.id);
         }
 
+        answer_reminders(transaction, filed, now).await?;
+
         for (account, by_source) in &leaving {
             let Some(Some(archive)) = archives.get(account) else {
                 continue;
@@ -323,6 +327,81 @@ impl FilingPass for FocusFiling {
         }
         Ok(effects)
     }
+}
+
+/// Whether `message` can answer a reminder: a reply -- it names what it
+/// answers, by `In-Reply-To` or `References` -- filed somewhere other than
+/// the person's own folders, and not in Junk, where a stranger's mail
+/// that threads in by its subject would otherwise count as an answer.
+///
+/// A message that names nothing starts a conversation of its own, and no
+/// reminder can stand on that, so a notification costs no read. A reply
+/// threaded by its subject alone is not missed: the due timer asks who
+/// has written in the conversation before it fires a reminder.
+fn may_answer(message: &FiledMessage<'_>) -> bool {
+    let replies = message.message.in_reply_to.is_some() || !message.message.references.is_empty();
+    replies
+        && !matches!(
+            message.role,
+            MailboxRole::Sent | MailboxRole::Drafts | MailboxRole::Outbox | MailboxRole::Junk
+        )
+}
+
+/// A reply from somebody else cancels the reminder waiting on it, and
+/// settles one that had already surfaced (spec 007 FR-044): the person was
+/// waiting to hear, and has.
+///
+/// One read per call, and only when a reply arrived: whether a reminder
+/// stands on any of the conversations the replies joined. Only when one
+/// does is the person's own list of addresses read, to tell their own
+/// follow-up -- which leaves the reminder waiting -- from somebody else's
+/// answer.
+async fn answer_reminders(
+    transaction: &Connection,
+    filed: &[FiledMessage<'_>],
+    now: chrono::DateTime<Utc>,
+) -> Result<(), SyncError> {
+    let mut threads: Vec<ThreadId> = filed
+        .iter()
+        .filter(|message| may_answer(message))
+        .filter_map(|message| message.thread)
+        .collect();
+    threads.sort_unstable();
+    threads.dedup();
+    if threads.is_empty() {
+        return Ok(());
+    }
+    let reminders = ReminderRepository::new(transaction);
+    let standing = reminders.standing_on(&threads).await?;
+    if standing.is_empty() {
+        return Ok(());
+    }
+    let own: BTreeSet<String> = IdentityRepository::new(transaction)
+        .own_addresses()
+        .await?
+        .iter()
+        .map(EmailAddress::normalized)
+        .collect();
+    for reminder in standing {
+        let replied = filed.iter().any(|message| {
+            message.thread == Some(reminder.thread)
+                && may_answer(message)
+                && message
+                    .message
+                    .from
+                    .iter()
+                    .any(|from| !own.contains(&from.normalized()))
+        });
+        if !replied {
+            continue;
+        }
+        if reminder.fired_at.is_some() {
+            reminders.settle(reminder.id, now).await?;
+        } else {
+            reminders.cancel(reminder.id, now).await?;
+        }
+    }
+    Ok(())
 }
 
 /// A classifier's reason as the store spells it (`filter_decisions`). One

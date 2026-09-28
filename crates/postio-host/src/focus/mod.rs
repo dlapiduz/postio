@@ -34,7 +34,7 @@ use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 pub(crate) use catch_up::FILED_THROUGH;
-pub(crate) use due::deliver_due;
+pub(crate) use due::{deliver_due, fire_reminders};
 
 use postio_config::FocusConfig;
 use postio_sync::{FilingPass, FocusFiling};
@@ -161,6 +161,13 @@ fn due_timer(inner: &Arc<Inner>, config: Arc<RwLock<FocusConfig>>) -> tokio::tas
                     Ok(delivered) => tracing::debug!(delivered, "Focus delivered digests"),
                     Err(error) => {
                         tracing::warn!(%error, "Focus could not deliver its digests: {error}");
+                    }
+                }
+                match fire_reminders(&database, chrono::Utc::now()).await {
+                    Ok(0) => {}
+                    Ok(fired) => tracing::debug!(fired, "Focus surfaced reminders"),
+                    Err(error) => {
+                        tracing::warn!(%error, "Focus could not fire its reminders: {error}");
                     }
                 }
                 if let Err(error) = catch_up::keep_mark(&database, &mut marked).await {

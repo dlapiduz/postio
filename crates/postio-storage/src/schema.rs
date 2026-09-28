@@ -720,6 +720,30 @@ CREATE TABLE recipients (
     CHECK ((message_id IS NOT NULL) <> (draft_id IS NOT NULL))
 );
 
+-- A reminder to follow up (spec 007 US5, research R7): when nobody but the
+-- person has written in the conversation by `due_at`, the conversation
+-- comes back to the top of Focus's inbox, marked "No reply since" the day
+-- the reminder was set. Set and cleared by `remind_if_no_reply`, fired by
+-- Focus's due timer, and lost on a resync, like a snooze: the person's
+-- intent, but a short-lived one.
+CREATE TABLE reminders (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- The conversation. Not a foreign key: a threading pass may renumber
+    -- conversations, and a message's own `thread_id` is not one either.
+    thread_id          INTEGER NOT NULL,
+    -- The message it was set on: the one the person waits on a reply to.
+    anchor_message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    set_at             INTEGER NOT NULL,
+    due_at             INTEGER NOT NULL,
+    -- When the due timer found no reply by `due_at`, and surfaced it.
+    fired_at           INTEGER,
+    -- When a message from somebody else arrived in the conversation before
+    -- it fired: a reply cancels it (FR-044).
+    cancelled_at       INTEGER,
+    -- When a surfaced reminder stopped standing: a reply came after all.
+    settled_at         INTEGER
+);
+
 CREATE TABLE settings (
     key         TEXT    NOT NULL,
     -- NULL scopes the setting globally; otherwise it is per account.
@@ -918,6 +942,14 @@ CREATE INDEX idx_recipients_address ON recipients (address_id, kind);
 CREATE INDEX idx_recipients_draft ON recipients (draft_id, kind, position);
 
 CREATE INDEX idx_recipients_message ON recipients (message_id, kind, position);
+
+-- The reminders that still stand, in the order they fired: led by the two
+-- columns every read of them asks `IS NULL` of, because the planner seeks
+-- an equality and will not seek `fired_at IS NOT NULL` from the front of
+-- an index. The due timer's read and the surfaced rows' both seek it.
+CREATE INDEX idx_reminders_standing ON reminders (settled_at, cancelled_at, fired_at);
+
+CREATE INDEX idx_reminders_thread ON reminders (thread_id);
 
 CREATE UNIQUE INDEX idx_settings_account_key
     ON settings (account_id, key) WHERE account_id IS NOT NULL;

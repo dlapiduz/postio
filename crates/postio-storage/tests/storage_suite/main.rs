@@ -48,6 +48,7 @@ mod messages;
 mod operations;
 mod promoted_headers;
 mod reclaim_pages;
+mod reminders;
 mod schema_fidelity;
 mod seed_is_honest;
 mod snoozed_due_index;

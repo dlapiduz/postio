@@ -63,6 +63,11 @@ pub enum UndoKind {
     Snooze,
     /// Messages were unsnoozed.
     Unsnooze,
+    /// A reminder was set on conversations: they come back if nobody
+    /// replies (specs/007-postio-focus US5).
+    Remind,
+    /// Conversations' reminders were cleared.
+    Unremind,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
     /// A send that had stopped was put back on the queue (spec 003).
@@ -97,7 +102,20 @@ impl UndoKind {
             UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
+            // Counted in conversations: a reminder waits on a reply to the
+            // conversation, whichever of its messages it was set from.
+            UndoKind::Remind => format!("Reminder set on {count} {}", conversations(count)),
+            UndoKind::Unremind => format!("Reminder cleared on {count} {}", conversations(count)),
         }
+    }
+}
+
+/// "conversation", or its plural, for `count` of them.
+fn conversations(count: usize) -> &'static str {
+    if count == 1 {
+        "conversation"
+    } else {
+        "conversations"
     }
 }
 

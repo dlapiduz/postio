@@ -3239,7 +3239,7 @@ fn filed_elsewhere(world: &World, from: &str, subject: &str) -> MessageId {
 
 /// Focus last ran with the store as it is now: its mark set, as a session
 /// that had just filed everything here would leave it.
-fn focus_ran_before(world: &World) {
+pub(crate) fn focus_ran_before(world: &World) {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         let newest = MessageRepository::new(&connection)
