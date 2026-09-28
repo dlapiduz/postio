@@ -45,6 +45,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "rows::the_inbox_opens_with_its_first_heading_on_screen",
+        rows::the_inbox_opens_with_its_first_heading_on_screen as fn(),
+    ),
+    (
         "has_action::has_action_narrows_to_the_marked_rows_and_back",
         has_action::has_action_narrows_to_the_marked_rows_and_back as fn(),
     ),

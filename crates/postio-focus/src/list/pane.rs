@@ -1,8 +1,11 @@
 //! The list as it sits in the window: a `GtkListView` over the feed's
 //! model, in a scroller, with Focus's rows.
 
-use gtk::graphene;
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk::prelude::*;
+use gtk::{glib, graphene};
 
 use super::feed::Feed;
 use super::heading::DayHeading;
@@ -17,6 +20,8 @@ pub struct ListPane {
     cursor: gtk::SingleSelection,
     feed: Feed,
     keymap: SharedKeymap,
+    /// Whether the list is held at its top, first heading showing.
+    pinned: Rc<Cell<bool>>,
 }
 
 /// The selection a list's rows draw their boxes from.
@@ -86,13 +91,23 @@ impl ListPane {
             .vexpand(true)
             .hexpand(true)
             .build();
+        let pinned = hold_the_top(feed.list(), &view, &scrolled);
         ListPane {
             scrolled,
             view,
             cursor,
             feed,
             keymap,
+            pinned,
         }
+    }
+
+    /// Scroll to the very top, first heading showing, and hold it there
+    /// while the rows settle: the cursor has gone to the first row, and
+    /// GTK would bring that row into view without its heading.
+    pub fn to_top(&self) {
+        self.pinned.set(true);
+        self.scrolled.vadjustment().set_value(0.0);
     }
 
     /// Redraw every row on screen: what they draw from beside their own
@@ -200,4 +215,87 @@ impl std::fmt::Debug for ListPane {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ListPane").finish_non_exhaustive()
     }
+}
+
+/// Hold the list at its top, its first day heading on screen, until the
+/// person scrolls away from it.
+///
+/// GTK anchors a list on its first row and lays that row's section header
+/// out above it, off screen: when the rows arrive, and again every time
+/// they change height as their pages land, the view is put back one
+/// heading's height down (measured: 33 px, the heading's 32 and its rule),
+/// and the first thing the list says -- what day it is -- is hidden. So
+/// while the list is pinned, a move that only hides the first heading is
+/// taken back.
+///
+/// The list is pinned when it opens, when its rows are replaced wholesale
+/// (the has-action filter), whenever it is back at 0, and when the cursor
+/// goes to the first row. It is unpinned by the person's own scrolling,
+/// and by any move past the heading -- the cursor restored twenty rows
+/// down is a real scroll, and is left alone.
+fn hold_the_top(
+    list: &super::model::FocusList,
+    view: &gtk::ListView,
+    scrolled: &gtk::ScrolledWindow,
+) -> Rc<Cell<bool>> {
+    let pinned = Rc::new(Cell::new(true));
+    list.connect_items_changed({
+        let pinned = pinned.clone();
+        move |list, position, _removed, added| {
+            if position == 0 && added > 0 && list.n_items() == added {
+                pinned.set(true);
+            }
+        }
+    });
+    let scrolling = gtk::EventControllerScroll::new(
+        gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::KINETIC,
+    );
+    scrolling.set_propagation_phase(gtk::PropagationPhase::Capture);
+    scrolling.connect_scroll({
+        let pinned = pinned.clone();
+        move |_, _, _| {
+            pinned.set(false);
+            glib::Propagation::Proceed
+        }
+    });
+    scrolled.add_controller(scrolling);
+    let view = view.downgrade();
+    scrolled.vadjustment().connect_value_changed({
+        let pinned = pinned.clone();
+        move |adjustment| {
+            let value = adjustment.value();
+            if value <= 0.0 {
+                pinned.set(true);
+                return;
+            }
+            if !pinned.get() {
+                return;
+            }
+            let heading = view
+                .upgrade()
+                .and_then(|view| first_heading_height(&view))
+                .unwrap_or(0.0);
+            if value <= heading {
+                adjustment.set_value(0.0);
+            } else {
+                pinned.set(false);
+            }
+        }
+    });
+    pinned
+}
+
+/// How tall the list's first day heading asks to be. Measured, not read
+/// from its allocation: GTK scrolls while it lays the list out, before the
+/// heading has one.
+fn first_heading_height(view: &gtk::ListView) -> Option<f64> {
+    let mut child = view.first_child();
+    while let Some(widget) = child {
+        if let Some(heading) = widget.first_child().and_downcast::<DayHeading>() {
+            let (_, natural, _, _) = heading.measure(gtk::Orientation::Vertical, -1);
+            return Some(f64::from(natural));
+        }
+        child = widget.next_sibling();
+    }
+    None
 }

@@ -2,6 +2,7 @@
 //! draws, read back from what its last snapshot laid out -- what a person
 //! sees, not what the row was handed.
 
+use gtk::prelude::*;
 use postio_ui::label_colour::{ACCENT_BAND, Rgb, hue_distance};
 
 use crate::support::{self, Fixture, with_class};
@@ -127,6 +128,69 @@ pub fn rows_sit_under_their_day_s_heading() {
                 .iter()
                 .map(support::texts)
                 .collect::<Vec<_>>()
+        );
+    });
+}
+
+/// The inbox opens at its top, the first day's heading on screen above the
+/// first row, not scrolled one heading's height past it: GTK brings a
+/// section's first row into view without its header, and a list that opens
+/// with its heading hidden says nothing about what day it is (FR-010).
+pub fn the_inbox_opens_with_its_first_heading_on_screen() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        // More than a screen, over several days, every third row marked:
+        // the shape of a real inbox. The rows arrive as one-line
+        // placeholders and grow when their page lands, and GTK lays the
+        // list out again then -- the second place it hid the heading.
+        let fixture = Fixture::empty().await;
+        for step in 0..120_i64 {
+            let (message, _) = fixture
+                .file(
+                    ("Ada Moreno", "ada@example.com"),
+                    &format!("Message {step}"),
+                    "A line of preview.",
+                    1 + step * 60 * 3,
+                )
+                .await;
+            if step % 3 == 0 {
+                fixture.ask(message, "Can you approve it?").await;
+            }
+        }
+        // A window the size a person's is, not the list's natural height.
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.set_default_size(1000, 640);
+        window.present();
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            fixture.host(),
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || !window.rows_on_screen().is_empty()).await,
+            "the inbox never reached the screen"
+        );
+        let pane = window.pane().expect("the inbox");
+        // Long enough for anything that follows the landing to have moved it.
+        crate::settle();
+        assert_eq!(
+            pane.widget().vadjustment().value(),
+            0.0,
+            "the list opened scrolled past its first heading"
+        );
+        let heading = with_class(&window, "focus-day-heading")
+            .into_iter()
+            .next()
+            .expect("a day heading");
+        let top = heading
+            .compute_point(pane.widget(), &gtk::graphene::Point::new(0.0, 0.0))
+            .expect("the heading is inside the list");
+        assert!(
+            heading.is_mapped() && top.y() >= 0.0,
+            "the first heading is not on screen: y = {}",
+            top.y()
         );
     });
 }

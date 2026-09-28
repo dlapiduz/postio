@@ -368,6 +368,9 @@ impl FocusWindow {
                 pane.cursor().set_selected(position);
                 pane.view()
                     .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+                if position == 0 {
+                    pane.to_top();
+                }
             }
             _ => {}
         }
