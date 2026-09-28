@@ -114,3 +114,74 @@ pub fn a_presented_window_is_captured_without_the_caller_counting_frames() {
     );
     window.destroy();
 }
+
+/// A popover is a surface of its own, so a window's widgets drawn alone
+/// leave it out -- and Focus's folders popover (screen 10) is exactly what
+/// a picture of that screen is for. The capture draws an open popover
+/// where the compositor shows it.
+pub fn an_open_popover_is_in_the_picture() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let window = gtk::Window::new();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let anchor = gtk::Button::with_label("places");
+    anchor.set_halign(gtk::Align::Start);
+    anchor.set_valign(gtk::Align::Start);
+    content.append(&anchor);
+    let filler = gtk::Label::new(Some("postio"));
+    filler.set_vexpand(true);
+    content.append(&filler);
+    window.set_child(Some(&content));
+    window.set_default_size(400, 300);
+
+    let red = gtk::DrawingArea::new();
+    red.set_content_width(120);
+    red.set_content_height(80);
+    red.set_draw_func(|_, cairo, width, height| {
+        cairo.set_source_rgb(1.0, 0.0, 0.0);
+        cairo.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+        let _ = cairo.fill();
+    });
+    let popover = gtk::Popover::builder().child(&red).has_arrow(false).build();
+    popover.set_parent(&anchor);
+    window.present();
+    popover.popup();
+    let context = gtk::glib::MainContext::default();
+    let heartbeat = gtk::glib::timeout_add_local(Duration::from_millis(10), || {
+        gtk::glib::ControlFlow::Continue
+    });
+    for _ in 0..3000 {
+        if red.is_mapped() && red.width() > 0 {
+            break;
+        }
+        context.iteration(true);
+    }
+    heartbeat.remove();
+    assert!(red.is_mapped(), "the popover never opened");
+
+    let picture = match capture::texture_within(&window, Duration::from_secs(30)) {
+        Ok(picture) => picture,
+        Err(error) => panic!("a presented window would not render: {error}"),
+    };
+    let texture = picture.texture;
+    let (width, height) = (texture.width(), texture.height());
+    let stride = usize::try_from(width).expect("a width") * 4;
+    let mut pixels = vec![0u8; stride * usize::try_from(height).expect("a height")];
+    texture.download(&mut pixels, stride);
+    // Cairo's memory format is premultiplied BGRA, little end first.
+    let red_pixels = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[2] > 240 && pixel[1] < 16 && pixel[0] < 16)
+        .count();
+    assert!(
+        red_pixels > 120 * 80 / 2,
+        "the popover's content is not in the picture: {red_pixels} red pixels"
+    );
+    popover.popdown();
+    popover.unparent();
+    window.destroy();
+}

@@ -124,6 +124,10 @@ const CASES: &[(&str, fn())] = &[
         capture::a_window_the_compositor_never_showed_is_an_error as fn(),
     ),
     (
+        "capture::an_open_popover_is_in_the_picture",
+        capture::an_open_popover_is_in_the_picture as fn(),
+    ),
+    (
         "capture::a_capture_that_fails_leaves_no_file",
         capture::a_capture_that_fails_leaves_no_file as fn(),
     ),

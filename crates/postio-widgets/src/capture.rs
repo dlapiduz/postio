@@ -256,7 +256,12 @@ fn drawn(widget: &gtk::Widget) -> Option<gtk::gsk::RenderNode> {
     }
     let snapshot = gtk::Snapshot::new();
     match laid_out(widget) {
-        Some((window, child)) => window.snapshot_child(&child, &snapshot),
+        Some((window, child)) => {
+            window.snapshot_child(&child, &snapshot);
+            for popover in open_popovers(window) {
+                over(window, &popover, &snapshot);
+            }
+        }
         None => {
             let paintable = gtk::WidgetPaintable::new(Some(widget));
             paintable.snapshot(
@@ -267,6 +272,59 @@ fn drawn(widget: &gtk::Widget) -> Option<gtk::gsk::RenderNode> {
         }
     }
     snapshot.to_node()
+}
+
+/// Every popover open over `window`, outermost first.
+///
+/// A popover is a surface of its own -- the compositor places it -- so the
+/// window's child, drawn alone, leaves it out, and a picture of a screen
+/// whose point is a popover (Focus's folders, screen 10) would show the
+/// screen without it. It is still a widget in the window's tree, a child of
+/// the widget it hangs from, which is how it is found.
+fn open_popovers(window: &gtk::Window) -> Vec<gtk::Popover> {
+    let mut found = Vec::new();
+    let mut stack: Vec<gtk::Widget> = GtkWindowExt::child(window).into_iter().collect();
+    while let Some(widget) = stack.pop() {
+        if let Some(popover) = widget.downcast_ref::<gtk::Popover>()
+            && popover.is_mapped()
+        {
+            found.push(popover.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    found
+}
+
+/// Draw `popover` into `snapshot` where the compositor shows it over
+/// `window`.
+///
+/// Its place is its popup surface's offset from the window's, less where
+/// each widget sits within its own surface (a window's shadow, a popover's
+/// margin). Its children are drawn through it, so its own frame -- the
+/// background and border its contents node carries -- comes with them.
+fn over(window: &gtk::Window, popover: &gtk::Popover, snapshot: &gtk::Snapshot) {
+    let Some(popup) = popover
+        .surface()
+        .and_then(|surface| surface.downcast::<gdk::Popup>().ok())
+    else {
+        return;
+    };
+    let (window_x, window_y) = window.surface_transform();
+    let (popover_x, popover_y) = popover.surface_transform();
+    let x = f64::from(popup.position_x()) + popover_x - window_x;
+    let y = f64::from(popup.position_y()) + popover_y - window_y;
+    snapshot.save();
+    snapshot.translate(&graphene::Point::new(x as f32, y as f32));
+    let mut child = popover.first_child();
+    while let Some(next) = child {
+        child = next.next_sibling();
+        popover.snapshot_child(&next, snapshot);
+    }
+    snapshot.restore();
 }
 
 /// Whether the compositor is presenting this window right now.
