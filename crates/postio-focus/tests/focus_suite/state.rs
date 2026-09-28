@@ -179,3 +179,71 @@ pub fn offline_an_archive_takes_effect_at_once_and_queues() {
         );
     });
 }
+
+/// US6 scenario 2, what can be proven before the reader and the command
+/// bar exist: during a first sync, mail that has arrived is in the list
+/// and in the strip's counts at once, while the banner goes on counting.
+pub fn during_a_first_sync_what_has_arrived_is_listed() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let account = fixture.account.id;
+        assert!(sink.emit(Event::ConnectionChanged {
+            account,
+            state: ConnectionState::Online,
+        }));
+        assert!(sink.emit(Event::SyncProgress {
+            account,
+            done: 100,
+            total: 5_000,
+        }));
+
+        // The pass files a message and says so, as sync does.
+        let (arrived, _) = fixture
+            .file(("Lena Park", "lena@example.org"), "Harbor draft", "v3.", 1)
+            .await;
+        assert!(sink.emit(Event::NewMail {
+            account,
+            mailbox: fixture.inbox,
+            messages: vec![arrived],
+        }));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "mail that arrived during the first sync is not listed: {:?}",
+            support::subjects(&window)
+        );
+        assert!(
+            crate::settle_until(async || counts(&window).starts_with("2 ")).await,
+            "the strip does not count it: {}",
+            counts(&window)
+        );
+        assert!(
+            window
+                .banner_showing()
+                .is_some_and(|(title, ..)| title.starts_with("First sync")),
+            "the first sync's banner is still up"
+        );
+    });
+}
+
+/// What the strip's counts say, as a person reads them.
+fn counts(window: &postio_focus::window::FocusWindow) -> String {
+    support::texts(&support::only(window, "focus-counts")).join(" ")
+}
