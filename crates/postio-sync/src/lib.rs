@@ -79,9 +79,7 @@ pub use backfill::{
 pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
-pub use filing::{
-    BuiltIn, Classifier, FiledMessage, FilingEffects, FilingPass, FocusFiling, NoFiling,
-};
+pub use filing::{BuiltIn, Classifier, FiledMessage, FilingEffects, FilingPass, FocusFiling};
 pub use initial::{
     DEFAULT_BATCH_SIZE, Progress, Report, commit_batch, sync_mailbox, sync_mailbox_with_batch_size,
 };

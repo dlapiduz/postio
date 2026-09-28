@@ -2162,3 +2162,128 @@ fn a_host_that_never_enables_focus_mode_files_nothing() {
     );
     assert!(probe.calls().is_empty(), "{:?}", probe.calls());
 }
+
+// ── Focus's own filing pass (spec 007, T122) ────────────────────────────────
+
+/// Mail arriving at the mock's inbox after the first sync, then the pass
+/// that brings it in, asked for the way `R` asks.
+fn deliver_all(
+    world: &World,
+    mock: &postio_account::backend::MockBackend,
+    client: &Client,
+    raws: &[String],
+) {
+    use postio_account::backend::{AppendMessage, MailBackend as _};
+    for raw in raws {
+        world
+            .rt
+            .block_on(mock.append("INBOX", &AppendMessage::new(raw.as_bytes().to_vec())))
+            .expect("delivered");
+    }
+    world.send(client, Command::Refresh);
+}
+
+/// A notification from a build server the account never wrote to.
+fn notification() -> String {
+    "Message-ID: <build@example.com>\r\nFrom: Forge <notifications@forge.example>\r\nTo: Test \
+     User <test@example.com>\r\nSubject: Build 2231 passed\r\nAuto-Submitted: \
+     auto-generated\r\nDate: Wed, 23 Sep 2026 09:00:00 +0000\r\n\r\nGreen.\r\n"
+        .to_owned()
+}
+
+/// A letter from a person, which nothing files away.
+fn letter() -> String {
+    "Message-ID: <weir@example.com>\r\nFrom: Quinn <quinn@example.com>\r\nTo: Test User \
+     <test@example.com>\r\nSubject: Weir level\r\nDate: Wed, 23 Sep 2026 09:01:00 \
+     +0000\r\n\r\nThe weir is high.\r\n"
+        .to_owned()
+}
+
+/// The folder the message with `subject` is in, by role, and why Focus
+/// filed it there if it did.
+fn filed_where(
+    world: &World,
+    subject: &str,
+) -> Option<(
+    postio_model::MailboxRole,
+    Option<postio_storage::repository::FilterReason>,
+)> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let id: i64 = postio_storage::sql::first(
+            &connection,
+            "SELECT id FROM messages WHERE subject = ?1",
+            [subject],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a read")?;
+        let message = MessageRepository::new(&connection)
+            .get(MessageId::new(id))
+            .await
+            .expect("a read")?;
+        let role = postio_storage::repository::MailboxRepository::new(&connection)
+            .get(message.mailbox_id)
+            .await
+            .expect("a read")?
+            .role;
+        let reason = postio_storage::repository::FilterDecisionRepository::new(&connection)
+            .get(message.id)
+            .await
+            .expect("a read")
+            .map(|decision| decision.reason);
+        Some((role, reason))
+    })
+}
+
+#[test]
+fn focus_mode_files_a_notification_away_as_it_arrives() {
+    // US9 scenario 1, end to end: Focus mode runs Focus's own filing pass,
+    // so a notification from a sender the user never wrote to is archived
+    // with its reason as it is filed, and never reaches the inbox; a
+    // person's letter, in the same pass, stays.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    world.host().enable_focus(crate::FocusSetup::default());
+    let (client, _) = world.frontend(ClientKind::Focus);
+    world.host().start_syncing();
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+
+    deliver_all(&world, &mock, &client, &[notification(), letter()]);
+    eventually(&world, || row_titled(&world, &client, "Weir level"));
+
+    assert_eq!(
+        filed_where(&world, "Build 2231 passed"),
+        Some((
+            postio_model::MailboxRole::Archive,
+            Some(postio_storage::repository::FilterReason::Notification)
+        )),
+        "filed away with its reason, in the pass that brought it"
+    );
+    assert!(row_titled(&world, &client, "Build 2231 passed").is_none());
+}
+
+#[test]
+fn focus_mode_files_nothing_away_when_filtering_is_off() {
+    // FR-119 through the host: `[focus] filtering = false` reaches the pass
+    // Focus mode runs, and the notification stays in the inbox.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let config =
+        postio_config::Config::from_toml_str("[focus]\nfiltering = false\n").expect("a config");
+    world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config(config.focus));
+    let (client, _) = world.frontend(ClientKind::Focus);
+    world.host().start_syncing();
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+
+    deliver_all(&world, &mock, &client, &[notification(), letter()]);
+    eventually(&world, || row_titled(&world, &client, "Weir level"));
+
+    assert_eq!(
+        filed_where(&world, "Build 2231 passed"),
+        Some((postio_model::MailboxRole::Inbox, None))
+    );
+    assert!(row_titled(&world, &client, "Build 2231 passed").is_some());
+}

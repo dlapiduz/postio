@@ -18,6 +18,7 @@
 //!   2, for what the built-in layers leave open, and in the detector's place.
 
 mod facts;
+mod filters;
 mod guards;
 mod input;
 mod needs_action;

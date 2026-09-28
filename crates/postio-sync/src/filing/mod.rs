@@ -76,22 +76,6 @@ pub trait FilingPass: Send + Sync + std::fmt::Debug {
     ) -> Result<FilingEffects, SyncError>;
 }
 
-/// The filing pass that files nothing: Focus mode's, until Focus's rules
-/// are written.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoFiling;
-
-#[async_trait::async_trait]
-impl FilingPass for NoFiling {
-    async fn file(
-        &self,
-        _transaction: &Connection,
-        _filed: &[FiledMessage<'_>],
-    ) -> Result<FilingEffects, SyncError> {
-        Ok(FilingEffects::default())
-    }
-}
-
 /// Hands `filed` to `pass`, in a scope of its own inside `transaction`, and
 /// answers what it did.
 ///

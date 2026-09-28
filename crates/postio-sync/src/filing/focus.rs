@@ -96,6 +96,11 @@ impl Default for FocusFiling {
 }
 
 impl FocusFiling {
+    /// Focus's own pass, as `config` sets it.
+    pub fn from_config(config: &FocusConfig) -> Self {
+        FocusFiling::default().configured(config)
+    }
+
     /// A pass that decides with `classifier`, with `[focus]` at its
     /// defaults.
     pub fn with_classifier(classifier: Arc<dyn Classifier>) -> Self {

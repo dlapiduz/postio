@@ -3,7 +3,10 @@
 
 use chrono::{DateTime, Utc};
 
+use postio_model::MailboxRole;
+
 use crate::facts::Facts;
+use crate::filters;
 use crate::guards;
 use crate::input::{BodyMessage, FiledMessage, OwnText};
 use crate::needs_action;
@@ -174,6 +177,13 @@ impl Stage for Corrections {}
 /// automated-senders table and the user's digest rules (T105, T110, T122,
 /// T133).
 ///
+/// Only what reaches the inbox is Focus's to file away: mail filed anywhere
+/// else is already where a server rule or the user put it, and both
+/// questions close on it. In the inbox, [`crate::filters`] names a reason
+/// when the message's structure and headers give one, and leaves the
+/// question open when they do not -- open for the user's model, in
+/// milestone 2, and otherwise answered "stay" (FR-112).
+///
 /// The built-in needs-action detector belongs to this layer too (FR-130),
 /// but it is not one of its stages: it answers the needs-action question
 /// last, and only when no model is connected, since the user's model
@@ -181,7 +191,26 @@ impl Stage for Corrections {}
 /// the other.
 struct StructureAndRules;
 
-impl Stage for StructureAndRules {}
+impl Stage for StructureAndRules {
+    fn at_filing(
+        &self,
+        message: &FiledMessage<'_>,
+        _facts: &dyn Facts,
+        rules: &dyn Rules,
+        decisions: &mut Decisions,
+    ) {
+        if message.role != MailboxRole::Inbox {
+            decisions.filter.decide(None);
+            decisions.hold.decide(None);
+            return;
+        }
+        if decisions.filter.is_open()
+            && let Some(reason) = filters::reason(message, rules)
+        {
+            decisions.filter.decide(Some(reason));
+        }
+    }
+}
 
 /// Layers 1-3, in FR-130's order.
 const BUILT_IN: &[&dyn Stage] = &[&Guards, &Corrections, &StructureAndRules];
@@ -304,7 +333,9 @@ fn believable(answer: &NeedsAction, text: &OwnText<'_>) -> bool {
 mod tests {
     use std::cell::Cell;
 
-    use postio_model::promoted::{AUTO_GENERATED, PromotedHeaders};
+    use postio_model::promoted::{
+        AUTO_GENERATED, PRECEDENCE_BULK, PRECEDENCE_LIST, PromotedHeaders,
+    };
     use postio_model::{
         AccountId, EmailAddress, Identity, MailboxId, MailboxRole, Message, ThreadId,
     };
@@ -502,11 +533,12 @@ mod tests {
     // --- The built-in pipeline ----------------------------------------------
 
     #[test]
-    fn the_built_in_pipeline_files_nothing_yet_and_marks_no_automated_mail() {
-        // Mail that every later rule would have something to say about -- a
-        // notifier's address, List-Unsubscribe, Auto-Submitted, a question --
-        // stays in the inbox, unheld, until a rule files it (T122), and it
-        // is never marked: an automated sender asks nothing (FR-106).
+    fn an_unthreaded_notifier_stays_in_the_inbox_and_no_automated_mail_is_marked() {
+        // Mail that every rule has something to say about -- a notifier's
+        // address, List-Unsubscribe, Auto-Submitted, a question -- but in no
+        // conversation yet, so the guards cannot say it is safe to file
+        // away: it stays in the inbox, unheld. And it is never marked: an
+        // automated sender asks nothing (FR-106).
         let message = message();
         let identities = identities();
         let body = BodyMessage {
@@ -621,6 +653,247 @@ mod tests {
         assert_eq!(classify(None).marker, None);
         assert_eq!(classify(Some(&model)).marker, None);
         assert_eq!(model.asked.get(), 0, "the model never saw the message");
+    }
+
+    // --- Filtering by structure and headers (T122, US9) ----------------------
+
+    /// Shipped rules: the automated-senders table Postio ships.
+    struct ShippedRules;
+
+    impl Rules for ShippedRules {
+        fn senders(&self) -> &crate::senders::Senders {
+            crate::senders::Senders::shipped()
+        }
+    }
+
+    /// Mail from `from` to Ada, in thread 3, whose promoted headers said
+    /// `said` (`None`: not known).
+    fn from(from: EmailAddress, said: Option<PromotedHeaders>) -> Message {
+        let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
+        message.from = vec![from];
+        message.to = vec![ada()];
+        message.promoted = said;
+        message.thread_id = Some(ThreadId::new(3));
+        message
+    }
+
+    fn said(unsubscribe_offered: bool, automation: u8) -> Option<PromotedHeaders> {
+        Some(PromotedHeaders {
+            unsubscribe_offered,
+            automation,
+        })
+    }
+
+    /// What the built-in layers file `message` away as, with nothing
+    /// guarding it, when it is filed into a folder with `role`.
+    fn filed_as(
+        message: &Message,
+        role: MailboxRole,
+    ) -> Option<(ReasonKind, Layer, Option<String>)> {
+        let filed = FiledMessage {
+            role,
+            ..filed(message)
+        };
+        at_filing(&filed, &NoFacts, &ShippedRules)
+            .filter
+            .map(|reason| {
+                (
+                    reason.kind,
+                    reason.layer,
+                    reason.source.map(|source| source.as_str().to_owned()),
+                )
+            })
+    }
+
+    fn in_the_inbox(message: &Message) -> Option<(ReasonKind, Layer, Option<String>)> {
+        filed_as(message, MailboxRole::Inbox)
+    }
+
+    #[test]
+    fn a_notifier_is_filed_as_a_notification_from_its_source() {
+        // US9 scenario 1: "notification · Forge". The senders table knows
+        // the address before any header is read.
+        let notifier = from(
+            EmailAddress::new(Some("Forge"), "notifications@forge.example"),
+            said(false, AUTO_GENERATED),
+        );
+
+        assert_eq!(
+            in_the_inbox(&notifier),
+            Some((
+                ReasonKind::Notification,
+                Layer::Senders,
+                Some("Forge".to_owned())
+            ))
+        );
+    }
+
+    #[test]
+    fn mail_a_machine_sent_is_a_notification_by_its_headers() {
+        // `Auto-Submitted`, from an address the table does not know. With
+        // no display name, the source is the sender's domain.
+        let machine = from(
+            EmailAddress::new(None::<&str>, "robot@builds.example"),
+            said(false, AUTO_GENERATED),
+        );
+
+        assert_eq!(
+            in_the_inbox(&machine),
+            Some((
+                ReasonKind::Notification,
+                Layer::Header,
+                Some("builds.example".to_owned())
+            ))
+        );
+    }
+
+    #[test]
+    fn bulk_mail_is_a_promotion_by_its_headers() {
+        let newsletter = from(
+            EmailAddress::new(Some("Ledger"), "news@ledger.example"),
+            said(true, PRECEDENCE_BULK),
+        );
+        let offer = from(
+            EmailAddress::new(Some("Shop"), "hello@shop.example"),
+            said(true, 0),
+        );
+
+        assert_eq!(
+            in_the_inbox(&newsletter),
+            Some((
+                ReasonKind::Promotion,
+                Layer::Header,
+                Some("Ledger".to_owned())
+            ))
+        );
+        assert_eq!(
+            in_the_inbox(&offer).map(|(kind, layer, _)| (kind, layer)),
+            Some((ReasonKind::Promotion, Layer::Header)),
+            "a sender's own mailing: List-Unsubscribe and no list"
+        );
+    }
+
+    #[test]
+    fn the_server_s_junk_verdict_files_mail_as_spam() {
+        let mut junk = from(
+            EmailAddress::new(Some("Winner"), "prize@lottery.example"),
+            said(false, 0),
+        );
+        junk.flags.insert(postio_model::Flag::Junk);
+
+        assert_eq!(
+            in_the_inbox(&junk).map(|(kind, layer, _)| (kind, layer)),
+            Some((ReasonKind::Spam, Layer::Server))
+        );
+    }
+
+    #[test]
+    fn the_senders_table_names_the_reason_before_the_headers_guess_one() {
+        // A receipt with an unsubscribe link is still a receipt.
+        let receipt = from(
+            EmailAddress::new(Some("Shop"), "receipts@shop.example"),
+            said(true, PRECEDENCE_BULK),
+        );
+
+        assert_eq!(
+            in_the_inbox(&receipt).map(|(kind, layer, _)| (kind, layer)),
+            Some((ReasonKind::Receipt, Layer::Senders))
+        );
+    }
+
+    #[test]
+    fn when_in_doubt_mail_goes_to_the_inbox() {
+        // US9 scenario 6. A person's letter; a discussion list, which is
+        // people writing through a list rather than a sender mailing its
+        // customers; and a message whose headers are not known yet, which
+        // is no evidence either way.
+        let letter = from(
+            EmailAddress::new(Some("Tove"), "tove@example.org"),
+            said(false, 0),
+        );
+        let mut discussion = from(
+            EmailAddress::new(Some("Oren"), "oren@example.org"),
+            said(true, PRECEDENCE_LIST),
+        );
+        discussion.list_id = Some("harbour-dev.lists.example.org".to_owned());
+        let unknown = from(EmailAddress::new(Some("Tove"), "tove@example.org"), None);
+
+        assert_eq!(in_the_inbox(&letter), None, "a person's letter");
+        assert_eq!(in_the_inbox(&discussion), None, "a discussion list");
+        assert_eq!(in_the_inbox(&unknown), None, "headers not known yet");
+    }
+
+    #[test]
+    fn only_what_reaches_the_inbox_is_filed_away() {
+        let notifier = from(
+            EmailAddress::new(Some("Forge"), "notifications@forge.example"),
+            said(false, AUTO_GENERATED),
+        );
+
+        for role in [
+            MailboxRole::Archive,
+            MailboxRole::Sent,
+            MailboxRole::Junk,
+            MailboxRole::Regular,
+        ] {
+            assert_eq!(filed_as(&notifier, role), None, "{role:?}");
+        }
+    }
+
+    #[test]
+    fn a_guard_keeps_what_every_rule_would_file_in_the_inbox() {
+        // US9 scenarios 2 and 3: the user wrote to the sender, or took part
+        // in the conversation, and nothing a header says moves it.
+        struct Wrote;
+        impl Facts for Wrote {
+            fn wrote_to(&self, _: &EmailAddress) -> bool {
+                true
+            }
+            fn took_part(&self, _: ThreadId) -> bool {
+                false
+            }
+            fn own_domain(&self, _: &EmailAddress) -> bool {
+                false
+            }
+            fn never_filter(&self, _: &EmailAddress) -> bool {
+                false
+            }
+        }
+        struct TookPart;
+        impl Facts for TookPart {
+            fn wrote_to(&self, _: &EmailAddress) -> bool {
+                false
+            }
+            fn took_part(&self, _: ThreadId) -> bool {
+                true
+            }
+            fn own_domain(&self, _: &EmailAddress) -> bool {
+                false
+            }
+            fn never_filter(&self, _: &EmailAddress) -> bool {
+                false
+            }
+        }
+        let mut promotion = from(
+            EmailAddress::new(Some("Deals"), "deals@shop.example"),
+            said(true, PRECEDENCE_BULK),
+        );
+        promotion.flags.insert(postio_model::Flag::Junk);
+
+        assert!(
+            at_filing(&filed(&promotion), &NoFacts, &ShippedRules)
+                .filter
+                .is_some(),
+            "unguarded, it is filed"
+        );
+        assert_eq!(
+            at_filing(&filed(&promotion), &Wrote, &ShippedRules).filter,
+            None
+        );
+        assert_eq!(
+            at_filing(&filed(&promotion), &TookPart, &ShippedRules).filter,
+            None
+        );
     }
 
     // --- An earlier layer's decision stands (FR-130) -------------------------

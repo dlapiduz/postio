@@ -28,6 +28,7 @@ mod drafts;
 mod drain;
 mod filing;
 mod focus_filing;
+mod focus_rules;
 mod initial;
 mod interactive_under_load;
 mod loopback;

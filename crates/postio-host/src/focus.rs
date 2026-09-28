@@ -11,6 +11,9 @@
 //! 1. **A filing pass** in every sync engine, through the wiring's
 //!    [`postio_runtime::FilingSlot`]: each incremental pass hands it what
 //!    arrived, in the transaction that filed it ([`postio_sync::filing`]).
+//!    It is Focus's own ([`postio_sync::FocusFiling`]), built from `[focus]`:
+//!    spam and updates filed away with their reasons, guarded mail left
+//!    alone.
 //! 2. **A body-stage task**, on the body indexer's pattern: it hears every
 //!    `BodyLoaded`, for invitations and the needs-action detector to read
 //!    the bodies that land. It listens, and reads nothing yet.
@@ -22,31 +25,41 @@
 
 use std::sync::Arc;
 
-use postio_sync::{FilingPass, NoFiling};
+use postio_config::FocusConfig;
+use postio_sync::{FilingPass, FocusFiling};
 
 use crate::{Host, Inner};
 
-/// What Focus mode runs with.
-#[derive(Debug, Clone)]
+/// What Focus mode runs with: `[focus]` as `config.toml` says it, and the
+/// filing pass built from it.
+#[derive(Debug, Clone, Default)]
 pub struct FocusSetup {
-    filing: Arc<dyn FilingPass>,
-}
-
-impl Default for FocusSetup {
-    /// Focus mode as Focus runs it until its rules exist: a filing pass
-    /// that files nothing.
-    fn default() -> Self {
-        FocusSetup {
-            filing: Arc::new(NoFiling),
-        }
-    }
+    config: FocusConfig,
+    /// A pass to file with instead of Focus's own, for a test that watches
+    /// what the engines hand over.
+    filing: Option<Arc<dyn FilingPass>>,
 }
 
 impl FocusSetup {
-    /// File what arrives with `pass`.
-    pub fn filing(mut self, pass: Arc<dyn FilingPass>) -> Self {
-        self.filing = pass;
+    /// Focus mode as `config` -- the `[focus]` section -- says: whether mail
+    /// is filed away, whom never to, and the digest rules.
+    pub fn with_config(mut self, config: FocusConfig) -> Self {
+        self.config = config;
         self
+    }
+
+    /// File what arrives with `pass` rather than Focus's own.
+    pub fn filing(mut self, pass: Arc<dyn FilingPass>) -> Self {
+        self.filing = Some(pass);
+        self
+    }
+
+    /// The pass the engines file with: the one given, or Focus's own as
+    /// the config sets it.
+    fn pass(&self) -> Arc<dyn FilingPass> {
+        self.filing
+            .clone()
+            .unwrap_or_else(|| Arc::new(FocusFiling::from_config(&self.config)))
     }
 }
 
@@ -77,9 +90,9 @@ impl Host {
     /// before its next pass starts.
     ///
     /// A second call changes the filing pass and answers the tasks the
-    /// first one started.
+    /// first one started: it is how a changed `[focus]` reaches the pass.
     pub fn enable_focus(&self, setup: FocusSetup) -> FocusHandle {
-        self.inner.wiring.filing.set(Some(setup.filing));
+        self.inner.wiring.filing.set(Some(setup.pass()));
         let mut focus = self.inner.focus.lock().expect("never poisoned");
         if let Some(running) = &*focus {
             return running.clone();
