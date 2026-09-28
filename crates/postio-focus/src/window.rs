@@ -41,7 +41,12 @@ mod imp {
         pub unavailable: adw::StatusPage,
         pub retry: gtk::Button,
         pub inbox: gtk::Box,
-        pub toasts: adw::ToastOverlay,
+        /// The undo toast, and the overlay it appears over: the shared one
+        /// both desktop apps say "Archived 3 messages" with.
+        pub toast: postio_widgets::widgets::toast::Toast,
+        /// The toast on screen, until it is dismissed -- by its timeout, its
+        /// button, or a newer one.
+        pub on_screen: RefCell<Option<adw::Toast>>,
         pub pane: RefCell<Option<ListPane>>,
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
@@ -79,7 +84,8 @@ mod imp {
                 unavailable: adw::StatusPage::new(),
                 retry: gtk::Button::with_label("Try again"),
                 inbox: gtk::Box::new(gtk::Orientation::Vertical, 0),
-                toasts: adw::ToastOverlay::new(),
+                toast: postio_widgets::widgets::toast::Toast::new(),
+                on_screen: RefCell::default(),
                 pane: RefCell::default(),
                 chrome: RefCell::default(),
                 client: RefCell::default(),
@@ -161,8 +167,8 @@ impl FocusWindow {
         imp.pages.add_named(&imp.unavailable, Some(UNAVAILABLE));
         imp.pages.add_named(&imp.inbox, Some(INBOX));
         imp.pages.set_visible_child_name(BLANK);
-        imp.toasts.set_child(Some(&imp.pages));
-        self.set_content(Some(&imp.toasts));
+        imp.toast.overlay().set_child(Some(&imp.pages));
+        self.set_content(Some(imp.toast.overlay()));
 
         // Capture, not bubble: a single-key binding has to be seen before the
         // focused widget consumes it, and whether it should is the
@@ -194,6 +200,14 @@ impl FocusWindow {
             }
         ));
         self.add_action(&run);
+        // What the toast's Undo names: the same undo Ctrl+Z reaches.
+        let undo = gio::SimpleAction::new("undo", None);
+        undo.connect_activate(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_, _| window.act(CommandId::Undo)
+        ));
+        self.add_action(&undo);
         let about = gio::SimpleAction::new("about", None);
         about.connect_activate(glib::clone!(
             #[weak(rename_to = window)]
@@ -317,6 +331,9 @@ impl FocusWindow {
             CommandId::Archive | CommandId::Delete | CommandId::ToggleRead => {
                 self.send(Command::default_for(id));
             }
+            // The last action this window took, whatever it was and however
+            // long ago the toast went (FR-041): the host keeps the stack.
+            CommandId::Undo => self.post(Command::Undo),
             CommandId::Quit => self.close(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
@@ -464,6 +481,19 @@ impl FocusWindow {
                 None => Vec::new(),
             },
         }
+    }
+
+    /// Send `command` to the host as it is: a verb that aims at nothing.
+    fn post(&self, command: Command) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: as `send`'s.
+            if let Err(error) = client.send(command).await {
+                tracing::warn!(%error, "Focus could not send a command: {error}");
+            }
+        });
     }
 
     /// Send `command` to the host, aimed as [`Self::aims`] says, and let
@@ -677,6 +707,29 @@ impl FocusWindow {
 
     /// What the store just said.
     fn hear(&self, event: &postio_core::Event) {
+        use postio_core::Event;
+        match event {
+            // What this window's own commands say about themselves: only the
+            // client that sent a command hears these (postio-host).
+            Event::ActionCompleted {
+                description,
+                undoable,
+            } => {
+                self.imp()
+                    .toast
+                    .show_action_completed(description, *undoable);
+                self.follow_toast();
+            }
+            Event::UndoPerformed { description } => {
+                self.imp().toast.show_undo_performed(description);
+                self.follow_toast();
+            }
+            Event::CommandRejected { reason, .. } => {
+                self.imp().toast.show_notice(reason);
+                self.follow_toast();
+            }
+            _ => {}
+        }
         if let Some(pane) = self.imp().pane.borrow().as_ref() {
             pane.feed().handle(event);
         }
@@ -699,8 +752,38 @@ impl FocusWindow {
             .unwrap_or_default()
     }
 
-    /// The toast overlay, for what the window announces.
-    pub fn toasts(&self) -> &adw::ToastOverlay {
-        &self.imp().toasts
+    /// Keep track of the toast just shown until it goes.
+    fn follow_toast(&self) {
+        let Some(toast) = self.imp().toast.showing() else {
+            return;
+        };
+        toast.connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |gone| {
+                let mut on_screen = window.imp().on_screen.borrow_mut();
+                if on_screen.as_ref() == Some(gone) {
+                    on_screen.take();
+                }
+            }
+        ));
+        self.imp().on_screen.replace(Some(toast));
+    }
+
+    /// The words of the toast on screen, if one is.
+    pub fn toast_showing(&self) -> Option<String> {
+        self.imp()
+            .on_screen
+            .borrow()
+            .as_ref()
+            .and_then(|toast| toast.title().map(|title| title.to_string()))
+    }
+
+    /// Take the toast on screen away, as its timeout would.
+    pub fn dismiss_toast(&self) {
+        let toast = self.imp().on_screen.borrow().clone();
+        if let Some(toast) = toast {
+            toast.dismiss();
+        }
     }
 }

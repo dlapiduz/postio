@@ -31,6 +31,7 @@ mod rows;
 mod selection;
 mod starts_offline;
 mod support;
+mod undo;
 mod visible_window;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
@@ -85,6 +86,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
         starts_offline::the_inbox_is_listed_from_the_store_with_no_network as fn(),
+    ),
+    (
+        "undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone",
+        undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone as fn(),
     ),
     (
         "visible_window::a_row_whose_page_has_not_landed_draws_a_skeleton",
