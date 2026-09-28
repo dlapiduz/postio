@@ -266,6 +266,14 @@ query against the engine's full-text index. So the same string means the same th
 typed in the search bar, saved to the sidebar, or written into `config.toml` in
 `$EDITOR`.
 
+**A header wanted before its body is promoted, not special-cased.** It gets a
+column, its own operator and its own fetch, so filing and search ask the same
+question. `list:` (`List-Id`) was the first. Focus's `is:bulk` and
+`is:automated` read `List-Unsubscribe`, `Precedence` and `Auto-Submitted`
+from `messages.unsubscribe_offered` and `messages.automation`. How each
+backend learns them is in
+[ADR 0025](decisions/0025-arbitrary-headers-are-indexed-rows.md) Q4's note.
+
 **What this decision does NOT say.** A real IMAP mailbox is *not* a saved
 search. It is server state with a `UIDVALIDITY`, a message set that physically
 lives there, and a `MailboxRole` (`Inbox`, `Archive`, `Sent`, `Drafts`,

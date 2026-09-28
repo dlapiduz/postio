@@ -238,8 +238,8 @@ subject:invoice -in:archive
 ```
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
-`is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
-`group:` `header:`
+`is:read` `is:flagged` `is:bulk` `is:automated` `before:` `after:` `larger:`
+`smaller:` `account:` `group:` `header:`
 
 `header:` reaches any RFC 5322 field the envelope does not carry:
 `header:x-mailer` asks whether a message has that field at all,
@@ -258,7 +258,8 @@ Every header is indexed, with no list of names: a curated list is maintained
 forever, lies about every name off it, and converges on one provider's own
 vocabulary, which §3 is most explicit about. A header that must be matchable
 *before* the body arrives earns an operator of its own instead — `list:` is
-one that was.
+one that was, and `is:bulk` and `is:automated` (`List-Unsubscribe`,
+`Precedence`, `Auto-Submitted`) are two more.
 
 `account:` names an account by the name it shows in the sidebar or by its
 address, and composes with everything else — `account:work is:unread` is one

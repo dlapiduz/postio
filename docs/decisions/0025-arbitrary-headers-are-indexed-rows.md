@@ -295,6 +295,40 @@ late-answering operator; promotion is how a specific one becomes early and
 cheap. Keeping those two paths distinct is what stops `header:` from becoming
 a reason to enlarge every sync.
 
+> **Three more headers took this path for Postio Focus (2026-09-28;
+> `specs/007-postio-focus`, research R8).** `List-Unsubscribe`, `Precedence`
+> and `Auto-Submitted` are what Focus's filing pass reads to tell bulk and
+> automated mail at arrival, before any body exists. Each part of the hatch,
+> as built:
+>
+> - **The columns** are `messages.unsubscribe_offered` (0 or 1) and
+>   `messages.automation` (a bitmask of the `Precedence` and `Auto-Submitted`
+>   keywords, spelled out beside the column in `postio-storage`'s schema).
+>   NULL means not known, and a write that does not know them never erases
+>   one that did. `postio_model::promoted` is the one reading of the three
+>   fields, and every path below goes through it.
+> - **The operators** are `is:bulk` (an unsubscribe offered, or any
+>   `Precedence` bit) and `is:automated` (any `Auto-Submitted` bit). Mail whose
+>   headers nothing has read yet matches neither.
+> - **The IMAP fetch** is one more item on the same `UID FETCH`:
+>   `BODY.PEEK[HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)]`,
+>   kept apart from the `REFERENCES` and `LIST-ID` items because those parsers
+>   read a block holding exactly one field. Only an incremental pass asks for
+>   it (`MailBackend::fetch_headers_for_filing`). A first sync's
+>   `fetch_headers` does not, so the cost this ADR refused to put on every
+>   initial sync is still not paid.
+> - **Gmail** reads them from the metadata-format response every sync already
+>   requests, which carries every header, so they are known at no extra cost.
+> - **JMAP** does not ask: io-jmap 0.3 cannot request single headers, so the
+>   trait's default `fetch_headers_for_filing` answers with the facts not
+>   known.
+> - **Mail that arrived without them** learns them from its body's header
+>   block when the body arrives (`postio-index`'s `index_headers`). That
+>   covers first-synced mail, JMAP accounts and anything older.
+>
+> `header:` itself is unchanged: it stays the general, late-answering
+> operator this ADR describes.
+
 ## Q5 — Existing stores, and the store that cannot answer locally
 
 Nothing may silently answer "no such mail". Three populations, three
