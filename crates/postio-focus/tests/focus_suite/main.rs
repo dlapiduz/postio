@@ -184,6 +184,10 @@ const CASES: &[(&str, fn())] = &[
         selection::escape_clears_the_selection_and_the_cursor_stays as fn(),
     ),
     (
+        "selection::a_select_all_archives_what_focus_lists_and_never_held_mail",
+        selection::a_select_all_archives_what_focus_lists_and_never_held_mail as fn(),
+    ),
+    (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
         starts_offline::the_inbox_is_listed_from_the_store_with_no_network as fn(),
     ),

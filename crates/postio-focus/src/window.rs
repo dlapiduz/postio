@@ -509,7 +509,7 @@ impl FocusWindow {
                     let accounts = imp.accounts.borrow().clone();
                     let (sink, _) = postio_core::bridge::event_channel();
                     state.update(&sink, |app| {
-                        let mut events = app.open_view(ViewScope::Unified { accounts });
+                        let mut events = app.open_view(ViewScope::Focus { accounts });
                         events.extend(app.select_all());
                         events
                     });

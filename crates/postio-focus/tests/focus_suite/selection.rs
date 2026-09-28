@@ -85,3 +85,45 @@ pub fn escape_clears_the_selection_and_the_cursor_stays() {
         );
     });
 }
+
+pub fn a_select_all_archives_what_focus_lists_and_never_held_mail() {
+    // `X` is a predicate over the view (FR-015), so which view it names is
+    // the whole question: Focus's inbox leaves out held digest mail, and the
+    // unified inbox does not. `a` after `X` must take exactly what the list
+    // shows (T167).
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (held, _) = fixture
+            .file(("Weir Level", "levels@example.test"), "Held for the digest", "Held.", 1)
+            .await;
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::DigestRepository::new(&connection)
+                .hold(held, "levels", support::now())
+                .await
+                .expect("held");
+        }
+        let (window, _client) = fixture.five().await;
+
+        support::keys(&window, &["X", "a"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).is_empty()).await,
+            "a select-all archives every conversation the list shows: {:?}",
+            support::subjects(&window)
+        );
+        let connection = fixture.database.connect().await.expect("a connection");
+        let after = postio_storage::repository::MessageRepository::new(&connection)
+            .get(held)
+            .await
+            .expect("a read")
+            .expect("the held message");
+        assert_eq!(
+            after.mailbox_id, fixture.inbox,
+            "the held message was archived too: a select-all in Focus reached \
+             past what Focus lists"
+        );
+    });
+}
