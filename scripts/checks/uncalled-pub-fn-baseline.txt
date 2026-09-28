@@ -63,7 +63,6 @@ lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
 message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
-next_due                          # crates/postio-ui/src/schedule.rs -- spec 007's digest due timer (T135) is built after it
 normalized_subject                # crates/postio-model/src/message.rs:313
 on_data_body                      # crates/postio-smtp/src/transport.rs:436
 on_ext                            # crates/postio-core/src/dispatch.rs:322

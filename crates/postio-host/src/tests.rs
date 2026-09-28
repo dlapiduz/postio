@@ -2985,3 +2985,162 @@ fn an_invitation_to_an_event_that_is_over_offers_no_answer() {
     assert_eq!(state(series_over), Some(InviteState::Past));
     assert_eq!(state(ongoing), Some(InviteState::Open));
 }
+
+// ── Digest deliveries (spec 007, T135) ──────────────────────────────────────
+
+/// `[focus]` with one digest rule, "Newsletters", on `cadence`.
+fn digesting(cadence: &str) -> postio_config::FocusConfig {
+    postio_config::Config::from_toml_str(&format!(
+        "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.example\"]\n{cadence}\n"
+    ))
+    .expect("a config")
+    .focus
+}
+
+/// A message in the world's inbox held for "Newsletters" at `at`.
+fn held_at(world: &World, at: chrono::DateTime<Utc>) -> MessageId {
+    let inbox = folder(world, postio_model::MailboxRole::Inbox);
+    let message = received(world, inbox, Utc::now() - at, None);
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::DigestRepository::new(&connection)
+            .hold(message, "Newsletters", at)
+            .await
+            .expect("held");
+    });
+    message
+}
+
+/// Every delivery: its rule, when it came due, and what it holds.
+fn deliveries(world: &World) -> Vec<(String, chrono::DateTime<Utc>, Vec<MessageId>)> {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let rows: Vec<(i64, String, i64)> = postio_storage::sql::all(
+            &connection,
+            "SELECT id, rule, due_at FROM digest_deliveries ORDER BY id",
+            (),
+            |row| {
+                use postio_storage::sql::RowExt as _;
+                Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+            },
+        )
+        .await
+        .expect("a read");
+        let mut found = Vec::new();
+        for (id, rule, due_at) in rows {
+            let held: Vec<MessageId> = postio_storage::sql::all(
+                &connection,
+                "SELECT message_id FROM digest_holds WHERE delivery_id = ?1 ORDER BY message_id",
+                [id],
+                |row| Ok(MessageId::new(postio_storage::sql::RowExt::col(row, 0)?)),
+            )
+            .await
+            .expect("a read");
+            found.push((rule, postio_storage::repository::from_millis(due_at), held));
+        }
+        found
+    })
+}
+
+/// Two hours east of UTC, as a zone with no daylight saving to cloud it.
+fn east() -> chrono::FixedOffset {
+    chrono::FixedOffset::east_opt(2 * 3600).expect("an offset")
+}
+
+fn on(day: u32, hour: u32) -> chrono::DateTime<chrono::FixedOffset> {
+    use chrono::TimeZone as _;
+    east()
+        .with_ymd_and_hms(2026, 9, day, hour, 0, 0)
+        .single()
+        .expect("a time")
+}
+
+fn deliver_due_at(
+    world: &World,
+    config: &postio_config::FocusConfig,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> usize {
+    world
+        .rt
+        .block_on(crate::focus::deliver_due(&world.database, config, &now))
+        .expect("the timer's pass")
+}
+
+#[test]
+fn held_mail_is_delivered_as_one_digest_when_its_rule_comes_due() {
+    // US10 scenario 1: held on Wednesday, a weekly rule due Sunday at nine
+    // delivers nothing on Saturday night, and one digest at nine on Sunday
+    // holding it.
+    let world = World::new();
+    let config = digesting("cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"");
+    let wednesday = held_at(&world, on(23, 10).with_timezone(&Utc));
+
+    assert_eq!(deliver_due_at(&world, &config, on(26, 20)), 0);
+    assert!(deliveries(&world).is_empty(), "not before it is due");
+
+    assert_eq!(deliver_due_at(&world, &config, on(27, 9)), 1);
+    assert_eq!(
+        deliveries(&world),
+        vec![(
+            "Newsletters".to_owned(),
+            on(27, 9).with_timezone(&Utc),
+            vec![wednesday]
+        )]
+    );
+}
+
+#[test]
+fn a_digest_missed_while_focus_was_closed_is_delivered_once() {
+    // US10 scenario 3: Focus was closed through three Sundays. It delivers
+    // one digest, as of the latest of them, holding everything; asked again,
+    // it delivers nothing more.
+    let world = World::new();
+    let config = digesting("cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"");
+    let first = held_at(&world, on(2, 10).with_timezone(&Utc));
+    let second = held_at(&world, on(10, 18).with_timezone(&Utc));
+
+    assert_eq!(deliver_due_at(&world, &config, on(27, 12)), 1);
+    assert_eq!(deliver_due_at(&world, &config, on(27, 12)), 0);
+
+    let mut held = vec![first, second];
+    held.sort();
+    assert_eq!(
+        deliveries(&world),
+        vec![(
+            "Newsletters".to_owned(),
+            on(27, 9).with_timezone(&Utc),
+            held
+        )],
+        "one digest, as of the last due time, nothing lost or doubled"
+    );
+}
+
+#[test]
+fn a_due_time_with_nothing_held_makes_no_digest() {
+    // US10 scenario 6.
+    let world = World::new();
+    let config = digesting("cadence = \"daily\"\nat = \"07:00\"");
+
+    assert_eq!(deliver_due_at(&world, &config, on(27, 12)), 0);
+    assert!(deliveries(&world).is_empty());
+}
+
+#[test]
+fn focus_mode_delivers_what_came_due_when_it_starts() {
+    // The due timer runs from `[focus]` as Focus mode starts, so a digest
+    // that came due while Focus was closed is there when it opens.
+    let world = World::new();
+    let config = digesting("cadence = \"daily\"\nat = \"00:00\"");
+    let held = held_at(&world, Utc::now() - chrono::TimeDelta::days(2));
+
+    world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config(config));
+
+    let delivered = eventually(&world, || {
+        let found = deliveries(&world);
+        (!found.is_empty()).then_some(found)
+    });
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].2, vec![held]);
+}

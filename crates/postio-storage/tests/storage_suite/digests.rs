@@ -187,3 +187,55 @@ async fn letting_go_of_what_waits_leaves_delivered_mail_in_its_digest() {
     assert_eq!(hold_of(&connection, ids[1]).await, None);
     assert_eq!(hold_of(&connection, ids[0]).await, Some(Some(delivery)));
 }
+
+#[tokio::test]
+async fn a_rule_waits_since_its_oldest_undelivered_hold_in_one_seek() {
+    // The due timer's question (T135): since when has a rule held mail
+    // nobody has been given yet? Its next delivery is the first due time
+    // after that; with nothing waiting there is none (US10 scenario 6).
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages(&connection, 4).await;
+    let digests = DigestRepository::new(&connection);
+    assert_eq!(
+        digests.waiting_since("Newsletters").await.expect("a read"),
+        None,
+        "nothing held, nothing waits"
+    );
+
+    digests
+        .hold(ids[0], "Newsletters", at(20, 9))
+        .await
+        .expect("held");
+    digests
+        .deliver("Newsletters", at(21, 9), at(21, 9))
+        .await
+        .expect("delivered");
+    digests
+        .hold(ids[2], "Newsletters", at(24, 8))
+        .await
+        .expect("held");
+    digests
+        .hold(ids[1], "Newsletters", at(23, 7))
+        .await
+        .expect("held");
+    digests
+        .hold(ids[3], "Other", at(19, 1))
+        .await
+        .expect("another rule's");
+
+    let mut since = None;
+    let counts = postio_storage::test_support::counting::counted_async(|| async {
+        since = digests.waiting_since("Newsletters").await.expect("a read");
+    })
+    .await;
+    assert_eq!(since, Some(at(23, 7)), "the oldest of what waits");
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    let plan = test_support::plan(&connection, DigestRepository::explain_waiting_since()).await;
+    assert!(
+        !plan
+            .lines()
+            .any(|step| step.trim_start().starts_with("SCAN")),
+        "{plan}"
+    );
+}

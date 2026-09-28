@@ -15,7 +15,7 @@ use postio_model::ids::{DeliveryId, MessageId};
 use super::to_millis;
 
 use crate::error::Result;
-use crate::sql::{self, bind};
+use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
 /// Reads and writes digest holds and deliveries.
@@ -79,6 +79,27 @@ impl<'a> DigestRepository<'a> {
         )
         .await?;
         Ok(released as usize)
+    }
+
+    /// When `rule`'s oldest hold that no delivery has taken was made, or
+    /// `None` when nothing waits: its next delivery is the first due time
+    /// after that (T135), and with nothing waiting there is none (US10
+    /// scenario 6). One statement, a seek on `idx_digest_holds_rule`.
+    pub async fn waiting_since(&self, rule: &str) -> Result<Option<DateTime<Utc>>> {
+        let since: Option<i64> = sql::first(
+            self.connection,
+            Self::explain_waiting_since(),
+            [rule],
+            |row| row.col(0),
+        )
+        .await?
+        .flatten();
+        Ok(since.map(super::from_millis))
+    }
+
+    /// The SQL [`Self::waiting_since`] runs.
+    pub fn explain_waiting_since() -> &'static str {
+        "SELECT min(held_at) FROM digest_holds WHERE rule = ?1 AND delivery_id IS NULL"
     }
 
     /// Delivers everything `rule` holds and has not yet delivered, as one

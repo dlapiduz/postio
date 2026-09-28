@@ -19,15 +19,17 @@
 //!    `BodyLoaded`, for invitations and the needs-action detector to read
 //!    the bodies that land.
 //! 3. **A due timer** on the engine's tick
-//!    ([`postio_runtime::POLL_INTERVAL`]), for digest deliveries, reminders
-//!    and RSVP windows. One for the store rather than one per account, so it
-//!    keeps time whether or not an engine is running. It ticks, and nothing
-//!    is due yet.
+//!    ([`postio_runtime::POLL_INTERVAL`]), for digest deliveries ([`due`]),
+//!    and later reminders and RSVP windows. One for the store rather than one
+//!    per account, so it keeps time whether or not an engine is running.
 
 mod body;
+mod due;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+
+pub(crate) use due::deliver_due;
 
 use postio_config::FocusConfig;
 use postio_sync::{FilingPass, FocusFiling};
@@ -76,6 +78,9 @@ pub struct FocusHandle {
     body_stage: tokio::task::AbortHandle,
     due_timer: tokio::task::AbortHandle,
     caught_up: Arc<AtomicBool>,
+    /// `[focus]` as the tasks read it, replaced by each call to
+    /// [`Host::enable_focus`].
+    config: Arc<RwLock<FocusConfig>>,
 }
 
 impl FocusHandle {
@@ -107,30 +112,43 @@ impl Host {
         self.inner.wiring.filing.set(Some(setup.pass()));
         let mut focus = self.inner.focus.lock().expect("never poisoned");
         if let Some(running) = &*focus {
+            *running.config.write().expect("never poisoned") = setup.config;
             return running.clone();
         }
         let caught_up = Arc::new(AtomicBool::new(false));
+        let config = Arc::new(RwLock::new(setup.config));
         let handle = FocusHandle {
             body_stage: body::spawn(&self.inner, Arc::clone(&caught_up)),
-            due_timer: due_timer(&self.inner),
+            due_timer: due_timer(&self.inner, Arc::clone(&config)),
             caught_up,
+            config,
         };
         *focus = Some(handle.clone());
         handle
     }
 }
 
-/// The due timer: the engine's tick, kept by the host for the whole store.
-fn due_timer(inner: &Inner) -> tokio::task::AbortHandle {
+/// The due timer: the engine's tick, kept by the host for the whole store,
+/// delivering the digests `config` says have come due ([`due`]). Its first
+/// tick is at once, so what came due while Focus was closed is delivered as
+/// it opens.
+fn due_timer(inner: &Inner, config: Arc<RwLock<FocusConfig>>) -> tokio::task::AbortHandle {
+    let database = inner.wiring.database.clone();
     inner
         .runtime()
-        .spawn(async {
+        .spawn(async move {
             let mut tick = tokio::time::interval(postio_runtime::POLL_INTERVAL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
-                // Nothing is due yet: digest deliveries, reminders and RSVP
-                // windows will be.
                 tick.tick().await;
+                let config = config.read().expect("never poisoned").clone();
+                match deliver_due(&database, &config, &chrono::Local::now()).await {
+                    Ok(0) => {}
+                    Ok(delivered) => tracing::debug!(delivered, "Focus delivered digests"),
+                    Err(error) => {
+                        tracing::warn!(%error, "Focus could not deliver its digests: {error}");
+                    }
+                }
             }
         })
         .abort_handle()
