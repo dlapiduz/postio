@@ -196,3 +196,51 @@ pub fn a_draft_the_classic_app_kept_opens_in_focus() {
         );
     });
 }
+
+/// US11 scenario 3 by the keyboard (T080): `g t` lists Drafts, and `Enter`
+/// on a draft opens it in the composer rather than in the reader.
+pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (fixture, window, classic) = both_apps().await;
+        let mut kept = Draft::new(fixture.account.id);
+        kept.to = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
+        kept.subject = "Harbor notes".to_owned();
+        kept.body.text = Some("Two comments on the headers.".to_owned());
+        classic
+            .save_draft(1, kept)
+            .await
+            .expect("the classic app saves its draft");
+
+        support::keys(&window, &["g", "t"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Harbor notes"]).await,
+            "g t did not list Drafts: {:?} under {:?}",
+            support::subjects(&window),
+            window.place_name()
+        );
+        assert_eq!(window.place_name(), "Drafts");
+
+        support::keys(&window, &["j"]);
+        let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "Enter on a draft did not open it to edit"
+        );
+        assert!(
+            window.reading().is_none_or(|reading| !reading.is_open()),
+            "a draft opens in the composer, not the reader"
+        );
+        let dialog = window.compose_dialog().expect("the compose dialog");
+        assert!(
+            crate::settle_until(async || {
+                field(&dialog, "Subject").as_deref() == Some("Harbor notes")
+            })
+            .await,
+            "the draft's subject: {:?}",
+            field(&dialog, "Subject")
+        );
+    });
+}

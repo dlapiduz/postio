@@ -674,6 +674,8 @@ impl FocusWindow {
                     self.answer(message, id);
                 }
             }
+            // `g t`: the Drafts folder, where Enter opens a draft to edit.
+            CommandId::GoToDrafts => self.go_to_drafts(),
             // The classic app's composer, in its dialog (US3).
             CommandId::Compose | CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 if let Some(compose) = self.compose() {
@@ -1215,6 +1217,35 @@ impl FocusWindow {
         }
     }
 
+    /// `g t`: list the Drafts folder of the account Focus writes from.
+    fn go_to_drafts(&self) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let accounts = self.imp().accounts.borrow().clone();
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            use postio_model::listing::MailStore as _;
+            for account in accounts {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                let Ok(folders) = client.mailboxes(account).await else {
+                    continue;
+                };
+                if let Some(drafts) = folders
+                    .iter()
+                    .find(|folder| folder.role == postio_model::MailboxRole::Drafts)
+                    && let Some(window) = window.upgrade()
+                {
+                    window.go_to(
+                        postio_ui::finder::Destination::Mailbox(drafts.id),
+                        &crate::places::place_name(drafts),
+                    );
+                    return;
+                }
+            }
+        });
+    }
+
     /// Say the counts the host last gave: the strip's, the toggle's, and
     /// how many of how many the filter is showing.
     fn show_counts(&self) {
@@ -1501,6 +1532,12 @@ impl FocusWindow {
         let (Some(pane), Some(row)) = (self.pane(), self.cursor_row()) else {
             return;
         };
+        // A draft is written, not read: it opens in the composer (US11
+        // scenario 3), whichever app left it.
+        if row.row().summary.representative.send_state.is_some() {
+            self.open_draft(row.id());
+            return;
+        }
         let Some(reading) = self.reading_dialog() else {
             return;
         };

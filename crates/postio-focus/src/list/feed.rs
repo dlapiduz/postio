@@ -339,11 +339,22 @@ impl Inner {
                     self.landed.set(true);
                     self.filled();
                 }
-                Ok(ListPage::Messages(_)) => {
-                    // Every scope Focus opens lists conversations; a scope
-                    // that lists messages is a place this list does not draw.
-                    tracing::warn!(page, "Focus asked a scope that lists messages");
-                    self.list.give_up(generation, page);
+                Ok(ListPage::Messages(answer)) => {
+                    // Drafts lists messages, not conversations (a draft is
+                    // edited, not read in a thread): each is a row of its
+                    // own, with no label pills and nothing spliced in.
+                    let rows: Vec<FocusRow> = answer
+                        .rows
+                        .into_iter()
+                        .map(|message| FocusRow::conversation(lone(message)))
+                        .collect();
+                    if generation == self.list.generation() {
+                        self.stored.set(answer.total);
+                        self.total.set(answer.total);
+                    }
+                    self.list.deliver_page(generation, answer.total, page, rows);
+                    self.landed.set(true);
+                    self.filled();
                 }
                 Err(error) => {
                     tracing::warn!(page, %error, "Focus could not read a page: {error}");
@@ -362,5 +373,23 @@ impl Inner {
         for handler in self.on_filled.borrow().iter() {
             handler();
         }
+    }
+}
+
+/// A message listed on its own -- a draft -- as the one-message
+/// conversation a row draws.
+fn lone(message: postio_model::listing::MessageSummary) -> postio_model::listing::ThreadSummary {
+    postio_model::listing::ThreadSummary {
+        id: message.thread,
+        subject: message.subject.clone(),
+        participants: message.from.iter().cloned().collect(),
+        message_count: 1,
+        unread_count: u32::from(!message.seen),
+        flagged: message.flagged,
+        has_attachments: message.has_attachments,
+        last_at: message.received_at,
+        marker: None,
+        copies: Vec::new(),
+        representative: message,
     }
 }

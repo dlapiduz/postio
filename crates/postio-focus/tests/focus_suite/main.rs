@@ -78,6 +78,10 @@ const CASES: &[(&str, fn())] = &[
         invitations::the_open_invitation_s_card_answers_with_its_keys as fn(),
     ),
     (
+        "drafts::g_t_lists_drafts_and_enter_opens_one_to_edit",
+        drafts::g_t_lists_drafts_and_enter_opens_one_to_edit as fn(),
+    ),
+    (
         "bar::a_plain_word_offers_commands_and_searches_only_when_asked",
         bar::a_plain_word_offers_commands_and_searches_only_when_asked as fn(),
     ),
