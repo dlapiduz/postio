@@ -14,8 +14,9 @@
 //! - the built-in needs-action detector finds a question or a to-do in the
 //!   own text of mail sent directly to the user (FR-104 to FR-106, research
 //!   R10). It is held to SC-013's precision by `tests/needs_action.rs`;
-//! - [`ModelLayer`] is where the user's own model will answer, in milestone
-//!   2, for what the built-in layers leave open, and in the detector's place.
+//! - [`ModelLayer`] is where the user's own model answers, in milestone 2,
+//!   for what the built-in layers leave open, and in the detector's place
+//!   ([`at_body_with`]); when it is not running, the detector answers.
 
 /// The classifier's version: what `focus_classified` records a message was
 /// classified by. Raise it when a change to the rules should classify the
@@ -39,9 +40,9 @@ pub use facts::Facts;
 pub use input::{BodyMessage, EXCERPT_CHARS, FiledMessage, OwnText};
 pub use needs_action::considered;
 pub use outcome::{
-    InviteIdentity, InviteUid, Layer, MarkerCandidate, MarkerKind, Outcome, Reason, ReasonKind,
-    RuleName, SourceName, Span,
+    InviteIdentity, InviteUid, Layer, MarkedBy, MarkerCandidate, MarkerKind, Outcome, Reason,
+    ReasonKind, RuleName, SourceName, Span,
 };
-pub use pipeline::{ModelLayer, NeedsAction, at_body, at_filing};
+pub use pipeline::{ModelLayer, NeedsAction, Unavailable, at_body, at_body_with, at_filing};
 pub use rules::Rules;
 pub use senders::{Sender, Senders, SendersError};

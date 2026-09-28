@@ -29,8 +29,11 @@
 //! - **Questions and to-dos** (FR-104 to FR-106, T117), in mail sent
 //!   directly to the user: the built-in detector reads the newest message's
 //!   own words and the marker quotes its sentence verbatim, cut to a plain
-//!   prefix of 200 characters. With no model configured nothing else is
-//!   asked, and nothing connects anywhere. A message that asks something is
+//!   prefix of 200 characters. When `[focus.model]` names the person's own
+//!   model with `needs_action` on, the model answers in the detector's
+//!   place, one message at a time, and when it is not running the detector
+//!   answers after all (FR-107, FR-170). With no model configured nothing
+//!   else is asked, and nothing connects anywhere (SC-016). A message that asks something is
 //!   not held for a digest: filing held it on its headers, and the stage
 //!   lets it go while it still waits (FR-122).
 //!
@@ -48,8 +51,11 @@ use std::time::Duration;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
+use postio_ai::NeedsActionModel;
 use postio_calendar::{Invitation, Method};
-use postio_classify::{BodyMessage, Facts, FiledMessage, MarkerCandidate, OwnText, Rules, Senders};
+use postio_classify::{
+    BodyMessage, Facts, FiledMessage, MarkerCandidate, ModelLayer, OwnText, Rules, Senders,
+};
 use postio_config::{FocusConfig, FocusFilter};
 use postio_model::listing::MarkerKind;
 use postio_model::{
@@ -61,6 +67,7 @@ use postio_storage::repository::{
 };
 use postio_storage::{BlobStore, Checkout, Connection, Store, WritePriority};
 
+use super::model::Models;
 use crate::Inner;
 
 /// How far back the stage reads: the inbox's last 30 days (FR-141).
@@ -80,6 +87,15 @@ const BREATHER: Duration = Duration::from_millis(20);
 /// Why the stage could not read or record what it meant to.
 type Failure = postio_storage::Error;
 
+/// What a batch is classified by, as `[focus]` stood when it was read.
+#[derive(Clone)]
+struct Reading {
+    /// `[focus.filter]`: the marker kinds the person stopped.
+    filter: FocusFilter,
+    /// The person's model, when it answers the needs-action question.
+    model: Option<Arc<NeedsActionModel>>,
+}
+
 /// Start the body stage over `inner`'s store: the catch-up, then every body
 /// that lands. `caught_up` is set once the catch-up has taken everything it
 /// found.
@@ -89,14 +105,22 @@ type Failure = postio_storage::Error;
 pub(super) fn spawn(
     inner: &Inner,
     config: Arc<RwLock<FocusConfig>>,
+    models: Arc<Models>,
     caught_up: Arc<AtomicBool>,
 ) -> tokio::task::AbortHandle {
     let events = inner.hub.subscribe("focus:body-stage");
     let database = inner.wiring.database.clone();
     let blobs = inner.wiring.blobs.clone();
-    // `[focus.filter]` as it stands when each batch is read: a kind the
-    // person stopped reaches the next message classified.
-    let corrections = move || config.read().expect("never poisoned").filter.clone();
+    // `[focus]` as it stands when each batch is read: a kind the person
+    // stopped, or a model named or switched off, reaches the next message
+    // classified.
+    let corrections = move || {
+        let config = config.read().expect("never poisoned");
+        Reading {
+            filter: config.filter.clone(),
+            model: models.needs_action(&config),
+        }
+    };
     inner
         .runtime()
         .spawn(async move {
@@ -158,11 +182,11 @@ fn since() -> DateTime<Utc> {
 
 /// Classify every inbox's recent mail that has a body here and no record at
 /// `version`, newest first, a batch at a time. Answers how many it took.
-pub(crate) async fn catch_up(
+async fn catch_up(
     database: &Store,
     blobs: &BlobStore,
     version: u32,
-    corrections: &(dyn Fn() -> FocusFilter + Send + Sync),
+    corrections: &(dyn Fn() -> Reading + Send + Sync),
 ) -> Result<usize, Failure> {
     let since = since();
     let inboxes = {
@@ -197,7 +221,7 @@ async fn landed_bodies(
     blobs: &BlobStore,
     landed: &[MessageId],
     version: u32,
-    corrections: &(dyn Fn() -> FocusFilter + Send + Sync),
+    corrections: &(dyn Fn() -> Reading + Send + Sync),
 ) -> Result<(), Failure> {
     for chunk in landed.chunks(BATCH as usize) {
         let connection = database.connect_background().await?;
@@ -225,7 +249,7 @@ async fn classify(
     blobs: &BlobStore,
     batch: &[MessageId],
     version: u32,
-    corrections: &FocusFilter,
+    corrections: &Reading,
 ) -> Result<(), Failure> {
     if batch.is_empty() {
         return Ok(());
@@ -284,7 +308,7 @@ async fn found_in(
     blobs: &BlobStore,
     message: MessageId,
     people: &mut HashMap<AccountId, Arc<Vec<Identity>>>,
-    corrections: &FocusFilter,
+    corrections: &Reading,
 ) -> Result<Option<Found>, Failure> {
     let Some(row) = MessageRepository::new(connection).get(message).await? else {
         return Ok(None);
@@ -439,7 +463,7 @@ async fn needs_action(
     connection: &Checkout,
     row: Message,
     people: &mut HashMap<AccountId, Arc<Vec<Identity>>>,
-    corrections: &FocusFilter,
+    corrections: &Reading,
 ) -> Result<Option<Marker>, Failure> {
     let message = row.id;
     let identities = match people.get(&row.account_id) {
@@ -455,8 +479,9 @@ async fn needs_action(
         identities: &identities,
     };
     let rules = Shipped {
-        corrections: corrections.clone(),
+        corrections: corrections.filter.clone(),
     };
+    let model = corrections.model.clone();
     if !postio_classify::considered(&asked, &rules) {
         return Ok(None);
     }
@@ -476,7 +501,12 @@ async fn needs_action(
             filed: filed_in_the_inbox(&row),
             identities: &identities,
         };
-        postio_classify::at_body(&asked, &text, &NoGuards, &rules)
+        // The person's model, when there is one, answers in the built-in
+        // detector's place, and the detector answers when it cannot. Here,
+        // on a blocking thread, so waiting for it holds up nothing but this
+        // batch (FR-107, FR-131).
+        let model = model.as_deref().map(|model| model as &dyn ModelLayer);
+        postio_classify::at_body_with(&asked, &text, &NoGuards, &rules, model)
             .marker
             .and_then(|candidate| detected(message, &text, candidate))
     })
@@ -525,10 +555,15 @@ fn detected(message: MessageId, text: &OwnText<'_>, candidate: MarkerCandidate) 
         postio_classify::MarkerKind::Invite => return None,
     };
     let span = candidate.span?;
+    let source = match candidate.by {
+        postio_classify::MarkedBy::Model => MarkerSource::Model,
+        postio_classify::MarkedBy::Detector => MarkerSource::Detector,
+        postio_classify::MarkedBy::Calendar => MarkerSource::Calendar,
+    };
     Some(Marker {
         message,
         kind,
-        source: MarkerSource::Detector,
+        source,
         span: Some((
             u32::try_from(span.start).ok()?,
             u32::try_from(span.end).ok()?,

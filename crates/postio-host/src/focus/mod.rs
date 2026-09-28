@@ -28,6 +28,7 @@
 mod body;
 mod catch_up;
 mod due;
+mod model;
 pub(crate) mod rules;
 mod surfaced;
 
@@ -55,6 +56,9 @@ pub struct FocusSetup {
     /// A pass to file with instead of Focus's own, for a test that watches
     /// what the engines hand over.
     filing: Option<Arc<dyn FilingPass>>,
+    /// How the person's model is reached instead of this computer's own
+    /// sockets: a test's fake runtime.
+    model_transport: Option<Arc<dyn postio_ai::Transport>>,
 }
 
 impl FocusSetup {
@@ -70,6 +74,15 @@ impl FocusSetup {
     /// (contracts/config.md). Without it, the path [`Host::open`] was given.
     pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
         self.config_path = Some(path);
+        self
+    }
+
+    /// Reach the person's model through `transport` rather than this
+    /// computer's own sockets: what a test does, so that nothing it runs
+    /// opens a connection. Nothing connects either way unless `[focus.model]`
+    /// names a model (FR-166).
+    pub fn with_model_transport(mut self, transport: Arc<dyn postio_ai::Transport>) -> Self {
+        self.model_transport = Some(transport);
         self
     }
 
@@ -167,10 +180,15 @@ impl Host {
                 let caught_up = Arc::new(AtomicBool::new(false));
                 let marking = Arc::new(AtomicBool::new(false));
                 let config = Arc::new(RwLock::new(setup.config.clone()));
+                let models = Arc::new(model::Models::new(
+                    setup.model_transport.clone(),
+                    self.inner.wiring.egress.clone(),
+                ));
                 let handle = FocusHandle {
                     body_stage: body::spawn(
                         &self.inner,
                         Arc::clone(&config),
+                        Arc::clone(&models),
                         Arc::clone(&caught_up),
                     ),
                     due_timer: due_timer(&self.inner, Arc::clone(&config), Arc::clone(&marking)),

@@ -13,7 +13,7 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use postio_model::{EmailAddress, Flag, MailboxRole};
 
 use crate::input::{BodyMessage, OwnText};
-use crate::outcome::{MarkerCandidate, MarkerKind};
+use crate::outcome::{MarkedBy, MarkerCandidate, MarkerKind};
 use crate::rules::Rules;
 
 /// `messages.automation`'s bits: `Precedence` bulk, list and junk, and
@@ -96,6 +96,7 @@ pub(crate) fn detect(message: &BodyMessage<'_>, text: &OwnText<'_>) -> Option<Ma
         ends_at: None,
         due_at: found.due.map(|due| due.with_timezone(&Utc)),
         invite: None,
+        by: MarkedBy::Detector,
     })
 }
 

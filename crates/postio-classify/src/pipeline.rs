@@ -11,7 +11,7 @@ use crate::guards;
 use crate::input::{BodyMessage, FiledMessage, OwnText};
 use crate::needs_action;
 use crate::outcome::{
-    Layer, MarkerCandidate, MarkerKind, Outcome, Reason, ReasonKind, RuleName, Span,
+    Layer, MarkedBy, MarkerCandidate, MarkerKind, Outcome, Reason, ReasonKind, RuleName, Span,
 };
 use crate::rules::Rules;
 
@@ -41,6 +41,25 @@ pub fn at_body(
     Pipeline::built_in().at_body(message, text, facts, rules)
 }
 
+/// [`at_body`], with the person's own model after the built-in layers when
+/// they have brought one (FR-107, FR-170): the model answers the
+/// needs-action question in the built-in detector's place, under the same
+/// rules, and when it is not running the detector answers after all, so a
+/// marker never waits on it. With `None`, exactly [`at_body`].
+pub fn at_body_with(
+    message: &BodyMessage<'_>,
+    text: &OwnText<'_>,
+    facts: &dyn Facts,
+    rules: &dyn Rules,
+    model: Option<&dyn ModelLayer>,
+) -> Outcome {
+    Pipeline {
+        stages: BUILT_IN,
+        model,
+    }
+    .at_body(message, text, facts, rules)
+}
+
 /// Layer 4: the user's own model, when they have brought one (milestone 2,
 /// FR-165, FR-170). `postio-ai` implements it.
 ///
@@ -48,14 +67,28 @@ pub fn at_body(
 /// fixed schema: a category, or a kind with a span and a due date. There is
 /// no field in either answer for words of its own (FR-132), and what it
 /// returns is checked before it is believed.
+///
+/// Each question is answered `Ok` -- an answer, or `None` for "not this" --
+/// or [`Unavailable`] when the model could not answer at all: not running,
+/// too slow, or off its schema. Then the question goes to whatever answers
+/// without the model (FR-107, FR-167).
 pub trait ModelLayer {
     /// A filter reason for a message the earlier layers left open, or `None`
     /// to leave it in the inbox.
-    fn filter(&self, message: &FiledMessage<'_>) -> Option<ReasonKind>;
+    fn filter(&self, message: &FiledMessage<'_>) -> Result<Option<ReasonKind>, Unavailable>;
 
     /// Whether the message's own text asks something of the user, and where.
-    fn needs_action(&self, message: &BodyMessage<'_>, text: &OwnText<'_>) -> Option<NeedsAction>;
+    fn needs_action(
+        &self,
+        message: &BodyMessage<'_>,
+        text: &OwnText<'_>,
+    ) -> Result<Option<NeedsAction>, Unavailable>;
 }
+
+/// The model gave no answer: it is not running, not reachable, too slow, or
+/// said something off its schema. The question is answered without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unavailable;
 
 /// A model's needs-action answer: what kind, which characters of the own
 /// text, and when it is due. Nothing else.
@@ -279,8 +312,11 @@ impl<'a> Pipeline<'a> {
         }
         if let Some(model) = self.model
             && decisions.filter.is_open()
+            // Unanswered, the question stays open: when in doubt, mail goes
+            // to the inbox (FR-112).
+            && let Ok(answer) = model.filter(message)
         {
-            let reason = model.filter(message).map(|kind| Reason {
+            let reason = answer.map(|kind| Reason {
                 kind,
                 source: None,
                 layer: Layer::Model,
@@ -335,17 +371,23 @@ impl<'a> Pipeline<'a> {
         let Some(model) = self.model else {
             return needs_action::detect(message, text);
         };
-        model
-            .needs_action(message, text)
-            .filter(|answer| believable(answer, text))
-            .map(|answer| MarkerCandidate {
-                kind: answer.kind,
-                span: Some(answer.span),
-                starts_at: None,
-                ends_at: None,
-                due_at: answer.due_at,
-                invite: None,
-            })
+        match model.needs_action(message, text) {
+            Ok(answer) => answer
+                .filter(|answer| believable(answer, text))
+                .map(|answer| MarkerCandidate {
+                    kind: answer.kind,
+                    span: Some(answer.span),
+                    starts_at: None,
+                    ends_at: None,
+                    // A question carries no due date (research R10).
+                    due_at: answer.due_at.filter(|_| answer.kind == MarkerKind::Todo),
+                    invite: None,
+                    by: MarkedBy::Model,
+                }),
+            // Not running, or no answer it could keep to: the built-in
+            // detector answers, and nothing waits (FR-107).
+            Err(Unavailable) => needs_action::detect(message, text),
+        }
     }
 }
 
@@ -508,6 +550,7 @@ mod tests {
                 ends_at: None,
                 due_at: None,
                 invite: None,
+                by: MarkedBy::Calendar,
             }));
         }
     }
@@ -517,17 +560,29 @@ mod tests {
     struct Model {
         filter: Option<ReasonKind>,
         needs_action: Option<NeedsAction>,
+        /// Not running: every question goes unanswered.
+        down: bool,
         asked: Cell<u32>,
     }
 
     impl ModelLayer for Model {
-        fn filter(&self, _: &FiledMessage<'_>) -> Option<ReasonKind> {
+        fn filter(&self, _: &FiledMessage<'_>) -> Result<Option<ReasonKind>, Unavailable> {
             self.asked.set(self.asked.get() + 1);
-            self.filter
+            if self.down {
+                return Err(Unavailable);
+            }
+            Ok(self.filter)
         }
-        fn needs_action(&self, _: &BodyMessage<'_>, _: &OwnText<'_>) -> Option<NeedsAction> {
+        fn needs_action(
+            &self,
+            _: &BodyMessage<'_>,
+            _: &OwnText<'_>,
+        ) -> Result<Option<NeedsAction>, Unavailable> {
             self.asked.set(self.asked.get() + 1);
-            self.needs_action.clone()
+            if self.down {
+                return Err(Unavailable);
+            }
+            Ok(self.needs_action.clone())
         }
     }
 
@@ -607,10 +662,71 @@ mod tests {
                 ends_at: None,
                 due_at: None,
                 invite: None,
+                by: MarkedBy::Detector,
             })
         );
         assert_eq!(outcome.filter, None);
         assert_eq!(outcome.hold, None);
+    }
+
+    #[test]
+    fn a_model_that_is_not_running_leaves_the_question_to_the_built_in_detector() {
+        // FR-107, US12 scenario 6: markers never wait on the model. Asked
+        // and unanswered, it gives way to the built-in detector, whose
+        // marker says it is the detector's.
+        let model = Model {
+            down: true,
+            ..Model::default()
+        };
+        let message = letter();
+        let identities = identities();
+        let body = BodyMessage {
+            filed: filed_letter(&message),
+            identities: &identities,
+        };
+
+        let outcome = at_body_with(&body, &OwnText::new(TEXT), &NoFacts, &NoRules, Some(&model));
+
+        let marker = outcome.marker.expect("the built-in detector answered");
+        assert_eq!(marker.kind, MarkerKind::Question);
+        assert_eq!(marker.span, Some(0..TEXT.chars().count()));
+        assert_eq!(marker.by, MarkedBy::Detector);
+        assert_eq!(model.asked.get(), 1, "the model was asked first");
+    }
+
+    #[test]
+    fn a_marker_says_which_detector_found_it() {
+        // The store records a marker's source (`markers.source`): the
+        // model's answer is the model's, the built-in answer the detector's.
+        let model = Model {
+            needs_action: Some(NeedsAction {
+                kind: MarkerKind::Todo,
+                span: 0..3,
+                due_at: None,
+            }),
+            ..Model::default()
+        };
+        let message = letter();
+        let identities = identities();
+        let body = BodyMessage {
+            filed: filed_letter(&message),
+            identities: &identities,
+        };
+        let text = OwnText::new(TEXT);
+
+        let by_model = at_body_with(&body, &text, &NoFacts, &NoRules, Some(&model));
+        let built_in = at_body_with(&body, &text, &NoFacts, &NoRules, None);
+
+        let by_model = by_model.marker.expect("the model's marker");
+        assert_eq!(
+            (by_model.kind, by_model.by),
+            (MarkerKind::Todo, MarkedBy::Model)
+        );
+        assert_eq!(by_model.span, Some(0..3));
+        assert_eq!(
+            built_in.marker.expect("the detector's").by,
+            MarkedBy::Detector
+        );
     }
 
     /// The person stopped questions from Tove (FR-108).
@@ -1275,6 +1391,7 @@ mod tests {
                 ends_at: None,
                 due_at: None,
                 invite: None,
+                by: MarkedBy::Model,
             })
         );
     }

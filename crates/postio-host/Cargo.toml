@@ -23,6 +23,10 @@ postio-calendar.workspace = true
 # The newest message's own words, which is all the needs-action detector
 # reads and all a marker may quote (spec 007 FR-104).
 postio-body.workspace = true
+# The person's own model, when `[focus.model]` names one (spec 007
+# milestone 2): the needs-action question asked of it in the built-in
+# detector's place. It cannot send mail, by its boundary rule.
+postio-ai.workspace = true
 postio-client.workspace = true
 postio-core.workspace = true
 postio-config.workspace = true
@@ -39,6 +43,8 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync
 tracing = { workspace = true }
 
 [dev-dependencies]
+# Its fake runtime: no host test opens a connection, loopback included.
+postio-ai = { workspace = true, features = ["test-support"] }
 async-trait = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-smtp.workspace = true

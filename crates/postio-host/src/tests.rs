@@ -2513,7 +2513,7 @@ pub(crate) fn focus_caught_up(world: &World) -> crate::FocusHandle {
 }
 
 /// Every connection Postio has opened, by subsystem.
-fn egress(world: &World) -> Vec<String> {
+pub(crate) fn egress(world: &World) -> Vec<String> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         postio_storage::sql::all(&connection, "SELECT subsystem FROM egress_log", (), |row| {

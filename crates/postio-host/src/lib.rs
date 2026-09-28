@@ -1637,6 +1637,8 @@ pub mod settings;
 pub mod startup;
 
 #[cfg(test)]
+mod model_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod verbs_tests;

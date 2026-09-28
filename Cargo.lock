@@ -4902,6 +4902,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "postio-account",
+ "postio-ai",
  "postio-body",
  "postio-calendar",
  "postio-classify",

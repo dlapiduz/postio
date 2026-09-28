@@ -158,6 +158,21 @@ pub struct MarkerCandidate {
     /// An invitation's iTIP identity, which an update or a cancellation is
     /// matched by.
     pub invite: Option<InviteIdentity>,
+    /// Which detector found it: what the store records as the marker's
+    /// source, since the person's model and the built-in detector answer
+    /// the same question in turn (FR-107).
+    pub by: MarkedBy,
+}
+
+/// What found a marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MarkedBy {
+    /// The message's calendar part: an invitation.
+    Calendar,
+    /// The built-in needs-action detector (FR-105).
+    Detector,
+    /// The person's own model (FR-170).
+    Model,
 }
 
 /// What a marker says a message asks.

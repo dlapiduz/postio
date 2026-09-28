@@ -29,10 +29,12 @@
 mod client;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
+mod needs_action;
 mod schema;
 mod transport;
 
 pub use client::{AiError, Client, Question, RETRY_AFTER};
+pub use needs_action::NeedsActionModel;
 pub use schema::{Field, Kind, Schema, SchemaError};
 pub use transport::{LocalTransport, Stream, TIMEOUT, Transport};
 
