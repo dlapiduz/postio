@@ -17,6 +17,7 @@
 //! | `15` | The three archived, and the undo toast |
 //! | `16` | The empty inbox: a store with nothing in it, a digest rule, a morning's filtering |
 //! | `17`, `18`, `19` | Screen 01 under the first sync's, the offline and the sign-in error's banner |
+//! | `20` | The key map, over screen 01 |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -78,6 +79,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("17", "the first sync's banner"),
     ("18", "the offline banner"),
     ("19", "the sign-in error's banner"),
+    ("20", "the key map over the inbox"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -621,6 +623,21 @@ fn stage(
             pick_three();
             if !banner("Can't sign in") {
                 return Err("the sign-in banner never showed".into());
+            }
+        }
+        "20" => {
+            pick_three();
+            window.act(CommandId::CheatSheet);
+            // The dialog is mapped before it is drawn: libadwaita's sheet
+            // opens at 80% and transparent, and maps its content when that
+            // settles. What is waited for is the key map's own content.
+            if !settle_until(|| {
+                window
+                    .key_map()
+                    .and_then(|dialog| dialog.child())
+                    .is_some_and(|content| content.is_mapped() && content.width() > 0)
+            }) {
+                return Err("the key map never opened".into());
             }
         }
         _ => unreachable!("checked against SCREENS"),

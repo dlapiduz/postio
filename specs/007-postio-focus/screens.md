@@ -33,7 +33,7 @@ the date.
 | 17 First sync | 2026-09-28 | As 01 (b–f). The progress bar runs the banner's full width under it, where the reference draws a short bar after the sentence. The label reads "Syncing 12,408 of 18,204", as drawn | An AdwBanner holds a title and a button, nothing between; the bar is re-dressed neutral, not the accent's fill (FR-091) |
 | 18 Offline | 2026-09-28 | As 01 (b–f). "Retry now" sits at the banner's right edge, where the reference sets it beside the sentence | AdwBanner places its button at the end |
 | 19 Sign-in error | 2026-09-28 | As 18. The server and the address are the demo account's. "Update password…" does not open anything yet | As 18; the credential dialog is still `postio-gtk`'s (T055) |
-| 20 Key map | not yet | The footer names `[keys]` in `config.toml` (C3). No Obsidian group before milestone 3 (C9). Shifted keys (C22) | Constitution II; milestone order |
+| 20 Key map | 2026-09-28 | Known: the footer names `[keys]` in `config.toml` (C3), no Obsidian group (C9), keys spelled as the keymap spells them, `ctrl+k` rather than "Ctrl K" (C22). Found: one row per command, each with every binding, alternates included, where the reference merges pairs ("Top / bottom", "Extend selection") and shows one or two keys; and the groups hold every command Focus offers in the key map's contexts, zoom, find in message, the outbox's verbs and the picker's number keys among them, where the reference shows a shorter set. So the columns run past the dialog and scroll | Constitution II: the key map is generated from the registry and the groups table (`postio_ui::keymap_sheet`), and a command Focus offers is taught; merging pairs, or leaving a row out, is a change to that table rather than to the dialog |
 
 ## Rendering them
 
