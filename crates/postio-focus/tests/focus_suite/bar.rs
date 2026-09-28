@@ -285,6 +285,12 @@ pub fn a_plain_word_offers_commands_and_searches_only_when_asked() {
             "the search row: {said:?}"
         );
         assert!(bar.result_subjects().is_empty(), "no search until asked");
+        // A plain word is what the entry already shows; it is not a chip.
+        assert!(
+            bar.chips().is_empty(),
+            "a plain word chipped: {:?}",
+            bar.chips()
+        );
         bar.run_search();
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,

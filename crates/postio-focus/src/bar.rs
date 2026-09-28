@@ -75,6 +75,8 @@ type Handler = Rc<dyn Fn(BarAction)>;
 pub struct Bar {
     client: Client,
     root: gtk::Box,
+    /// The bar over its scrim: what the window lays over the list.
+    over: gtk::Overlay,
     entry: gtk::Entry,
     chips: gtk::Box,
     echo: gtk::Label,
@@ -163,11 +165,21 @@ impl Bar {
         root.append(&heading);
         root.append(&scrolled);
         root.append(&footer);
-        root.set_visible(false);
+        // The list dims behind the bar (screens 07-09). The dimming is
+        // paint only: it takes no pointer, so the list under it behaves as
+        // it did.
+        let scrim = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        scrim.add_css_class("focus-bar-scrim");
+        scrim.set_can_target(false);
+        let over = gtk::Overlay::new();
+        over.set_child(Some(&scrim));
+        over.add_overlay(&root);
+        over.set_visible(false);
 
         let bar = Rc::new(Bar {
             client,
             root,
+            over,
             entry,
             chips,
             echo,
@@ -189,6 +201,25 @@ impl Bar {
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
+        // The scrim is the bar's: a press on it, outside the bar, closes
+        // the bar as Escape does, rather than reaching the list beneath.
+        let outside = gtk::GestureClick::new();
+        outside.connect_pressed({
+            let weak = weak.clone();
+            move |_, _, x, y| {
+                let Some(bar) = weak.upgrade() else {
+                    return;
+                };
+                let picked = bar.over.pick(x, y, gtk::PickFlags::DEFAULT);
+                let inside = picked.is_some_and(|widget| {
+                    widget == *bar.root.upcast_ref::<gtk::Widget>() || widget.is_ancestor(&bar.root)
+                });
+                if !inside {
+                    bar.close();
+                }
+            }
+        });
+        bar.over.add_controller(outside);
         bar.entry.connect_changed({
             let weak = weak.clone();
             move |entry| {
@@ -234,8 +265,8 @@ impl Bar {
     }
 
     /// The bar, to lay over the list.
-    pub fn widget(&self) -> &gtk::Box {
-        &self.root
+    pub fn widget(&self) -> &gtk::Overlay {
+        &self.over
     }
 
     /// Run `handler` with what a row asks for when it is run.
@@ -300,7 +331,7 @@ impl Bar {
     pub fn open(&self) {
         self.open.set(true);
         self.places_known.set(false);
-        self.root.set_visible(true);
+        self.over.set_visible(true);
         self.entry.set_text("");
         self.update("");
         self.entry.grab_focus();
@@ -310,7 +341,7 @@ impl Bar {
     /// Close the bar. Nothing it showed is kept.
     pub fn close(&self) {
         self.open.set(false);
-        self.root.set_visible(false);
+        self.over.set_visible(false);
         self.generation.set(self.generation.get() + 1);
     }
 
@@ -432,19 +463,21 @@ impl Bar {
             return;
         }
         let parsed = self.lowered(typed);
-        let chips: Vec<String> = parsed
-            .tokens()
-            .iter()
-            .map(|token| token.raw.clone())
-            .collect();
-        self.show_chips(&chips);
         // Words that name what they want -- an operator, or a partial one
-        // on its way -- are a search (screen 07). A plain word is answered
-        // with the commands and places it names and one search row, and
-        // searches when that row is chosen (screen 09).
+        // on its way -- are a search, shown as its chips (screen 07). A
+        // plain word is answered with the commands and places it names and
+        // one search row, and searches when that row is chosen (screen 09);
+        // it is what the entry already says, so it makes no chip.
         if parsed.filters().next().is_some() || parsed.partials().next().is_some() {
+            let chips: Vec<String> = parsed
+                .tokens()
+                .iter()
+                .map(|token| token.raw.clone())
+                .collect();
+            self.show_chips(&chips);
             self.search(parsed, generation);
         } else {
+            self.show_chips(&[]);
             self.heading.set_visible(false);
         }
     }

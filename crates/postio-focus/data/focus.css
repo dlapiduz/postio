@@ -360,6 +360,11 @@ banner.focus-banner button {
 }
 
 /* ── The command bar (screens 07-09) ─────────────────────────────────── */
+/* The list dims behind the command bar, in either scheme. */
+.focus-bar-scrim {
+  background-color: color-mix(in srgb, black 16%, transparent);
+}
+
 .focus-bar {
   margin-top: var(--postio-space-3);
   padding: var(--postio-space-3);
