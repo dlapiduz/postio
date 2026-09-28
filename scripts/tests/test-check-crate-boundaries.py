@@ -66,6 +66,7 @@ def build_fixture(
     classify_deps: str = "",
     calendar_deps: str = "",
     ai_deps: str = "",
+    vault_deps: str = "",
     app_deps: str = "",
     include_gtk: bool = True,
 ) -> Path:
@@ -93,6 +94,8 @@ def build_fixture(
     write_crate(root, "crates", "postio-calendar", calendar_deps)
     # Milestone 2: the client for the person's own model.
     write_crate(root, "crates", "postio-ai", ai_deps)
+    # Milestone 3: Obsidian capture.
+    write_crate(root, "crates", "postio-vault", vault_deps)
     write_crate(root, "crates", "postio-app", app_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
@@ -527,6 +530,46 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-ai", "candle-core", "helper"),
+        )
+
+        # Milestone 3: postio-vault writes files on this computer, and
+        # nothing more (specs/007-postio-focus T157, FR-180).
+        check_case(
+            "postio-vault gains an HTTP client",
+            build_fixture(
+                tmp_path / "vault-reqwest",
+                vault_deps='reqwest = { path = "../../vendor/reqwest" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vault", "reqwest"),
+        )
+        check_case(
+            "postio-vault reaches io-http through another crate",
+            build_fixture(
+                tmp_path / "vault-http",
+                vault_deps='helper = { path = "../helper" }\n',
+                helper_deps='io-http = { path = "../../vendor/io-http" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vault", "io-http", "helper"),
+        )
+        check_case(
+            "postio-vault gains a toolkit",
+            build_fixture(
+                tmp_path / "vault-gtk",
+                vault_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vault", "gtk4"),
+        )
+        check_case(
+            "postio-vault gains the store engine",
+            build_fixture(
+                tmp_path / "vault-turso",
+                vault_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vault", "turso"),
         )
 
         # 18. And the real workspace is clean today.

@@ -228,6 +228,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_stop_markers(config, &map, errors);
         check_digests(config, &map, errors);
         check_model(config, &map, errors);
+        check_vault(config, &map, errors);
     }
     config
 }
@@ -699,6 +700,51 @@ fn check_model(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationErro
         ),
     };
     push(errors, map, path, at_value, message);
+}
+
+/// `[focus.vault]` (spec 007 T157, contracts/config.md): a vault that is
+/// not a folder on this computer, and a note or folder named outside it.
+/// Semantic: nothing is captured until it reads, and the rest of the file
+/// applies. By key, never by the path, which is the person's.
+fn check_vault(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    let Some(vault) = &config.focus.vault else {
+        return;
+    };
+    if vault.path.trim().is_empty() {
+        push(
+            errors,
+            map,
+            "focus.vault".to_owned(),
+            false,
+            "`[focus.vault]` names no `path`, so nothing is captured; give the vault's folder"
+                .to_owned(),
+        );
+    } else if vault.root().is_none() {
+        push(
+            errors,
+            map,
+            "focus.vault.path".to_owned(),
+            true,
+            "`[focus.vault] path` must be a folder on this computer, written from `/` or `~/`"
+                .to_owned(),
+        );
+    }
+    for (key, value) in [
+        ("tasks_note", vault.tasks_note.as_deref()),
+        ("projects", vault.projects.as_deref()),
+    ] {
+        if let Some(value) = value
+            && !crate::focus::stays_inside(std::path::Path::new(value.trim()))
+        {
+            push(
+                errors,
+                map,
+                format!("focus.vault.{key}"),
+                true,
+                format!("`[focus.vault] {key}` must be inside the vault, written relative to it"),
+            );
+        }
+    }
 }
 
 fn and_list(items: &[&str]) -> String {

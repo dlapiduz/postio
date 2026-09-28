@@ -53,6 +53,9 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
     send path, another HTTP client, the store engine, a toolkit, or an
     inference engine: it frames HTTP to this computer with ``io-http`` and
     nothing else (``specs/007-postio-focus`` FR-165, FR-168, ADR 0009 Q1).
+  * ``postio-vault``, Obsidian capture, must not link a network crate, a
+    toolkit or the store engine: it appends markdown to a folder on this
+    computer (``specs/007-postio-focus`` FR-180).
   * No app binary (``postio-app``, ``postio-focus``, ``postio-tui``,
     ``postio-ffi``) may link an inference engine. The local model is the
     user's own and optional (``specs/007-postio-focus`` FR-165).
@@ -283,6 +286,30 @@ RULES: dict[str, dict[str, object]] = {
             "speaks HTTP only through io-http to an endpoint that can only be "
             "this computer, "
             "opens no store and draws nothing, and carries no model of its own"
+        ),
+    },
+    "postio-vault": {
+        "banned": [
+            *NETWORK_CRATES,
+            "tokio",
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "webkit6",
+            "webkit6-sys",
+            "postio-storage",
+            "turso",
+            "turso_core",
+            "rusqlite",
+            "libsqlite3-sys",
+        ],
+        "edges": "product",
+        "why": (
+            "specs/007-postio-focus FR-180: Obsidian capture writes plain "
+            "markdown into a vault on this computer, with no plugin and no "
+            "network. It is file access and nothing else: no network crate, "
+            "no toolkit, no store engine"
         ),
     },
     "postio-app": {

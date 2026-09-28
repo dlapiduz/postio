@@ -49,6 +49,9 @@ pub struct FocusConfig {
     /// `[focus.model]`: the person's own model, off unless present (FR-166).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::model::FocusModel>,
+    /// `[focus.vault]`: the Obsidian vault Focus captures into (FR-180).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault: Option<FocusVault>,
     /// Keys in `[focus]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
@@ -61,9 +64,79 @@ impl Default for FocusConfig {
             filter: FocusFilter::default(),
             digests: Vec::new(),
             model: None,
+            vault: None,
             extras: Extras::default(),
         }
     }
+}
+
+/// `[focus.vault]`: the Obsidian vault Focus captures tasks and notes into
+/// (spec 007 FR-180, FR-181, contracts/config.md).
+///
+/// ```toml
+/// [focus.vault]
+/// path       = "~/Notes"          # the vault's folder, on this computer
+/// tasks_note = "Tasks.md"         # where a task goes with no project
+/// projects   = "Projects"         # a folder of project notes
+/// ```
+///
+/// The notes are relative to the vault and stay inside it. What reads and
+/// writes the vault is `postio-vault`, handed [`FocusVault::root`] and the
+/// two notes; this crate only reads the section.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct FocusVault {
+    /// The vault's folder: absolute, or under `~/`.
+    #[serde(default)]
+    pub path: String,
+    /// Where tasks go when no project is chosen, relative to the vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tasks_note: Option<String>,
+    /// A folder of project notes, relative to the vault, in addition to
+    /// notes with `type: project` frontmatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projects: Option<String>,
+    /// Keys in `[focus.vault]` this version of Postio does not know.
+    #[serde(flatten)]
+    pub extras: Extras,
+}
+
+impl FocusVault {
+    /// The vault's folder, with a leading `~/` read as the home folder:
+    /// `None` when the section names no absolute folder.
+    pub fn root(&self) -> Option<std::path::PathBuf> {
+        let path = self.path.trim();
+        let root = match path.strip_prefix("~/") {
+            Some(rest) => std::path::PathBuf::from(std::env::var_os("HOME")?).join(rest),
+            None => std::path::PathBuf::from(path),
+        };
+        root.is_absolute().then_some(root)
+    }
+
+    /// The tasks note, relative to the vault: `Tasks.md` unless given.
+    pub fn tasks_note(&self) -> std::path::PathBuf {
+        self.tasks_note
+            .as_deref()
+            .map(str::trim)
+            .filter(|note| !note.is_empty())
+            .unwrap_or("Tasks.md")
+            .into()
+    }
+
+    /// The projects folder, relative to the vault, when one is given.
+    pub fn projects(&self) -> Option<std::path::PathBuf> {
+        self.projects
+            .as_deref()
+            .map(str::trim)
+            .filter(|folder| !folder.is_empty())
+            .map(Into::into)
+    }
+}
+
+/// Whether `path` stays inside the folder it is relative to.
+pub(crate) fn stays_inside(path: &std::path::Path) -> bool {
+    use std::path::Component;
+    path.components()
+        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
 /// `[focus.filter]`: what the user has told Focus about filtering.

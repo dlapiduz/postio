@@ -5195,6 +5195,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-vault"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "postio-model",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "postio-widgets"
 version = "0.3.0"
 dependencies = [

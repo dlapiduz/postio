@@ -853,3 +853,67 @@ fn a_model_section_keeps_what_this_version_does_not_know() {
     let model = config.focus.model.expect("the section");
     assert!(model.extras.contains_key("temperature"));
 }
+
+// --------------------------------------------------------- [focus.vault] --
+//
+// Spec 007 T157, contracts/config.md: the Obsidian vault Focus captures
+// into, a folder on this computer, with its tasks note and projects folder
+// relative to it.
+
+#[test]
+fn a_vault_section_names_its_folder_and_notes() {
+    let checked = check(
+        "[focus.vault]\npath = \"/home/someone/Notes\"\ntasks_note = \"Inbox/Tasks.md\"\n\
+         projects = \"Projects\"\n",
+    );
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+    let vault = checked
+        .config
+        .expect("a config")
+        .focus
+        .vault
+        .expect("the section");
+    assert_eq!(
+        vault.root(),
+        Some(std::path::PathBuf::from("/home/someone/Notes"))
+    );
+    assert_eq!(
+        vault.tasks_note(),
+        std::path::PathBuf::from("Inbox/Tasks.md")
+    );
+    assert_eq!(vault.projects(), Some(std::path::PathBuf::from("Projects")));
+
+    let plain = check("[focus.vault]\npath = \"/srv/vault\"\n")
+        .config
+        .expect("a config")
+        .focus
+        .vault
+        .expect("the section");
+    assert_eq!(plain.tasks_note(), std::path::PathBuf::from("Tasks.md"));
+    assert_eq!(plain.projects(), None);
+    assert_eq!(check("").config.expect("a config").focus.vault, None);
+}
+
+#[test]
+fn a_vault_path_that_is_not_a_folder_on_this_computer_or_a_note_outside_it_is_reported() {
+    for (text, path) in [
+        ("[focus.vault]\npath = \"Notes\"\n", "focus.vault.path"),
+        ("[focus.vault]\ntasks_note = \"Tasks.md\"\n", "focus.vault"),
+        (
+            "[focus.vault]\npath = \"/srv/vault\"\ntasks_note = \"../Tasks.md\"\n",
+            "focus.vault.tasks_note",
+        ),
+        (
+            "[focus.vault]\npath = \"/srv/vault\"\nprojects = \"/srv/projects\"\n",
+            "focus.vault.projects",
+        ),
+    ] {
+        let found = errors(text);
+        assert_eq!(found.len(), 1, "{text}: {found:?}");
+        assert_eq!(found[0].0, path, "{text}");
+    }
+}
