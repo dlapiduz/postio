@@ -95,6 +95,10 @@ pub struct Bar {
     handler: RefCell<Option<Handler>>,
     /// This bar, weakly: what a future comes back to.
     me: RefCell<std::rc::Weak<Bar>>,
+    /// The pinned saved searches, in order: each name and its query.
+    saved: RefCell<Vec<(String, String)>>,
+    /// The saved row across the top.
+    saved_row: gtk::Box,
 }
 
 impl Bar {
@@ -141,8 +145,12 @@ impl Bar {
         footer.add_css_class("focus-bar-footer");
         footer.set_xalign(0.0);
 
+        let saved_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        saved_row.add_css_class("focus-bar-saved");
+        saved_row.set_visible(false);
         let root = gtk::Box::new(gtk::Orientation::Vertical, S2);
         root.add_css_class("focus-bar");
+        root.append(&saved_row);
         root.set_width_request(WIDTH);
         root.set_halign(gtk::Align::Center);
         root.set_valign(gtk::Align::Start);
@@ -170,6 +178,8 @@ impl Bar {
             open: Cell::new(false),
             handler: RefCell::default(),
             me: RefCell::default(),
+            saved: RefCell::default(),
+            saved_row,
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
@@ -230,9 +240,54 @@ impl Bar {
     /// Read every key the bar shows from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
+        self.show_saved();
         self.footer.set_text(
             "\u{2191}\u{2193} move \u{b7} \u{21b5} open / run \u{b7} > commands only \u{b7} Local index",
         );
+    }
+
+    /// The pinned saved searches, in order: each name and its query. The
+    /// first four run on `Alt+1`-`Alt+4`.
+    pub fn set_saved(&self, saved: Vec<(String, String)>) {
+        self.saved.replace(saved);
+        self.show_saved();
+    }
+
+    fn show_saved(&self) {
+        while let Some(child) = self.saved_row.first_child() {
+            self.saved_row.remove(&child);
+        }
+        let saved = self.saved.borrow();
+        self.saved_row.set_visible(!saved.is_empty());
+        if saved.is_empty() {
+            return;
+        }
+        let title = gtk::Label::new(Some("Saved"));
+        title.add_css_class("dim-label");
+        self.saved_row.append(&title);
+        let keymap = self.keymap.borrow();
+        for (index, (name, _)) in saved.iter().enumerate() {
+            let pill = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+            pill.add_css_class("focus-bar-saved-pill");
+            pill.append(&gtk::Label::new(Some(name)));
+            if let Some(key) = SAVED
+                .get(index)
+                .and_then(|command| postio_ui::hints::key(&keymap, *command))
+            {
+                pill.append(&keyhint::cap(&key));
+            }
+            self.saved_row.append(&pill);
+        }
+    }
+
+    /// Open the bar on the `index`th saved search, and run it.
+    pub fn open_saved(&self, index: usize) -> bool {
+        let Some((_, query)) = self.saved.borrow().get(index).cloned() else {
+            return false;
+        };
+        self.open();
+        self.set_text(&query);
+        true
     }
 
     /// Open the bar, empty, and read the places it can go.
@@ -581,6 +636,7 @@ impl Bar {
     fn read_places(&self) {
         let client = self.client.clone();
         let (places, folders) = (Rc::clone(&self.places), Rc::clone(&self.folders));
+        let weak = self.self_weak();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
@@ -624,6 +680,11 @@ impl Bar {
             }
             places.replace(found);
             folders.replace(names);
+            // What was typed before the places landed is answered again,
+            // now that `in:` has folders to complete.
+            if let Some(bar) = weak.upgrade().filter(|bar| bar.is_open()) {
+                bar.update(&bar.entry.text());
+            }
         });
     }
 
@@ -782,6 +843,14 @@ impl Bar {
         }
     }
 }
+
+/// The commands that run the saved searches, in order.
+const SAVED: [CommandId; 4] = [
+    CommandId::SavedSearch1,
+    CommandId::SavedSearch2,
+    CommandId::SavedSearch3,
+    CommandId::SavedSearch4,
+];
 
 /// The command that goes to a mailbox of `role` directly.
 fn go_to(role: MailboxRole) -> Option<CommandId> {

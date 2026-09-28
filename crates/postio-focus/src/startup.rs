@@ -100,6 +100,9 @@ impl Session {
             if update.changed.keys {
                 window.set_keymap(service.keymap().clone());
             }
+            if update.changed.filters {
+                window.set_saved_searches(saved_searches(service.config()));
+            }
             if update.changed.focus {
                 let focus = service.config().focus.clone();
                 host.enable_focus(setup(focus.clone(), Some(service.path())));
@@ -113,6 +116,19 @@ impl Session {
     pub fn stop(&self) {
         self.host.stop();
     }
+}
+
+/// The pinned saved searches `config` holds, in the order `Alt+1`-`Alt+4`
+/// take them: each name as the person called it, and its query.
+fn saved_searches(config: &postio_config::Config) -> Vec<(String, String)> {
+    config
+        .ordered_filter_keys()
+        .into_iter()
+        .filter_map(|key| {
+            let filter = config.filters.get(&key)?;
+            Some((filter.name.clone().unwrap_or(key), filter.query.clone()))
+        })
+        .collect()
 }
 
 /// Focus mode as `focus` says, writing its corrections to `config_path`.
@@ -148,6 +164,7 @@ pub fn adopt_at(
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
     window.set_focus_config(config.focus.clone());
+    window.set_saved_searches(saved_searches(config));
     window.set_remote_runtime(host.runtime());
     window.show_inbox(
         client.clone(),

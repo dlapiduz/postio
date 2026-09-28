@@ -119,6 +119,8 @@ mod imp {
         pub runtime: RefCell<Option<tokio::runtime::Handle>>,
         /// The command bar, over the list.
         pub bar: RefCell<Option<Rc<crate::bar::Bar>>>,
+        /// The pinned saved searches, in order: each name and its query.
+        pub saved: RefCell<Vec<(String, String)>>,
     }
 
     impl Default for FocusWindow {
@@ -160,6 +162,7 @@ mod imp {
                 choices: RefCell::default(),
                 runtime: RefCell::default(),
                 bar: RefCell::default(),
+                saved: RefCell::default(),
             }
         }
     }
@@ -462,6 +465,24 @@ impl FocusWindow {
                 Some(bar) => bar.close(),
                 None => self.clear_selection(),
             },
+            CommandId::SavedSearch1
+            | CommandId::SavedSearch2
+            | CommandId::SavedSearch3
+            | CommandId::SavedSearch4 => {
+                let index = match id {
+                    CommandId::SavedSearch1 => 0,
+                    CommandId::SavedSearch2 => 1,
+                    CommandId::SavedSearch3 => 2,
+                    _ => 3,
+                };
+                let opened = self.bar().is_some_and(|bar| bar.open_saved(index));
+                if !opened {
+                    self.imp()
+                        .toast
+                        .show_notice(&format!("No saved search {} is pinned", index + 1));
+                    self.follow_toast();
+                }
+            }
             CommandId::Search | CommandId::CommandPalette => {
                 if let Some(bar) = self.bar() {
                     bar.open();
@@ -795,6 +816,7 @@ impl FocusWindow {
         list_or_empty.set_visible_child_name(LIST);
         // The command bar lies over the list, never beside it.
         let bar = crate::bar::Bar::new(client.clone(), &self.keymap());
+        bar.set_saved(imp.saved.borrow().clone());
         bar.connect_action(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -1350,6 +1372,15 @@ impl FocusWindow {
     /// runtime, which the desktop app's fetcher runs on too.
     pub fn set_remote_runtime(&self, runtime: tokio::runtime::Handle) {
         self.imp().runtime.replace(Some(runtime));
+    }
+
+    /// The pinned saved searches, in `config.toml`'s order: each name and
+    /// its query.
+    pub fn set_saved_searches(&self, saved: Vec<(String, String)>) {
+        if let Some(bar) = self.bar() {
+            bar.set_saved(saved.clone());
+        }
+        self.imp().saved.replace(saved);
     }
 
     /// The command bar, once the inbox is showing.

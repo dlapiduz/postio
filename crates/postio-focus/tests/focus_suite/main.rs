@@ -61,6 +61,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "bar::alt_2_runs_the_second_saved_search",
+        bar::alt_2_runs_the_second_saved_search as fn(),
+    ),
+    (
         "bar::half_typed_operators_show_no_error_and_results_keep_updating",
         bar::half_typed_operators_show_no_error_and_results_keep_updating as fn(),
     ),

@@ -118,3 +118,60 @@ pub fn in_rec_lists_receipts_newest_first() {
         assert!(!bar.is_open(), "Escape closed the bar");
     });
 }
+
+/// US4 scenario 5: a saved search pinned at `Alt+2` runs from the list,
+/// and its results are shown.
+pub fn alt_2_runs_the_second_saved_search() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Budget",
+                "The numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .file(
+                ("Lena Park", "lena@example.org"),
+                "Train ticket",
+                "Your ticket.",
+                10,
+            )
+            .await;
+        fixture.index().await;
+        let config = postio_config::Config::from_toml_str(
+            "[filters.tickets]\nquery = \"subject:ticket\"\npinned = true\norder = 1\n\n\
+             [filters.from-ada]\nquery = \"from:ada\"\npinned = true\norder = 2\nname = \"From Ada\"\n",
+        )
+        .expect("a config");
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            fixture.host(),
+            &config,
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        support::press(&window, "2", gtk::gdk::ModifierType::ALT_MASK);
+        let bar = window.bar().expect("a bar");
+        assert!(bar.is_open(), "Alt+2 opened the bar");
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Budget"]).await,
+            "the second saved search's results are not shown: {:?}",
+            bar.result_subjects()
+        );
+        let said = bar.texts();
+        assert!(
+            said.contains(&"From Ada".to_owned()) && said.contains(&"alt+2".to_owned()),
+            "the saved row names it with its key: {said:?}"
+        );
+    });
+}

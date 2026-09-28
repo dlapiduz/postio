@@ -369,6 +369,13 @@ banner.focus-banner button {
   box-shadow: var(--postio-shadow-lg);
 }
 
+.focus-bar-saved-pill {
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 999px;
+  font-size: var(--postio-text-ui);
+}
+
 .focus-bar-input {
   min-height: 36px;
   padding: 0 var(--postio-space-2);
