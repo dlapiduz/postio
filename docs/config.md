@@ -1,7 +1,7 @@
 # Configuration reference
 
 <!-- Generated from `postio-config`'s schema by
-`crates/postio-config/tests/config_doc.rs`. Do not edit by hand:
+`crates/postio-config/tests/config_suite/config_doc.rs`. Do not edit by hand:
 change the schema and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-config`. -->
 
 `~/.config/postio/config.toml` is the settings -- there is no separate
@@ -76,6 +76,87 @@ wrote it.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `filtering` | boolean | `true` | Postio Focus files spam and automated updates away as they arrive, each with its reason and one key from restored. `false` stops filing new mail away; what is already filtered stays where it is. |
+
+Postio Focus's settings: what it files away, what it holds into digests, and the model and vault it may use. The classic app and the terminal read none of them. The contract they are built to is [`specs/007-postio-focus/contracts/config.md`](../specs/007-postio-focus/contracts/config.md).
+
+Focus writes to this file itself, when a sender is restored, a marker kind is stopped, or a digest rule is made, stopped or removed. It writes the way the settings window saves: everything it does not own is kept as written, and the file is replaced whole. A running app picks the change up as it would an edit in `$EDITOR`.
+
+Every table below, filled in:
+
+```toml
+[focus]
+filtering = true
+
+[focus.filter]
+never = ["ada@example.com", "@example.org"]
+stop_markers = [{ sender = "grace@example.net", kind = "question" }]
+
+[[focus.digests]]
+name = "Newsletters"
+match = ["from:news@example.org", "from:digest@example.net"]
+cadence = "weekly"
+day = "saturday"
+at = "09:00"
+
+[focus.model]
+endpoint = "http://127.0.0.1:11434/v1"
+model = "a-small-model"
+needs_action = true
+digest_summary = true
+like_this = true
+
+[focus.vault]
+path = "~/Notes"
+tasks_note = "Tasks.md"
+projects = "Projects"
+```
+
+## `[focus.filter]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `never` | array of strings | `[]` | Senders Focus never files away: pinned, or restored from Filtered. An entry is an address (`ada@example.com`) or a whole domain (`@example.com`), which covers that domain only. |
+| `stop_markers` | array of tables | `[]` | Marker kinds stopped for a sender, each `{ sender, kind }` with `kind` `question` or `todo`. Focus writes one when a kind is dismissed three times for the same sender, and undo takes it back. |
+
+Validation reports an entry that is not an address or a whole domain, or a stopped marker with no sender or an unknown kind. It names the entry by its position, never by its content, and that entry is ignored.
+
+## `[[focus.digests]]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | `none (required)` | What the digest row and the rules list call it. Unique among the rules. |
+| `match` | array of strings | `none (required)` | Queries in the one search language. The rule holds a message when any of them matches it. |
+| `cadence` | string | `none (required)` | `daily`, `weekly` or `monthly`. |
+| `day` | string or integer | `unset` | A weekday for a weekly rule (`saturday`), a day from 1 to 28 for a monthly one, and absent for a daily one. |
+| `at` | string | `none (required)` | The local time it comes due, as `HH:MM`. |
+
+One table per rule. The file's order is the order the rules are matched in, and the first rule that matches holds the message. Mail with an invitation, a question or a to-do in it is never held, and neither is a conversation you have written in.
+
+**When a rule comes due.** The next delivery is the first time the cadence, day and `at` name after the previous delivery, or after the rule was made, in the local time zone. Days are counted on the calendar, not as 24-hour spans, so a weekly digest keeps its time across a change of the clocks. A time the clocks skip is pushed forward by the gap, and a time they repeat comes due once, at its first occurrence. Monthly days stop at 28, so every month has one. A delivery that came due while Focus was closed is made once when it next opens, and a delivery with nothing held is not made at all.
+
+A rule that does not validate is not applied, and the other rules still are. Validation reports a missing or repeated name, a rule with no query, an empty query or one the search language cannot read, an unknown cadence, a day that does not fit the cadence, and a time that is not one.
+
+## `[focus.model]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `endpoint` | string | `none (required)` | Where the model runtime listens, on this computer only: `http://127.0.0.1:<port>/v1`, `http://[::1]:<port>/v1`, `http://localhost:<port>/v1`, or `unix:` and a socket's absolute path. Anything else is refused, and no model is used. |
+| `model` | string | `none (required)` | The model's name, as the runtime serves it. |
+| `needs_action` | boolean | `true` | Ask the model which mail asks a question or sets a to-do, in place of the built-in detector. The detector answers whenever the model does not. |
+| `digest_summary` | boolean | `true` | Have the model write each digest's summary, every statement citing the mail it came from. |
+| `like_this` | boolean | `true` | Offer "Digest mail like this", which asks the model for a rule. |
+
+**Absent means off.** Without this section nothing connects to a model, and Postio never looks for one: the built-in detector marks questions and to-dos, and digests open on their list of mail. Postio ships no model and starts none. It speaks to the one you run, through the OpenAI-compatible `/chat/completions` that common local runtimes serve, and names no runtime or model itself. A section with no endpoint, no model, or an endpoint on another computer is reported and used for nothing.
+
+## `[focus.vault]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `path` | string | `none (required)` | The Obsidian vault's folder, written from `/` or `~/`. |
+| `tasks_note` | string | `"Tasks.md"` | Where a task goes when no project is chosen, relative to the vault and inside it. |
+| `projects` | string | `unset` | A folder of project notes, relative to the vault and inside it, besides the notes whose frontmatter says `type: project`. |
+
+Where Focus captures a message as a task or a note. A task is one Obsidian Tasks line whose link opens the message in Focus, as `postio://message/<id>`. A vault that is not a folder on this computer, or a note or folder named outside it, is reported, and nothing is captured until it is fixed.
 
 ## `[keys]`
 
