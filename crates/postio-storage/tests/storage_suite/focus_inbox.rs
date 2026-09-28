@@ -1343,3 +1343,130 @@ async fn a_conversation_in_two_inboxes_counts_once_in_each_figure() {
         "folding the has-action figure took {marked_counts:?}"
     );
 }
+
+#[tokio::test]
+async fn a_surfaced_conversation_is_its_reminder_row_and_not_listed_twice() {
+    // Spec 007 T095: a reminder that fired stands in Focus's inbox as its
+    // own row, spliced at its position; the conversation's ordinary row
+    // leaves at every membership site -- the window, the count and the
+    // positions -- so it is never listed twice, and comes back when the
+    // reminder settles. Its position is one statement.
+    use postio_storage::repository::ReminderRepository;
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    let reminders = ReminderRepository::new(&connection);
+    let sluice = id_of(&connection, "<sluice@example.com>").await;
+    let sluice_thread = MessageRepository::new(&connection)
+        .get(sluice)
+        .await
+        .expect("a read")
+        .and_then(|message| message.thread_id)
+        .expect("threaded");
+    let before = agreed(&threads, alone).await.len();
+
+    let id = reminders
+        .set(sluice_thread, sluice, at(30), at(16))
+        .await
+        .expect("set");
+    let waiting = agreed(&threads, alone).await;
+    assert!(
+        subjects(&waiting).contains(&"About <sluice@example.com>"),
+        "a reminder still waiting leaves the row alone"
+    );
+    reminders.fire(id, at(30)).await.expect("fired");
+    let rows = agreed(&threads, alone).await;
+    assert!(
+        !subjects(&rows).contains(&"About <sluice@example.com>"),
+        "a surfaced conversation is its reminder row, not also its own: {:?}",
+        subjects(&rows)
+    );
+    assert_eq!(rows.len(), before - 1);
+
+    let _ = threads.focus_position(alone, at(30)).await.expect("warm");
+    let mut position = 0;
+    let counts = counted_async(|| async {
+        position = threads
+            .focus_position(alone, at(30))
+            .await
+            .expect("a position");
+    })
+    .await;
+    assert_eq!(
+        counts.statements, 1,
+        "the position is one statement: {counts:?}"
+    );
+    assert_eq!(position, 0, "nothing in the inbox is newer than it fired");
+    assert!(
+        scans(&connection, &threads.explain_focus_position(1))
+            .await
+            .is_empty(),
+        "leaving it out walks no table"
+    );
+
+    let mailboxes = [alone[0].1];
+    let _ = reminders.surfaced_in(&mailboxes).await.expect("warm");
+    let mut standing = Vec::new();
+    let counts = counted_async(|| async {
+        standing = reminders
+            .surfaced_in(&mailboxes)
+            .await
+            .expect("the surfaced");
+    })
+    .await;
+    assert_eq!(
+        standing
+            .iter()
+            .map(|reminder| reminder.id)
+            .collect::<Vec<_>>(),
+        [id],
+        "the reminder row, while its conversation is in the inbox"
+    );
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    assert!(
+        scans(&connection, &ReminderRepository::explain_surfaced_in(1))
+            .await
+            .is_empty(),
+        "the standing reminders by their index, each conversation by its own"
+    );
+    let archive = test_support::mailbox(
+        &connection,
+        &{
+            let accounts = AccountRepository::new(&connection);
+            accounts
+                .get(alone[0].0)
+                .await
+                .expect("a read")
+                .expect("the account")
+        },
+        "Elsewhere",
+    )
+    .await
+    .id;
+    MessageRepository::new(&connection)
+        .move_to(&[sluice], archive)
+        .await
+        .expect("moved");
+    assert!(
+        reminders
+            .surfaced_in(&mailboxes)
+            .await
+            .expect("a read")
+            .is_empty(),
+        "moved out of the inbox, it is no row"
+    );
+    MessageRepository::new(&connection)
+        .move_to(&[sluice], mailboxes[0])
+        .await
+        .expect("moved back");
+
+    reminders.settle(id, at(31)).await.expect("settled");
+    assert!(
+        subjects(&agreed(&threads, alone).await).contains(&"About <sluice@example.com>"),
+        "settled, the conversation is a row again"
+    );
+}

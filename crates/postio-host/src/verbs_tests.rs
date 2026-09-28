@@ -1350,6 +1350,56 @@ fn a_fired_reminder_is_announced_and_listed_with_its_conversation() {
     );
 }
 
+#[test]
+fn an_archived_reminder_row_leaves_and_undo_brings_it_back() {
+    // T095: a surfaced reminder is a row of Focus's inbox while its
+    // conversation is in an inbox. Archiving it takes the row away with
+    // the conversation, and undoing the archive brings both back.
+    let world = World::new();
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let (budget, _) = letter(
+        &world,
+        "tove@example.org",
+        "Atlas Q3 budget",
+        "<atlas@example.org>",
+        None,
+        Utc::now() - chrono::TimeDelta::days(3),
+    );
+    world.send(
+        &client,
+        remind(budget, Some(Utc::now() - chrono::TimeDelta::hours(1))),
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    world.host().enable_focus(crate::FocusSetup::default());
+    world.hear(&events, |event| matches!(event, Event::SurfacedChanged));
+    assert_eq!(surfaced(&world, &client).len(), 1, "the reminder surfaced");
+
+    world.send(
+        &client,
+        Command::default_for(postio_core::CommandId::Archive)
+            .with_target(MessageTarget::Messages(vec![budget])),
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert!(
+        surfaced(&world, &client).is_empty(),
+        "archived, the conversation's reminder row went with it"
+    );
+
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert_eq!(
+        surfaced(&world, &client).len(),
+        1,
+        "undone, the reminder row is back"
+    );
+}
+
 // ── The digest verbs (T137, T138, T139) ─────────────────────────────────────
 
 /// Every message a digest rule holds, and whether each is delivered yet.

@@ -4,8 +4,9 @@
 //! stands, with when it came due and where it goes.
 //!
 //! What it reads, whatever the inbox holds: the open deliveries with their
-//! counts and kept summaries (one statement), their senders (one), the surfaced reminders
-//! (one), and for each row its place (one) -- and for a reminder its
+//! counts and kept summaries (one statement), their senders (one), the
+//! surfaced reminders on conversations still in an inbox (one), and for
+//! each row its place (one) -- and for a reminder its
 //! conversation's latest message (one, and its row). No body is read.
 
 use postio_config::FocusConfig;
@@ -52,7 +53,11 @@ pub(crate) async fn surfaced(inner: &Inner) -> Result<Vec<Surfaced>, StoreError>
         });
     }
 
-    for reminder in ReminderRepository::new(&reader).surfaced().await? {
+    let mailboxes: Vec<_> = inboxes.iter().map(|(_, inbox)| *inbox).collect();
+    for reminder in ReminderRepository::new(&reader)
+        .surfaced_in(&mailboxes)
+        .await?
+    {
         let Some(fired_at) = reminder.fired_at else {
             continue;
         };

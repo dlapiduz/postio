@@ -16,7 +16,7 @@
 //! a resync forgets it (research R14).
 
 use chrono::{DateTime, Utc};
-use postio_model::ids::{MessageId, ReminderId, ThreadId};
+use postio_model::ids::{MailboxId, MessageId, ReminderId, ThreadId};
 
 use super::{from_millis, to_millis};
 
@@ -267,6 +267,46 @@ impl<'a> ReminderRepository<'a> {
     /// `idx_reminders_standing`.
     pub async fn surfaced(&self) -> Result<Vec<Reminder>> {
         sql::all(self.connection, Self::explain_surfaced(), (), read_reminder).await
+    }
+
+    /// Every reminder that has fired and still stands on a conversation
+    /// with mail in one of `inboxes`, oldest first: the surfaced rows of
+    /// Focus's inbox over them. A conversation archived away takes its row
+    /// with it, and an undone archive brings it back, with nothing written
+    /// to the reminder. One statement: the standing reminders through
+    /// `idx_reminders_standing`, each asked for one message in an inbox
+    /// through its conversation's index.
+    pub async fn surfaced_in(&self, inboxes: &[MailboxId]) -> Result<Vec<Reminder>> {
+        if inboxes.is_empty() {
+            return Ok(Vec::new());
+        }
+        sql::all(
+            self.connection,
+            &Self::explain_surfaced_in(inboxes.len()),
+            inboxes.iter().map(|inbox| inbox.get()).collect::<Vec<_>>(),
+            read_reminder,
+        )
+        .await
+    }
+
+    /// The SQL [`Self::surfaced_in`] runs over `inboxes` inboxes.
+    pub fn explain_surfaced_in(inboxes: usize) -> String {
+        let placeholders = (1..=inboxes)
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "SELECT r.id, r.thread_id, r.anchor_message_id, r.set_at, r.due_at, r.fired_at,
+                    r.cancelled_at, r.settled_at
+               FROM reminders r
+              WHERE r.fired_at IS NOT NULL AND r.settled_at IS NULL AND r.cancelled_at IS NULL
+                AND EXISTS (SELECT 1 FROM messages m
+                             WHERE m.thread_id = r.thread_id
+                               AND m.mailbox_id IN ({placeholders})
+                               AND m.{visible})
+              ORDER BY r.fired_at, r.id LIMIT 256",
+            visible = super::VISIBLE
+        )
     }
 
     /// The SQL [`Self::surfaced`] runs.

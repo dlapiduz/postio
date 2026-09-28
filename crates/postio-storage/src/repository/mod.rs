@@ -112,11 +112,17 @@ pub(crate) const VISIBLE: &str = "deleted_locally = 0 AND (snoozed_until IS NULL
 /// the rows, the total and the seek marks agree about what a row is. Each
 /// test is a lookup by key into `digest_holds` and, for a delivered hold,
 /// `digest_deliveries`: a cost per candidate row, never a walk.
+///
+/// And a conversation whose reminder fired and still stands (T095): its
+/// reminder's row stands for it, spliced at its place, so its ordinary row
+/// leaves until the reminder settles -- or it would be listed twice. A
+/// lookup by key into `idx_reminders_thread`, for a message in a
+/// conversation.
 pub(crate) fn focus_excludes(alias: &str) -> String {
-    let message = if alias.is_empty() {
-        "messages.id".to_owned()
+    let (message, thread) = if alias.is_empty() {
+        ("messages.id".to_owned(), "messages.thread_id".to_owned())
     } else {
-        format!("{alias}id")
+        (format!("{alias}id"), format!("{alias}thread_id"))
     };
     format!(
         " AND NOT EXISTS (
@@ -125,7 +131,13 @@ pub(crate) fn focus_excludes(alias: &str) -> String {
                 AND (held.delivery_id IS NULL
                      OR NOT EXISTS (SELECT 1 FROM digest_deliveries delivered
                                      WHERE delivered.id = held.delivery_id
-                                       AND delivered.archived_at IS NOT NULL)))"
+                                       AND delivered.archived_at IS NOT NULL)))
+           AND NOT EXISTS (
+             SELECT 1 FROM reminders surfaced
+              WHERE surfaced.thread_id = {thread}
+                AND surfaced.fired_at IS NOT NULL
+                AND surfaced.cancelled_at IS NULL
+                AND surfaced.settled_at IS NULL)"
     )
 }
 
