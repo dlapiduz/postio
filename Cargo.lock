@@ -4810,6 +4810,12 @@ dependencies = [
 [[package]]
 name = "postio-focus"
 version = "0.3.0"
+dependencies = [
+ "gio",
+ "glib",
+ "gtk4",
+ "libadwaita",
+]
 
 [[package]]
 name = "postio-gmail"

@@ -12,5 +12,11 @@ repository.workspace = true
 name = "postio-focus"
 path = "src/main.rs"
 
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+gio = "0.22.9"
+glib = { version = "0.22.9", features = ["v2_72"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+
 [lints]
 workspace = true
