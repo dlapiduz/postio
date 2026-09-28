@@ -132,6 +132,57 @@ pub fn preview_day(
     }
 }
 
+/// The `g d` view's title (spec C15, T139).
+pub const RULES_TITLE: &str = "Digest rules";
+
+/// The line under it: what a rule does, and what it never does.
+pub const RULES_SUBTITLE: &str =
+    "Held mail skips the inbox until its digest comes \u{b7} search still finds it";
+
+/// What the view says with no rule yet.
+pub const RULES_EMPTY: &str = "No digest rules yet";
+
+/// How to make one, with the key that does it.
+pub fn rules_empty_hint(keymap: &postio_core::Keymap) -> String {
+    match crate::hints::key(keymap, postio_core::CommandId::DigestRule) {
+        Some(key) => format!("Press {key} on a message to digest its sender"),
+        None => "Digest a sender from a message".to_owned(),
+    }
+}
+
+/// "holds 3": what a rule holds now.
+pub fn holds(count: u32) -> String {
+    format!("holds {count}")
+}
+
+/// When a rule next delivers: "next Sun 4 Oct 09:00".
+pub fn next_delivery(at: chrono::DateTime<chrono::Local>) -> String {
+    format!("next {}", at.format("%a %-d %b %H:%M"))
+}
+
+/// The `g d` view's footer.
+pub fn rules_footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
+    use postio_core::CommandId;
+    let mut said = Vec::new();
+    said.extend(crate::hints::hint(keymap, CommandId::OpenMessage, "edit"));
+    said.extend(crate::hints::hint(
+        keymap,
+        CommandId::Delete,
+        "remove and release",
+    ));
+    said.extend(crate::hints::hint(keymap, CommandId::Back, "inbox"));
+    said
+}
+
+/// What removing a rule asks: its name, and what comes back.
+pub fn remove_body(holds: u32) -> String {
+    let messages = if holds == 1 { "message" } else { "messages" };
+    format!(
+        "What it holds now \u{2014} {holds} {messages} \u{2014} comes to the inbox, and its \
+         senders\u{2019} mail is no longer held."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +332,19 @@ mod tests {
         assert_eq!(preview_day(now, now), "Today");
         assert_eq!(preview_day(now - chrono::Duration::days(3), now), "Wed");
         assert_eq!(preview_day(now - chrono::Duration::days(14), now), "12 Sep");
+    }
+
+    #[test]
+    fn the_rules_list_says_what_each_holds_and_how_to_make_one() {
+        assert_eq!(holds(3), "holds 3");
+        assert_eq!(
+            rules_empty_hint(postio_core::Keymap::defaults()),
+            "Press d on a message to digest its sender"
+        );
+        assert_eq!(
+            crate::hints::line(&rules_footer(postio_core::Keymap::defaults())),
+            "Return edit \u{b7} Delete remove and release \u{b7} Escape inbox"
+        );
+        assert!(remove_body(1).contains("1 message "));
     }
 }

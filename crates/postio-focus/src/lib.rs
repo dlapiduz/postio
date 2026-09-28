@@ -26,6 +26,7 @@ pub mod names;
 pub mod open;
 pub mod places;
 pub mod rule_dialog;
+pub mod rules;
 pub mod source;
 pub mod startup;
 pub mod style;

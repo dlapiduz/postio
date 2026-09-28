@@ -57,6 +57,12 @@ const STOP_DIALOG: &str = "focus-stop-digesting";
 /// The sweep's confirmation (FR-118).
 const SWEEP_DIALOG: &str = "focus-sweep";
 
+/// The digest rules list's page (`g d`, T139).
+const RULES: &str = "rules";
+
+/// Removing a digest rule's confirmation (FR-126).
+const REMOVE_RULE_DIALOG: &str = "focus-remove-rule";
+
 /// The Filtered view's page (screen 21).
 const FILTERED: &str = "filtered";
 /// The inbox's list, and the empty inbox in its place.
@@ -159,6 +165,8 @@ mod imp {
         pub notifier: RefCell<Option<super::Notifier>>,
         /// Where a test takes notifications instead of the desktop.
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
+        /// The digest rules list, built the first time `g d` opens it.
+        pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,
         /// The digest rule dialog, built the first time `d` opens it.
         pub rule_dialog: RefCell<Option<Rc<crate::rule_dialog::RuleDialog>>>,
         /// The digest window, built the first time a digest opens.
@@ -232,6 +240,7 @@ mod imp {
                 filtered: RefCell::default(),
                 digest_window: RefCell::default(),
                 rule_dialog: RefCell::default(),
+                rules_view: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
             }
@@ -640,6 +649,11 @@ impl FocusWindow {
     /// Run the command `id` means here: the cursor and the selection are the
     /// window's own, and a verb on mail goes to the host aimed at them.
     pub fn act(&self, id: CommandId) {
+        // The rules list takes the list's keys for its own rows; a verb on
+        // mail has nothing under it there.
+        if self.rules().is_some() && self.rules_act(id) {
+            return;
+        }
         match id {
             CommandId::NextMessage => self.move_cursor(1),
             CommandId::PrevMessage => self.move_cursor(-1),
@@ -727,6 +741,7 @@ impl FocusWindow {
             CommandId::SweepInbox => self.ask_sweep(),
             CommandId::DismissMarker => self.dismiss_marker(),
             CommandId::DigestRule => self.new_digest_rule(),
+            CommandId::GoToDigestRules => self.show_rules(),
             CommandId::RestoreFiltered => {
                 if let Some(message) = self.filtered().and_then(|view| view.focused()) {
                     self.restore_filtered(message);
@@ -1800,6 +1815,152 @@ impl FocusWindow {
             }
         }
         senders
+    }
+
+    /// The digest rules list, while it is the page on screen.
+    pub fn rules(&self) -> Option<Rc<crate::rules::RulesView>> {
+        let imp = self.imp();
+        if imp.pages.visible_child_name().as_deref() != Some(RULES) {
+            return None;
+        }
+        imp.rules_view.borrow().clone()
+    }
+
+    /// `g d`: every digest rule, in place of the inbox (T139).
+    fn show_rules(&self) {
+        let imp = self.imp();
+        let Some(client) = imp.client.borrow().clone() else {
+            return;
+        };
+        let view = imp.rules_view.borrow().clone();
+        let view = view.unwrap_or_else(|| {
+            let view = crate::rules::RulesView::new(client, &self.keymap());
+            view.connect_action(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |action| window.rules_action(action)
+            ));
+            imp.pages.add_named(view.widget(), Some(RULES));
+            imp.rules_view.replace(Some(Rc::clone(&view)));
+            view
+        });
+        imp.pages.set_visible_child_name(RULES);
+        view.open(imp.focus_config.borrow().digests.clone());
+    }
+
+    /// A command while the rules list is on screen; whether it was the
+    /// list's. What only the inbox answers is refused there, so a key does
+    /// not act on mail nobody can see.
+    fn rules_act(&self, id: CommandId) -> bool {
+        let Some(view) = self.rules() else {
+            return false;
+        };
+        match id {
+            CommandId::Back | CommandId::GoToInbox => self.leave_filtered(),
+            CommandId::NextMessage => view.step(1),
+            CommandId::PrevMessage => view.step(-1),
+            CommandId::OpenMessage => {
+                if let Some((name, _)) = view.focused() {
+                    self.edit_digest_rule(&name);
+                }
+            }
+            CommandId::Delete => {
+                if let Some((name, holds)) = view.focused() {
+                    self.ask_remove_rule(&name, holds);
+                }
+            }
+            CommandId::GoToDigestRules
+            | CommandId::GoToFiltered
+            | CommandId::Undo
+            | CommandId::CheatSheet
+            | CommandId::Quit
+            | CommandId::Search
+            | CommandId::CommandPalette => return false,
+            _ => {}
+        }
+        true
+    }
+
+    /// What the rules list asked for.
+    fn rules_action(&self, action: crate::rules::RulesAction) {
+        use crate::rules::RulesAction;
+        match action {
+            RulesAction::Back => self.leave_filtered(),
+            RulesAction::Edit(name) => self.edit_digest_rule(&name),
+            RulesAction::Remove { name, holds } => self.ask_remove_rule(&name, holds),
+        }
+    }
+
+    /// `Delete` on a rule (FR-126): ask, then take it out of `config.toml`
+    /// and release what it holds into the inbox. No undo takes that mail
+    /// back into the rule, so this is the one place the list asks first.
+    fn ask_remove_rule(&self, name: &str, holds: u32) {
+        let dialog = adw::AlertDialog::new(
+            Some(&format!("Remove \u{201c}{name}\u{201d}?")),
+            Some(&postio_ui::digest::remove_body(holds)),
+        );
+        dialog.set_widget_name(REMOVE_RULE_DIALOG);
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("remove", "Remove rule");
+        dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+        dialog.set_close_response("cancel");
+        let name = name.to_owned();
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_, response| {
+                    if response == "remove" {
+                        window.remove_rule(name.clone());
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    /// Removing a rule's confirmation, while it is up.
+    pub fn remove_rule_confirmation(&self) -> Option<adw::AlertDialog> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == REMOVE_RULE_DIALOG)
+            .and_then(|dialog| dialog.downcast().ok())
+    }
+
+    /// Take the rule called `name` out of `config.toml`, releasing what it
+    /// held, and say how much came back.
+    fn remove_rule(&self, name: String) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                let removed = client.delete_digest_rule(name.clone()).await;
+                let said = match removed {
+                    Ok(released) => {
+                        window
+                            .imp()
+                            .focus_config
+                            .borrow_mut()
+                            .digests
+                            .retain(|rule| rule.name != name);
+                        if let Some(view) = window.imp().rules_view.borrow().as_ref() {
+                            view.forget(&name);
+                        }
+                        let messages = if released == 1 { "message" } else { "messages" };
+                        format!(
+                            "Removed \u{201c}{name}\u{201d} \u{b7} {released} {messages} back in the inbox"
+                        )
+                    }
+                    Err(error) => error.to_string(),
+                };
+                window.imp().toast.show_notice(&said);
+                window.follow_toast();
+            }
+        ));
     }
 
     /// The rule dialog, built the first time it is asked for.

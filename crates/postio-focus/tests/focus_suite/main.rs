@@ -148,6 +148,10 @@ const CASES: &[(&str, fn())] = &[
         digest::d_on_a_message_previews_the_rule_and_create_writes_it as fn(),
     ),
     (
+        "digest::g_d_lists_the_rules_and_delete_releases_what_one_held",
+        digest::g_d_lists_the_rules_and_delete_releases_what_one_held as fn(),
+    ),
+    (
         "digest::d_stops_digesting_the_sender_once_confirmed",
         digest::d_stops_digesting_the_sender_once_confirmed as fn(),
     ),

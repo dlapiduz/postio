@@ -671,3 +671,18 @@ banner.focus-banner button {
   padding: var(--postio-space-2) var(--postio-space-4);
   background-color: var(--postio-ground);
 }
+
+/* ── The digest rules list (g d; C15): 21's frame ───────────────────── */
+.focus-rules-name {
+  font-weight: bold;
+}
+
+.focus-rules-match {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-rules-empty-title {
+  font-weight: bold;
+}

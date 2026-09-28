@@ -268,3 +268,114 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
         );
     });
 }
+
+/// T139 (FR-126): `g d` lists every rule with what it matches, when it
+/// delivers and what it holds now; `Delete` removes the focused rule once
+/// confirmed, and what it held comes into the inbox.
+pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        let mut held = Vec::new();
+        for (subject, minutes) in [("The weekly numbers", 40), ("The rate decision", 50)] {
+            let (message, _) = fixture
+                .file(("Ledger", "news@ledger.test"), subject, "Rates.", minutes)
+                .await;
+            held.push(message);
+        }
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            let digests = postio_storage::repository::DigestRepository::new(&connection);
+            // Held now, by the real clock: its Sunday has not come.
+            for message in &held {
+                digests
+                    .hold(*message, "Newsletters", chrono::Utc::now())
+                    .await
+                    .expect("held");
+            }
+        }
+        let directory = tempfile::tempdir().expect("a config directory");
+        let path = directory.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.test\"]\n\
+             cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
+        )
+        .expect("a config");
+        let config = postio_config::Config::load_from_path(&path).expect("it reads");
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_focus::startup::adopt_at(
+            &window,
+            fixture.host(),
+            &config,
+            Some(&path),
+        ));
+        support::keep(directory);
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Atlas budget"]).await,
+            "held mail is not in the inbox: {:?}",
+            support::subjects(&window)
+        );
+
+        support::keys(&window, &["g", "d"]);
+        let rules = window.rules().expect("g d opened the rules");
+        assert!(
+            crate::settle_until(async || rules.texts().iter().any(|text| text == "holds 2")).await,
+            "the rule never said what it holds: {:?}",
+            rules.texts()
+        );
+        let said = rules.texts();
+        for wanted in [
+            "Digest rules",
+            "Newsletters",
+            "from:news@ledger.test",
+            "Weekly, Sunday 09:00",
+        ] {
+            assert!(
+                said.iter().any(|text| text == wanted),
+                "no {wanted:?} in {said:?}"
+            );
+        }
+
+        support::press(&window, "Delete", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.remove_rule_confirmation().is_some()).await,
+            "Delete asked nothing"
+        );
+        let dialog = window.remove_rule_confirmation().expect("the confirmation");
+        gtk::prelude::ObjectExt::emit_by_name::<()>(&dialog, "response", &[&"remove"]);
+        adw::prelude::AdwDialogExt::close(&dialog);
+        assert!(
+            crate::settle_until(async || {
+                !std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("Newsletters")
+            })
+            .await,
+            "the rule is still in config.toml"
+        );
+        assert!(
+            crate::settle_until(async || rules.texts().iter().all(|text| text != "Newsletters"))
+                .await,
+            "the rule is still listed: {:?}",
+            rules.texts()
+        );
+        support::press(&window, "Escape", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "what the rule held did not come into the inbox: {:?}",
+            support::subjects(&window)
+        );
+    });
+}
