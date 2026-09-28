@@ -77,6 +77,9 @@ pub struct OpenMessage {
     /// The message on screen, and a count that moves with every open, so a
     /// body that lands for an earlier one is dropped.
     shown: Rc<Cell<Option<MessageId>>>,
+    /// The inline parts of the message on screen, by content id: what the
+    /// reader's `cid:` images resolve to.
+    inline: Inline,
     generation: Rc<Cell<u64>>,
     open: Rc<Cell<bool>>,
     handler: RefCell<Option<Handler>>,
@@ -124,18 +127,16 @@ impl OpenMessage {
         allowlist: &std::path::Path,
         runtime: Option<tokio::runtime::Handle>,
     ) -> Rc<Self> {
-        // Inline (`cid:`) images resolve against the message on screen,
-        // through the store's owner; the reader asks synchronously.
+        // Inline (`cid:`) images resolve against the message on screen. The
+        // reader asks synchronously, while it lays the document out, so the
+        // message's inline parts are read from the store's owner before it
+        // is rendered (`load`) and the reader is answered from them -- never
+        // a blocking call on the main thread (#1608).
         let shown: Rc<Cell<Option<MessageId>>> = Rc::default();
+        let inline: Inline = Rc::default();
         let source = {
-            let client = client.clone();
-            let shown = Rc::clone(&shown);
-            Rc::new(move |content_id: &str| {
-                let message = shown.get()?;
-                postio_session::blocking::now(client.inline_part(message, content_id.to_owned()))
-                    .ok()
-                    .flatten()
-            })
+            let inline = Rc::clone(&inline);
+            Rc::new(move |content_id: &str| inline.borrow().get(&cid_key(content_id)).cloned())
         };
         let reader = Reader::sharing(source, allowlist, Verbs::NONE);
         // The subject is the column's heading, over the header card.
@@ -259,6 +260,7 @@ impl OpenMessage {
             fold_label,
             keymap: RefCell::new(keymap.clone()),
             shown,
+            inline,
             generation: Rc::default(),
             open,
             handler: RefCell::default(),
@@ -490,7 +492,9 @@ impl OpenMessage {
         let current = Rc::clone(&self.generation);
         let shown_parts = Rc::clone(&self.parts);
         let shown_body = Rc::clone(&self.body);
+        let inline = Rc::clone(&self.inline);
         shown_parts.borrow_mut().clear();
+        inline.borrow_mut().clear();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
@@ -535,6 +539,24 @@ impl OpenMessage {
                         &root_type(content_type.as_deref(), &body, &parts),
                         &parts,
                     );
+                    // The inline images, before the reader asks for them.
+                    for content_id in parts.iter().filter_map(|part| part.content_id.clone()) {
+                        // Asked for as a `cid:` URI names it, as the reader
+                        // would have asked.
+                        let asked = content_id
+                            .trim()
+                            .trim_start_matches('<')
+                            .trim_end_matches('>')
+                            .to_owned();
+                        // POSTIO-GLIB-SAFE: as the reading's.
+                        let read = client.inline_part(message, asked).await;
+                        if current.get() != generation {
+                            return;
+                        }
+                        if let Ok(Some(found)) = read {
+                            inline.borrow_mut().insert(cid_key(&content_id), found);
+                        }
+                    }
                     shown_body.replace(Some(body.clone()));
                     reader.render(&body, sender.as_deref());
                     reader.set_encoding_problems(encoding_problems);
@@ -905,4 +927,17 @@ fn remote_fetch(
                 .collect()
         }
     })
+}
+
+/// The inline parts of the message on screen, by content id.
+type Inline = Rc<RefCell<std::collections::HashMap<String, (Vec<u8>, String)>>>;
+
+/// A content id as a `cid:` URI and a part header both spell it: without
+/// the angle brackets a `Content-ID` header wears, in any case.
+fn cid_key(content_id: &str) -> String {
+    content_id
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .to_ascii_lowercase()
 }
