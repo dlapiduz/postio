@@ -111,6 +111,7 @@ impl OpenMessage {
                 CommandId::Back,
                 CommandId::PrevMessage,
                 CommandId::NextMessage,
+                CommandId::DismissMarker,
             ])
             .collect()
     }
@@ -711,6 +712,28 @@ impl OpenMessage {
         choices
     }
 
+    /// Press the card's Dismiss, as a click does; whether there was one.
+    pub fn dismiss_marker(&self) -> bool {
+        let Some(card) = self.card.borrow().clone() else {
+            return false;
+        };
+        let mut stack = vec![card.upcast::<gtk::Widget>()];
+        while let Some(widget) = stack.pop() {
+            if widget.has_css_class("focus-marker-dismiss")
+                && let Some(button) = widget.downcast_ref::<gtk::Button>()
+            {
+                button.emit_clicked();
+                return true;
+            }
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                child = next.next_sibling();
+                stack.push(next);
+            }
+        }
+        false
+    }
+
     /// What the marker card says, piece by piece; empty with no card.
     pub fn marker_card_said(&self) -> Vec<String> {
         let Some(card) = self.card.borrow().clone() else {
@@ -797,7 +820,34 @@ impl OpenMessage {
             });
             card.append(&button);
         }
+        // `-`: the marker was wrong, or is done with (T118). Quieter than
+        // the answers: it answers nothing.
+        let dismiss = gtk::Button::new();
+        postio_widgets::widgets::button::style(&dismiss, Kind::Ghost, Size::Regular);
+        dismiss.add_css_class("focus-marker-dismiss");
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        row.append(&gtk::Label::new(Some("Dismiss")));
+        if let Some(key) = hints::key(&keymap, CommandId::DismissMarker) {
+            row.append(&keyhint::cap(&key));
+        }
+        dismiss.set_child(Some(&row));
+        let handler = self.handler.borrow().clone();
+        dismiss.connect_clicked(move |_| {
+            if let Some(handler) = &handler {
+                handler(CommandId::DismissMarker);
+            }
+        });
+        card.append(&dismiss);
         card
+    }
+
+    /// Take the marker card away: its marker was dismissed.
+    pub fn clear_marker(&self) {
+        self.marker.replace(None);
+        if let Some(shown) = self.shown.get() {
+            self.show_marker_card(shown);
+        }
+        self.reader.view().set_highlight(None);
     }
 
     /// Highlight the marker's sentence in the body, where it is drawn

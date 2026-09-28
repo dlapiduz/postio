@@ -127,6 +127,10 @@ const CASES: &[(&str, fn())] = &[
         filtered::focus_never_notifies_for_mail_it_filtered_or_held as fn(),
     ),
     (
+        "filtered::f_says_what_a_sweep_would_move_then_moves_it_as_one_undo",
+        filtered::f_says_what_a_sweep_would_move_then_moves_it_as_one_undo as fn(),
+    ),
+    (
         "filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back",
         filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
     ),
@@ -157,6 +161,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "bar::in_rec_lists_receipts_newest_first",
         bar::in_rec_lists_receipts_newest_first as fn(),
+    ),
+    (
+        "marker_card::the_card_dismisses_its_marker",
+        marker_card::the_card_dismisses_its_marker as fn(),
     ),
     (
         "marker_card::a_marked_message_opens_with_its_card_and_its_sentence_highlighted",

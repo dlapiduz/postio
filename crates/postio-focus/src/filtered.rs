@@ -37,6 +37,8 @@ pub enum FilteredAction {
     },
     /// Restore this message and never filter its sender.
     Restore(MessageId),
+    /// Ask whether to sweep the inbox (FR-118).
+    Sweep,
 }
 
 type Handler = Rc<dyn Fn(FilteredAction)>;
@@ -48,6 +50,8 @@ pub struct FilteredView {
     tabs: gtk::Box,
     list: gtk::ListBox,
     footer: KeyLine,
+    /// The sweep button's words and key.
+    sweep_words: gtk::Box,
     keymap: RefCell<Keymap>,
     /// Which tab is showing, `0` for All.
     tab: Cell<usize>,
@@ -81,10 +85,18 @@ impl FilteredView {
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
         titles.append(&title);
         titles.append(&subtitle);
+        // FR-118: filtering what is already in the inbox is a deliberate
+        // command, and this is where filtering lives. It asks first.
+        let sweep = gtk::Button::new();
+        sweep.add_css_class("flat");
+        sweep.add_css_class("focus-filtered-sweep");
+        let sweep_words = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        sweep.set_child(Some(&sweep_words));
         let header = gtk::CenterBox::new();
         header.add_css_class("focus-filtered-header");
         header.set_start_widget(Some(&back));
         header.set_center_widget(Some(&titles));
+        header.set_end_widget(Some(&sweep));
 
         let tabs = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         tabs.add_css_class("focus-filtered-tabs");
@@ -122,6 +134,7 @@ impl FilteredView {
             tabs,
             list,
             footer,
+            sweep_words,
             keymap: RefCell::new(keymap.clone()),
             tab: Cell::new(0),
             counts: Cell::new([0; 7]),
@@ -138,6 +151,14 @@ impl FilteredView {
             move |_| {
                 if let Some(view) = weak.upgrade() {
                     view.emit(FilteredAction::Back);
+                }
+            }
+        });
+        sweep.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(view) = weak.upgrade() {
+                    view.emit(FilteredAction::Sweep);
                 }
             }
         });
@@ -183,6 +204,19 @@ impl FilteredView {
         view
     }
 
+    /// The commands the view has a control for: Back, the sweep, the
+    /// restore, and the tabs.
+    pub fn controls() -> Vec<CommandId> {
+        [
+            CommandId::Back,
+            CommandId::SweepInbox,
+            CommandId::RestoreFiltered,
+        ]
+        .into_iter()
+        .chain(filtered::TAB_COMMANDS)
+        .collect()
+    }
+
     /// The view, for the window's pages.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
@@ -196,6 +230,13 @@ impl FilteredView {
     /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
+        while let Some(child) = self.sweep_words.first_child() {
+            self.sweep_words.remove(&child);
+        }
+        self.sweep_words.append(&keyhint::labelled(
+            filtered::SWEEP_BUTTON,
+            postio_ui::hints::key(keymap, CommandId::SweepInbox).as_deref(),
+        ));
         self.footer.set(&filtered::footer(keymap));
         self.show_tabs();
         self.show_rows();

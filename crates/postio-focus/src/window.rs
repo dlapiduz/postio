@@ -51,6 +51,9 @@ pub type Notifier = Rc<
 /// Where a test takes notifications instead of the desktop.
 type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 
+/// The sweep's confirmation (FR-118).
+const SWEEP_DIALOG: &str = "focus-sweep";
+
 /// The Filtered view's page (screen 21).
 const FILTERED: &str = "filtered";
 /// The inbox's list, and the empty inbox in its place.
@@ -536,6 +539,7 @@ impl FocusWindow {
                 self.open_message();
             }
             Ok(CommandId::ViewSource) => self.view_source(),
+            Ok(CommandId::DismissMarker) => self.dismiss_marker(),
             Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(),
             // Screen 04's toolbar verbs and the Invite card's answers, for
             // the message on screen (US3, US8).
@@ -695,6 +699,8 @@ impl FocusWindow {
             CommandId::GoToInbox => self.go_to_inbox(),
             CommandId::ViewSource => self.view_source(),
             CommandId::GoToFiltered => self.show_filtered(),
+            CommandId::SweepInbox => self.ask_sweep(),
+            CommandId::DismissMarker => self.dismiss_marker(),
             CommandId::RestoreFiltered => {
                 if let Some(message) = self.filtered().and_then(|view| view.focused()) {
                     self.restore_filtered(message);
@@ -1497,6 +1503,90 @@ impl FocusWindow {
         application.send_notification(Some(&notification.identifier), &built);
     }
 
+    /// `-` (T118): take the marker off the open message, or off what a
+    /// verb would aim at in the list. One undo puts it back.
+    fn dismiss_marker(&self) {
+        if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
+            let Some(message) = reading.shown() else {
+                return;
+            };
+            reading.clear_marker();
+            self.post(Command::DismissMarker {
+                target: MessageTarget::Messages(vec![message]),
+                dismissed: true,
+            });
+            return;
+        }
+        self.send(Command::DismissMarker {
+            target: MessageTarget::Selection,
+            dismissed: true,
+        });
+    }
+
+    /// The sweep's confirmation, while it is up.
+    pub fn sweep_confirmation(&self) -> Option<adw::AlertDialog> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == SWEEP_DIALOG)
+            .and_then(|dialog| dialog.downcast().ok())
+    }
+
+    /// `F` (FR-118): say how much of the inbox the filtering rules would
+    /// file away, and sweep only when the person says so.
+    fn ask_sweep(&self) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
+                // host answers on its own runtime (ADR 0041).
+                let counted = client.sweep_preview().await;
+                let count = match counted {
+                    Ok(count) => count,
+                    Err(error) => {
+                        window.imp().toast.show_notice(&error.to_string());
+                        window.follow_toast();
+                        return;
+                    }
+                };
+                if count == 0 {
+                    window
+                        .imp()
+                        .toast
+                        .show_notice(postio_ui::filtered::SWEEP_NOTHING);
+                    window.follow_toast();
+                    return;
+                }
+                let undo = postio_ui::hints::key(&window.keymap(), CommandId::Undo);
+                let dialog = adw::AlertDialog::new(
+                    Some(postio_ui::filtered::SWEEP_HEADING),
+                    Some(&postio_ui::filtered::sweep_body(count, undo.as_deref())),
+                );
+                dialog.set_widget_name(SWEEP_DIALOG);
+                dialog.add_response("cancel", "Cancel");
+                dialog.add_response("sweep", &postio_ui::filtered::sweep_action(count));
+                dialog.set_response_appearance("sweep", adw::ResponseAppearance::Suggested);
+                dialog.set_default_response(Some("sweep"));
+                dialog.set_close_response("cancel");
+                dialog.connect_response(
+                    None,
+                    glib::clone!(
+                        #[weak]
+                        window,
+                        move |_, response| {
+                            if response == "sweep" {
+                                window.post(Command::SweepInbox);
+                            }
+                        }
+                    ),
+                );
+                dialog.present(Some(&window));
+            }
+        ));
+    }
+
     /// The Filtered view, while it is the page on screen.
     pub fn filtered(&self) -> Option<Rc<crate::filtered::FilteredView>> {
         let imp = self.imp();
@@ -1548,6 +1638,7 @@ impl FocusWindow {
                 }
             }
             FilteredAction::Restore(message) => self.restore_filtered(message),
+            FilteredAction::Sweep => self.ask_sweep(),
         }
     }
 
@@ -2078,6 +2169,7 @@ impl FocusWindow {
         commands.extend(crate::open::OpenMessage::controls());
         commands.extend(crate::places::Places::controls());
         commands.extend(crate::bar::Bar::controls());
+        commands.extend(crate::filtered::FilteredView::controls());
         commands.push(CommandId::Undo);
         commands.extend(crate::compose::Compose::controls());
         // The answering actions a marked row draws, each a button.

@@ -68,3 +68,57 @@ pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
         );
     });
 }
+
+/// T118's surface: the card offers "Dismiss" with `-`'s key, and pressing
+/// it takes the marker off -- the card goes, and the list's row with it
+/// draws one line again.
+pub fn the_card_dismisses_its_marker() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(
+                ("Lena Park", "lena@example.org"),
+                "Harbor API draft v3",
+                "Uploaded v3.",
+                5,
+            )
+            .await;
+        fixture
+            .write_body(message, &format!("Hi all,\n\n{SENTENCE}.\n\nLena\n"))
+            .await;
+        fixture.ask(message, SENTENCE).await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j"]);
+        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        assert!(
+            crate::settle_until(async || !reading.marker_card_said().is_empty()).await,
+            "no marker card"
+        );
+        let card = reading.marker_card_said();
+        assert!(
+            card.iter().any(|said| said == "Dismiss") && card.iter().any(|said| said == "-"),
+            "the card offers Dismiss with its key: {card:?}"
+        );
+        assert!(reading.dismiss_marker(), "the card's Dismiss was pressed");
+        assert!(
+            crate::settle_until(async || reading.marker_card_said().is_empty()).await,
+            "the card stayed: {:?}",
+            reading.marker_card_said()
+        );
+        assert!(
+            crate::settle_until(async || {
+                window.cursor_row().is_some_and(|row| !row.two_lines())
+            })
+            .await,
+            "the row still draws its marker"
+        );
+    });
+}

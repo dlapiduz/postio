@@ -70,6 +70,32 @@ pub fn today_short(count: u32) -> String {
     format!("{count} today")
 }
 
+/// The Filtered view's button that asks for a sweep.
+pub const SWEEP_BUTTON: &str = "Sweep the inbox\u{2026}";
+
+/// The sweep's question (FR-118): what `F` asks before anything moves.
+pub const SWEEP_HEADING: &str = "Sweep the inbox?";
+
+/// What a sweep that would move nothing says instead of asking.
+pub const SWEEP_NOTHING: &str = "Nothing in the inbox would be filtered";
+
+/// What the sweep's question says: how many would move, where, and how
+/// to take it back.
+pub fn sweep_body(count: u32, undo: Option<&str>) -> String {
+    let messages = if count == 1 { "message" } else { "messages" };
+    let mut said =
+        format!("{count} {messages} in the inbox would move to Filtered, each with its reason.");
+    if let Some(undo) = undo {
+        said.push_str(&format!(" One {undo} puts them back."));
+    }
+    said
+}
+
+/// The sweep's button: "Move 2 to Filtered".
+pub fn sweep_action(count: u32) -> String {
+    format!("Move {count} to Filtered")
+}
+
 /// A row's reason pill: "notification · Forge", or the reason alone.
 pub fn pill(reason: &str, source: Option<&str>) -> String {
     match source.map(str::trim).filter(|source| !source.is_empty()) {
@@ -116,6 +142,19 @@ mod tests {
             ("promotion".to_owned(), 41),
         ]);
         assert_eq!(counts, [141, 12, 41, 88, 0, 0, 0]);
+    }
+
+    #[test]
+    fn the_sweep_says_how_many_and_how_to_take_it_back() {
+        assert_eq!(
+            sweep_body(2, Some("ctrl+z")),
+            "2 messages in the inbox would move to Filtered, each with its reason. \
+             One ctrl+z puts them back."
+        );
+        assert_eq!(
+            sweep_body(1, None),
+            "1 message in the inbox would move to Filtered, each with its reason."
+        );
     }
 
     #[test]

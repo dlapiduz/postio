@@ -39,10 +39,6 @@ const NOT_YET: &[&str] = &[
     "move",
     "unsnooze",
     "stop_digesting_sender",
-    // The commands lane's verbs (T118, T128): the engine answers them, and
-    // nothing draws them until the bar (US4) and the marker card do.
-    "dismiss_marker",
-    "sweep_inbox",
     "view_source",
     "open_attachment_or_link",
     "save_search",

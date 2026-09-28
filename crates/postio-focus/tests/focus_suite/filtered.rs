@@ -350,3 +350,79 @@ pub fn focus_never_notifies_for_mail_it_filtered_or_held() {
         );
     });
 }
+
+/// FR-118 (T128's surface): `F` says first how much of the inbox the
+/// filtering rules would file away, and moves it only when the person
+/// says so; one `Ctrl+Z` takes the sweep back. The main menu offers the
+/// same.
+pub fn f_says_what_a_sweep_would_move_then_moves_it_as_one_undo() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .file(
+                (" ", "notifications@forge.example"),
+                "Build passed",
+                "Green.",
+                10,
+            )
+            .await;
+        fixture
+            .file(
+                (" ", "alerts@builds.example"),
+                "Deploy finished",
+                "Done.",
+                15,
+            )
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "the inbox never reached the screen"
+        );
+        support::press(&window, "F", gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            crate::settle_until(async || window.sweep_confirmation().is_some()).await,
+            "F asked nothing"
+        );
+        let dialog = window.sweep_confirmation().expect("the confirmation");
+        let said = format!(
+            "{} {}",
+            gtk::prelude::ObjectExt::property::<String>(&dialog, "heading"),
+            gtk::prelude::ObjectExt::property::<String>(&dialog, "body")
+        );
+        assert!(said.contains('2'), "it says how many would move: {said}");
+        crate::settle_for(std::time::Duration::from_millis(200)).await;
+        assert_eq!(support::subjects(&window).len(), 3, "nothing moved yet");
+
+        // What a click on the button does: the response, and the dialog
+        // closes.
+        gtk::prelude::ObjectExt::emit_by_name::<()>(&dialog, "response", &[&"sweep"]);
+        adw::prelude::AdwDialogExt::close(&dialog);
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Atlas budget"]).await,
+            "the sweep did not move the two: {:?}",
+            support::subjects(&window)
+        );
+        assert!(
+            crate::settle_until(async || window.sweep_confirmation().is_none()).await,
+            "the confirmation stayed up"
+        );
+        support::press(&window, "z", gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "one Ctrl+Z did not take the sweep back: {:?}",
+            support::subjects(&window)
+        );
+    });
+}
