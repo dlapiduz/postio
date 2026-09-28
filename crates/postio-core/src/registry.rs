@@ -1377,8 +1377,13 @@ static SPECS: &[CommandSpec] = &[
         // declaration, and a declaration nothing backs from the keyboard is
         // what ADR 0005 keeps refusing to ship -- so undo reaches the toast
         // while it is up. Context-local state, context-local binding; the
-        // global stack is untouched (ADR 0005 Q6c).
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Accounts),
+        // global stack is untouched (ADR 0005 Q6c). And Focus's digest and
+        // Filtered: archiving a whole digest and a restore from Filtered are
+        // each one undoable action (FR-125, contracts/keymap.md).
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Accounts)
+            .with(Context::Digest)
+            .with(Context::Filtered),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,

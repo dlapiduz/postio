@@ -51,4 +51,19 @@ mod tests {
             "* flags in the three-pane apps, and Focus offers no flag verb (C13)"
         );
     }
+
+    #[test]
+    fn mod_z_undoes_in_a_digest_and_in_filtered() {
+        // contracts/keymap.md, "Digests and Filtered": archiving a whole
+        // digest and restoring from Filtered are each one undoable action
+        // (FR-125), so the undo key has to reach them there too.
+        let (mut resolver, _) = resolver(Keymap::defaults());
+        for context in [KeyContext::Digest, KeyContext::Filtered] {
+            assert_eq!(
+                press(&mut resolver, "ctrl+z", context),
+                Outcome::Command("undo".into()),
+                "mod+z (ctrl+z here) undoes in {context:?}"
+            );
+        }
+    }
 }
