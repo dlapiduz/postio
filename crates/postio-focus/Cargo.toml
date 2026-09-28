@@ -64,6 +64,10 @@ postio-model = { workspace = true, features = ["test-corpus"] }
 # A throwaway store with mail in it, for the suite to open.
 postio-storage = { workspace = true, features = ["test-support"] }
 postio-test-support.workspace = true
+# The drainer and a scripted SMTP server: what a send does once the link is
+# back, driven without a connection (US3 scenario 7).
+postio-smtp.workspace = true
+postio-sync.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
 

@@ -38,6 +38,7 @@ mod keymap;
 mod list_contract;
 mod marked_rows;
 mod marker_card;
+mod offline_send;
 mod one_composer;
 mod one_keymap;
 mod open_choice;
@@ -166,6 +167,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "corrections::three_dismissals_write_a_stop_marker_to_focus_s_config",
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
+    ),
+    (
+        "offline_send::offline_a_send_is_in_the_outbox_at_once_and_leaves_once",
+        offline_send::offline_a_send_is_in_the_outbox_at_once_and_leaves_once as fn(),
     ),
     (
         "one_composer::the_same_content_from_either_app_leaves_as_the_same_message",
