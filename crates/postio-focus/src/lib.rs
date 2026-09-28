@@ -14,6 +14,7 @@ pub mod bulk;
 pub mod chooser;
 pub mod chrome;
 pub mod compose;
+pub mod digest;
 pub mod empty;
 pub mod filtered;
 pub mod keymap_dialog;

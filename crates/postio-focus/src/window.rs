@@ -51,6 +51,9 @@ pub type Notifier = Rc<
 /// Where a test takes notifications instead of the desktop.
 type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 
+/// The stop-digesting confirmation (US10 scenario 5).
+const STOP_DIALOG: &str = "focus-stop-digesting";
+
 /// The sweep's confirmation (FR-118).
 const SWEEP_DIALOG: &str = "focus-sweep";
 
@@ -156,6 +159,8 @@ mod imp {
         pub notifier: RefCell<Option<super::Notifier>>,
         /// Where a test takes notifications instead of the desktop.
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
+        /// The digest window, built the first time a digest opens.
+        pub digest_window: RefCell<Option<Rc<crate::digest::DigestWindow>>>,
         /// The Filtered view, built the first time `g f` opens it.
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         /// A `postio://` link that arrived before the store was open.
@@ -223,6 +228,7 @@ mod imp {
                 warm: Cell::default(),
                 answering: Cell::default(),
                 filtered: RefCell::default(),
+                digest_window: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
             }
@@ -462,6 +468,9 @@ impl FocusWindow {
             if dialog.widget_name() == crate::open::DIALOG_NAME {
                 return self.reading_key(outcome);
             }
+            if dialog.widget_name() == crate::digest::DIALOG_NAME {
+                return self.digest_key(outcome);
+            }
             return match outcome {
                 Outcome::Command(id)
                     if matches!(
@@ -508,6 +517,8 @@ impl FocusWindow {
             .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
         {
             KeyContext::Reader
+        } else if self.digest().is_some() {
+            KeyContext::Digest
         } else if self.filtered().is_some() {
             KeyContext::Filtered
         } else {
@@ -1553,9 +1564,171 @@ impl FocusWindow {
         });
     }
 
-    /// Open `digest`'s window (T137).
+    /// Open `digest`'s window over the inbox (T137): its plain list.
     fn open_digest(&self, digest: crate::list::Digest) {
-        let _ = digest;
+        let imp = self.imp();
+        let Some(client) = imp.client.borrow().clone() else {
+            return;
+        };
+        let window = imp.digest_window.borrow().clone();
+        let window = window.unwrap_or_else(|| {
+            let window = crate::digest::DigestWindow::new(client, &self.keymap());
+            window.connect_action(glib::clone!(
+                #[weak(rename_to = focus)]
+                self,
+                move |action| focus.digest_action(action)
+            ));
+            imp.digest_window.replace(Some(Rc::clone(&window)));
+            window
+        });
+        let rule_when = imp
+            .focus_config
+            .borrow()
+            .digests
+            .iter()
+            .find(|rule| rule.name.trim() == digest.rule.trim())
+            .and_then(postio_ui::digest::rule_when);
+        window.show(self, digest, rule_when);
+    }
+
+    /// The digest window, while it is open.
+    pub fn digest(&self) -> Option<Rc<crate::digest::DigestWindow>> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == crate::digest::DIALOG_NAME)?;
+        self.imp().digest_window.borrow().clone()
+    }
+
+    /// What the digest window asked for.
+    fn digest_action(&self, action: crate::digest::DigestAction) {
+        use crate::digest::DigestAction;
+        let Some(window) = self.imp().digest_window.borrow().clone() else {
+            return;
+        };
+        match action {
+            DigestAction::ArchiveAll => {
+                if let Some(digest) = window.digest() {
+                    window.close();
+                    self.archive_digest(digest.delivery);
+                }
+            }
+            DigestAction::EditRule => {
+                if let Some(digest) = window.digest() {
+                    self.edit_digest_rule(&digest.rule);
+                }
+            }
+            DigestAction::Open { message, subject } => {
+                if let Some(reading) = self.reading_dialog() {
+                    reading.show_found(self, message, &subject);
+                }
+            }
+        }
+    }
+
+    /// A key while a digest is open (US10): its keys are `Context::Digest`'s.
+    fn digest_key(&self, outcome: Outcome) -> glib::Propagation {
+        let Outcome::Command(id) = outcome else {
+            return match outcome {
+                Outcome::Pending(_) => glib::Propagation::Stop,
+                _ => glib::Propagation::Proceed,
+            };
+        };
+        let Some(window) = self.imp().digest_window.borrow().clone() else {
+            return glib::Propagation::Proceed;
+        };
+        match id.parse::<CommandId>() {
+            Ok(CommandId::Back) => window.close(),
+            Ok(CommandId::ArchiveThread) => {
+                self.digest_action(crate::digest::DigestAction::ArchiveAll)
+            }
+            Ok(CommandId::DigestRule) => self.digest_action(crate::digest::DigestAction::EditRule),
+            Ok(CommandId::StopDigestingSender) => {
+                if let Some(message) = window.focused() {
+                    self.ask_stop_digesting(&message);
+                }
+            }
+            Ok(CommandId::Unsubscribe) => {
+                if let Some(message) = window.focused() {
+                    self.unsubscribe(message.id);
+                }
+            }
+            Ok(CommandId::Undo) => self.act(CommandId::Undo),
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    }
+
+    /// `D` in a digest (US10 scenario 5): ask, then stop digesting the
+    /// message's sender -- out of `config.toml`, releasing what the rule
+    /// holds from them.
+    fn ask_stop_digesting(&self, message: &postio_model::listing::MessageSummary) {
+        let sender = message
+            .from
+            .as_ref()
+            .map(|from| from.address.clone())
+            .unwrap_or_default();
+        let dialog = adw::AlertDialog::new(
+            Some(&format!("Stop digesting {sender}?")),
+            Some(
+                "Their mail comes to the inbox again, and what the digest holds from                  them now comes back with it.",
+            ),
+        );
+        dialog.set_widget_name(STOP_DIALOG);
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("stop", "Stop digesting");
+        dialog.set_response_appearance("stop", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("stop"));
+        dialog.set_close_response("cancel");
+        let id = message.id;
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_, response| {
+                    if response == "stop" {
+                        window.post(Command::StopDigestingSender {
+                            target: MessageTarget::Messages(vec![id]),
+                            stopped: true,
+                            kept: None,
+                        });
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    /// The stop-digesting confirmation, while it is up.
+    pub fn stop_digesting_confirmation(&self) -> Option<adw::AlertDialog> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == STOP_DIALOG)
+            .and_then(|dialog| dialog.downcast().ok())
+    }
+
+    /// `U`: leave the list `message` came from -- only ever on this key.
+    fn unsubscribe(&self, message: MessageId) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                let left = client.unsubscribe(message).await;
+                let said = match left {
+                    Ok(list) => format!("Unsubscribed from {list}"),
+                    Err(error) => error.to_string(),
+                };
+                window.imp().toast.show_notice(&said);
+                window.follow_toast();
+            }
+        ));
+    }
+
+    /// Edit the digest rule called `name` (T138).
+    fn edit_digest_rule(&self, name: &str) {
+        let _ = name;
     }
 
     /// The sweep's confirmation, while it is up.
@@ -2205,6 +2378,7 @@ impl FocusWindow {
         commands.extend(crate::places::Places::controls());
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
+        commands.extend(crate::digest::DigestWindow::controls());
         commands.push(CommandId::Undo);
         commands.extend(crate::compose::Compose::controls());
         // The answering actions a marked row draws, each a button.

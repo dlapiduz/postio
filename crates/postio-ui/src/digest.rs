@@ -46,6 +46,39 @@ pub fn unreadable_queries(rule: &DigestRule, today: NaiveDate) -> Vec<String> {
         .collect()
 }
 
+/// When a rule delivers, as the digest window's sub-row says it:
+/// "Weekly, Sunday 09:00", "Daily, 08:00", "Monthly, day 1 09:00"; `None`
+/// for a rule whose cadence, day or time names no time.
+pub fn rule_when(rule: &DigestRule) -> Option<String> {
+    use postio_config::Due;
+    Some(match rule.due().ok()? {
+        Due::Daily { at } => format!("Daily, {}", at.format("%H:%M")),
+        Due::Weekly { day, at } => {
+            let day = chrono::NaiveDate::from_isoywd_opt(2026, 1, day)?.format("%A");
+            format!("Weekly, {day} {}", at.format("%H:%M"))
+        }
+        Due::Monthly { day, at } => format!("Monthly, day {day} {}", at.format("%H:%M")),
+    })
+}
+
+/// The digest window's line under its title: "14 messages from 6 senders
+/// · came due today 16:00".
+pub fn window_subtitle(
+    count: u32,
+    senders: usize,
+    at: chrono::DateTime<chrono::Local>,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    let messages = if count == 1 { "message" } else { "messages" };
+    let people = if senders == 1 { "sender" } else { "senders" };
+    let when = if at.date_naive() == now.date_naive() {
+        format!("today {}", at.format("%H:%M"))
+    } else {
+        at.format("%a %-d %b %H:%M").to_string()
+    };
+    format!("{count} {messages} from {senders} {people} \u{b7} came due {when}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +150,50 @@ mod tests {
             unreadable_queries(&rule("Lists", &["is:someday"]), today()).len(),
             1,
             "and one it cannot read is reported"
+        );
+    }
+
+    #[test]
+    fn a_rule_says_when_it_delivers() {
+        let toml = |text: &str| {
+            postio_config::Config::from_toml_str(text)
+                .expect("a config")
+                .focus
+                .digests
+                .remove(0)
+        };
+        let weekly = toml(
+            "[[focus.digests]]\nname = \"N\"\nmatch = [\"from:a@b.test\"]\ncadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
+        );
+        assert_eq!(rule_when(&weekly).as_deref(), Some("Weekly, Sunday 09:00"));
+        let daily = toml(
+            "[[focus.digests]]\nname = \"N\"\nmatch = [\"from:a@b.test\"]\ncadence = \"daily\"\nat = \"08:00\"\n",
+        );
+        assert_eq!(rule_when(&daily).as_deref(), Some("Daily, 08:00"));
+        let monthly = toml(
+            "[[focus.digests]]\nname = \"N\"\nmatch = [\"from:a@b.test\"]\ncadence = \"monthly\"\nday = 1\nat = \"09:00\"\n",
+        );
+        assert_eq!(rule_when(&monthly).as_deref(), Some("Monthly, day 1 09:00"));
+    }
+
+    #[test]
+    fn the_window_says_how_much_from_how_many_and_when() {
+        use chrono::TimeZone as _;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 9, 26, 16, 9, 0)
+            .single()
+            .expect("a time");
+        let at = chrono::Local
+            .with_ymd_and_hms(2026, 9, 26, 16, 0, 0)
+            .single()
+            .expect("a time");
+        assert_eq!(
+            window_subtitle(14, 6, at, now),
+            "14 messages from 6 senders \u{b7} came due today 16:00"
+        );
+        assert_eq!(
+            window_subtitle(1, 1, at - chrono::Duration::days(1), now),
+            "1 message from 1 sender \u{b7} came due Fri 25 Sep 16:00"
         );
     }
 }

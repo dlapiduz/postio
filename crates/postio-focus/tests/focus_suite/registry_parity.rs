@@ -34,7 +34,6 @@ const NOT_YET: &[&str] = &[
     "zoom_out",
     "zoom_reset",
     "expand_all",
-    "archive_thread",
     "delete",
     "move",
     "unsnooze",

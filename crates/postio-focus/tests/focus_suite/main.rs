@@ -31,6 +31,7 @@ mod corrections;
 mod cursor;
 mod desktop;
 mod drafts;
+mod digest;
 mod empty;
 mod filtered;
 mod harness;
@@ -137,6 +138,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back",
         filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
+    ),
+    (
+        "digest::enter_opens_a_digest_and_shift_a_archives_all_of_it",
+        digest::enter_opens_a_digest_and_shift_a_archives_all_of_it as fn(),
+    ),
+    (
+        "digest::d_stops_digesting_the_sender_once_confirmed",
+        digest::d_stops_digesting_the_sender_once_confirmed as fn(),
     ),
     (
         "desktop::focus_says_which_application_it_is",
