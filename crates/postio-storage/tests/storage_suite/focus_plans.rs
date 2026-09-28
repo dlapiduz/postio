@@ -73,3 +73,60 @@ async fn a_sweep_walks_the_inbox_a_window_at_a_time_by_its_index() {
     let walked = scans(&sql).await;
     assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
 }
+
+#[tokio::test]
+async fn the_surfaced_rows_are_read_without_a_walk() {
+    // Spec 007, contracts/engine.md: the digest rows, their senders, a
+    // reminder's conversation and each row's place are each a seek.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let threads = postio_storage::repository::ThreadRepository::new(&connection);
+    for sql in [
+        postio_storage::repository::DigestRepository::explain_open_deliveries().to_owned(),
+        postio_storage::repository::DigestRepository::explain_senders_of(2),
+        postio_storage::repository::ThreadRepository::explain_latest_member(),
+        threads.explain_focus_position(2),
+    ] {
+        let walked = scans(&sql).await;
+        assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_surfaced_row_s_position_is_one_statement() {
+    // contracts/engine.md: "a surfaced row's position is 1 statement",
+    // however many conversations are newer than it.
+    use postio_storage::test_support::counting;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let now = chrono::Utc::now();
+    for minutes in 0..5 {
+        let mut message = postio_model::Message::new(
+            account.id,
+            inbox,
+            now - chrono::TimeDelta::minutes(minutes),
+        );
+        postio_storage::repository::MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+    }
+    let threads = postio_storage::repository::ThreadRepository::new(&connection);
+
+    counting::reset();
+    let position = threads
+        .focus_position(
+            &[(account.id, inbox)],
+            now - chrono::TimeDelta::seconds(150),
+        )
+        .await
+        .expect("a count");
+    let cost = counting::here();
+
+    assert_eq!(
+        position, 3,
+        "the three newer than two and a half minutes ago"
+    );
+    assert_eq!(cost.statements, 1, "{cost:?}");
+}

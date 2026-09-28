@@ -850,6 +850,9 @@ CREATE UNIQUE INDEX idx_contacts_shared_address
 
 CREATE INDEX idx_cross_account_moves_phase ON cross_account_moves (phase);
 
+-- The deliveries not yet archived: the digest rows of Focus's inbox.
+CREATE INDEX idx_digest_deliveries_open ON digest_deliveries (archived_at);
+
 CREATE INDEX idx_digest_holds_delivery ON digest_holds (delivery_id);
 
 CREATE INDEX idx_digest_holds_rule ON digest_holds (rule, delivery_id);

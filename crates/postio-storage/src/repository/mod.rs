@@ -59,7 +59,7 @@ pub use correspondents::{Correspondent, CorrespondentRepository};
 pub use cross_account::{
     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
 };
-pub use digests::DigestRepository;
+pub use digests::{DigestRepository, OpenDelivery};
 pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
 pub use filter_decisions::{FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason};

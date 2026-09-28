@@ -329,6 +329,10 @@ pub enum Req {
     /// Focus's filtering rules (spec 007 FR-118): what the sweep says before
     /// it moves anything. Answered as a count.
     SweepPreview,
+    /// The rows Focus's inbox surfaces among its conversations: the digests
+    /// delivered and not archived, and the reminders that fired, each with
+    /// its time and position (spec 007, contracts/engine.md).
+    Surfaced,
 }
 
 /// The host's answer to one [`Req`].
@@ -415,6 +419,8 @@ pub enum Resp {
     Onboarding(Box<postio_ui::onboarding::Status>),
     /// Where the browser sign-in waits for the person.
     Consent(Box<postio_ui::onboarding::BrowserSignIn>),
+    /// The rows Focus's inbox surfaces, newest first.
+    Surfaced(Vec<postio_model::listing::Surfaced>),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }

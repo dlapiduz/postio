@@ -2998,7 +2998,7 @@ fn an_invitation_to_an_event_that_is_over_offers_no_answer() {
 // ── Digest deliveries (spec 007, T135) ──────────────────────────────────────
 
 /// `[focus]` with one digest rule, "Newsletters", on `cadence`.
-fn digesting(cadence: &str) -> postio_config::FocusConfig {
+pub(crate) fn digesting(cadence: &str) -> postio_config::FocusConfig {
     postio_config::Config::from_toml_str(&format!(
         "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.example\"]\n{cadence}\n"
     ))
@@ -3021,7 +3021,7 @@ fn held_at(world: &World, at: chrono::DateTime<Utc>) -> MessageId {
 }
 
 /// Every delivery: its rule, when it came due, and what it holds.
-fn deliveries(world: &World) -> Vec<(String, chrono::DateTime<Utc>, Vec<MessageId>)> {
+pub(crate) fn deliveries(world: &World) -> Vec<(String, chrono::DateTime<Utc>, Vec<MessageId>)> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         let rows: Vec<(i64, String, i64)> = postio_storage::sql::all(

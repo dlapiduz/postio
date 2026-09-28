@@ -28,6 +28,7 @@
 mod body;
 mod catch_up;
 mod due;
+mod surfaced;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -35,6 +36,7 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 pub(crate) use catch_up::FILED_THROUGH;
 pub(crate) use due::{deliver_due, fire_reminders, settle_answers};
+pub(crate) use surfaced::surfaced;
 
 use postio_config::FocusConfig;
 use postio_sync::{FilingPass, FocusFiling};
@@ -194,24 +196,47 @@ fn due_timer(inner: &Arc<Inner>, config: Arc<RwLock<FocusConfig>>) -> tokio::tas
             }
             let database = inner.wiring.database.clone();
             let mut marked = None;
+            let mut standing: Option<Vec<postio_model::ReminderId>> = None;
             let mut tick = tokio::time::interval(postio_runtime::POLL_INTERVAL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
                 let config = config.read().expect("never poisoned").clone();
+                let mut surfaced_changed = false;
                 match deliver_due(&database, &config, &chrono::Local::now()).await {
                     Ok(0) => {}
-                    Ok(delivered) => tracing::debug!(delivered, "Focus delivered digests"),
+                    Ok(delivered) => {
+                        tracing::debug!(delivered, "Focus delivered digests");
+                        surfaced_changed = true;
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "Focus could not deliver its digests: {error}");
                     }
                 }
                 match fire_reminders(&database, chrono::Utc::now()).await {
                     Ok(0) => {}
-                    Ok(fired) => tracing::debug!(fired, "Focus surfaced reminders"),
+                    Ok(fired) => {
+                        tracing::debug!(fired, "Focus surfaced reminders");
+                        surfaced_changed = true;
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "Focus could not fire its reminders: {error}");
                     }
+                }
+                // A surfaced reminder can stop standing without this timer:
+                // the filing pass settles one when its reply arrives. Asked
+                // of the store each tick, one seek, and said when it moved.
+                if let Ok(now_standing) = standing_reminders(&database).await {
+                    if standing
+                        .as_ref()
+                        .is_some_and(|before| *before != now_standing)
+                    {
+                        surfaced_changed = true;
+                    }
+                    standing = Some(now_standing);
+                }
+                if surfaced_changed {
+                    inner.hub.emit(postio_core::Event::SurfacedChanged);
                 }
                 match settle_answers(&database, chrono::Utc::now()).await {
                     Ok(settled) => {
@@ -233,4 +258,18 @@ fn due_timer(inner: &Arc<Inner>, config: Arc<RwLock<FocusConfig>>) -> tokio::tas
             }
         })
         .abort_handle()
+}
+
+/// The surfaced reminders' ids, oldest first: what the due timer compares
+/// tick to tick.
+async fn standing_reminders(
+    database: &postio_storage::Store,
+) -> Result<Vec<postio_model::ReminderId>, postio_storage::Error> {
+    let reader = database.read().await?;
+    Ok(postio_storage::repository::ReminderRepository::new(&reader)
+        .surfaced()
+        .await?
+        .into_iter()
+        .map(|reminder| reminder.id)
+        .collect())
 }

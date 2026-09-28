@@ -205,6 +205,78 @@ pub enum InviteAnswer {
     Declined,
 }
 
+/// A row Focus's inbox surfaces among its conversations (spec 007, research
+/// R3): a digest that came due, or a reminder nobody answered. The frontend
+/// reads them with `surfaced()` when it hears `Event::SurfacedChanged`, and
+/// splices each in at its [`position`](Self::position).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Surfaced {
+    /// A digest delivery not yet archived (FR-123, FR-124).
+    Digest {
+        /// Which delivery.
+        delivery: crate::ids::DeliveryId,
+        /// The rule's name, as `[[focus.digests]]` has it: "Newsletters".
+        rule: String,
+        /// How often it comes, when the rule is still in `config.toml`.
+        cadence: Option<Cadence>,
+        /// How many messages it holds.
+        count: u32,
+        /// Who sent them, most messages first: the row's line until
+        /// summaries exist (milestone 2).
+        senders: Vec<EmailAddress>,
+        /// The opening of its summary, once one is written (milestone 2).
+        summary_line: Option<String>,
+        /// When it came due: the time its row shows, and sits at.
+        at: DateTime<Utc>,
+        /// How many of Focus's conversations are newer than `at`: where the
+        /// row goes.
+        position: u32,
+    },
+    /// A reminder that found no reply by its time (FR-044).
+    Reminder {
+        /// Which reminder.
+        reminder: crate::ids::ReminderId,
+        /// The conversation it is about.
+        thread: ThreadId,
+        /// The day it was set: "No reply since <date>".
+        since: DateTime<Utc>,
+        /// The conversation's latest message: the row's first line.
+        representative: MessageSummary,
+        /// When it fired, and so came back to the top.
+        at: DateTime<Utc>,
+        /// How many of Focus's conversations are newer than `at`: where the
+        /// row goes.
+        position: u32,
+    },
+}
+
+impl Surfaced {
+    /// When the row came due, which is where it sits among conversations.
+    pub fn at(&self) -> DateTime<Utc> {
+        match self {
+            Surfaced::Digest { at, .. } | Surfaced::Reminder { at, .. } => *at,
+        }
+    }
+
+    /// How many of Focus's conversations sort above it.
+    pub fn position(&self) -> u32 {
+        match self {
+            Surfaced::Digest { position, .. } | Surfaced::Reminder { position, .. } => *position,
+        }
+    }
+}
+
+/// How often a digest comes: its row's first word, "Weekly · digest".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Cadence {
+    /// Every day.
+    Daily,
+    /// Every week.
+    Weekly,
+    /// Every month.
+    Monthly,
+}
+
 impl ThreadSummary {
     /// Whether anything in this folder's slice is unread.
     pub fn has_unread(&self) -> bool {

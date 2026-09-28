@@ -73,11 +73,17 @@ impl Actions {
 
         let now = Utc::now();
         let mut previous: BTreeMap<Option<DateTime<Utc>>, Vec<MessageId>> = BTreeMap::new();
+        let mut surfaced = false;
         let transaction = connection.transaction().await.map_err(store_failure)?;
         {
             let reminders = ReminderRepository::new(&transaction);
             for (thread, anchor) in &conversations {
                 let standing = reminders.standing(*thread).await.map_err(store_failure)?;
+                // A surfaced one, cleared or set again, leaves the inbox's
+                // surfaced rows.
+                surfaced |= standing
+                    .as_ref()
+                    .is_some_and(|reminder| reminder.fired_at.is_some());
                 previous
                     .entry(standing.as_ref().map(|reminder| reminder.due_at))
                     .or_default()
@@ -100,6 +106,7 @@ impl Actions {
         let anchors: Vec<MessageId> = conversations.into_values().collect();
         Ok(Applied {
             lasts: None,
+            surfaced,
             account,
             kind: if at.is_some() {
                 UndoKind::Remind
@@ -257,6 +264,7 @@ impl Actions {
 
         Ok(Applied {
             lasts: Some(RSVP_WINDOW),
+            surfaced: false,
             account: account.id,
             kind,
             count: 1,
@@ -413,6 +421,7 @@ impl Actions {
 
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: if dismissed {
                 UndoKind::DismissMarker
@@ -523,6 +532,7 @@ impl Actions {
             }
             applied.push(Applied {
                 lasts: None,
+                surfaced: false,
                 account,
                 kind: if restored {
                     UndoKind::Restore
@@ -635,6 +645,7 @@ impl Actions {
             };
             applied.push(Applied {
                 lasts: None,
+                surfaced: false,
                 account,
                 kind: UndoKind::Sweep,
                 count: moved.len(),
@@ -705,6 +716,7 @@ impl Actions {
             let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
             applied.push(Applied {
                 lasts: None,
+                surfaced: false,
                 account,
                 kind: UndoKind::Sweep,
                 count: ids.len(),

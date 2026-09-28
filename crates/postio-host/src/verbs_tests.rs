@@ -1206,3 +1206,146 @@ fn a_sweep_says_what_it_would_move_then_moves_exactly_that_as_one_undo() {
         );
     }
 }
+
+// ── Surfaced rows (T136) ────────────────────────────────────────────────────
+
+/// A message from `from` in the world's inbox, received `ago`, held for the
+/// "Newsletters" rule from then.
+fn newsletter(world: &World, from: &str, subject: &str, ago: chrono::TimeDelta) -> MessageId {
+    let (id, _) = letter(
+        world,
+        from,
+        subject,
+        &format!(
+            "<{}@ledger.example>",
+            subject.to_lowercase().replace(' ', "-")
+        ),
+        None,
+        Utc::now() - ago,
+    );
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        postio_storage::repository::DigestRepository::new(&connection)
+            .hold(id, "Newsletters", Utc::now() - ago)
+            .await
+            .expect("held");
+    });
+    id
+}
+
+/// The surfaced rows, as a Focus client reads them.
+fn surfaced(world: &World, client: &postio_client::Client) -> Vec<postio_model::listing::Surfaced> {
+    world
+        .rt
+        .block_on(client.surfaced())
+        .expect("the surfaced rows")
+}
+
+#[test]
+fn a_delivered_digest_is_announced_and_listed_with_its_count_senders_and_place() {
+    // FR-123, FR-124: when a digest comes due, one row surfaces among the
+    // conversations, saying its cadence, its name, its count and its
+    // senders; the frontend hears that the surfaced rows changed, and reads
+    // them -- each with its time and where it sits in the inbox.
+    let world = World::new();
+    let config = crate::tests::digesting("cadence = \"daily\"\nat = \"00:00\"");
+    newsletter(
+        &world,
+        "news@ledger.example",
+        "The weekly numbers",
+        chrono::TimeDelta::days(2),
+    );
+    newsletter(
+        &world,
+        "news@ledger.example",
+        "The rate decision",
+        chrono::TimeDelta::days(1),
+    );
+    let (client, events) = world.frontend(ClientKind::Focus);
+    assert!(
+        surfaced(&world, &client).is_empty(),
+        "nothing has come due yet"
+    );
+
+    world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config(config));
+    world.hear(&events, |event| matches!(event, Event::SurfacedChanged));
+
+    let rows = surfaced(&world, &client);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let postio_model::listing::Surfaced::Digest {
+        rule,
+        cadence,
+        count,
+        senders,
+        at,
+        position,
+        ..
+    } = &rows[0]
+    else {
+        panic!("a digest row: {rows:?}");
+    };
+    assert_eq!(rule, "Newsletters");
+    assert_eq!(*cadence, Some(postio_model::listing::Cadence::Daily));
+    assert_eq!(*count, 2);
+    assert_eq!(
+        senders
+            .iter()
+            .map(|sender| sender.address.as_str())
+            .collect::<Vec<_>>(),
+        ["news@ledger.example"]
+    );
+    let (_, due, _) = crate::tests::deliveries(&world).remove(0);
+    assert_eq!(*at, due, "it sits at the time it came due");
+    assert_eq!(
+        *position, 1,
+        "below the one conversation newer than it: the world's own message"
+    );
+}
+
+#[test]
+fn a_fired_reminder_is_announced_and_listed_with_its_conversation() {
+    // A reminder nobody answered surfaces too: the frontend hears it, and
+    // reads the conversation it is about and the day it was set.
+    let world = World::new();
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let (budget, thread) = letter(
+        &world,
+        "tove@example.org",
+        "Atlas Q3 budget",
+        "<atlas@example.org>",
+        None,
+        Utc::now() - chrono::TimeDelta::days(3),
+    );
+    world.send(
+        &client,
+        remind(budget, Some(Utc::now() - chrono::TimeDelta::hours(1))),
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    let set_at = reminder_on(&world, thread).expect("set").set_at;
+
+    world.host().enable_focus(crate::FocusSetup::default());
+    world.hear(&events, |event| matches!(event, Event::SurfacedChanged));
+
+    let rows = surfaced(&world, &client);
+    let [
+        postio_model::listing::Surfaced::Reminder {
+            thread: surfaced_thread,
+            since,
+            representative,
+            ..
+        },
+    ] = rows.as_slice()
+    else {
+        panic!("one reminder row: {rows:?}");
+    };
+    assert_eq!(*surfaced_thread, thread);
+    assert_eq!(*since, set_at, "No reply since the day it was set");
+    assert_eq!(
+        representative.id, budget,
+        "the conversation's latest message"
+    );
+}

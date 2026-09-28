@@ -129,6 +129,7 @@ impl Req {
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
             Req::SweepPreview => "SweepPreview",
+            Req::Surfaced => "Surfaced",
         }
     }
 }
@@ -949,6 +950,18 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// The rows Focus's inbox surfaces among its conversations: each
+    /// digest delivered and not archived, and each reminder that fired and
+    /// stands, with when it came due and where it goes (spec 007). Read
+    /// again on `Event::SurfacedChanged`.
+    pub async fn surfaced(&self) -> Result<Vec<postio_model::listing::Surfaced>, StoreError> {
+        self.read(Req::Surfaced, "the surfaced rows", |answer| match answer {
+            Resp::Surfaced(rows) => Some(rows),
+            _ => None,
+        })
         .await
     }
 

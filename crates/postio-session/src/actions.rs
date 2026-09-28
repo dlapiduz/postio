@@ -211,6 +211,9 @@ struct Applied {
     /// stack's own expiry: an answer's reply, which leaves once its window
     /// closes (`Recovery::Window`, research R9).
     lasts: Option<std::time::Duration>,
+    /// Whether the rows Focus's inbox surfaces changed: a surfaced reminder
+    /// cleared, a digest archived (`Event::SurfacedChanged`).
+    surfaced: bool,
 }
 
 /// Everything a verb needs: the store to write, the state to resolve targets
@@ -826,6 +829,7 @@ impl Actions {
 
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind,
             messages: Vec::new(),
@@ -921,6 +925,7 @@ impl Actions {
             .collect();
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind,
             count: messages.len(),
@@ -1048,6 +1053,7 @@ impl Actions {
 
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind,
             count: moved.len(),
@@ -1104,6 +1110,7 @@ impl Actions {
         }
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::Snooze,
             count: ids.len(),
@@ -1159,6 +1166,7 @@ impl Actions {
         }
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::Unsnooze,
             count: ids.len(),
@@ -1302,6 +1310,7 @@ impl Actions {
         };
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::Label,
             count: changed.len(),
@@ -1524,6 +1533,7 @@ impl Actions {
         };
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: kind_for(&flag, wanted).await,
             messages: Vec::new(),
@@ -1599,6 +1609,7 @@ impl Actions {
         };
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: kind_for(&flag, wanted).await,
             count: changed.len(),
@@ -1644,6 +1655,9 @@ impl Actions {
         }
         if applied.mailboxes_changed {
             events.emit(Event::MailboxesChanged { account });
+        }
+        if applied.surfaced {
+            events.emit(Event::SurfacedChanged);
         }
         if !recording.records().await {
             return;
@@ -1910,6 +1924,7 @@ impl Actions {
 
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::MapMailboxRole,
             count: 1,
@@ -1960,6 +1975,7 @@ impl Actions {
             .map_err(store_failure)?;
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::RetriedSend,
             // The Outbox row appears when this succeeds, and the Drafts
@@ -2009,6 +2025,7 @@ impl Actions {
                 transaction.commit().await.map_err(store_failure)?;
                 Ok(Applied {
                     lasts: None,
+                    surfaced: false,
                     account,
                     kind: UndoKind::CancelledSend,
                     // And here the Outbox row may be the one that disappears.
@@ -2111,6 +2128,7 @@ impl Actions {
             .map_err(store_failure)?;
         Ok(Applied {
             lasts: None,
+            surfaced: false,
             account: draft.account_id,
             kind: UndoKind::MarkedSent,
             count: 1,

@@ -1033,6 +1033,9 @@ impl Inner {
                 .draft_counts(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
+            Req::Surfaced => focus::surfaced(self)
+                .await
+                .map_or_else(Resp::Failed, Resp::Surfaced),
             Req::SweepPreview => match self.wiring.focus.config() {
                 Some(config) => {
                     postio_session::focus::sweep_preview(&self.wiring.database, &config)

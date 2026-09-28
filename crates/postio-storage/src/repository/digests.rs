@@ -18,6 +18,21 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
+/// A delivery not yet archived: a digest row of Focus's inbox.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenDelivery {
+    /// Its row.
+    pub id: DeliveryId,
+    /// The rule's name, as `[[focus.digests]]` had it.
+    pub rule: String,
+    /// When it came due.
+    pub due_at: DateTime<Utc>,
+    /// When Focus delivered it: later, if Focus was closed at the due time.
+    pub delivered_at: DateTime<Utc>,
+    /// How many messages it holds.
+    pub count: u32,
+}
+
 /// Reads and writes digest holds and deliveries.
 #[derive(Debug)]
 pub struct DigestRepository<'a> {
@@ -142,6 +157,83 @@ impl<'a> DigestRepository<'a> {
             Ok(Some(delivery))
         })
         .await
+    }
+
+    /// Every delivery not yet archived, newest first, each with how many
+    /// messages it holds: the digest rows of Focus's inbox. One statement,
+    /// a seek on `idx_digest_deliveries_open` and each count a seek on
+    /// `idx_digest_holds_delivery`.
+    pub async fn open_deliveries(&self) -> Result<Vec<OpenDelivery>> {
+        sql::all(
+            self.connection,
+            Self::explain_open_deliveries(),
+            (),
+            |row| {
+                Ok(OpenDelivery {
+                    id: DeliveryId::new(row.col(0)?),
+                    rule: row.col(1)?,
+                    due_at: super::from_millis(row.col(2)?),
+                    delivered_at: super::from_millis(row.col(3)?),
+                    count: u32::try_from(row.col::<i64>(4)?).unwrap_or(u32::MAX),
+                })
+            },
+        )
+        .await
+    }
+
+    /// The SQL [`Self::open_deliveries`] runs.
+    pub fn explain_open_deliveries() -> &'static str {
+        "SELECT d.id, d.rule, d.due_at, d.delivered_at,
+                (SELECT count(*) FROM digest_holds h WHERE h.delivery_id = d.id)
+           FROM digest_deliveries d
+          WHERE d.archived_at IS NULL
+          ORDER BY d.due_at DESC, d.id DESC LIMIT 256"
+    }
+
+    /// Who sent the mail each of `deliveries` holds, each sender once with
+    /// how many messages they sent, most first: the digest row's line until
+    /// summaries exist (FR-124). One statement for all of them.
+    pub async fn senders_of(
+        &self,
+        deliveries: &[DeliveryId],
+    ) -> Result<Vec<(DeliveryId, postio_model::EmailAddress, u32)>> {
+        if deliveries.is_empty() {
+            return Ok(Vec::new());
+        }
+        sql::all(
+            self.connection,
+            &Self::explain_senders_of(deliveries.len()),
+            deliveries
+                .iter()
+                .map(|delivery| delivery.get())
+                .collect::<Vec<_>>(),
+            |row| {
+                Ok((
+                    DeliveryId::new(row.col(0)?),
+                    postio_model::EmailAddress::new(
+                        row.col::<Option<String>>(2)?,
+                        row.col::<String>(1)?,
+                    ),
+                    u32::try_from(row.col::<i64>(3)?).unwrap_or(u32::MAX),
+                ))
+            },
+        )
+        .await
+    }
+
+    /// The SQL [`Self::senders_of`] runs for `deliveries` deliveries.
+    pub fn explain_senders_of(deliveries: usize) -> String {
+        format!(
+            "SELECT h.delivery_id, a.address, max(r.name), count(DISTINCT h.message_id)
+               FROM digest_holds h
+               JOIN recipients r ON r.message_id = h.message_id AND r.kind = 'from'
+               JOIN addresses a ON a.id = r.address_id
+              WHERE h.delivery_id IN ({})
+              GROUP BY h.delivery_id, a.id
+              ORDER BY h.delivery_id, 4 DESC, a.address
+              LIMIT 1024",
+            super::messages::placeholders(deliveries, 1)
+        )
     }
 
     /// Archives `delivery` at `at`, as `⇧A` does, and answers whether there

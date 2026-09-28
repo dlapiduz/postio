@@ -657,6 +657,69 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
+    /// The conversation's newest message that a list would show: what a
+    /// surfaced reminder's row draws as its first line (spec 007). One
+    /// statement, a seek on `idx_messages_thread`.
+    pub async fn latest_member(&self, id: ThreadId) -> Result<Option<MessageId>> {
+        sql::first(
+            self.connection,
+            &Self::explain_latest_member(),
+            [id.get()],
+            |row| Ok(MessageId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::latest_member`] runs.
+    pub fn explain_latest_member() -> String {
+        format!(
+            "SELECT messages.id FROM messages
+              WHERE messages.thread_id = ?1 AND messages.{MEMBER}
+              ORDER BY messages.received_at DESC, messages.id DESC LIMIT 1"
+        )
+    }
+
+    /// Where a row surfaced at `at` goes in Focus's inbox over `inboxes`:
+    /// how many of its conversations are newer than `at` (spec 007,
+    /// data-model.md "Surfaced rows"). A conversation is newer when any
+    /// member there is, since its newest member is the one its row sorts
+    /// by. One statement, whatever the inbox holds: a seek on
+    /// `idx_messages_list` to the rows newer than `at`.
+    ///
+    /// With more than one account, a conversation that reached two inboxes
+    /// counts in each, where the list folds it into one row, so the row can
+    /// sit one place lower than the fold would put it.
+    pub async fn focus_position(
+        &self,
+        inboxes: &[(AccountId, MailboxId)],
+        at: DateTime<Utc>,
+    ) -> Result<u32> {
+        if inboxes.is_empty() {
+            return Ok(0);
+        }
+        let mut arguments: Vec<i64> = inboxes.iter().map(|(_, inbox)| inbox.get()).collect();
+        arguments.push(to_millis(at));
+        let count: i64 = sql::one(
+            self.connection,
+            &self.explain_focus_position(inboxes.len()),
+            arguments,
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// The SQL [`Self::focus_position`] runs over `inboxes` inboxes.
+    pub fn explain_focus_position(&self, inboxes: usize) -> String {
+        format!(
+            "SELECT count(DISTINCT coalesce(messages.thread_id, -messages.id)) FROM messages
+              WHERE messages.mailbox_id IN ({}) AND {} AND messages.sort_at > ?{}",
+            placeholders(inboxes, 1),
+            Membership::Focus.test("messages."),
+            inboxes + 1
+        )
+    }
+
     /// A thread's messages as list rows, in either direction.
     pub async fn messages(&self, id: ThreadId, order: ThreadOrder) -> Result<Vec<MessageListRow>> {
         sql::all(

@@ -139,6 +139,14 @@ pub enum Event {
         /// The message whose body is now available.
         message: MessageId,
     },
+    /// The rows Focus's inbox surfaces among its conversations changed: a
+    /// digest was delivered or archived, or a reminder fired or stopped
+    /// standing (spec 007). Read them again with `surfaced()`.
+    ///
+    /// It names no account, as [`Event::SearchResults`] names none: Focus's
+    /// inbox is every account's at once, and a digest can hold mail from
+    /// several.
+    SurfacedChanged,
 
     // -- View ------------------------------------------------------------
     /// The selection changed, by keyboard or pointer.
