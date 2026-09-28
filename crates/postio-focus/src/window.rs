@@ -1069,16 +1069,16 @@ impl FocusWindow {
                     }
                 }
             };
-            // POSTIO-GLIB-SAFE: reading the account is a client call, a
-            // oneshot receive; the host answers on its own runtime.
-            postio_widgets::present::onboarding::update_credential(
+            let opening = postio_widgets::present::onboarding::update_credential(
                 &window,
                 &client,
                 move |account| account.address.address.eq_ignore_ascii_case(&address),
                 open_link,
                 retry,
-            )
-            .await;
+            );
+            // POSTIO-GLIB-SAFE: reading the account is a client call, a
+            // oneshot receive; the host answers on its own runtime.
+            opening.await;
         });
     }
 

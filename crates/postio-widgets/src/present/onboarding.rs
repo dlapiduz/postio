@@ -189,11 +189,10 @@ impl Presenter {
         let client = self.inner.client.clone();
         let presenter = self.clone();
         glib::spawn_future_local(async move {
+            let saving = client.add_account_then(submission.clone(), AfterSave::Wait);
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // proves and writes on its own runtime.
-            let saved = client
-                .add_account_then(submission.clone(), AfterSave::Wait)
-                .await;
+            let saved = saving.await;
             presenter.settle(
                 &submission,
                 saved.map_err(|error| error.message().to_owned()),
@@ -222,11 +221,10 @@ impl Presenter {
         let client = self.inner.client.clone();
         let presenter = self.clone();
         glib::spawn_future_local(async move {
+            let beginning = client.begin_oauth_then(submission.clone(), AfterSave::Wait);
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // runs the sign-in on its own runtime.
-            let consent = client
-                .begin_oauth_then(submission.clone(), AfterSave::Wait)
-                .await;
+            let consent = beginning.await;
             let ended = match consent {
                 Ok(consent) => {
                     if let Some(screen) = presenter.screen() {
