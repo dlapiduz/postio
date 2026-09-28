@@ -97,7 +97,12 @@ pub fn a_select_all_archives_what_focus_lists_and_never_held_mail() {
         }
         let fixture = Fixture::empty().await;
         let (held, _) = fixture
-            .file(("Weir Level", "levels@example.test"), "Held for the digest", "Held.", 1)
+            .file(
+                ("Weir Level", "levels@example.test"),
+                "Held for the digest",
+                "Held.",
+                1,
+            )
             .await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
