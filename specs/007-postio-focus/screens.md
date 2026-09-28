@@ -14,9 +14,9 @@ the date.
 
 | Screen | Compared on | Differences | Reason |
 |---|---|---|---|
-| 01 Inbox, light | not yet | Digest row's first line shows its senders until summaries exist (C5). Task buttons and "Task in … · due …" appear only with Obsidian (C9). Header counts appear only once their features do (C10). Shifted keys drawn as the shared hint code draws them (C22) | Milestone order; the one keymap's hint rules |
-| 02 Inbox, dark | not yet | As 01 | As 01 |
-| 03 Has-action filter | not yet | As 01 (C9, C22) | As 01 |
+| 01 Inbox, light | 2026-09-28 | Known: no digest row (C5), no Task buttons or "Task in … · due" (C9), no filtered or digest counts (C10), shifted keys (C22). Found: (a) the sync label says "Not synced yet"; (b) the field's keycap reads `ctrl+k`, not "Ctrl K", and the bulk bar's keys are one mono line ("x toggle · J/K extend · Escape clear"), not caps; (c) a selected row shows the icon theme's check glyph, not a filled box; (d) the bulk bar's buttons are bordered, not flat labels with Archive raised; (e) the cursor is the accent outline alone, with no accent tint; (f) the date, the counts ("58 · 19 unread") and "Has action · 8" are the demo store's. Fixed on the way: the list opened 33 px down with "Today" hidden (GTK anchors the first row, not its heading), and the strip painted no plate of its own | Milestone order (C5, C9, C10); (a) the sync states are US6 (T052), and the demo never syncs; (b) and C22: the shared hint code's spelling and the shared `KeyLine`; (c) the stock `checkbox-checked-symbolic`; (d) the shared `ActionBar`'s buttons; (e) FR-091: the accent is the focus ring, and contracts/focus-surface.md draws the cursor as a 2 px ring that tints nothing; (f) the demo is anchored at 16:09 on the day it runs |
+| 02 Inbox, dark | 2026-09-28 | As 01. Libadwaita's own dark palette, with nothing of Focus's in between: the neutral selection and the hairlines lift rather than darken, and the markers, the unread dots and the cursor ring take the dark accent | As 01; FR-090 |
+| 03 Has-action filter | 2026-09-28 | As 01 (C9, C22, and a–f). The reference heads its list "Has action · 7" and draws eight rows; the build's heading counts the rows it lists ("Has action · 8" over eight) | As 01; the heading and the toggle read one count (`FocusCounts.has_action`) |
 | 04 Open email | not yet | The body is rendered HTML, not the plain-text part (C1). The header and marker cards stay while the body scrolls (research R2). Task and Note buttons wait for Obsidian (C9) | Handoff; one reused view; milestone order |
 | 05 Compose | not yet | No Markdown toggle (C7). Suggestions open at four characters (C23). Cc and Bcc share one command. "Task after sending" waits for Obsidian (C9) | The existing composer; one completion rule |
 | 06 Reply all | not yet | As 05 (C7, C9) | As 05 |
@@ -28,9 +28,27 @@ the date.
 | 12 Remind picker | not yet | none known | |
 | 13 Label picker | not yet | none known | |
 | 14 Move picker | not yet | none known | |
-| 15 Undo toast | not yet | Shifted keys (C22) | Hint rules |
+| 15 Undo toast | 2026-09-28 | Shifted keys (C22). The toast says "Archived 4 messages", not 3: the three selected conversations hold four messages. Its Undo button carries no keycap, and the toast has a close button | C22; the engine counts the messages an action moved; AdwToast's button takes a label only, and its close button is libadwaita's |
 | 16 Empty inbox | not yet | Lists only what exists (C10) | FR-070 |
 | 17 First sync | not yet | none known | |
 | 18 Offline | not yet | none known | |
 | 19 Sign-in error | not yet | none known | |
 | 20 Key map | not yet | The footer names `[keys]` in `config.toml` (C3). No Obsidian group before milestone 3 (C9). Shifted keys (C22) | Constitution II; milestone order |
+
+## Rendering them
+
+`cargo run -p postio-focus --example shot -- <png> <screen> [light|dark] [WxH]`
+writes one screen; an unknown screen writes nothing and says `NO IMAGE WAS
+WRITTEN`. The cargo runner sends it to the private headless compositor, whose
+1280x800 monitor mutter will not open a 1440x900 window on without maximizing
+it, so the references' size wants a larger monitor of its own:
+
+```sh
+POSTIO_TEST_DISPLAY=focus-shot POSTIO_TEST_GEOMETRY=1920x1200 \
+    cargo run -p postio-focus --example shot -- /tmp/01.png 01
+```
+
+The shot runs with an empty `XDG_CONFIG_HOME` (a desktop's own `gtk.css` would
+otherwise paint the picture) and with GTK's animations off (a capture taken
+as the state is reached would otherwise catch the focus ring and the toast on
+their way in).
