@@ -337,6 +337,16 @@ sender still stands.
 - the `reminders` index `idx_reminders_standing (settled_at, cancelled_at,
   fired_at)`, because `(fired_at, settled_at)` scanned (T094).
 
+The Focus window lane added (T048, T043):
+
+- `idx_markers_dismissed`, a full index, where the plan named a partial
+  `idx_markers_open`;
+- `Req::ThreadLabels`, which reads a page's labels in one extra request.
+  `FocusRow::Conversation { summary, labels }` is the row;
+- `FocusCounts { conversations, unread, has_action, filtered_today }`. It has
+  no digest fields: the window derives "next digest" and "N digest rules"
+  from `[focus]`.
+
 No `no_reply` marker is written. A fired reminder is a surfaced row that
 carries `since` (T136).
 

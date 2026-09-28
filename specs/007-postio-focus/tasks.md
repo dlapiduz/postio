@@ -84,7 +84,7 @@ maintainer asks.
 
   Test first: a literal key hint planted in `crates/postio-widgets/src` fails `check-key-hints-are-derived.py`
 - [X] T004 [P] Write `docs/decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md`, kept to the rule: what may live there, what may not, and who depends on it. List it in `docs/decisions/README.md`
-- [ ] T005 [P] Create `crates/postio-focus/tests/focus_suite/main.rs` on the `app_suite` custom harness (`CASES`, `IGNORED`, the `--list` contract of `list_contract.rs`) on the headless compositor, and `crates/postio-widgets/tests/widgets_suite/main.rs` the same way. Test first: an empty case is listed and runs. `widgets_suite` is done. `focus_suite` comes with T038, when there is a Focus to run
+- [X] T005 [P] Create `crates/postio-focus/tests/focus_suite/main.rs` on the `app_suite` custom harness (`CASES`, `IGNORED`, the `--list` contract of `list_contract.rs`) on the headless compositor, and `crates/postio-widgets/tests/widgets_suite/main.rs` the same way. Test first: an empty case is listed and runs. `widgets_suite` is done. `focus_suite` comes with T038, when there is a Focus to run
 - [X] T006 [P] Create `specs/007-postio-focus/screens.md`: one row per screen from 01 to 20, with the columns "compared on", "differences" and "reason". Pre-fill the known differences C1–C23 from the spec
 
 ---
@@ -103,7 +103,7 @@ maintainer asks.
 
   In `crates/postio-calendar/tests/`, parse each with calcard (default features off) and assert the start, end and zone. Record per fixture in research R9, together with `cargo tree -d` and the verdict of `check-dependency-policy.py`. **If calcard fails the zones, T107 wraps ical-rs instead, behind the same adapter**
 - [ ] T008 [P] **S2.** Against a real account, measured locally and never committed, record the bytes per message that `HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)` adds, in research R8
-- [ ] T009 [P] **S3.** In a throwaway `crates/postio-focus/examples/list_spike.rs` (deleted after), put 100,000 synthetic rows of two fixed heights, plus 50 spliced rows, in a `gtk::ListView`. Measure rows built per frame while scrolling and jumping, and record them in research R3
+- [X] T009 [P] **S3.** In a throwaway `crates/postio-focus/examples/list_spike.rs` (deleted after), put 100,000 synthetic rows of two fixed heights, plus 50 spliced rows, in a `gtk::ListView`. Measure rows built per frame while scrolling and jumping, and record them in research R3
 - [X] T010 [P] **S4.** Build the labelled needs-action dataset as one data file, `crates/postio-classify/tests/data/needs_action.toml`: at least 150 items, each a message's own text with its addressing (direct, copied, list or automated) and a label (question, to-do or none, with any due date). Cover pleasantries, rhetorical questions, quoted history, signatures, list mail, copied-only mail, and instruction-shaped text. Sentence-level labels are what the detector reads, and a data file keeps the shared `.eml` corpus from swelling. Reserved domains and fictional names only. Measure precision and recall for rules alone, and record them in research R10. **If precision is under 0.9, T116 adds the small weights table**
 - [X] T011 [P] **S5.** Across the render corpus, locate a chosen sentence by excerpt with `TextIndex::find` and the offset tiebreak. Record the success rate in research R2. Done, over 69 fixtures: an excerpt is found as read 90.5% of the time when read from the text part and 92.3% when read from what is drawn, and 98.7% once whitespace is collapsed (R2). `crates/postio-render/tests/excerpt_locate.rs` holds the floors, nightly
 - [X] T012 [P] **S6.** On a spike commit (reverted after), switch the list's order to `sort_at` in `crates/postio-storage/src/repository/threads.rs` and `messages.rs`. Run `storage_suite`'s list counting tests, and record the result and the size of the diff in research R7. **The maintainer's default holds unless the spike says otherwise; T093 follows the result**. Done: do it, on three conditions (R7)
@@ -154,7 +154,7 @@ maintainer asks.
 - [X] T031 [P] Add the key-map groups table in `crates/postio-ui/src/keymap_sheet.rs`. Test first: every command reachable with `Frontend::Focus` has a group
 - [X] T032 Give the classic app handlers for the new commands every app offers: `toggle_read`, `go_to_folders`, `go_to_archive`, `go_to_snoozed` and `saved_search_1`–`4`. Test first: `app_suite/command_wiring.rs` lists them as unwired
 - [X] T162 The terminal's handlers for the commands every app now offers: `go_to_archive`, `go_to_snoozed` and `saved_search_1`–`4` (in its GAPS today), and its signature delete moves off a hard-coded `d` onto the keymap. Test first: each key does in the terminal what it does in the classic app
-- [ ] T163 `mod+z` undoes in `Context::Digest` and `Context::Filtered` (contracts/keymap.md). Test first: `mod+z` resolves to `undo` in both contexts, for Focus
+- [X] T163 `mod+z` undoes in `Context::Digest` and `Context::Filtered` (contracts/keymap.md). Test first: `mod+z` resolves to `undo` in both contexts, for Focus
 
 ### Engine seams several stories need
 
@@ -172,25 +172,25 @@ maintainer asks.
 
 **Goal**: Screens 01, 02, 03 and 15. **Independent test**: spec US1.
 
-- [ ] T038 [US1] `crates/postio-focus/src/{main,app,startup}.rs`: an `AdwApplication` with id `dev.postio.Postio.Focus`. The store opens on a thread behind a window that says what it waits for. `enable_focus` is called. Test first, in `focus_suite/starts_offline.rs`: a fixture store, no network, and the inbox is listed (scenario 1). Call `Host::enable_focus` before `start_syncing`, and connect as `ClientKind::Focus` (T034). Build the resolver with `Resolver::from_commands_for(.., Frontend::Focus)`, and set `Availability.frontend = Focus`. Call `host.enable_focus(FocusSetup::default().with_config(config.focus))`, and again on every `[focus]` change (T060). Pass the config path (`FocusSetup::with_config_path`), because Focus's config writes refuse without it, and call `Host::stop` on quit, which keeps the filing mark (T164)
-- [ ] T039 [US1] `window.rs`, the chrome of contracts/focus-surface.md:
+- [X] T038 [US1] `crates/postio-focus/src/{main,app,startup}.rs`: an `AdwApplication` with id `dev.postio.Postio.Focus`. The store opens on a thread behind a window that says what it waits for. `enable_focus` is called. Test first, in `focus_suite/starts_offline.rs`: a fixture store, no network, and the inbox is listed (scenario 1). Call `Host::enable_focus` before `start_syncing`, and connect as `ClientKind::Focus` (T034). Build the resolver with `Resolver::from_commands_for(.., Frontend::Focus)`, and set `Availability.frontend = Focus`. Call `host.enable_focus(FocusSetup::default().with_config(config.focus))`, and again on every `[focus]` change (T060). Pass the config path (`FocusSetup::with_config_path`), because Focus's config writes refuse without it, and call `Host::stop` on quit, which keeps the filing mark (T164)
+- [X] T039 [US1] `window.rs`, the chrome of contracts/focus-surface.md:
   - the top bar: compose, the command-bar field with `/` and `Ctrl K`, the sync label, the menu and close;
   - the header strip: "Inbox ▾" `g o`, the counts, and "Has action" `!`.
 
   The filtered and digest counts stay hidden until those features exist. Test first: the widget tree carries each control and its key
-- [ ] T040 [P] [US1] `data/focus-colours.css`: the `--postio-*` colour variables from libadwaita's named colours, and the accent from `AdwStyleManager`. Test first: switching to dark changes the resolved colours, and a CSS assertion shows the accent only on markers, focus and the has-action toggle
-- [ ] T041 [US1] The list model: `FocusRow` over `postio_widgets::list_model` and `Paging` over `ListScope::Focus(Inbox)`. Test first: scrolling reads only the visible window (scenario 7, counted)
+- [X] T040 [P] [US1] `data/focus-colours.css`: the `--postio-*` colour variables from libadwaita's named colours, and the accent from `AdwStyleManager`. Test first: switching to dark changes the resolved colours, and a CSS assertion shows the accent only on markers, focus and the has-action toggle
+- [X] T041 [US1] The list model: `FocusRow` over `postio_widgets::list_model` and `Paging` over `ListScope::Focus(Inbox)`. Test first: scrolling reads only the visible window (scenario 7, counted)
 - [X] T161 [US1] Focus's inbox folds a conversation that reached two inboxes into one row, as Unified does (spec Edge Cases: "one inbox across all accounts"). T033 shows one row per inbox. The partner statements run only when more than one account is enabled, so one account keeps the page at 3. Test first: a conversation delivered to two accounts' inboxes is one row, archiving it archives both copies, and a one-account page is still at most 3 statements
 - [X] T042 [P] [US1] `postio_ui::label_colour(name, accent_hue)`. Test first: a stable colour, never within the accent's hue band, and a label's stored colour when it has one
-- [ ] T043 [US1] The one-line row (40 px, one `snapshot()`): the gutter, sender, subject, up to two pills, first line, attachment icon, count and time, with bold for unread, and day headings. Test first: a row shows "RE: Q3 numbers!!" and "Hi all —" verbatim (scenario 2), and a third label draws no third pill (scenario 8)
-- [ ] T044 [US1] The two-line row (72 px) from `MarkerSummary`, with the kind chip, date, quote and actions with their keycaps. Test first: a marked row is 72 px, and its height does not change with focus or selection. An invitation's marker is not flipped to past as time passes, so read past from `ends_at` when drawing (T110)
-- [ ] T045 [US1] Cursor and selection: `x`, `J`/`K`, `X` (a predicate), `Escape`, and the bulk bar with keycaps. Test first: select three rows, put the cursor on a fourth, press `a`, and exactly the three are archived (scenario 3). Aim a folded row at `MessageTarget::Threads(id + copies)` (T161)
-- [ ] T046 [US1] Toast and undo: "Archived 3 messages · Undo", and `Ctrl+Z` returns all three, including after the toast has gone. Test first: scenario 3's undo half
-- [ ] T047 [US1] `j` and `k` move only the cursor: nothing opens and nothing is marked read. Test first: scenario 4
-- [ ] T048 [US1] The has-action filter: `FocusScope::HasAction`, the toggle's count, "Showing 7 of 312 · ! again to show all", the selection cleared, and the cursor kept. Test first: scenario 5, and the count is counted. `idx_markers_open` was not built, because the planner does not read partial indexes. Give the has-action scope its own counted seek
-- [ ] T049 [US1] Light and dark follow the system at once. Test first: scenario 6
-- [ ] T050 [US1] `crates/postio-focus/examples/shot.rs`: a seeded demo store (the storage seed, plus markers written through the host) that renders a named screen, light or dark, at a given size. Test first: `shot 01` writes a PNG, and an unknown screen exits non-zero with `NO IMAGE WAS WRITTEN`
-- [ ] T051 [US1] Compare screens 01, 02, 03 and 15 with their PNGs, and record them in `screens.md`
+- [X] T043 [US1] The one-line row (40 px, one `snapshot()`): the gutter, sender, subject, up to two pills, first line, attachment icon, count and time, with bold for unread, and day headings. Test first: a row shows "RE: Q3 numbers!!" and "Hi all —" verbatim (scenario 2), and a third label draws no third pill (scenario 8)
+- [X] T044 [US1] The two-line row (72 px) from `MarkerSummary`, with the kind chip, date, quote and actions with their keycaps. Test first: a marked row is 72 px, and its height does not change with focus or selection. An invitation's marker is not flipped to past as time passes, so read past from `ends_at` when drawing (T110)
+- [X] T045 [US1] Cursor and selection: `x`, `J`/`K`, `X` (a predicate), `Escape`, and the bulk bar with keycaps. Test first: select three rows, put the cursor on a fourth, press `a`, and exactly the three are archived (scenario 3). Aim a folded row at `MessageTarget::Threads(id + copies)` (T161)
+- [X] T046 [US1] Toast and undo: "Archived 3 messages · Undo", and `Ctrl+Z` returns all three, including after the toast has gone. Test first: scenario 3's undo half
+- [X] T047 [US1] `j` and `k` move only the cursor: nothing opens and nothing is marked read. Test first: scenario 4
+- [X] T048 [US1] The has-action filter: `FocusScope::HasAction`, the toggle's count, "Showing 7 of 312 · ! again to show all", the selection cleared, and the cursor kept. Test first: scenario 5, and the count is counted. `idx_markers_open` was not built, because the planner does not read partial indexes. Give the has-action scope its own counted seek
+- [X] T049 [US1] Light and dark follow the system at once. Test first: scenario 6
+- [X] T050 [US1] `crates/postio-focus/examples/shot.rs`: a seeded demo store (the storage seed, plus markers written through the host) that renders a named screen, light or dark, at a given size. Test first: `shot 01` writes a PNG, and an unknown screen exits non-zero with `NO IMAGE WAS WRITTEN`
+- [X] T051 [US1] Compare screens 01, 02, 03 and 15 with their PNGs, and record them in `screens.md`
 
 ---
 
@@ -198,27 +198,31 @@ maintainer asks.
 
 **Goal**: Screens 16–19. **Independent test**: spec US6.
 
-- [ ] T052 [US6] One `AdwBanner` for first sync, offline or a sign-in error, chosen in that priority, with the sync label to match. Test first: drive each state through the host's test seam, and the banner and label read as contracts/focus-surface.md says
-- [ ] T053 [US6] With no network, archiving, labelling and searching take effect at once and queue. Test first: scenario 1
-- [ ] T054 [US6] First sync: what has arrived can be read and searched, and progress shows. Test first: scenario 2
-- [ ] T055 [US6] Update password… opens the shared credential dialog. Test first: scenario 3. The credential dialog is still in `postio-gtk` (T022): route onboarding through `postio-client` first
-- [ ] T056 [US6] The empty inbox lists only what exists. Test first: scenario 4, with and without digests or filtering
-- [ ] T057 [US6] Compare screens 16–19, and record them
+- [X] T052 [US6] One `AdwBanner` for first sync, offline or a sign-in error, chosen in that priority, with the sync label to match. Test first: drive each state through the host's test seam, and the banner and label read as contracts/focus-surface.md says
+- [ ] T053 [US6] With no network, archiving, labelling and searching take effect at once and queue. Test first: scenario 1. The archive half is done: offline, an archive takes effect at once and queues. The label and search halves come with the label picker (T097) and the command bar (US4)
+- [ ] T054 [US6] First sync: what has arrived can be read and searched, and progress shows. Test first: scenario 2. The listing half is done. Reading and searching during a first sync come with T069 and US4
+- [ ] T055 [US6] Update password… opens the shared credential dialog. Test first: scenario 3. The credential dialog is still in `postio-gtk` (T022): route onboarding through `postio-client` first. Blocked on T165
+- [X] T056 [US6] The empty inbox lists only what exists. Test first: scenario 4, with and without digests or filtering
+- [X] T057 [US6] Compare screens 16–19, and record them
 
 ## Phase 5: User Story 7: one key map, taught everywhere (P1)
 
 **Goal**: Screen 20. **Independent test**: spec US7.
 
-- [ ] T058 [US7] The key map dialog (1100×760), generated from the registry and the groups table: `?` and `Escape`, and the footer naming `[keys]` in `config.toml`. Test first: scenario 4, and every row's key equals the key the keymap resolves. Group with `postio_ui::keymap_sheet::{group, Group, KEY_MAP_CONTEXTS}`
-- [ ] T059 [US7] `focus_suite/registry_parity.rs`: every command reachable with `Frontend::Focus` has a key, a command-bar row and a visible control. It starts with a `NOT_YET` list that each story empties. Test first: the list is non-empty, and fails with names
-- [ ] T060 [US7] `ConfigChanged.focus`, and live reload of `[keys]` and `[focus]` in Focus. Test first: scenario 1 (override archive, save, and the key map, bar and button all change). `[focus]` is one struct, `postio_config::FocusConfig` (T132). Extend it and `change.rs`: `ConfigChanged` does not report `[focus]` yet
-- [ ] T061 [US7] Scenarios 2, 3 and 5 as `focus_suite` cases. The classic defaults are the one keymap's
-- [ ] T062 [US7] Compare screen 20, and record it
+- [X] T058 [US7] The key map dialog (1100×760), generated from the registry and the groups table: `?` and `Escape`, and the footer naming `[keys]` in `config.toml`. Test first: scenario 4, and every row's key equals the key the keymap resolves. Group with `postio_ui::keymap_sheet::{group, Group, KEY_MAP_CONTEXTS}`
+- [X] T059 [US7] `focus_suite/registry_parity.rs`: every command reachable with `Frontend::Focus` has a key, a command-bar row and a visible control. It starts with a `NOT_YET` list that each story empties. Test first: the list is non-empty, and fails with names. `NOT_YET` starts with 131 commands, each missing its command-bar row. US4 empties it
+- [X] T060 [US7] `ConfigChanged.focus`, and live reload of `[keys]` and `[focus]` in Focus. Test first: scenario 1 (override archive, save, and the key map, bar and button all change). `[focus]` is one struct, `postio_config::FocusConfig` (T132). Extend it and `change.rs`: `ConfigChanged` does not report `[focus]` yet
+- [X] T061 [US7] Scenarios 2, 3 and 5 as `focus_suite` cases. The classic defaults are the one keymap's
+- [X] T062 [US7] Compare screen 20, and record it
 
 ## Phase 6: User Story 11: one store, either desktop app (P1)
 
-- [ ] T063 [US11] The store-in-use screen: "Postio is already open in another window. Close it to open Postio here.", with Try again. Test first, in the pattern of `crates/postio-tui/tests/store_in_use.rs`: a second process holds the store, the sentence shows, and the store is byte-for-byte unchanged (scenario 1)
-- [ ] T064 [US11] Across apps: archive in Focus and the classic app shows the archive; a draft left in either opens in the other. Test first: scenarios 2 and 3 over one temporary store
+- [X] T063 [US11] The store-in-use screen: "Postio is already open in another window. Close it to open Postio here.", with Try again. Test first, in the pattern of `crates/postio-tui/tests/store_in_use.rs`: a second process holds the store, the sentence shows, and the store is byte-for-byte unchanged (scenario 1)
+- [ ] T064 [US11] Across apps: archive in Focus and the classic app shows the archive; a draft left in either opens in the other. Test first: scenarios 2 and 3 over one temporary store. The archive half is done. The draft half comes with Focus's composer (US3)
+- [ ] T165 Move the credential and add-account dialogs (`postio_gtk::onboarding`) and their probe and persist (`postio_app::onboarding`) behind `postio-client`, into `postio-widgets`: T022's remainder, which T055 needs. Test first: the classic app's onboarding cases pass unchanged, and Focus opens the dialog from its banner
+- [ ] T166 Commands Focus offers no surface for become `Requirement::ThreePane`: the conversation rail, the folder-list keys, the parts-panel keys and the account-list keys. `toggle_fold` and `expand_all` stay for Focus's dialog (FR-034). Test first: registry parity, with none of them in `NOT_YET`
+- [ ] T167 A select-all (`X`) in Focus is a predicate over Focus's own scope. Today it aims at the unified view, so it takes in held digest mail, and its exceptions remove only representatives. Give `postio-core` and `postio-session` a Focus view scope. Test first: `X` then `a` archives exactly what the list shows
+- [ ] T168 Folded copies in Focus's counts: the has-action page folds copies across accounts, as the inbox does (T161), and `focus_unread` counts a folded conversation once. Test first: a conversation in two inboxes counts once in each figure
 
 ## Phase 7: User Story 2: open a message, come back to the same place (P1)
 

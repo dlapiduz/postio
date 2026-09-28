@@ -400,6 +400,28 @@ decisions, written through the host. This is the classic `shot` loop
 
 ---
 
+**Spike S3 (T009, 2026-09-28): R3 holds.** The spike built a two-height
+`gtk::ListView` over 100,000 rows plus 50 spliced ones, headless, at
+1440×900 (an 862 px viewport), and counted factory setup and bind calls per
+frame.
+
+| What | Binds |
+|---|---|
+| First frames | 205 |
+| Scrolling 40 px a frame | at most 11, 3.2 on average |
+| Scrolling 800 px a frame | at most 27, 15.8 on average |
+| 60 random jumps | 12,175, at most 205 in a frame |
+| 50 jumps into spliced data | 10,250, at most 205 in a frame |
+
+- Over the whole run, 207 row widgets were built. Every one of the 112 jumps
+  bound its target row.
+- GTK estimates the list's height at 5% under its true height.
+
+So design for 205 binds per jump: a cheap bind, a skeleton row while a page
+lands, and a page cache. T041 did.
+
+---
+
 ## R4. One keymap for every app
 
 **Decision.** `KEYS.md` becomes the registry's defaults, the maintainer's
