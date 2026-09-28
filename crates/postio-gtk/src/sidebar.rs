@@ -1269,6 +1269,18 @@ impl Sidebar {
         imp.saved_section.set_visible(!searches.is_empty());
     }
 
+    /// The query of the saved search drawn `index`th, counting from zero,
+    /// in the order `[filters]` pins them -- what `alt+1`...`alt+4` run
+    /// (specs/007-postio-focus T032).
+    ///
+    /// Read from the rows the sidebar draws, so the key and the row agree
+    /// by construction: the third row is the third key's, whatever order a
+    /// reorder left them in.
+    pub fn saved_search_query(&self, index: usize) -> Option<String> {
+        let row = self.imp().saved.row_at_index(i32::try_from(index).ok()?)?;
+        Some(row_query(&row))
+    }
+
     /// The selected folder, if any.
     pub fn selected(&self) -> Option<MailboxId> {
         // The registry, not the two fixed boxes: in section mode those are

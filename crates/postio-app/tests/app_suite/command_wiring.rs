@@ -143,23 +143,15 @@ const SEARCH_OWNED: &[CommandId] = &[CommandId::ToggleResultOrder];
 /// entry once its issue lands a real handler; the sweep will fail the same
 /// way it did for `ToggleSidebar` if one is removed too early.
 ///
-/// Every id this sweep found unanswered before has since been wired or
-/// removed. `OpenMessage` was one (#767), answered in `Window::act` and
-/// proven end to end by `search_open.rs`; `AddLabel` was the other, removed
-/// by #766 when it had nothing behind it and brought back by #780 with a
-/// handler, which is why it is not listed here.
-///
-/// The one keymap (specs/007-postio-focus contracts/keymap.md) gave every
-/// app the archive, the snoozed mail and four pinned searches; the classic
-/// app's handlers for them are that spec's T032.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    (CommandId::GoToArchive, "specs/007-postio-focus T032"),
-    (CommandId::GoToSnoozed, "specs/007-postio-focus T032"),
-    (CommandId::SavedSearch1, "specs/007-postio-focus T032"),
-    (CommandId::SavedSearch2, "specs/007-postio-focus T032"),
-    (CommandId::SavedSearch3, "specs/007-postio-focus T032"),
-    (CommandId::SavedSearch4, "specs/007-postio-focus T032"),
-];
+/// Empty, and worth keeping: every id this sweep found unanswered has since
+/// been wired or removed. `OpenMessage` was one (#767), answered in
+/// `Window::act` and proven end to end by `search_open.rs`; `AddLabel` was
+/// the other, removed by #766 when it had nothing behind it and brought back
+/// by #780 with a handler, which is why it is not listed here. The one
+/// keymap's archive, snoozed mail and four pinned searches were listed here
+/// until specs/007-postio-focus T032 answered them in `Window::act`
+/// (`go_to_keystroke.rs`, `gtk_saved_searches_live.rs`).
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
 
 pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     crate::gtk_case(async {

@@ -419,3 +419,84 @@ pub fn a_pinned_saved_search_does_not_auto_run_on_first_present() {
     settle();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// `alt+1` ... `alt+4` run the pinned saved searches, in the order the
+/// sidebar draws them (specs/007-postio-focus T032, contracts/keymap.md):
+/// what activating the row does, from the keyboard, without walking the
+/// folder list to it. A number with nothing pinned behind it says so.
+pub fn alt_and_a_digit_runs_that_pinned_saved_search() {
+    let root = std::env::temp_dir().join(format!(
+        "postio-saved-searches-digits-{}",
+        std::process::id()
+    ));
+    let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("config.toml");
+    std::fs::write(
+        &path,
+        "[filters.alpha]\nquery = \"subject:alpha\"\npinned = true\n\n\
+         [filters.beta]\nquery = \"subject:beta\"\npinned = true\n",
+    )
+    .unwrap();
+
+    let window = Window::default();
+    postio_gtk::config::install_at(&window, &path);
+    window.present();
+    settle();
+    assert_eq!(
+        saved_search_names_in_order(&window),
+        ["alpha".to_string(), "beta".to_string()],
+        "both pins should be on screen, in this order, for the digits to mean them"
+    );
+    let finder = window.finder();
+
+    // The second first, so the first cannot pass by being the only one.
+    press(&window, "2", gdk::ModifierType::ALT_MASK);
+    assert!(finder.is_open(), "alt+2 ran nothing");
+    assert_eq!(finder.mode(), Mode::Search);
+    assert_eq!(
+        finder.query().text,
+        "subject:beta",
+        "alt+2 ran something other than the second pinned search"
+    );
+    window.close_finder();
+    settle();
+
+    press(&window, "1", gdk::ModifierType::ALT_MASK);
+    assert!(finder.is_open(), "alt+1 ran nothing");
+    assert_eq!(finder.query().text, "subject:alpha");
+    window.close_finder();
+    settle();
+
+    // Nothing is pinned third: no search runs, and the window says why
+    // rather than doing nothing.
+    press(&window, "3", gdk::ModifierType::ALT_MASK);
+    assert!(
+        !finder.is_open(),
+        "alt+3 ran a search with nothing pinned third"
+    );
+    assert!(
+        window
+            .announced()
+            .is_some_and(|said| said.contains("saved search 3")),
+        "alt+3 did nothing and said nothing: {:?}",
+        window.announced()
+    );
+
+    window.close();
+    settle();
+    let _ = std::fs::remove_dir_all(&root);
+}

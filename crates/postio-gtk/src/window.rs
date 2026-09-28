@@ -3274,15 +3274,47 @@ impl Window {
             postio_core::Command::GoToDrafts => Some((MailboxRole::Drafts, "drafts folder")),
             postio_core::Command::GoToSent => Some((MailboxRole::Sent, "sent folder")),
             postio_core::Command::GoToFlagged => Some((MailboxRole::Flagged, "flagged folder")),
+            // The one keymap's two new destinations (specs/007-postio-focus
+            // T032), reached the same way: by role, through the sidebar.
+            postio_core::Command::GoToArchive => Some((MailboxRole::Archive, "archive")),
+            postio_core::Command::GoToSnoozed => Some((MailboxRole::Snoozed, "snoozed folder")),
             _ => None,
         };
         if let Some((role, called)) = destination {
             match self.sidebar().mailbox_for_role(role) {
+                // A view -- Flagged, Snoozed -- is a row with no folder of its
+                // own (ADR 0036). Opened as a folder, its placeholder id lists
+                // a folder that does not exist while the sidebar highlights the
+                // right row, which is how `g s` came to show an empty list
+                // under "Flagged". It opens by its role, as a click on the row
+                // does.
+                Some(_) if matches!(role, MailboxRole::Flagged | MailboxRole::Snoozed) => {
+                    self.open_view(role);
+                }
                 Some(mailbox) => self.open_mailbox(mailbox),
                 // Said, not swallowed. A key that appears to do nothing is
                 // read as a broken key, and the next thing tried is the same
                 // key again.
                 None => self.announce(&format!("This account has no {called}")),
+            }
+            return;
+        }
+
+        // The pinned saved searches, by their place in the sidebar: what
+        // activating the row does, from `alt+1`...`alt+4` (specs/007-postio-
+        // focus T032). A place with nothing pinned in it is said out loud,
+        // like a destination this account does not have.
+        let pinned = match command {
+            postio_core::Command::SavedSearch1 => Some(0),
+            postio_core::Command::SavedSearch2 => Some(1),
+            postio_core::Command::SavedSearch3 => Some(2),
+            postio_core::Command::SavedSearch4 => Some(3),
+            _ => None,
+        };
+        if let Some(index) = pinned {
+            match self.sidebar().saved_search_query(index) {
+                Some(query) => self.run_search(&query),
+                None => self.announce(&format!("No saved search {} is pinned", index + 1)),
             }
             return;
         }

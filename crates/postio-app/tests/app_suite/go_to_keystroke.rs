@@ -1,4 +1,5 @@
-//! `g i` reaches the inbox, at the composition root.
+//! `g i` reaches the inbox, at the composition root -- and `g r` the archive
+//! and `g z` the snoozed mail, the one keymap's two new destinations.
 //!
 //! # Why here rather than beside the box
 //!
@@ -28,9 +29,10 @@ use postio_app::{commands, feed_the_window};
 use postio_core::CommandId;
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
+use postio_gtk::sidebar::SidebarChoice;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_model::MailboxRole;
+use postio_model::{ListScope, MailboxRole};
 use postio_session::{Wiring, actions};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
@@ -127,6 +129,52 @@ pub fn pressing_g_i_shows_the_inbox() {
             "`g i` did not reach the inbox: the sidebar is still showing {:?}",
             window.sidebar().selected()
         );
+
+        // ── the one keymap's two new destinations, and flagged ───────────────
+        // specs/007-postio-focus T032: `g r` the archive and `g z` the snoozed
+        // mail, by role as `g i` is. Asked of the list as well as the sidebar,
+        // because a highlighted row over a list of something else is the
+        // failure a person sees: Flagged and Snoozed are views with no folder
+        // of their own (ADR 0036), and a view opened as a folder lists nothing.
+        let account = report.account.id;
+        press(&window, &["g", "r"]);
+        assert!(
+            settle_until(async || {
+                window.sidebar().selected() == Some(archive)
+                    && feeds.messages.scope() == Some(ListScope::Mailbox(archive))
+            })
+            .await,
+            "`g r` did not reach the archive: the sidebar is showing {:?} and the \
+             list {:?}",
+            window.sidebar().selected_choice(),
+            feeds.messages.scope()
+        );
+        for (keys, role, scope) in [
+            (
+                ["g", "asterisk"],
+                MailboxRole::Flagged,
+                ListScope::Flagged(account),
+            ),
+            (
+                ["g", "z"],
+                MailboxRole::Snoozed,
+                ListScope::Snoozed(account),
+            ),
+        ] {
+            press(&window, &keys);
+            assert!(
+                settle_until(async || {
+                    window.sidebar().selected_choice() == Some(SidebarChoice::View(role))
+                        && feeds.messages.scope() == Some(scope)
+                })
+                .await,
+                "`{}` did not reach the {role:?} view: the sidebar is showing {:?} and \
+                 the list {:?}",
+                keys.join(" "),
+                window.sidebar().selected_choice(),
+                feeds.messages.scope()
+            );
+        }
 
         // ── `g` is a letter to somebody who is writing ───────────────────────
         // FR-042. `g` is one of the commonest letters in English prose, so a
