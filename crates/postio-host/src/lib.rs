@@ -526,6 +526,12 @@ impl Host {
         });
     }
 
+    /// The host's runtime, for a frontend that has work of its own to run
+    /// there: Focus's remote-image fetch, as the desktop app runs its own.
+    pub fn runtime(&self) -> tokio::runtime::Handle {
+        self.inner.runtime().clone()
+    }
+
     /// Stop the engines and mark a clean end, before the host is dropped.
     ///
     /// Engines first: they are the one thing still writing on threads of

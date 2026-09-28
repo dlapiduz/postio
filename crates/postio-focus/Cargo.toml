@@ -40,12 +40,17 @@ postio-host.workspace = true
 postio-model.workspace = true
 # The rendered document's links and text, which `o` offers (US2).
 postio-render.workspace = true
+# The remote-image fetcher, run on the host's runtime for a sender the
+# person allowed (US2 scenario 4), as the desktop app runs it.
+postio-runtime.workspace = true
 # Logging, as the other apps set it up.
 postio-session.workspace = true
 postio-ui.workspace = true
 # What both desktop apps draw with (ADR 0043).
 postio-widgets.workspace = true
+tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }

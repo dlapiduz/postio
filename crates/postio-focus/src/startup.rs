@@ -148,6 +148,7 @@ pub fn adopt_at(
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
     window.set_focus_config(config.focus.clone());
+    window.set_remote_runtime(host.runtime());
     window.show_inbox(
         client.clone(),
         state.clone(),

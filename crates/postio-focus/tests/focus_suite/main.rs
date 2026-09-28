@@ -38,6 +38,7 @@ mod open_choice;
 mod open_message;
 mod registry_parity;
 mod reload;
+mod remote_images;
 mod rows;
 mod selection;
 mod shot;
@@ -57,6 +58,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for",
+        remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for as fn(),
+    ),
     (
         "open_choice::o_offers_the_links_and_parts_and_opens_only_what_is_chosen",
         open_choice::o_offers_the_links_and_parts_and_opens_only_what_is_chosen as fn(),
@@ -248,6 +253,13 @@ pub fn settle() {
     while glib::MainContext::default().iteration(false) {}
 }
 
+/// Let the main loop run for at least `least`: a dwell a case must outlast,
+/// not a deadline it waits against.
+pub async fn settle_for(least: std::time::Duration) {
+    let started = std::time::Instant::now();
+    settle_until(async || started.elapsed() >= least).await;
+}
+
 /// Turn the loop until `done`, or give up after ten seconds (scaled by
 /// `POSTIO_TEST_PATIENCE`). Returns whether it happened, because every call
 /// site is already inside an `assert!` that says what was expected.
@@ -346,6 +358,9 @@ fn hermetic(arguments: &[String]) {
         .args(arguments)
         .env(HERMETIC, "1")
         .env("XDG_CONFIG_HOME", config.path())
+        // State too: the remote-image allow list lives there, and a case
+        // about blocked images must not read the developer's own.
+        .env("XDG_STATE_HOME", config.path().join("state"))
         .status()
         .expect("the suite runs again in its own configuration");
     drop(config);

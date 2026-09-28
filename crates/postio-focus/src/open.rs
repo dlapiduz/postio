@@ -93,7 +93,16 @@ pub struct OpenMessage {
 impl OpenMessage {
     /// The dialog, reading through `client`, with the remote-image allow
     /// list at `allowlist` and its keys from `keymap`.
-    pub fn new(client: Client, keymap: &Keymap, allowlist: &std::path::Path) -> Rc<Self> {
+    ///
+    /// `runtime` is where a remote image is fetched, for a sender the person
+    /// allowed or a message they chose to show once; with none, nothing is
+    /// ever fetched.
+    pub fn new(
+        client: Client,
+        keymap: &Keymap,
+        allowlist: &std::path::Path,
+        runtime: Option<tokio::runtime::Handle>,
+    ) -> Rc<Self> {
         // Inline (`cid:`) images resolve against the message on screen,
         // through the store's owner; the reader asks synchronously.
         let shown: Rc<Cell<Option<MessageId>>> = Rc::default();
@@ -108,6 +117,9 @@ impl OpenMessage {
             })
         };
         let reader = Reader::sharing(source, allowlist, Verbs::NONE);
+        if let Some(runtime) = runtime {
+            reader.set_remote_fetch(remote_fetch(runtime));
+        }
 
         // The header: Close, the title and position, and the steps.
         let close = gtk::Button::new();
@@ -692,4 +704,29 @@ fn words_in(document: &postio_render::RenderedDocument, rect: postio_render::Rec
         (Some(start), Some(end)) => document.text.slice(start..end).trim().to_owned(),
         _ => String::new(),
     }
+}
+
+/// The reader's remote-image fetch, on `runtime`: the desktop app's fetcher
+/// (`postio_runtime::remote_images`), which the reader asks only for URLs
+/// its allow list or a "show once" has cleared.
+fn remote_fetch(
+    runtime: tokio::runtime::Handle,
+) -> impl Fn(Vec<String>, postio_widgets::reader::view::RemoteArrived) + 'static {
+    let fetcher = std::sync::Arc::new(postio_runtime::remote_images::RemoteImageFetcher::new());
+    postio_widgets::present::reading::remote_fetch(runtime, move |parsed: Vec<url::Url>| {
+        let fetcher = std::sync::Arc::clone(&fetcher);
+        async move {
+            fetcher
+                .fetch_all(&parsed)
+                .await
+                .into_iter()
+                .map(|(url, fetched)| match fetched {
+                    postio_runtime::remote_images::Fetched::Image(bytes) => {
+                        (url, Some(bytes.to_vec()))
+                    }
+                    postio_runtime::remote_images::Fetched::Failed(_) => (url, None),
+                })
+                .collect()
+        }
+    })
 }

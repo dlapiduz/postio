@@ -115,6 +115,8 @@ mod imp {
         pub launcher: RefCell<Option<super::Launcher>>,
         /// What the open-with chooser on screen offers.
         pub choices: RefCell<Vec<crate::chooser::Choice>>,
+        /// Where remote images are fetched: the host's runtime.
+        pub runtime: RefCell<Option<tokio::runtime::Handle>>,
     }
 
     impl Default for FocusWindow {
@@ -154,6 +156,7 @@ mod imp {
                 reading: RefCell::default(),
                 launcher: RefCell::default(),
                 choices: RefCell::default(),
+                runtime: RefCell::default(),
             }
         }
     }
@@ -1159,6 +1162,7 @@ impl FocusWindow {
                     client,
                     &self.keymap(),
                     &crate::open::allowlist_path(),
+                    self.imp().runtime.borrow().clone(),
                 );
                 reading.connect_command(glib::clone!(
                     #[weak(rename_to = window)]
@@ -1314,6 +1318,12 @@ impl FocusWindow {
                 }
             }
         });
+    }
+
+    /// Where remote images a person allowed are fetched: the host's
+    /// runtime, which the desktop app's fetcher runs on too.
+    pub fn set_remote_runtime(&self, runtime: tokio::runtime::Handle) {
+        self.imp().runtime.replace(Some(runtime));
     }
 
     /// The open-email dialog, once a message has been opened.
