@@ -14,6 +14,8 @@
 //! | `01` | The inbox in light: three rows selected, the cursor on a marked row, the bulk bar |
 //! | `02` | The same, in dark |
 //! | `03` | The has-action filter on |
+//! | `05` | A new message: a recipient chip, suggestions for "Grac", a subject and a body |
+//! | `06` | Reply to all on the Harbor thread: its recipients, its label and the folded quote |
 //! | `15` | The three archived, and the undo toast |
 //! | `16` | The empty inbox: a store with nothing in it, a digest rule, a morning's filtering |
 //! | `17`, `18`, `19` | Screen 01 under the first sync's, the offline and the sign-in error's banner |
@@ -78,6 +80,8 @@ const SCREENS: &[(&str, &str)] = &[
     ("01", "the inbox, light, three selected"),
     ("02", "the inbox, dark, three selected"),
     ("03", "the has-action filter"),
+    ("05", "a new message, with recipient suggestions"),
+    ("06", "reply to all, with the thread's recipients and label"),
     ("15", "the undo toast after archiving three"),
     ("16", "the empty inbox"),
     ("17", "the first sync's banner"),
@@ -459,6 +463,9 @@ fn render(args: &[String]) -> Result<String, String> {
     } else {
         runtime.block_on(demo())
     };
+    if matches!(request.screen.as_str(), "05" | "06") {
+        runtime.block_on(compose_demo(&database, account));
+    }
     let blobs = BlobStore::open(
         blobs_dir.path().to_path_buf(),
         &postio_storage::test_support::blob_keys(),
@@ -725,11 +732,140 @@ fn stage(
                 return Err("the key map never opened".into());
             }
         }
+        "05" => {
+            pick_three();
+            window.act(CommandId::Compose);
+            let composer = composing(window)?;
+            composer.test_set_to("Ada Moreno <ada@example.com>, ");
+            composer.test_set_subject("Q4 headcount numbers");
+            composer.test_set_body(
+                "Hi Ada, here are the Q4 headcount numbers. Two roles move to the \
+                 platform team; everything else stays flat.",
+            );
+            // Four characters: the one completion rule opens at four (C23).
+            composer.test_set_to("Grac");
+            if !settle_until(|| composer.test_recipient_popover_visible()) {
+                return Err("the recipient suggestions never opened".into());
+            }
+            // The editing surface paints in its own process: give it the
+            // frames to draw what was typed.
+            let typed = Instant::now();
+            settle_until(|| typed.elapsed() > Duration::from_millis(500));
+        }
+        "06" => {
+            pick_three();
+            pane.cursor().set_selected(HARBOR);
+            window.act(CommandId::ReplyAll);
+            let composer = composing(window)?;
+            if !settle_until(|| {
+                window.compose_dialog().is_some_and(|dialog| {
+                    shown_with_class(&dialog, "focus-compose-labels")
+                        && composer.test_body_eval(
+                            "document.querySelector('details.postio-quote') ? 'y' : 'n'",
+                        ) == "y"
+                })
+            }) {
+                return Err("the reply's labels and quote never showed".into());
+            }
+        }
         _ => unreachable!("checked against SCREENS"),
     }
     // Once more, so what the last change queued is drawn.
     settle_until(|| settled(window));
     Ok(())
+}
+
+/// The row screen 06 replies to: "Harbor API draft v3".
+const HARBOR: u32 = 3;
+
+/// The composer, once its dialog has opened over the window and drawn.
+fn composing(window: &FocusWindow) -> Result<postio_widgets::composer::Composer, String> {
+    if !settle_until(|| {
+        window
+            .compose_dialog()
+            .and_then(|dialog| dialog.child())
+            .is_some_and(|content| content.is_mapped() && content.width() > 0)
+    }) {
+        return Err("the compose dialog never opened".into());
+    }
+    window.composer().ok_or_else(|| "no composer".into())
+}
+
+/// Whether a widget under `root` wearing `class` is on screen.
+fn shown_with_class(root: &impl IsA<gtk::Widget>, class: &str) -> bool {
+    let mut stack = vec![root.clone().upcast::<gtk::Widget>()];
+    while let Some(widget) = stack.pop() {
+        if widget.has_css_class(class) && widget.is_mapped() {
+            return true;
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    false
+}
+
+/// What screens 05 and 06 add to the demo store: the people the To field
+/// completes to, and the Harbor thread's recipients and body, so a reply
+/// to all has someone to copy and something to quote.
+async fn compose_demo(database: &Store, account: AccountId) {
+    let connection = database.connect().await.expect("a connection");
+    let contacts = postio_storage::repository::ContactRepository::new(&connection);
+    for (name, address) in [
+        ("Grace Oyelaran", "grace@example.org"),
+        ("Graham Ellis", "graham@example.net"),
+        ("Ada Moreno", "ada@example.com"),
+    ] {
+        contacts
+            .create(
+                Some(account),
+                &EmailAddress::new(Some(name), address),
+                Some(name),
+            )
+            .await
+            .expect("a contact");
+    }
+    let messages = MessageRepository::new(&connection);
+    let newest = RfcMessageId::new(format!(
+        "<demo.{HARBOR}.{}@example.test>",
+        TODAY[HARBOR as usize].messages - 1
+    ));
+    let Some(id) = messages
+        .ids_by_rfc_message_id(account, &newest)
+        .await
+        .expect("a lookup")
+        .first()
+        .copied()
+    else {
+        return;
+    };
+    if let Some(mut message) = messages.get(id).await.expect("a read") {
+        message.to = vec![
+            EmailAddress::new(Some("Test User"), "test@example.com"),
+            EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net"),
+        ];
+        message.cc = vec![
+            EmailAddress::new(Some("Grace Oyelaran"), "grace@example.org"),
+            EmailAddress::new(None::<String>, "harbor-api@example.org"),
+        ];
+        messages.update(&mut message).await.expect("its recipients");
+    }
+    messages
+        .set_body(
+            id,
+            &postio_storage::repository::StoredBody {
+                text: Some(TODAY[HARBOR as usize].preview.to_owned()),
+                html: None,
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            postio_model::BodyState::Full,
+        )
+        .await
+        .expect("its body");
 }
 
 /// Whether the empty inbox is what the window shows.

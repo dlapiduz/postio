@@ -510,3 +510,72 @@ banner.focus-banner button {
 .postio-segmented button.postio-segment:checked:hover {
   background-color: var(--postio-selected-strong-bg);
 }
+
+/* ── The compose dialog (screens 05 and 06) ─────────────────────────────
+   The classic app's composer in Focus's frame. Its own classes are dressed
+   by the classic stylesheet, which Focus does not load, so the fields are
+   restated here, scoped to the dialog: hairline rows, flat entries, dim
+   labels -- and no accent underline on the focused row (FR-091). */
+.focus-compose .postio-composer {
+  background-color: var(--postio-surface);
+}
+
+.focus-compose-header {
+  min-height: 50px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-compose-title {
+  font-weight: bold;
+}
+
+.focus-compose-saved {
+  font-size: 0.85em;
+  color: var(--postio-dim);
+}
+
+.focus-compose .postio-compose-row {
+  min-height: 42px;
+  padding: 0 var(--postio-space-6);
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.focus-compose .postio-compose-label {
+  color: var(--postio-dim);
+}
+
+.focus-compose .postio-compose-field,
+.focus-compose .postio-compose-field:focus {
+  background: none;
+  border: none;
+  box-shadow: none;
+  outline: none;
+  padding: 0;
+}
+
+.focus-compose .postio-compose-toolbar {
+  padding: var(--postio-space-1) var(--postio-space-6);
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.focus-compose .postio-compose-warning,
+.focus-compose .postio-compose-tracking-notice {
+  padding: var(--postio-space-1) var(--postio-space-6);
+  font-size: 0.85em;
+  color: var(--postio-ink-secondary);
+}
+
+.focus-compose-footer {
+  min-height: 42px;
+  padding: 0 var(--postio-space-3);
+  border-top: 1px solid var(--postio-hairline);
+}
+
+.focus-compose-label-chip {
+  padding: 0 var(--postio-space-1) 0 var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 999px;
+  background: none;
+  color: var(--postio-ink);
+}

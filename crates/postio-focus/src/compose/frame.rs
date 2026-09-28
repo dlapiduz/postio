@@ -118,6 +118,13 @@ impl Frame {
         trailing.append(&send_later);
         trailing.append(&send);
 
+        for widget in [
+            close.upcast_ref::<gtk::Widget>(),
+            heading.upcast_ref(),
+            trailing.upcast_ref(),
+        ] {
+            widget.set_valign(gtk::Align::Center);
+        }
         let header = gtk::CenterBox::new();
         header.add_css_class("focus-compose-header");
         header.set_start_widget(Some(&close));
