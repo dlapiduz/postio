@@ -44,6 +44,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "reader_verbs::a_header_can_leave_the_subject_to_its_surface",
+        reader_verbs::a_header_can_leave_the_subject_to_its_surface as fn(),
+    ),
+    (
         "reader_verbs::a_card_placed_under_the_header_sits_between_it_and_the_body",
         reader_verbs::a_card_placed_under_the_header_sits_between_it_and_the_body as fn(),
     ),

@@ -298,6 +298,12 @@ impl MessageHeader {
         self.draw_recipients(&lines);
     }
 
+    /// Show or hide the subject line: hidden for a surface that heads its
+    /// own column with the subject (Focus's open-email dialog).
+    pub fn set_subject_visible(&self, visible: bool) {
+        self.subject.set_visible(visible);
+    }
+
     /// Put `subject` on the subject line, as it is -- the caller has already
     /// decided what an absent one reads as.
     pub fn set_subject(&self, subject: &str) {

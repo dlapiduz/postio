@@ -118,3 +118,45 @@ pub fn a_card_placed_under_the_header_sits_between_it_and_the_body() {
     assert!(!card.is_mapped(), "taking it away takes it away");
     window.destroy();
 }
+
+/// A surface that heads its column with the subject itself -- Focus's
+/// dialog -- hides the header's own subject line rather than draw it twice.
+pub fn a_header_can_leave_the_subject_to_its_surface() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let (window, reader) = drawn(Verbs::NONE);
+    let header = reader.header();
+    header.set_message(
+        &[],
+        &[],
+        &[],
+        Some("Harbor API draft v3"),
+        chrono::Utc::now(),
+    );
+    while gtk::glib::MainContext::default().iteration(false) {}
+    let shown = |header: &postio_widgets::reader::MessageHeader| {
+        let mut stack = vec![header.widget()];
+        let mut found = false;
+        while let Some(widget) = stack.pop() {
+            if let Some(label) = widget.downcast_ref::<gtk::Label>()
+                && label.label() == "Harbor API draft v3"
+                && label.is_mapped()
+            {
+                found = true;
+            }
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                child = next.next_sibling();
+                stack.push(next);
+            }
+        }
+        found
+    };
+    assert!(shown(&header), "the subject line is drawn by default");
+    header.set_subject_visible(false);
+    while gtk::glib::MainContext::default().iteration(false) {}
+    assert!(!shown(&header), "the subject line stayed");
+    window.destroy();
+}
