@@ -130,6 +130,7 @@ impl Req {
             Req::RetireOrientation => "RetireOrientation",
             Req::MoveRecent => "MoveRecent",
             Req::FilteredTabs => "FilteredTabs",
+            Req::DeliveryMessages(_) => "DeliveryMessages",
             Req::Filtered { .. } => "Filtered",
             Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
@@ -1037,6 +1038,23 @@ impl Client {
             Resp::MoveRecent(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// What `delivery` holds, as list rows, newest first: the digest
+    /// window's plain list.
+    pub async fn delivery_messages(
+        &self,
+        delivery: postio_model::DeliveryId,
+    ) -> Result<Vec<postio_model::listing::MessageSummary>, StoreError> {
+        self.read(
+            Req::DeliveryMessages(delivery),
+            "a digest's messages",
+            |answer| match answer {
+                Resp::Rows(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 

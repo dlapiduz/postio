@@ -1139,6 +1139,9 @@ impl Inner {
             Req::Surfaced => focus::surfaced(self)
                 .await
                 .map_or_else(Resp::Failed, Resp::Surfaced),
+            Req::DeliveryMessages(delivery) => focus::digests::delivery_messages(self, delivery)
+                .await
+                .map_or_else(Resp::Failed, Resp::Rows),
             Req::FilteredTabs => focus::filtered::tabs(self)
                 .await
                 .map_or_else(Resp::Failed, Resp::FilteredTabs),

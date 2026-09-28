@@ -369,6 +369,9 @@ pub enum Req {
     /// Each filter reason with how many messages it keeps filtered: the
     /// Filtered view's tabs (spec 007 T124).
     FilteredTabs,
+    /// What a digest delivery holds, as list rows, newest first: the
+    /// digest window's plain list (spec 007 T137).
+    DeliveryMessages(postio_model::DeliveryId),
     /// A page of the Filtered view, newest first.
     Filtered {
         /// One reason, as the store spells it, or every reason.
