@@ -343,7 +343,10 @@ CREATE TABLE egress_log (
 -- Why Focus filed a message out of the inbox (spec 007, FR-113): one
 -- decision per message, from a vocabulary this CHECK keeps closed, and the
 -- same six `postio_classify::ReasonKind` spells. Recomputable from the
--- message by the catch-up; restoring it (`R`) deletes the row.
+-- message by the catch-up. Restoring it (`R`) keeps the row and marks it
+-- `restored_at`: SC-012 measures filtering from the decisions and the
+-- restores the store keeps, and undoing a restore puts back the reason it
+-- had.
 CREATE TABLE filter_decisions (
     message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     reason      TEXT    NOT NULL
@@ -357,7 +360,10 @@ CREATE TABLE filter_decisions (
     layer       TEXT    NOT NULL
                         CHECK (layer IN ('header', 'senders', 'server', 'model')),
     -- When. Local midnight bounds "filtered today".
-    decided_at  INTEGER NOT NULL
+    decided_at  INTEGER NOT NULL,
+    -- When the person restored the message to the inbox (`R`, FR-116): it
+    -- is no longer filtered, and a read of what is filtered leaves it out.
+    restored_at INTEGER
 );
 
 -- What Focus has classified (spec 007): one record per message and stage,

@@ -1002,3 +1002,124 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         "and the correction is gone"
     );
 }
+
+// ── Restoring from Filtered (T125) ──────────────────────────────────────────
+
+/// File `message` as an arrival in the inbox, through the filing pass
+/// Focus mode has installed: what the next sync would do with it.
+fn file_now(world: &World, message: MessageId) {
+    let pass = world
+        .host()
+        .wiring()
+        .filing
+        .get()
+        .expect("Focus mode's filing pass");
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        let row = MessageRepository::new(&connection)
+            .get(message)
+            .await
+            .expect("a read")
+            .expect("the message");
+        let filed = [postio_sync::FiledMessage {
+            message: &row,
+            thread: row.thread_id,
+            role: postio_model::MailboxRole::Inbox,
+        }];
+        let filed = &filed;
+        let pass = &pass;
+        postio_storage::transaction(&connection, |transaction| async move {
+            pass.file(&transaction, filed).await
+        })
+        .await
+        .expect("filed");
+    });
+}
+
+#[test]
+fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both() {
+    // US9 scenario 4, FR-116: `R` returns a filtered message to the inbox
+    // and never filters its sender again -- the correction written to
+    // `[focus.filter] never` -- and one `Ctrl+Z` reverses all of it: the
+    // message goes back to Filtered with its reason, and the sender is
+    // filtered again.
+    let world = World::new();
+    let (_directory, path) = config_file("[ui]\ndensity = \"compact\"\n");
+    crate::tests::focus_ran_before(&world);
+    let notification =
+        crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build passed");
+    world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config_path(path.clone()));
+    let (role, reason) = crate::tests::eventually(&world, || {
+        crate::tests::filed_where(&world, "Build passed")
+            .filter(|(role, _)| *role == postio_model::MailboxRole::Archive)
+    });
+    assert_eq!(
+        role,
+        postio_model::MailboxRole::Archive,
+        "Focus filtered it"
+    );
+    let reason = reason.expect("with its reason");
+    let (client, events) = world.frontend(ClientKind::Focus);
+
+    world.send(
+        &client,
+        Command::RestoreFiltered {
+            target: MessageTarget::Messages(vec![notification]),
+            restored: true,
+        },
+    );
+    let said = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::ActionCompleted { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert_eq!(
+        said,
+        Event::ActionCompleted {
+            description: "Restored 1 message".to_owned(),
+            undoable: true,
+        }
+    );
+    assert_eq!(
+        crate::tests::filed_where(&world, "Build passed"),
+        Some((postio_model::MailboxRole::Inbox, None)),
+        "back in the inbox, and no longer filtered"
+    );
+    assert_eq!(
+        focus_in(&path).filter.never,
+        vec!["notifications@forge.example"],
+        "its sender pinned"
+    );
+    let next = crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build failed");
+    file_now(&world, next);
+    assert_eq!(
+        crate::tests::filed_where(&world, "Build failed"),
+        Some((postio_model::MailboxRole::Inbox, None)),
+        "and the sender is never filtered again"
+    );
+
+    world.send(&client, Command::Undo);
+    let undone = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::UndoPerformed { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert!(matches!(undone, Event::UndoPerformed { .. }), "{undone:?}");
+    assert_eq!(
+        crate::tests::filed_where(&world, "Build passed"),
+        Some((postio_model::MailboxRole::Archive, Some(reason))),
+        "back in Filtered, with its reason"
+    );
+    assert!(focus_in(&path).filter.never.is_empty(), "and unpinned");
+    let again = crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build fixed");
+    file_now(&world, again);
+    assert_eq!(
+        crate::tests::filed_where(&world, "Build fixed").map(|(role, _)| role),
+        Some(postio_model::MailboxRole::Archive),
+        "the sender's mail is filtered again"
+    );
+}

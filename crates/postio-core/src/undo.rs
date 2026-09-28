@@ -77,6 +77,11 @@ pub enum UndoKind {
     DismissMarker,
     /// Dismissed markers were brought back.
     UndismissMarker,
+    /// Filtered messages were restored to the inbox, and their senders
+    /// pinned (specs/007-postio-focus FR-116).
+    Restore,
+    /// Restored messages were filed away again, with their reasons.
+    Refilter,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
     /// A send that had stopped was put back on the queue (spec 003).
@@ -120,6 +125,8 @@ impl UndoKind {
             UndoKind::Decline => "Declined".to_owned(),
             UndoKind::DismissMarker => format!("Dismissed {count} {}", markers(count)),
             UndoKind::UndismissMarker => format!("Brought back {count} {}", markers(count)),
+            UndoKind::Restore => format!("Restored {count} {messages}"),
+            UndoKind::Refilter => format!("Filtered {count} {messages} again"),
         }
     }
 }

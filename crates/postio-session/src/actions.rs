@@ -86,6 +86,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::CancelSend,
     CommandId::Undo,
     CommandId::MapMailboxRole,
+    CommandId::RestoreFiltered,
 ];
 
 /// How long [`Command::Snooze`] hides a message for when it names no time:
@@ -402,6 +403,9 @@ impl Actions {
             }
             Command::DismissMarker { target, dismissed } => {
                 vec![self.dismiss(target, *dismissed).await?]
+            }
+            Command::RestoreFiltered { target, restored } => {
+                self.restore(target, *restored).await?
             }
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".

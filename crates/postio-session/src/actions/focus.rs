@@ -7,7 +7,7 @@
 //! whose way back is its own command, the other direction, has to be one
 //! `act` knows (docs/ARCHITECTURE.md §5).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use postio_calendar::{Answer, Invitation, Method};
@@ -16,14 +16,16 @@ use postio_core::undo::UndoKind;
 use postio_core::{Command, MessageTarget};
 use postio_model::listing::{InviteAnswer, MarkerKind};
 use postio_model::{
-    Account, Draft, DraftKind, EmailAddress, Identity, Message, MessageId, ThreadId,
+    Account, AccountId, Draft, DraftKind, EmailAddress, Identity, MailboxId, MailboxRole, Message,
+    MessageId, ThreadId,
 };
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, DraftRepository, InviteState, MarkerRepository, ReminderRepository,
+    AccountRepository, DraftRepository, FilterDecisionRepository, InviteState, MarkerRepository,
+    ReminderRepository,
 };
 
-use super::{Actions, Aim, Applied, RSVP_WINDOW, store_failure};
+use super::{Actions, Aim, Applied, Destination, RSVP_WINDOW, mailbox_for, store_failure};
 
 impl Actions {
     /// Wait for a reply in each targeted conversation until `at`, or with
@@ -430,6 +432,149 @@ impl Actions {
                 dismissed: !dismissed,
             }],
         })
+    }
+}
+
+impl Actions {
+    /// Put filtered messages back in the inbox and never filter their
+    /// senders again, or, with `restored` false, file them away again as
+    /// they were (spec 007 US9 scenario 4, FR-116).
+    ///
+    /// Three things, and one undo takes back all three:
+    ///
+    /// - the message moves to its account's inbox, with the server's move
+    ///   queued, as any move is;
+    /// - its decision is marked restored rather than deleted: the store
+    ///   keeps what Focus decided and what the person said of it (SC-012),
+    ///   and undo puts back the very reason it had;
+    /// - its sender joins `[focus.filter] never`, written as an editor saves
+    ///   it, and the filing pass reads the file as written at once.
+    ///
+    /// On the way back a sender is unpinned only when no other restore of
+    /// theirs still stands behind the pin.
+    pub(super) async fn restore(
+        &self,
+        target: &MessageTarget,
+        restored: bool,
+    ) -> Result<Vec<Applied>, CommandError> {
+        let (mut connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, target).await? {
+            Aim::Rows(rows) => rows,
+            Aim::Bulk(_) => {
+                return Err(CommandError::rejected("Select the messages to restore"));
+            }
+        };
+        let mut by_account: BTreeMap<AccountId, Vec<Message>> = BTreeMap::new();
+        for row in rows {
+            by_account.entry(row.account_id).or_default().push(row);
+        }
+        // Where each account's messages go: its inbox, or back to its
+        // archive. Resolved before anything is written, as `relocate` does.
+        let to = if restored {
+            Destination::Role(MailboxRole::Inbox)
+        } else {
+            Destination::Role(MailboxRole::Archive)
+        };
+        let mut destinations = BTreeMap::new();
+        for account in by_account.keys() {
+            destinations.insert(*account, mailbox_for(&connection, *account, to).await?);
+        }
+
+        let now = Utc::now();
+        let mut applied = Vec::new();
+        let mut senders: BTreeSet<String> = BTreeSet::new();
+        for (account, rows) in by_account {
+            let destination = destinations[&account];
+            let mut moved: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
+            let mut ids = Vec::new();
+            let transaction = connection.transaction().await.map_err(store_failure)?;
+            {
+                let decisions = FilterDecisionRepository::new(&transaction);
+                for row in &rows {
+                    if !decisions
+                        .restore(row.id, restored.then_some(now))
+                        .await
+                        .map_err(store_failure)?
+                    {
+                        continue;
+                    }
+                    ids.push(row.id);
+                    senders.extend(row.from.iter().map(EmailAddress::normalized));
+                    if row.mailbox_id != destination {
+                        moved.entry(row.mailbox_id).or_default().push(row.id);
+                    }
+                }
+                if !moved.is_empty() {
+                    postio_storage::actions::relocate(
+                        &transaction,
+                        account,
+                        &moved,
+                        destination,
+                        postio_storage::actions::Relocation::Move,
+                        now,
+                    )
+                    .await
+                    .map_err(store_failure)?;
+                }
+            }
+            transaction.commit().await.map_err(store_failure)?;
+            if ids.is_empty() {
+                continue;
+            }
+            applied.push(Applied {
+                lasts: None,
+                account,
+                kind: if restored {
+                    UndoKind::Restore
+                } else {
+                    UndoKind::Refilter
+                },
+                count: ids.len(),
+                messages: ids.clone(),
+                removed: moved.into_iter().collect(),
+                arrived: Some(destination),
+                reloaded: Vec::new(),
+                changed: Vec::new(),
+                mailboxes_changed: false,
+                inverse: vec![Command::RestoreFiltered {
+                    target: MessageTarget::Messages(ids),
+                    restored: !restored,
+                }],
+            });
+        }
+        if applied.is_empty() {
+            return Err(CommandError::rejected(if restored {
+                "Those messages are not in Filtered"
+            } else {
+                "Those messages were not restored from Filtered"
+            }));
+        }
+
+        if self.focus.is_on() {
+            for sender in senders {
+                if !restored
+                    && FilterDecisionRepository::new(&connection)
+                        .restored_from(&sender)
+                        .await
+                        .map_err(store_failure)?
+                        > 0
+                {
+                    continue;
+                }
+                let written = self
+                    .focus
+                    .write(move |text| {
+                        postio_config::focus_edit::set_never(text, &sender, restored).map_err(
+                            |_| "Postio could not write that sender to config.toml".to_owned(),
+                        )
+                    })
+                    .await;
+                if let Err(reason) = written {
+                    tracing::warn!(%reason, "Focus could not write a restored sender: {reason}");
+                }
+            }
+        }
+        Ok(applied)
     }
 }
 

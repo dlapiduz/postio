@@ -1,10 +1,10 @@
-//! Focus's reminders, as the store keeps them (spec 007 US5, data-model.md
-//! "`reminders`"): what each read of them costs.
+//! What the reads behind Focus's verbs and its due timer cost (spec 007):
+//! reminders, answers waiting out their windows, dismissals and restores.
 //!
-//! The due timer asks for what has come due every five seconds for as long
-//! as Focus runs, the filing pass asks about the conversations a reply
-//! joined, and the surfaced rows are read with Focus's inbox. None of them
-//! may walk the reminders or the mail.
+//! The due timer asks what has come due every five seconds for as long as
+//! Focus runs, the filing pass asks about the conversations a reply joined,
+//! and a verb asks about one sender's mail. None of them may walk a table:
+//! each is asked of the planner here.
 
 use postio_storage::repository::ReminderRepository;
 use postio_storage::test_support;
@@ -50,6 +50,16 @@ async fn counting_a_sender_s_dismissals_walks_no_table() {
     // dismissed in that sender's mail. It is driven from the sender's
     // address, never a walk of the markers or the mail.
     let sql = postio_storage::repository::MarkerRepository::explain_dismissed_from();
+    let walked = scans(sql).await;
+    assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
+}
+
+#[tokio::test]
+async fn asking_whether_a_restore_still_stands_behind_a_pin_walks_no_table() {
+    // FR-116: taking a restore back unpins its sender only when no other
+    // restore of theirs stands. Asked from the sender's address, never a
+    // walk of the decisions or the mail.
+    let sql = postio_storage::repository::FilterDecisionRepository::explain_restored_from();
     let walked = scans(sql).await;
     assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
 }

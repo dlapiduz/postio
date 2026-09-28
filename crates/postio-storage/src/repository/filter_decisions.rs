@@ -143,7 +143,8 @@ impl<'a> FilterDecisionRepository<'a> {
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (message_id) DO UPDATE
                 SET reason = excluded.reason, source = excluded.source,
-                    layer = excluded.layer, decided_at = excluded.decided_at",
+                    layer = excluded.layer, decided_at = excluded.decided_at,
+                    restored_at = NULL",
             vec![
                 turso::Value::Integer(decision.message.get()),
                 turso::Value::Text(decision.reason.as_str().to_owned()),
@@ -159,21 +160,61 @@ impl<'a> FilterDecisionRepository<'a> {
         Ok(())
     }
 
-    /// The decision on `message`: what its Filtered row and the open
-    /// message say about why it is there.
+    /// The decision on `message`, while it stands: what its Filtered row
+    /// and the open message say about why it is there. A decision the
+    /// person took back by restoring the message is not one.
     pub async fn get(&self, message: MessageId) -> Result<Option<FilterDecision>> {
         sql::first(
             self.connection,
             "SELECT message_id, reason, source, layer, decided_at
-               FROM filter_decisions WHERE message_id = ?1",
+               FROM filter_decisions WHERE message_id = ?1 AND restored_at IS NULL",
             [message.get()],
             read_decision,
         )
         .await
     }
 
-    /// Deletes the decision on `message`, as restoring it to the inbox
-    /// (`R`) does, and answers whether there was one.
+    /// Marks the decision on `message` restored at `at`, as `R` does, or
+    /// with `None` makes it stand again, as undo does; answers whether the
+    /// message has a decision that changed. The decision is kept either
+    /// way: a restore is the person's word on it (SC-012).
+    pub async fn restore(&self, message: MessageId, at: Option<DateTime<Utc>>) -> Result<bool> {
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE filter_decisions SET restored_at = ?2
+              WHERE message_id = ?1 AND (restored_at IS NULL) = (?2 IS NOT NULL)",
+            vec![
+                turso::Value::Integer(message.get()),
+                at.map(to_millis)
+                    .map_or(turso::Value::Null, turso::Value::Integer),
+            ],
+        )
+        .await?;
+        Ok(changed > 0)
+    }
+
+    /// How many of `sender`'s messages (an address, as
+    /// `EmailAddress::normalized` spells it) the person restored and has
+    /// not taken back: whether a restore still stands behind the sender's
+    /// `[focus.filter] never` entry. One statement, driven from the
+    /// sender's address.
+    pub async fn restored_from(&self, sender: &str) -> Result<u32> {
+        let count = sql::scalar(self.connection, Self::explain_restored_from(), [sender]).await?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// The SQL [`Self::restored_from`] runs.
+    pub fn explain_restored_from() -> &'static str {
+        "SELECT count(DISTINCT d.message_id)
+           FROM addresses a
+           JOIN recipients r ON r.address_id = a.id AND r.kind = 'from'
+           JOIN filter_decisions d ON d.message_id = r.message_id
+          WHERE a.address_normalized = ?1 AND d.restored_at IS NOT NULL"
+    }
+
+    /// Deletes the decision on `message`, and answers whether there was one:
+    /// what taking back a sweep of the inbox does, since the person never
+    /// saw that decision stand.
     pub async fn delete(&self, message: MessageId) -> Result<bool> {
         let deleted = sql::execute(
             self.connection,

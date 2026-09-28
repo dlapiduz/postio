@@ -2206,7 +2206,7 @@ fn letter() -> String {
 
 /// The folder the message with `subject` is in, by role, and why Focus
 /// filed it there if it did.
-fn filed_where(
+pub(crate) fn filed_where(
     world: &World,
     subject: &str,
 ) -> Option<(
@@ -3214,7 +3214,7 @@ fn focus_mode_announces_no_arrival_it_filtered_or_held() {
 
 /// A message filed in the world's inbox from `from`, an hour ago, threaded
 /// as a sync threads it: what another app's sync leaves behind.
-fn filed_elsewhere(world: &World, from: &str, subject: &str) -> MessageId {
+pub(crate) fn filed_elsewhere(world: &World, from: &str, subject: &str) -> MessageId {
     let inbox = folder(world, postio_model::MailboxRole::Inbox);
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
