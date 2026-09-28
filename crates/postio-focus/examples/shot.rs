@@ -89,6 +89,10 @@ const SCREENS: &[(&str, &str)] = &[
     ("08", "the command bar: in:Rec, a folder listed"),
     ("09", "the command bar: a word, its commands and places"),
     ("10", "the folders popover"),
+    ("11", "the snooze picker at the row"),
+    ("12", "the remind picker at the row"),
+    ("13", "the label picker at the row"),
+    ("14", "the move picker at the row"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -688,6 +692,24 @@ fn stage(
                 return Err("the popover never listed the places".into());
             }
         }
+        "11" | "12" | "13" | "14" => {
+            pick_three();
+            let (command, wanted) = match screen {
+                "11" => (CommandId::Snooze, "Later today"),
+                "12" => (CommandId::RemindIfNoReply, "Tomorrow"),
+                "13" => (CommandId::AddLabel, "Harbor"),
+                _ => (CommandId::Move, "Receipts"),
+            };
+            window.act(command);
+            let Some(picker) = window.open_picker() else {
+                return Err(format!("{command} opened no picker"));
+            };
+            if !settle_until(|| {
+                picker.is_shown() && picker.texts().iter().any(|line| line == wanted)
+            }) {
+                return Err(format!("the picker never listed {wanted:?}"));
+            }
+        }
         "20" => {
             pick_three();
             window.act(CommandId::CheatSheet);
@@ -973,6 +995,11 @@ pub async fn demo() -> (Store, AccountId) {
         )
         .await;
     }
+    // Screen 14: mail was last moved to Receipts.
+    postio_storage::repository::SettingsRepository::new(&connection)
+        .note_move(receipts)
+        .await
+        .expect("a recent move");
     // The command bar searches this machine's index, as sync fills it.
     postio_index::index::ensure_schema(&connection)
         .await

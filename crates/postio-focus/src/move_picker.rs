@@ -156,7 +156,12 @@ impl MovePicker {
             shown.push(folder.id);
         }
         let mut first = true;
-        for folder in folders.iter().filter(|folder| keeps(folder)) {
+        // What Recent lists is not listed again under it (screen 14).
+        let recent_ids: Vec<MailboxId> = recent.iter().map(|folder| folder.id).collect();
+        for folder in folders
+            .iter()
+            .filter(|folder| keeps(folder) && !recent_ids.contains(&folder.id))
+        {
             rows.push(Row {
                 section: first.then(|| "All folders".to_owned()),
                 name: crate::places::place_name(folder),
