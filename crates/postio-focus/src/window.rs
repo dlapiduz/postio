@@ -1343,6 +1343,9 @@ impl FocusWindow {
         match launch {
             Some(launch) => launch(uri),
             None => {
+                // POSTIO-CONSENT: runs only when the person chooses a link or
+                // a part in the open-with chooser (`o`, then a row), one at a
+                // time; nothing opens on render, on arrival or from a setting.
                 gtk::UriLauncher::new(uri).launch(Some(self), None::<&gio::Cancellable>, |_| {})
             }
         }

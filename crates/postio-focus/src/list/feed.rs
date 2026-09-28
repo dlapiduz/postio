@@ -150,6 +150,8 @@ impl Feed {
                     0
                 }
             };
+            // POSTIO-GLIB-SAFE: read_surfaced awaits only a client call, a
+            // oneshot receive (ADR 0041).
             Rc::clone(&inner).read_surfaced().await;
             if inner.paging.borrow().scope() != Some(scope) {
                 // Another place was opened while this one was being counted.
@@ -199,6 +201,8 @@ impl Feed {
                 // it is read again before the pages are.
                 let inner = Rc::clone(&self.inner);
                 glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: read_surfaced awaits only a client
+                    // call, a oneshot receive (ADR 0041).
                     Rc::clone(&inner).read_surfaced().await;
                     inner.list.refresh();
                 });
