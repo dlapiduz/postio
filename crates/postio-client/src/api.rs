@@ -129,6 +129,8 @@ impl Req {
             Req::OrientationSeen => "OrientationSeen",
             Req::RetireOrientation => "RetireOrientation",
             Req::MoveRecent => "MoveRecent",
+            Req::FilteredTabs => "FilteredTabs",
+            Req::Filtered { .. } => "Filtered",
             Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
             Req::StorageCeiling(_) => "StorageCeiling",
@@ -1035,6 +1037,43 @@ impl Client {
             Resp::MoveRecent(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// Each filter reason, as the store spells it, with how many messages
+    /// it keeps filtered: the Filtered view's tabs.
+    pub async fn filtered_tabs(&self) -> Result<Vec<(String, u32)>, StoreError> {
+        self.read(
+            Req::FilteredTabs,
+            "the filtered tabs",
+            |answer| match answer {
+                Resp::FilteredTabs(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `limit` filtered messages from `offset`, newest first, of the reason
+    /// `reason` names or of every reason.
+    pub async fn filtered(
+        &self,
+        reason: Option<String>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<crate::protocol::FilteredRow>, StoreError> {
+        self.read(
+            Req::Filtered {
+                reason,
+                offset,
+                limit,
+            },
+            "filtered mail",
+            |answer| match answer {
+                Resp::Filtered(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 

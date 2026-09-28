@@ -228,6 +228,80 @@ impl<'a> FilterDecisionRepository<'a> {
         Ok(u32::try_from(count.max(0)).unwrap_or(u32::MAX))
     }
 
+    /// Each reason with how many messages it keeps filtered now, in the
+    /// order the Filtered view's tabs list them (screen 21).
+    ///
+    /// One statement, one count a reason, each sought through
+    /// `idx_filter_decisions_reason` to the reason's standing decisions.
+    pub async fn tabs(&self) -> Result<Vec<(FilterReason, u32)>> {
+        let counts: Vec<i64> = sql::first(self.connection, Self::explain_tabs(), (), |row| {
+            (0..FilterReason::ALL.len())
+                .map(|index| row.col(index))
+                .collect::<Result<Vec<i64>>>()
+        })
+        .await?
+        .unwrap_or_default();
+        Ok(FilterReason::ALL
+            .into_iter()
+            .zip(counts.into_iter().chain(std::iter::repeat(0)))
+            .map(|(reason, count)| (reason, u32::try_from(count.max(0)).unwrap_or(u32::MAX)))
+            .collect())
+    }
+
+    /// The SQL [`Self::tabs`] runs.
+    pub fn explain_tabs() -> &'static str {
+        static SQL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        SQL.get_or_init(|| {
+            let counts: Vec<String> = FilterReason::ALL
+                .iter()
+                .map(|reason| {
+                    format!(
+                        "(SELECT count(*) FROM filter_decisions
+                           WHERE reason = '{}' AND restored_at IS NULL)",
+                        reason.as_str()
+                    )
+                })
+                .collect();
+            format!("SELECT {}", counts.join(",\n       "))
+        })
+    }
+
+    /// The standing decisions, newest first -- of `reason` only, when one
+    /// is given -- `limit` of them from `offset`: a page of Filtered.
+    pub async fn filtered(
+        &self,
+        reason: Option<FilterReason>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<FilterDecision>> {
+        let sql = Self::explain_filtered(reason.is_some());
+        let mut arguments = Vec::new();
+        if let Some(reason) = reason {
+            arguments.push(turso::Value::Text(reason.as_str().to_owned()));
+        }
+        arguments.push(turso::Value::Integer(i64::from(limit)));
+        arguments.push(turso::Value::Integer(i64::from(offset)));
+        sql::all(self.connection, &sql, arguments, read_decision).await
+    }
+
+    /// The SQL [`Self::filtered`] runs, for one reason or for all: the
+    /// standing decisions through `idx_filter_decisions_reason` or
+    /// `idx_filter_decisions_standing`, in the index's own order.
+    pub fn explain_filtered(one_reason: bool) -> String {
+        let (reason, limit, offset) = if one_reason {
+            ("reason = ?1 AND ", 2, 3)
+        } else {
+            ("", 1, 2)
+        };
+        format!(
+            "SELECT message_id, reason, source, layer, decided_at
+               FROM filter_decisions
+              WHERE {reason}restored_at IS NULL
+              ORDER BY decided_at DESC
+              LIMIT ?{limit} OFFSET ?{offset}"
+        )
+    }
+
     /// Deletes the decision on `message`, and answers whether there was one:
     /// what taking back a sweep of the inbox does, since the person never
     /// saw that decision stand.

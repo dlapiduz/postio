@@ -871,7 +871,11 @@ CREATE INDEX idx_egress_log_at ON egress_log (at DESC);
 
 CREATE INDEX idx_filter_decisions_decided ON filter_decisions (decided_at);
 
-CREATE INDEX idx_filter_decisions_reason ON filter_decisions (reason, decided_at DESC);
+CREATE INDEX idx_filter_decisions_reason
+    ON filter_decisions (reason, restored_at, decided_at DESC);
+
+CREATE INDEX idx_filter_decisions_standing
+    ON filter_decisions (restored_at, decided_at DESC);
 
 CREATE INDEX idx_identities_account ON identities (account_id, position);
 

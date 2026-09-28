@@ -188,3 +188,118 @@ async fn filtered_today_counts_the_decisions_since_midnight_in_one_statement() {
         "counted through the index on decided_at"
     );
 }
+
+#[tokio::test]
+async fn filtered_mail_is_listed_newest_first_by_reason_and_counted_once() {
+    // Screen 21, US9 scenarios 5 and 7: Filtered lists what is filtered and
+    // not restored, newest first; a tab lists one reason; mail filtered
+    // forty days ago is still there; and the tabs' counts are one
+    // statement. Each read seeks its index and walks no table.
+    use postio_storage::test_support::counting::{counted_async, scans};
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let decisions = FilterDecisionRepository::new(&connection);
+    let mut made = Vec::new();
+    for (reason, decided) in [
+        (FilterReason::Notification, at(9)),
+        (FilterReason::Promotion, at(10)),
+        (FilterReason::Notification, at(11)),
+        (FilterReason::Spam, at(12)),
+        (FilterReason::Receipt, at(8) - chrono::TimeDelta::days(40)),
+        (FilterReason::Social, at(13)),
+    ] {
+        let id = MessageRepository::new(&connection)
+            .create(&mut Message::new(account.id, inbox, decided))
+            .await
+            .expect("a message");
+        decisions
+            .record(&FilterDecision {
+                message: id,
+                reason,
+                source: Some("Forge".to_owned()),
+                layer: FilterLayer::Header,
+                decided_at: decided,
+            })
+            .await
+            .expect("recorded");
+        made.push(id);
+    }
+    // The social one was restored: it is no longer filtered.
+    decisions
+        .restore(made[5], Some(at(14)))
+        .await
+        .expect("restored");
+
+    let _ = decisions.tabs().await.expect("warm");
+    let mut tabs = Vec::new();
+    let counts = counted_async(|| async {
+        tabs = decisions.tabs().await.expect("the tabs");
+    })
+    .await;
+    assert_eq!(
+        tabs,
+        [
+            (FilterReason::Spam, 1),
+            (FilterReason::Promotion, 1),
+            (FilterReason::Notification, 2),
+            (FilterReason::Receipt, 1),
+            (FilterReason::Shipping, 0),
+            (FilterReason::Social, 0),
+        ],
+        "each reason's standing decisions, in the tabs' order"
+    );
+    assert_eq!(counts.statements, 1, "{counts:?}");
+
+    let all: Vec<MessageId> = decisions
+        .filtered(None, 0, 50)
+        .await
+        .expect("all")
+        .iter()
+        .map(|decision| decision.message)
+        .collect();
+    assert_eq!(
+        all,
+        [made[3], made[2], made[1], made[0], made[4]],
+        "newest first, the forty-day-old one still there, the restored one gone"
+    );
+    let mut notifications = Vec::new();
+    let counts = counted_async(|| async {
+        notifications = decisions
+            .filtered(Some(FilterReason::Notification), 0, 50)
+            .await
+            .expect("a tab");
+    })
+    .await;
+    assert_eq!(
+        notifications
+            .iter()
+            .map(|decision| decision.message)
+            .collect::<Vec<_>>(),
+        [made[2], made[0]],
+        "only notifications"
+    );
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    assert_eq!(counts.rows, 2, "it reads what it lists: {counts:?}");
+    for (label, sql) in [
+        (
+            "the tabs",
+            FilterDecisionRepository::explain_tabs().to_owned(),
+        ),
+        ("all", FilterDecisionRepository::explain_filtered(false)),
+        ("a tab", FilterDecisionRepository::explain_filtered(true)),
+    ] {
+        // A SELECT with no FROM of its own "scans" its one constant row.
+        let walks: Vec<String> = scans(&connection, &sql)
+            .await
+            .into_iter()
+            .filter(|step| step != "SCAN CONSTANT ROW")
+            .collect();
+        assert!(
+            walks.is_empty(),
+            "{label} walks a table:\n{}",
+            test_support::plan(&connection, &sql).await
+        );
+    }
+}

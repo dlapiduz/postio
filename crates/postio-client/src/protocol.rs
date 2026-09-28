@@ -52,6 +52,20 @@ pub struct FocusCounts {
     pub filtered_today: u32,
 }
 
+/// One row of Focus's Filtered view (screen 21): the message, why it was
+/// filtered and by whom, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilteredRow {
+    /// The message, as a list row.
+    pub message: postio_model::listing::MessageSummary,
+    /// Why, as the store spells it: "notification".
+    pub reason: String,
+    /// Who it came from, shown after the reason: "Forge".
+    pub source: Option<String>,
+    /// When it was filed away.
+    pub at: chrono::DateTime<chrono::Utc>,
+}
+
 /// The host's name for one connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClientId(pub u64);
@@ -352,6 +366,18 @@ pub enum Req {
     /// Where mail was last moved, newest first: the move picker's Recent
     /// (spec 007 T098).
     MoveRecent,
+    /// Each filter reason with how many messages it keeps filtered: the
+    /// Filtered view's tabs (spec 007 T124).
+    FilteredTabs,
+    /// A page of the Filtered view, newest first.
+    Filtered {
+        /// One reason, as the store spells it, or every reason.
+        reason: Option<String>,
+        /// The first row.
+        offset: u32,
+        /// How many rows.
+        limit: u32,
+    },
     /// Put this folder first in the move picker's Recent.
     NoteMove(MailboxId),
     /// Fetch this message's body ahead of the backfill: a person opened it.
@@ -521,6 +547,10 @@ pub enum Resp {
     Labels(Vec<postio_model::Label>),
     /// Folders, newest first: the move picker's Recent.
     MoveRecent(Vec<MailboxId>),
+    /// Each filter reason with its count, in the tabs' order.
+    FilteredTabs(Vec<(String, u32)>),
+    /// A page of filtered mail.
+    Filtered(Vec<FilteredRow>),
     /// Each label with how many conversations carry it; a label nothing
     /// carries is left out.
     LabelCounts(Vec<(postio_model::LabelId, u32)>),

@@ -28,6 +28,7 @@
 mod body;
 mod catch_up;
 mod due;
+pub(crate) mod filtered;
 mod model;
 pub(crate) mod rules;
 mod summary;

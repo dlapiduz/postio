@@ -1100,6 +1100,16 @@ impl Inner {
             Req::Surfaced => focus::surfaced(self)
                 .await
                 .map_or_else(Resp::Failed, Resp::Surfaced),
+            Req::FilteredTabs => focus::filtered::tabs(self)
+                .await
+                .map_or_else(Resp::Failed, Resp::FilteredTabs),
+            Req::Filtered {
+                reason,
+                offset,
+                limit,
+            } => focus::filtered::page(self, reason, offset, limit)
+                .await
+                .map_or_else(Resp::Failed, Resp::Filtered),
             Req::SweepPreview => match self.wiring.focus.config() {
                 Some(config) => {
                     postio_session::focus::sweep_preview(&self.wiring.database, &config)
