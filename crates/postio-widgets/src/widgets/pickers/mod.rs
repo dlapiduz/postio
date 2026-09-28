@@ -283,6 +283,12 @@ impl Picker {
     pub fn set_rows(&self, rows: Vec<Row>) {
         self.rows.replace(rows);
         self.show_rows();
+        // A popup is sized when it is presented: rows that land after it
+        // opened -- a label picker's, read from the store -- would scroll
+        // inside the height it had when it was empty.
+        if self.popover.is_visible() {
+            self.popover.present();
+        }
     }
 
     /// Open the picker from `parent`, pointing at `rect` in its coordinates
