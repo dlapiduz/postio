@@ -25,6 +25,8 @@ glib = { version = "0.22.9", features = ["v2_72"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.22.9", features = ["v1_56"] }
 postio-body.workspace = true
+# The store's host, asked for everything a presenter shows (ADR 0041).
+postio-client.workspace = true
 postio-config.workspace = true
 # The command registry and keymap the keycaps and action bars read.
 postio-core.workspace = true

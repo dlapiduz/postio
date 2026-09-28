@@ -1,7 +1,9 @@
 //! The small controls both desktop apps draw, built once (ADR 0043).
 //!
 //! A button with its key beside it, a row of them, a one-line notice, the
-//! chips, the key hints and the undo toast. Postio had three or four
+//! chips, the key hints and the undo toast; and the pieces of the account
+//! form, which both apps open: the plate it floats on, its labelled fields,
+//! the segmented control, the callout and the kicker. Postio had three or four
 //! hand-rolled copies of each; copies drift, and only one of the three
 //! keycap implementations read the live keymap, so the other two claimed
 //! keys a rebind had already moved (#1002).
@@ -14,9 +16,15 @@
 pub mod action_bar;
 pub mod button;
 pub mod chip;
+pub mod chrome;
+pub mod field;
 pub mod keycap;
 pub mod keyhint;
+pub mod notes;
 pub mod notice;
+pub mod plate;
+pub mod screen;
+pub mod segmented;
 pub mod toast;
 
 /// The design system's spacing ramp in whole pixels -- `S1` 3px to `S8`
@@ -30,6 +38,11 @@ pub mod space {
 pub use action_bar::{Action, ActionBar};
 pub use button::{Kind, Size, icon_button};
 pub use chip::{chip_button, filter_chip};
+pub use chrome::{kicker, stat_line};
+pub use field::field;
 pub use keycap::KeycapButton;
 pub use keyhint::KeyLine;
+pub use notes::{ListOrEmpty, callout, empty_note};
 pub use notice::{NoticeBar, NoticeMenuItem};
+pub use screen::under_window_chrome;
+pub use segmented::SegmentedControl;

@@ -40,22 +40,19 @@
 use gtk::glib;
 use std::sync::Arc;
 
-use adw::prelude::*;
-use postio_account::discovery::{DiscoveryTransport, PimalayaTransport};
+use postio_account::discovery::DiscoveryTransport;
 use postio_client::Client;
 use postio_core::CommandId;
-use postio_gtk::onboarding::Onboarding;
 use postio_gtk::window::Window;
 
 use crate::Wiring;
 use crate::frontend::Frontend;
-use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
 
 /// Wire [`CommandId::AddAccount`] to the dialogue.
 ///
 /// Through `connect_command` rather than the command bus: the bus answers
 /// verbs over mail, and this one is answered by the composition root, which
-/// is the only place that may build a probe and write an account row.
+/// brings the new account into the window once it is written.
 pub async fn install(window: &Window, wiring: &Wiring) {
     install_for(window, &Frontend::in_process(wiring)).await;
 }
@@ -68,23 +65,12 @@ pub async fn install_for(window: &Window, frontend: &Frontend) {
     window.connect_command({
         let frontend = frontend.clone();
         move |id| {
-            postio_session::blocking::now(async {
-                if id == CommandId::AddAccount {
-                    let Some(window) = weak.upgrade() else {
-                        return;
-                    };
-                    // Built per opening, not once: a transport is cheap, and one
-                    // shared between dialogues would outlive the cancellation
-                    // that is supposed to end its work.
-                    open_for(
-                        &window,
-                        &frontend,
-                        // Discovery probes are outbound connections too (#151).
-                        Arc::new(PimalayaTransport::new().with_egress(frontend.egress.clone())),
-                    )
-                    .await;
-                }
-            })
+            if id == CommandId::AddAccount {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                open_for(&window, &frontend);
+            }
         }
     });
 }
@@ -92,100 +78,49 @@ pub async fn install_for(window: &Window, frontend: &Frontend) {
 /// Opens the add-account dialogue over `window` and hands back the dialogue,
 /// so a caller — and a test — can close it the way the user would.
 ///
-/// `transport` is supplied rather than constructed, for the reason #282 gave
-/// [`crate::onboarding::install`]: a probe that builds its own transport can
-/// only be reached by dialling the network, and no test in the default suite
-/// may.
+/// `transport` is where the dialogue's host looks servers up: supplied
+/// rather than constructed, for the reason #282 gave
+/// [`crate::onboarding::install`] — a probe that builds its own transport
+/// can only be reached by dialling the network, and no test in the default
+/// suite may.
 pub async fn open(
     window: &Window,
     wiring: &Wiring,
     transport: Arc<dyn DiscoveryTransport>,
 ) -> adw::Dialog {
-    // The write, and reading its row back, are the store owner's (ADR 0041),
-    // asked through a client of this dialogue's own over the same wiring.
-    open_for(window, &Frontend::in_process(wiring), transport).await
+    // The probe and the writes are the store owner's (ADR 0041), asked
+    // through a client of this dialogue's own, to a host over the same
+    // wiring.
+    open_for(
+        window,
+        &Frontend::in_process(&wiring.clone().with_discovery(transport)),
+    )
 }
 
-/// [`open`], for a window whose store's owner may be another process.
-pub async fn open_for(
-    window: &Window,
-    frontend: &Frontend,
-    transport: Arc<dyn DiscoveryTransport>,
-) -> adw::Dialog {
-    let screen = Onboarding::new();
-    // A fresh form starts at its first field, which is the name.
-    screen.focus_name();
-
-    let dialog = adw::Dialog::builder()
-        .title("Add account")
-        .content_width(420)
-        .content_height(420)
-        .child(&screen)
-        .build();
-
-    let cancellation = ProbeCancellation::default();
-    // Every way out of the dialogue, including the ones with no button:
-    // `Esc`, the close gesture, and the parent window closing under it.
-    dialog.connect_closed({
-        let cancellation = cancellation.clone();
-        move |_| cancellation.stop()
-    });
-
-    let client = frontend.client.clone();
-
-    let jmap = JmapOfferSlot::default();
-    screen.connect_probe({
-        let screen = screen.clone();
-        let runtime = frontend.runtime.clone();
-        let cancellation = cancellation.clone();
-        let jmap = jmap.clone();
-        move |address| {
-            probe(
-                &screen,
-                &runtime,
-                address,
-                &cancellation,
-                Arc::clone(&transport),
-                jmap.clone(),
-            )
-        }
-    });
-
-    screen.connect_submit({
-        let screen = screen.clone();
-        let runtime = frontend.runtime.clone();
-        let cancellation = cancellation.clone();
-        let on_saved = {
-            let window = window.clone();
+/// [`open`], over `frontend`'s client: its host probes, proves and writes.
+pub fn open_for(window: &Window, frontend: &Frontend) -> adw::Dialog {
+    postio_widgets::present::onboarding::add_account(
+        window,
+        &frontend.client,
+        crate::onboarding::open_with(Arc::new(
+            postio_account::oauth::browser::SystemBrowserOpener,
+        )),
+        {
+            let window = glib::object::ObjectExt::downgrade(window);
             let frontend = frontend.clone();
-            let dialog = dialog.clone();
-            let client = client.clone();
-            move |address: &str| {
-                postio_session::blocking::now(async {
-                    dialog.close();
-                    join(&window, &frontend, &client, address).await;
-                })
+            move |submission| {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                postio_session::blocking::now(join(
+                    &window,
+                    &frontend,
+                    &frontend.client,
+                    &submission.address,
+                ));
             }
-        };
-        move |submission| {
-            // Pressing Connect settles the question the probe was asking,
-            // and the dialogue is on its way out either way.
-            cancellation.stop();
-            let address = submission.address.clone();
-            let on_saved = on_saved.clone();
-            submit(
-                &screen,
-                &runtime,
-                &client,
-                submission.clone(),
-                jmap.borrow().clone(),
-                move || on_saved(&address),
-            )
-        }
-    });
-
-    dialog.present(Some(window));
-    dialog
+        },
+    )
 }
 
 /// Bring the account just written at `address` into the running application.

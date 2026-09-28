@@ -1,66 +1,43 @@
-//! First run: probe, test, and write the account.
+//! First run: the account form as the window's whole content.
 //!
-//! `postio_gtk::onboarding` draws canvas 3e and knows nothing about mail. This
-//! is the other half — the probe, the connection test and the two writes —
-//! and it lives here for the reason everything in this crate lives here: the
-//! view layer may not link `io-imap` or `rusqlite`, and all three need one or
-//! the other.
-//!
-//! # Why not `postio-core`
-//!
-//! Because it cannot be done there, and the bead's own notes record the dead
-//! end in detail: Cargo resolves one feature set per package across the
-//! workspace, so a `default-features = false` edge from `postio-core` to
-//! `postio-account` does not stop `io-imap` reaching `postio-gtk` through it,
-//! and `scripts/checks/check-crate-boundaries.py` fails. That is a real constraint
-//! and it is not worked around here — it is simply the wrong place to have
-//! looked. The composition root already depends on `postio-account` with its
-//! default features, is guarded against nothing, and is where `compose.rs`
-//! and `feed.rs` already join the two halves.
-//!
-//! # The two writes
-//!
-//! An account row, and a credential in the keyring — the same pair
-//! `examples/provision.rs` makes, which is what has been standing in for this
-//! screen. The password goes to the Secret Service and nowhere else: not to
-//! the store, not to `config.toml`, not to a log, and not into any error this
-//! module produces.
+//! `postio_widgets::onboarding` draws canvas 3e and knows nothing about mail;
+//! `postio_widgets::present::onboarding` joins it to the store's host, which
+//! probes, proves and writes (ADR 0041, specs/007-postio-focus T165). What is
+//! left here is the classic app's own: the form replacing an empty window
+//! rather than floating over one, the sync-window step after the account is
+//! saved, and bringing the window up over the new account once it is.
 //!
 //! # Nothing here blocks the UI
 //!
-//! The probe and the connection test are both network work, and both are
-//! spawned on the runtime and answered over a channel the main context
-//! awaits — the same crossing `feed.rs` makes for a page read. The screen
-//! stays live throughout and says which of the two it is waiting on.
+//! The probe and the connection test are network work, done on the host's
+//! runtime and answered over the client; the screen stays live throughout
+//! and says which of the two it is waiting on.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use adw::prelude::*;
-use gtk::glib;
-use postio_account::cancel::CancelToken;
-use postio_account::discovery::{DiscoveryTransport, Probe};
-use postio_client::Client;
+use postio_account::discovery::DiscoveryTransport;
 use postio_core::CommandId;
 use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
-use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Status, Submission};
+use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_model::Account;
 #[cfg(test)]
 use postio_storage::Store;
 #[cfg(test)]
 use postio_storage::repository::AccountRepository;
+use postio_widgets::present::onboarding::Presenter;
 
 use crate::Wiring;
 pub(crate) use postio_session::onboarding::configured;
 #[cfg(test)]
 use postio_session::onboarding::persist;
-use postio_session::onboarding::{
-    SignInError, connection_settings, probe_options, prove, provider_name, run_sign_in, status_for,
-    write_sync_window,
-};
+use postio_session::onboarding::write_sync_window;
+#[cfg(test)]
+use postio_session::onboarding::{connection_settings, probe_options, status_for};
 
 /// Whether this installation has an account yet.
 ///
@@ -82,7 +59,7 @@ pub async fn needed(database: &Store) -> bool {
         .unwrap_or(true)
 }
 
-/// Put the first-run screen in the window and wire it to the network.
+/// Put the first-run screen in the window and wire it to the store's host.
 ///
 /// The screen becomes the window's whole content — there is nothing behind it
 /// to go back to, so an overlay over an empty three-pane shell would be
@@ -99,6 +76,11 @@ pub async fn needed(database: &Store) -> bool {
 /// event queues, not merely feed the panes. Skipping that would leave a
 /// window with mail in it and no key that does anything, the same shape of
 /// bug `postio-bl2` is named for.
+///
+/// `transport` is where the host looks a new address's servers up, and
+/// `opener` how a browser sign-in's consent link is opened: supplied rather
+/// than constructed, so a test drives the same screen over a mock and a
+/// fake browser (#282).
 ///
 /// # `repairing`
 ///
@@ -121,10 +103,11 @@ pub async fn install(
     transport: Arc<dyn DiscoveryTransport>,
     opener: Arc<dyn postio_account::oauth::BrowserOpener>,
 ) {
-    // The writes are the store owner's (ADR 0041). This screen is reached
-    // before any window is fed, so it connects its own client, over the
-    // same wiring.
-    let frontend = crate::frontend::Frontend::in_process(wiring);
+    // The probe and the writes are the store owner's (ADR 0041). This
+    // screen is reached before any window is fed, so it connects its own
+    // client, to a host over the same wiring that looks servers up through
+    // `transport`.
+    let frontend = crate::frontend::Frontend::in_process(&wiring.clone().with_discovery(transport));
     // Once the account is written, the same sequence `run()`'s `activate`
     // handler runs when an account is there from the start.
     let open = {
@@ -136,21 +119,18 @@ pub async fn install(
             ))
         }
     };
-    install_for(window, &frontend, repairing, transport, opener, open).await;
+    install_for(window, &frontend, repairing, opener, open);
 }
 
-/// [`install`], for a window whose store's owner may be another process:
-/// the writes go through `frontend`'s client, and `open` is what brings the
-/// window up over the account once it is written.
-pub async fn install_for(
+/// [`install`], over `frontend`'s client: `open` is what brings the window
+/// up over the account once it is written.
+pub fn install_for(
     window: &Window,
     frontend: &crate::frontend::Frontend,
     repairing: Option<Account>,
-    transport: Arc<dyn DiscoveryTransport>,
     opener: Arc<dyn postio_account::oauth::BrowserOpener>,
     open: impl Fn() + Clone + 'static,
 ) {
-    let client = frontend.client.clone();
     let screen = Onboarding::new();
     let previous = window.content();
     // Under the window's chrome, not instead of it.
@@ -178,73 +158,7 @@ pub async fn install_for(
         None => screen.focus_name(),
     }
 
-    // One per screen, shared by the two closures below: the probe replaces
-    // the token in it, `Connect` clears it.
-    let cancellation = ProbeCancellation::default();
-
-    // The provider's OAuth offer, parked by the probe for the submit to
-    // sign in with — and pre-filled on a repair, where the account row
-    // already recorded the resolved endpoints (#534).
-    let offer: OAuthOfferSlot = Rc::new(RefCell::new(repairing.as_ref().and_then(|account| {
-        account
-            .oauth
-            .as_ref()
-            .map(|oauth| postio_account::discovery::OAuthOffer {
-                issuer: None,
-                authorize: Some(oauth.authorize_url.clone()),
-                token: Some(oauth.token_url.clone()),
-                scopes: oauth.scopes.split_whitespace().map(str::to_owned).collect(),
-                refresh_token_lifetime_days: oauth.refresh_token_lifetime_days,
-            })
-    })));
-    // A repair over a JMAP account proves over JMAP again.
-    let jmap: JmapOfferSlot =
-        Rc::new(RefCell::new(repairing.as_ref().and_then(
-            |account| match &account.backend {
-                postio_model::account::Backend::Jmap { session_url } => {
-                    Some(postio_account::discovery::JmapOffer {
-                        session_url: session_url.clone(),
-                    })
-                }
-                // A Gmail-REST repair re-proves through OAuth like any
-                // other Gmail account; there is no JMAP offer to park.
-                postio_model::account::Backend::Imap | postio_model::account::Backend::Gmail => {
-                    None
-                }
-            },
-        )));
-
-    // The browser wait's own cancel token, wired to the screen's Cancel
-    // button and Esc. Separate from the probe's: cancelling a sign-in must
-    // not kill a probe and vice versa.
-    let sign_in_cancel: Rc<RefCell<Option<CancelToken>>> = Rc::new(RefCell::new(None));
-    screen.connect_cancel_sign_in({
-        let sign_in_cancel = sign_in_cancel.clone();
-        move || {
-            if let Some(cancel) = sign_in_cancel.borrow().as_ref() {
-                cancel.cancel();
-            }
-        }
-    });
-
-    screen.connect_probe({
-        let screen = screen.clone();
-        let runtime = frontend.runtime.clone();
-        let cancellation = cancellation.clone();
-        let offer = offer.clone();
-        let jmap = jmap.clone();
-        move |address| {
-            probe_with_offer(
-                &screen,
-                &runtime,
-                address,
-                &cancellation,
-                Arc::clone(&transport),
-                offer.clone(),
-                jmap.clone(),
-            )
-        }
-    });
+    let presenter = Presenter::drive(&screen, &frontend.client, open_with(opener));
 
     // What finishes the screen for good: swap the window content back and
     // start the application over the new account, the exact sequence
@@ -254,462 +168,50 @@ pub async fn install_for(
     // would show mail and answer no key, which is the shape of bug
     // `postio-bl2` is named for.
     //
-    // Held back from `submit`/`submit_oauth`'s own `on_saved` (below) by
-    // the sync-window step (#876): the account and its credential are
-    // already written by the time that step shows, so `Status::Saved` is
-    // real, but the window this closure swaps to should not appear until
-    // the user has chosen how far back to sync.
+    // Held back from the save itself by the sync-window step (#876): the
+    // account and its credential are already written by the time that step
+    // shows, so `Status::Saved` is real, but the window this closure swaps
+    // to should not appear until the user has chosen how far back to sync.
+    // That is also why the host was asked to wait rather than start the
+    // account's sync on save.
     let finish = {
         let window = window.clone();
-        let previous = previous.clone();
         move || {
             window.set_content(previous.as_ref());
             open();
         }
     };
-    screen.connect_start_sync({
-        let finish = finish.clone();
-        move |window| {
-            if let Err(error) = write_sync_window(window) {
-                tracing::warn!(%error, "could not save the chosen sync window");
-            }
-            finish();
+    screen.connect_start_sync(move |window| {
+        if let Err(error) = write_sync_window(window) {
+            tracing::warn!(%error, "could not save the chosen sync window");
         }
+        finish();
     });
-
-    screen.connect_submit({
-        let screen = screen.clone();
-        let runtime = frontend.runtime.clone();
-        let cancellation = cancellation.clone();
-        // `submit`/`submit_oauth` show the sync-window step and stop —
-        // `finish` runs from `connect_start_sync` above once the user picks
-        // one and presses `Start sync`, not from here.
-        let on_saved = {
-            let screen = screen.clone();
-            move || screen.set_status(Status::SyncWindow)
-        };
-        let offer = offer.clone();
-        let jmap = jmap.clone();
-        let sign_in_cancel = sign_in_cancel.clone();
-        let opener = opener.clone();
-        move |submission| {
-            // Pressing Connect settles the question the probe was asking, and
-            // the screen is on its way out either way. Leaving a discovery
-            // request open past that point is a socket held for an answer
-            // nobody will read.
-            cancellation.stop();
-            if submission.oauth_client.is_some() {
-                let Some(offer) = offer.borrow().clone() else {
-                    screen.set_status(Status::Failed(
-                        "This provider's OAuth settings were not found — probe \
-                         the address again."
-                            .to_owned(),
-                    ));
-                    return;
-                };
-                let cancel = CancelToken::new();
-                *sign_in_cancel.borrow_mut() = Some(cancel.clone());
-                submit_oauth(
-                    &screen,
-                    &runtime,
-                    &client,
-                    submission.clone(),
-                    offer,
-                    cancel,
-                    opener.clone(),
-                    on_saved.clone(),
-                );
-            } else {
-                submit(
-                    &screen,
-                    &runtime,
-                    &client,
-                    submission.clone(),
-                    jmap.borrow().clone(),
-                    on_saved.clone(),
-                )
+    presenter.connect_saved({
+        let screen = screen.downgrade();
+        move |_| {
+            if let Some(screen) = screen.upgrade() {
+                screen.set_status(Status::SyncWindow);
             }
         }
     });
 }
 
-/// The cancel token for the probe currently in flight, if there is one.
-///
-/// #57 gave the transport a token it can actually act on — a cancelled probe
-/// now fails its socket at the next read rather than running on detached.
-/// This is the other half: something has to *do* the cancelling, and before
-/// this the composition root handed `Probe::run` a
-/// `CancelToken::new()` it then dropped on the floor, so no probe in the
-/// shipping application was ever cancellable at all.
-///
-/// `Rc<RefCell<..>>` rather than a plain field: the probe closure and the
-/// submit closure both need it, and both are `'static` closures owned by the
-/// screen.
-#[derive(Clone, Default)]
-pub(crate) struct ProbeCancellation(Rc<RefCell<Option<CancelToken>>>);
-
-impl ProbeCancellation {
-    /// Stops whatever probe is in flight and hands back a token for the new
-    /// one.
-    ///
-    /// The view layer already refuses to start a second probe while
-    /// `Status::is_busy`, so the cancel here is usually a no-op — but that
-    /// guard lives in another crate and answers a question about *what the
-    /// screen says*, which is not the same question as whether a socket is
-    /// open. Two independent reasons to be correct is the right number for
-    /// something whose failure is invisible.
-    pub(crate) fn restart(&self) -> CancelToken {
-        self.stop();
-        let token = CancelToken::new();
-        *self.0.borrow_mut() = Some(token.clone());
-        token
-    }
-
-    /// Stops whatever probe is in flight, if any. Idempotent.
-    pub(crate) fn stop(&self) {
-        if let Some(token) = self.0.borrow_mut().take() {
-            token.cancel();
+/// How the classic app opens a browser sign-in's consent link: through
+/// `opener`, the one the composition root was handed.
+pub(crate) fn open_with(opener: Arc<dyn postio_account::oauth::BrowserOpener>) -> impl Fn(&str) {
+    move |url| {
+        // POSTIO-CONSENT: the consent link of a browser sign-in the person
+        // began by pressing "Sign in with your browser", opened once, when
+        // the host has bound the loopback listener waiting for its redirect.
+        // Never on render and never retried on its own (ADR 0006 Q3).
+        let opened = url
+            .parse::<postio_account::oauth::Url>()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))
+            .and_then(|url| opener.open(&url));
+        if let Err(error) = opened {
+            tracing::warn!(%error, "could not open the sign-in link");
         }
-    }
-}
-
-/// Run the autoconfig probe for `address` and show what it found.
-///
-/// `transport` is supplied rather than constructed. It used to be built right
-/// here, inside the spawned task, which meant the only way to reach this
-/// function was to dial the network — and no test in the default suite may.
-/// The mapping had already been split out into [`status_for`] so *it* could be
-/// tested; everything around it, which is where the wiring lives, stayed
-/// uncovered (#282).
-pub(crate) fn probe(
-    screen: &Onboarding,
-    runtime: &tokio::runtime::Handle,
-    address: &str,
-    cancellation: &ProbeCancellation,
-    transport: Arc<dyn DiscoveryTransport>,
-    jmap: JmapOfferSlot,
-) {
-    probe_with_offer(
-        screen,
-        runtime,
-        address,
-        cancellation,
-        transport,
-        OAuthOfferSlot::default(),
-        jmap,
-    )
-}
-
-/// The OAuth offer the last successful probe carried, shared between the
-/// probe that writes it and the submit that reads it (#534). The screen's
-/// form fields cannot carry it — endpoints and scopes are protocol data
-/// the widget deliberately does not know.
-pub(crate) type OAuthOfferSlot = Rc<RefCell<Option<postio_account::discovery::OAuthOffer>>>;
-
-/// The JMAP offer a preset row advertised (#545, ADR 0018 Q5) — parked at
-/// probe time for the same reason as [`OAuthOfferSlot`]: endpoints are
-/// protocol data the form fields deliberately do not carry. Present only
-/// when the row's preference order puts `jmap` first.
-pub(crate) type JmapOfferSlot = Rc<RefCell<Option<postio_account::discovery::JmapOffer>>>;
-
-/// [`probe`], also parking the discovered OAuth offer in `offer` for the
-/// submit handler to sign in with.
-pub(crate) fn probe_with_offer(
-    screen: &Onboarding,
-    runtime: &tokio::runtime::Handle,
-    address: &str,
-    cancellation: &ProbeCancellation,
-    transport: Arc<dyn DiscoveryTransport>,
-    offer: OAuthOfferSlot,
-    jmap: JmapOfferSlot,
-) {
-    screen.set_status(Status::Probing);
-
-    let (sender, receiver) = async_channel::bounded(1);
-    let email = address.to_owned();
-    let cancel = cancellation.restart();
-    runtime.spawn(async move {
-        let probe = Probe::with_options(transport, probe_options());
-        let answer = probe.run(&email, &cancel).await;
-        let _ = sender.send(answer).await;
-    });
-
-    glib::spawn_future_local({
-        let screen = screen.clone();
-        async move {
-            let Ok(answer) = receiver.recv().await else {
-                // The runtime went away. Rare, and the form still works.
-                screen.set_status(Status::Manual { suggestion: None });
-                return;
-            };
-            match answer {
-                Ok(report) => {
-                    *offer.borrow_mut() = report
-                        .settings()
-                        .and_then(|settings| settings.oauth.clone());
-                    *jmap.borrow_mut() = report.settings().and_then(|settings| {
-                        (settings.backends.first().map(String::as_str) == Some("jmap"))
-                            .then(|| settings.jmap.clone())
-                            .flatten()
-                    });
-                    screen.set_status(status_for(&report));
-                }
-                Err(error) => {
-                    tracing::info!(%error, "autoconfig found nothing");
-                    *offer.borrow_mut() = None;
-                    *jmap.borrow_mut() = None;
-                    screen.set_status(Status::Manual { suggestion: None });
-                }
-            }
-        }
-    });
-}
-
-/// Test the credentials, then write the account and the password, then run
-/// `on_saved` -- what happens next differs by host (#464): the first-run and
-/// startup-repair screen replaces itself with the running application
-/// ([`install`]'s own `on_saved`, built from the same five pieces this
-/// function used to take directly); a credential-update dialog over an
-/// already-running app
-/// ([`crate::settings_credential::install`]) only has to close.
-///
-/// `on_saved` runs once, only after the credential and the account row are
-/// both written -- never on a failed probe or a failed connection test.
-///
-/// The proof runs here, where the person is; the two writes are the store
-/// owner's, asked through `client` (`Client::save_account`).
-pub(crate) fn submit(
-    screen: &Onboarding,
-    runtime: &tokio::runtime::Handle,
-    client: &Client,
-    submission: Submission,
-    jmap: Option<postio_account::discovery::JmapOffer>,
-    on_saved: impl Fn() + 'static,
-) {
-    screen.set_status(Status::Connecting);
-
-    let (sender, receiver) = async_channel::bounded(1);
-    let proving = submission.clone();
-    runtime.spawn(async move {
-        let _ = sender.send(prove(&proving, jmap.as_ref()).await).await;
-    });
-
-    glib::spawn_future_local({
-        let screen = screen.clone();
-        let runtime = runtime.clone();
-        let client = client.clone();
-        async move {
-            let answer = match receiver.recv().await {
-                Ok(answer) => answer,
-                Err(_) => Err("Postio's runtime stopped before the server answered.".to_owned()),
-            };
-            let backend = match answer {
-                Ok(backend) => backend,
-                Err(reason) => {
-                    screen.set_status(Status::Failed(reason));
-                    return;
-                }
-            };
-
-            // Only now, with the credentials known good. Writing either half
-            // first would leave a broken account behind every failed attempt.
-            //
-            // Both writes are one request to the store's owner, asked on the
-            // runtime and answered over a channel — the same crossing the
-            // connection test above makes. See
-            // `postio_session::onboarding::persist` for the order they happen
-            // in and why it is that way round.
-            let (sender, receiver) = async_channel::bounded(1);
-            let written = submission.clone();
-            runtime.spawn(async move {
-                let saved = client.save_account(written, backend).await;
-                let _ = sender
-                    .send(saved.map_err(|error| error.message().to_owned()))
-                    .await;
-            });
-            let stored = receiver.recv().await.unwrap_or_else(|_| {
-                Err("Postio's runtime stopped before the account was saved.".to_owned())
-            });
-            if let Err(reason) = stored {
-                screen.set_status(Status::Failed(reason));
-                return;
-            }
-
-            screen.set_status(Status::Saved);
-            on_saved();
-        }
-    });
-}
-
-/// The browser sign-in, end to end (#534, ADR 0006 Q3): resolve the
-/// endpoints, run [`postio_account::oauth::authorize`] through the system
-/// browser, prove the token against the IMAP server, and only then
-/// persist — the same nothing-stranded order the password path keeps.
-///
-/// Cancellable at every stage: `cancel` is the flow's own token, wired to
-/// the screen's Cancel button and `Esc`. A cancelled attempt returns the
-/// screen to the settings it was showing, because the user changed their
-/// mind — that is not a failure and must not read as one.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn submit_oauth(
-    screen: &Onboarding,
-    runtime: &tokio::runtime::Handle,
-    client: &Client,
-    submission: Submission,
-    offer: postio_account::discovery::OAuthOffer,
-    cancel: CancelToken,
-    opener: Arc<dyn postio_account::oauth::BrowserOpener>,
-    on_saved: impl Fn() + 'static,
-) {
-    let Some(oauth_client) = submission.oauth_client.clone() else {
-        return;
-    };
-    // What the browser is about to be asked to approve, so the screen can
-    // say so rather than showing a spinner (#1179, `Design/screens/23`).
-    // The scopes are known here, from the provider's own preset row; the
-    // consent URL and the loopback port are not known until `authorize`
-    // binds its listener and opens the browser, so they arrive through
-    // `AnnouncingOpener` below, at the moment they become true.
-    let (announce, announced) = async_channel::bounded(1);
-    let opener: Arc<dyn postio_account::oauth::BrowserOpener> = Arc::new(AnnouncingOpener {
-        inner: opener,
-        announce,
-    });
-    screen.set_browser_sign_in(BrowserSignIn {
-        provider: provider_name(&submission.settings),
-        scopes: offer.scopes.clone(),
-        ..BrowserSignIn::default()
-    });
-    screen.set_status(Status::WaitingForBrowser);
-
-    glib::spawn_future_local({
-        let screen = screen.clone();
-        let scopes = offer.scopes.clone();
-        let provider = provider_name(&submission.settings);
-        async move {
-            let Ok(url) = announced.recv().await else {
-                return;
-            };
-            // The redirect the listener actually bound, read back off the
-            // request rather than guessed: `authorize` chose an ephemeral
-            // port, and this is the only place its number appears.
-            let redirect_uri = url
-                .query_pairs()
-                .find(|(key, _)| key == "redirect_uri")
-                .map(|(_, value)| value.into_owned())
-                .unwrap_or_default();
-            screen.set_browser_sign_in(BrowserSignIn {
-                provider,
-                scopes,
-                redirect_uri,
-                authorize_url: url.to_string(),
-            });
-        }
-    });
-
-    let settings = connection_settings(&submission);
-    let (sender, receiver) = async_channel::bounded(1);
-    let flow_cancel = cancel.clone();
-    let scopes = offer.scopes.clone();
-    let refresh_lifetime = offer.refresh_token_lifetime_days;
-    runtime.spawn(async move {
-        let answer = run_sign_in(
-            &settings,
-            &oauth_client,
-            &offer,
-            opener.as_ref(),
-            &flow_cancel,
-        )
-        .await;
-        let _ = sender.send(answer).await;
-    });
-
-    glib::spawn_future_local({
-        let screen = screen.clone();
-        let runtime = runtime.clone();
-        let client = client.clone();
-        async move {
-            let answer = match receiver.recv().await {
-                Ok(answer) => answer,
-                Err(_) => Err(SignInError::Failed(
-                    "Postio's runtime stopped before the sign-in finished.".to_owned(),
-                )),
-            };
-            let (endpoints, tokens) = match answer {
-                Ok(done) => done,
-                Err(SignInError::Cancelled) => {
-                    // The user's own Esc. Back to where they were, quietly.
-                    screen.set_status(Status::Found(submission.settings.clone()));
-                    return;
-                }
-                Err(SignInError::Failed(reason)) => {
-                    screen.set_status(Status::Failed(reason));
-                    return;
-                }
-            };
-
-            // The tokens go to the store's owner, which writes them to the
-            // keyring and the row to the store, in
-            // `postio_session::onboarding::persist_oauth`'s order.
-            let grant = postio_client::protocol::OAuthGrant {
-                submission: submission.clone(),
-                authorize_url: endpoints.authorize.to_string(),
-                token_url: endpoints.token.to_string(),
-                scopes: scopes.clone(),
-                refresh_token_lifetime_days: refresh_lifetime,
-                access_token: tokens.access_token.expose().to_owned(),
-                refresh_token: tokens
-                    .refresh_token
-                    .as_ref()
-                    .map(|token| token.expose().to_owned()),
-                expires_in: tokens.expires_in,
-                token_type: tokens.token_type,
-                scope: tokens.scope,
-            };
-            let (sender, receiver) = async_channel::bounded(1);
-            runtime.spawn(async move {
-                let saved = client.save_oauth_account(grant).await;
-                let _ = sender
-                    .send(saved.map_err(|error| error.message().to_owned()))
-                    .await;
-            });
-            let stored = receiver.recv().await.unwrap_or_else(|_| {
-                Err("Postio's runtime stopped before the account was saved.".to_owned())
-            });
-            if let Err(reason) = stored {
-                screen.set_status(Status::Failed(reason));
-                return;
-            }
-
-            screen.set_status(Status::Saved);
-            on_saved();
-        }
-    });
-}
-
-/// Forwards to the real opener and announces the URL on its way past.
-///
-/// The consent URL and the loopback port it carries are built inside
-/// [`postio_account::oauth::authorize`] and never returned — the only moment
-/// they are visible to anything outside that function is the call to
-/// [`postio_account::oauth::BrowserOpener::open`]. So the screen learns what
-/// it is showing from here rather than from a second construction of the
-/// same URL, which would be a copy that could drift from the one the browser
-/// actually got.
-///
-/// `try_send` on a bounded(1) channel, never `send`: `open` is called on the
-/// runtime and must not be made to wait on a GTK task that may never run —
-/// a screen that has already been closed leaves nobody receiving, and
-/// blocking the sign-in on that would be a hang rather than a missing line.
-struct AnnouncingOpener {
-    inner: Arc<dyn postio_account::oauth::BrowserOpener>,
-    announce: async_channel::Sender<postio_account::oauth::Url>,
-}
-
-impl postio_account::oauth::BrowserOpener for AnnouncingOpener {
-    fn open(&self, url: &postio_account::oauth::Url) -> std::io::Result<()> {
-        let _ = self.announce.try_send(url.clone());
-        self.inner.open(url)
     }
 }
 
@@ -720,67 +222,12 @@ mod tests {
     use postio_account::secret::{AccountKey, SecretStore};
     use postio_gtk::onboarding::Server;
     use postio_gtk::onboarding::Settings;
+    use postio_gtk::onboarding::Submission;
     use postio_model::account::TransportSecurity;
     use postio_session::onboarding::explain;
     use std::time::Duration;
 
     use postio_account::discovery::{DiscoveryReport, ServerSettings, SettingsSource};
-
-    // -- Cancelling the probe that is in flight (#57) ---------------------
-    //
-    // The transport can now act on a cancelled token, and the composition
-    // root used to hand it a `CancelToken::new()` it immediately forgot --
-    // so no probe in the shipping application was cancellable, whatever the
-    // layers underneath could do. These cover the bookkeeping that changed;
-    // the two call sites using it are one line each.
-
-    #[test]
-    fn a_probe_gets_a_live_token() {
-        let cancellation = ProbeCancellation::default();
-        let token = cancellation.restart();
-        assert!(
-            !token.is_cancelled(),
-            "the probe was handed a token that was already spent"
-        );
-    }
-
-    #[test]
-    fn starting_a_probe_stops_the_one_before_it() {
-        let cancellation = ProbeCancellation::default();
-        let first = cancellation.restart();
-        let second = cancellation.restart();
-
-        assert!(first.is_cancelled(), "the earlier probe kept its socket");
-        assert!(!second.is_cancelled(), "the new probe starts live");
-    }
-
-    #[test]
-    fn leaving_the_screen_stops_the_probe() {
-        let cancellation = ProbeCancellation::default();
-        let token = cancellation.restart();
-
-        cancellation.stop();
-
-        assert!(
-            token.is_cancelled(),
-            "pressing Connect left a discovery request open for an answer \
-             nobody will read"
-        );
-    }
-
-    #[test]
-    fn stopping_twice_is_harmless() {
-        // `Connect` can be pressed without a probe ever having run -- typed
-        // address, straight to the password field.
-        let cancellation = ProbeCancellation::default();
-        cancellation.stop();
-        cancellation.stop();
-
-        let token = cancellation.restart();
-        cancellation.stop();
-        cancellation.stop();
-        assert!(token.is_cancelled());
-    }
 
     /// A report from a domain that publishes nothing, with the guess on.
     fn nothing_published(suggestion: Option<AccountSettings>) -> DiscoveryReport {

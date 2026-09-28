@@ -5217,6 +5217,7 @@ dependencies = [
  "libadwaita",
  "pango",
  "postio-body",
+ "postio-client",
  "postio-config",
  "postio-core",
  "postio-model",

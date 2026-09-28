@@ -31,7 +31,7 @@ pub fn under_window_chrome(screen: &impl IsA<gtk::Widget>) -> adw::ToolbarView {
 ///
 /// `window.content()` is the chrome rather than the screen, so reaching the
 /// screen by downcasting the content finds nothing; this is what asks instead.
-pub fn showing_in<T: IsA<gtk::Widget>>(window: &crate::window::Window) -> Option<T> {
+pub fn showing_in<T: IsA<gtk::Widget>>(window: &impl IsA<adw::ApplicationWindow>) -> Option<T> {
     fn search<T: IsA<gtk::Widget>>(widget: &gtk::Widget) -> Option<T> {
         if let Ok(found) = widget.clone().downcast::<T>() {
             return Some(found);
@@ -45,5 +45,8 @@ pub fn showing_in<T: IsA<gtk::Widget>>(window: &crate::window::Window) -> Option
         }
         None
     }
-    window.content().and_then(|content| search(&content))
+    window
+        .as_ref()
+        .content()
+        .and_then(|content| search(&content))
 }

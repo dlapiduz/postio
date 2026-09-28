@@ -10,17 +10,18 @@
 //! # What this widget will not do
 //!
 //! It does not probe, it does not connect, and it does not write anything. It
-//! cannot: `postio-gtk` may not link `io-imap` or `rusqlite`
+//! cannot: `postio-widgets` may not link `io-imap` or the store's engine
 //! (`scripts/checks/check-crate-boundaries.py`), and all three of those need one or
 //! the other. So this is the form and the states, and
 //! [`Onboarding::connect_probe`] / [`Onboarding::connect_submit`] are where
-//! the composition root does the work — the same arrangement
-//! [`crate::composer`] has with `postio-app`'s `compose.rs`.
+//! the work is done: [`crate::present::onboarding`] asks the store's host
+//! for each step through `postio-client`, the arrangement the composer has
+//! with its host.
 //!
 //! That is also why the settings this shows are [`Settings`] and not
 //! `postio_account::discovery::AccountSettings`: a plain shape the view layer
-//! owns, filled in by whoever ran the probe, exactly as [`crate::list::Row`]
-//! stands in for a stored message.
+//! owns, filled in by whoever ran the probe, exactly as a list's row stands
+//! in for a stored message.
 //!
 //! # When the probe runs
 //!
@@ -199,7 +200,7 @@ impl Onboarding {
     /// header lived here. So `window.content()` is the chrome, not the
     /// screen, and everything that used to reach the screen by downcasting
     /// the content asks here instead.
-    pub fn showing_in(window: &crate::window::Window) -> Option<Self> {
+    pub fn showing_in(window: &impl IsA<adw::ApplicationWindow>) -> Option<Self> {
         crate::widgets::screen::showing_in(window)
     }
 
@@ -235,7 +236,6 @@ impl Onboarding {
         self.imp().status.borrow().clone()
     }
 
-    /// Move the screen on.
     /// Tells the screen what the browser has been sent to consent to.
     ///
     /// Called just before [`set_status`](Self::set_status) moves to
@@ -324,6 +324,7 @@ impl Onboarding {
         self.clipboard().set_text(&url);
     }
 
+    /// Move the screen on.
     pub fn set_status(&self, status: Status) {
         let imp = self.imp();
         // Filling the manual fields from a probe is the widget writing its

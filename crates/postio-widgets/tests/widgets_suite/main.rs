@@ -27,6 +27,7 @@ mod harness;
 mod list_contract;
 mod list_model_generic;
 mod present_config;
+mod present_onboarding;
 mod present_reading;
 mod reader_verbs;
 mod support;
@@ -81,6 +82,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "present_config::an_edit_reaches_the_app_and_a_broken_one_keeps_the_last_good_keys",
         present_config::an_edit_reaches_the_app_and_a_broken_one_keeps_the_last_good_keys as fn(),
+    ),
+    (
+        "present_onboarding::the_credential_dialog_reads_the_account_and_saves_through_the_client",
+        present_onboarding::the_credential_dialog_reads_the_account_and_saves_through_the_client
+            as fn(),
     ),
     (
         "present_reading::fetched_images_come_back_under_the_documents_spelling",

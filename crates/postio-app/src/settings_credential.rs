@@ -1,8 +1,8 @@
 //! Updating an account's credential, from the settings panel (#464).
 //!
-//! Reuses `onboarding`'s probe-then-persist machinery — the same form, the
-//! same connection test, the same "credential first, then the row" write
-//! order (`onboarding::submit`, `onboarding::persist`) — because updating a
+//! Reuses the account form's presenter — the same form, the same connection
+//! test, the same "credential first, then the row" write order
+//! (`postio_widgets::present::onboarding`, `onboarding::persist`) — because updating a
 //! credential is exactly what [`postio_gtk::onboarding::Status::Reauthenticate`]
 //! already does when `startup_route` finds a broken one automatically. This
 //! is a second, manual way in, for an account whose credential is not
@@ -20,8 +20,8 @@
 //!
 //! # Why `on_saved` only closes
 //!
-//! `onboarding::submit`'s `on_saved` is what [`crate::onboarding::install`]
-//! uses to run the whole first-run bootstrap once an account is written.
+//! The saved-account hook is what [`crate::onboarding::install`] uses to
+//! run the whole first-run bootstrap once an account is written.
 //! Reauthenticating an account that already has an engine needs none of
 //! that — same account, same connection, only the credential (and whatever
 //! server settings came with it) changed. Closing the dialog and refreshing
@@ -30,15 +30,11 @@
 
 use std::sync::Arc;
 
-use adw::prelude::*;
-use postio_account::discovery::{DiscoveryTransport, PimalayaTransport};
-use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
 
 use crate::Wiring;
 use crate::frontend::Frontend;
-use crate::onboarding::{ProbeCancellation, configured, probe, submit};
 
 /// Opens a dialog over `window` letting the user re-enter `id`'s credential
 /// (and, since the same form carries them, its server settings). Does
@@ -50,89 +46,36 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
 }
 
 /// [`install`], for a window whose store's owner may be another process:
-/// the row and the writes go through `frontend`'s client.
+/// the row, the proof and the writes go through `frontend`'s client.
+///
+/// The dialog is `postio_widgets::present::onboarding::update_credential`,
+/// the one Focus's sign-in banner opens too; what is the classic app's is
+/// refreshing its settings panel once the credential is written.
 pub async fn install_for(window: &Window, frontend: &Frontend, id: AccountId) {
-    let client = frontend.client.clone();
-    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
-    // on its own runtime.
-    let Ok(accounts) = client.accounts().await else {
-        return;
-    };
-    let Some(account) = accounts.into_iter().find(|account| account.id == id) else {
-        return;
-    };
-
-    let screen = Onboarding::new();
-    screen.set_address(&account.address.address);
-    screen.set_status(Status::Reauthenticate(configured(&account)));
-    screen.focus_password();
-
-    let dialog = adw::Dialog::builder()
-        .title("Update credential")
-        .content_width(420)
-        .content_height(420)
-        .child(&screen)
-        .build();
-
-    let cancellation = ProbeCancellation::default();
-    // Walking away from the dialog stops whatever the probe was asking, the
-    // same way it does in `crate::add_account` -- ADR 0012 Q3, which is
-    // about any onboarding host that can be *left* rather than about the
-    // add-account one in particular. Every way out lands here: `Esc`, the
-    // close button, and the parent window going away under it (#57).
-    dialog.connect_closed({
-        let cancellation = cancellation.clone();
-        move |_| cancellation.stop()
-    });
-    let transport: Arc<dyn DiscoveryTransport> =
-        Arc::new(PimalayaTransport::new().with_egress(frontend.egress.clone()));
-
-    let jmap = crate::onboarding::JmapOfferSlot::default();
-    screen.connect_probe({
-        let screen = screen.clone();
-        let runtime = frontend.runtime.clone();
-        let cancellation = cancellation.clone();
-        let jmap = jmap.clone();
-        move |address| {
-            probe(
-                &screen,
-                &runtime,
-                address,
-                &cancellation,
-                Arc::clone(&transport),
-                jmap.clone(),
-            )
+    let on_saved = {
+        let window = gtk::glib::object::ObjectExt::downgrade(window);
+        let frontend = frontend.clone();
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            postio_session::blocking::now(crate::settings_accounts::refresh(
+                &window,
+                &frontend,
+                &frontend.client,
+            ));
         }
-    });
-
-    screen.connect_submit({
-        let screen = screen.clone();
-        let runtime = frontend.runtime.clone();
-        let cancellation = cancellation.clone();
-        let on_saved = {
-            let window = window.clone();
-            let frontend = frontend.clone();
-            let client = client.clone();
-            let dialog = dialog.clone();
-            move || {
-                postio_session::blocking::now(async {
-                    dialog.close();
-                    crate::settings_accounts::refresh(&window, &frontend, &client).await;
-                })
-            }
-        };
-        move |submission| {
-            cancellation.stop();
-            submit(
-                &screen,
-                &runtime,
-                &client,
-                submission.clone(),
-                jmap.borrow().clone(),
-                on_saved.clone(),
-            )
-        }
-    });
-
-    dialog.present(Some(window));
+    };
+    // POSTIO-GLIB-SAFE: reading the account is a client call, a oneshot
+    // receive; the host answers on its own runtime.
+    postio_widgets::present::onboarding::update_credential(
+        window,
+        &frontend.client,
+        |account| account.id == id,
+        crate::onboarding::open_with(Arc::new(
+            postio_account::oauth::browser::SystemBrowserOpener,
+        )),
+        on_saved,
+    )
+    .await;
 }

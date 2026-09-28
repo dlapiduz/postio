@@ -86,7 +86,7 @@ pub mod keymap;
 pub mod list;
 pub mod list_state;
 pub mod list_view;
-pub mod onboarding;
+pub use postio_widgets::onboarding;
 pub mod orientation;
 pub mod palette;
 pub mod parts;
