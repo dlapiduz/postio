@@ -19,5 +19,6 @@
 mod contrast;
 mod keybindings_doc;
 mod keymap_api;
+mod keymap_sheet;
 mod reader_tokens;
 mod tokens;
