@@ -297,7 +297,7 @@ fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
     let builder = actions::wire(
         Dispatcher::builder(),
         Actions::new(wiring.database.clone(), state.clone())
-            .with_blobs(wiring.blobs.clone())
+            .with_blob_store(wiring.blobs.clone())
             .with_focus(wiring.focus.clone()),
     );
     refresh::wire(builder, wiring.engine.clone(), state.clone()).build()

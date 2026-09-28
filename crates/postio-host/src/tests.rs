@@ -86,7 +86,7 @@ impl World {
 
     /// Quit, as a frontend's last window closing stops its host, and launch
     /// again over the same store and blobs: the next session.
-    pub(crate) fn reopen(&mut self) {
+    pub(crate) fn relaunch(&mut self) {
         if let Some(host) = self.host.take() {
             host.close();
         }

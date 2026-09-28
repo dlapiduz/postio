@@ -78,7 +78,6 @@ recount_account                   # crates/postio-storage/src/repository/mailbox
 recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
-remind_presets                    # crates/postio-ui/src/schedule.rs:74 -- spec 007's remind picker (T091, T094) is built after it
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
 reopen                            # crates/postio-account/src/secret.rs:670
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
@@ -94,7 +93,6 @@ set_metered                       # crates/postio-sync/src/backfill.rs:478
 set_name                          # crates/postio-storage/src/repository/contact_groups.rs:66
 set_thread                        # crates/postio-storage/src/repository/messages.rs:1136
 set_user_active                   # crates/postio-sync/src/backfill.rs:483
-snooze_presets                    # crates/postio-ui/src/schedule.rs:59 -- spec 007's snooze picker (T091, T092) is built after it
 suspend                           # crates/postio-sync/src/watch.rs:510
 takes_free_text                   # crates/postio-search/src/query.rs:157
 temporary_directory               # crates/postio-storage/src/blob.rs:145
@@ -102,7 +100,6 @@ text_bytes                        # crates/postio-storage/src/repository/message
 thread_page                       # crates/postio-runtime/src/store/local.rs -- the threaded window under MailStore::list_page; for runtime_suite/thread_store, which measures it on purpose
 timing_out_after_the_payload      # crates/postio-smtp/src/transport.rs:594
 try_next                          # crates/postio-core/src/bridge.rs:328
-unreadable_queries                # crates/postio-ui/src/digest.rs -- spec 007's digest holds (T133) are built after it
 untracked                         # crates/postio-core/src/invocation.rs:155
 vanishing_after_the_payload       # crates/postio-smtp/src/transport.rs:583
 vanishing_at                      # crates/postio-smtp/src/transport.rs:572

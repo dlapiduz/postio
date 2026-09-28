@@ -260,7 +260,7 @@ impl Actions {
     /// The same verbs, reading parts from `blobs`: what answering an
     /// invitation needs of its calendar part (specs/007-postio-focus).
     #[must_use]
-    pub fn with_blobs(mut self, blobs: postio_storage::BlobStore) -> Self {
+    pub fn with_blob_store(mut self, blobs: postio_storage::BlobStore) -> Self {
         self.blobs = Some(blobs);
         self
     }

@@ -1823,7 +1823,7 @@ fn a_first_sync_that_lands_between_ticks_is_not_sorted_at_the_next_open() {
     // A new account's first sync, between two ticks: no filing pass sees it.
     let first_sync =
         crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build passed");
-    world.reopen();
+    world.relaunch();
     world.host().enable_focus(crate::FocusSetup::default());
     sorted_through(&world, first_sync);
 
