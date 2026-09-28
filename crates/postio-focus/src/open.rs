@@ -88,6 +88,13 @@ pub struct OpenMessage {
     messages: Cell<u32>,
     /// The parts of the message on screen, as its row lists them.
     parts: Rc<RefCell<Vec<Attachment>>>,
+    /// The row's marker, and the message it belongs to.
+    marker: RefCell<Option<(MessageId, postio_model::listing::MarkerSummary)>>,
+    /// The card drawn for it, while it is shown.
+    card: RefCell<Option<gtk::Box>>,
+    /// The body on screen, once it has landed: where the marker's sentence
+    /// is looked for.
+    body: Rc<RefCell<Option<MessageBody>>>,
 }
 
 impl OpenMessage {
@@ -244,6 +251,9 @@ impl OpenMessage {
             position: Cell::new(Position { index: 0, total: 0 }),
             messages: Cell::new(1),
             parts: Rc::default(),
+            marker: RefCell::default(),
+            card: RefCell::default(),
+            body: Rc::default(),
         });
 
         let weak = Rc::downgrade(&page);
@@ -279,11 +289,14 @@ impl OpenMessage {
                 }
             }
         });
-        page.reader.connect_rendered({
+        // When the body view has the new snapshot, not when the render was
+        // asked for: the fold line and the highlight are read off it.
+        page.reader.view().connect_rendered({
             let weak = weak.clone();
             move |_| {
                 if let Some(page) = weak.upgrade() {
                     page.show_fold_line();
+                    page.highlight_marker();
                 }
             }
         });
@@ -340,6 +353,8 @@ impl OpenMessage {
         self.at.set(0);
         self.show_position(true);
         self.show_labels(&conversation.labels);
+        self.marker
+            .replace(summary.marker.clone().map(|marker| (message, marker)));
 
         if !self.open.get() {
             self.dialog.present(Some(parent));
@@ -358,7 +373,8 @@ impl OpenMessage {
         self.generation.set(generation);
         // The inline-image source reads this same cell.
         self.shown.set(Some(message));
-        self.reader.set_under_header(None);
+        self.body.replace(None);
+        self.show_marker_card(message);
         self.fold_line.set_visible(false);
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
@@ -437,6 +453,7 @@ impl OpenMessage {
         let reader = self.reader.clone();
         let current = Rc::clone(&self.generation);
         let shown_parts = Rc::clone(&self.parts);
+        let shown_body = Rc::clone(&self.body);
         shown_parts.borrow_mut().clear();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
@@ -482,6 +499,7 @@ impl OpenMessage {
                         &root_type(content_type.as_deref(), &body, &parts),
                         &parts,
                     );
+                    shown_body.replace(Some(body.clone()));
                     reader.render(&body, sender.as_deref());
                     reader.set_encoding_problems(encoding_problems);
                 }
@@ -633,6 +651,128 @@ impl OpenMessage {
             });
         }
         choices
+    }
+
+    /// What the marker card says, piece by piece; empty with no card.
+    pub fn marker_card_said(&self) -> Vec<String> {
+        let Some(card) = self.card.borrow().clone() else {
+            return Vec::new();
+        };
+        let mut said = Vec::new();
+        let mut stack = vec![card.upcast::<gtk::Widget>()];
+        while let Some(widget) = stack.pop() {
+            if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+                said.push(label.text().to_string());
+            }
+            let mut child = widget.last_child();
+            while let Some(next) = child {
+                child = next.prev_sibling();
+                stack.push(next);
+            }
+        }
+        said
+    }
+
+    /// The marker card under the header, for `message` when the marker is
+    /// its (a thread's other messages have none).
+    fn show_marker_card(&self, message: MessageId) {
+        let card = self
+            .marker
+            .borrow()
+            .as_ref()
+            .filter(|(marked, _)| *marked == message)
+            .map(|(_, marker)| self.marker_card(marker));
+        self.reader
+            .set_under_header(card.as_ref().map(|card| card.upcast_ref::<gtk::Widget>()));
+        self.card.replace(card);
+    }
+
+    /// The card for `marker` (contracts/focus-surface.md, 04.5): its kind,
+    /// its date, its sentence, and the actions that answer it with their
+    /// keys -- or what is true instead.
+    fn marker_card(&self, marker: &postio_model::listing::MarkerSummary) -> gtk::Box {
+        let line = postio_ui::focus_row::marker_line(marker, chrono::Utc::now(), &chrono::Local);
+        let card = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        card.add_css_class("focus-marker-card");
+        let chip = gtk::Label::new(Some(line.chip));
+        chip.add_css_class("focus-marker-chip");
+        chip.set_valign(gtk::Align::Center);
+        card.append(&chip);
+        if let Some(date) = &line.date {
+            let date = gtk::Label::new(Some(date));
+            date.add_css_class("focus-marker-date");
+            card.append(&date);
+        }
+        if let Some(quote) = &line.quote {
+            let quote = gtk::Label::new(Some(&format!("\u{201c}{quote}\u{201d}")));
+            quote.add_css_class("focus-marker-quote");
+            quote.set_ellipsize(pango::EllipsizeMode::End);
+            quote.set_xalign(0.0);
+            quote.set_hexpand(true);
+            card.append(&quote);
+        } else {
+            let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            spacer.set_hexpand(true);
+            card.append(&spacer);
+        }
+        if let Some(status) = line.status {
+            let status = gtk::Label::new(Some(status));
+            status.add_css_class("dim-label");
+            card.append(&status);
+        }
+        let keymap = self.keymap.borrow().clone();
+        for (command, words) in line.actions {
+            let button = gtk::Button::new();
+            postio_widgets::widgets::button::style(&button, Kind::Secondary, Size::Regular);
+            button.add_css_class("focus-marker-action");
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+            row.append(&gtk::Label::new(Some(words)));
+            if let Some(key) = hints::key(&keymap, command) {
+                row.append(&keyhint::cap(&key));
+            }
+            button.set_child(Some(&row));
+            let handler = self.handler.borrow().clone();
+            button.connect_clicked(move |_| {
+                if let Some(handler) = &handler {
+                    handler(command);
+                }
+            });
+            card.append(&button);
+        }
+        card
+    }
+
+    /// Highlight the marker's sentence in the body, where it is drawn
+    /// (spec 007 FR-035, research R2): found by its words through
+    /// `TextIndex::locate`, whose offset is chars into the body's own text,
+    /// the text the detector read.
+    fn highlight_marker(&self) {
+        let Some(shown) = self.shown.get() else {
+            return;
+        };
+        let excerpt = self
+            .marker
+            .borrow()
+            .as_ref()
+            .filter(|(marked, _)| *marked == shown)
+            .and_then(|(_, marker)| marker.excerpt.clone());
+        let (Some(excerpt), Some(body), Some(document)) = (
+            excerpt,
+            self.body.borrow().clone(),
+            self.reader.view().document(),
+        ) else {
+            return;
+        };
+        let own = postio_body::own_text(&body);
+        // Where the sentence starts in that text. The first place its words
+        // stand: the marker keeps its span, the listing does not carry it.
+        let offset = own.find(&excerpt).map_or(0, |at| own[..at].chars().count());
+        let range = document.text.locate(postio_render::Excerpt {
+            text: &excerpt,
+            offset,
+            source_len: own.chars().count(),
+        });
+        self.reader.view().set_highlight(range);
     }
 
     /// How many of the conversation's messages `[` and `]` can step

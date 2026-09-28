@@ -33,6 +33,7 @@ mod has_action;
 mod keymap;
 mod list_contract;
 mod marked_rows;
+mod marker_card;
 mod one_keymap;
 mod open_choice;
 mod open_message;
@@ -58,6 +59,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "marker_card::a_marked_message_opens_with_its_card_and_its_sentence_highlighted",
+        marker_card::a_marked_message_opens_with_its_card_and_its_sentence_highlighted as fn(),
+    ),
     (
         "remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for",
         remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for as fn(),

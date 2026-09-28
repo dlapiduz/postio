@@ -331,6 +331,34 @@ banner.focus-banner button {
   font-size: var(--postio-text-meta);
 }
 
+/* The marker card (04.5): under the header card, outlined in the accent --
+   a marker is one of the three things FR-091 gives the accent. */
+.focus-marker-card {
+  margin: var(--postio-space-2) 0;
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border: 1px solid var(--postio-accent);
+  border-radius: var(--postio-radius-md);
+}
+
+.focus-marker-chip {
+  padding: 0 var(--postio-space-1);
+  border: 1px solid var(--postio-accent);
+  border-radius: var(--postio-radius-sm);
+  color: var(--postio-accent);
+  font-weight: bold;
+  font-size: var(--postio-text-meta);
+}
+
+.focus-marker-date {
+  color: var(--postio-accent);
+  font-weight: bold;
+}
+
+.focus-marker-quote {
+  color: var(--postio-accent);
+  font-style: italic;
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

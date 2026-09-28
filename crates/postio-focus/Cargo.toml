@@ -31,6 +31,8 @@ gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.22.9", features = ["v1_56"] }
 # The keyring the store key is read from: this process opens the store.
 postio-account.workspace = true
+# What a marker's sentence is found in: the body's own text (research R2).
+postio-body.workspace = true
 postio-client.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
