@@ -402,10 +402,14 @@ fn slice(membership: Membership, mailbox: &str) -> String {
 /// the has-action filter's rows, as conversations and as messages in none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Marked {
-    /// Conversations with a marker the person has not dismissed.
+    /// Conversations with a marker the person has not dismissed: one per
+    /// row, the copy the row is drawn from.
     pub threads: Vec<ThreadId>,
     /// Messages in no conversation that carry one.
     pub lone: Vec<MessageId>,
+    /// The other copies folded into a row of [`Self::threads`], with their
+    /// accounts: the same conversation received at another address (T168).
+    pub copies: HashMap<ThreadId, Vec<(AccountId, ThreadId)>>,
 }
 
 impl Marked {
@@ -1102,32 +1106,96 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// Each raw row's partners that are in view -- in their own account's
-    /// inbox -- with the key each is drawn at there.
+    /// The rows `counted` -- conversations of a folded list over `inboxes`
+    /// -- are drawn as: each group of copies of one conversation the person
+    /// received at several addresses is one row, by the rule
+    /// [`Self::folded_page`] folds by. Each row's members come newest first,
+    /// as `(account, conversation)`: the first is the one the row is drawn
+    /// from, and an in-view copy that is not in `counted` joins the row too.
     ///
-    /// A partner filed away is not part of what the user is looking at: it
-    /// neither takes the row nor folds into it, and an action on the row does
-    /// not reach it through the group.
-    async fn partners_in_view(
+    /// Five statements with several inboxes -- the conversations, their
+    /// roots, partners by root and by subject, and where they are in view --
+    /// and none with one, where nothing can fold.
+    async fn fold_in_view(
         &self,
         membership: Membership,
         inboxes: &[(AccountId, MailboxId)],
-        raw: &[(AccountId, ThreadListRow)],
-    ) -> Result<HashMap<ThreadId, Vec<Partner>>> {
-        let ids: Vec<ThreadId> = raw.iter().filter_map(|(_, row)| row.id).collect();
+        counted: &[(AccountId, ThreadId)],
+    ) -> Result<Vec<Vec<(AccountId, ThreadId)>>> {
+        if inboxes.len() < 2 || counted.is_empty() {
+            return Ok(counted.iter().map(|member| vec![*member]).collect());
+        }
+        let ids: Vec<ThreadId> = counted.iter().map(|(_, thread)| *thread).collect();
         let threads = self.threads_by_id(&ids).await?;
         let candidates = self.group_partners_for(&threads).await?;
-        let mut wanted: Vec<ThreadId> = candidates
-            .values()
-            .flatten()
-            .map(|partner| partner.id)
+        let mut accounts: HashMap<ThreadId, AccountId> = counted
+            .iter()
+            .map(|(account, thread)| (*thread, *account))
             .collect();
+        for partner in candidates.values().flatten() {
+            accounts.entry(partner.id).or_insert(partner.account_id);
+        }
+        let mut wanted: Vec<ThreadId> = accounts.keys().copied().collect();
         wanted.sort_unstable();
-        wanted.dedup();
-        if wanted.is_empty() {
+        let keys = self.keys_in_view(membership, inboxes, &wanted).await?;
+
+        // Union the copies in view, each conversation first its own root.
+        let mut root: HashMap<ThreadId, ThreadId> = HashMap::new();
+        fn find(root: &mut HashMap<ThreadId, ThreadId>, thread: ThreadId) -> ThreadId {
+            let parent = *root.entry(thread).or_insert(thread);
+            if parent == thread {
+                return thread;
+            }
+            let top = find(root, parent);
+            root.insert(thread, top);
+            top
+        }
+        for thread in &ids {
+            find(&mut root, *thread);
+        }
+        for (thread, partners) in &candidates {
+            for partner in partners {
+                if keys.contains_key(&partner.id) {
+                    let (a, b) = (find(&mut root, *thread), find(&mut root, partner.id));
+                    if a != b {
+                        root.insert(a, b);
+                    }
+                }
+            }
+        }
+        let mut rows: HashMap<ThreadId, Vec<ThreadId>> = HashMap::new();
+        let members: Vec<ThreadId> = root.keys().copied().collect();
+        for thread in members {
+            let top = find(&mut root, thread);
+            rows.entry(top).or_default().push(thread);
+        }
+        let newest = |thread: &ThreadId| keys.get(thread).map(|key| sort_key(*key));
+        let mut folded: Vec<Vec<(AccountId, ThreadId)>> = rows
+            .into_values()
+            .map(|mut members| {
+                members.sort_by_key(|thread| std::cmp::Reverse((newest(thread), thread.get())));
+                members
+                    .into_iter()
+                    .map(|thread| (accounts[&thread], thread))
+                    .collect()
+            })
+            .collect();
+        folded.sort_by_key(|members| std::cmp::Reverse(newest(&members[0].1)));
+        Ok(folded)
+    }
+
+    /// Where each of `wanted` is drawn in view: its newest message in the
+    /// inboxes under `membership`, and nothing for one with no message
+    /// there. One statement, sought through the conversations' own index.
+    async fn keys_in_view(
+        &self,
+        membership: Membership,
+        inboxes: &[(AccountId, MailboxId)],
+        wanted: &[ThreadId],
+    ) -> Result<HashMap<ThreadId, ThreadCursor>> {
+        if wanted.is_empty() || inboxes.is_empty() {
             return Ok(HashMap::new());
         }
-
         let rows: Vec<(i64, i64, i64)> = {
             let mut statement = sql::statement(
                 self.connection,
@@ -1164,6 +1232,37 @@ impl<'a> ThreadRepository<'a> {
                 })
                 .or_insert(key);
         }
+
+        Ok(keys)
+    }
+
+    /// Each raw row's partners that are in view -- in their own account's
+    /// inbox -- with the key each is drawn at there.
+    ///
+    /// A partner filed away is not part of what the user is looking at: it
+    /// neither takes the row nor folds into it, and an action on the row does
+    /// not reach it through the group.
+    async fn partners_in_view(
+        &self,
+        membership: Membership,
+        inboxes: &[(AccountId, MailboxId)],
+        raw: &[(AccountId, ThreadListRow)],
+    ) -> Result<HashMap<ThreadId, Vec<Partner>>> {
+        let ids: Vec<ThreadId> = raw.iter().filter_map(|(_, row)| row.id).collect();
+        let threads = self.threads_by_id(&ids).await?;
+        let candidates = self.group_partners_for(&threads).await?;
+        let mut wanted: Vec<ThreadId> = candidates
+            .values()
+            .flatten()
+            .map(|partner| partner.id)
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        if wanted.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let keys = self.keys_in_view(membership, inboxes, &wanted).await?;
 
         Ok(candidates
             .into_iter()
@@ -1363,10 +1462,32 @@ impl<'a> ThreadRepository<'a> {
         // RfcMessageId can never be anyone's copy, so it counts by row. The
         // badge is the conversation's size wherever it is filed, and the
         // unread count is the inboxes' slice -- a folder row's two rules.
-        let mut members: Vec<i64> = vec![head.get()];
-        members.extend(partners.iter().map(|partner| partner.thread.id.get()));
+        let mut members: Vec<ThreadId> = vec![head];
+        members.extend(partners.iter().map(|partner| partner.thread.id));
+        (row.message_count, row.unread_count) =
+            self.folded_counts(membership, &members, inboxes).await?;
+        for partner in partners {
+            row.has_attachments |= partner.thread.has_attachments;
+            row.is_flagged |= partner.thread.is_flagged;
+            row.first_at = row.first_at.min(partner.thread.first_at);
+        }
+        Ok(row)
+    }
+
+    /// A folded row's two counts over its `members`: distinct messages, not
+    /// distinct rows -- a copy received at two addresses is one message to
+    /// the user, and a message with no RfcMessageId can never be anyone's
+    /// copy, so it counts by row. The badge is the conversation's size
+    /// wherever it is filed, and the unread count is the inboxes' slice --
+    /// a folder row's two rules. One statement.
+    async fn folded_counts(
+        &self,
+        membership: Membership,
+        members: &[ThreadId],
+        inboxes: &[(AccountId, MailboxId)],
+    ) -> Result<(u32, u32)> {
         let first_inbox = members.len() + 1;
-        let (message_count, unread_count): (u32, u32) = sql::one(
+        sql::one(
             self.connection,
             &format!(
                 "SELECT
@@ -1381,20 +1502,12 @@ impl<'a> ThreadRepository<'a> {
             ),
             members
                 .iter()
-                .copied()
+                .map(|thread| thread.get())
                 .chain(inboxes.iter().map(|(_, inbox)| inbox.get()))
                 .collect::<Vec<_>>(),
             |row| Ok((row.col(0)?, row.col(1)?)),
         )
-        .await?;
-        row.message_count = message_count;
-        row.unread_count = unread_count;
-        for partner in partners {
-            row.has_attachments |= partner.thread.has_attachments;
-            row.is_flagged |= partner.thread.is_flagged;
-            row.first_at = row.first_at.min(partner.thread.first_at);
-        }
-        Ok(row)
+        .await
     }
 
     /// One window of Focus's inbox (spec 007): every inbox in the query,
@@ -1704,18 +1817,34 @@ impl<'a> ThreadRepository<'a> {
             return Ok(Marked::default());
         }
         let arguments: Vec<i64> = inboxes.iter().map(|(_, inbox)| inbox.get()).collect();
-        let found: Vec<(Option<i64>, i64)> = sql::all(
+        let found: Vec<(Option<i64>, i64, i64)> = sql::all(
             self.connection,
             &self.explain_focus_marked(inboxes.len()),
             arguments,
-            |row| Ok((row.col(0)?, row.col(1)?)),
+            |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
         )
         .await?;
         let mut marked = Marked::default();
-        for (thread, message) in found {
+        let mut conversations = Vec::new();
+        for (thread, message, account) in found {
             match thread {
-                Some(thread) => marked.threads.push(ThreadId::new(thread)),
+                Some(thread) => {
+                    conversations.push((AccountId::new(account), ThreadId::new(thread)));
+                }
                 None => marked.lone.push(MessageId::new(message)),
+            }
+        }
+        // A conversation received at two addresses is one row of Focus's
+        // inbox, so it is one row here, drawn from the copy the inbox draws
+        // it from, and naming the others (T168).
+        for mut row in self
+            .fold_in_view(Membership::Focus, inboxes, &conversations)
+            .await?
+        {
+            let (_, drawn) = row.remove(0);
+            marked.threads.push(drawn);
+            if !row.is_empty() {
+                marked.copies.insert(drawn, row);
             }
         }
         Ok(marked)
@@ -1724,7 +1853,8 @@ impl<'a> ThreadRepository<'a> {
     /// The SQL [`Self::focus_marked`] runs over `inboxes` inboxes.
     pub fn explain_focus_marked(&self, inboxes: usize) -> String {
         format!(
-            "SELECT DISTINCT m.thread_id, CASE WHEN m.thread_id IS NULL THEN m.id ELSE 0 END
+            "SELECT DISTINCT m.thread_id, CASE WHEN m.thread_id IS NULL THEN m.id ELSE 0 END,
+                    m.account_id
                FROM markers k JOIN messages m ON m.id = k.message_id
               WHERE k.dismissed_at IS NULL AND m.mailbox_id IN ({}) AND {}",
             placeholders(inboxes, 1),
@@ -1740,8 +1870,9 @@ impl<'a> ThreadRepository<'a> {
     /// Three statements, the inbox page's budget: the window, sought through
     /// the marked conversations' own index and sorting only what they hold;
     /// the participants; and the markers. A conversation received at two
-    /// addresses is not folded here: the filter is short, and every copy
-    /// that draws a marker is a row.
+    /// addresses is one row, as it is in the inbox: [`Self::focus_marked`]
+    /// folded its copies, and this names them as the row's members, with
+    /// one statement more for each such row's counts (T168).
     pub async fn focus_marked_page(
         &self,
         inboxes: &[(AccountId, MailboxId)],
@@ -1767,11 +1898,32 @@ impl<'a> ThreadRepository<'a> {
         drop(statement);
         let mut groups: Vec<ThreadGroup> = found
             .into_iter()
-            .map(|(account, row)| ThreadGroup {
-                members: row.id.map(|thread| (account, thread)).into_iter().collect(),
-                row,
+            .map(|(account, row)| {
+                let copies = row
+                    .id
+                    .and_then(|thread| marked.copies.get(&thread))
+                    .cloned()
+                    .unwrap_or_default();
+                ThreadGroup {
+                    members: row
+                        .id
+                        .map(|thread| (account, thread))
+                        .into_iter()
+                        .chain(copies)
+                        .collect(),
+                    row,
+                }
             })
             .collect();
+        // A folded row counts its copies once, as the inbox's does.
+        for ThreadGroup { row, members } in &mut groups {
+            if members.len() > 1 {
+                let threads: Vec<ThreadId> = members.iter().map(|(_, thread)| *thread).collect();
+                (row.message_count, row.unread_count) = self
+                    .folded_counts(Membership::Focus, &threads, inboxes)
+                    .await?;
+            }
+        }
 
         let ids: Vec<ThreadId> = groups.iter().filter_map(|group| group.row.id).collect();
         let mut participants = self.participants_for(&ids).await?;
@@ -1853,24 +2005,61 @@ impl<'a> ThreadRepository<'a> {
     /// messages in none. One statement, sought through each inbox's index.
     ///
     /// With several accounts, a conversation received unread at two
-    /// addresses counts once an inbox, where its row is folded into one:
-    /// the fold's partner search is the page's, and a header count does not
-    /// pay for it.
+    /// addresses is one row, and counts once (T168): the unread
+    /// conversations are read and folded by the page's own partner search,
+    /// five statements more.
     pub async fn focus_unread(&self, inboxes: &[(AccountId, MailboxId)]) -> Result<u32> {
         if inboxes.is_empty() {
             return Ok(0);
         }
-        let count: i64 = sql::one(
+        let arguments: Vec<i64> = inboxes.iter().map(|(_, inbox)| inbox.get()).collect();
+        if inboxes.len() < 2 {
+            let count: i64 = sql::one(
+                self.connection,
+                &self.explain_focus_unread(inboxes.len()),
+                arguments,
+                |row| row.col(0),
+            )
+            .await?;
+            return Ok(count.max(0) as u32);
+        }
+        // Several inboxes: the unread conversations themselves, folded as
+        // the page folds them, so one received unread at two addresses is
+        // the one row it is drawn as (T168).
+        let unread: Vec<(i64, Option<i64>)> = sql::all(
             self.connection,
-            &self.explain_focus_unread(inboxes.len()),
-            inboxes
-                .iter()
-                .map(|(_, inbox)| inbox.get())
-                .collect::<Vec<_>>(),
-            |row| row.col(0),
+            &self.explain_focus_unread_rows(inboxes.len()),
+            arguments,
+            |row| Ok((row.col(0)?, row.col(1)?)),
         )
         .await?;
-        Ok(count.max(0) as u32)
+        let lone = unread.iter().filter(|(_, thread)| thread.is_none()).count();
+        let conversations: Vec<(AccountId, ThreadId)> = unread
+            .iter()
+            .filter_map(|(account, thread)| {
+                thread.map(|thread| (AccountId::new(*account), ThreadId::new(thread)))
+            })
+            .collect();
+        let rows = self
+            .fold_in_view(Membership::Focus, inboxes, &conversations)
+            .await?
+            .len();
+        Ok((lone + rows) as u32)
+    }
+
+    /// The SQL [`Self::focus_unread`] runs over several inboxes: each
+    /// unread conversation once, with its account, and each unread message
+    /// in none.
+    pub fn explain_focus_unread_rows(&self, inboxes: usize) -> String {
+        format!(
+            "SELECT DISTINCT messages.account_id,
+                    messages.thread_id,
+                    CASE WHEN messages.thread_id IS NULL THEN messages.id ELSE 0 END
+               FROM messages
+              WHERE messages.mailbox_id IN ({}) AND messages.seen = 0 AND {}",
+            placeholders(inboxes, 1),
+            Membership::Focus.test("messages.")
+        )
     }
 
     /// The SQL [`Self::focus_unread`] runs over `inboxes` inboxes.

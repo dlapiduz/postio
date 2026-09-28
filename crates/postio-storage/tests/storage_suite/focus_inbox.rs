@@ -1236,3 +1236,110 @@ async fn focus_s_unread_count_is_its_unread_conversations_in_one_statement() {
         test_support::plan(&connection, &sql).await
     );
 }
+
+#[tokio::test]
+async fn a_conversation_in_two_inboxes_counts_once_in_each_figure() {
+    // T168: Focus's inbox folds a conversation received at two addresses
+    // into one row (T161), so its header's figures count it once too: once
+    // unread, and once among the rows with an action, where the has-action
+    // filter draws it as one row naming both copies.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    let (ada, grace) = (inboxes[0], inboxes[1]);
+    let (ada_launch, ada_copy) = file(
+        &connection,
+        ada,
+        11,
+        "<launch@example.net>",
+        &[],
+        "quinn@example.com",
+    )
+    .await;
+    let (grace_launch, grace_copy) = file(
+        &connection,
+        grace,
+        12,
+        "<launch@example.net>",
+        &[],
+        "quinn@example.com",
+    )
+    .await;
+    let markers = MarkerRepository::new(&connection);
+    for message in [ada_launch, grace_launch] {
+        markers
+            .insert(&marker(
+                message,
+                MarkerKind::Question,
+                Some("Can you make the launch?"),
+            ))
+            .await
+            .expect("a question on each copy");
+    }
+    let threads = ThreadRepository::new(&connection);
+    let page = threads
+        .focus_page_at(&focus(&inboxes, 50, None), 0)
+        .await
+        .expect("Focus's inbox");
+    let unread_rows = page
+        .iter()
+        .filter(|group| group.row.unread_count > 0)
+        .count();
+
+    let _ = threads.focus_unread(&inboxes).await.expect("warm");
+    let mut unread = 0;
+    let unread_counts = counted_async(|| async {
+        unread = threads.focus_unread(&inboxes).await.expect("the unread");
+    })
+    .await;
+    assert_eq!(
+        unread as usize, unread_rows,
+        "the unread figure is the rows drawn unread: the launch once"
+    );
+
+    let _ = threads.focus_marked(&inboxes).await.expect("warm");
+    let mut marked = None;
+    let marked_counts = counted_async(|| async {
+        marked = Some(threads.focus_marked(&inboxes).await.expect("the marked"));
+    })
+    .await;
+    let marked = marked.expect("read");
+    let has_action = threads
+        .focus_marked_page(&inboxes, &marked, 0, 50)
+        .await
+        .expect("the has-action page");
+    let launch_rows: Vec<&ThreadGroup> = has_action
+        .iter()
+        .filter(|group| {
+            group.members.contains(&(ada.0, ada_copy))
+                || group.members.contains(&(grace.0, grace_copy))
+        })
+        .collect();
+    assert_eq!(
+        launch_rows.len(),
+        1,
+        "the has-action filter draws the launch once: {has_action:#?}"
+    );
+    let mut members = launch_rows[0].members.clone();
+    members.sort();
+    let mut both = vec![(ada.0, ada_copy), (grace.0, grace_copy)];
+    both.sort();
+    assert_eq!(members, both, "naming both copies, for an action to reach");
+    assert_eq!(
+        marked.len() as usize,
+        has_action.len(),
+        "the has-action figure is the filter's rows"
+    );
+
+    // Counted: the one statement each, and the partner search the inbox
+    // page already pays -- the threads, their roots, partners by root, by
+    // subject, and where those are in view.
+    assert!(
+        unread_counts.statements <= 1 + 5,
+        "folding the unread figure took {unread_counts:?}"
+    );
+    assert!(
+        marked_counts.statements <= 1 + 5,
+        "folding the has-action figure took {marked_counts:?}"
+    );
+}
