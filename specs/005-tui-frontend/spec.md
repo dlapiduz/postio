@@ -357,8 +357,9 @@ first sync.
   carries on the operation queue where it stopped; nothing queued is lost.
 - **SSH with no browser**: every "open" action (link, attachment, OAuth
   consent) degrades to showing the target so the user can act elsewhere.
-- **Suspend and resume** (`Ctrl+Z`, then `fg`), and handing the terminal to
-  `$EDITOR`, restore the screen exactly.
+- **Handing the terminal to `$EDITOR`** restores the screen exactly. There is
+  no suspend: `Ctrl+Z` is undo, as in every Postio app (specs/007-postio-focus).
+  This case used to promise suspend and resume, which was never built.
 
 ## Requirements *(mandatory)*
 

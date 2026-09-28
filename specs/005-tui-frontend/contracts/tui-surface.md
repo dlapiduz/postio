@@ -101,8 +101,11 @@ nothing and every other behaviour is unchanged.
 ## Terminal state
 
 - Raw mode, the alternate screen, mouse capture, bracketed paste and keyboard
-  flags are restored on quit, on panic (a hook), on `Ctrl+Z` (SIGTSTP; re-armed
-  on SIGCONT, with a full redraw) and around `$EDITOR`.
+  flags are restored on quit, on panic (a hook) and around `$EDITOR`.
+- There is no suspend. Raw mode delivers `Ctrl+Z` as a key, and it is undo,
+  as it is in every Postio app (specs/007-postio-focus, contracts/keymap.md).
+  This contract used to say `Ctrl+Z` suspended the terminal (SIGTSTP, re-armed
+  on SIGCONT); that was never built.
 - `$EDITOR` gets a `0600` file in `$XDG_RUNTIME_DIR/postio/`, which is deleted
   when the editor returns.
 
