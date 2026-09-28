@@ -54,8 +54,12 @@ struct Entry {
     /// Where it sorts within its section: a mailbox's role order.
     rank: usize,
     name: String,
-    count: Option<u32>,
+    /// What it says on the right: its count, or "186 today".
+    count: Option<String>,
     go: Option<CommandId>,
+    /// Run this command rather than go to [`Self::destination`]: a place
+    /// that is a view of its own, like Filtered.
+    command: Option<CommandId>,
     destination: Destination,
     /// How it is marked: a mailbox's icon, or a label's colour.
     mark: Mark,
@@ -69,6 +73,9 @@ enum Mark {
     /// A label's dot, in its stored colour if it has one.
     Dot(Option<String>),
 }
+
+/// What a place that is a command asks the window to run.
+type CommandHandler = Rc<dyn Fn(CommandId)>;
 
 /// What going somewhere asks the window to do: the place, and its name.
 type Handler = Rc<dyn Fn(Destination, String)>;
@@ -88,6 +95,11 @@ pub struct Places {
     rows: RefCell<Vec<Option<usize>>>,
     keymap: RefCell<Keymap>,
     handler: RefCell<Option<Handler>>,
+    /// Runs a place that is a command: Filtered.
+    command_handler: RefCell<Option<CommandHandler>>,
+    /// How many were filtered today, while filtering is on: whether the
+    /// popover lists Filtered, and what it says beside it.
+    filtered_today: std::cell::Cell<Option<u32>>,
     me: RefCell<std::rc::Weak<Places>>,
 }
 
@@ -163,6 +175,8 @@ impl Places {
             rows: RefCell::default(),
             keymap: RefCell::new(keymap.clone()),
             handler: RefCell::default(),
+            command_handler: RefCell::default(),
+            filtered_today: std::cell::Cell::new(None),
             me: RefCell::default(),
         });
         places.me.replace(Rc::downgrade(&places));
@@ -199,6 +213,20 @@ impl Places {
     /// Run `handler` with the place a person chooses.
     pub fn connect_go(&self, handler: impl Fn(Destination, String) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
+    }
+
+    /// Run `handler` with the command a place stands for: Filtered's.
+    pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
+        self.command_handler.replace(Some(Rc::new(handler)));
+    }
+
+    /// How many were filtered today, or `None` while filtering is off:
+    /// Filtered is listed among the mailboxes with it (screen 10).
+    pub fn set_filtered_today(&self, count: Option<u32>) {
+        self.filtered_today.set(count);
+        if self.is_open() {
+            self.show();
+        }
     }
 
     /// Read every key the popover shows from `keymap`.
@@ -259,6 +287,13 @@ impl Places {
             return;
         };
         self.popover.popdown();
+        if let Some(command) = entry.command {
+            let handler = self.command_handler.borrow().clone();
+            if let Some(handler) = handler {
+                handler(command);
+            }
+            return;
+        }
         let handler = self.handler.borrow().clone();
         if let Some(handler) = handler {
             handler(entry.destination, entry.name);
@@ -271,10 +306,21 @@ impl Places {
             self.list.remove(&child);
         }
         let wanted = self.entry.text().to_lowercase();
+        let filtered = self.filtered_today.get().map(|count| Entry {
+            section: Section::Mailboxes,
+            rank: role_rank(MailboxRole::Archive) + 1,
+            name: postio_ui::filtered::TITLE.to_owned(),
+            count: Some(postio_ui::filtered::today_short(count)),
+            go: Some(CommandId::GoToFiltered),
+            command: Some(CommandId::GoToFiltered),
+            destination: Destination::Search(String::new()),
+            mark: Mark::Icon("folder-symbolic"),
+        });
         let mut shown: Vec<Entry> = self
             .all
             .borrow()
             .iter()
+            .chain(filtered.iter())
             .filter(|entry| wanted.is_empty() || entry.name.to_lowercase().contains(&wanted))
             .cloned()
             .collect();
@@ -311,8 +357,8 @@ impl Places {
             name.set_xalign(0.0);
             name.set_hexpand(true);
             row.append(&name);
-            if let Some(count) = entry.count {
-                let count = gtk::Label::new(Some(&count.to_string()));
+            if let Some(count) = &entry.count {
+                let count = gtk::Label::new(Some(count));
                 count.add_css_class("dim-label");
                 count.add_css_class("focus-places-count");
                 row.append(&count);
@@ -360,7 +406,8 @@ impl Places {
                         section,
                         rank,
                         name: place_name(&mailbox),
-                        count: Some(mailbox.counts.total),
+                        count: Some(mailbox.counts.total.to_string()),
+                        command: None,
                         go: go_to(mailbox.role),
                         destination: Destination::Mailbox(mailbox.id),
                         mark: Mark::Icon(icon(mailbox.role)),
@@ -374,6 +421,7 @@ impl Places {
                         rank: 0,
                         name: label.name.clone(),
                         count: None,
+                        command: None,
                         go: None,
                         destination: Destination::Label(label.id),
                         mark: Mark::Dot(label.color.clone()),

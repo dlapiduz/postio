@@ -57,6 +57,10 @@ pub struct Chrome {
     has_action_key: gtk::Box,
     showing: gtk::Label,
     filtered_today: gtk::Box,
+    /// "186 filtered today", inside the strip's button to Filtered.
+    filtered_today_label: gtk::Label,
+    filtered_today_key: gtk::Box,
+    filtered_today_button: gtk::Button,
     digest_rules: gtk::Box,
     handler: RefCell<Option<Handler>>,
 }
@@ -202,6 +206,17 @@ impl Chrome {
         let filtered_today = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         filtered_today.add_css_class("focus-filtered-today");
         filtered_today.set_visible(false);
+        // "186 filtered today g f": a way into Filtered (screen 01, T126).
+        let filtered_today_label = gtk::Label::new(None);
+        let filtered_today_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let filtered_today_words = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        filtered_today_words.append(&filtered_today_label);
+        filtered_today_words.append(&filtered_today_key);
+        let filtered_today_button = gtk::Button::new();
+        filtered_today_button.add_css_class("flat");
+        filtered_today_button.add_css_class("focus-filtered-today-button");
+        filtered_today_button.set_child(Some(&filtered_today_words));
+        filtered_today.append(&filtered_today_button);
         let digest_rules = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         digest_rules.add_css_class("focus-digest-rules");
         digest_rules.set_visible(false);
@@ -233,8 +248,19 @@ impl Chrome {
             has_action_key,
             showing,
             filtered_today,
+            filtered_today_label,
+            filtered_today_key,
+            filtered_today_button,
             digest_rules,
             handler: RefCell::default(),
+        });
+        chrome.filtered_today_button.connect_clicked({
+            let chrome = Rc::downgrade(&chrome);
+            move |_| {
+                if let Some(chrome) = chrome.upgrade() {
+                    chrome.run(CommandId::GoToFiltered);
+                }
+            }
         });
         chrome.set_keymap(keymap);
 
@@ -300,6 +326,20 @@ impl Chrome {
         }
         caps_for(&self.place_key, keymap, CommandId::GoToFolders);
         caps_for(&self.has_action_key, keymap, CommandId::ToggleHasAction);
+        caps_for(&self.filtered_today_key, keymap, CommandId::GoToFiltered);
+    }
+
+    /// Say how many were filtered since local midnight, or, with `None` --
+    /// filtering off -- nothing.
+    pub fn set_filtered_today(&self, count: Option<u32>) {
+        match count {
+            Some(count) => {
+                self.filtered_today_label
+                    .set_text(&postio_ui::filtered::today(count));
+                self.filtered_today.set_visible(true);
+            }
+            None => self.filtered_today.set_visible(false),
+        }
     }
 
     /// Name the place the list shows: "Inbox", or a folder.
@@ -356,6 +396,18 @@ impl Chrome {
             .copied()
             .chain(MENU.iter().filter_map(|(_, command)| *command))
             .collect()
+    }
+
+    /// What the strip says was filtered today, while it says anything.
+    pub fn filtered_today_said(&self) -> Option<String> {
+        self.filtered_today
+            .is_visible()
+            .then(|| self.filtered_today_label.text().to_string())
+    }
+
+    /// Press the strip's filtered-today count, as a click does.
+    pub fn press_filtered_today(&self) {
+        self.filtered_today_button.emit_clicked();
     }
 
     /// The counts that wait for their features (FR-018), for the tasks that

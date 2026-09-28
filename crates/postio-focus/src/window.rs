@@ -1285,6 +1285,16 @@ impl FocusWindow {
         let counts = imp.counts.get();
         if let Some(counts) = counts {
             chrome.set_counts(counts.conversations, counts.unread);
+            // Filtering off files nothing new, and says nothing about it.
+            let filtered = imp
+                .focus_config
+                .borrow()
+                .filtering
+                .then_some(counts.filtered_today);
+            chrome.set_filtered_today(filtered);
+            if let Some(places) = imp.places.borrow().as_ref() {
+                places.set_filtered_today(filtered);
+            }
         }
         let has_action = counts.map(|counts| counts.has_action);
         let label = postio_ui::focus_row::has_action_label(has_action);
@@ -1839,9 +1849,22 @@ impl FocusWindow {
                     self,
                     move |destination, name| window.go_to(destination, &name)
                 ));
+                places.connect_command(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.act(command)
+                ));
                 places
             })
             .clone();
+        let filtering = self.imp().focus_config.borrow().filtering;
+        places.set_filtered_today(
+            self.imp()
+                .counts
+                .get()
+                .filter(|_| filtering)
+                .map(|counts| counts.filtered_today),
+        );
         places.open();
     }
 

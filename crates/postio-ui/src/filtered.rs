@@ -60,6 +60,16 @@ pub fn tab_counts(reasons: &[(String, u32)]) -> [u32; 7] {
     counts
 }
 
+/// The header strip's count: "186 filtered today".
+pub fn today(count: u32) -> String {
+    format!("{count} filtered today")
+}
+
+/// The folders popover's count beside Filtered: "186 today".
+pub fn today_short(count: u32) -> String {
+    format!("{count} today")
+}
+
 /// A row's reason pill: "notification · Forge", or the reason alone.
 pub fn pill(reason: &str, source: Option<&str>) -> String {
     match source.map(str::trim).filter(|source| !source.is_empty()) {

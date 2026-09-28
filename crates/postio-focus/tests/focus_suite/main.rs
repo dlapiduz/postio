@@ -119,6 +119,10 @@ const CASES: &[(&str, fn())] = &[
         filtered::g_f_lists_filtered_mail_and_its_number_keys_narrow_it as fn(),
     ),
     (
+        "filtered::the_strip_counts_what_was_filtered_today",
+        filtered::the_strip_counts_what_was_filtered_today as fn(),
+    ),
+    (
         "filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back",
         filtered::r_restores_the_focused_row_and_ctrl_z_takes_it_back as fn(),
     ),

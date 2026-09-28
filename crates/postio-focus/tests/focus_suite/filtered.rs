@@ -175,3 +175,88 @@ pub fn r_restores_the_focused_row_and_ctrl_z_takes_it_back() {
         );
     });
 }
+
+/// T126: the header strip says how many were filtered since local
+/// midnight, with `g f`, and pressing it opens Filtered; the folders
+/// popover lists Filtered with the same count.
+pub fn the_strip_counts_what_was_filtered_today() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        // Filed a minute and two ago, by the real clock: today. And one
+        // forty days ago, which is not.
+        let ago = |minutes: i64| (support::now() - chrono::Utc::now()).num_minutes() + minutes;
+        fixture
+            .filtered(
+                ("Forge", "noreply@forge.test"),
+                "Review requested",
+                "notification",
+                Some("Forge"),
+                ago(1),
+            )
+            .await;
+        fixture
+            .filtered(
+                ("Outdoor Supply", "deals@outdoor.test"),
+                "30% off tents",
+                "promotion",
+                None,
+                ago(2),
+            )
+            .await;
+        fixture
+            .filtered(
+                ("Forge", "noreply@forge.test"),
+                "Old build",
+                "notification",
+                Some("Forge"),
+                40 * 24 * 60,
+            )
+            .await;
+        let (window, _client) = fixture.open().await;
+        let chrome = window.chrome().expect("the strip");
+        assert!(
+            crate::settle_until(async || {
+                chrome.filtered_today_said().as_deref() == Some("2 filtered today")
+            })
+            .await,
+            "the strip does not count today's: {:?}",
+            chrome.filtered_today_said()
+        );
+        let said = support::texts(chrome.strip());
+        assert!(
+            said.iter().any(|text| text == "g f"),
+            "with its key: {said:?}"
+        );
+
+        support::keys(&window, &["g", "o"]);
+        let places = window.places().expect("the folders popover");
+        assert!(
+            crate::settle_until(async || places.names().contains(&"Filtered".to_owned())).await,
+            "the popover lists no Filtered: {:?}",
+            places.names()
+        );
+        places.set_filter("filt");
+        places.activate();
+        assert!(
+            crate::settle_until(async || window.filtered().is_some()).await,
+            "the popover's Filtered row did not open Filtered"
+        );
+        support::press(&window, "Escape", gdk::ModifierType::empty());
+        chrome.press_filtered_today();
+        assert!(
+            crate::settle_until(async || window.filtered().is_some()).await,
+            "pressing the strip's count did not open Filtered"
+        );
+    });
+}
