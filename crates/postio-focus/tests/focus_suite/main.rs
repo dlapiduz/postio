@@ -31,6 +31,7 @@ mod list_contract;
 mod marked_rows;
 mod rows;
 mod selection;
+mod shot;
 mod starts_offline;
 mod support;
 mod undo;
@@ -47,6 +48,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "rows::the_inbox_opens_with_its_first_heading_on_screen",
         rows::the_inbox_opens_with_its_first_heading_on_screen as fn(),
+    ),
+    (
+        "shot::screen_01_is_written_as_a_png",
+        shot::screen_01_is_written_as_a_png as fn(),
+    ),
+    (
+        "shot::an_unknown_screen_writes_nothing_and_says_so",
+        shot::an_unknown_screen_writes_nothing_and_says_so as fn(),
+    ),
+    (
+        "shot::the_demo_inbox_opens_with_its_first_heading_on_screen",
+        shot::the_demo_inbox_opens_with_its_first_heading_on_screen as fn(),
     ),
     (
         "has_action::has_action_narrows_to_the_marked_rows_and_back",
