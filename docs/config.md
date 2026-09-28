@@ -71,6 +71,12 @@ wrote it.
 | `filter` | string | `""` | A per-target override in `EnvFilter` syntax, e.g. `"postio_sync=debug,io_imap=trace"`. Empty means "just use `level`". |
 | `timestamps` | boolean | `true` | Prefix each log line with the time it was emitted. |
 
+## `[focus]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `filtering` | boolean | `true` | Postio Focus files spam and automated updates away as they arrive, each with its reason and one key from restored. `false` stops filing new mail away; what is already filtered stays where it is. |
+
 ## `[keys]`
 
 Overrides a command's binding, keyed by the command id. See the

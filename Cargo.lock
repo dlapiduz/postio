@@ -5066,6 +5066,7 @@ dependencies = [
  "chrono",
  "postio-account",
  "postio-classify",
+ "postio-config",
  "postio-index",
  "postio-model",
  "postio-smtp",

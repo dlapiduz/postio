@@ -79,7 +79,7 @@ pub use change::ConfigChanged;
 pub use compose::{ComposeConfig, SignaturePlacement, patch_compose};
 pub use error::{ConfigError, Result};
 pub use filters::{FilterConfig, patch_filters};
-pub use focus::{DigestRule, Due, DueError, FocusConfig};
+pub use focus::{DigestRule, Due, DueError, FocusConfig, FocusFilter};
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
@@ -166,7 +166,8 @@ pub struct Config {
     /// `[reader]` — how the reading pane draws a message: its zoom.
     #[serde(default)]
     pub reader: ReaderConfig,
-    /// `[focus]` — Focus's own settings: its digest rules (spec 007).
+    /// `[focus]` — Focus's own settings: filtering, the senders it never
+    /// files away, and its digest rules (spec 007).
     #[serde(default)]
     pub focus: FocusConfig,
     /// Top-level keys this version of Postio does not know.

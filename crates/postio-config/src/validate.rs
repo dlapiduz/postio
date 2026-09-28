@@ -224,6 +224,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_sync(config, &map, errors);
         check_filters(config, &map, errors);
         check_mailboxes(config, &map, errors);
+        check_never(config, &map, errors);
         check_digests(config, &map, errors);
     }
     config
@@ -543,6 +544,27 @@ fn check_filters(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationEr
                 format!("filters.{name}.query"),
                 false,
                 format!("filter `{name}` has an empty query"),
+            );
+        }
+    }
+}
+
+/// `[focus.filter] never` (spec 007 T123, contracts/config.md): an entry
+/// that is neither an address nor a whole domain, by its place and never by
+/// what it says -- it is somebody's address, or meant to be.
+fn check_never(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    for (place, entry) in config.focus.filter.never.iter().enumerate() {
+        if crate::focus::never_entry(entry).is_none() {
+            push(
+                errors,
+                map,
+                format!("focus.filter.never[{place}]"),
+                true,
+                format!(
+                    "entry {} of `[focus.filter] never` is neither an address nor a whole \
+                     domain such as `@example.org`, so it pins nobody",
+                    place + 1
+                ),
             );
         }
     }

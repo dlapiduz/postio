@@ -23,6 +23,9 @@ postio-account = { version = "0.4.2", path = "../postio-account", default-featur
 # classifier sends nothing and reaches nothing: its boundary rule keeps this
 # crate, and everything that sends, out of its graph.
 postio-classify.workspace = true
+# `[focus]`: whether Focus files mail away at all, and the senders it never
+# does (spec 007 FR-119, FR-111), which the pass reads as it is built.
+postio-config.workspace = true
 # The search index's body column. A body is only ever indexable at the moment
 # it lands, and this crate is where it lands -- see `fetch_body` (#327).
 postio-index.workspace = true

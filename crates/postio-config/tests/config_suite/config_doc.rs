@@ -197,6 +197,15 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Prefix each log line with the time it was emitted.",
     },
+    // ── [focus] ───────────────────────────────────────────────────────
+    Entry {
+        path: "focus.filtering",
+        kind: "boolean",
+        default: "true",
+        description: "Postio Focus files spam and automated updates away as they arrive, each \
+                       with its reason and one key from restored. `false` stops filing new \
+                       mail away; what is already filtered stays where it is.",
+    },
 ];
 
 /// A `Config` built so every documented key actually serialises, for the

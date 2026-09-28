@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use postio_classify::{Facts, Layer, Outcome, ReasonKind, Rules, Senders};
+use postio_config::{FocusConfig, FocusFilter};
 use postio_model::{AccountId, EmailAddress, MailboxId, MailboxRole, MessageId};
 use postio_storage::Connection;
 use postio_storage::actions::{self, Relocation};
@@ -80,19 +81,43 @@ impl Rules for Shipped {
 #[derive(Debug, Clone)]
 pub struct FocusFiling {
     classifier: Arc<dyn Classifier>,
+    /// `[focus] filtering`: whether mail is filed away at all (FR-119).
+    filtering: bool,
+    /// `[focus.filter]`: the senders never filed away (FR-111, FR-116).
+    filter: FocusFilter,
 }
 
 impl Default for FocusFiling {
-    /// Focus's own: the built-in classifier.
+    /// Focus's own: the built-in classifier, with `[focus]` as it is when
+    /// nothing is written -- filtering on, nobody pinned.
     fn default() -> Self {
         FocusFiling::with_classifier(Arc::new(BuiltIn))
     }
 }
 
 impl FocusFiling {
-    /// A pass that decides with `classifier`.
+    /// A pass that decides with `classifier`, with `[focus]` at its
+    /// defaults.
     pub fn with_classifier(classifier: Arc<dyn Classifier>) -> Self {
-        FocusFiling { classifier }
+        FocusFiling {
+            classifier,
+            filtering: true,
+            filter: FocusFilter::default(),
+        }
+    }
+
+    /// This pass, doing what `config` says of filtering: whether to file
+    /// anything away, and whom never to.
+    pub fn configured(mut self, config: &FocusConfig) -> Self {
+        self.filtering = config.filtering;
+        self.filter = config.filter.clone();
+        self
+    }
+
+    /// Whether `outcome` asks this pass to do anything: a reason to file
+    /// the message away, while filtering is on.
+    fn acts(&self, outcome: &Outcome) -> bool {
+        self.filtering && outcome.filter.is_some()
     }
 
     /// The SQL of every read the pass can issue, so a test can ask the
@@ -117,13 +142,13 @@ impl FocusFiling {
         filed: &FiledMessage<'_>,
         own: &mut Option<Arc<BTreeSet<String>>>,
     ) -> Result<Outcome, SyncError> {
-        let never = |_: &EmailAddress| false;
+        let never = |address: &EmailAddress| self.filter.never_filters(address);
         let senders = &filed.message.from;
         let mut known = Known::new(senders, filed.thread, &never);
         // Nothing acts while every unread guard says "no": then nothing
         // acts at all, and there is nothing to read (`super::facts`).
         let optimistic = self.classifier.at_filing(filed, known.assuming(false));
-        if !acts(&optimistic) {
+        if !self.acts(&optimistic) {
             return Ok(optimistic);
         }
         // Asked again, with doubt for what is unread, until it asks nothing
@@ -151,11 +176,6 @@ impl FocusFiling {
             }
         }
     }
-}
-
-/// Whether `outcome` asks the pass to do anything.
-fn acts(outcome: &Outcome) -> bool {
-    outcome.filter.is_some()
 }
 
 /// The domains the person sends from, lowercased: every account's address
@@ -199,7 +219,7 @@ impl FilingPass for FocusFiling {
 
         for message in filed {
             let outcome = self.decide(transaction, message, &mut own).await?;
-            let Some(reason) = outcome.filter else {
+            let Some(reason) = outcome.filter.filter(|_| self.filtering) else {
                 continue;
             };
             let account = message.message.account_id;

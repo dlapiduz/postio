@@ -663,3 +663,46 @@ fn a_rule_that_fails_is_not_applied_and_the_others_still_are() {
         .collect();
     assert_eq!(names, ["Newsletters", "School"]);
 }
+
+// --------------------------------------------------- [focus.filter] never --
+//
+// Spec 007 T123, contracts/config.md: an entry is an address or a whole
+// domain (`@example.org`). One that is neither is reported by its place,
+// never by what it says, and it pins nobody.
+
+#[test]
+fn never_entries_that_are_addresses_or_domains_are_valid() {
+    let checked = check(
+        "[focus.filter]\nnever = [\"pinned@example.org\", \"@example.net\", \"Ada@Example.COM\"]\n",
+    );
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+}
+
+#[test]
+fn a_never_entry_that_is_neither_an_address_nor_a_domain_is_reported_by_its_place() {
+    for (entry, why) in [
+        ("pinned", "no domain"),
+        ("@", "an at sign and nothing after"),
+        ("pinned@", "no domain after the at sign"),
+        ("two@at@example.org", "two at signs"),
+        ("   ", "blank"),
+        ("pinned @example.org", "a space inside"),
+    ] {
+        let text = format!("[focus.filter]\nnever = [\"ada@example.com\", \"{entry}\"]\n");
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{why}: {found:?}");
+        let (path, message) = &found[0];
+        assert_eq!(path, "focus.filter.never[1]", "{why}");
+        // A lone `@` is in the message's own example; anything longer the
+        // message has no business repeating.
+        assert!(
+            entry.trim().len() < 2 || !message.contains(entry.trim()),
+            "{why}: the message repeats the entry: {message}"
+        );
+        assert!(message.contains('2'), "{why}: the second entry: {message}");
+    }
+}

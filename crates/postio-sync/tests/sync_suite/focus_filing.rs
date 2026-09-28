@@ -403,3 +403,57 @@ async fn the_pass_reads_at_most_four_statements_per_arrival_and_scans_no_mail() 
         );
     }
 }
+
+// --- `[focus] filtering` and `[focus.filter] never` (T123) -------------------------
+
+fn configured(toml: &str) -> FocusFiling {
+    let config = postio_config::Config::from_toml_str(toml).expect("a config");
+    pass().configured(&config.focus)
+}
+
+#[tokio::test]
+async fn with_filtering_off_nothing_new_is_filed_away() {
+    // FR-119: `filtering = false` stops filing new mail into Filtered.
+    let world = world(true).await;
+    world
+        .deliver(mail(1, "Forge <notifications@forge.example>", ""))
+        .await;
+
+    world
+        .pass(&configured("[focus]\nfiltering = false\n"))
+        .await;
+
+    let (mailbox, decision) = world.where_is("Arrival 1").await;
+    assert_eq!(mailbox.id, world.inbox.id, "it stayed in the inbox");
+    assert_eq!(decision, None);
+}
+
+#[tokio::test]
+async fn a_sender_the_user_never_filters_is_not_filtered() {
+    // FR-111, FR-116: a pinned sender, or one restored from Filtered, by
+    // address or by a whole domain.
+    let world = world(true).await;
+    world
+        .deliver(mail(1, "Forge <notifications@forge.example>", ""))
+        .await;
+    world
+        .deliver(mail(2, "Weekly <digest@lists.example.net>", ""))
+        .await;
+    world
+        .deliver(mail(3, "Stranger <alerts@elsewhere.example>", ""))
+        .await;
+
+    world
+        .pass(&configured(
+            "[focus.filter]\nnever = [\"Notifications@Forge.example\", \"@lists.example.net\"]\n",
+        ))
+        .await;
+
+    for subject in ["Arrival 1", "Arrival 2"] {
+        let (mailbox, decision) = world.where_is(subject).await;
+        assert_eq!(mailbox.id, world.inbox.id, "{subject} left the inbox");
+        assert_eq!(decision, None, "{subject}");
+    }
+    let (_, decision) = world.where_is("Arrival 3").await;
+    assert!(decision.is_some(), "and a sender nobody pinned is filed");
+}

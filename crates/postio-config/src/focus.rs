@@ -1,8 +1,12 @@
 //! `[focus]` -- Focus's own settings (spec 007 FR-160, contracts/config.md).
 //!
-//! Only the digest rules so far:
-//!
 //! ```toml
+//! [focus]
+//! filtering = true        # FR-119: file spam and updates away as they arrive
+//!
+//! [focus.filter]
+//! never = ["ada@example.org", "@example.net"]   # never filtered (FR-111, FR-116)
+//!
 //! [[focus.digests]]
 //! name    = "Newsletters"
 //! match   = ["from:news@localfirst.example", "from:editor@ledger.example"]
@@ -23,19 +27,102 @@
 use std::fmt;
 
 use chrono::{NaiveTime, Weekday};
+use postio_model::EmailAddress;
 use serde::{Deserialize, Serialize};
 
 use crate::Extras;
 
 /// The `[focus]` section.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FocusConfig {
+    /// Whether Focus files spam and automated updates away as they arrive
+    /// (FR-119). On when Focus first opens. `false` stops filing new mail
+    /// into Filtered; what is already there stays where it is.
+    #[serde(default = "crate::yes")]
+    pub filtering: bool,
+    /// `[focus.filter]`: the user's own word on filtering.
+    #[serde(default, skip_serializing_if = "FocusFilter::is_empty")]
+    pub filter: FocusFilter,
     /// `[[focus.digests]]`, in the file's order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub digests: Vec<DigestRule>,
     /// Keys in `[focus]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
+}
+
+impl Default for FocusConfig {
+    fn default() -> Self {
+        FocusConfig {
+            filtering: true,
+            filter: FocusFilter::default(),
+            digests: Vec::new(),
+            extras: Extras::default(),
+        }
+    }
+}
+
+/// `[focus.filter]`: what the user has told Focus about filtering.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct FocusFilter {
+    /// Senders Focus never files away: pinned (FR-111), or restored from
+    /// Filtered with `R` (FR-116). Each entry is an address
+    /// (`ada@example.org`) or a whole domain (`@example.org`); one that is
+    /// neither is reported by validation and pins nobody.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub never: Vec<String>,
+    /// Keys in `[focus.filter]` this version of Postio does not know.
+    #[serde(flatten)]
+    pub extras: Extras,
+}
+
+impl FocusFilter {
+    /// Nothing in the section: it is not written back.
+    pub fn is_empty(&self) -> bool {
+        self.never.is_empty() && self.extras.is_empty()
+    }
+
+    /// Whether `address` is a sender Focus never files away: named by an
+    /// entry, in any case, or at a domain an entry names whole -- that
+    /// domain only, not the ones under it.
+    pub fn never_filters(&self, address: &EmailAddress) -> bool {
+        let Some((_, domain)) = address.address.rsplit_once('@') else {
+            return false;
+        };
+        self.never.iter().any(|entry| match never_entry(entry) {
+            Some(NeverEntry::Address(pinned)) => pinned.eq_ignore_ascii_case(&address.address),
+            Some(NeverEntry::Domain(pinned)) => pinned.eq_ignore_ascii_case(domain),
+            None => false,
+        })
+    }
+}
+
+/// What a `[focus.filter] never` entry names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NeverEntry<'a> {
+    /// One address.
+    Address(&'a str),
+    /// Every address at a domain.
+    Domain(&'a str),
+}
+
+/// What `entry` names, or `None` when it is neither an address nor a whole
+/// domain: an `@` with something on each side of it, or one at the start
+/// with a domain after it, and no space or second `@` anywhere.
+pub(crate) fn never_entry(entry: &str) -> Option<NeverEntry<'_>> {
+    let entry = entry.trim();
+    if entry.chars().any(char::is_whitespace) || entry.matches('@').count() != 1 {
+        return None;
+    }
+    let (local, domain) = entry.split_once('@')?;
+    if domain.is_empty() {
+        return None;
+    }
+    Some(if local.is_empty() {
+        NeverEntry::Domain(domain)
+    } else {
+        NeverEntry::Address(entry)
+    })
 }
 
 /// One `[[focus.digests]]` rule, as written: a digest by sender, and later

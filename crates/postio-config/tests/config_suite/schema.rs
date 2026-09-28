@@ -459,3 +459,59 @@ at      = "09:00"
         })
     );
 }
+
+/// Spec 007 T123: `[focus] filtering` is on unless the file turns it off
+/// (FR-119), and `[focus.filter] never` lists the senders Focus never files
+/// away: an address, or a whole domain (contracts/config.md).
+#[test]
+fn focus_filtering_is_on_unless_turned_off() {
+    let config = postio_config::Config::from_toml_str("").expect("parse");
+    assert!(config.focus.filtering, "on when Focus first opens");
+    assert!(config.focus.filter.never.is_empty());
+
+    let config = postio_config::Config::from_toml_str(
+        r#"[focus]
+filtering = false
+
+[focus.filter]
+never = ["pinned@example.org", "@example.net"]
+"#,
+    )
+    .expect("parse");
+    assert!(!config.focus.filtering);
+    assert_eq!(
+        config.focus.filter.never,
+        ["pinned@example.org", "@example.net"]
+    );
+}
+
+/// Which senders `[focus.filter] never` covers: an address, in any case,
+/// and every address at a domain named whole -- that domain only, not the
+/// ones under it. An entry that is neither pins nobody.
+#[test]
+fn a_never_entry_names_an_address_or_a_whole_domain() {
+    let config = postio_config::Config::from_toml_str(
+        r#"[focus.filter]
+never = ["Pinned@Example.org", "@lists.example.net", "not an address"]
+"#,
+    )
+    .expect("parse");
+    let never = |address: &str| {
+        config
+            .focus
+            .filter
+            .never_filters(&postio_model::EmailAddress::new(None::<&str>, address))
+    };
+
+    assert!(never("pinned@example.org"));
+    assert!(never("PINNED@EXAMPLE.ORG"));
+    assert!(!never("other@example.org"));
+    assert!(never("news@lists.example.net"));
+    assert!(never("News@LISTS.example.NET"));
+    assert!(
+        !never("news@example.net"),
+        "the domain named, not its parent"
+    );
+    assert!(!never("news@a.lists.example.net"), "nor one under it");
+    assert!(!never("not an address"));
+}
