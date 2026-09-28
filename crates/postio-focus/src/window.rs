@@ -404,6 +404,7 @@ impl FocusWindow {
                 self.move_cursor(-1);
                 self.open_message();
             }
+            Ok(CommandId::ViewSource) => self.view_source(),
             Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
             Ok(CommandId::NextInConversation) => reading.step_thread(1),
             _ => return glib::Propagation::Proceed,
@@ -450,6 +451,7 @@ impl FocusWindow {
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
             CommandId::OpenMessage => self.open_message(),
+            CommandId::ViewSource => self.view_source(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -1160,6 +1162,43 @@ impl FocusWindow {
             total: pane.feed().list().n_items(),
         };
         reading.show(self, &row, position);
+    }
+
+    /// The raw source on screen, while it is shown.
+    pub fn source_shown(&self) -> Option<String> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == crate::source::DIALOG_NAME)
+            .and_then(|dialog| crate::source::shown(&dialog))
+    }
+
+    /// `v`: the raw source of the message open, or else of the row under
+    /// the cursor, read through the host and fetched only now if it is not
+    /// here (US2 scenario 5).
+    fn view_source(&self) {
+        let message = self
+            .reading()
+            .filter(|reading| reading.is_open())
+            .and_then(|reading| reading.shown())
+            .or_else(|| self.cursor_row().map(|row| row.id()));
+        let (Some(message), Some(client)) = (message, self.imp().client.borrow().clone()) else {
+            return;
+        };
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let read = client.raw_source(message).await;
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            match read {
+                Ok(raw) => crate::source::dialog(&raw, &window.keymap()).present(Some(&window)),
+                Err(error) => {
+                    window.imp().toast.show_notice(&error.to_string());
+                    window.follow_toast();
+                }
+            }
+        });
     }
 
     /// The open-email dialog, once a message has been opened.

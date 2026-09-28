@@ -45,6 +45,7 @@ mod state;
 mod store_in_use;
 mod support;
 mod undo;
+mod view_source;
 mod visible_window;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
@@ -55,6 +56,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message",
+        view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message as fn(),
+    ),
     (
         "open_message::escape_closes_and_keeps_the_cursor_and_the_selection",
         open_message::escape_closes_and_keeps_the_cursor_and_the_selection as fn(),

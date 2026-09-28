@@ -292,6 +292,22 @@ impl Fixture {
 }
 
 impl Fixture {
+    /// Keep `raw` as `message`'s raw source, as a fetched message is kept.
+    pub async fn write_raw(&self, message: MessageId, raw: &[u8]) {
+        let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
+            .expect("a blob store");
+        let blob = blobs.put(raw).expect("the raw source is kept");
+        let connection = self.database.connect().await.expect("a connection");
+        let repository = MessageRepository::new(&connection);
+        let mut row = repository
+            .get(message)
+            .await
+            .expect("the message reads")
+            .expect("the message is there");
+        row.raw_blob_id = Some(blob);
+        repository.update(&mut row).await.expect("the row names it");
+    }
+
     /// A conversation of `count` messages about `subject`, each a reply to
     /// the one before, the newest `minutes` ago and each earlier one an hour
     /// before it; the body of the nth (from 1, oldest first) is "Message n".
