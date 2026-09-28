@@ -20,13 +20,15 @@
 //! text"); nothing wraps, and the height never changes (FR-013).
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::glib;
 use gtk::graphene;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use postio_ui::focus_row::{MAX_PILLS, count_badge};
+use postio_core::Keymap;
+use postio_ui::focus_row::{MAX_PILLS, count_badge, marker_line};
 use postio_ui::label_colour::{Rgb, label_colour};
 
 use super::item::FocusRow;
@@ -68,6 +70,20 @@ const PILL_PAD: f32 = 7.0;
 const ICON: f32 = 16.0;
 /// Below this, a first line is not worth drawing: it would be a letter.
 const LEAST_FIRST_LINE: f32 = 40.0;
+/// Where a two-line row's lines sit (their centres), from screen 01.
+const FIRST_LINE: f32 = 22.0;
+const SECOND_LINE: f32 = 51.0;
+/// The marker dot in the gutter.
+const GUTTER_CENTRE: f32 = 30.0;
+const DOT: f32 = 7.0;
+/// An action's button on the second line, and the keycap in it.
+const ACTION_HEIGHT: f32 = 24.0;
+const ACTION_PAD: f32 = 9.0;
+const KEYCAP_PAD: f32 = 4.0;
+
+/// The keymap a list's rows read their keycaps from, shared by every row
+/// and replaced when `[keys]` changes.
+pub type SharedKeymap = Rc<RefCell<Keymap>>;
 
 mod imp {
     use super::*;
@@ -77,6 +93,7 @@ mod imp {
         pub item: RefCell<Option<FocusRow>>,
         pub bound: RefCell<Option<(RowObject, glib::SignalHandlerId)>>,
         pub drawn: RefCell<Drawn>,
+        pub keymap: RefCell<Option<SharedKeymap>>,
     }
 
     #[glib::object_subclass]
@@ -128,12 +145,15 @@ impl Default for RowWidget {
 }
 
 /// The colours a row draws in, read from its own style: the ink, and the
-/// quieter steps libadwaita takes of it; and the accent's hue, from
-/// `AdwStyleManager`, which the label colours keep away from (FR-091).
+/// quieter steps libadwaita takes of it; and the accent, from
+/// `AdwStyleManager` -- for a marker, the one thing on a row FR-091 gives
+/// it -- whose hue the label colours keep away from.
 struct Palette {
     ink: gdk::RGBA,
     dim: gdk::RGBA,
     rule: gdk::RGBA,
+    raised: gdk::RGBA,
+    accent: gdk::RGBA,
     accent_hue: f64,
 }
 
@@ -145,11 +165,14 @@ impl Palette {
             colour.set_alpha(ink.alpha() * by);
             colour
         };
-        let accent = adw::StyleManager::default().accent_color_rgba();
+        let manager = adw::StyleManager::default();
+        let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
         Palette {
             ink,
             dim: faded(0.55),
             rule: faded(0.18),
+            raised: faded(0.06),
+            accent,
             accent_hue: rgb(&accent).hue(),
         }
     }
@@ -174,6 +197,12 @@ fn rgba(colour: Rgb) -> gdk::RGBA {
 }
 
 impl RowWidget {
+    /// Read keycaps from `keymap`, which the list shares with every row.
+    pub fn set_keymap(&self, keymap: SharedKeymap) {
+        self.imp().keymap.replace(Some(keymap));
+        self.queue_draw();
+    }
+
     /// Show what `row` stands for, and follow it as it changes.
     pub fn bind(&self, row: &RowObject) {
         self.unbind();
@@ -283,7 +312,12 @@ impl RowWidget {
         let summary = &row.summary;
         let palette = Palette::of(self);
         let width = self.width() as f32;
-        let middle = ONE_LINE as f32 / 2.0;
+        let two_lines = summary.marker.is_some();
+        let middle = if two_lines {
+            FIRST_LINE
+        } else {
+            ONE_LINE as f32 / 2.0
+        };
         let bold = summary.has_unread();
         let mut drawn = Drawn {
             bold,
@@ -414,7 +448,182 @@ impl RowWidget {
             drawn.texts.push(preview.to_owned());
         }
         drawn.texts.extend(trailing_texts.into_iter().rev());
+        if let Some(marker) = &summary.marker {
+            self.draw_marker(snapshot, marker, &palette, &mut drawn);
+        }
         self.imp().drawn.replace(drawn);
+    }
+
+    /// The second line of a marked row: the accent dot in the gutter, the
+    /// kind chip, the date, the quoted sentence, and on the right the
+    /// actions that answer it with their keys -- or what is true instead.
+    fn draw_marker(
+        &self,
+        snapshot: &gtk::Snapshot,
+        marker: &postio_model::listing::MarkerSummary,
+        palette: &Palette,
+        drawn: &mut Drawn,
+    ) {
+        let line = marker_line(marker, chrono::Utc::now(), &chrono::Local);
+        let width = self.width() as f32;
+
+        let dot = graphene::Rect::new(GUTTER_CENTRE - DOT / 2.0, FIRST_LINE - DOT / 2.0, DOT, DOT);
+        snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
+        snapshot.append_color(&palette.accent, &dot);
+        snapshot.pop();
+
+        // The actions first, from the right edge in, so the quote knows its
+        // room.
+        let keymap = self.imp().keymap.borrow().clone();
+        let mut right = width - TRAILING;
+        let mut actions = Vec::new();
+        for (command, words) in line.actions.iter().rev() {
+            let key = keymap
+                .as_ref()
+                .and_then(|keymap| postio_ui::hints::key(&keymap.borrow(), *command));
+            let label = self.layout(words, true, 0.92);
+            let (label_width, _) = label.pixel_size();
+            let cap = key.as_deref().map(|key| {
+                let cap = self.mono(key, 0.72);
+                let (cap_width, _) = cap.pixel_size();
+                (cap, cap_width as f32 + 2.0 * KEYCAP_PAD)
+            });
+            let button = ACTION_PAD
+                + label_width as f32
+                + cap.as_ref().map_or(0.0, |(_, boxed)| 6.0 + boxed)
+                + ACTION_PAD;
+            right -= button;
+            let frame = graphene::Rect::new(
+                right,
+                SECOND_LINE - ACTION_HEIGHT / 2.0,
+                button,
+                ACTION_HEIGHT,
+            );
+            let outline = gtk::gsk::RoundedRect::from_rect(frame, 5.0);
+            snapshot.push_rounded_clip(&outline);
+            snapshot.append_color(&palette.raised, &frame);
+            snapshot.pop();
+            snapshot.append_border(&outline, &[1.0; 4], &[palette.rule; 4]);
+            self.put(
+                snapshot,
+                &label,
+                right + ACTION_PAD,
+                SECOND_LINE,
+                label_width as f32,
+                &palette.ink,
+            );
+            let mut said = vec![(*words).to_owned()];
+            if let (Some((cap, boxed)), Some(key)) = (cap, key) {
+                let x = right + ACTION_PAD + label_width as f32 + 6.0;
+                let (_, cap_height) = cap.pixel_size();
+                let frame = graphene::Rect::new(
+                    x,
+                    SECOND_LINE - (cap_height as f32 + 2.0) / 2.0,
+                    boxed,
+                    cap_height as f32 + 2.0,
+                );
+                snapshot.append_border(
+                    &gtk::gsk::RoundedRect::from_rect(frame, 3.0),
+                    &[1.0; 4],
+                    &[palette.rule; 4],
+                );
+                self.put(
+                    snapshot,
+                    &cap,
+                    x + KEYCAP_PAD,
+                    SECOND_LINE,
+                    boxed,
+                    &palette.dim,
+                );
+                said.push(key);
+            }
+            actions.push(said);
+            right -= GAP;
+        }
+        if let Some(status) = line.status {
+            let layout = self.layout(status, false, 0.92);
+            let (status_width, _) = layout.pixel_size();
+            right -= status_width as f32;
+            self.put(
+                snapshot,
+                &layout,
+                right,
+                SECOND_LINE,
+                status_width as f32,
+                &palette.dim,
+            );
+            right -= GAP;
+            drawn.texts.push(status.to_owned());
+        }
+
+        // The chip, the date and the quote, left to right, in the accent.
+        let mut x = SUBJECT_X;
+        let chip = self.layout(line.chip, true, 0.85);
+        let (chip_width, chip_height) = chip.pixel_size();
+        let boxed = chip_width as f32 + 12.0;
+        let frame = graphene::Rect::new(
+            x,
+            SECOND_LINE - (chip_height as f32 + 4.0) / 2.0,
+            boxed,
+            chip_height as f32 + 4.0,
+        );
+        snapshot.append_border(
+            &gtk::gsk::RoundedRect::from_rect(frame, 4.0),
+            &[1.0; 4],
+            &[palette.accent; 4],
+        );
+        self.put(
+            snapshot,
+            &chip,
+            x + 6.0,
+            SECOND_LINE,
+            chip_width as f32,
+            &palette.accent,
+        );
+        drawn.texts.push(line.chip.to_owned());
+        x += boxed + 10.0;
+        if let Some(date) = &line.date {
+            let layout = self.layout(date, true, 0.95);
+            x += self.put(
+                snapshot,
+                &layout,
+                x,
+                SECOND_LINE,
+                (right - x).max(0.0),
+                &palette.accent,
+            ) + 10.0;
+            drawn.texts.push(date.clone());
+        }
+        if let Some(quote) = &line.quote
+            && right - x >= LEAST_FIRST_LINE
+        {
+            let quoted = format!("\u{201c}{quote}\u{201d}");
+            let layout = self.layout(&quoted, false, 0.95);
+            let attributes = layout.attributes().unwrap_or_default();
+            attributes.insert(pango::AttrInt::new_style(pango::Style::Italic));
+            layout.set_attributes(Some(&attributes));
+            self.put(
+                snapshot,
+                &layout,
+                x,
+                SECOND_LINE,
+                right - x,
+                &palette.accent,
+            );
+            drawn.texts.push(quoted);
+        }
+        for said in actions.into_iter().rev() {
+            drawn.texts.extend(said);
+        }
+    }
+
+    /// A layout of `text` in the monospace face keys are set in (FR-093).
+    fn mono(&self, text: &str, scale: f64) -> pango::Layout {
+        let layout = self.layout(text, false, scale);
+        let attributes = layout.attributes().unwrap_or_default();
+        attributes.insert(pango::AttrString::new_family("Adwaita Mono"));
+        layout.set_attributes(Some(&attributes));
+        layout
     }
 
     /// Draw the symbolic icon `name`, `ICON` pixels square, at `x`, `y`, in

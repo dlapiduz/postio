@@ -271,3 +271,29 @@ impl Fixture {
         }
     }
 }
+
+impl Fixture {
+    /// Mark `message` with a question quoting `sentence`, as the built-in
+    /// detector would have.
+    pub async fn ask(&self, message: MessageId, sentence: &str) {
+        use postio_storage::repository::{Marker, MarkerRepository, MarkerSource};
+        let connection = self.database.connect().await.expect("a connection");
+        MarkerRepository::new(&connection)
+            .insert(&Marker {
+                message,
+                kind: postio_model::listing::MarkerKind::Question,
+                source: MarkerSource::Detector,
+                span: Some((0, sentence.chars().count() as u32)),
+                excerpt: Some(sentence.to_owned()),
+                starts_at: None,
+                ends_at: None,
+                due_at: None,
+                invite: None,
+                invite_state: None,
+                answer: None,
+                dismissed_at: None,
+            })
+            .await
+            .expect("a marker");
+    }
+}

@@ -201,6 +201,9 @@ impl FocusWindow {
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
             chrome.set_keymap(&keymap);
         }
+        if let Some(pane) = imp.pane.borrow().as_ref() {
+            pane.set_keymap(keymap.clone());
+        }
         imp.keymap.replace(keymap);
     }
 
@@ -371,7 +374,7 @@ impl FocusWindow {
             self,
             move || window.update_counts()
         ));
-        let pane = ListPane::new(feed.clone());
+        let pane = ListPane::new(feed.clone(), self.keymap());
         imp.inbox.append(pane.widget());
         imp.pane.replace(Some(pane));
         imp.client.replace(Some(client.clone()));

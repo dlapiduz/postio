@@ -26,6 +26,7 @@ mod chrome;
 mod colours;
 mod harness;
 mod list_contract;
+mod marked_rows;
 mod rows;
 mod starts_offline;
 mod support;
@@ -55,6 +56,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "colours::the_roles_resolve_and_follow_the_system_into_dark",
         colours::the_roles_resolve_and_follow_the_system_into_dark as fn(),
+    ),
+    (
+        "marked_rows::a_marked_row_is_two_lines_whatever_its_state",
+        marked_rows::a_marked_row_is_two_lines_whatever_its_state as fn(),
     ),
     (
         "rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived",

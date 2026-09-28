@@ -7,7 +7,7 @@ use gtk::prelude::*;
 use super::feed::Feed;
 use super::heading::DayHeading;
 use super::model::RowObject;
-use super::row::RowWidget;
+use super::row::{RowWidget, SharedKeymap};
 
 /// The list pane: what scrolls, what draws, and where its rows come from.
 #[derive(Clone)]
@@ -16,17 +16,24 @@ pub struct ListPane {
     view: gtk::ListView,
     cursor: gtk::SingleSelection,
     feed: Feed,
+    keymap: SharedKeymap,
 }
 
 impl ListPane {
-    /// A pane drawing `feed`'s list.
-    pub fn new(feed: Feed) -> Self {
+    /// A pane drawing `feed`'s list, its rows' keycaps read from `keymap`.
+    pub fn new(feed: Feed, keymap: postio_core::Keymap) -> Self {
+        let keymap: SharedKeymap = std::rc::Rc::new(std::cell::RefCell::new(keymap));
         let factory = gtk::SignalListItemFactory::new();
-        factory.connect_setup(|_, item| {
-            let item = item
-                .downcast_ref::<gtk::ListItem>()
-                .expect("a list view's factory builds list items");
-            item.set_child(Some(&RowWidget::default()));
+        factory.connect_setup({
+            let keymap = keymap.clone();
+            move |_, item| {
+                let item = item
+                    .downcast_ref::<gtk::ListItem>()
+                    .expect("a list view's factory builds list items");
+                let row = RowWidget::default();
+                row.set_keymap(keymap.clone());
+                item.set_child(Some(&row));
+            }
         });
         factory.connect_bind(|_, item| {
             let item = item
@@ -78,7 +85,14 @@ impl ListPane {
             view,
             cursor,
             feed,
+            keymap,
         }
+    }
+
+    /// Read every row's keycaps from `keymap` from now on.
+    pub fn set_keymap(&self, keymap: postio_core::Keymap) {
+        self.keymap.replace(keymap);
+        self.view.queue_draw();
     }
 
     /// The pane's outermost widget, to place in a layout.
