@@ -212,6 +212,8 @@ fn sample_draft() -> Draft {
         },
         body_markdown: Some("sure".into()),
         labels: vec![LabelId::new(2), LabelId::new(4)],
+        // Populated, for the reason `rfc_message_id` is below.
+        calendar_reply: Some("BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n".into()),
         attachments: vec![],
         state: DraftState::Editing,
         // Populated rather than `None`: this test exists to prove a field

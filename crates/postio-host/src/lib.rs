@@ -293,7 +293,7 @@ const BLOCKING_THREADS: usize = 8;
 fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
     let builder = actions::wire(
         Dispatcher::builder(),
-        Actions::new(wiring.database.clone(), state.clone()),
+        Actions::new(wiring.database.clone(), state.clone()).with_blobs(wiring.blobs.clone()),
     );
     refresh::wire(builder, wiring.engine.clone(), state.clone()).build()
 }

@@ -34,7 +34,7 @@ use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 pub(crate) use catch_up::FILED_THROUGH;
-pub(crate) use due::{deliver_due, fire_reminders};
+pub(crate) use due::{deliver_due, fire_reminders, settle_answers};
 
 use postio_config::FocusConfig;
 use postio_sync::{FilingPass, FocusFiling};
@@ -168,6 +168,20 @@ fn due_timer(inner: &Arc<Inner>, config: Arc<RwLock<FocusConfig>>) -> tokio::tas
                     Ok(fired) => tracing::debug!(fired, "Focus surfaced reminders"),
                     Err(error) => {
                         tracing::warn!(%error, "Focus could not fire its reminders: {error}");
+                    }
+                }
+                match settle_answers(&database, chrono::Utc::now()).await {
+                    Ok(settled) => {
+                        // The rows repaint with the answer as it now stands.
+                        for (account, message) in settled {
+                            inner.hub.emit(postio_core::Event::MessagesChanged {
+                                account,
+                                messages: vec![message],
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "Focus could not settle its answers: {error}");
                     }
                 }
                 if let Err(error) = catch_up::keep_mark(&database, &mut marked).await {

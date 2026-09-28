@@ -10,13 +10,20 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use postio_calendar::{Answer, Invitation, Method};
 use postio_core::dispatch::CommandError;
 use postio_core::undo::UndoKind;
 use postio_core::{Command, MessageTarget};
-use postio_model::{MessageId, ThreadId};
-use postio_storage::repository::ReminderRepository;
+use postio_model::listing::{InviteAnswer, MarkerKind};
+use postio_model::{
+    Account, Draft, DraftKind, EmailAddress, Identity, Message, MessageId, ThreadId,
+};
+use postio_storage::Connection;
+use postio_storage::repository::{
+    AccountRepository, DraftRepository, InviteState, MarkerRepository, ReminderRepository,
+};
 
-use super::{Actions, Aim, Applied, store_failure};
+use super::{Actions, Aim, Applied, RSVP_WINDOW, store_failure};
 
 impl Actions {
     /// Wait for a reply in each targeted conversation until `at`, or with
@@ -90,6 +97,7 @@ impl Actions {
 
         let anchors: Vec<MessageId> = conversations.into_values().collect();
         Ok(Applied {
+            lasts: None,
             account,
             kind: if at.is_some() {
                 UndoKind::Remind
@@ -112,4 +120,223 @@ impl Actions {
                 .collect(),
         })
     }
+
+    /// Answer the invitation `message` carries, or the focused message's,
+    /// and send the reply (spec 007 US8, FR-102, research R9).
+    ///
+    /// Local-first, like a send: the reply is written as a draft and queued
+    /// with a not-before time [`RSVP_WINDOW`] away, and the marker says
+    /// `accepting` or `declining` until then. Nothing reaches the network
+    /// here, and nothing can before the window closes, so the undo entry --
+    /// which cancels the send -- lasts exactly that long; after it, the
+    /// answer stands, and `mod+z` reaches whatever was done before it.
+    ///
+    /// The reply goes out from the identity the invitation names among its
+    /// attendees, spelled as the invitation spells it: answering as some
+    /// other address would be a stranger's reply to the organiser's
+    /// calendar. With no such identity there is nobody to answer as.
+    pub(super) async fn answer(
+        &self,
+        message: Option<MessageId>,
+        answer: Answer,
+    ) -> Result<Applied, CommandError> {
+        let blobs = self
+            .blobs
+            .clone()
+            .ok_or_else(|| CommandError::rejected("Answering an invitation needs Postio Focus"))?;
+        let (mut connection, _permit) = self.connect().await?;
+        let row = match message {
+            Some(id) => self.rows(&connection, vec![id]).await?.remove(0),
+            None => match self.aim(&connection, &MessageTarget::Selection).await? {
+                Aim::Rows(mut rows) => rows.remove(0),
+                Aim::Bulk(_) => {
+                    return Err(CommandError::rejected("Pick the invitation to answer"));
+                }
+            },
+        };
+        let marker = MarkerRepository::new(&connection)
+            .get(row.id)
+            .await
+            .map_err(store_failure)?
+            .filter(|marker| marker.kind == MarkerKind::Invite)
+            .ok_or_else(|| {
+                CommandError::rejected("That message carries no invitation to answer")
+            })?;
+        match marker.invite_state {
+            Some(InviteState::Cancelled) => {
+                return Err(CommandError::rejected(
+                    "That event was cancelled, so there is nothing to answer",
+                ));
+            }
+            Some(InviteState::Past) => {
+                return Err(CommandError::rejected(
+                    "That event is over, so there is nothing to answer",
+                ));
+            }
+            Some(InviteState::Open) | None => {}
+        }
+        if let Some(given) = marker.answer {
+            return Err(CommandError::rejected(match given {
+                InviteAnswer::Accepting | InviteAnswer::Declining => {
+                    "Your answer is on its way; undo takes it back while it waits"
+                }
+                InviteAnswer::Accepted => "You accepted that invitation already",
+                InviteAnswer::Declined => "You declined that invitation already",
+            }));
+        }
+        let invitation = invitation_of(&blobs, &row).await.ok_or_else(|| {
+            CommandError::rejected("Postio does not have that invitation's calendar yet")
+        })?;
+        let account = AccountRepository::new(&connection)
+            .get(row.account_id)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That message's account is no longer here"))?;
+        let Some((identity, attendee)) = attendee_among(&account, &invitation) else {
+            return Err(CommandError::rejected(
+                "That invitation does not name any address you send from, so there is \
+                 nobody to answer as",
+            ));
+        };
+        let organizer = invitation.organizer.clone().ok_or_else(|| {
+            CommandError::rejected("That invitation names no organiser to answer")
+        })?;
+
+        let (kind, pending, subject, said) = match answer {
+            Answer::Accept => (
+                UndoKind::Accept,
+                InviteAnswer::Accepting,
+                "Accepted",
+                "accepted",
+            ),
+            Answer::Decline => (
+                UndoKind::Decline,
+                InviteAnswer::Declining,
+                "Declined",
+                "declined",
+            ),
+        };
+        let ics = postio_calendar::reply(&invitation, &attendee, answer);
+        let mut draft = Draft::new(account.id);
+        draft.use_identity(identity);
+        draft.kind = DraftKind::Reply;
+        draft.in_reply_to = Some(row.id);
+        draft.thread_id = row.thread_id;
+        draft.to = vec![organizer];
+        let event = invitation
+            .summary
+            .clone()
+            .or_else(|| row.subject.clone())
+            .unwrap_or_default();
+        draft.subject = format!("{subject}: {event}");
+        let who = if identity.display_name.trim().is_empty() {
+            identity.address.address.clone()
+        } else {
+            identity.display_name.clone()
+        };
+        draft.body.text = Some(format!("{who} has {said} this invitation."));
+        draft.calendar_reply = Some(String::from_utf8_lossy(&ics).into_owned());
+
+        let now = Utc::now();
+        let until = now
+            + chrono::Duration::from_std(RSVP_WINDOW).map_err(|_| {
+                CommandError::rejected("That answer's window is longer than Postio can hold")
+            })?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
+        DraftRepository::new(&transaction)
+            .queue_send_at(&mut draft, now, until)
+            .await
+            .map_err(store_failure)?;
+        MarkerRepository::new(&transaction)
+            .answer(row.id, Some(pending), Some(until))
+            .await
+            .map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
+
+        Ok(Applied {
+            lasts: Some(RSVP_WINDOW),
+            account: account.id,
+            kind,
+            count: 1,
+            messages: vec![row.id],
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            // The row repaints with its answer, and the Outbox holds the
+            // reply while it waits.
+            changed: vec![row.id],
+            mailboxes_changed: true,
+            inverse: vec![Command::CancelSend {
+                draft: Some(draft.id),
+            }],
+        })
+    }
+
+    /// When `draft`, whose send was just cancelled, is the reply to an
+    /// invitation, take the answer back whole: the reply goes -- it was
+    /// never the person's to edit -- and the invitation is unanswered again.
+    /// Answers the messages whose rows repaint.
+    pub(super) async fn withdraw_answer(
+        &self,
+        connection: &Connection,
+        draft: &Draft,
+    ) -> Result<Vec<MessageId>, CommandError> {
+        if draft.calendar_reply.is_none() {
+            return Ok(Vec::new());
+        }
+        DraftRepository::new(connection)
+            .discard(draft.id, Utc::now())
+            .await
+            .map_err(store_failure)?;
+        let Some(invitation) = draft.in_reply_to else {
+            return Ok(Vec::new());
+        };
+        MarkerRepository::new(connection)
+            .answer(invitation, None, None)
+            .await
+            .map_err(store_failure)?;
+        Ok(vec![invitation])
+    }
+}
+
+/// The invitation `row`'s calendar part carries, when the part is on this
+/// machine and is a request: what can be answered. Read off the async
+/// runtime's threads, as parsing is.
+async fn invitation_of(blobs: &postio_storage::BlobStore, row: &Message) -> Option<Invitation> {
+    let parts: Vec<_> = row
+        .attachments
+        .iter()
+        .filter(|part| part.mime_type.eq_ignore_ascii_case("text/calendar"))
+        .filter_map(|part| part.blob_id.clone())
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let blobs = blobs.clone();
+    tokio::task::spawn_blocking(move || {
+        parts.iter().find_map(|part| {
+            let ics = blobs.get(part).ok()?;
+            postio_calendar::parse(&ics)
+                .ok()
+                .filter(|invitation| invitation.method == Method::Request)
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// The identity of `account` that `invitation` names among its attendees,
+/// and the attendee as the invitation spells it: who answers, and as whom.
+fn attendee_among<'a>(
+    account: &'a Account,
+    invitation: &Invitation,
+) -> Option<(&'a Identity, EmailAddress)> {
+    invitation.attendees.iter().find_map(|attendee| {
+        account
+            .identities
+            .iter()
+            .find(|identity| identity.address.same_address(&attendee.address))
+            .map(|identity| (identity, attendee.address.clone()))
+    })
 }

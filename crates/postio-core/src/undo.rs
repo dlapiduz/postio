@@ -68,6 +68,11 @@ pub enum UndoKind {
     Remind,
     /// Conversations' reminders were cleared.
     Unremind,
+    /// An invitation was accepted: the reply waits out a short window in
+    /// the outbox (specs/007-postio-focus research R9).
+    Accept,
+    /// An invitation was declined, the same way.
+    Decline,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
     /// A send that had stopped was put back on the queue (spec 003).
@@ -106,6 +111,9 @@ impl UndoKind {
             // conversation, whichever of its messages it was set from.
             UndoKind::Remind => format!("Reminder set on {count} {}", conversations(count)),
             UndoKind::Unremind => format!("Reminder cleared on {count} {}", conversations(count)),
+            // One answer to one invitation: screen 15's "Accepted · Undo".
+            UndoKind::Accept => "Accepted".to_owned(),
+            UndoKind::Decline => "Declined".to_owned(),
         }
     }
 }
@@ -123,6 +131,11 @@ fn conversations(count: usize) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UndoEntry {
     kind: UndoKind,
+    /// How long the unit is offered, when it is shorter than the stack's
+    /// own expiry: a send that can be cancelled only until it leaves
+    /// ([`UndoEntry::lasting`]).
+    #[serde(default)]
+    window: Option<Duration>,
     messages: Vec<MessageId>,
     /// How many messages the unit covers.
     ///
@@ -141,6 +154,7 @@ impl UndoEntry {
     pub fn new(kind: UndoKind, messages: Vec<MessageId>, inverse: Vec<Command>) -> Self {
         UndoEntry {
             kind,
+            window: None,
             count: messages.len(),
             messages,
             inverse,
@@ -159,10 +173,28 @@ impl UndoEntry {
     pub fn bulk(kind: UndoKind, count: usize, inverse: Vec<Command>) -> Self {
         UndoEntry {
             kind,
+            window: None,
             messages: Vec::new(),
             count,
             inverse,
         }
+    }
+
+    /// The same entry, offered only for `window` from when it is recorded:
+    /// what [`Recovery::Window`](crate::Recovery::Window) means on the stack
+    /// (specs/007-postio-focus research R9).
+    ///
+    /// An answer to an invitation is the case: its reply waits a few seconds
+    /// in the outbox, and cancelling the send is the way back only until the
+    /// drainer takes it. An entry that outlived that would sit on top of the
+    /// stack answering "too late" and shadow the archive beneath it, so it
+    /// goes with its window, and `mod+z` after that reaches the action
+    /// beneath. It never folds into another unit: each send has its own
+    /// window.
+    #[must_use]
+    pub fn lasting(mut self, window: Duration) -> Self {
+        self.window = Some(window);
+        self
     }
 
     /// Whether this unit covers rows it cannot name.
@@ -225,6 +257,15 @@ struct Recorded {
     at: Instant,
 }
 
+impl Recorded {
+    /// Whether its own window, if it has one, has closed by `now`.
+    fn closed(&self, now: Instant) -> bool {
+        self.entry
+            .window
+            .is_some_and(|window| now.saturating_duration_since(self.at) >= window)
+    }
+}
+
 /// The undo history: bounded, self-pruning, and coalescing.
 #[derive(Debug, Clone)]
 pub struct UndoStack {
@@ -281,7 +322,12 @@ impl UndoStack {
     /// The unit `u` would take back, without taking it back — this is what the
     /// toast is written from.
     pub fn peek(&self) -> Option<&UndoEntry> {
-        self.entries.back().map(|recorded| &recorded.entry)
+        let now = Instant::now();
+        self.entries
+            .iter()
+            .rev()
+            .find(|recorded| !recorded.closed(now))
+            .map(|recorded| &recorded.entry)
     }
 
     /// Forget everything. Used when the account changes out from under us.
@@ -300,6 +346,9 @@ impl UndoStack {
 
         if let Some(last) = self.entries.back_mut()
             && last.entry.kind == entry.kind
+            // An entry with a window of its own is one send, never a burst.
+            && last.entry.window.is_none()
+            && entry.window.is_none()
             && now.duration_since(last.at) <= self.coalesce_within
             // Independence within a unit is what lets the inverses replay in
             // the order they were recorded.
@@ -330,8 +379,10 @@ impl UndoStack {
         self.entries.pop_back().map(|recorded| recorded.entry)
     }
 
-    /// Drop units that have aged out. Entries are in time order, so this only
-    /// ever has to look at the front.
+    /// Drop units that have aged out. Entries are in time order, so the
+    /// stack's own expiry only ever has to look at the front; an entry whose
+    /// own window closed can be anywhere, and there are at most
+    /// [`Self::MAX_DEPTH`] to look at.
     fn prune(&mut self, now: Instant) {
         while let Some(oldest) = self.entries.front() {
             if now.saturating_duration_since(oldest.at) > self.expire_after {
@@ -340,6 +391,7 @@ impl UndoStack {
                 break;
             }
         }
+        self.entries.retain(|recorded| !recorded.closed(now));
     }
 }
 

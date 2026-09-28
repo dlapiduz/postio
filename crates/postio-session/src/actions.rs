@@ -78,6 +78,8 @@ pub const WIRED: &[CommandId] = &[
     // reports in registry order and `every_wired_command_has_a_handler_and_an_arm`
     // compares the two lists directly.
     CommandId::AddLabel,
+    CommandId::AcceptInvite,
+    CommandId::DeclineInvite,
     CommandId::MarkSent,
     CommandId::RetrySend,
     CommandId::CancelSend,
@@ -95,6 +97,11 @@ pub const WIRED: &[CommandId] = &[
 /// first place. Focus's picker is that work (specs/007-postio-focus research
 /// R6), and it names its time, so this is only ever the default.
 const DEFAULT_SNOOZE: Duration = Duration::hours(3);
+
+/// How long an answer to an invitation waits in the outbox before it may
+/// leave, and so how long it can be taken back (specs/007-postio-focus
+/// FR-102, research R9): about ten seconds, the toast's own life.
+pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Whether a verb is being performed or replayed backwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +204,10 @@ struct Applied {
     mailboxes_changed: bool,
     /// What takes it back.
     inverse: Vec<Command>,
+    /// How long it can be taken back, when that is shorter than the undo
+    /// stack's own expiry: an answer's reply, which leaves once its window
+    /// closes (`Recovery::Window`, research R9).
+    lasts: Option<std::time::Duration>,
 }
 
 /// Everything a verb needs: the store to write, the state to resolve targets
@@ -210,6 +221,10 @@ pub struct Actions {
     database: Store,
     state: SharedState,
     undo: Arc<Mutex<UndoStack>>,
+    /// The parts a verb reads beside the rows: an invitation's calendar
+    /// part, which answering it has to read. `None` for a bus composed
+    /// without them, whose Focus verbs then say they cannot run.
+    blobs: Option<postio_storage::BlobStore>,
 }
 
 impl Actions {
@@ -219,7 +234,16 @@ impl Actions {
             database,
             state,
             undo: Arc::new(Mutex::new(UndoStack::new())),
+            blobs: None,
         }
+    }
+
+    /// The same verbs, reading parts from `blobs`: what answering an
+    /// invitation needs of its calendar part (specs/007-postio-focus).
+    #[must_use]
+    pub fn with_blobs(mut self, blobs: postio_storage::BlobStore) -> Self {
+        self.blobs = Some(blobs);
+        self
     }
 
     /// Run one invocation, reporting through `events`.
@@ -351,6 +375,18 @@ impl Actions {
             }
             Command::Unsnooze { target } => vec![self.unsnooze(target).await?],
             Command::RemindIfNoReply { target, at } => vec![self.remind(target, *at).await?],
+            Command::AcceptInvite { message } => {
+                vec![
+                    self.answer(*message, postio_calendar::Answer::Accept)
+                        .await?,
+                ]
+            }
+            Command::DeclineInvite { message } => {
+                vec![
+                    self.answer(*message, postio_calendar::Answer::Decline)
+                        .await?,
+                ]
+            }
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
             Command::MarkSent { draft } => vec![self.mark_sent(*draft).await?],
@@ -766,6 +802,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            lasts: None,
             account,
             kind,
             messages: Vec::new(),
@@ -860,6 +897,7 @@ impl Actions {
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
         Ok(Applied {
+            lasts: None,
             account,
             kind,
             count: messages.len(),
@@ -986,6 +1024,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            lasts: None,
             account,
             kind,
             count: moved.len(),
@@ -1041,6 +1080,7 @@ impl Actions {
                 .push(message.id);
         }
         Ok(Applied {
+            lasts: None,
             account,
             kind: UndoKind::Snooze,
             count: ids.len(),
@@ -1095,6 +1135,7 @@ impl Actions {
             }
         }
         Ok(Applied {
+            lasts: None,
             account,
             kind: UndoKind::Unsnooze,
             count: ids.len(),
@@ -1237,6 +1278,7 @@ impl Actions {
             on: Some(!wanted),
         };
         Ok(Applied {
+            lasts: None,
             account,
             kind: UndoKind::Label,
             count: changed.len(),
@@ -1458,6 +1500,7 @@ impl Actions {
             },
         };
         Ok(Applied {
+            lasts: None,
             account,
             kind: kind_for(&flag, wanted).await,
             messages: Vec::new(),
@@ -1532,6 +1575,7 @@ impl Actions {
             },
         };
         Ok(Applied {
+            lasts: None,
             account,
             kind: kind_for(&flag, wanted).await,
             count: changed.len(),
@@ -1588,6 +1632,10 @@ impl Actions {
             UndoEntry::new(applied.kind, applied.messages, applied.inverse)
         } else {
             UndoEntry::bulk(applied.kind, applied.count, applied.inverse)
+        };
+        let entry = match applied.lasts {
+            Some(window) => entry.lasting(window),
+            None => entry,
         };
         // The description comes back from the stack rather than from the
         // entry handed to it: a burst coalesces into the unit already there,
@@ -1838,6 +1886,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            lasts: None,
             account,
             kind: UndoKind::MapMailboxRole,
             count: 1,
@@ -1887,6 +1936,7 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         Ok(Applied {
+            lasts: None,
             account,
             kind: UndoKind::RetriedSend,
             // The Outbox row appears when this succeeds, and the Drafts
@@ -1913,29 +1963,42 @@ impl Actions {
     async fn cancel_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
         use postio_storage::repository::CancelSendOutcome;
 
-        let (connection, _permit) = self.connect().await?;
-        let drafts = DraftRepository::new(&connection);
-        let draft = self.stopped_send(&connection, &drafts, draft).await?;
+        let (mut connection, _permit) = self.connect().await?;
+        let draft = {
+            let drafts = DraftRepository::new(&connection);
+            self.stopped_send(&connection, &drafts, draft).await?
+        };
         let account = draft.account_id;
 
-        match drafts
+        // One transaction for the cancel and what follows from it: an answer
+        // to an invitation is withdrawn with its send or not at all, or the
+        // due timer would later make final an answer nothing sent.
+        let transaction = connection.transaction().await.map_err(store_failure)?;
+        match DraftRepository::new(&transaction)
             .cancel_send(draft.id, Utc::now())
             .await
             .map_err(store_failure)?
         {
-            CancelSendOutcome::Cancelled => Ok(Applied {
-                account,
-                kind: UndoKind::CancelledSend,
-                // And here the Outbox row may be the one that disappears.
-                mailboxes_changed: true,
-                count: 1,
-                messages: Vec::new(),
-                removed: Vec::new(),
-                arrived: None,
-                reloaded: Vec::new(),
-                changed: Vec::new(),
-                inverse: Vec::new(),
-            }),
+            CancelSendOutcome::Cancelled => {
+                // An answer to an invitation taken back inside its window is
+                // withdrawn whole: the row it answers repaints unanswered.
+                let changed = self.withdraw_answer(&transaction, &draft).await?;
+                transaction.commit().await.map_err(store_failure)?;
+                Ok(Applied {
+                    lasts: None,
+                    account,
+                    kind: UndoKind::CancelledSend,
+                    // And here the Outbox row may be the one that disappears.
+                    mailboxes_changed: true,
+                    count: 1,
+                    messages: Vec::new(),
+                    removed: Vec::new(),
+                    arrived: None,
+                    reloaded: Vec::new(),
+                    changed,
+                    inverse: Vec::new(),
+                })
+            }
             CancelSendOutcome::NotQueued => Err(CommandError::rejected(
                 "That message is not waiting to be sent",
             )),
@@ -2024,6 +2087,7 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         Ok(Applied {
+            lasts: None,
             account: draft.account_id,
             kind: UndoKind::MarkedSent,
             count: 1,

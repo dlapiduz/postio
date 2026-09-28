@@ -18,7 +18,9 @@
 use chrono::{DateTime, TimeZone, Utc};
 use postio_config::FocusConfig;
 use postio_model::EmailAddress;
-use postio_storage::repository::{DigestRepository, IdentityRepository, ReminderRepository};
+use postio_storage::repository::{
+    DigestRepository, IdentityRepository, MarkerRepository, MessageRepository, ReminderRepository,
+};
 use postio_storage::{Store, WritePriority};
 use postio_ui::schedule::next_due;
 
@@ -120,4 +122,38 @@ pub(crate) async fn fire_reminders(database: &Store, now: DateTime<Utc>) -> Resu
         }
     }
     Ok(fired)
+}
+
+/// Make final every answer whose window has closed by `now` (spec 007
+/// research R9): `accepting` becomes `accepted`, `declining` `declined`.
+/// Answers each message it settled, with its account.
+pub(crate) async fn settle_answers(
+    database: &Store,
+    now: DateTime<Utc>,
+) -> Result<Vec<(postio_model::AccountId, postio_model::MessageId)>, Failure> {
+    let due = {
+        let reader = database.read().await?;
+        MarkerRepository::new(&reader).answers_due(now).await?
+    };
+    if due.is_empty() {
+        return Ok(Vec::new());
+    }
+    let connection = database.connect_background().await?;
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+    let mut settled = Vec::with_capacity(due.len());
+    for message in due {
+        if !MarkerRepository::new(&connection)
+            .settle_answer(message)
+            .await?
+        {
+            continue;
+        }
+        if let Some(row) = MessageRepository::new(&connection).get(message).await? {
+            settled.push((row.account_id, message));
+        }
+    }
+    Ok(settled)
 }

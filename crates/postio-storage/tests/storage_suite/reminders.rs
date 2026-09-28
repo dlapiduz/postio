@@ -33,3 +33,13 @@ async fn no_read_of_the_reminders_walks_a_table() {
         assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
     }
 }
+
+#[tokio::test]
+async fn the_due_timer_finds_answers_whose_window_closed_without_a_walk() {
+    // Research R9: every tick asks which answers' windows have closed. The
+    // markers are every invitation, question and to-do Focus has seen, so
+    // the question has to be a seek, not a walk of them.
+    let sql = postio_storage::repository::MarkerRepository::explain_answers_due();
+    let walked = scans(sql).await;
+    assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
+}

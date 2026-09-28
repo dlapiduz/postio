@@ -167,6 +167,66 @@ impl<'a> MarkerRepository<'a> {
         Ok(changed > 0)
     }
 
+    /// Records how the person answered the invitation on `message`, and,
+    /// while the reply waits out its window, when the window closes
+    /// (research R9); `None` for both takes an answer back, as undo within
+    /// the window does. Answers whether the message has a marker.
+    pub async fn answer(
+        &self,
+        message: MessageId,
+        answer: Option<InviteAnswer>,
+        until: Option<DateTime<Utc>>,
+    ) -> Result<bool> {
+        use turso::Value::{Integer, Null, Text};
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE markers SET answer = ?2, answer_until = ?3 WHERE message_id = ?1",
+            vec![
+                Integer(message.get()),
+                answer.map_or(Null, |answer| Text(answer_name(answer).to_owned())),
+                until.map_or(Null, |until| Integer(to_millis(until))),
+            ],
+        )
+        .await?;
+        Ok(changed > 0)
+    }
+
+    /// The messages whose answer's window has closed by `now`: what Focus's
+    /// due timer makes final each tick. One statement, a seek on
+    /// `idx_markers_answer_until`.
+    pub async fn answers_due(&self, now: DateTime<Utc>) -> Result<Vec<MessageId>> {
+        sql::all(
+            self.connection,
+            Self::explain_answers_due(),
+            [to_millis(now)],
+            |row| Ok(MessageId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::answers_due`] runs.
+    pub fn explain_answers_due() -> &'static str {
+        "SELECT message_id FROM markers WHERE answer_until <= ?1 ORDER BY answer_until LIMIT 256"
+    }
+
+    /// Makes the answer on `message` final, its window closed: `accepting`
+    /// becomes `accepted` and `declining` `declined`. Answers whether there
+    /// was one waiting.
+    pub async fn settle_answer(&self, message: MessageId) -> Result<bool> {
+        let settled = sql::execute(
+            self.connection,
+            "UPDATE markers
+                SET answer = CASE answer WHEN 'accepting' THEN 'accepted'
+                                         WHEN 'declining' THEN 'declined'
+                                         ELSE answer END,
+                    answer_until = NULL
+              WHERE message_id = ?1 AND answer_until IS NOT NULL",
+            [message.get()],
+        )
+        .await?;
+        Ok(settled > 0)
+    }
+
     /// The marker on `message`, dismissed or not: what the open message's
     /// marker card reads.
     pub async fn get(&self, message: MessageId) -> Result<Option<Marker>> {

@@ -321,7 +321,11 @@ CREATE TABLE "drafts" (
     -- for `reference_ids`' reason -- only ever read and written whole, with
     -- the row -- and an id whose label has since been deleted is skipped
     -- when it is applied.
-    label_ids               TEXT    NOT NULL DEFAULT ''
+    label_ids               TEXT    NOT NULL DEFAULT '',
+    -- The iCalendar answer an invitation's reply carries (spec 007 FR-102):
+    -- a METHOD:REPLY object, sent as the text/calendar alternative beside
+    -- the words. NULL for every draft a person writes.
+    calendar_reply          TEXT
 );
 
 CREATE TABLE egress_log (
@@ -481,6 +485,10 @@ CREATE TABLE markers (
     -- is open.
     answer           TEXT    CHECK (answer IN ('accepting', 'accepted',
                                                'declining', 'declined')),
+    -- While an answer's reply waits out its window in the outbox, when the
+    -- window closes (research R9): Focus's due timer then makes the answer
+    -- final. NULL otherwise.
+    answer_until     INTEGER,
     -- When the person dismissed it. It never returns on this message.
     dismissed_at     INTEGER
 );
@@ -866,6 +874,9 @@ CREATE UNIQUE INDEX idx_mailboxes_account_path ON mailboxes (account_id, path);
 CREATE INDEX idx_mailboxes_account_role ON mailboxes (account_id, role);
 
 CREATE INDEX idx_mailboxes_parent ON mailboxes (parent_id);
+
+-- The answers waiting out their windows, for Focus's due timer.
+CREATE INDEX idx_markers_answer_until ON markers (answer_until);
 
 CREATE INDEX idx_markers_invite ON markers (invite_uid);
 

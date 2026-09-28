@@ -2330,7 +2330,7 @@ fn received(
 }
 
 /// The world's folder with `role`.
-fn folder(world: &World, role: postio_model::MailboxRole) -> MailboxId {
+pub(crate) fn folder(world: &World, role: postio_model::MailboxRole) -> MailboxId {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         postio_storage::repository::MailboxRepository::new(&connection)
@@ -2475,7 +2475,10 @@ fn letter_from_tove(
 }
 
 /// The marker on `message`, once the body stage has had it.
-fn marker_on(world: &World, message: MessageId) -> Option<postio_storage::repository::Marker> {
+pub(crate) fn marker_on(
+    world: &World,
+    message: MessageId,
+) -> Option<postio_storage::repository::Marker> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         postio_storage::repository::MarkerRepository::new(&connection)
@@ -2486,7 +2489,7 @@ fn marker_on(world: &World, message: MessageId) -> Option<postio_storage::reposi
 }
 
 /// Focus mode on, and the catch-up done.
-fn focus_caught_up(world: &World) -> crate::FocusHandle {
+pub(crate) fn focus_caught_up(world: &World) -> crate::FocusHandle {
     let focus = world.host().enable_focus(crate::FocusSetup::default());
     eventually(world, || focus.caught_up().then_some(()));
     focus
@@ -2656,13 +2659,13 @@ fn a_question_brings_its_message_out_of_a_digest_hold() {
 // ── Invitations, marked (spec 007, T110) ────────────────────────────────────
 
 /// An instant as iCalendar writes one in UTC, to the minute.
-fn ics_utc(at: chrono::DateTime<Utc>) -> String {
+pub(crate) fn ics_utc(at: chrono::DateTime<Utc>) -> String {
     at.format("%Y%m%dT%H%M00Z").to_string()
 }
 
 /// A calendar part: `method` for event `uid` at `sequence`, stamped
 /// `stamp`, with `event` lines for its times.
-fn calendar(
+pub(crate) fn calendar(
     method: &str,
     uid: &str,
     sequence: u32,
@@ -2691,7 +2694,7 @@ fn calendar(
 }
 
 /// `DTSTART` and `DTEND` for an event from `start`, `minutes` long.
-fn when(start: chrono::DateTime<Utc>, minutes: i64) -> Vec<String> {
+pub(crate) fn when(start: chrono::DateTime<Utc>, minutes: i64) -> Vec<String> {
     vec![
         format!("DTSTART:{}", ics_utc(start)),
         format!(
@@ -2703,7 +2706,7 @@ fn when(start: chrono::DateTime<Utc>, minutes: i64) -> Vec<String> {
 
 /// A message to the user, received `ago` before now, carrying `ics` as a
 /// calendar part that is here, as the body backfill leaves one.
-fn invitation_mail(world: &World, ago: chrono::TimeDelta, ics: &str) -> MessageId {
+pub(crate) fn invitation_mail(world: &World, ago: chrono::TimeDelta, ics: &str) -> MessageId {
     let inbox = folder(world, postio_model::MailboxRole::Inbox);
     let blob = world
         .host()
@@ -2752,7 +2755,7 @@ fn invitation_mail(world: &World, ago: chrono::TimeDelta, ics: &str) -> MessageI
 }
 
 /// Tomorrow at ten, UTC, to the minute: an event that is ahead.
-fn ahead() -> chrono::DateTime<Utc> {
+pub(crate) fn ahead() -> chrono::DateTime<Utc> {
     use chrono::Timelike as _;
     (Utc::now() + chrono::TimeDelta::days(1))
         .with_hour(10)

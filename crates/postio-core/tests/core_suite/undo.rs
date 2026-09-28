@@ -402,3 +402,60 @@ fn archiving_twelve_messages_then_undoing_restores_all_twelve() {
         "the last toast counted the whole burst: {seen:?}"
     );
 }
+
+// ── An entry that lasts only its window (specs/007-postio-focus research R9) ──
+
+/// An invitation answered: its reply waits `window` in the outbox, and
+/// cancelling the send is the way back.
+fn accepted(id: i64, window: Duration) -> UndoEntry {
+    UndoEntry::new(
+        UndoKind::Accept,
+        vec![message(id)],
+        vec![Command::CancelSend {
+            draft: Some(postio_model::DraftId::new(id)),
+        }],
+    )
+    .lasting(window)
+}
+
+#[test]
+fn an_answer_can_be_taken_back_inside_its_window_and_not_after() {
+    // Research R9: the undo stack holds an entry for an RSVP's window that
+    // expires with it, so `mod+z` after the window reaches the action
+    // beneath rather than answering "too late".
+    let mut stack = UndoStack::new();
+    let start = Instant::now();
+    stack.record_at(archived(1), start);
+    stack.record_at(accepted(2, Duration::from_secs(10)), start);
+
+    let inside = stack
+        .clone()
+        .undo_at(start + Duration::from_secs(9))
+        .expect("something to undo");
+    assert_eq!(
+        inside.kind(),
+        UndoKind::Accept,
+        "inside the window, the answer"
+    );
+    assert_eq!(inside.description(), "Accepted");
+
+    let after = stack
+        .undo_at(start + Duration::from_secs(11))
+        .expect("something to undo");
+    assert_eq!(
+        after.kind(),
+        UndoKind::Archive,
+        "after it, the action beneath: the answer's entry went with its window"
+    );
+}
+
+#[test]
+fn an_answer_is_never_folded_into_another_unit() {
+    // Each answer is its own send with its own window: two answered in one
+    // breath are two entries, each expiring on its own.
+    let mut stack = UndoStack::new();
+    let start = Instant::now();
+    stack.record_at(accepted(1, Duration::from_secs(10)), start);
+    stack.record_at(accepted(2, Duration::from_secs(10)), start);
+    assert_eq!(stack.depth(), 2);
+}

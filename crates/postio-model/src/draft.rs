@@ -173,6 +173,14 @@ pub struct Draft {
     /// them has none.
     #[serde(default)]
     pub labels: Vec<LabelId>,
+    /// The iCalendar answer this draft carries, when it is the reply to an
+    /// invitation (spec 007 FR-102): a `METHOD:REPLY` object, as
+    /// `postio-calendar` writes it, which
+    /// [`outgoing::build`](crate::outgoing::build) places beside the text as
+    /// the `text/calendar` alternative. `None` for everything a person
+    /// writes.
+    #[serde(default)]
+    pub calendar_reply: Option<String>,
     /// Attachments added so far. These carry
     /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
     /// until the draft becomes a sent message.
@@ -224,6 +232,7 @@ impl Draft {
             body: MessageBody::default(),
             body_markdown: None,
             labels: Vec::new(),
+            calendar_reply: None,
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,

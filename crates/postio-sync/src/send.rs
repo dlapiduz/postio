@@ -271,12 +271,21 @@ pub(crate) async fn resolve(
         None => None,
     };
 
+    // An answer to an invitation carries its iCalendar reply, which goes
+    // beside the words as the `text/calendar` alternative (spec 007 FR-102).
+    let calendar = draft
+        .calendar_reply
+        .as_deref()
+        .map(|ics| outgoing::CalendarPart {
+            method: outgoing::CalendarMethod::Reply,
+            ics: ics.as_bytes(),
+        });
     let built = outgoing::build(
         &draft,
         identity,
         &outgoing_attachments,
         parent.as_ref(),
-        None,
+        calendar,
     );
 
     let Some(sent) = MailboxRepository::new(connection)

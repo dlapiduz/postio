@@ -488,3 +488,357 @@ fn the_person_s_own_message_does_not_cancel_their_reminder() {
     );
     assert_eq!(fire_at(&world, due), 1, "and it fires when its time comes");
 }
+
+// ── Answering an invitation (T112) ──────────────────────────────────────────
+
+/// The world's account as one that sends: an identity at its address, the
+/// attendee its invitations name, and a Sent folder to file the reply in.
+fn sending(world: &World) {
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        let account = postio_storage::repository::AccountRepository::new(&connection)
+            .get(world.account)
+            .await
+            .expect("a read")
+            .expect("the account");
+        let mut identity = postio_model::Identity::new(account.id, account.address.clone());
+        identity.display_name = "Test User".to_owned();
+        identity.is_default = true;
+        postio_storage::repository::IdentityRepository::new(&connection)
+            .create(&mut identity)
+            .await
+            .expect("an identity");
+        postio_storage::test_support::mailbox(&connection, &account, "Sent").await;
+    });
+}
+
+/// An invitation from Ines to the world's account, an hour old, with its
+/// marker as the body stage writes it: open, unanswered.
+fn invited(world: &World) -> MessageId {
+    let start = crate::tests::ahead();
+    let request = crate::tests::invitation_mail(
+        world,
+        chrono::TimeDelta::hours(1),
+        &crate::tests::calendar(
+            "REQUEST",
+            "review@example.org",
+            0,
+            Utc::now(),
+            &crate::tests::when(start, 45),
+        ),
+    );
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        postio_storage::repository::MarkerRepository::new(&connection)
+            .insert(&postio_storage::repository::Marker {
+                message: request,
+                kind: postio_model::listing::MarkerKind::Invite,
+                source: postio_storage::repository::MarkerSource::Calendar,
+                span: None,
+                excerpt: None,
+                starts_at: Some(start),
+                ends_at: Some(start + chrono::TimeDelta::minutes(45)),
+                due_at: None,
+                invite: Some(postio_storage::repository::InviteIdentity {
+                    uid: "review@example.org".to_owned(),
+                    sequence: 0,
+                    stamp: None,
+                }),
+                invite_state: Some(postio_storage::repository::InviteState::Open),
+                answer: None,
+                dismissed_at: None,
+            })
+            .await
+            .expect("its marker");
+    });
+    request
+}
+
+/// A mail server and an SMTP server that accepts everything, as the
+/// drainer meets them.
+struct Outbox {
+    backend: postio_account::backend::MockBackend,
+    smtp: postio_smtp::transport::ScriptedConnector,
+    secrets: std::sync::Arc<postio_account::secret::MemorySecretStore>,
+}
+
+fn outbox(world: &World) -> Outbox {
+    use postio_account::secret::{AccountKey, Password, SecretStore as _};
+    let backend = postio_account::backend::MockBackend::builder()
+        .mailbox(postio_account::backend::MockMailbox::new("Sent"))
+        .build();
+    let secrets = std::sync::Arc::new(postio_account::secret::MemorySecretStore::new());
+    world.rt.block_on(async {
+        use postio_account::backend::MailBackend as _;
+        backend.connect().await.expect("connected");
+        secrets
+            .store(
+                &AccountKey::new("test@example.com".to_owned()),
+                &Password::new("password"),
+            )
+            .await
+            .expect("the password");
+    });
+    // The test account submits on 587 with STARTTLS, as most do.
+    let script = postio_smtp::transport::SmtpScript::new("220 mail.example.com ESMTP ready")
+        .on(
+            "EHLO",
+            "250-mail.example.com\r\n250-STARTTLS\r\n250 AUTH PLAIN",
+        )
+        .on("STARTTLS", "220 go ahead")
+        .on("AUTH PLAIN", "235 authenticated")
+        .on("MAIL FROM", "250 ok")
+        .on("RCPT TO", "250 ok")
+        .on("DATA", "354 go ahead")
+        .on("QUIT", "221 bye");
+    Outbox {
+        backend,
+        smtp: postio_smtp::transport::ScriptedConnector::new(script),
+        secrets,
+    }
+}
+
+impl Outbox {
+    /// Drain the account's queue as of `now`, as the engine does.
+    fn drain_at(&self, world: &World, now: DateTime<Utc>) -> postio_sync::DrainReport {
+        let tokens = postio_account::auth::StoredPasswordSource::new(self.secrets.clone());
+        world.rt.block_on(async {
+            let connection = world.database().connect().await.expect("a connection");
+            postio_sync::Drainer::new(&self.backend)
+                .with_smtp(postio_sync::send::SmtpContext {
+                    connector: &self.smtp,
+                    tokens: &tokens,
+                    blobs: &world.host().wiring().blobs,
+                })
+                .drain(&connection, world.account, now)
+                .await
+                .expect("a drain")
+        })
+    }
+
+    /// How many messages reached the SMTP server.
+    fn sent(&self) -> usize {
+        self.smtp
+            .log()
+            .commands()
+            .iter()
+            .filter(|line| line.starts_with("MAIL FROM"))
+            .count()
+    }
+
+    /// Everything written to the SMTP server.
+    fn written(&self) -> String {
+        String::from_utf8_lossy(&self.smtp.log().written).into_owned()
+    }
+}
+
+/// The invitation's answer, as its marker holds it.
+fn answer_on(world: &World, message: MessageId) -> Option<postio_model::listing::InviteAnswer> {
+    crate::tests::marker_on(world, message).and_then(|marker| marker.answer)
+}
+
+/// Past the window an answer waits out in the outbox.
+fn after_the_window() -> DateTime<Utc> {
+    Utc::now() + postio_session::actions::RSVP_WINDOW + chrono::TimeDelta::seconds(1)
+}
+
+#[test]
+fn an_accepted_invitation_waits_out_its_window_and_then_one_reply_leaves() {
+    // US8 scenarios 2 and 3, and FR-102: `y` queues the answer through the
+    // outbox, local-first. Nothing reaches the transport before the window
+    // ends; after it, exactly one reply goes to the organiser.
+    let world = World::new();
+    sending(&world);
+    let request = invited(&world);
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let outbox = outbox(&world);
+
+    world.send(
+        &client,
+        Command::AcceptInvite {
+            message: Some(request),
+        },
+    );
+    let said = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::ActionCompleted { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert_eq!(
+        said,
+        Event::ActionCompleted {
+            description: "Accepted".to_owned(),
+            undoable: true,
+        }
+    );
+    assert_eq!(
+        answer_on(&world, request),
+        Some(postio_model::listing::InviteAnswer::Accepting),
+        "accepting while the window is open"
+    );
+
+    outbox.drain_at(&world, Utc::now());
+    assert_eq!(
+        outbox.sent(),
+        0,
+        "nothing reached the transport inside the window"
+    );
+
+    let report = outbox.drain_at(&world, after_the_window());
+    assert_eq!(report.applied, 1, "{report:?}");
+    assert_eq!(outbox.sent(), 1, "one reply left");
+    let written = outbox.written();
+    assert!(
+        written.contains("RCPT TO:<ines@example.org>"),
+        "to the organiser"
+    );
+    assert!(
+        written.contains("Content-Type: text/calendar; method=\"REPLY\""),
+        "with the calendar answer beside its words:\n{written}"
+    );
+    assert!(written.contains("PARTSTAT=ACCEPTED"), "saying yes");
+
+    outbox.drain_at(&world, after_the_window());
+    assert_eq!(outbox.sent(), 1, "and only one");
+}
+
+#[test]
+fn an_answer_taken_back_inside_its_window_sends_nothing() {
+    // US8 scenario 2: cancelled within the ten seconds, nothing is sent,
+    // and the invitation is as it was.
+    let world = World::new();
+    sending(&world);
+    let request = invited(&world);
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let outbox = outbox(&world);
+
+    world.send(
+        &client,
+        Command::DeclineInvite {
+            message: Some(request),
+        },
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { description, .. } if description == "Declined")
+    });
+    assert_eq!(
+        answer_on(&world, request),
+        Some(postio_model::listing::InviteAnswer::Declining)
+    );
+
+    world.send(&client, Command::Undo);
+    let undone = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::UndoPerformed { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert_eq!(
+        undone,
+        Event::UndoPerformed {
+            description: "Declined".to_owned()
+        }
+    );
+    assert_eq!(
+        answer_on(&world, request),
+        None,
+        "the invitation is as it was"
+    );
+
+    outbox.drain_at(&world, after_the_window());
+    assert_eq!(outbox.sent(), 0, "nothing was sent");
+}
+
+#[test]
+fn when_the_window_closes_the_answer_stands() {
+    // Research R9: the due timer turns `accepting` into `accepted` once the
+    // window has closed, and nothing earlier.
+    let world = World::new();
+    sending(&world);
+    let request = invited(&world);
+    let (client, events) = world.frontend(ClientKind::Focus);
+    world.send(
+        &client,
+        Command::AcceptInvite {
+            message: Some(request),
+        },
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+
+    let settle = |now: DateTime<Utc>| {
+        world
+            .rt
+            .block_on(crate::focus::settle_answers(world.database(), now))
+            .expect("the timer's pass")
+    };
+    assert!(settle(Utc::now()).is_empty(), "not while it is open");
+    assert_eq!(
+        answer_on(&world, request),
+        Some(postio_model::listing::InviteAnswer::Accepting)
+    );
+
+    let settled = settle(after_the_window());
+    assert_eq!(settled, vec![(world.account, request)]);
+    assert_eq!(
+        answer_on(&world, request),
+        Some(postio_model::listing::InviteAnswer::Accepted)
+    );
+}
+
+#[test]
+fn an_invitation_answers_only_from_an_address_it_invited() {
+    // "With no match, there is no answer": an invitation that names none of
+    // the person's addresses among its attendees has nobody to answer as.
+    let world = World::new();
+    sending(&world);
+    let request = invited(&world);
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        let account = postio_storage::repository::AccountRepository::new(&connection)
+            .get(world.account)
+            .await
+            .expect("a read")
+            .expect("the account");
+        for identity in account.identities {
+            postio_storage::repository::IdentityRepository::new(&connection)
+                .delete(identity.id)
+                .await
+                .expect("gone");
+        }
+        let mut other = postio_model::Identity::new(
+            account.id,
+            postio_model::EmailAddress::new(None::<&str>, "desk@example.com"),
+        );
+        other.is_default = true;
+        postio_storage::repository::IdentityRepository::new(&connection)
+            .create(&mut other)
+            .await
+            .expect("an identity");
+    });
+    let (client, events) = world.frontend(ClientKind::Focus);
+
+    world.send(
+        &client,
+        Command::AcceptInvite {
+            message: Some(request),
+        },
+    );
+    let said = world.hear(&events, |event| {
+        matches!(
+            event,
+            Event::ActionCompleted { .. } | Event::CommandRejected { .. }
+        )
+    });
+    assert!(
+        matches!(
+            &said,
+            Event::CommandRejected { reason, .. }
+                if reason.contains("does not name any address you send from")
+        ),
+        "refused, saying why: {said:?}"
+    );
+    assert_eq!(answer_on(&world, request), None);
+}
