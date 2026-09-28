@@ -94,9 +94,22 @@ pub(crate) async fn save(
             "A digest rule needs a sender or a query to hold",
         ));
     }
-    if !postio_ui::digest::unreadable_queries(&rule, Local::now().date_naive()).is_empty() {
+    let today = Local::now().date_naive();
+    if !postio_ui::digest::unreadable_queries(&rule, today).is_empty() {
         return Err(StoreError::new(
             "Postio cannot read one of that rule's queries",
+        ));
+    }
+    // A rule holds mail as it is filed, before its body is here, so it can
+    // only ask what is known then (FR-171). A query beyond that would be
+    // saved and hold nothing -- the classifier leaves such a rule out -- so
+    // it is refused, saying what a rule can use.
+    if rule.queries.iter().any(|query| {
+        postio_search::matcher::Matcher::new(&postio_search::parse(query, today)).is_err()
+    }) {
+        return Err(StoreError::new(
+            "A digest rule holds mail as it arrives, before its text is here, so it can use \
+             from:, to:, subject:, filename: and list:",
         ));
     }
     let taken = inner.wiring.focus.config().is_some_and(|config| {
@@ -178,4 +191,187 @@ fn due_of(draft: &DigestRuleDraft) -> Result<Due, StoreError> {
             return Err(StoreError::new("A monthly digest needs a day from 1 to 28"));
         }
     })
+}
+
+/// How many of a candidate's recent messages the model is shown.
+const SAMPLE: u32 = 6;
+
+/// "Digest mail like this" for `message` (FR-171): the rule the person's
+/// model picks, with its preview, or `None` when there is no model with
+/// `like_this` on, or it picked none.
+///
+/// Postio builds the candidates -- the message's list, its sender, its
+/// sender's domain -- each a query a rule can hold by as mail is filed, and
+/// shows the model a sample of what each would have caught in the last 90
+/// days. The model answers with a number, so the rule is Postio's query,
+/// never text it wrote. Reads: the message and its body, then one search
+/// and one read of rows per candidate, and the chosen one's preview.
+pub(crate) async fn like_this(
+    inner: &Inner,
+    message: MessageId,
+) -> Result<Option<postio_client::protocol::LikeThisRule>, StoreError> {
+    let Some(config) = inner.wiring.focus.config() else {
+        return Ok(None);
+    };
+    let models = inner
+        .focus
+        .lock()
+        .expect("never poisoned")
+        .as_ref()
+        .map(|focus| std::sync::Arc::clone(&focus.models));
+    let Some(client) =
+        models.and_then(|models| models.client(&config, postio_config::ModelFeature::LikeThis))
+    else {
+        return Ok(None);
+    };
+    let (row, text) = {
+        let reader = inner.wiring.database.read().await?;
+        let messages = postio_storage::repository::MessageRepository::new(&reader);
+        let Some(row) = messages.get(message).await? else {
+            return Ok(None);
+        };
+        let body = messages.body(message).await?;
+        (row, body)
+    };
+    let text = match text {
+        Some(body) => {
+            let body = postio_model::MessageBody {
+                text: body.text,
+                html: body.html,
+            };
+            tokio::task::spawn_blocking(move || postio_body::own_text(&body))
+                .await
+                .unwrap_or_default()
+        }
+        None => String::new(),
+    };
+    let queries = candidates(&row);
+    if queries.is_empty() {
+        return Ok(None);
+    }
+    let since = Utc::now() - chrono::TimeDelta::days(90);
+    let mut samples: Vec<Vec<(String, String)>> = Vec::with_capacity(queries.len());
+    for query in &queries {
+        let (_, ids) = recent(inner, query, since, SAMPLE).await?;
+        let rows = inner.wiring.store.message_rows(ids).await?;
+        samples.push(
+            rows.into_iter()
+                .map(|row| {
+                    (
+                        row.from.map(|from| from.address).unwrap_or_default(),
+                        row.subject.unwrap_or_default(),
+                    )
+                })
+                .collect(),
+        );
+    }
+    let sender = row
+        .from
+        .first()
+        .map(|from| match &from.name {
+            Some(name) => format!("{name} <{}>", from.address),
+            None => from.address.clone(),
+        })
+        .unwrap_or_default();
+    let subject = row.subject.clone().unwrap_or_default();
+    let account = row.account_id;
+    let offered = queries.clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        let candidates: Vec<postio_ai::Candidate<'_>> = offered
+            .iter()
+            .zip(&samples)
+            .map(|(query, sample)| postio_ai::Candidate {
+                query,
+                sample: sample
+                    .iter()
+                    .map(|(sender, subject)| (sender.as_str(), subject.as_str()))
+                    .collect(),
+            })
+            .collect();
+        postio_ai::LikeThis::new(client).choose(
+            &postio_ai::Example {
+                account,
+                sender: &sender,
+                subject: &subject,
+                text: &text,
+            },
+            &candidates,
+        )
+    })
+    .await
+    .unwrap_or(Err(postio_ai::AiError::Down));
+    let Ok(Some(index)) = chosen else {
+        return Ok(None);
+    };
+    let Some(query) = queries.into_iter().nth(index) else {
+        return Ok(None);
+    };
+    let queries = vec![query];
+    let preview = preview(inner, &queries, since).await?;
+    Ok(Some(postio_client::protocol::LikeThisRule {
+        queries,
+        preview,
+    }))
+}
+
+/// The rules "like this" could be: `message`'s list, its sender, and its
+/// sender's domain, each a query a rule holds by as mail is filed.
+fn candidates(message: &postio_model::Message) -> Vec<String> {
+    let quoted = |value: &str| {
+        if value.chars().any(char::is_whitespace) {
+            format!("\"{}\"", value.replace('"', ""))
+        } else {
+            value.to_owned()
+        }
+    };
+    let mut queries = Vec::new();
+    if let Some(list) = message
+        .list_id
+        .as_deref()
+        .filter(|list| !list.trim().is_empty())
+    {
+        queries.push(format!("list:{}", quoted(list.trim())));
+    }
+    if let Some(from) = message.from.first() {
+        queries.push(format!("from:{}", quoted(&from.address)));
+        if let Some((_, domain)) = from.address.rsplit_once('@')
+            && !domain.is_empty()
+        {
+            queries.push(format!("from:{}", quoted(domain)));
+        }
+    }
+    queries.truncate(postio_ai::MAX_CANDIDATES);
+    queries
+}
+
+/// `query` through the executor over every account's mail since `since`:
+/// how many it matches, and the newest `limit`.
+async fn recent(
+    inner: &Inner,
+    query: &str,
+    since: DateTime<Utc>,
+    limit: u32,
+) -> Result<(u64, Vec<MessageId>), StoreError> {
+    let reader = inner.wiring.database.read().await?;
+    let parsed = postio_search::parse(
+        &format!("{query} after:{}", since.format("%Y-%m-%d")),
+        Local::now().date_naive(),
+    );
+    let found = postio_index::search(
+        &reader,
+        &postio_index::SearchRequest {
+            account: AccountScope::Unified,
+            query: &parsed,
+            scope: Scope::default(),
+            limit,
+            order: ResultOrder::Newest,
+        },
+        Utc::now(),
+    )
+    .await
+    .map_err(|_| StoreError::new("Postio could not run that rule over your mail"))?;
+    Ok((
+        found.total_hits,
+        found.hits.iter().map(|hit| hit.message_id).collect(),
+    ))
 }

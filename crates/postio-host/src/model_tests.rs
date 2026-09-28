@@ -362,3 +362,100 @@ fn a_reference_that_no_longer_resolves_is_not_shown() {
     let texts: Vec<&str> = shown.statements.iter().map(|s| s.text.as_str()).collect();
     assert_eq!(texts, ["Kept."]);
 }
+
+// ── "Digest mail like this" (T155, US14, FR-171) ────────────────────────────
+
+/// `[focus]` naming a model with only `like_this` as given.
+fn judging(like_this: bool) -> FocusConfig {
+    postio_config::Config::from_toml_str(&format!(
+        "[focus.model]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = \"a-small-model\"\n\
+         needs_action = false\ndigest_summary = false\nlike_this = {like_this}\n"
+    ))
+    .expect("a config")
+    .focus
+}
+
+/// Three issues of a newsletter on a list, the last one the example.
+fn issues(world: &World) -> postio_model::MessageId {
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+    });
+    let mut last = None;
+    for issue in 110..113 {
+        last = Some(letter_from_tove(
+            world,
+            saturday_noon(),
+            &format!("Issue {issue}: this week in local-first software."),
+            |message| {
+                message.from = vec![postio_model::EmailAddress::new(
+                    Some("Local-First Weekly"),
+                    "editor@weekly.example",
+                )];
+                message.subject = Some(format!("Issue {issue}"));
+                message.list_id = Some("weekly.lists.example.org".to_owned());
+            },
+        ));
+    }
+    last.expect("an issue")
+}
+
+#[test]
+fn like_this_makes_a_rule_from_the_candidate_the_model_picks_previewed() {
+    // US14, FR-171: the model checks which mail is alike, by choosing among
+    // queries Postio built from the message, and the rule comes previewed
+    // through the executor, as any rule does before it is saved.
+    let world = World::new();
+    let example = issues(&world);
+    let runtime = FakeRuntime::always(Reply::content(r#"{"candidate":1}"#));
+    focus_with(&world, judging(true), &runtime);
+    let client = world
+        .host()
+        .connect(postio_client::protocol::ClientKind::Test);
+
+    let proposal = world
+        .rt
+        .block_on(client.digest_like_this(example))
+        .expect("a read")
+        .expect("a proposal");
+
+    assert_eq!(proposal.queries, ["list:weekly.lists.example.org"]);
+    assert_eq!(proposal.preview.count, 3, "the three issues");
+    let request = &runtime.requests()[0];
+    assert!(
+        request.data().contains("[1] list:weekly.lists.example.org"),
+        "{}",
+        request.data()
+    );
+    assert!(
+        request.data().contains("[2] from:editor@weekly.example"),
+        "{}",
+        request.data()
+    );
+}
+
+#[test]
+fn without_a_model_like_this_is_absent_and_nothing_connects() {
+    // FR-167: "Digest mail like this" is absent without a model, or with
+    // its switch off; list and search rules work either way.
+    for config in [FocusConfig::default(), judging(false)] {
+        let world = World::new();
+        let example = issues(&world);
+        let runtime = FakeRuntime::always(Reply::content(r#"{"candidate":1}"#));
+        focus_with(&world, config, &runtime);
+        let client = world
+            .host()
+            .connect(postio_client::protocol::ClientKind::Test);
+
+        assert_eq!(
+            world
+                .rt
+                .block_on(client.digest_like_this(example))
+                .expect("a read"),
+            None
+        );
+        assert_eq!(runtime.connections(), 0);
+    }
+}

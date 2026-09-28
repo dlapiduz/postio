@@ -15,7 +15,9 @@
 //! whole `.eml` corpus, asks every query below of both, and asserts the
 //! answers are identical, naming the fixtures either side disagrees about.
 //!
-//! The queries are the ones a digest rule is written in, chosen so each
+//! The queries are the ones a digest rule is written in -- `from:` and
+//! `list:`, and the query rules' `to:`, `subject:` and `filename:` -- chosen
+//! so each
 //! divides the corpus -- a query every message answers the same way agrees
 //! trivially and proves nothing -- plus a few that should match nothing at
 //! all, which is where a matcher too eager to say yes shows itself.
@@ -64,6 +66,22 @@ const DIVIDING: &[&str] = &[
     "list:news.larkspur.example.com",
     "list:harbour",
     "list:example.org",
+    // Query rules, milestone 2's: what is known of a message as it is
+    // filed, before its body (spec 007 US14, T155).
+    "to:ada.norwood@example.com",
+    "to:quinn.abara@example.net",
+    "to:harbour-dev@lists.example.org",
+    "to:ren",
+    "subject:walkthrough",
+    "subject:\"Tide gate interlock\"",
+    "subject:receipt",
+    "subject:invitation",
+    "filename:invite.ics",
+    "filename:badge.png",
+    "filename:ics",
+    "-subject:walkthrough",
+    "to:ada subject:walkthrough",
+    "from:example.com -to:ada.norwood@example.com",
     // Negation, and more than one condition.
     "-from:ada.norwood@example.com",
     "-list:harbour",
@@ -78,6 +96,9 @@ const NOTHING: &[&str] = &[
     "from:francoise",
     "list:nothing.example",
     "from:ad",
+    "to:nobody@example.com",
+    "subject:zeppelin",
+    "filename:nothing.pdf",
 ];
 
 fn today() -> NaiveDate {

@@ -135,6 +135,7 @@ impl Req {
             Req::Surfaced => "Surfaced",
             Req::DigestPreview { .. } => "DigestPreview",
             Req::DigestSummary(_) => "DigestSummary",
+            Req::DigestLikeThis(_) => "DigestLikeThis",
             Req::SaveDigestRule { .. } => "SaveDigestRule",
             Req::DeleteDigestRule(_) => "DeleteDigestRule",
         }
@@ -1012,6 +1013,26 @@ impl Client {
             Resp::Surfaced(rows) => Some(rows),
             _ => None,
         })
+        .await
+    }
+
+    /// "Digest mail like this" for `message`: the rule the person's model
+    /// picks among queries Postio builds from it, and its preview, for the
+    /// rule dialog to show before it is saved. `None` when there is no model
+    /// with `like_this` on -- the command is absent then -- or the model
+    /// picked none (spec 007 FR-171).
+    pub async fn digest_like_this(
+        &self,
+        message: MessageId,
+    ) -> Result<Option<crate::protocol::LikeThisRule>, StoreError> {
+        self.read(
+            Req::DigestLikeThis(message),
+            "a rule for mail like this",
+            |answer| match answer {
+                Resp::DigestLikeThis(rule) => Some(rule),
+                _ => None,
+            },
+        )
         .await
     }
 

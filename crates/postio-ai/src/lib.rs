@@ -29,12 +29,14 @@
 mod client;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
+mod like_this;
 mod needs_action;
 mod schema;
 mod summary;
 mod transport;
 
 pub use client::{AiError, Client, Question, RETRY_AFTER};
+pub use like_this::{Candidate, Example, LikeThis, MAX_CANDIDATES};
 pub use needs_action::NeedsActionModel;
 pub use schema::{Field, Kind, Schema, SchemaError};
 pub use summary::{MAX_SOURCES, SOURCE_CHARS, Source, Summariser, resolve};

@@ -1157,6 +1157,37 @@ mod tests {
     }
 
     #[test]
+    fn a_list_rule_and_a_query_rule_hold_what_they_match() {
+        // US14 scenario 1: `list:weekly.example.org` holds mail from that
+        // list; and a query rule, in the one language, holds what it
+        // matches of what is known as mail is filed (FR-171, T155).
+        let rules = digesting(&[
+            ("Weekly", &["list:weekly.example.org"]),
+            ("Receipts", &["subject:receipt -to:ops@example.com"]),
+        ]);
+        let mut weekly = ledger();
+        weekly.list_id = Some("weekly.example.org".to_owned());
+        let mut receipt = ledger();
+        receipt.from = vec![EmailAddress::new(Some("Shop"), "orders@shop.example")];
+        receipt.subject = Some("Your receipt for order 4410".to_owned());
+        let mut elsewhere = receipt.clone();
+        elsewhere.subject = Some("Your order has shipped".to_owned());
+
+        assert_eq!(
+            held_under(&at_filing(&filed(&weekly), &NoFacts, &rules)),
+            Some("Weekly")
+        );
+        assert_eq!(
+            held_under(&at_filing(&filed(&receipt), &NoFacts, &rules)),
+            Some("Receipts")
+        );
+        assert_eq!(
+            held_under(&at_filing(&filed(&elsewhere), &NoFacts, &rules)),
+            None
+        );
+    }
+
+    #[test]
     fn an_invitation_is_never_held_nor_filed_away() {
         // US10 scenario 2, FR-122: it comes to the inbox with its marker,
         // from the rule's sender and in bulk mail's clothes. An invitation is

@@ -1833,3 +1833,110 @@ fn a_first_sync_that_lands_between_ticks_is_not_sorted_at_the_next_open() {
         "the first sync's row stays in the inbox"
     );
 }
+
+// ── List and query rules (spec 007 T155, US14) ──────────────────────────────
+
+#[test]
+fn a_query_rule_s_preview_lists_what_it_matches_and_the_rule_holds_the_same() {
+    // US14 scenario 2, and the story's Independent Test: a query rule's
+    // preview is the query through the executor over the recent window, in
+    // the one language search speaks (ADR 0008), and what it lists is what
+    // the rule then holds as mail is filed.
+    let world = World::new();
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+    });
+    let mut receipts = Vec::new();
+    for days in 1..=3 {
+        let (id, _) = letter(
+            &world,
+            "orders@shop.example",
+            &format!("Your receipt for order {days}"),
+            &format!("<receipt-{days}@shop.example>"),
+            None,
+            Utc::now() - chrono::TimeDelta::days(days),
+        );
+        receipts.push(id);
+    }
+    let (shipped, _) = letter(
+        &world,
+        "orders@shop.example",
+        "Your order has shipped",
+        "<shipped@shop.example>",
+        None,
+        Utc::now() - chrono::TimeDelta::days(1),
+    );
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let query = "subject:receipt from:orders@shop.example";
+
+    let preview = world
+        .rt
+        .block_on(client.digest_preview(
+            vec![query.to_owned()],
+            Utc::now() - chrono::TimeDelta::days(90),
+        ))
+        .expect("a preview");
+
+    assert_eq!(preview.count, 3);
+    let mut listed: Vec<MessageId> = preview.first.iter().map(|row| row.id).collect();
+    listed.sort();
+    assert_eq!(listed, receipts);
+    let rule = postio_search::matcher::Matcher::new(&postio_search::parse(
+        query,
+        chrono::Local::now().date_naive(),
+    ))
+    .expect("a rule can hold by it as mail is filed");
+    world.rt.block_on(async {
+        let reader = world.database().read().await.expect("a reader");
+        let messages = MessageRepository::new(&reader);
+        for id in receipts.iter().chain([&shipped]) {
+            let row = messages.get(*id).await.expect("a read").expect("a row");
+            assert_eq!(
+                rule.matches(&row),
+                receipts.contains(id),
+                "the rule holds what the preview listed, and nothing else"
+            );
+        }
+    });
+}
+
+#[test]
+fn a_rule_the_filing_pass_could_never_answer_is_refused_with_a_sentence() {
+    // FR-171: a rule holds mail as it is filed, before its body is here, so
+    // it can ask only what is known then. A query beyond that would be
+    // saved and hold nothing; it is refused, saying what a rule can use.
+    let world = World::new();
+    let (_directory, path) = config_file("");
+    world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config_path(path.clone()));
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let rule = |query: &str| postio_client::protocol::DigestRuleDraft {
+        name: "Invoices".to_owned(),
+        queries: vec![query.to_owned()],
+        cadence: postio_model::listing::Cadence::Daily,
+        day: None,
+        at: chrono::NaiveTime::from_hms_opt(9, 0, 0).expect("a time"),
+    };
+
+    for query in ["invoice", "from:orders@shop.example has:attachment"] {
+        let refused = world
+            .rt
+            .block_on(client.save_digest_rule(None, rule(query)))
+            .expect_err(query);
+        assert!(refused.to_string().contains("list:"), "{refused}");
+    }
+    assert!(focus_in(&path).digests.is_empty(), "nothing written");
+
+    world
+        .rt
+        .block_on(client.save_digest_rule(None, rule("list:billing.lists.example.org")))
+        .expect("a list rule is written");
+    assert_eq!(
+        focus_in(&path).digests[0].queries,
+        ["list:billing.lists.example.org"]
+    );
+}

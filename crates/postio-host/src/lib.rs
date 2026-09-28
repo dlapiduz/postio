@@ -1069,6 +1069,9 @@ impl Inner {
                 Ok(bytes) => Resp::RawSource(bytes),
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
+            Req::DigestLikeThis(message) => focus::like_this(self, message)
+                .await
+                .map_or_else(Resp::Failed, Resp::DigestLikeThis),
             Req::DigestSummary(delivery) => focus::digest_summary(self, delivery)
                 .await
                 .map_or_else(Resp::Failed, Resp::DigestSummary),

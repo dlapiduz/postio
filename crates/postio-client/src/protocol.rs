@@ -363,6 +363,11 @@ pub enum Req {
     /// read: `None` when none is written, or none is left to show (spec 007
     /// FR-172 to FR-175).
     DigestSummary(postio_model::DeliveryId),
+    /// "Digest mail like this" for a message (spec 007 FR-171): the rule
+    /// the person's model picks from the queries Postio builds for it, with
+    /// its preview. Answered `None` when no model with `like_this` on is
+    /// configured -- the command is absent -- or the model picked none.
+    DigestLikeThis(MessageId),
     /// What a digest rule matching `queries` would have caught since
     /// `since`: the rule dialog's preview, through the executor (spec 007
     /// FR-120, FR-127).
@@ -410,6 +415,17 @@ pub enum RuleDay {
     Weekday(chrono::Weekday),
     /// A day of the month, 1 to 28, for a monthly digest.
     OfMonth(u32),
+}
+
+/// The rule "Digest mail like this" proposes (spec 007 FR-171): queries in
+/// the one language, never text a model wrote, and what they would have
+/// caught.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LikeThisRule {
+    /// The rule's queries, for `[[focus.digests]] match`.
+    pub queries: Vec<String>,
+    /// What it would have caught in the last 90 days.
+    pub preview: DigestPreview,
 }
 
 /// What a digest rule would have caught (spec 007 screen 24): "Would have
@@ -514,6 +530,8 @@ pub enum Resp {
     Surfaced(Vec<postio_model::listing::Surfaced>),
     /// A digest rule's preview.
     DigestPreview(DigestPreview),
+    /// The rule "Digest mail like this" proposes, if any.
+    DigestLikeThis(Option<LikeThisRule>),
     /// A digest's summary, if it has one to show.
     DigestSummary(Option<postio_model::summary::DigestSummary>),
     /// A message's raw source, every byte as the server sent it.

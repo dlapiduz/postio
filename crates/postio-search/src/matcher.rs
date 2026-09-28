@@ -29,8 +29,9 @@
 //!   (1) `v`'s words appear, in order and adjacent, in *any* of the row's five
 //!   columns -- the executor's index lookup -- and (2) *any one* of `v`'s
 //!   words appears in the sender -- its per-row check, which the engine
-//!   answers word by word, not as a phrase. `list:` is the same with the
-//!   list id in place of the sender.
+//!   answers word by word, not as a phrase. `to:`, `subject:`, `filename:`
+//!   and `list:` are the same with their own column in place of the sender
+//!   (`fts_column_condition`, all five).
 //!
 //! That last point has a consequence worth saying plainly: `from:` a full
 //! address also selects mail sent **to** that address by anyone whose own
@@ -42,10 +43,13 @@
 //! # What it evaluates
 //!
 //! The part of the language digest rules are written in: `from:` (milestone
-//! 1's sender rules) and `list:` (milestone 2's), each possibly negated, any
-//! number of them together. Anything else is [`Unsupported`], named, so a
-//! rule that asks more than this can be refused where it is configured
-//! rather than silently holding the wrong mail.
+//! 1's sender rules), and `list:`, `to:`, `subject:` and `filename:`
+//! (milestone 2's list and query rules) -- what is known of a message as it
+//! is filed, before its body -- each possibly negated, any number of them
+//! together. Anything else is [`Unsupported`], named, so a rule that asks
+//! more than this can be refused where it is configured rather than
+//! silently holding the wrong mail. Free text is among it: the executor
+//! also searches bodies, which filing does not have.
 
 use postio_model::{EmailAddress, Message};
 
@@ -119,8 +123,9 @@ fn addresses<'a>(addresses: impl IntoIterator<Item = &'a EmailAddress>) -> Strin
 pub enum Unsupported {
     /// The query constrains nothing: a rule over it would hold every message.
     Empty,
-    /// A token outside `from:` and `list:` -- free text, another operator, or
-    /// one still being typed -- as it was written.
+    /// A token outside `from:`, `to:`, `subject:`, `filename:` and `list:`
+    /// -- free text, another operator, or one still being typed -- as it was
+    /// written.
     Token(String),
 }
 
@@ -130,7 +135,7 @@ pub struct Matcher {
     clauses: Vec<Condition>,
 }
 
-/// One `from:` or `list:`, with its words worked out once.
+/// One column condition, with its words worked out once.
 #[derive(Debug, Clone)]
 struct Condition {
     negated: bool,
@@ -145,11 +150,15 @@ struct Condition {
 #[derive(Debug, Clone, Copy)]
 enum Column {
     Sender,
+    Recipients,
+    Subject,
+    Filenames,
     ListId,
 }
 
 impl Matcher {
-    /// `query`, if every token in it is a `from:` or `list:`.
+    /// `query`, if every token in it is a `from:`, `to:`, `subject:`,
+    /// `filename:` or `list:`.
     pub fn new(query: &ParsedQuery) -> Result<Self, Unsupported> {
         if query.is_empty() {
             return Err(Unsupported::Empty);
@@ -163,6 +172,9 @@ impl Matcher {
                 };
                 let (column, value) = match &clause.filter {
                     Filter::From(value) => (Column::Sender, value),
+                    Filter::To(value) => (Column::Recipients, value),
+                    Filter::Subject(value) => (Column::Subject, value),
+                    Filter::Filename(value) => (Column::Filenames, value),
                     Filter::List(value) => (Column::ListId, value),
                     _ => return Err(Unsupported::Token(token.raw.clone())),
                 };
@@ -194,6 +206,9 @@ impl Condition {
     fn holds(&self, document: &Document) -> bool {
         let column = match self.column {
             Column::Sender => &document.sender,
+            Column::Recipients => &document.recipients,
+            Column::Subject => &document.subject,
+            Column::Filenames => &document.filenames,
             Column::ListId => &document.list_id,
         };
         let in_the_row = document
@@ -286,8 +301,16 @@ mod tests {
     }
 
     #[test]
-    fn only_from_and_list_are_evaluated() {
-        for query in ["from:ada", "list:harbour", "-from:ada list:harbour"] {
+    fn only_what_is_known_as_mail_is_filed_is_evaluated() {
+        for query in [
+            "from:ada",
+            "list:harbour",
+            "-from:ada list:harbour",
+            "to:ada",
+            "subject:minutes",
+            "filename:invite.ics",
+            "list:harbour -subject:minutes",
+        ] {
             assert!(Matcher::new(&parse(query, today())).is_ok(), "{query:?}");
         }
         assert_eq!(
@@ -298,7 +321,8 @@ mod tests {
             ("invoice", "invoice"),
             ("from:ada is:unread", "is:unread"),
             ("from:", "from:"),
-            ("subject:minutes", "subject:minutes"),
+            ("list:harbour has:attachment", "has:attachment"),
+            ("in:archive", "in:archive"),
         ] {
             assert_eq!(
                 Matcher::new(&parse(query, today())).err(),
@@ -364,6 +388,30 @@ mod tests {
         assert!(!matcher("-list:harbour").matches_document(&list));
         assert!(matcher("from:ada list:harbour").matches_document(&list));
         assert!(!matcher("from:grace list:harbour").matches_document(&list));
+    }
+
+    #[test]
+    fn a_recipient_a_subject_and_a_filename_are_matched_as_their_columns() {
+        // US14: a query rule. `to:`, `subject:` and `filename:` are the
+        // executor's same two conditions as `from:`, on their own columns.
+        let mut minutes = row(
+            "Quinn Abara quinn.abara@example.net",
+            "Ada Norwood ada.norwood@example.com",
+            "",
+        );
+        minutes.filenames = "notes.pdf invite.ics".to_owned();
+        assert!(matcher("to:ada.norwood@example.com").matches_document(&minutes));
+        assert!(!matcher("to:ren.ishida@example.net").matches_document(&minutes));
+        assert!(matcher("subject:minutes").matches_document(&minutes));
+        assert!(!matcher("subject:agenda").matches_document(&minutes));
+        assert!(matcher("filename:invite.ics").matches_document(&minutes));
+        assert!(!matcher("filename:drawing.svg").matches_document(&minutes));
+        assert!(matcher("to:ada subject:minutes").matches_document(&minutes));
+        assert!(!matcher("to:ada -subject:minutes").matches_document(&minutes));
+        // As with `from:`, the phrase may be anywhere in the row, and one of
+        // its words must be in the column: "quinn" is in the row, not in
+        // the recipients.
+        assert!(!matcher("to:quinn").matches_document(&minutes));
     }
 
     #[test]

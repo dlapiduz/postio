@@ -48,8 +48,8 @@ impl Digests {
     /// as of `today`, which dates a relative query.
     ///
     /// A rule with a blank name, no query, or a query the matcher cannot
-    /// read (anything beyond `from:` and `list:`, or one still half-typed)
-    /// is left out, and the others still apply (ADR 0008 Q6): a rule that
+    /// read (anything beyond `from:`, `to:`, `subject:`, `filename:` and
+    /// `list:`, or one still half-typed) is left out, and the others still apply (ADR 0008 Q6): a rule that
     /// holds more than it says is the worst thing a digest can do.
     /// Validation is what tells the user (`postio_ui::digest`).
     pub fn new<'a>(

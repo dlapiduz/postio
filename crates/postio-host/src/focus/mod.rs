@@ -39,6 +39,7 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 pub(crate) use catch_up::FILED_THROUGH;
 pub(crate) use due::{deliver_due, fire_reminders, settle_answers};
+pub(crate) use rules::like_this;
 pub(crate) use summary::digest_summary;
 pub(crate) use surfaced::surfaced;
 
@@ -119,6 +120,8 @@ pub struct FocusHandle {
     /// `[focus]` as the tasks read it, replaced by each call to
     /// [`Host::enable_focus`].
     config: Arc<RwLock<FocusConfig>>,
+    /// The person's model, as Focus's tasks and reads reach it.
+    pub(crate) models: Arc<model::Models>,
 }
 
 impl FocusHandle {
@@ -202,6 +205,7 @@ impl Host {
                     caught_up,
                     marking,
                     config,
+                    models,
                 };
                 *focus = Some(handle.clone());
                 handle
