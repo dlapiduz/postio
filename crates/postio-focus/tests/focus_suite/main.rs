@@ -70,6 +70,10 @@ const CASES: &[(&str, fn())] = &[
         colours::the_roles_resolve_and_follow_the_system_into_dark as fn(),
     ),
     (
+        "colours::the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent",
+        colours::the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent as fn(),
+    ),
+    (
         "marked_rows::a_marked_row_is_two_lines_whatever_its_state",
         marked_rows::a_marked_row_is_two_lines_whatever_its_state as fn(),
     ),

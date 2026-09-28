@@ -37,7 +37,7 @@ use super::model::RowObject;
 /// What a row drew in its last snapshot: every text it laid out, in order,
 /// each label pill with its colour, and whether it was drawn bold. What a
 /// person sees, for a test to read back.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Drawn {
     /// Every text laid out, in the order drawn.
     pub texts: Vec<String>,
@@ -48,6 +48,23 @@ pub struct Drawn {
     /// Whether the row drew itself selected: the neutral ground and the
     /// checked box.
     pub picked: bool,
+    /// The ink the row drew its text in.
+    pub ink: gdk::RGBA,
+    /// The accent a marker was drawn in, when the row has one.
+    pub accent: Option<gdk::RGBA>,
+}
+
+impl Default for Drawn {
+    fn default() -> Self {
+        Drawn {
+            texts: Vec::new(),
+            pills: Vec::new(),
+            bold: false,
+            picked: false,
+            ink: gdk::RGBA::TRANSPARENT,
+            accent: None,
+        }
+    }
 }
 
 /// A one-line row's height, in pixels: the classic row's (research R3).
@@ -345,6 +362,7 @@ impl RowWidget {
         let mut drawn = Drawn {
             bold,
             picked: self.is_picked(),
+            ink: palette.ink,
             ..Drawn::default()
         };
         if drawn.picked {
@@ -506,6 +524,7 @@ impl RowWidget {
     ) {
         let line = marker_line(marker, chrono::Utc::now(), &chrono::Local);
         let width = self.width() as f32;
+        drawn.accent = Some(palette.accent);
 
         let dot = graphene::Rect::new(GUTTER_CENTRE - DOT / 2.0, FIRST_LINE - DOT / 2.0, DOT, DOT);
         snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
