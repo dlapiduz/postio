@@ -286,3 +286,25 @@ banner.focus-banner button {
   font-weight: bold;
   margin-right: var(--postio-space-4);
 }
+
+/* ── The shared account form, without the accent (FR-091) ────────────
+   The credential and add-account form came to postio-widgets with T165,
+   painted in the classic app's accent: its card icons, its scope mark and
+   a segmented control's checked segment. Focus shows the same form from
+   its sign-in banner, and keeps the accent for markers, the focus ring and
+   the has-action toggle, so here the icons take the ink and the checked
+   segment a neutral selected fill. */
+.postio-onboarding-card-icon,
+.postio-onboarding-scope-mark {
+  color: var(--postio-ink);
+}
+
+.postio-segmented button.postio-segment:checked {
+  background-color: var(--postio-selected-strong-bg);
+  border-color: var(--postio-selected-border);
+  color: var(--postio-selected-fg);
+}
+
+.postio-segmented button.postio-segment:checked:hover {
+  background-color: var(--postio-selected-strong-bg);
+}
