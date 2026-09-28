@@ -375,7 +375,11 @@ maintainer asks.
   - a note in ADR 0032 on Focus's one-message dialog (FR-037)
   - `docs/config.md`: the `[focus]` section, `[[focus.digests]]` with its due-time rule, `[focus.filter]` and `[focus.model]`
 - [X] T146 Draft the constitution's Scope amendment (MINOR): name Focus, and allow its optional, user-supplied local model. Update the Sync Impact Report. **It waits for the maintainer's approval, and does not land without it**. Drafted and approved by the maintainer 2026-09-27 ("approve as drafted"): 1.3.0, with CLAUDE.md's scope line to match
-- [ ] T147 [P] SC-011: the first classification pass over a 100,000-message store, as a `POSTIO-MEASUREMENT:` test in `.config/nextest.toml`'s nightly profile
+- [X] T147 [P] SC-011: the first classification pass over a 100,000-message store, as a `POSTIO-MEASUREMENT:` test in `.config/nextest.toml`'s nightly profile. Done, with an in-memory store:
+  - needs-action alone: 3,000 bodies in 3.7 s, against a 60 s budget;
+  - the filing catch-up alone: 61,188 messages in 177 s, against 300 s;
+  - the two together: each about 184 s (T169)
+- [ ] T169 First open on a large backlog: the filing catch-up and the needs-action pass share one background connection. Together they take about 184 s, missing needs-action's 60 s budget, and inbox page reads reach 380 ms. Give the passes their own connections or a priority, and have both yield to interactive reads. Test first: T147's measurement with both passes running, needs-action inside its budget, and page reads within 16 ms at the median
 - [ ] T148 `screens.md` complete for 01–20, with every difference and its reason (SC-009)
 - [ ] T149 Walk quickstart.md by hand (scenarios 1–11) on a throwaway store, and record the outcomes in `screens.md`'s notes
 - [ ] T150 Rebase onto `main`, and run the full suites the diff touches (quickstart, "Automated"). **Do not land**
@@ -384,22 +388,22 @@ maintainer asks.
 
 ## Phase 17: Milestone 2: the user's own local model (P3)
 
-- [ ] T151 `crates/postio-ai`, the client of research R16. Test first, against a fake transport (no network in the default suite):
+- [X] T151 `crates/postio-ai`, the client of research R16. Test first, against a fake transport (no network in the default suite):
   - OpenAI-compatible chat completions with `json_schema`;
   - loopback-only endpoints;
   - client-side validation;
   - the `model` egress subsystem, a schema change;
   - the boundary rule
-- [ ] T152 `[focus.model]` and its validation: endpoints on this machine only, per-feature switches, and no probing. Test first: SC-016, with no section and no connection attempt
-- [ ] T153 [US12] The model answers the needs-action question in place of the built-in detector, and the detector answers when the model is down (FR-107, FR-170). Test first: scenario 6
-- [ ] T154 [US13] The digest summariser: statements with references resolved by excerpt, plain text only, the Summary tab (22), and the email from a reference (23), falling back to the list. Test first: scenarios 1–6 and SC-014
-- [ ] T155 [US14] `list:` and query rules, and "Match a list or a search instead…". "More like this" goes through the model. Test first: scenarios 1 and 2
+- [X] T152 `[focus.model]` and its validation: endpoints on this machine only, per-feature switches, and no probing. Test first: SC-016, with no section and no connection attempt
+- [X] T153 [US12] The model answers the needs-action question in place of the built-in detector, and the detector answers when the model is down (FR-107, FR-170). Test first: scenario 6
+- [ ] T154 [US13] The digest summariser: statements with references resolved by excerpt, plain text only, the Summary tab (22), and the email from a reference (23), falling back to the list. Test first: scenarios 1–6 and SC-014. The engine half is done: `client.digest_summary(delivery)`, and `Surfaced::Digest.summary_line` re-read on `SurfacedChanged`. The Summary tab and dialog remain
+- [ ] T155 [US14] `list:` and query rules, and "Match a list or a search instead…". "More like this" goes through the model. Test first: scenarios 1 and 2. The engine half is done: list and query rules; `client.digest_like_this(message)`, present only when `model_for(ModelFeature::LikeThis)` is set. The command needs a registry id, and the dialog remains
 - [ ] T156 Compare screens 22 and 23, and record them
 
 ## Phase 18: Milestone 3: Obsidian and `postio://` (P3)
 
-- [ ] T157 [US15] `crates/postio-vault`: the Tasks line with the link before the date (spec C21), notes appended, project suggestion, and finished tasks read back. Test first: against a temporary vault, scenario 1's bytes, and nothing else changed
-- [ ] T158 [US15] The capture sheet (screen 25): `t` and `n`, and `Context::Capture`'s keys. Test first: a `focus_suite` case
+- [X] T157 [US15] `crates/postio-vault`: the Tasks line with the link before the date (spec C21), notes appended, project suggestion, and finished tasks read back. Test first: against a temporary vault, scenario 1's bytes, and nothing else changed
+- [ ] T158 [US15] The capture sheet (screen 25): `t` and `n`, and `Context::Capture`'s keys. Test first: a `focus_suite` case. `postio_vault::Vault` has `append_task`, `append_note`, `projects`, `suggest` and `tasks`. Wire them through a host request, and delete their baseline lines
 - [ ] T159 [US15] `postio://`: `x-scheme-handler/postio` in Focus's desktop file, and `open` only navigates. Test first: scenario 2, including an unknown id refused with a message
 - [ ] T160 Compare screen 25, and record it
 

@@ -1340,6 +1340,30 @@ reference carries a message and an excerpt.
 - A statement whose reference does not resolve is dropped.
 - The summary is plain text.
 
+**Built (T151 to T155).**
+
+- **The client.** `crates/postio-ai` is `io-http` over std sockets; loopback
+  needs no TLS. It can connect only through a `ModelEndpoint`, and one of
+  those can only be built from a loopback address or a local socket, so
+  `localhost` is never looked up. Each question's schema is flat and checked
+  again on the client. The message text is fenced, and no tools are
+  offered. After a failure, the runtime is left alone for 60 s. Every call
+  is recorded in the egress log under `model`.
+- **The needs-action question.** `ModelLayer` answers
+  `Result<Option<_>, Unavailable>`, and `Unavailable` hands the question to
+  the built-in detector. A quote that is not verbatim in the text is dropped.
+- **Summaries.** A statement stays only if its excerpt is found byte for
+  byte in the own text, when it is written and again when it is read. The
+  summary is stored with the delivery, and it is written after the delivery
+  rather than before its due time (a deviation from FR-142). The row shows
+  its senders until the summary lands, so nothing waits.
+- **"More like this".** Postio builds the candidate queries (the list, the
+  sender, the sender's domain), and the model answers with one number.
+  A saved rule is therefore never text the model wrote (FR-132).
+- **Rules.** The matcher also reads `to:`, `subject:` and `filename:`, and
+  ADR 0008's differential test covers 18 more queries. Saving a rule the
+  filing pass cannot answer is refused with a sentence.
+
 **postio-vault** writes Obsidian Tasks lines:
 `- [ ] <text> [✉](postio://message/<id>) 📅 YYYY-MM-DD`.
 
