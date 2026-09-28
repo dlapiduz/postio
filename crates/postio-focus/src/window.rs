@@ -159,6 +159,8 @@ mod imp {
         pub notifier: RefCell<Option<super::Notifier>>,
         /// Where a test takes notifications instead of the desktop.
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
+        /// The digest rule dialog, built the first time `d` opens it.
+        pub rule_dialog: RefCell<Option<Rc<crate::rule_dialog::RuleDialog>>>,
         /// The digest window, built the first time a digest opens.
         pub digest_window: RefCell<Option<Rc<crate::digest::DigestWindow>>>,
         /// The Filtered view, built the first time `g f` opens it.
@@ -229,6 +231,7 @@ mod imp {
                 answering: Cell::default(),
                 filtered: RefCell::default(),
                 digest_window: RefCell::default(),
+                rule_dialog: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
             }
@@ -723,6 +726,7 @@ impl FocusWindow {
             CommandId::GoToFiltered => self.show_filtered(),
             CommandId::SweepInbox => self.ask_sweep(),
             CommandId::DismissMarker => self.dismiss_marker(),
+            CommandId::DigestRule => self.new_digest_rule(),
             CommandId::RestoreFiltered => {
                 if let Some(message) = self.filtered().and_then(|view| view.focused()) {
                     self.restore_filtered(message);
@@ -1726,9 +1730,106 @@ impl FocusWindow {
         ));
     }
 
-    /// Edit the digest rule called `name` (T138).
+    /// Edit the digest rule called `name` (T138), from its digest's `d`.
     fn edit_digest_rule(&self, name: &str) {
-        let _ = name;
+        let rule = self
+            .imp()
+            .focus_config
+            .borrow()
+            .digests
+            .iter()
+            .find(|rule| rule.name.trim() == name.trim())
+            .cloned();
+        let Some(rule) = rule else {
+            self.imp()
+                .toast
+                .show_notice("That digest's rule is no longer in config.toml");
+            self.follow_toast();
+            return;
+        };
+        if let Some(dialog) = self.rule_dialog_built() {
+            dialog.open_edit(self, &rule);
+        }
+    }
+
+    /// `d` on a message, or "Digest these…" in the bulk bar (T138): a new
+    /// rule for the senders of what a verb would aim at.
+    fn new_digest_rule(&self) {
+        let senders = self.aimed_senders();
+        if senders.is_empty() {
+            return;
+        }
+        if let Some(dialog) = self.rule_dialog_built() {
+            dialog.open_new(self, &senders);
+        }
+    }
+
+    /// The senders of the selection, or of the cursor's conversation, once
+    /// each.
+    fn aimed_senders(&self) -> Vec<postio_model::EmailAddress> {
+        let picked: Vec<MessageId> = match self.selection() {
+            Selection::These(picked) => picked.into_iter().collect(),
+            Selection::Everything { .. } => Vec::new(),
+        };
+        let mut rows = Vec::new();
+        if picked.is_empty() {
+            rows.extend(self.cursor_row());
+        } else if let Some(pane) = self.pane() {
+            let list = pane.feed().list();
+            for position in 0..list.n_items() {
+                if let Some(row) = list
+                    .item(position)
+                    .and_downcast::<RowObject>()
+                    .and_then(|row| row.item())
+                    && picked.contains(&row.id())
+                {
+                    rows.push(row);
+                }
+            }
+        }
+        let mut senders: Vec<postio_model::EmailAddress> = Vec::new();
+        for row in rows {
+            let Some(from) = row
+                .as_conversation()
+                .and_then(|row| row.summary.representative.from.clone())
+            else {
+                continue;
+            };
+            if !senders.iter().any(|known| known.same_address(&from)) {
+                senders.push(from);
+            }
+        }
+        senders
+    }
+
+    /// The rule dialog, built the first time it is asked for.
+    fn rule_dialog_built(&self) -> Option<Rc<crate::rule_dialog::RuleDialog>> {
+        let imp = self.imp();
+        let client = imp.client.borrow().clone()?;
+        let dialog = imp.rule_dialog.borrow().clone();
+        Some(dialog.unwrap_or_else(|| {
+            let dialog = crate::rule_dialog::RuleDialog::new(client, &self.keymap());
+            dialog.connect_saved(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |name| {
+                    window
+                        .imp()
+                        .toast
+                        .show_notice(&format!("Digest rule \u{201c}{name}\u{201d} saved"));
+                    window.follow_toast();
+                }
+            ));
+            imp.rule_dialog.replace(Some(Rc::clone(&dialog)));
+            dialog
+        }))
+    }
+
+    /// The rule dialog, while it is open.
+    pub fn rule_dialog(&self) -> Option<Rc<crate::rule_dialog::RuleDialog>> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == crate::rule_dialog::DIALOG_NAME)?;
+        self.imp().rule_dialog.borrow().clone()
     }
 
     /// The sweep's confirmation, while it is up.

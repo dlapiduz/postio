@@ -171,3 +171,100 @@ pub fn d_stops_digesting_the_sender_once_confirmed() {
         );
     });
 }
+
+/// US10 scenario 1 (T138): `d` on a message opens "Digest this sender"
+/// with its address; the preview's count is what the executor finds from
+/// that sender in the last 90 days; Create writes the rule to
+/// `config.toml`.
+pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        for (subject, days) in [
+            ("Issue 3", 3),
+            ("Issue 2", 20),
+            ("Issue 1", 60),
+            ("Old issue", 100),
+        ] {
+            fixture
+                .file(
+                    ("Ledger", "news@ledger.test"),
+                    subject,
+                    "Rates.",
+                    days * 24 * 60,
+                )
+                .await;
+        }
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let directory = tempfile::tempdir().expect("a config directory");
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, "# Mine.\n").expect("a config");
+        let config = postio_config::Config::load_from_path(&path).expect("it reads");
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_focus::startup::adopt_at(
+            &window,
+            fixture.host(),
+            &config,
+            Some(&path),
+        ));
+        support::keep(directory);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 5).await,
+            "the inbox never reached the screen"
+        );
+        // The cursor on Ledger's newest: the second row.
+        support::keys(&window, &["j", "j"]);
+        support::press(&window, "d", gdk::ModifierType::empty());
+        let dialog = window.rule_dialog().expect("d opened the rule dialog");
+        assert!(
+            crate::settle_until(async || {
+                dialog
+                    .texts()
+                    .iter()
+                    .any(|text| text == "Would have caught 3 messages in the last 90 days")
+            })
+            .await,
+            "the preview is not the executor's three: {:?}",
+            dialog.texts()
+        );
+        let said = dialog.texts();
+        for wanted in ["Digest this sender", "news@ledger.test", "Issue 3"] {
+            assert!(
+                said.iter().any(|text| text == wanted),
+                "no {wanted:?} in {said:?}"
+            );
+        }
+        dialog.create();
+        assert!(
+            crate::settle_until(async || {
+                std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("from:news@ledger.test")
+            })
+            .await,
+            "Create wrote no rule:\n{}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .starts_with("# Mine."),
+            "the rest of the file is as it was"
+        );
+        assert!(
+            crate::settle_until(async || window.rule_dialog().is_none()).await,
+            "Create closed the dialog"
+        );
+    });
+}

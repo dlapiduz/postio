@@ -79,6 +79,59 @@ pub fn window_subtitle(
     format!("{count} {messages} from {senders} {people} \u{b7} came due {when}")
 }
 
+/// The rule dialog's preview heading: "Would have caught 9 messages in
+/// the last 90 days" (screen 24).
+pub fn preview_heading(count: u32) -> String {
+    let messages = if count == 1 { "message" } else { "messages" };
+    format!("Would have caught {count} {messages} in the last 90 days")
+}
+
+/// Under the preview's rows: "and 5 more", or nothing when they are all.
+pub fn preview_more(count: u32, shown: usize) -> Option<String> {
+    let rest = (count as usize).saturating_sub(shown);
+    (rest > 0).then(|| format!("and {rest} more"))
+}
+
+/// The rule dialog's note: what still comes straight to the inbox.
+pub fn rule_note(senders: usize) -> &'static str {
+    if senders > 1 {
+        "Mail from these senders with an invite, question or to-do still comes straight to the inbox."
+    } else {
+        "Mail from this sender with an invite, question or to-do still comes straight to the inbox."
+    }
+}
+
+/// A new rule's name, from its senders' names: "Ledger", "Ledger and
+/// Forge", "Ledger, Forge and 2 others" (contracts/config.md: the name
+/// defaults to the sender's).
+pub fn rule_name(names: &[String]) -> String {
+    match names {
+        [] => "Digest".to_owned(),
+        [one] => one.clone(),
+        [one, two] => format!("{one} and {two}"),
+        [one, two, rest @ ..] => {
+            let others = if rest.len() == 1 { "other" } else { "others" };
+            format!("{one}, {two} and {} {others}", rest.len())
+        }
+    }
+}
+
+/// When a previewed message came, as the preview's rows say it: "Today",
+/// a weekday within the week, then the date.
+pub fn preview_day(
+    at: chrono::DateTime<chrono::Local>,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    let (day, today) = (at.date_naive(), now.date_naive());
+    if day == today {
+        "Today".to_owned()
+    } else if today - day < chrono::Duration::days(7) && day < today {
+        at.format("%a").to_string()
+    } else {
+        at.format("%-d %b").to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +248,38 @@ mod tests {
             window_subtitle(1, 1, at - chrono::Duration::days(1), now),
             "1 message from 1 sender \u{b7} came due Fri 25 Sep 16:00"
         );
+    }
+
+    #[test]
+    fn the_rule_dialog_says_what_it_would_catch_and_what_it_is_called() {
+        assert_eq!(
+            preview_heading(9),
+            "Would have caught 9 messages in the last 90 days"
+        );
+        assert_eq!(
+            preview_heading(1),
+            "Would have caught 1 message in the last 90 days"
+        );
+        assert_eq!(preview_more(9, 4).as_deref(), Some("and 5 more"));
+        assert_eq!(preview_more(3, 3), None);
+        let names = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rule_name(&names(&["Ledger"])), "Ledger");
+        assert_eq!(
+            rule_name(&names(&["Ledger", "Forge", "Rates", "Tides"])),
+            "Ledger, Forge and 2 others"
+        );
+        use chrono::TimeZone as _;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 9, 26, 16, 9, 0)
+            .single()
+            .expect("a time");
+        assert_eq!(preview_day(now, now), "Today");
+        assert_eq!(preview_day(now - chrono::Duration::days(3), now), "Wed");
+        assert_eq!(preview_day(now - chrono::Duration::days(14), now), "12 Sep");
     }
 }
