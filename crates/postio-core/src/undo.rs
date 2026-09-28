@@ -73,6 +73,10 @@ pub enum UndoKind {
     Accept,
     /// An invitation was declined, the same way.
     Decline,
+    /// Markers were dismissed as wrong (specs/007-postio-focus FR-108).
+    DismissMarker,
+    /// Dismissed markers were brought back.
+    UndismissMarker,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
     /// A send that had stopped was put back on the queue (spec 003).
@@ -114,6 +118,8 @@ impl UndoKind {
             // One answer to one invitation: screen 15's "Accepted · Undo".
             UndoKind::Accept => "Accepted".to_owned(),
             UndoKind::Decline => "Declined".to_owned(),
+            UndoKind::DismissMarker => format!("Dismissed {count} {}", markers(count)),
+            UndoKind::UndismissMarker => format!("Brought back {count} {}", markers(count)),
         }
     }
 }
@@ -125,6 +131,11 @@ fn conversations(count: usize) -> &'static str {
     } else {
         "conversations"
     }
+}
+
+/// "marker", or its plural, for `count` of them.
+fn markers(count: usize) -> &'static str {
+    if count == 1 { "marker" } else { "markers" }
 }
 
 /// One undoable unit: what happened, and what takes it back.

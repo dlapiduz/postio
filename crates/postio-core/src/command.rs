@@ -148,6 +148,8 @@ command_ids! {
     ViewSource => "view_source",
     /// Choose one of the message's links or parts, and open it.
     OpenAttachmentOrLink => "open_attachment_or_link",
+    /// Take a wrong marker off the message, and remember that it was wrong.
+    DismissMarker => "dismiss_marker",
     /// Focus the search field.
     Search => "search",
     /// Save the current search as a pinned folder in the sidebar.
@@ -711,6 +713,16 @@ pub enum Command {
         /// The message; `None` means the one on screen.
         message: Option<MessageId>,
     },
+    /// Take a wrong marker off a message, or bring it back (spec 007
+    /// FR-108). A dismissal is a correction: it never returns on that
+    /// message, and dismissing one kind from one sender again and again
+    /// stops that kind for the sender.
+    DismissMarker {
+        /// Whose markers.
+        target: MessageTarget,
+        /// `true` dismisses; `false` is undo's way back.
+        dismissed: bool,
+    },
 
     // -- Search ----------------------------------------------------------
     /// Search, or focus the search field when `query` is `None`.
@@ -1071,6 +1083,7 @@ impl Command {
             | Command::AddLabel { target, .. }
             | Command::DigestRule { target }
             | Command::StopDigestingSender { target, .. }
+            | Command::DismissMarker { target, .. }
             | Command::RestoreFiltered { target, .. } => Some(target),
             _ => None,
         }
@@ -1106,6 +1119,9 @@ impl Command {
             }
             Command::RestoreFiltered { restored, .. } => {
                 Command::RestoreFiltered { target, restored }
+            }
+            Command::DismissMarker { dismissed, .. } => {
+                Command::DismissMarker { target, dismissed }
             }
             other => other,
         }
@@ -1161,6 +1177,7 @@ impl Command {
             Command::StopDigestingSender { .. } => CommandId::StopDigestingSender,
             Command::ViewSource { .. } => CommandId::ViewSource,
             Command::OpenAttachmentOrLink { .. } => CommandId::OpenAttachmentOrLink,
+            Command::DismissMarker { .. } => CommandId::DismissMarker,
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
             Command::BackToWords => CommandId::BackToWords,
@@ -1339,6 +1356,10 @@ impl Command {
             },
             CommandId::ViewSource => Command::ViewSource { message: None },
             CommandId::OpenAttachmentOrLink => Command::OpenAttachmentOrLink { message: None },
+            CommandId::DismissMarker => Command::DismissMarker {
+                target: MessageTarget::Selection,
+                dismissed: true,
+            },
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
             CommandId::BackToWords => Command::BackToWords,

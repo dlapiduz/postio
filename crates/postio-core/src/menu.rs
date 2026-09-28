@@ -232,6 +232,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::StopDigestingSender
         | C::ViewSource
         | C::OpenAttachmentOrLink
+        | C::DismissMarker
         | C::BackToWords
         | C::GoToFiltered
         | C::GoToDigestRules

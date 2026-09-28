@@ -71,15 +71,70 @@ pub struct FocusFilter {
     /// neither is reported by validation and pins nobody.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub never: Vec<String>,
+    /// Marker kinds the person stopped for a sender, by dismissing them
+    /// again and again (FR-108): the detector does not mark that kind in
+    /// that sender's mail any more.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stop_markers: Vec<StopMarker>,
     /// Keys in `[focus.filter]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
 }
 
+/// One `[focus.filter] stop_markers` entry: a marker kind stopped for one
+/// sender (contracts/config.md). Read as written, so an entry with a field
+/// missing or wrong is validation's to report and stops nothing, rather
+/// than an error that would stop the whole file loading.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StopMarker {
+    /// The sender's address.
+    #[serde(default)]
+    pub sender: String,
+    /// `question` or `todo`.
+    #[serde(default)]
+    pub kind: String,
+}
+
+impl StopMarker {
+    /// Whether the entry names a sender -- an address, or a whole domain as
+    /// `never` does -- and a kind of marker that can be dismissed: what
+    /// validation asks of it.
+    pub fn is_well_formed(&self) -> bool {
+        never_entry(&self.sender).is_some()
+            && matches!(
+                self.kind.trim().to_ascii_lowercase().as_str(),
+                "question" | "todo"
+            )
+    }
+
+    /// Whether it stops `kind` markers in mail from `sender`.
+    fn covers(&self, sender: &EmailAddress, kind: &str) -> bool {
+        if !self.kind.trim().eq_ignore_ascii_case(kind) {
+            return false;
+        }
+        let Some((_, domain)) = sender.address.rsplit_once('@') else {
+            return false;
+        };
+        match never_entry(&self.sender) {
+            Some(NeverEntry::Address(stopped)) => stopped.eq_ignore_ascii_case(&sender.address),
+            Some(NeverEntry::Domain(stopped)) => stopped.eq_ignore_ascii_case(domain),
+            None => false,
+        }
+    }
+}
+
 impl FocusFilter {
     /// Nothing in the section: it is not written back.
     pub fn is_empty(&self) -> bool {
-        self.never.is_empty() && self.extras.is_empty()
+        self.never.is_empty() && self.stop_markers.is_empty() && self.extras.is_empty()
+    }
+
+    /// Whether the person stopped `kind` markers -- `question` or `todo` --
+    /// for mail from `sender`, in any case.
+    pub fn stops(&self, sender: &EmailAddress, kind: &str) -> bool {
+        self.stop_markers
+            .iter()
+            .any(|stop| stop.is_well_formed() && stop.covers(sender, kind))
     }
 
     /// Whether `address` is a sender Focus never files away: named by an

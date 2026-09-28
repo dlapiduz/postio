@@ -1025,6 +1025,19 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_MAIL,
     },
     CommandSpec {
+        id: CommandId::DismissMarker,
+        title: "Dismiss marker",
+        // `-`, taking the marker off: no app binds it in a message surface,
+        // and the one keymap's enumeration holds it so (specs/007-postio-focus
+        // T118; contracts/keymap.md names no key for it).
+        default_binding: "-",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
         id: CommandId::Search,
         title: "Search",
         default_binding: "/",

@@ -41,8 +41,8 @@
 //! classification failed is not taken again and again. A failure is logged
 //! by ids and outcome, never by content.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use std::collections::HashMap;
@@ -50,6 +50,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
 use postio_calendar::{Invitation, Method};
 use postio_classify::{BodyMessage, Facts, FiledMessage, MarkerCandidate, OwnText, Rules, Senders};
+use postio_config::{FocusConfig, FocusFilter};
 use postio_model::listing::MarkerKind;
 use postio_model::{
     AccountId, EmailAddress, Identity, MailboxRole, Message, MessageBody, MessageId, ThreadId,
@@ -85,15 +86,22 @@ type Failure = postio_storage::Error;
 ///
 /// Over a wiring whose events go to a single reader rather than a hub,
 /// there is nothing to hear: the stage catches up and ends.
-pub(super) fn spawn(inner: &Inner, caught_up: Arc<AtomicBool>) -> tokio::task::AbortHandle {
+pub(super) fn spawn(
+    inner: &Inner,
+    config: Arc<RwLock<FocusConfig>>,
+    caught_up: Arc<AtomicBool>,
+) -> tokio::task::AbortHandle {
     let events = inner.hub.subscribe("focus:body-stage");
     let database = inner.wiring.database.clone();
     let blobs = inner.wiring.blobs.clone();
+    // `[focus.filter]` as it stands when each batch is read: a kind the
+    // person stopped reaches the next message classified.
+    let corrections = move || config.read().expect("never poisoned").filter.clone();
     inner
         .runtime()
         .spawn(async move {
             let version = postio_classify::VERSION;
-            if let Err(error) = catch_up(&database, &blobs, version).await {
+            if let Err(error) = catch_up(&database, &blobs, version, &corrections).await {
                 tracing::warn!(%error, "Focus's body stage could not catch up: {error}");
             }
             caught_up.store(true, Ordering::Release);
@@ -122,7 +130,9 @@ pub(super) fn spawn(inner: &Inner, caught_up: Arc<AtomicBool>) -> tokio::task::A
                 }
                 landed.sort_unstable();
                 landed.dedup();
-                if let Err(error) = landed_bodies(&database, &blobs, &landed, version).await {
+                if let Err(error) =
+                    landed_bodies(&database, &blobs, &landed, version, &corrections).await
+                {
                     tracing::warn!(
                         bodies = landed.len(),
                         %error,
@@ -152,6 +162,7 @@ pub(crate) async fn catch_up(
     database: &Store,
     blobs: &BlobStore,
     version: u32,
+    corrections: &(dyn Fn() -> FocusFilter + Send + Sync),
 ) -> Result<usize, Failure> {
     let since = since();
     let inboxes = {
@@ -168,7 +179,7 @@ pub(crate) async fn catch_up(
             if batch.is_empty() {
                 break;
             }
-            classify(&connection, blobs, &batch, version).await?;
+            classify(&connection, blobs, &batch, version, &corrections()).await?;
             taken += batch.len();
             drop(connection);
             tokio::time::sleep(BREATHER).await;
@@ -186,13 +197,14 @@ async fn landed_bodies(
     blobs: &BlobStore,
     landed: &[MessageId],
     version: u32,
+    corrections: &(dyn Fn() -> FocusFilter + Send + Sync),
 ) -> Result<(), Failure> {
     for chunk in landed.chunks(BATCH as usize) {
         let connection = database.connect_background().await?;
         let batch = FocusClassifiedRepository::new(&connection)
             .bodies_to_classify(chunk, since(), version)
             .await?;
-        classify(&connection, blobs, &batch, version).await?;
+        classify(&connection, blobs, &batch, version, &corrections()).await?;
     }
     Ok(())
 }
@@ -213,6 +225,7 @@ async fn classify(
     blobs: &BlobStore,
     batch: &[MessageId],
     version: u32,
+    corrections: &FocusFilter,
 ) -> Result<(), Failure> {
     if batch.is_empty() {
         return Ok(());
@@ -222,7 +235,7 @@ async fn classify(
     let mut invited = Vec::new();
     let mut asks = Vec::new();
     for &message in batch {
-        match found_in(connection, blobs, message, &mut people).await {
+        match found_in(connection, blobs, message, &mut people, corrections).await {
             Ok(Some(Found::Invitation(invitation))) => invited.push((message, invitation)),
             Ok(Some(Found::Asks(marker))) => asks.push(marker),
             Ok(None) => {}
@@ -271,6 +284,7 @@ async fn found_in(
     blobs: &BlobStore,
     message: MessageId,
     people: &mut HashMap<AccountId, Arc<Vec<Identity>>>,
+    corrections: &FocusFilter,
 ) -> Result<Option<Found>, Failure> {
     let Some(row) = MessageRepository::new(connection).get(message).await? else {
         return Ok(None);
@@ -278,7 +292,7 @@ async fn found_in(
     if let Some(invitation) = invitation_of(blobs, &row).await {
         return Ok(Some(Found::Invitation(invitation)));
     }
-    Ok(needs_action(connection, row, people)
+    Ok(needs_action(connection, row, people, corrections)
         .await?
         .map(Found::Asks))
 }
@@ -425,6 +439,7 @@ async fn needs_action(
     connection: &Checkout,
     row: Message,
     people: &mut HashMap<AccountId, Arc<Vec<Identity>>>,
+    corrections: &FocusFilter,
 ) -> Result<Option<Marker>, Failure> {
     let message = row.id;
     let identities = match people.get(&row.account_id) {
@@ -439,7 +454,10 @@ async fn needs_action(
         filed: filed_in_the_inbox(&row),
         identities: &identities,
     };
-    if !postio_classify::considered(&asked, &Shipped) {
+    let rules = Shipped {
+        corrections: corrections.clone(),
+    };
+    if !postio_classify::considered(&asked, &rules) {
         return Ok(None);
     }
     let Some(stored) = MessageRepository::new(connection).body(message).await? else {
@@ -458,7 +476,7 @@ async fn needs_action(
             filed: filed_in_the_inbox(&row),
             identities: &identities,
         };
-        postio_classify::at_body(&asked, &text, &NoGuards, &Shipped)
+        postio_classify::at_body(&asked, &text, &NoGuards, &rules)
             .marker
             .and_then(|candidate| detected(message, &text, candidate))
     })
@@ -527,12 +545,26 @@ fn detected(message: MessageId, text: &OwnText<'_>, candidate: MarkerCandidate) 
 }
 
 /// What the detector decides by: the automated-senders table Postio ships,
-/// as data (FR-114).
-struct Shipped;
+/// as data (FR-114), and the marker kinds the person stopped for a sender
+/// by dismissing them (FR-108).
+struct Shipped {
+    corrections: FocusFilter,
+}
 
 impl Rules for Shipped {
     fn senders(&self) -> &Senders {
         Senders::shipped()
+    }
+
+    fn stops(&self, sender: &EmailAddress, kind: postio_classify::MarkerKind) -> bool {
+        let kind = match kind {
+            postio_classify::MarkerKind::Question => "question",
+            postio_classify::MarkerKind::Todo => "todo",
+            // An invitation comes from its calendar part, and is never the
+            // detector's to find or the person's to stop.
+            postio_classify::MarkerKind::Invite => return false,
+        };
+        self.corrections.stops(sender, kind)
     }
 }
 

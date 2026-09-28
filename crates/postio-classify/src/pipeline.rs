@@ -302,7 +302,17 @@ impl<'a> Pipeline<'a> {
             stage.at_body(message, text, facts, rules, &mut decisions);
         }
         if decisions.marker.is_open() {
-            let marker = self.needs_action(message, text, rules);
+            // Layer 2 speaks after the answer, since the answer is what
+            // names the kind: a kind the person stopped for this sender is
+            // not marked, whichever detector found it (FR-108).
+            let marker = self.needs_action(message, text, rules).filter(|found| {
+                !message
+                    .filed
+                    .message
+                    .from
+                    .iter()
+                    .any(|sender| rules.stops(sender, found.kind))
+            });
             decisions.marker.decide(marker);
         }
         decisions.outcome()
@@ -601,6 +611,64 @@ mod tests {
         );
         assert_eq!(outcome.filter, None);
         assert_eq!(outcome.hold, None);
+    }
+
+    /// The person stopped questions from Tove (FR-108).
+    struct StoppedTove;
+
+    impl Rules for StoppedTove {
+        fn senders(&self) -> &crate::senders::Senders {
+            &NO_SENDERS
+        }
+        fn stops(&self, sender: &EmailAddress, kind: MarkerKind) -> bool {
+            kind == MarkerKind::Question && sender.address == "tove@example.org"
+        }
+    }
+
+    #[test]
+    fn a_kind_the_person_stopped_for_a_sender_is_not_marked_by_either_detector() {
+        // FR-108: dismissing a sender's questions again and again is a
+        // correction, and both detectors take it into account. The same
+        // question from anybody else is still marked.
+        let identities = identities();
+        let tove = letter();
+        let body = BodyMessage {
+            filed: filed_letter(&tove),
+            identities: &identities,
+        };
+        assert_eq!(
+            at_body(&body, &OwnText::new(TEXT), &NoFacts, &StoppedTove).marker,
+            None,
+            "the built-in detector's answer"
+        );
+        let model = Model {
+            needs_action: Some(NeedsAction {
+                kind: MarkerKind::Question,
+                span: 0..TEXT.chars().count(),
+                due_at: None,
+            }),
+            ..Model::default()
+        };
+        assert_eq!(
+            Pipeline::built_in_with(Some(&model))
+                .at_body(&body, &OwnText::new(TEXT), &NoFacts, &StoppedTove)
+                .marker,
+            None,
+            "the model's answer"
+        );
+
+        let mut oren = letter();
+        oren.from = vec![EmailAddress::new(Some("Oren"), "oren@example.org")];
+        let body = BodyMessage {
+            filed: filed_letter(&oren),
+            identities: &identities,
+        };
+        assert!(
+            at_body(&body, &OwnText::new(TEXT), &NoFacts, &StoppedTove)
+                .marker
+                .is_some(),
+            "somebody else's question is still one"
+        );
     }
 
     #[test]

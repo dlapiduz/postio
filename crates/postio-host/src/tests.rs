@@ -2297,7 +2297,7 @@ fn focus_mode_files_nothing_away_when_filtering_is_off() {
 
 /// A message in the world's folder `mailbox`, received `ago` before now,
 /// with `text` as its body when there is one.
-fn received(
+pub(crate) fn received(
     world: &World,
     mailbox: MailboxId,
     ago: chrono::TimeDelta,
@@ -2343,7 +2343,7 @@ pub(crate) fn folder(world: &World, role: postio_model::MailboxRole) -> MailboxI
 }
 
 /// The classifier version `message`'s body stage is recorded at.
-fn body_classified_at(world: &World, message: MessageId) -> Option<i64> {
+pub(crate) fn body_classified_at(world: &World, message: MessageId) -> Option<i64> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         postio_storage::sql::first(
@@ -2428,7 +2428,7 @@ fn a_body_that_lands_while_focus_runs_is_classified() {
 
 /// A message to the world's inbox from Tove, received an hour ago and dated
 /// `date`, shaped by `shape`, with `text` as its body.
-fn letter_from_tove(
+pub(crate) fn letter_from_tove(
     world: &World,
     date: chrono::DateTime<Utc>,
     text: &str,
@@ -2507,9 +2507,10 @@ fn egress(world: &World) -> Vec<String> {
     })
 }
 
-const APPROVE: &str = "Can you approve these by Friday so finance can close the quarter?";
+pub(crate) const APPROVE: &str =
+    "Can you approve these by Friday so finance can close the quarter?";
 
-fn saturday_noon() -> chrono::DateTime<Utc> {
+pub(crate) fn saturday_noon() -> chrono::DateTime<Utc> {
     use chrono::TimeZone as _;
     chrono::Local
         .with_ymd_and_hms(2026, 9, 26, 12, 0, 0)

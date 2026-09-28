@@ -77,6 +77,9 @@ struct Inner {
     /// Focus mode's tasks, once Focus has switched it on (spec 007). `None`
     /// in every host but Focus's.
     focus: Mutex<Option<FocusHandle>>,
+    /// Where `config.toml` is, when the host was opened on one: where Focus
+    /// writes the person's corrections, unless told otherwise.
+    config_path: Mutex<Option<std::path::PathBuf>>,
 }
 
 /// The engine syncing each account: at most one per account, however many
@@ -293,7 +296,9 @@ const BLOCKING_THREADS: usize = 8;
 fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
     let builder = actions::wire(
         Dispatcher::builder(),
-        Actions::new(wiring.database.clone(), state.clone()).with_blobs(wiring.blobs.clone()),
+        Actions::new(wiring.database.clone(), state.clone())
+            .with_blobs(wiring.blobs.clone())
+            .with_focus(wiring.focus.clone()),
     );
     refresh::wire(builder, wiring.engine.clone(), state.clone()).build()
 }
@@ -399,6 +404,8 @@ impl Host {
         })?;
         // Which folders' arrivals are worth a notification.
         host.notify_with(sync_config);
+        *host.inner.config_path.lock().expect("never poisoned") =
+            config_path.map(std::path::Path::to_path_buf);
         Ok(host)
     }
 
@@ -425,6 +432,7 @@ impl Host {
             notify: Mutex::new(postio_config::SyncConfig::default()),
             engines: Engines::default(),
             focus: Mutex::new(None),
+            config_path: Mutex::new(None),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),

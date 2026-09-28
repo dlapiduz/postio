@@ -842,3 +842,163 @@ fn an_invitation_answers_only_from_an_address_it_invited() {
     );
     assert_eq!(answer_on(&world, request), None);
 }
+
+// ── Dismissing a marker (T118) ──────────────────────────────────────────────
+
+/// A `config.toml` in a directory of its own, saying `text`.
+fn config_file(text: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("config.toml");
+    std::fs::write(&path, text).expect("the file");
+    (directory, path)
+}
+
+/// `[focus]` as the file at `path` now says it.
+fn focus_in(path: &std::path::Path) -> postio_config::FocusConfig {
+    postio_config::Config::from_toml_str(&std::fs::read_to_string(path).expect("the file"))
+        .expect("it reads")
+        .focus
+}
+
+/// A dismissal, or its undoing, of `message`'s marker, as the frontend
+/// sends it.
+fn dismiss(message: MessageId, dismissed: bool) -> Command {
+    Command::DismissMarker {
+        target: MessageTarget::Messages(vec![message]),
+        dismissed,
+    }
+}
+
+#[test]
+fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
+    // US12 scenario 5 and FR-108. A dismissed marker never returns on its
+    // message, however often the message is classified. Three questions
+    // from one sender dismissed as wrong teach Focus that this sender's
+    // questions are not questions to the person: `[focus.filter]
+    // stop_markers` gains the correction, written as an editor saves it,
+    // and the sender's next question is not marked. Undo takes both back.
+    let world = World::new();
+    let (_directory, path) = config_file("# Mine.\n[ui]\ndensity = \"compact\"\n");
+    let questions: Vec<MessageId> = (0..3)
+        .map(|_| {
+            crate::tests::letter_from_tove(
+                &world,
+                crate::tests::saturday_noon(),
+                &format!("Hi,\n\n{}\n\nThanks,\nTove", crate::tests::APPROVE),
+                |_| {},
+            )
+        })
+        .collect();
+    let focus = world
+        .host()
+        .enable_focus(crate::FocusSetup::default().with_config_path(path.clone()));
+    crate::tests::eventually(&world, || focus.caught_up().then_some(()));
+    for question in &questions {
+        assert!(
+            crate::tests::marker_on(&world, *question).is_some(),
+            "the fixture's questions are marked"
+        );
+    }
+    let (client, events) = world.frontend(ClientKind::Focus);
+
+    for (n, question) in questions.iter().enumerate() {
+        world.send(&client, dismiss(*question, true));
+        let said = world.hear(&events, |event| {
+            matches!(
+                event,
+                Event::ActionCompleted { .. } | Event::CommandRejected { .. }
+            )
+        });
+        // Dismissals in one breath are one gesture, as archives are: one
+        // toast that counts them, and one undo.
+        assert_eq!(
+            said,
+            Event::ActionCompleted {
+                description: format!(
+                    "Dismissed {} marker{}",
+                    n + 1,
+                    if n == 0 { "" } else { "s" }
+                ),
+                undoable: true,
+            }
+        );
+        let marker = crate::tests::marker_on(&world, *question).expect("the marker is kept");
+        assert!(marker.dismissed_at.is_some(), "dismissed");
+        assert_eq!(
+            focus_in(&path).filter.stop_markers.is_empty(),
+            n < 2,
+            "the correction is written at the third dismissal, and not before"
+        );
+    }
+    let written = std::fs::read_to_string(&path).expect("the file");
+    assert!(
+        written.starts_with("# Mine.\n[ui]\ndensity = \"compact\"\n"),
+        "{written}"
+    );
+    assert_eq!(
+        focus_in(&path).filter.stop_markers,
+        vec![postio_config::StopMarker {
+            sender: "tove@example.org".to_owned(),
+            kind: "question".to_owned(),
+        }]
+    );
+
+    // Classified again, the first question's marker does not come back.
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "DELETE FROM focus_classified WHERE message_id = ?1",
+            [questions[0].get()],
+        )
+        .await
+        .expect("its record gone");
+    });
+    world.host().inner.hub.emit(Event::BodyLoaded {
+        account: world.account,
+        message: questions[0],
+    });
+    crate::tests::eventually(&world, || {
+        crate::tests::body_classified_at(&world, questions[0])
+    });
+    assert!(
+        crate::tests::marker_on(&world, questions[0])
+            .is_some_and(|marker| marker.dismissed_at.is_some()),
+        "still dismissed"
+    );
+
+    // The same sender's next question is not marked.
+    let next = crate::tests::letter_from_tove(
+        &world,
+        Utc::now(),
+        &format!("Hi,\n\n{}\n\nThanks,\nTove", crate::tests::APPROVE),
+        |_| {},
+    );
+    world.host().inner.hub.emit(Event::BodyLoaded {
+        account: world.account,
+        message: next,
+    });
+    crate::tests::eventually(&world, || crate::tests::body_classified_at(&world, next));
+    assert_eq!(
+        crate::tests::marker_on(&world, next),
+        None,
+        "the sender's questions are not marked any more"
+    );
+
+    // Undo takes the dismissals back, and the correction they taught.
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    for question in &questions {
+        assert!(
+            crate::tests::marker_on(&world, *question)
+                .is_some_and(|marker| marker.dismissed_at.is_none()),
+            "each marker is back"
+        );
+    }
+    assert!(
+        focus_in(&path).filter.stop_markers.is_empty(),
+        "and the correction is gone"
+    );
+}

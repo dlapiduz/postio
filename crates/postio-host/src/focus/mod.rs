@@ -46,6 +46,9 @@ use crate::{Host, Inner};
 #[derive(Debug, Clone, Default)]
 pub struct FocusSetup {
     config: FocusConfig,
+    /// Where `config.toml` is, for Focus's verbs to write the person's
+    /// corrections to: the path the host opened with, unless given.
+    config_path: Option<std::path::PathBuf>,
     /// A pass to file with instead of Focus's own, for a test that watches
     /// what the engines hand over.
     filing: Option<Arc<dyn FilingPass>>,
@@ -56,6 +59,14 @@ impl FocusSetup {
     /// is filed away, whom never to, and the digest rules.
     pub fn with_config(mut self, config: FocusConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Write the person's corrections -- a sender restored from Filtered, a
+    /// marker kind stopped, a digest rule -- to the `config.toml` at `path`
+    /// (contracts/config.md). Without it, the path [`Host::open`] was given.
+    pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
+        self.config_path = Some(path);
         self
     }
 
@@ -116,19 +127,51 @@ impl Host {
     pub fn enable_focus(&self, setup: FocusSetup) -> FocusHandle {
         self.inner.wiring.filing.set(Some(setup.pass()));
         let mut focus = self.inner.focus.lock().expect("never poisoned");
-        if let Some(running) = &*focus {
-            *running.config.write().expect("never poisoned") = setup.config;
-            return running.clone();
-        }
-        let caught_up = Arc::new(AtomicBool::new(false));
-        let config = Arc::new(RwLock::new(setup.config));
-        let handle = FocusHandle {
-            body_stage: body::spawn(&self.inner, Arc::clone(&caught_up)),
-            due_timer: due_timer(&self.inner, Arc::clone(&config)),
-            caught_up,
-            config,
+        let handle = match &*focus {
+            Some(running) => {
+                *running.config.write().expect("never poisoned") = setup.config.clone();
+                running.clone()
+            }
+            None => {
+                let caught_up = Arc::new(AtomicBool::new(false));
+                let config = Arc::new(RwLock::new(setup.config.clone()));
+                let handle = FocusHandle {
+                    body_stage: body::spawn(
+                        &self.inner,
+                        Arc::clone(&config),
+                        Arc::clone(&caught_up),
+                    ),
+                    due_timer: due_timer(&self.inner, Arc::clone(&config)),
+                    caught_up,
+                    config,
+                };
+                *focus = Some(handle.clone());
+                handle
+            }
         };
-        *focus = Some(handle.clone());
+        // Focus's verbs read `[focus]` and write the person's corrections
+        // to the file. What they write reaches the filing pass and Focus's
+        // tasks at once, as a reload from the file would.
+        let path = setup.config_path.clone().or_else(|| {
+            self.inner
+                .config_path
+                .lock()
+                .expect("never poisoned")
+                .clone()
+        });
+        let tasks = Arc::clone(&handle.config);
+        let filing = self.inner.wiring.filing.clone();
+        let chosen = setup.filing.clone();
+        self.inner.wiring.focus.install(
+            path,
+            setup.config,
+            Arc::new(move |written: &FocusConfig| {
+                *tasks.write().expect("never poisoned") = written.clone();
+                filing.set(Some(chosen.clone().unwrap_or_else(|| {
+                    Arc::new(FocusFiling::from_config(written)) as Arc<dyn FilingPass>
+                })));
+            }),
+        );
         handle
     }
 }

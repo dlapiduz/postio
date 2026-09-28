@@ -1,6 +1,9 @@
 //! The data the rules layer reads (`contracts/engine.md`, "The classifier").
 
+use postio_model::EmailAddress;
+
 use crate::digests::Digests;
+use crate::outcome::MarkerKind;
 use crate::senders::Senders;
 
 /// Everything the classifier decides by, as data rather than code
@@ -28,5 +31,14 @@ pub trait Rules {
     /// rules say otherwise.
     fn digests(&self) -> &Digests {
         Digests::none()
+    }
+
+    /// Whether the person stopped markers of `kind` in mail from `sender`,
+    /// by dismissing them as wrong again and again (FR-108, `[focus.filter]
+    /// stop_markers`): their correction, which a detector's answer has to
+    /// accept, whichever detector gave it. Nothing is stopped unless the
+    /// rules say otherwise.
+    fn stops(&self, _sender: &EmailAddress, _kind: MarkerKind) -> bool {
+        false
     }
 }

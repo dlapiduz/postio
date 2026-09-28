@@ -299,6 +299,161 @@ impl Actions {
     }
 }
 
+/// How many markers of one kind the person dismisses in one sender's mail
+/// before Focus takes it as a correction: that this sender's mail does not
+/// ask that of them (FR-108, the plan's answer to "how far a dismissal
+/// teaches").
+pub const STOPS_AFTER: u32 = 3;
+
+impl Actions {
+    /// Take the markers off the targeted messages as wrong, or bring them
+    /// back (spec 007 FR-108, US12 scenario 5).
+    ///
+    /// A dismissal is for good on its own message: the body stage never
+    /// writes over one. And it teaches: once the person has dismissed
+    /// [`STOPS_AFTER`] markers of one kind in one sender's mail, the
+    /// correction goes into `[focus.filter] stop_markers`, written as an
+    /// editor saves it, and both detectors leave that kind alone in that
+    /// sender's mail from then on. Bringing markers back takes the
+    /// correction back when it drops the count below the line it crossed.
+    /// Only question and to-do markers teach; an invitation's comes from
+    /// its calendar part.
+    ///
+    /// The correction is the person's decision, so it lives in the file and
+    /// not the store; a file Focus cannot write leaves the dismissal
+    /// standing and the correction unwritten, which is said in the log by
+    /// outcome only.
+    pub(super) async fn dismiss(
+        &self,
+        target: &MessageTarget,
+        dismissed: bool,
+    ) -> Result<Applied, CommandError> {
+        let (mut connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, target).await? {
+            Aim::Rows(rows) => rows,
+            Aim::Bulk(_) => {
+                return Err(CommandError::rejected(
+                    "Select the messages whose markers to dismiss",
+                ));
+            }
+        };
+        let now = Utc::now();
+        let mut touched = Vec::new();
+        let mut account = None;
+        // How many markers of each kind, in each sender's mail, this took
+        // off or put back.
+        let mut taught: BTreeMap<(String, &'static str), u32> = BTreeMap::new();
+        let transaction = connection.transaction().await.map_err(store_failure)?;
+        {
+            let markers = MarkerRepository::new(&transaction);
+            for row in &rows {
+                let Some(marker) = markers.get(row.id).await.map_err(store_failure)? else {
+                    continue;
+                };
+                if marker.dismissed_at.is_some() == dismissed {
+                    continue;
+                }
+                markers
+                    .dismiss(row.id, dismissed.then_some(now))
+                    .await
+                    .map_err(store_failure)?;
+                touched.push(row.id);
+                account.get_or_insert(row.account_id);
+                if let Some(kind) = teaches(marker.kind) {
+                    for sender in &row.from {
+                        *taught.entry((sender.normalized(), kind)).or_default() += 1;
+                    }
+                }
+            }
+        }
+        transaction.commit().await.map_err(store_failure)?;
+        let Some(account) = account else {
+            return Err(CommandError::rejected(if dismissed {
+                "There is no marker there to dismiss"
+            } else {
+                "There is no dismissed marker there to bring back"
+            }));
+        };
+
+        if self.focus.is_on() {
+            for ((sender, kind), changed) in taught {
+                let now_dismissed = MarkerRepository::new(&connection)
+                    .dismissed_from(&sender, marker_kind(kind))
+                    .await
+                    .map_err(store_failure)?;
+                let present = if dismissed {
+                    now_dismissed >= STOPS_AFTER
+                } else if now_dismissed < STOPS_AFTER && now_dismissed + changed >= STOPS_AFTER {
+                    false
+                } else {
+                    continue;
+                };
+                if !dismissed || present {
+                    let written = self
+                        .focus
+                        .write(move |text| {
+                            postio_config::focus_edit::set_stop_marker(text, &sender, kind, present)
+                                .map_err(|_| {
+                                    "Postio could not write that correction to config.toml"
+                                        .to_owned()
+                                })
+                        })
+                        .await;
+                    if let Err(reason) = written {
+                        tracing::warn!(
+                            %reason,
+                            "Focus could not write a marker correction: {reason}"
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(Applied {
+            lasts: None,
+            account,
+            kind: if dismissed {
+                UndoKind::DismissMarker
+            } else {
+                UndoKind::UndismissMarker
+            },
+            count: touched.len(),
+            messages: touched.clone(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            // The row draws its marker, or no longer does.
+            changed: touched.clone(),
+            mailboxes_changed: false,
+            inverse: vec![Command::DismissMarker {
+                target: MessageTarget::Messages(touched),
+                dismissed: !dismissed,
+            }],
+        })
+    }
+}
+
+/// The name `[focus.filter] stop_markers` gives a marker kind whose
+/// dismissals teach: a question or a to-do. An invitation's marker comes
+/// from its calendar part and a reminder's from its time, and dismissing
+/// either says nothing about what the sender's mail asks.
+fn teaches(kind: MarkerKind) -> Option<&'static str> {
+    match kind {
+        MarkerKind::Question => Some("question"),
+        MarkerKind::Todo => Some("todo"),
+        MarkerKind::Invite | MarkerKind::NoReply => None,
+    }
+}
+
+/// The marker kind a stop names.
+fn marker_kind(name: &str) -> MarkerKind {
+    if name == "todo" {
+        MarkerKind::Todo
+    } else {
+        MarkerKind::Question
+    }
+}
+
 /// The invitation `row`'s calendar part carries, when the part is on this
 /// machine and is a request: what can be answered. Read off the async
 /// runtime's threads, as parsing is.

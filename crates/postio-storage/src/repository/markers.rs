@@ -227,6 +227,33 @@ impl<'a> MarkerRepository<'a> {
         Ok(settled > 0)
     }
 
+    /// How many markers of `kind` the person has dismissed in mail from
+    /// `sender` (an address, as `EmailAddress::normalized` spells it): what
+    /// decides when dismissing teaches Focus that this sender's mail does
+    /// not ask that of them (FR-108). One statement, driven from the
+    /// sender's address: a cost of their mail, never a walk of everybody's.
+    pub async fn dismissed_from(&self, sender: &str, kind: MarkerKind) -> Result<u32> {
+        let count = sql::scalar(
+            self.connection,
+            Self::explain_dismissed_from(),
+            vec![
+                turso::Value::Text(sender.to_owned()),
+                turso::Value::Text(kind_name(kind).to_owned()),
+            ],
+        )
+        .await?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// The SQL [`Self::dismissed_from`] runs.
+    pub fn explain_dismissed_from() -> &'static str {
+        "SELECT count(DISTINCT k.message_id)
+           FROM addresses a
+           JOIN recipients r ON r.address_id = a.id AND r.kind = 'from'
+           JOIN markers k ON k.message_id = r.message_id
+          WHERE a.address_normalized = ?1 AND k.kind = ?2 AND k.dismissed_at IS NOT NULL"
+    }
+
     /// The marker on `message`, dismissed or not: what the open message's
     /// marker card reads.
     pub async fn get(&self, message: MessageId) -> Result<Option<Marker>> {

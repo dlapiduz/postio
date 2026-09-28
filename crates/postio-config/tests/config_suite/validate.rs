@@ -706,3 +706,50 @@ fn a_never_entry_that_is_neither_an_address_nor_a_domain_is_reported_by_its_plac
         assert!(message.contains('2'), "{why}: the second entry: {message}");
     }
 }
+
+// ------------------------------------------- [focus.filter] stop_markers --
+//
+// Spec 007 T118, contracts/config.md: each entry names a sender and a kind,
+// `question` or `todo`. One that does not is reported by its place, never
+// by what it says, and stops nothing.
+
+#[test]
+fn stop_markers_that_name_a_sender_and_a_kind_are_valid() {
+    let checked = check(
+        "[focus.filter]\nstop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }, \
+         { sender = \"@example.net\", kind = \"todo\" }]\n",
+    );
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+}
+
+#[test]
+fn a_stop_marker_with_no_sender_or_an_unknown_kind_is_reported_by_its_place() {
+    for (entry, why) in [
+        (
+            "{ sender = \"news@ledger.example\", kind = \"invite\" }",
+            "a kind nobody dismisses",
+        ),
+        (
+            "{ sender = \"news\", kind = \"question\" }",
+            "not an address",
+        ),
+        ("{ kind = \"todo\" }", "no sender"),
+    ] {
+        let text = format!(
+            "[focus.filter]\nstop_markers = [{{ sender = \"ada@example.com\", kind = \"todo\" }}, {entry}]\n"
+        );
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{why}: {found:?}");
+        let (path, message) = &found[0];
+        assert_eq!(path, "focus.filter.stop_markers[1]", "{why}");
+        assert!(message.contains('2'), "{why}: the second entry: {message}");
+        assert!(
+            !message.contains("ledger") && !message.contains("news"),
+            "{why}: the message repeats the entry: {message}"
+        );
+    }
+}

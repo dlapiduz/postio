@@ -225,6 +225,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_filters(config, &map, errors);
         check_mailboxes(config, &map, errors);
         check_never(config, &map, errors);
+        check_stop_markers(config, &map, errors);
         check_digests(config, &map, errors);
     }
     config
@@ -563,6 +564,27 @@ fn check_never(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationErro
                 format!(
                     "entry {} of `[focus.filter] never` is neither an address nor a whole \
                      domain such as `@example.org`, so it pins nobody",
+                    place + 1
+                ),
+            );
+        }
+    }
+}
+
+/// `[focus.filter] stop_markers` (spec 007 T118, contracts/config.md): an
+/// entry that names no sender's address, or a kind that is not `question`
+/// or `todo`, by its place and never by what it says.
+fn check_stop_markers(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    for (place, stop) in config.focus.filter.stop_markers.iter().enumerate() {
+        if !stop.is_well_formed() {
+            push(
+                errors,
+                map,
+                format!("focus.filter.stop_markers[{place}]"),
+                true,
+                format!(
+                    "entry {} of `[focus.filter] stop_markers` needs a sender's address and a \
+                     kind, `question` or `todo`, so it stops nothing",
                     place + 1
                 ),
             );

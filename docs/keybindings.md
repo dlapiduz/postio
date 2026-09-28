@@ -90,6 +90,7 @@ command from inside a text field.
 | `D` | Stop digesting this sender | Reader, digest (Postio Focus) | Undoable | `stop_digesting_sender` |
 | `v` | View source | List, conversation, reader (Postio Focus) |  | `view_source` |
 | `o` | Open attachment or link… | List, conversation, reader (Postio Focus) |  | `open_attachment_or_link` |
+| `-` | Dismiss marker | List, conversation, reader (Postio Focus) | Undoable | `dismiss_marker` |
 | `/` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `ctrl+BackSpace` | Back to words | Search (Postio Focus) |  | `back_to_words` |

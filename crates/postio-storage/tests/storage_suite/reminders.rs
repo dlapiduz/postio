@@ -43,3 +43,13 @@ async fn the_due_timer_finds_answers_whose_window_closed_without_a_walk() {
     let walked = scans(sql).await;
     assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
 }
+
+#[tokio::test]
+async fn counting_a_sender_s_dismissals_walks_no_table() {
+    // FR-108: every dismissal asks how many of that kind the person has
+    // dismissed in that sender's mail. It is driven from the sender's
+    // address, never a walk of the markers or the mail.
+    let sql = postio_storage::repository::MarkerRepository::explain_dismissed_from();
+    let walked = scans(sql).await;
+    assert!(walked.is_empty(), "{sql}\nwalks: {walked:?}");
+}

@@ -80,6 +80,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::AddLabel,
     CommandId::AcceptInvite,
     CommandId::DeclineInvite,
+    CommandId::DismissMarker,
     CommandId::MarkSent,
     CommandId::RetrySend,
     CommandId::CancelSend,
@@ -225,6 +226,9 @@ pub struct Actions {
     /// part, which answering it has to read. `None` for a bus composed
     /// without them, whose Focus verbs then say they cannot run.
     blobs: Option<postio_storage::BlobStore>,
+    /// `[focus]`, and where its corrections are written, once Focus mode is
+    /// on (specs/007-postio-focus): empty in every other app.
+    focus: crate::focus::FocusSettings,
 }
 
 impl Actions {
@@ -235,7 +239,16 @@ impl Actions {
             state,
             undo: Arc::new(Mutex::new(UndoStack::new())),
             blobs: None,
+            focus: crate::focus::FocusSettings::default(),
         }
+    }
+
+    /// The same verbs, reading `[focus]` and writing the person's
+    /// corrections through `focus`: the wiring's, which Focus mode fills.
+    #[must_use]
+    pub fn with_focus(mut self, focus: crate::focus::FocusSettings) -> Self {
+        self.focus = focus;
+        self
     }
 
     /// The same verbs, reading parts from `blobs`: what answering an
@@ -386,6 +399,9 @@ impl Actions {
                     self.answer(*message, postio_calendar::Answer::Decline)
                         .await?,
                 ]
+            }
+            Command::DismissMarker { target, dismissed } => {
+                vec![self.dismiss(target, *dismissed).await?]
             }
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".

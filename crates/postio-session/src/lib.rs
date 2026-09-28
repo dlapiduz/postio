@@ -45,6 +45,7 @@ pub mod blocking;
 pub mod diag;
 pub mod egress;
 pub mod engine;
+pub mod focus;
 pub mod logging;
 pub mod onboarding;
 pub mod paths;
@@ -366,6 +367,10 @@ pub struct Wiring {
     /// fills it, so while the classic app or the terminal holds the store,
     /// no engine files anything by Focus's rules.
     pub filing: postio_runtime::FilingSlot,
+    /// What Focus's verbs read of `[focus]`, and where they write the
+    /// person's corrections (spec 007): shared and empty for the same
+    /// reason as `filing`, and filled by the same switch.
+    pub focus: focus::FocusSettings,
 }
 
 /// A mail transport handed to the engine instead of the account's own.
@@ -409,6 +414,7 @@ impl Wiring {
             mail: None,
             discovery: Arc::new(postio_account::discovery::PimalayaTransport::new()),
             filing: postio_runtime::FilingSlot::default(),
+            focus: focus::FocusSettings::default(),
         }
     }
 
