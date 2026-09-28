@@ -68,6 +68,10 @@ const CASES: &[(&str, fn())] = &[
         widgets_css::the_shared_sheet_dresses_the_shared_widgets as fn(),
     ),
     (
+        "widgets_css::the_shared_sheet_dresses_the_account_form",
+        widgets_css::the_shared_sheet_dresses_the_account_form as fn(),
+    ),
+    (
         "widgets_css::the_shared_sheet_brings_the_shared_metrics",
         widgets_css::the_shared_sheet_brings_the_shared_metrics as fn(),
     ),

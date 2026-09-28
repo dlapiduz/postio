@@ -830,38 +830,6 @@ headerbar.postio-header button.toggle:checked {
   color: var(--postio-ink);
 }
 
-/* ── The plate (`widgets::plate`) ────────────────────────────────────
-   The surface an overlay is drawn on: the cheat sheet, the parts panel, the
-   unavailable screen, onboarding, and the box's results. A hairline, the
-   control radius, the surface ground, and the token's large lift -- which,
-   unlike the literal it replaced, deepens in the dark scheme. */
-.postio-plate {
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: var(--postio-shadow-lg);
-}
-
-/* The canvas' title bar: 44px over a hairline, one height for every plate
-   (they were 42 and 44). */
-.postio-plate-header {
-  min-height: 44px;
-  padding: 0 18px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
-/* A plate's name, as the canvas sets it over Parts, Add account and Sync
-   window: 12px Barlow Condensed, 0.16em, capitals. A size up from the
-   section kicker, because it names the whole surface. */
-.postio-plate-title {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: var(--postio-text-label);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--postio-ink-secondary);
-}
-
 /* ── The box's results ───────────────────────────────────────────────
    `postio-cfd.1` folded the command palette and the query bar into one
    box in the header; this is the plate its results hang from, directly
@@ -1148,96 +1116,6 @@ headerbar.postio-header button.toggle:checked {
   font-size: var(--postio-text-ui);
   line-height: 1.5;
   color: var(--postio-ink-secondary);
-}
-
-/* ── First run (canvas 3e) ───────────────────────────────────────────
-   One screen, on its own plate in the middle of the window. The same plate
-   the palette and the parts panel use, because it is the same kind of thing:
-   a surface the application puts in front of you, not a dialog. */
-.postio-onboarding {
-  min-width: 640px;
-}
-
-/* `step 1 of 1`. Mono, and it is the whole promise of this screen: there is
-   no second page and nothing is being held back for later. */
-.postio-onboarding-step {
-  font-family: var(--postio-font-mono);
-  font-size: var(--postio-text-meta);
-  color: var(--postio-dim);
-}
-
-.postio-onboarding-body {
-  padding: 22px 26px 26px;
-}
-
-/* A field's caption (`widgets::field`): onboarding's, the account
-   detail's -- one look, and the control's accessible name. */
-.postio-field-label {
-  font-size: var(--postio-text-body);
-  color: var(--postio-ink-secondary);
-}
-
-/* What the probe found, on its own ground so it reads as an answer rather
-   than as more form. */
-.postio-onboarding-card {
-  padding: 14px 16px;
-  border-radius: var(--postio-radius-sm);
-  background-color: var(--postio-active-bg);
-}
-
-.postio-onboarding-card-icon {
-  color: var(--postio-accent);
-}
-
-.postio-onboarding-card-heading {
-  font-size: var(--postio-text-body);
-  font-weight: 500;
-  color: var(--postio-ink);
-}
-
-/* IMAP / SMTP / Auth. Mono, because they are hostnames and ports — the same
-   face every other identifier in the application wears. */
-.postio-onboarding-line {
-  font-family: var(--postio-font-mono);
-  font-size: 0.75rem;
-  color: var(--postio-ink-secondary);
-}
-
-/* The provider's own sentence. Prose, not mono: it is the one thing on this
-   screen the user has to actually read, and iCloud's is the difference
-   between the password working and not. */
-.postio-onboarding-note {
-  font-size: var(--postio-text-body);
-  line-height: 1.5;
-  color: var(--postio-ink-secondary);
-  margin-top: 4px;
-}
-
-.postio-onboarding-help {
-  padding: 0;
-  font-size: var(--postio-text-ui);
-}
-
-/* The browser sign-in step (#1179, Design/screens/23). Never a login form:
-   what this shows is an account of what is happening in the browser that is
-   now in front of the user, and what the request they are about to approve
-   actually asks for. */
-.postio-onboarding-browser-flow {
-  font-family: var(--postio-font-mono);
-  font-size: var(--postio-text-small);
-  padding: 10px 12px;
-  border: 1px solid var(--postio-hairline);
-  background-color: var(--postio-ground);
-  color: var(--postio-ink-secondary);
-}
-
-.postio-onboarding-scope {
-  font-size: var(--postio-text-ui);
-  color: var(--postio-ink);
-}
-
-.postio-onboarding-scope-mark {
-  color: var(--postio-accent);
 }
 
 /* ── Settings (canvas 3f) ────────────────────────────────────────────
@@ -1583,27 +1461,6 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   background-color: transparent;
 }
 
-/* Why something was refused (`widgets::callout`): a sign-in the server
-   declined, a signature name already taken. The accent's warning cousin
-   rather than a red banner -- nothing has gone wrong with Postio, the
-   other side said no. */
-.postio-callout {
-  padding: 10px 12px;
-  border-radius: var(--postio-radius-sm);
-  border: 1px solid var(--postio-selected-border);
-  background-color: var(--postio-selected-bg);
-  font-size: var(--postio-text-body);
-  line-height: 1.5;
-  color: var(--postio-ink);
-}
-
-/* Why a list has nothing in it (`widgets::empty_note`). One quiet line,
-   the look the box's and the refine column's empties already had. */
-.postio-empty-note {
-  font-size: var(--postio-text-ui);
-  color: var(--postio-faint);
-}
-
 /* What the last connection test found (#980). Under the servers it is about,
    because the result is something you read, compare against the fields above,
    and then edit -- a toast would take it away before either. */
@@ -1807,62 +1664,9 @@ button.postio-compose-more {
 }
 
 /* ── The classic app's own controls ──────────────────────────────────
-   The segmented control, the check and the stat line. The controls both
-   desktop apps draw -- the keycap button, the action bar, the notice -- are
+   The check. The controls both desktop apps draw -- the keycap button, the
+   action bar, the notice, the segmented control and the account form -- are
    dressed by postio-widgets' `widgets.css` (ADR 0043). */
-
-/* A closed set of choices with all of them on screen (#1179). Joined,
-   square-cornered, one filled — the drawing's own vocabulary, and the
-   reason it replaced a dropdown: three answers you can read without
-   opening anything. Borders collapse between segments so the group reads
-   as one control rather than as three buttons that happen to touch. */
-.postio-segmented {
-  padding: 0;
-}
-
-.postio-segmented button.postio-segment {
-  min-height: 30px;
-  padding: 0 var(--postio-space-3);
-  margin: 0;
-  border: 1px solid var(--postio-hairline);
-  border-right-width: 0;
-  border-radius: 0;
-  background-image: none;
-  background-color: var(--postio-surface);
-  box-shadow: none;
-  font-family: var(--postio-font-body);
-  font-size: var(--postio-text-ui);
-  font-weight: 400;
-  color: var(--postio-ink-secondary);
-}
-
-.postio-segmented button.postio-segment.postio-segment-last {
-  border-right-width: 1px;
-}
-
-.postio-segmented button.postio-segment:hover {
-  background-color: var(--postio-hover-bg);
-  color: var(--postio-ink);
-}
-
-.postio-segmented button.postio-segment:checked {
-  background-color: var(--postio-accent);
-  border-color: var(--postio-accent);
-  color: var(--postio-accent-fg);
-  font-weight: 500;
-}
-
-.postio-segmented button.postio-segment:checked:hover {
-  background-color: var(--postio-accent-hover);
-}
-
-/* Every control needs a visible ring and none of them may rely on the
-   default one — the drawing's own constraint. The ring sits inside the
-   border so a collapsed edge does not clip it. */
-.postio-segmented button.postio-segment:focus-visible {
-  outline: 2px solid var(--postio-accent);
-  outline-offset: -3px;
-}
 
 /* A boolean that is a value in a form (#1179). Square, because every
    indicator in this application is square, and visibly filled when checked
@@ -1904,14 +1708,6 @@ button.postio-compose-more {
 .postio-check:focus-visible check {
   outline: 2px solid var(--postio-accent);
   outline-offset: 2px;
-}
-
-/* A line of mono facts under a group. Almost entirely number, and numbers
-   that do not line up read as a mistake. */
-.postio-stat-line {
-  font-family: var(--postio-font-mono);
-  font-size: var(--postio-text-small);
-  color: var(--postio-dim);
 }
 
 /* ── The conversation pane's own chrome (canvas turn 8a, #1004/#1005/#1006)

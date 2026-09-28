@@ -175,3 +175,65 @@ pub fn the_shared_sheet_brings_the_shared_metrics() {
         gtk::style_context_remove_provider_for_display(&display, provider);
     }
 }
+
+/// Every widget under `root` wearing `class`.
+fn wearing(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
+    let mut found = Vec::new();
+    if root.has_css_class(class) {
+        found.push(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(current) = child {
+        found.extend(wearing(&current, class));
+        child = current.next_sibling();
+    }
+    found
+}
+
+/// The account form is both apps' (T165), so the shared sheet dresses it:
+/// in an app that defines only the roles -- Focus, opening it from its
+/// sign-in banner -- the refusal still reads as the callout, and the step
+/// as the dim line it is.
+pub fn the_shared_sheet_dresses_the_account_form() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    let roles = gtk::CssProvider::new();
+    roles.load_from_string(ROLES);
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &roles,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let sheet = postio_widgets::style::install(&display);
+
+    let form = postio_widgets::onboarding::Onboarding::new();
+    form.set_status(postio_widgets::onboarding::Status::Failed(
+        "The server refused the password.".to_owned(),
+    ));
+    let window = gtk::Window::new();
+    window.set_child(Some(&form));
+    window.present();
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    let root: gtk::Widget = form.clone().upcast();
+    let refusal = wearing(&root, "postio-callout");
+    assert_eq!(refusal.len(), 1, "one callout on the form");
+    assert_eq!(
+        rgb(refusal[0].color()),
+        (1, 2, 3),
+        "the refusal does not wear the callout's --postio-ink"
+    );
+    let step = wearing(&root, "postio-onboarding-step");
+    assert_eq!(
+        rgb(step[0].color()),
+        (90, 80, 70),
+        "the step does not wear --postio-dim"
+    );
+
+    window.destroy();
+    gtk::style_context_remove_provider_for_display(&display, &sheet);
+    gtk::style_context_remove_provider_for_display(&display, &roles);
+}
