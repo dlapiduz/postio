@@ -1006,9 +1006,32 @@ must match the label.
   label was changed.
 - **The one wrong marker** marks a genuine to-do where the label prefers a
   question with no "you", which the second-person rule declines by design.
-- **Still a best case.** The rules and the dataset now share readers. The
-  gate cuts own text with the spike's approximation until T117 uses
-  `postio_body::own_text`.
+- **Still a best case.** The rules and the dataset now share readers.
+
+**The gate on real own text (T117).** Switched to `postio_body::own_text`, the
+gate first fell to 0.889 (64 of 72). There were eight false markers: five from
+earlier mail quoted without `>` markers, and three from signatures with no
+separator. `own_text` now stops at:
+
+- Outlook's "Original Message" line and underscore rule;
+- a forward banner;
+- a `From:` over `Sent:` or `Date:` block;
+- "Sent from my";
+- an attribution over unquoted text.
+
+It also drops an attribution sitting over a `>` quote, and ends the message at
+a bare closing line. Precision is back to 0.985 (65 of 66) and recall to 0.823.
+
+**How markers are written (T117, T110):**
+
+- A detector's marker is never overwritten when the message is classified
+  again.
+- A question or to-do in held mail releases a hold still waiting, never a
+  delivered one.
+- Every message carrying the same invitation UID and occurrence shows the
+  newest word, decided by `supersedes`, in whatever order the messages were
+  read. A marker already showing that word is left alone, so an answer
+  survives.
 
 **How due dates are read.**
 - The date is read in the local zone from the Date header, falling back to
@@ -1099,6 +1122,34 @@ entry.
 - **Automatic filtering is not on the user's undo stack**, because the user
   did not do it. Its undo is `R`.
 - **Filtered mail is archived and never deleted** (Clarifications).
+
+**Built (T102, T122, T123, T127, T133).** The filing pass is
+`postio_sync::FocusFiling`. It gives a message its reason in this order:
+
+1. The server's `$Junk`: spam, from the server layer.
+2. The automated-senders table: the table's own reason.
+3. The headers:
+   - `Auto-Submitted` is a notification;
+   - `Precedence: bulk` or `junk` is a promotion;
+   - `List-Unsubscribe` without `List-Id` is a promotion.
+
+Everything else stays in the inbox, discussion lists included (`List-Id`
+with `Precedence: list`). Only mail arriving in the inbox is filed away.
+
+The lane chose defaults where the spec was silent:
+
+- **A hold beats a filter.** Held mail is never also filed away, and the first
+  matching rule holds it.
+- **An invitation** is never held, and is filtered only by the server's
+  `$Junk`.
+- **A domain in `[focus.filter] never`** (`@example.com`) matches that exact
+  domain, not its subdomains.
+- **A message no rule acts on costs no reads.** The store's facts are asked
+  only when a rule would file something away.
+- **Catching up on open (T127)** sorts inbox mail past `focus.filed_through`
+  that has no filing record, newest first. The row under any app's cursor
+  stays where it is, and is recorded as seen. Focus's first-ever open only
+  sets the mark (FR-118).
 
 ---
 

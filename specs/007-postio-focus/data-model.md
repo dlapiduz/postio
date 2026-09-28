@@ -256,8 +256,16 @@ mailbox role, the promoted header facts, and whether it has a calendar part.
 At the body stage it is `BodyMessage { filed, identities }`: the same message,
 and the user's identities on its account, which say who "you" is. The
 automated-senders table reaches the classifier through `Rules::senders()`.
-T034's filing pass in `postio-sync` has a type with the same name. The two are
-reconciled when the engine lane lands (tasks.md T102).
+Filing and the classifier share one type, `postio_model::filing::FiledMessage`
+(T102).
+
+The filing lane added:
+
+- `focus_classified.message_id`, which is `NOT NULL`;
+- the settings key `focus.filed_through`, the newest message id sorted so
+  far, which the catch-up on open reads (T127);
+- `Invitation::series_ends_at` and `last_end()`, bounded at 1,024
+  occurrences, so a recurring invitation can be past (T110).
 
 ### `Invitation` (`crates/postio-calendar`)
 

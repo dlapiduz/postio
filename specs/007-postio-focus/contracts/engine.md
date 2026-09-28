@@ -57,7 +57,17 @@ As built by T034 (`crates/postio-sync/src/filing.rs`):
   the store has no `Transaction` type.
 - **How Focus supplies it.** `Host::enable_focus(FocusSetup)` puts it in a
   `FilingSlot` shared by every engine (`Wiring.filing`), so enabling it later
-  takes effect from the next pass. `FocusSetup::default()` files nothing.
+  takes effect from the next pass. `FocusSetup::default().with_config(focus)`
+  runs Focus's pass (`postio_sync::FocusFiling`) with the `[focus]` settings,
+  and each `enable_focus` call replaces them (T102, T122).
+- **Where else it runs.** A server with no MODSEQ (Gmail, JMAP) never reaches
+  `resync::incremental`: its steady-state pass is a full enumeration. That
+  pass hands the rows it inserted to the filing pass through
+  `commit_batch_filing` (T102). Such a pass still emits no `NewMail` on
+  `main` (#1704).
+- **One type crosses the seam:** `postio_model::filing::FiledMessage { message,
+  thread: Option<ThreadId>, role }`. Its promoted headers and calendar part
+  are methods. `postio-sync` and `postio-classify` both re-export it.
 
 - **It is called only on incremental passes.** First syncs, whose mail never
   produces `Event::NewMail` (`crates/postio-runtime/src/engine.rs:3372-3461`),
@@ -74,8 +84,8 @@ As built by T034 (`crates/postio-sync/src/filing.rs`):
   with its queued server move.
 - **Errors never lose mail** (ADR 0008, Q6). A failure leaves the message where
   it was, in the inbox, logs ids and outcome only, and lets the transaction
-  commit the insert. As T034 built it, an error still rolls back the write
-  unit; `NoFiling` cannot fail. T102 makes a failure commit the insert.
+  commit the insert. As built (T102), the pass runs in its own savepoint: a
+  failure rolls back only what the pass wrote, and the insert commits.
 - **Its cost is bounded:** at most **4 statements per new message** plus one
   per write, with no scans. A counting test in the sync suite asserts both.
 
@@ -97,7 +107,11 @@ pub struct Outcome {
   - `wrote_to(address)` reads `correspondents`;
   - `took_part(thread)` is an `EXISTS` over `idx_messages_thread_mailbox`
     with Sent;
-  - `own_domain(address)` checks the identities;
+  - `own_domain(address)` checks the identities. As built, it reads every
+    account's and identity's addresses once per call, in one statement over
+    those two small tables. It covers every account's domains, so an address
+    at a shared provider guards every sender there, which is the safe
+    direction;
   - `never_filter(address)` reads `[focus.filter] never`.
 - **`Rules`** holds four things:
   - the automated-senders table (shipped TOML, which is data);
@@ -139,9 +153,14 @@ pub struct Outcome {
   (FR-132).
 - **Boundary rule.** No postio-smtp, io-smtp, postio-account, postio-sync,
   postio-runtime, postio-transport, io-imap or io-http, and no network crate:
-  the list is postio-render's. It may depend on postio-model, postio-storage
-  (for `Facts`' reads), postio-search (the matcher and `parse_when`),
-  postio-body (own-text extraction), postio-calendar and postio-config.
+  the list is postio-render's. As built, it depends on postio-model and
+  postio-search (the matcher and `parse_when`), and nothing else of
+  Postio's:
+  - `Facts` is implemented in postio-sync, over the store.
+  - Own text comes from the caller.
+  - Digest rules arrive as plain `(name, queries)` through `Digests`.
+  - It cannot take postio-config, which brings `notify` and so `mio`, a
+    network crate its rule bans.
 
 ## Invitations (`crates/postio-calendar`, new)
 
