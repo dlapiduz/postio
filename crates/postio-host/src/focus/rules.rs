@@ -21,14 +21,19 @@ use crate::Inner;
 /// How many of a preview's messages the dialog lists: "then the first four".
 const FIRST: usize = 4;
 
+/// How many messages a query of a several-query rule is asked for, to count
+/// them once each: ninety days of one sender's mail is far fewer.
+const DISTINCT_BOUND: u32 = 10_000;
+
 /// What a rule matching `queries` would have caught since `since`: each
 /// query run through the executor as search runs it, over every account's
 /// mail, newest first -- its count, and the newest four rows (FR-127: a
 /// rule means what the same query means in search).
 ///
-/// A message two of the rule's queries both match counts once for each.
-/// The dialog writes one `from:` query per sender, which no message meets
-/// twice.
+/// A message two of the rule's queries both match counts once: a rule of
+/// one query is the executor's own count, and a rule of several counts
+/// the distinct messages among what each query finds, up to
+/// [`DISTINCT_BOUND`] a query.
 pub(crate) async fn preview(
     inner: &Inner,
     queries: &[String],
@@ -38,6 +43,8 @@ pub(crate) async fn preview(
     let today = Local::now().date_naive();
     let window = since.format("%Y-%m-%d");
     let mut count = 0u64;
+    let mut distinct: std::collections::HashSet<MessageId> = std::collections::HashSet::new();
+    let several = queries.len() > 1;
     let mut newest: Vec<(DateTime<Utc>, MessageId)> = Vec::new();
     for query in queries {
         let parsed = postio_search::parse(&format!("{query} after:{window}"), today);
@@ -47,7 +54,11 @@ pub(crate) async fn preview(
                 account: AccountScope::Unified,
                 query: &parsed,
                 scope: Scope::default(),
-                limit: FIRST as u32,
+                limit: if several {
+                    DISTINCT_BOUND
+                } else {
+                    FIRST as u32
+                },
                 order: ResultOrder::Newest,
             },
             Utc::now(),
@@ -55,6 +66,7 @@ pub(crate) async fn preview(
         .await
         .map_err(|_| StoreError::new("Postio could not run that rule over your mail"))?;
         count = count.saturating_add(found.total_hits);
+        distinct.extend(found.hits.iter().map(|hit| hit.message_id));
         newest.extend(
             found
                 .hits
@@ -70,6 +82,9 @@ pub(crate) async fn preview(
         }
     }
     let first = inner.wiring.store.message_rows(ids).await?;
+    if several {
+        count = distinct.len() as u64;
+    }
     Ok(DigestPreview {
         count: u32::try_from(count).unwrap_or(u32::MAX),
         first,

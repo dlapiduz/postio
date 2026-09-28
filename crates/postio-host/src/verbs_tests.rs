@@ -1776,6 +1776,47 @@ fn a_rule_s_preview_counts_what_the_executor_finds_in_the_last_ninety_days() {
 }
 
 #[test]
+fn a_preview_counts_a_message_two_of_its_queries_match_once() {
+    // T138: a rule of several queries -- "Digest these…" writes one per
+    // sender, and a query rule may overlap them -- would have caught each
+    // message once, however many of its queries match it.
+    let world = World::new();
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index");
+    });
+    for days in 1..=3 {
+        letter(
+            &world,
+            "news@ledger.example",
+            &format!("Issue {days}"),
+            &format!("<issue-{days}@ledger.example>"),
+            None,
+            Utc::now() - chrono::TimeDelta::days(days),
+        );
+    }
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let since = Utc::now() - chrono::TimeDelta::days(90);
+    let preview = world
+        .rt
+        .block_on(client.digest_preview(
+            vec![
+                "from:news@ledger.example".to_owned(),
+                "subject:issue".to_owned(),
+            ],
+            since,
+        ))
+        .expect("a preview");
+    assert_eq!(
+        preview.count, 3,
+        "three messages, each matched by both queries"
+    );
+    assert_eq!(preview.first.len(), 3, "each listed once");
+}
+
+#[test]
 fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_mail() {
     // FR-120, FR-126: the dialog's Create writes the rule to config.toml,
     // an edit rewrites it where it stands, and removing it at `g d` takes
