@@ -27,15 +27,16 @@
 //!    while Focus was closed (FR-134), and the bodies are already read: the
 //!    filtering, digest and invitation pass.
 //!
-//! When both have work at once they share the one background connection
-//! and take turns, so neither number is the sum; run 2026-09-28 with both at
-//! once, each finished at about the other's time.
+//! 3. **Both at once.** The mark back at the start and every classifier
+//!    record forgotten: a first open over a large backlog another app kept.
 //!
 //! **What it reports rather than gates** (FR-140: "Timings are measured
 //! nightly and report without gating"): the two passes' wall-clock times, the
 //! CPU the process spent while they ran, and how long a page of the inbox
-//! took to read while they did. It gates only that each pass finished and
-//! took everything it should have.
+//! took to read while they did. It gates that each pass finished and took
+//! everything it should have -- and, with both at once (3, T169), the two
+//! numbers that were the defect: the needs-action pass inside its minute,
+//! and a page read inside the interaction budget at the median.
 
 use std::time::{Duration, Instant};
 
@@ -179,16 +180,117 @@ fn focus_s_first_classification_pass_over_a_hundred_thousand_messages() {
         sorted, inbox_mail,
         "the filing pass sorted every inbox message past the mark"
     );
+
+    // 3. Both at once (T169): an open after another app filed everything,
+    // on a store whose recent bodies no classifier has read -- a first open
+    // of Focus over a large backlog another app kept. Both passes have the
+    // whole of their work, and they share the store with a person reading
+    // the inbox.
+    // What step 2 filed away has left the inbox, so this sorts what is
+    // still there.
+    let inbox_now = rt.block_on(count(
+        &database,
+        "SELECT count(*) FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id \
+         WHERE b.role = 'inbox'",
+    ));
+    rt.block_on(async {
+        let connection = database.connect().await.expect("a connection");
+        SettingsRepository::new(&connection)
+            .set(FILED_THROUGH, "0")
+            .await
+            .expect("the mark");
+        for forget in [
+            "DELETE FROM focus_classified",
+            "DELETE FROM markers",
+            "DELETE FROM digest_holds",
+            "DELETE FROM filter_decisions",
+        ] {
+            sql::execute(&connection, forget, ())
+                .await
+                .expect("the passes' records forgotten");
+        }
+    });
+    let mut needs_action = None;
+    let both = open_focus(&rt, &database, blob_dir.path(), |focus| {
+        if needs_action.is_none() && focus.caught_up() {
+            needs_action = Some(Instant::now());
+        }
+        needs_action.is_some()
+            && rt
+                .block_on(async {
+                    let reader = database.read().await?;
+                    SettingsRepository::new(&reader).get(FILED_THROUGH).await
+                })
+                .expect("the mark")
+                .as_deref()
+                == Some(newest.as_str())
+    });
+    let body_took = needs_action
+        .expect("the needs-action pass finished")
+        .duration_since(both.started);
+    eprintln!(
+        "both at once: needs-action in {:.1}s (budget {}s){}, filing in {:.1}s (budget {}s){}",
+        body_took.as_secs_f64(),
+        BODY_BUDGET.as_secs(),
+        over(body_took, BODY_BUDGET),
+        both.took.as_secs_f64(),
+        FILING_BUDGET.as_secs(),
+        over(both.took, FILING_BUDGET)
+    );
+    both.report();
+    let (read_again, sorted_again) = rt.block_on(async {
+        (
+            count(
+                &database,
+                "SELECT count(*) FROM focus_classified WHERE stage = 'body'",
+            )
+            .await,
+            count(
+                &database,
+                "SELECT count(*) FROM focus_classified WHERE stage = 'filing'",
+            )
+            .await,
+        )
+    });
+    assert_eq!(read_again, RECENT as u64, "both at once, every body read");
+    eprintln!("  {read_again} bodies read and {sorted_again} of {inbox_now} inbox messages sorted");
+    assert_eq!(
+        sorted_again, inbox_now,
+        "both at once, every message sorted"
+    );
+    // The two things T169 is about, gated: the needs-action pass keeps its
+    // own budget however much filing waits behind it, and a person reading
+    // the inbox meanwhile keeps the interaction budget at the median.
+    assert!(
+        body_took <= BODY_BUDGET,
+        "with the filing pass running, needs-action took {:.1}s",
+        body_took.as_secs_f64()
+    );
+    let median = both.median();
+    assert!(
+        median <= INTERACTION_BUDGET,
+        "with both passes running, a page of the inbox took {} ms at the median",
+        median.as_millis()
+    );
 }
 
 /// What one open cost.
 struct Measured {
+    /// When Focus was switched on.
+    started: Instant,
     took: Duration,
     cpu: Option<Duration>,
     reads: Vec<Duration>,
 }
 
 impl Measured {
+    /// The median page read while the passes ran.
+    fn median(&self) -> Duration {
+        let mut reads = self.reads.clone();
+        reads.sort_unstable();
+        reads.get(reads.len() / 2).copied().unwrap_or_default()
+    }
+
     fn report(&self) {
         if let Some(cpu) = self.cpu {
             eprintln!(
@@ -252,7 +354,12 @@ fn open_focus(
         .map(|(before, after)| after.saturating_sub(before));
     drop(client);
     host.stop();
-    Measured { took, cpu, reads }
+    Measured {
+        started: start,
+        took,
+        cpu,
+        reads,
+    }
 }
 
 /// `sql`'s one number.

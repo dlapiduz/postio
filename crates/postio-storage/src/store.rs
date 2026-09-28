@@ -755,6 +755,15 @@ impl Store {
         })
     }
 
+    /// Whether a turn on a reader is held right now: a read that comes in
+    /// numbers -- a list page, a sidebar refresh, a search -- is under way.
+    /// What a background pass asks between two units of its work, to let a
+    /// person's read finish before it takes the engine again (spec 007
+    /// T169).
+    pub fn reading(&self) -> bool {
+        self.readers.turns.available_permits() < READERS
+    }
+
     /// A connection and an interactive write permit, together.
     ///
     /// The pairing is the point: a write a person is waiting for has to take

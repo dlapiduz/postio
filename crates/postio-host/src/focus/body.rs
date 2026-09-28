@@ -98,7 +98,7 @@ struct Reading {
 
 /// Start the body stage over `inner`'s store: the catch-up, then every body
 /// that lands. `caught_up` is set once the catch-up has taken everything it
-/// found.
+/// found, and `said` told.
 ///
 /// Over a wiring whose events go to a single reader rather than a hub,
 /// there is nothing to hear: the stage catches up and ends.
@@ -107,6 +107,7 @@ pub(super) fn spawn(
     config: Arc<RwLock<FocusConfig>>,
     models: Arc<Models>,
     caught_up: Arc<AtomicBool>,
+    said: Arc<tokio::sync::Notify>,
 ) -> tokio::task::AbortHandle {
     let events = inner.hub.subscribe("focus:body-stage");
     let database = inner.wiring.database.clone();
@@ -129,6 +130,8 @@ pub(super) fn spawn(
                 tracing::warn!(%error, "Focus's body stage could not catch up: {error}");
             }
             caught_up.store(true, Ordering::Release);
+            // The filing catch-up waits on this (T169).
+            said.notify_one();
             let Some(events) = events else {
                 return;
             };
@@ -196,6 +199,8 @@ async fn catch_up(
     let mut taken = 0;
     for (_, inbox) in inboxes {
         loop {
+            // Behind a person's read under way (T169).
+            super::yield_to_reads(database).await;
             let connection = database.connect_background().await?;
             let batch = FocusClassifiedRepository::new(&connection)
                 .pending_bodies(inbox, since, version, BATCH)

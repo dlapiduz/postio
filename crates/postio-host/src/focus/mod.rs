@@ -183,6 +183,7 @@ impl Host {
             }
             None => {
                 let caught_up = Arc::new(AtomicBool::new(false));
+                let said = Arc::new(tokio::sync::Notify::new());
                 let marking = Arc::new(AtomicBool::new(false));
                 let config = Arc::new(RwLock::new(setup.config.clone()));
                 let models = Arc::new(model::Models::new(
@@ -195,12 +196,14 @@ impl Host {
                         Arc::clone(&config),
                         Arc::clone(&models),
                         Arc::clone(&caught_up),
+                        Arc::clone(&said),
                     ),
                     due_timer: due_timer(
                         &self.inner,
                         Arc::clone(&config),
                         Arc::clone(&models),
                         Arc::clone(&marking),
+                        (Arc::clone(&caught_up), said),
                     ),
                     caught_up,
                     marking,
@@ -238,9 +241,25 @@ impl Host {
     }
 }
 
+/// How long a background pass waits, between two batches, for a person's
+/// read under way to finish before it takes the engine again (T169): a
+/// page of the inbox reads in a few milliseconds, and a person reading
+/// without pause cannot hold a pass up for longer than this.
+const READ_PATIENCE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Let a person's read under way finish first, for at most
+/// [`READ_PATIENCE`]: what Focus's background passes do before each batch.
+pub(crate) async fn yield_to_reads(database: &postio_storage::Store) {
+    let until = tokio::time::Instant::now() + READ_PATIENCE;
+    while database.reading() && tokio::time::Instant::now() < until {
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+}
+
 /// The due timer: the engine's tick, kept by the host for the whole store.
 ///
-/// Before its first tick it sorts what another app filed while Focus was
+/// Before its first tick -- once the body stage has caught up, whose budget
+/// is the person's minute -- it sorts what another app filed while Focus was
 /// closed ([`catch_up`]), so a digest that comes due at once holds that mail
 /// too. Then, each tick, it delivers the digests `config` says have come due
 /// ([`due`]) -- the first tick is at once, so what came due while Focus was
@@ -252,12 +271,22 @@ fn due_timer(
     config: Arc<RwLock<FocusConfig>>,
     models: Arc<model::Models>,
     marking: Arc<AtomicBool>,
+    (read, said): (Arc<AtomicBool>, Arc<tokio::sync::Notify>),
 ) -> tokio::task::AbortHandle {
     let inner = Arc::clone(inner);
     let summarising = Arc::new(AtomicBool::new(false));
     let runtime = inner.runtime().clone();
     runtime
         .spawn(async move {
+            // The body stage's catch-up first (T169): its minute is the
+            // person's (SC-011), and it is the smaller pass by far -- a
+            // month's bodies against the whole backlog. Run together, the
+            // two took turns at the one writer, and needs-action finished
+            // when filing did, three minutes in. `notify_one` keeps its
+            // word for a waiter that arrives after it.
+            if !read.load(Ordering::Acquire) {
+                said.notified().await;
+            }
             match catch_up::catch_up(&inner).await {
                 Ok(_) => marking.store(true, Ordering::Release),
                 Err(error) => {

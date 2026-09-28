@@ -135,6 +135,8 @@ async fn sort_since(
     let mut taken = 0;
     for (account, inbox) in inboxes {
         loop {
+            // Behind a person's read under way (T169).
+            super::yield_to_reads(database).await;
             let connection = database.connect_background().await?;
             let batch = FocusClassifiedRepository::new(&connection)
                 .pending_filings(inbox, mark, version, BATCH)
@@ -161,7 +163,7 @@ async fn sort_since(
                     role: MailboxRole::Inbox,
                 })
                 .collect();
-            let _permit = connection
+            let permit = connection
                 .write_gate()
                 .acquire(WritePriority::Background)
                 .await;
@@ -188,6 +190,12 @@ async fn sort_since(
                 Ok::<_, Failure>(effects)
             })
             .await?;
+            // Given back before the breather, not at the end of the
+            // iteration: held through it, the permit was free only between
+            // this pass's own batches, when no other task had run to take
+            // it, and the body stage waited out the whole catch-up for its
+            // turn (T169).
+            drop(permit);
             drop(connection);
             announce(inner, account, inbox, &effects);
             taken += batch.len();
