@@ -124,6 +124,8 @@ impl OpenMessage {
             })
         };
         let reader = Reader::sharing(source, allowlist, Verbs::NONE);
+        // The subject is the column's heading, over the header card.
+        reader.header().set_subject_visible(false);
         if let Some(runtime) = runtime {
             reader.set_remote_fetch(remote_fetch(runtime));
         }

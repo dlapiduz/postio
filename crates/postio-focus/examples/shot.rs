@@ -18,6 +18,7 @@
 //! | `16` | The empty inbox: a store with nothing in it, a digest rule, a morning's filtering |
 //! | `17`, `18`, `19` | Screen 01 under the first sync's, the offline and the sign-in error's banner |
 //! | `20` | The key map, over screen 01 |
+//! | `04` | The to-do about the API draft, opened over screen 01 |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -80,6 +81,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("18", "the offline banner"),
     ("19", "the sign-in error's banner"),
     ("20", "the key map over the inbox"),
+    ("04", "a message opened over the inbox"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -625,6 +627,25 @@ fn stage(
                 return Err("the sign-in banner never showed".into());
             }
         }
+        "04" => {
+            pick_three();
+            pane.cursor().set_selected(OPENED as u32);
+            window.act(CommandId::OpenMessage);
+            let Some(reading) = window.reading() else {
+                return Err("Enter opened nothing".into());
+            };
+            if !settle_until(|| {
+                reading
+                    .dialog()
+                    .child()
+                    .is_some_and(|content| content.is_mapped() && content.width() > 0)
+                    && reading.body_text().contains("freeze it Thursday")
+                    && !reading.reader().view().highlight_rects().is_empty()
+                    && reading.reader().view().tiles_settled()
+            }) {
+                return Err("the opened message never drew with its sentence lit".into());
+            }
+        }
         "20" => {
             pick_three();
             window.act(CommandId::CheatSheet);
@@ -720,6 +741,43 @@ pub async fn empty_demo() -> (Store, AccountId) {
     (database, account.id)
 }
 
+/// The row screen 04 opens: the to-do about the API draft, by its place in
+/// [`TODAY`].
+const OPENED: usize = 3;
+
+/// Its body: the marked sentence, a list, and the quoted history folded
+/// under it, as screen 04 draws them.
+const OPENED_BODY: &str = "Hi all,\n\n\
+Uploaded v3 of the Harbor API draft with the pagination changes. The main differences from v2:\n\n\
+- Cursor pagination on every list endpoint, replacing page and offset.\n\
+- Rate-limit headers are documented for every response.\n\
+- /exports moved under /v1/accounts/{id}, as suggested.\n\n\
+Please leave comments by Wednesday; I'd like to freeze it Thursday so the client work can start.\n\n\
+The rendered PDF and the raw OpenAPI file are attached.\n\n\
+Juno\n\n\
+On Monday, Hollis Varga wrote:\n\
+> Thanks for v2. Two things before the next round:\n\
+> the exports path, and the rate limits.\n\
+> Everything else reads well to me.\n";
+
+/// Its attachments: the rendered draft and its source.
+fn opened_parts() -> Vec<Attachment> {
+    [
+        ("Harbor-API-v3.pdf", "application/pdf", 212_000),
+        ("harbor-openapi.yaml", "application/yaml", 38_000),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, mime, size))| {
+        let mut part = Attachment::new(MessageId::UNASSIGNED, mime, size);
+        part.filename = Some(name.to_owned());
+        // After the text part, as a synced message's parts are numbered.
+        part.part_id = Some((index + 2).to_string());
+        part
+    })
+    .collect()
+}
+
 /// The demo store: the storage seed, and today's inbox on top of it.
 pub async fn demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
@@ -743,6 +801,9 @@ pub async fn demo() -> (Store, AccountId) {
             let newest = later == 0;
             let when = at - chrono::Duration::minutes(40 * later);
             let mut message = message(report.account.id, inbox, row, when, newest);
+            if newest && index == OPENED {
+                message.attachments = opened_parts();
+            }
             let id = RfcMessageId::new(format!("<demo.{index}.{step}@example.test>"));
             message.rfc_message_id = Some(id.clone());
             if let Some(parent) = previous.replace(id) {
@@ -759,6 +820,25 @@ pub async fn demo() -> (Store, AccountId) {
                 .expect("threaded");
             last = message.id;
         }
+        let body = if index == OPENED {
+            OPENED_BODY.to_owned()
+        } else {
+            format!("{}\n", row.preview)
+        };
+        MessageRepository::new(&connection)
+            .set_body(
+                last,
+                &postio_storage::repository::StoredBody {
+                    text: Some(body),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("a body");
         let repository = LabelRepository::new(&connection);
         for name in row.labels {
             let label = match labels.get(name) {
