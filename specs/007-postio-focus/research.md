@@ -779,16 +779,18 @@ a dedicated operator, a column, and its own `HEADER.FIELDS` fetch"
 Focus takes that path for `List-Unsubscribe`, `Precedence` and
 `Auto-Submitted`:
 
-- **Fetched** in the header sync's existing `HEADER.FIELDS` item, and only on
-  incremental syncs. ADR 0025's objection was the cost to every first sync,
-  and a first sync pays nothing here.
+- **Fetched** only on incremental syncs, in a `HEADER.FIELDS` item of their
+  own in the same FETCH (T104). The `REFERENCES` and `LIST-ID` parsers each
+  read a block with exactly one field in it. ADR 0025's objection was the
+  cost to every first sync, and a first sync pays nothing here.
 - **Stored** as two columns, `messages.unsubscribe_offered` and
   `messages.automation`. For older mail they are filled from the body's own
   headers when it arrives.
 - **Searchable** through dedicated operators, `is:bulk` and `is:automated`,
   so search can ask the same question (constitution III).
-- **The other backends** ask for the same fields in their header requests:
-  `crates/postio-jmap` and `crates/postio-gmail`.
+- **The other backends:** Gmail reads the fields from the metadata it
+  already fetches. JMAP learns them from the body, because io-jmap 0.3 cannot
+  ask for a single header (T104).
 
 **Guards.** Each is one seek or one lookup:
 

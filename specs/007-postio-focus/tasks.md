@@ -303,7 +303,7 @@ maintainer asks.
 
   Test first: the fixtures' operators match, and a first sync's fetch is unchanged
 - [X] T105 [P] The automated-senders table, shipped as TOML and loaded as data (`crates/postio-classify/data/senders.toml`). Test first: patterns match their fixtures, and the classifier holds no provider constant
-- [ ] T106 [P] Add a note to ADR 0025 on the three promoted headers, and a line to ARCHITECTURE §6
+- [X] T106 [P] Add a note to ADR 0025 on the three promoted headers, and a line to ARCHITECTURE §6
 
 ## Phase 12: User Story 8: answer an invitation from the row (P2)
 
@@ -368,10 +368,10 @@ maintainer asks.
 
 - [ ] T142 [P] Accessibility (FR-096): each row announces the sender, subject, first line, unread and marker, and keycaps are exposed as shortcuts. Test first: an accessible-tree assertion in `focus_suite`, followed by an Orca pass by hand
 - [ ] T143 [P] No transition over 100 ms, and reduced motion honoured (FR-094)
-- [ ] T144 [P] Packaging: `flatpak/dev.postio.Postio.json` builds `postio-focus`, `crates/postio-focus/data/dev.postio.Postio.Focus.desktop` is added, and release.yml's `flatpak` job carries both apps. Test first: the packaging test pattern of `crates/postio-tui/tests/packaging.rs`
-- [ ] T145 [P] Documentation:
+- [X] T144 [P] Packaging: `flatpak/dev.postio.Postio.json` builds `postio-focus`, `crates/postio-focus/data/dev.postio.Postio.Focus.desktop` is added, and release.yml's `flatpak` job carries both apps. Test first: the packaging test pattern of `crates/postio-tui/tests/packaging.rs`. Focus is a second launcher in the one Flatpak, so the classic metainfo names it rather than a second component, and the release job checks that the build carries both apps
+- [X] T145 [P] Documentation:
   - `docs/PRODUCT.md` §2 and §23;
-  - `docs/ARCHITECTURE.md`: the shape diagram gains the four crates, and §9 their boundaries;
+  - `docs/ARCHITECTURE.md`: the shape diagram gains the six crates (widgets, focus, classify, calendar, ai and vault), and §9 their boundaries;
   - a note in ADR 0032 on Focus's one-message dialog (FR-037)
   - `docs/config.md`: the `[focus]` section, `[[focus.digests]]` with its due-time rule, `[focus.filter]` and `[focus.model]`
 - [X] T146 Draft the constitution's Scope amendment (MINOR): name Focus, and allow its optional, user-supplied local model. Update the Sync Impact Report. **It waits for the maintainer's approval, and does not land without it**. Drafted and approved by the maintainer 2026-09-27 ("approve as drafted"): 1.3.0, with CLAUDE.md's scope line to match
@@ -404,7 +404,7 @@ maintainer asks.
 
 - [X] T157 [US15] `crates/postio-vault`: the Tasks line with the link before the date (spec C21), notes appended, project suggestion, and finished tasks read back. Test first: against a temporary vault, scenario 1's bytes, and nothing else changed
 - [ ] T158 [US15] The capture sheet (screen 25): `t` and `n`, and `Context::Capture`'s keys. Test first: a `focus_suite` case. `postio_vault::Vault` has `append_task`, `append_note`, `projects`, `suggest` and `tasks`. Wire them through a host request, and delete their baseline lines
-- [ ] T159 [US15] `postio://`: `x-scheme-handler/postio` in Focus's desktop file, and `open` only navigates. Test first: scenario 2, including an unknown id refused with a message
+- [ ] T159 [US15] `postio://`: `x-scheme-handler/postio` in Focus's desktop file, and `open` only navigates. Test first: scenario 2, including an unknown id refused with a message. The desktop entry registers `x-scheme-handler/postio` (T144). Still to do: `HANDLES_OPEN`, and navigating from the URI
 - [ ] T160 Compare screen 25, and record it
 
 ---

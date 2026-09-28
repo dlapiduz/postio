@@ -27,7 +27,7 @@ Keys this version does not know are kept, as `[tui]` keeps them (`extras`).
 | Key | Type | Meaning |
 |---|---|---|
 | `never` | array of strings | Senders that are never filtered: pinned (FR-111), or restored from Filtered (FR-116). An entry is an address (`ada@example.org`) or a whole domain (`@example.org`) |
-| `stop_markers` | array of `{ sender, kind }` | Marker kinds the user stopped for a sender, by repeated dismissal (FR-108). `kind` is `question` or `todo`. As built (T118) it is its own array of tables, `[[focus.stop_markers]]`, and a third dismissal writes one entry, which undo takes back |
+| `stop_markers` | array of `{ sender, kind }` | Marker kinds the user stopped for a sender, by repeated dismissal (FR-108). `kind` is `question` or `todo`. As built (T118), it is an array of inline tables inside `[focus.filter]`. A third dismissal writes one entry, and undo takes it back |
 
 Validation reports an entry that is not an address or `@domain`. It reports
 the entry by position, never by content, in the log.
