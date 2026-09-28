@@ -26,6 +26,7 @@ use crate::bulk::Bulk;
 use crate::chrome::Chrome;
 use crate::list::{Feed, FocusRow, ListPane, RowObject};
 use postio_widgets::list_model::WindowedModel;
+use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 
 /// Where a chosen link or part is opened.
 type Launcher = Rc<dyn Fn(&str)>;
@@ -125,6 +126,10 @@ mod imp {
         pub places: RefCell<Option<Rc<crate::places::Places>>>,
         /// Whether the list shows Focus's own inbox, rather than a folder.
         pub at_inbox: Cell<bool>,
+        /// The snooze picker, built the first time `s` opens it.
+        pub snooze: RefCell<Option<Rc<WhenPicker>>>,
+        /// The remind picker, built the first time `h` opens it.
+        pub remind: RefCell<Option<Rc<WhenPicker>>>,
     }
 
     impl Default for FocusWindow {
@@ -169,6 +174,8 @@ mod imp {
                 saved: RefCell::default(),
                 places: RefCell::default(),
                 at_inbox: Cell::new(true),
+                snooze: RefCell::default(),
+                remind: RefCell::default(),
             }
         }
     }
@@ -323,6 +330,11 @@ impl FocusWindow {
         if let Some(places) = imp.places.borrow().as_ref() {
             places.set_keymap(&keymap);
         }
+        for picker in [&imp.snooze, &imp.remind] {
+            if let Some(picker) = picker.borrow().as_ref() {
+                picker.set_keymap(&keymap);
+            }
+        }
         imp.keymap.replace(keymap);
         // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
@@ -343,6 +355,15 @@ impl FocusWindow {
     /// through it without synthesizing a GDK event, which GTK4 gives no
     /// supported way to do.
     pub fn handle_key(&self, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
+        // A picker at the row has the keyboard: its keys are the picker
+        // context's, and what it does not use goes on to its field.
+        if let Some(picker) = self.open_picker() {
+            return if picker.press(key, state) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            };
+        }
         let Some(chord) = postio_widgets::keys::chord(key, state) else {
             return glib::Propagation::Proceed;
         };
@@ -517,6 +538,8 @@ impl FocusWindow {
             CommandId::GoToFolders => self.open_places(),
             CommandId::GoToInbox => self.go_to_inbox(),
             CommandId::ViewSource => self.view_source(),
+            CommandId::Snooze => self.open_when(When::Snooze),
+            CommandId::RemindIfNoReply => self.open_when(When::Remind),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -1568,6 +1591,112 @@ impl FocusWindow {
         commands.sort_by_key(|command| command.as_str());
         commands.dedup();
         commands
+    }
+
+    /// The picker open at the row, if one is.
+    pub fn open_picker(&self) -> Option<Rc<Picker>> {
+        let imp = self.imp();
+        [&imp.snooze, &imp.remind]
+            .into_iter()
+            .filter_map(|picker| {
+                picker
+                    .borrow()
+                    .as_ref()
+                    .map(|picker| Rc::clone(picker.picker()))
+            })
+            .find(|picker| picker.is_open())
+    }
+
+    /// Open the snooze or remind picker at the cursor's row, aimed at the
+    /// selection when there is one (US5).
+    fn open_when(&self, when: When) {
+        let imp = self.imp();
+        let slot = match when {
+            When::Snooze => &imp.snooze,
+            When::Remind => &imp.remind,
+        };
+        let picker = slot.borrow().clone();
+        let picker = picker.unwrap_or_else(|| {
+            let picker = WhenPicker::new(&self.keymap(), when);
+            picker.connect_chosen(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |at| window.send(match when {
+                    When::Snooze => Command::Snooze {
+                        target: MessageTarget::Selection,
+                        until: Some(at.to_utc()),
+                    },
+                    When::Remind => Command::RemindIfNoReply {
+                        target: MessageTarget::Selection,
+                        at: Some(at.to_utc()),
+                    },
+                })
+            ));
+            slot.replace(Some(Rc::clone(&picker)));
+            picker
+        });
+        let Some((anchor, rect)) = self.at_the_row() else {
+            return;
+        };
+        picker.open(
+            &anchor,
+            Some(&rect),
+            &self.picker_target(),
+            chrono::Local::now(),
+        );
+    }
+
+    /// Where a picker hangs: from the list, under the cursor's row, at the
+    /// subject column (screens 11-14).
+    fn at_the_row(&self) -> Option<(gtk::ListView, gdk::Rectangle)> {
+        let pane = self.pane()?;
+        let view = pane.view().clone();
+        let cursor = self.cursor_row()?;
+        let row = pane
+            .rows_on_screen()
+            .into_iter()
+            .find(|row| row.item().is_some_and(|item| item.id() == cursor.id()));
+        let rect = match row.and_then(|row| {
+            row.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0))
+                .map(|top| (top, row.height()))
+        }) {
+            Some((top, height)) => gdk::Rectangle::new(
+                crate::list::row::SUBJECT_X as i32,
+                top.y() as i32,
+                1,
+                height,
+            ),
+            None => gdk::Rectangle::new(crate::list::row::SUBJECT_X as i32, 0, 1, 1),
+        };
+        Some((view, rect))
+    }
+
+    /// What a picker names as its target: the cursor's conversation, or
+    /// how many are selected.
+    fn picker_target(&self) -> String {
+        let selected = match self.selection() {
+            Selection::These(picked) => picked.len(),
+            Selection::Everything { .. } => usize::MAX,
+        };
+        if selected == usize::MAX {
+            return "Every conversation".to_owned();
+        }
+        let Some(FocusRow::Conversation(row)) = self.cursor_row() else {
+            return String::new();
+        };
+        let representative = &row.summary.representative;
+        let sender = representative
+            .from
+            .as_ref()
+            .map(|from| from.display().to_owned())
+            .unwrap_or_default();
+        let subject = row
+            .summary
+            .subject
+            .clone()
+            .or_else(|| representative.subject.clone())
+            .unwrap_or_default();
+        postio_ui::pickers::target(selected.max(1), &sender, &subject)
     }
 
     /// The key map, while it is open.

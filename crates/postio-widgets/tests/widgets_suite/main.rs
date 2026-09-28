@@ -27,6 +27,7 @@ mod capture;
 mod harness;
 mod list_contract;
 mod list_model_generic;
+mod pickers;
 mod present_config;
 mod present_onboarding;
 mod present_reading;
@@ -122,6 +123,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "capture::a_window_the_compositor_never_showed_is_an_error",
         capture::a_window_the_compositor_never_showed_is_an_error as fn(),
+    ),
+    (
+        "pickers::two_picks_the_second_preset_and_tab_focuses_the_date_entry",
+        pickers::two_picks_the_second_preset_and_tab_focuses_the_date_entry as fn(),
     ),
     (
         "capture::an_open_popover_is_in_the_picture",

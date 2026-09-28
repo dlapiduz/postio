@@ -77,7 +77,7 @@ pub const TWO_LINES: i32 = 72;
 const SENDER_X: f32 = 56.0;
 const SENDER_WIDTH: f32 = 222.0;
 /// Where the subject column starts.
-const SUBJECT_X: f32 = 290.0;
+pub const SUBJECT_X: f32 = 290.0;
 /// The space the right edge keeps.
 const TRAILING: f32 = 24.0;
 /// The gap between two things on the line.

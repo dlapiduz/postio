@@ -34,6 +34,7 @@ pub mod onboarding;
 pub mod paging;
 pub mod palette;
 pub mod paste;
+pub mod pickers;
 pub mod privacy;
 pub mod reader;
 pub mod recipients;

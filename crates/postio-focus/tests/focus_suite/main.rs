@@ -38,6 +38,7 @@ mod marker_card;
 mod one_keymap;
 mod open_choice;
 mod open_message;
+mod pickers;
 mod places;
 mod registry_parity;
 mod reload;
@@ -68,6 +69,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "bar::offline_search_answers_locally_one_request_a_keystroke",
         bar::offline_search_answers_locally_one_request_a_keystroke as fn(),
+    ),
+    (
+        "pickers::h_then_3_reminds_at_the_end_of_the_week",
+        pickers::h_then_3_reminds_at_the_end_of_the_week as fn(),
+    ),
+    (
+        "pickers::s_then_2_snoozes_the_row_until_tomorrow_morning",
+        pickers::s_then_2_snoozes_the_row_until_tomorrow_morning as fn(),
     ),
     (
         "places::g_o_then_trav_and_enter_shows_travel",

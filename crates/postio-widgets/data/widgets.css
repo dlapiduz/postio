@@ -466,4 +466,83 @@ button.postio-icon-button:hover {
   font-family: var(--postio-font-mono);
   font-size: var(--postio-text-small);
   color: var(--postio-dim);
+
+/* ── The pickers (Focus's screens 11-14): a 380 px popover at the row ── */
+.postio-picker {
+  padding: var(--postio-space-2);
+}
+
+.postio-picker-head {
+  padding: var(--postio-space-1) var(--postio-space-2);
+}
+
+.postio-picker-title {
+  font-weight: bold;
+  font-size: var(--postio-text-ui);
+}
+
+.postio-picker-target {
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-label);
+}
+
+.postio-picker-list > row {
+  padding: 0;
+  min-height: 0;
+  border-radius: var(--postio-radius-md);
+}
+
+.postio-picker-row {
+  min-height: 34px;
+  padding: 0 var(--postio-space-2) 0 var(--postio-space-4);
+}
+
+.postio-picker-name {
+  font-weight: bold;
+}
+
+.postio-picker-detail {
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The cap column keeps its width with or without a cap, so details line
+   up across numbered and unnumbered rows. */
+.postio-picker-key {
+  min-width: 22px;
+}
+
+.postio-picker-section {
+  margin: var(--postio-space-2) var(--postio-space-2) var(--postio-space-1);
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-picker-date {
+  margin-top: var(--postio-space-2);
+  padding: var(--postio-space-2);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-picker-date > entry {
+  background: none;
+  box-shadow: none;
+  min-height: 0;
+  padding: 0;
+}
+
+.postio-picker-field-hint {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-meta);
+}
+
+.postio-picker-footnote {
+  margin-top: var(--postio-space-2);
+  padding: var(--postio-space-2) var(--postio-space-2) 0;
+  border-top: 1px solid var(--postio-hairline);
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-meta);
 }
