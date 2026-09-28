@@ -434,7 +434,7 @@ banner.focus-banner button {
 }
 
 .focus-places-section {
-  margin-top: var(--postio-space-2);
+  margin: var(--postio-space-2) var(--postio-space-2) var(--postio-space-1);
   font-weight: bold;
   font-size: var(--postio-text-label);
   color: var(--postio-ink-secondary);
@@ -442,6 +442,25 @@ banner.focus-banner button {
 
 .focus-places-footer {
   font-size: var(--postio-text-meta);
+}
+
+/* A place is a 30 px row, as screen 10 lists them. */
+.focus-places-list > row {
+  padding: 0;
+  min-height: 0;
+}
+
+.focus-places-row {
+  min-height: 30px;
+  padding: 0 var(--postio-space-2);
+}
+
+.focus-places-icon {
+  color: var(--postio-ink-secondary);
+}
+
+.focus-places-count {
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */

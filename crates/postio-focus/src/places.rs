@@ -16,11 +16,18 @@ use postio_core::{CommandId, Keymap};
 use postio_model::MailboxRole;
 use postio_model::listing::MailStore as _;
 use postio_ui::finder::Destination;
+use postio_ui::label_colour::{Rgb, label_colour};
 use postio_widgets::widgets::keyhint;
-use postio_widgets::widgets::space::{S1, S2};
+use postio_widgets::widgets::space::S2;
 
 /// The popover's width.
 const WIDTH: i32 = 400;
+
+/// The box a label's dot sits in: an icon's width, so names line up.
+const DOT_BOX: i32 = 16;
+
+/// A label's dot's radius.
+const DOT_RADIUS: f64 = 4.0;
 
 /// Which section a place is listed under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,6 +57,17 @@ struct Entry {
     count: Option<u32>,
     go: Option<CommandId>,
     destination: Destination,
+    /// How it is marked: a mailbox's icon, or a label's colour.
+    mark: Mark,
+}
+
+/// What sits before a place's name.
+#[derive(Debug, Clone)]
+enum Mark {
+    /// A symbolic icon, by name.
+    Icon(&'static str),
+    /// A label's dot, in its stored colour if it has one.
+    Dot(Option<String>),
 }
 
 /// What going somewhere asks the window to do: the place, and its name.
@@ -63,8 +81,11 @@ pub struct Places {
     list: gtk::ListBox,
     /// Every place, as last read.
     all: Rc<RefCell<Vec<Entry>>>,
-    /// The places listed now, in order: what each row goes to.
+    /// The places listed now, in order.
     shown: RefCell<Vec<Entry>>,
+    /// What each row of the list is: a section's heading, or the place at
+    /// that index of `shown`.
+    rows: RefCell<Vec<Option<usize>>>,
     keymap: RefCell<Keymap>,
     handler: RefCell<Option<Handler>>,
     me: RefCell<std::rc::Weak<Places>>,
@@ -82,7 +103,7 @@ impl Places {
             .child(&list)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .propagate_natural_height(true)
-            .max_content_height(420)
+            .max_content_height(640)
             .build();
         let footer = gtk::Label::new(Some(
             "\u{21b5} open \u{b7} Esc close \u{b7} same as in:Receipts in the command bar",
@@ -100,6 +121,9 @@ impl Places {
             .child(&content)
             .has_arrow(false)
             .position(gtk::PositionType::Bottom)
+            // Hung from the left edge of "Inbox", as screen 10 draws it,
+            // rather than centred on it and out over the window's edge.
+            .halign(gtk::Align::Start)
             .build();
         popover.set_parent(anchor);
         // The popover goes with the button it hangs from, before GTK would
@@ -120,6 +144,7 @@ impl Places {
             list,
             all: Rc::default(),
             shown: RefCell::default(),
+            rows: RefCell::default(),
             keymap: RefCell::new(keymap.clone()),
             handler: RefCell::default(),
             me: RefCell::default(),
@@ -145,7 +170,9 @@ impl Places {
         places.list.connect_row_activated({
             let weak = weak.clone();
             move |_, row| {
-                if let (Some(places), Ok(index)) = (weak.upgrade(), usize::try_from(row.index())) {
+                if let Some(places) = weak.upgrade()
+                    && let Some(index) = places.place_at(row)
+                {
                     places.go(index);
                 }
             }
@@ -200,11 +227,14 @@ impl Places {
 
     /// Go to the chosen place, or the first listed: what `Enter` does.
     pub fn activate(&self) {
-        let selected = self
-            .list
-            .selected_row()
-            .and_then(|row| usize::try_from(row.index()).ok());
+        let selected = self.list.selected_row().and_then(|row| self.place_at(&row));
         self.go(selected.unwrap_or(0));
+    }
+
+    /// The index in `shown` of the place `row` lists; `None` for a heading.
+    fn place_at(&self, row: &gtk::ListBoxRow) -> Option<usize> {
+        let index = usize::try_from(row.index()).ok()?;
+        self.rows.borrow().get(index).copied().flatten()
     }
 
     /// Go to the `index`th place listed.
@@ -240,10 +270,27 @@ impl Places {
             ))
         });
         let keymap = self.keymap.borrow();
+        let accent_hue = accent_hue();
+        let mut rows = Vec::new();
         let mut section = None;
-        for entry in &shown {
+        let mut first = None;
+        for (index, entry) in shown.iter().enumerate() {
+            if section != Some(entry.section) {
+                section = Some(entry.section);
+                let heading = gtk::Label::new(Some(entry.section.title()));
+                heading.add_css_class("focus-places-section");
+                heading.set_xalign(0.0);
+                let item = gtk::ListBoxRow::new();
+                item.set_child(Some(&heading));
+                item.set_selectable(false);
+                item.set_activatable(false);
+                item.set_can_focus(false);
+                self.list.append(&item);
+                rows.push(None);
+            }
             let row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
             row.add_css_class("focus-places-row");
+            row.append(&mark(&entry.mark, &entry.name, accent_hue));
             let name = gtk::Label::new(Some(&entry.name));
             name.set_xalign(0.0);
             name.set_hexpand(true);
@@ -251,6 +298,7 @@ impl Places {
             if let Some(count) = entry.count {
                 let count = gtk::Label::new(Some(&count.to_string()));
                 count.add_css_class("dim-label");
+                count.add_css_class("focus-places-count");
                 row.append(&count);
             }
             if let Some(key) = entry
@@ -260,25 +308,15 @@ impl Places {
                 row.append(&keyhint::cap(&key));
             }
             let item = gtk::ListBoxRow::new();
-            if section == Some(entry.section) {
-                item.set_child(Some(&row));
-            } else {
-                // A section's heading rides on its first row, so every row of
-                // the list is a place and its index is its place in `shown`.
-                section = Some(entry.section);
-                let heading = gtk::Label::new(Some(entry.section.title()));
-                heading.add_css_class("focus-places-section");
-                heading.set_xalign(0.0);
-                let holder = gtk::Box::new(gtk::Orientation::Vertical, S1);
-                holder.append(&heading);
-                holder.append(&row);
-                item.set_child(Some(&holder));
-            }
+            item.set_child(Some(&row));
             self.list.append(&item);
+            first.get_or_insert(item);
+            rows.push(Some(index));
         }
-        if let Some(first) = self.list.row_at_index(0) {
+        if let Some(first) = first {
             self.list.select_row(Some(&first));
         }
+        self.rows.replace(rows);
         self.shown.replace(shown);
     }
 
@@ -309,6 +347,7 @@ impl Places {
                         count: Some(mailbox.counts.total),
                         go: go_to(mailbox.role),
                         destination: Destination::Mailbox(mailbox.id),
+                        mark: Mark::Icon(icon(mailbox.role)),
                     });
                 }
                 // POSTIO-GLIB-SAFE: as above.
@@ -321,6 +360,7 @@ impl Places {
                         count: None,
                         go: None,
                         destination: Destination::Label(label.id),
+                        mark: Mark::Dot(label.color.clone()),
                     });
                 }
             }
@@ -330,6 +370,66 @@ impl Places {
             }
         });
     }
+}
+
+/// The icon a mailbox of `role` is marked with.
+fn icon(role: MailboxRole) -> &'static str {
+    match role {
+        MailboxRole::Inbox => "mail-read-symbolic",
+        MailboxRole::Drafts => "document-edit-symbolic",
+        MailboxRole::Sent | MailboxRole::Outbox => "mail-send-symbolic",
+        MailboxRole::Snoozed => "alarm-symbolic",
+        MailboxRole::Flagged => "mail-mark-important-symbolic",
+        MailboxRole::Junk => "mail-mark-junk-symbolic",
+        MailboxRole::Trash => "user-trash-symbolic",
+        MailboxRole::Archive | MailboxRole::Regular => "folder-symbolic",
+    }
+}
+
+/// The widget `mark` makes before a place called `name`.
+fn mark(mark: &Mark, name: &str, accent_hue: f64) -> gtk::Widget {
+    match mark {
+        Mark::Icon(icon) => {
+            let image = gtk::Image::from_icon_name(icon);
+            image.add_css_class("focus-places-icon");
+            image.set_accessible_role(gtk::AccessibleRole::Presentation);
+            image.upcast()
+        }
+        Mark::Dot(stored) => {
+            let colour = label_colour(name, stored.as_deref().and_then(Rgb::from_hex), accent_hue);
+            let dot = gtk::DrawingArea::new();
+            dot.set_content_width(DOT_BOX);
+            dot.set_content_height(DOT_BOX);
+            dot.set_valign(gtk::Align::Center);
+            dot.set_accessible_role(gtk::AccessibleRole::Presentation);
+            dot.set_draw_func(move |_, cairo, width, height| {
+                let unit = |channel: u8| f64::from(channel) / 255.0;
+                cairo.set_source_rgb(unit(colour.r), unit(colour.g), unit(colour.b));
+                cairo.arc(
+                    f64::from(width) / 2.0,
+                    f64::from(height) / 2.0,
+                    DOT_RADIUS,
+                    0.0,
+                    std::f64::consts::TAU,
+                );
+                let _ = cairo.fill();
+            });
+            dot.upcast()
+        }
+    }
+}
+
+/// The hue labels without a colour of their own are spread around.
+fn accent_hue() -> f64 {
+    let manager = adw::StyleManager::default();
+    let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
+    let byte = |channel: f32| (channel * 255.0).round().clamp(0.0, 255.0) as u8;
+    Rgb::new(
+        byte(accent.red()),
+        byte(accent.green()),
+        byte(accent.blue()),
+    )
+    .hue()
 }
 
 /// Where a mailbox of `role` sorts: the order screen 10 lists them in.
