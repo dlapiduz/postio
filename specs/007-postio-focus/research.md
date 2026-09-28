@@ -438,7 +438,7 @@ registry on this branch.
 | `g d` | Drafts | Digest rules. Drafts moves to `g t` |
 | `g t` | Sent | Drafts. Sent moves to `g s` |
 | `g s` | Flagged | Sent. Flagged moves to `g *` |
-| `o` (Search) | Toggle result order | Open attachment or link. Result order moves to `alt+o` |
+| `o` (Search) | Toggle result order | Open attachment or link. Result order moves to `O` (contracts/keymap.md), because `alt+o` is the reader view's |
 | `D` | Darken message | Stop digesting sender. Darken moves to `alt+d` |
 | `A` | Archive thread | Unchanged. In a digest it archives the whole digest: "archive everything this row stands for" |
 | `b`/`B` | Snooze / Unsnooze | `b` is free. Unsnooze keeps `B` |

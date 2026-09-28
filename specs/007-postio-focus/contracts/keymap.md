@@ -11,6 +11,9 @@ Legend:
 
 - **All**: every app that has the surface.
 - **Focus**: `Requirement::Focus`, offered only by Focus.
+- **Three-pane**: `Requirement::ThreePane`, offered by the apps with a
+  sidebar and panes (classic, terminal, macOS) and not by Focus. It covers
+  flag, the sidebar toggle, pane cycling and the parts panel (T029).
 - **New**: a new `CommandId`, and so a new `[keys]` name.
 - `mod` is Ctrl on Linux and ⌘ on macOS (`crates/postio-config/src/keys.rs:191-221`).
 
@@ -49,7 +52,7 @@ it.
 | `v` | `view_source` | Focus | **New.** The raw RFC 822 message (R2). Focus-only for now: the other apps adopt it with a source view of their own, and its key is reserved for them |
 | `o` | `open_attachment_or_link` | Focus | **New.** A chooser over the message's links and parts |
 | `?` | `cheat_sheet` | All | Unchanged. Focus's key map (screen 20) |
-| `*` | `flag` | All | Was `s`. Focus offers no flag verb, but the id stays for the other apps |
+| `*` | `flag` | Three-pane | Was `s`. Focus offers no flag verb (spec C13) |
 | `Left` | `prev_view` | All | Was `h` (with `Left` as its alternate) |
 | `alt+d` | `darken_message` | All graphical | Was `D` |
 
@@ -104,6 +107,16 @@ The `>` prefix in the command bar is the finder's mode prefix, not a key.
 | `Filtered` | `1` … `7` | `filtered_tab_1` … `filtered_tab_7` | Focus |
 | `Digest` | `]` / `[` | `next_reference` / `prev_reference` | Focus, milestone 2 |
 | `Digest` | `Tab` | `toggle_digest_summary` | Focus, milestone 2 |
+| `Digest`, `Filtered` | `mod+z` | `undo` | All |
+
+Both contexts fall back to Global only, so undo is bound in each. Archiving
+the whole digest is one undoable action (FR-125), and a restore from Filtered
+is undoable (FR-116, T125). Each has to be undoable where it was done (T163).
+
+**Each app binds only what it offers.** An app builds its resolver with
+`Resolver::from_commands_for(keymap, Frontend)`. So a key the one keymap
+keeps for Focus does nothing in the classic app, the terminal or macOS. For
+example, `y` does not answer an invitation there (T029).
 
 ## Obsidian: `Context::Capture` (new, milestone 3)
 

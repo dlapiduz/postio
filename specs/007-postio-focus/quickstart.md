@@ -150,7 +150,7 @@ ones are listed in the spec's table *Where the inputs disagree* (C1–C23).
 
 1. In the classic app, `s` snoozes, `Ctrl+Z` undoes, and `u` does nothing.
 2. In the terminal, `Ctrl+Z` undoes.
-3. Override `archive = "y"` under `[keys]` and save. In every app the key map,
+3. Override `archive = "w"` under `[keys]` and save. In every app the key map,
    the command bar and the Archive button show `y`, and in Focus that override
    frees nothing else.
 

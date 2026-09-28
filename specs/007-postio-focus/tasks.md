@@ -72,7 +72,7 @@ maintainer asks.
   - `crates/postio-classify/`
   - `crates/postio-calendar/`
 - [X] T002 Add the boundary rules of contracts/engine.md to `scripts/checks/check-crate-boundaries.py`, with their reasons: postio-widgets, postio-focus, postio-classify and postio-calendar, and postio-gtk's "not postio-focus". Add a workspace-wide ban on inference engines to `scripts/checks/check-dependency-policy.py`: candle, ort, tch, tract, burn, and llama.cpp bindings (FR-165). Test first: a fixture graph where `postio-focus` depends on `postio-gtk`, one where `postio-classify` depends on `postio-smtp`, and one where any crate depends on `candle-core`, each fails its check
-- [ ] T003 [P] Widen the eight checks that scan only `crates/postio-gtk` so they also scan `crates/postio-widgets` and `crates/postio-focus` (research R1):
+- [X] T003 [P] Widen the eight checks that scan only `crates/postio-gtk` so they also scan `crates/postio-widgets` and `crates/postio-focus` (research R1):
   - `check-key-hints-are-derived.py`
   - `check-buttons-have-a-kind.py`
   - `check-no-dead-css.py`
@@ -84,7 +84,7 @@ maintainer asks.
 
   Test first: a literal key hint planted in `crates/postio-widgets/src` fails `check-key-hints-are-derived.py`
 - [X] T004 [P] Write `docs/decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md`, kept to the rule: what may live there, what may not, and who depends on it. List it in `docs/decisions/README.md`
-- [ ] T005 [P] Create `crates/postio-focus/tests/focus_suite/main.rs` on the `app_suite` custom harness (`CASES`, `IGNORED`, the `--list` contract of `list_contract.rs`) on the headless compositor, and `crates/postio-widgets/tests/widgets_suite/main.rs` the same way. Test first: an empty case is listed and runs
+- [ ] T005 [P] Create `crates/postio-focus/tests/focus_suite/main.rs` on the `app_suite` custom harness (`CASES`, `IGNORED`, the `--list` contract of `list_contract.rs`) on the headless compositor, and `crates/postio-widgets/tests/widgets_suite/main.rs` the same way. Test first: an empty case is listed and runs. `widgets_suite` is done. `focus_suite` comes with T038, when there is a Focus to run
 - [X] T006 [P] Create `specs/007-postio-focus/screens.md`: one row per screen from 01 to 20, with the columns "compared on", "differences" and "reason". Pre-fill the known differences C1–C23 from the spec
 
 ---
@@ -110,32 +110,32 @@ maintainer asks.
 
 ### `postio-widgets`: the shared crate, with no change in behaviour
 
-- [ ] T013 `git mv crates/postio-gtk/src/body_view crates/postio-widgets/src/body_view`, then a wiring commit. The `gtk_suite` reader tests pass with import paths changed and nothing else
-- [ ] T014 Fix: `BodyView::set_content_from_top` resets the selection, focused link, toggled folds and darkened key. Test first in `crates/postio-widgets/tests/widgets_suite/body_view_resets.rs`: darken message A, then show message B, and B is not darkened
-- [ ] T015 Fix: a render that times out shows the message's plain text (`Place.plain`, research R1). Test first: a `test-hooks` render that never finishes shows the plain text
-- [ ] T016 [P] `git mv` `widgets/{keyhint,keycap,action_bar,button,chip,notice,toast}.rs` into `crates/postio-widgets/src/widgets/`, and move their rules out of `crates/postio-gtk/data/shell.css` into `crates/postio-widgets/data/widgets.css`. The classic app loads it. `check-no-dead-css.py` and the CSS parse tests stay green
-- [ ] T017 Split the colour layer from the metrics (research R11). The widget CSS reads `--postio-*` variables, and the classic app keeps defining them from `tokens.css`. Test first: the CSS parse assertions, and the classic `shot` is unchanged pixel for pixel on the demo store
-- [ ] T018 [P] Move `mark_html` (`crates/postio-gtk/src/search.rs:1568`) to `crates/postio-ui/src/search.rs` with its tests
-- [ ] T019 `git mv` the reader (`reader/{view,message_header,banner,notices}.rs`, and `parts::Chips`) into `crates/postio-widgets/src/reader/`. Then a wiring commit in which the verb bars become configuration and the classic app passes its three. `gtk_suite` and `app_suite` pass unchanged
-- [ ] T020 One remote-image allowlist per app, shared by its readers. Test first: two readers in one app see one "always allow"
-- [ ] T021 [P] `git mv` `MessageList` (`crates/postio-gtk/src/list.rs:283-376`) to `crates/postio-widgets/src/list_model.rs`, generalised over its row type. The classic list's tests are unchanged
-- [ ] T022 Move the presenters to `crates/postio-widgets/src/present/`:
+- [X] T013 `git mv crates/postio-gtk/src/body_view crates/postio-widgets/src/body_view`, then a wiring commit. The `gtk_suite` reader tests pass with import paths changed and nothing else
+- [X] T014 Fix: `BodyView::set_content_from_top` resets the selection, focused link, toggled folds and darkened key. Test first in `crates/postio-widgets/tests/widgets_suite/body_view_resets.rs`: darken message A, then show message B, and B is not darkened
+- [X] T015 Fix: a render that times out shows the message's plain text (`Place.plain`, research R1). Test first: a `test-hooks` render that never finishes shows the plain text
+- [X] T016 [P] `git mv` `widgets/{keyhint,keycap,action_bar,button,chip,notice,toast}.rs` into `crates/postio-widgets/src/widgets/`, and move their rules out of `crates/postio-gtk/data/shell.css` into `crates/postio-widgets/data/widgets.css`. The classic app loads it. `check-no-dead-css.py` and the CSS parse tests stay green
+- [X] T017 Split the colour layer from the metrics (research R11). The widget CSS reads `--postio-*` variables, and the classic app keeps defining them from `tokens.css`. Test first: the CSS parse assertions, and the classic `shot` is unchanged pixel for pixel on the demo store
+- [X] T018 [P] Move `mark_html` (`crates/postio-gtk/src/search.rs:1568`) to `crates/postio-ui/src/search.rs` with its tests
+- [X] T019 `git mv` the reader (`reader/{view,message_header,banner,notices}.rs`, and `parts::Chips`) into `crates/postio-widgets/src/reader/`. Then a wiring commit in which the verb bars become configuration and the classic app passes its three. `gtk_suite` and `app_suite` pass unchanged
+- [X] T020 One remote-image allowlist per app, shared by its readers. Test first: two readers in one app see one "always allow"
+- [X] T021 [P] `git mv` `MessageList` (`crates/postio-gtk/src/list.rs:283-376`) to `crates/postio-widgets/src/list_model.rs`, generalised over its row type. The classic list's tests are unchanged
+- [ ] T022 Move the presenters to `crates/postio-widgets/src/present/`:. Partial: the config and remote-image presenters moved. Three things stay in `postio-gtk`, because they reach `postio-session` or `postio-host` directly, which `postio-widgets` may not: the compose seams, the credential and add-account dialogs, and the cid blob source. Each moves once it goes through `postio-client` (T055, T078)
   - the compose seams (`crates/postio-app/src/compose.rs:77-98`);
   - the reading wiring (`reading.rs`);
   - the config service and watcher glue (`crates/postio-gtk/src/config.rs:111`);
   - the credential and add-account dialogs.
 
   `app_suite` passes unchanged
-- [ ] T023 Introduce `ComposerHost` in `crates/postio-gtk/src/composer.rs`. It replaces the composer's uses of `Window`: the pane, the context, the command broadcast, the keymap, the file dialogs' parent, and the autosave gate. Make `dispatch` public. Test first: a composer mounted on a test host autosaves after 1.5 s and sends
-- [ ] T024 `git mv` `composer.rs`, `editor.rs` and `data/editor.js` into `crates/postio-widgets/src/composer/`, and move `composer.rs`'s line in the spacing ratchet's baseline. The composer suites in `gtk_suite` and `app_suite` pass unchanged
-- [ ] T025 Fix: the detached composer's window follows dark mode (`style::track`). Test first: switch the style manager to dark, and the detached window carries `.postio-dark`
+- [X] T023 Introduce `ComposerHost` in `crates/postio-gtk/src/composer.rs`. It replaces the composer's uses of `Window`: the pane, the context, the command broadcast, the keymap, the file dialogs' parent, and the autosave gate. Make `dispatch` public. Test first: a composer mounted on a test host autosaves after 1.5 s and sends
+- [X] T024 `git mv` `composer.rs`, `editor.rs` and `data/editor.js` into `crates/postio-widgets/src/composer/`, and move `composer.rs`'s line in the spacing ratchet's baseline. The composer suites in `gtk_suite` and `app_suite` pass unchanged
+- [X] T025 Fix: the detached composer's window follows dark mode (`style::track`). Test first: switch the style manager to dark, and the detached window carries `.postio-dark`
 
 ### One keymap: before any Focus surface, so Focus is built on its final keys
 
-- [ ] T026 `Availability.terminal: bool` becomes `Availability.frontend: Frontend {Classic, Terminal, Focus, Macos}`, and `Requirement::Focus` is added (`crates/postio-core/src/registry.rs:85-230`). Test first: a Focus-only row is unreachable to Classic and Terminal availability, and reachable to Focus
-- [ ] T027 [P] Add `Context::{Picker, Digest, Filtered}`, with their fallback chains (each falls back to Global only), in `crates/postio-core/src/context.rs` and `crates/postio-ui/src/keymap.rs:561-589`. Test first: `x` in Picker resolves to nothing, and `Escape` resolves to `back`
-- [ ] T028 [P] Add a `!` punctuation alias to `crates/postio-ui/src/keymap.rs:196-216`. Test first: `"!"` parses and resolves
-- [ ] T029 Apply contracts/keymap.md to `crates/postio-core/src/{command,registry}.rs`:
+- [X] T026 `Availability.terminal: bool` becomes `Availability.frontend: Frontend {Classic, Terminal, Focus, Macos}`, and `Requirement::Focus` is added (`crates/postio-core/src/registry.rs:85-230`). Test first: a Focus-only row is unreachable to Classic and Terminal availability, and reachable to Focus
+- [X] T027 [P] Add `Context::{Picker, Digest, Filtered}`, with their fallback chains (each falls back to Global only), in `crates/postio-core/src/context.rs` and `crates/postio-ui/src/keymap.rs:561-589`. Test first: `x` in Picker resolves to nothing, and `Escape` resolves to `back`
+- [X] T028 [P] Add a `!` punctuation alias to `crates/postio-ui/src/keymap.rs:196-216`. Test first: `"!"` parses and resolves
+- [X] T029 Apply contracts/keymap.md to `crates/postio-core/src/{command,registry}.rs`:. It added `Requirement::ThreePane` (flag, sidebar toggle, pane cycling, parts panel) and `Resolver::from_commands_for(keymap, Frontend)`, so each app binds only what it offers
   - every default and remap it lists;
   - the new ids;
   - `mark_unread` becomes `toggle_read`, and `focus_sidebar` becomes `go_to_folders`.
@@ -150,9 +150,11 @@ maintainer asks.
   - `docs/PRODUCT.md` §8.
 
   Test first: the cross-frontend enumeration (SC-015) in `crates/postio-core/tests/core_suite/one_keymap.rs`, red against today's registry
-- [ ] T030 [P] The terminal: `ctrl+z` resolves to `undo`, and spec 005's suspend claim is corrected (`contracts/tui-surface.md:103-105`, `spec.md:360`, and T028's note). Test first in `crates/postio-tui/tests/`: after an archive, `ctrl+z` restores
-- [ ] T031 [P] Add the key-map groups table in `crates/postio-ui/src/keymap_sheet.rs`. Test first: every command reachable with `Frontend::Focus` has a group
-- [ ] T032 Give the classic app handlers for the new commands every app offers: `toggle_read`, `go_to_folders`, `go_to_archive`, `go_to_snoozed` and `saved_search_1`–`4`. Test first: `app_suite/command_wiring.rs` lists them as unwired
+- [X] T030 [P] The terminal: `ctrl+z` resolves to `undo`, and spec 005's suspend claim is corrected (`contracts/tui-surface.md:103-105`, `spec.md:360`, and T028's note). Test first in `crates/postio-tui/tests/`: after an archive, `ctrl+z` restores
+- [X] T031 [P] Add the key-map groups table in `crates/postio-ui/src/keymap_sheet.rs`. Test first: every command reachable with `Frontend::Focus` has a group
+- [X] T032 Give the classic app handlers for the new commands every app offers: `toggle_read`, `go_to_folders`, `go_to_archive`, `go_to_snoozed` and `saved_search_1`–`4`. Test first: `app_suite/command_wiring.rs` lists them as unwired
+- [ ] T162 The terminal's handlers for the commands every app now offers: `go_to_archive`, `go_to_snoozed` and `saved_search_1`–`4` (in its GAPS today), and its signature delete moves off a hard-coded `d` onto the keymap. Test first: each key does in the terminal what it does in the classic app
+- [ ] T163 `mod+z` undoes in `Context::Digest` and `Context::Filtered` (contracts/keymap.md). Test first: `mod+z` resolves to `undo` in both contexts, for Focus
 
 ### Engine seams several stories need
 
@@ -170,7 +172,7 @@ maintainer asks.
 
 **Goal**: Screens 01, 02, 03 and 15. **Independent test**: spec US1.
 
-- [ ] T038 [US1] `crates/postio-focus/src/{main,app,startup}.rs`: an `AdwApplication` with id `dev.postio.Postio.Focus`. The store opens on a thread behind a window that says what it waits for. `enable_focus` is called. Test first, in `focus_suite/starts_offline.rs`: a fixture store, no network, and the inbox is listed (scenario 1). Call `Host::enable_focus` before `start_syncing`, and connect as `ClientKind::Focus` (T034)
+- [ ] T038 [US1] `crates/postio-focus/src/{main,app,startup}.rs`: an `AdwApplication` with id `dev.postio.Postio.Focus`. The store opens on a thread behind a window that says what it waits for. `enable_focus` is called. Test first, in `focus_suite/starts_offline.rs`: a fixture store, no network, and the inbox is listed (scenario 1). Call `Host::enable_focus` before `start_syncing`, and connect as `ClientKind::Focus` (T034). Build the resolver with `Resolver::from_commands_for(.., Frontend::Focus)`, and set `Availability.frontend = Focus`
 - [ ] T039 [US1] `window.rs`, the chrome of contracts/focus-surface.md:
   - the top bar: compose, the command-bar field with `/` and `Ctrl K`, the sync label, the menu and close;
   - the header strip: "Inbox ▾" `g o`, the counts, and "Has action" `!`.
@@ -199,7 +201,7 @@ maintainer asks.
 - [ ] T052 [US6] One `AdwBanner` for first sync, offline or a sign-in error, chosen in that priority, with the sync label to match. Test first: drive each state through the host's test seam, and the banner and label read as contracts/focus-surface.md says
 - [ ] T053 [US6] With no network, archiving, labelling and searching take effect at once and queue. Test first: scenario 1
 - [ ] T054 [US6] First sync: what has arrived can be read and searched, and progress shows. Test first: scenario 2
-- [ ] T055 [US6] Update password… opens the shared credential dialog. Test first: scenario 3
+- [ ] T055 [US6] Update password… opens the shared credential dialog. Test first: scenario 3. The credential dialog is still in `postio-gtk` (T022): route onboarding through `postio-client` first
 - [ ] T056 [US6] The empty inbox lists only what exists. Test first: scenario 4, with and without digests or filtering
 - [ ] T057 [US6] Compare screens 16–19, and record them
 
@@ -207,7 +209,7 @@ maintainer asks.
 
 **Goal**: Screen 20. **Independent test**: spec US7.
 
-- [ ] T058 [US7] The key map dialog (1100×760), generated from the registry and the groups table: `?` and `Escape`, and the footer naming `[keys]` in `config.toml`. Test first: scenario 4, and every row's key equals the key the keymap resolves
+- [ ] T058 [US7] The key map dialog (1100×760), generated from the registry and the groups table: `?` and `Escape`, and the footer naming `[keys]` in `config.toml`. Test first: scenario 4, and every row's key equals the key the keymap resolves. Group with `postio_ui::keymap_sheet::{group, Group, KEY_MAP_CONTEXTS}`
 - [ ] T059 [US7] `focus_suite/registry_parity.rs`: every command reachable with `Frontend::Focus` has a key, a command-bar row and a visible control. It starts with a `NOT_YET` list that each story empties. Test first: the list is non-empty, and fails with names
 - [ ] T060 [US7] `ConfigChanged.focus`, and live reload of `[keys]` and `[focus]` in Focus. Test first: scenario 1 (override archive, save, and the key map, bar and button all change). `[focus]` is one struct, `postio_config::FocusConfig` (T132). Extend it and `change.rs`: `ConfigChanged` does not report `[focus]` yet
 - [ ] T061 [US7] Scenarios 2, 3 and 5 as `focus_suite` cases. The classic defaults are the one keymap's
@@ -240,7 +242,7 @@ maintainer asks.
 - [X] T075 [US3] The `correspondents` table, maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and when Sent syncs. Test first: sending to three addresses adds one to each, counted. Fill `sent_count` in `recipient_directory()`: the rows carry it since T076
 - [ ] T076 [P] [US3] `RecipientDirectory` rows carry `sent_count`, and completion ranks by it, with one rule for both apps (`crates/postio-ui/src/recipients.rs`). Test first: an address written to 42 times ranks above one seen 100 times and never written to (scenario 6). The rule is done: `postio_ui::recipients::suggest`, with ADR 0007's band (R15). Still open: the classic composer calls `Directory::suggest`, and the terminal ranks in SQL. Move both to the one rule after T024
 - [X] T077 [US3] `Draft.labels` (`crates/postio-model/src/draft.rs`), and the host applies them to the Sent copy's conversation. Test first: scenario 4
-- [ ] T078 [US3] `DialogHost` for `ComposerHost`, in the 980×820 frame of screens 05 and 06: the header, the fields with Labels, the footer, and "Draft saved locally". Test first: `E` fills every recipient, "Re:", the thread's labels, and a folded quote (scenario 1)
+- [ ] T078 [US3] `DialogHost` for `ComposerHost`, in the 980×820 frame of screens 05 and 06: the header, the fields with Labels, the footer, and "Draft saved locally". Test first: `E` fills every recipient, "Re:", the thread's labels, and a folded quote (scenario 1). The compose seams are still in `postio-gtk` (T022): Focus reaches compose through `postio-client`
 - [ ] T079 [P] [US3] An opt-in recipient chip entry in `crates/postio-widgets/src/widgets/recipients.rs`, which Focus turns on. Test first: choosing a suggestion adds a chip with name and address (scenario 6)
 - [ ] T080 [US3] Drafts: `Escape` saves locally, and a draft opens in either app. Test first: scenario 3
 - [ ] T081 [US3] Focus has no composer of its own. Test first: the same content from Focus and from the classic app queues byte-identical messages (scenario 2)
@@ -264,9 +266,9 @@ maintainer asks.
 **Goal**: Screens 11–14. **Independent test**: spec US5.
 
 - [ ] T091 [US5] The pickers in `crates/postio-widgets/src/widgets/pickers/`: a popover anchored to the row, its title and target, preset rows with number keys, a date entry (`parse_when`), a footnote, and the picker commands in `Context::Picker`. Test first in `widgets_suite`: `2` picks the second preset, and `Tab` focuses the date entry. Settle C14's wording first (`/ux-architect`). This task gives `snooze_presets`, `remind_presets` and `parse_when` their first callers, so delete their lines in `scripts/checks/uncalled-pub-fn-baseline.txt`
-- [ ] T092 [US5] `Command::Snooze { until }` (core, session and host). Test first: scenarios 1 and 2 at a fixed clock
+- [ ] T092 [US5] `Command::Snooze { until }` (core, session and host). Test first: scenarios 1 and 2 at a fixed clock. `Command::Snooze` has no `until` yet (T029 kept the payloads minimal)
 - [X] T093 [US5] `messages.sort_at` (per T012): the schema, the list's order, seek marks and indexes, and a woken snooze setting it. Test first: a woken snooze lists at the top, and `list_statement_count.rs` and `threads.rs:340` are unchanged. **If T012 chose the alternative:** change screen 11's copy instead, and record it. S6's conditions (R7): the folder and conversation lists move while the query views and search stay on `received_at`; `write_update` keeps `sort_at` at least `received_at` so drafts still rise, with a test; raw test inserts name the column. Move Focus's own window too: `focus_arm`'s `ORDER BY`, cursor and `focus_at`, and `representative_filter`
-- [ ] T094 [US5] The `reminders` table, `remind_if_no_reply { at }` (undoable), cancellation by the filing pass on a reply from someone else, and firing on the tick. Test first: scenarios 3 and 4, including Focus closed at the due time and offline
+- [ ] T094 [US5] The `reminders` table, `remind_if_no_reply { at }` (undoable), cancellation by the filing pass on a reply from someone else, and firing on the tick. Test first: scenarios 3 and 4, including Focus closed at the due time and offline. `Command::RemindIfNoReply` has no `at` yet
 - [ ] T095 [US5] Surfaced reminder rows: splice positions in `crates/postio-ui/src/list.rs`, `FocusRow::Reminder` as a two-line "No reply since …" row, and the Focus scope leaving out the conversation's ordinary row. Test first: the position is 1 statement, and a surfaced conversation is not listed twice
 - [ ] T096 [US5] `Draft.remind_at` (Remind if no reply, `mod+h`, in the composer) becomes a reminder on send. Test first: US3's scenario 5
 - [ ] T097 [US5] The label picker: filter, `Space` toggles (`add_label` on or off), create, "✓ applied", counts. Test first: scenario 5
