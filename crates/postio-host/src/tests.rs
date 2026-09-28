@@ -2647,3 +2647,341 @@ fn a_question_brings_its_message_out_of_a_digest_hold() {
     });
     assert_eq!(held, None, "the hold was let go");
 }
+
+// ── Invitations, marked (spec 007, T110) ────────────────────────────────────
+
+/// An instant as iCalendar writes one in UTC, to the minute.
+fn ics_utc(at: chrono::DateTime<Utc>) -> String {
+    at.format("%Y%m%dT%H%M00Z").to_string()
+}
+
+/// A calendar part: `method` for event `uid` at `sequence`, stamped
+/// `stamp`, with `event` lines for its times.
+fn calendar(
+    method: &str,
+    uid: &str,
+    sequence: u32,
+    stamp: chrono::DateTime<Utc>,
+    event: &[String],
+) -> String {
+    let mut lines = vec![
+        "BEGIN:VCALENDAR".to_owned(),
+        "VERSION:2.0".to_owned(),
+        "PRODID:-//Example Corp//Test//EN".to_owned(),
+        format!("METHOD:{method}"),
+        "BEGIN:VEVENT".to_owned(),
+        format!("UID:{uid}"),
+        format!("SEQUENCE:{sequence}"),
+        format!("DTSTAMP:{}", ics_utc(stamp)),
+        "SUMMARY:Roadmap review".to_owned(),
+        "ORGANIZER;CN=Ines:mailto:ines@example.org".to_owned(),
+        "ATTENDEE;CN=Test User;PARTSTAT=NEEDS-ACTION:mailto:test@example.com".to_owned(),
+    ];
+    lines.extend(event.iter().cloned());
+    if method == "CANCEL" {
+        lines.push("STATUS:CANCELLED".to_owned());
+    }
+    lines.extend(["END:VEVENT".to_owned(), "END:VCALENDAR".to_owned()]);
+    lines.join("\r\n") + "\r\n"
+}
+
+/// `DTSTART` and `DTEND` for an event from `start`, `minutes` long.
+fn when(start: chrono::DateTime<Utc>, minutes: i64) -> Vec<String> {
+    vec![
+        format!("DTSTART:{}", ics_utc(start)),
+        format!(
+            "DTEND:{}",
+            ics_utc(start + chrono::TimeDelta::minutes(minutes))
+        ),
+    ]
+}
+
+/// A message to the user, received `ago` before now, carrying `ics` as a
+/// calendar part that is here, as the body backfill leaves one.
+fn invitation_mail(world: &World, ago: chrono::TimeDelta, ics: &str) -> MessageId {
+    let inbox = folder(world, postio_model::MailboxRole::Inbox);
+    let blob = world
+        .host()
+        .wiring()
+        .blobs
+        .put(ics.as_bytes())
+        .expect("the part stored");
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let mut message = Message::new(world.account, inbox, Utc::now() - ago);
+        message.subject = Some("Invitation: Roadmap review".to_owned());
+        message.from = vec![postio_model::EmailAddress::new(
+            Some("Ines"),
+            "ines@example.org",
+        )];
+        message.to = vec![postio_model::EmailAddress::new(
+            Some("Test User"),
+            "test@example.com",
+        )];
+        let mut part =
+            postio_model::Attachment::new(MessageId::UNASSIGNED, "text/calendar", ics.len() as u64);
+        part.part_id = Some("2".to_owned());
+        message.attachments = vec![part];
+        let id = messages.create(&mut message).await.expect("a message");
+        messages
+            .set_attachment_blob(id, "2", &blob)
+            .await
+            .expect("the part linked");
+        messages
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some("You are invited.".to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("its body");
+        id
+    })
+}
+
+/// Tomorrow at ten, UTC, to the minute: an event that is ahead.
+fn ahead() -> chrono::DateTime<Utc> {
+    use chrono::Timelike as _;
+    (Utc::now() + chrono::TimeDelta::days(1))
+        .with_hour(10)
+        .and_then(|at| at.with_minute(0))
+        .and_then(|at| at.with_second(0))
+        .and_then(|at| at.with_nanosecond(0))
+        .expect("ten o'clock")
+}
+
+#[test]
+fn an_invitation_is_marked_with_its_event_and_can_be_answered() {
+    // US8 scenario 1: a calendar request's row shows Invite with the
+    // event's times, computed when the part arrived, not when the row is
+    // drawn -- and it is open to an answer.
+    let world = World::new();
+    let start = ahead();
+    let request = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(1),
+        &calendar(
+            "REQUEST",
+            "review@example.org",
+            0,
+            Utc::now(),
+            &when(start, 45),
+        ),
+    );
+
+    focus_caught_up(&world);
+
+    let marker = marker_on(&world, request).expect("a marker");
+    assert_eq!(marker.kind, postio_model::listing::MarkerKind::Invite);
+    assert_eq!(
+        marker.source,
+        postio_storage::repository::MarkerSource::Calendar
+    );
+    assert_eq!(marker.starts_at, Some(start));
+    assert_eq!(marker.ends_at, Some(start + chrono::TimeDelta::minutes(45)));
+    assert_eq!(
+        marker.invite_state,
+        Some(postio_storage::repository::InviteState::Open)
+    );
+    let invite = marker.invite.expect("its identity");
+    assert_eq!(
+        (invite.uid.as_str(), invite.sequence),
+        ("review@example.org", 0)
+    );
+}
+
+#[test]
+fn a_floating_time_is_placed_on_the_user_s_clock() {
+    use chrono::TimeZone as _;
+    let world = World::new();
+    let day = ahead().date_naive();
+    let request = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(1),
+        &calendar(
+            "REQUEST",
+            "standup@example.org",
+            0,
+            Utc::now(),
+            &[
+                format!("DTSTART:{}T100000", day.format("%Y%m%d")),
+                format!("DTEND:{}T101500", day.format("%Y%m%d")),
+            ],
+        ),
+    );
+
+    focus_caught_up(&world);
+
+    let ten = chrono::Local
+        .from_local_datetime(&day.and_hms_opt(10, 0, 0).expect("ten"))
+        .earliest()
+        .expect("ten o'clock here")
+        .with_timezone(&Utc);
+    assert_eq!(
+        marker_on(&world, request).and_then(|marker| marker.starts_at),
+        Some(ten)
+    );
+}
+
+#[test]
+fn a_later_cancellation_cancels_the_invitation_and_its_answers() {
+    // US8 scenario 4: the event is called off, so the invitation's row says
+    // so and offers no answer -- whichever of the two the stage read first.
+    let world = World::new();
+    let start = ahead();
+    let stamp = Utc::now() - chrono::TimeDelta::hours(3);
+    let request = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(3),
+        &calendar("REQUEST", "review@example.org", 0, stamp, &when(start, 45)),
+    );
+    let focus = focus_caught_up(&world);
+    assert_eq!(
+        marker_on(&world, request).and_then(|marker| marker.invite_state),
+        Some(postio_storage::repository::InviteState::Open)
+    );
+
+    let cancel = invitation_mail(
+        &world,
+        chrono::TimeDelta::minutes(5),
+        &calendar(
+            "CANCEL",
+            "review@example.org",
+            1,
+            stamp + chrono::TimeDelta::hours(2),
+            &when(start, 45),
+        ),
+    );
+    world.host().inner.hub.emit(Event::BodyLoaded {
+        account: world.account,
+        message: cancel,
+    });
+    let _ = focus;
+
+    let cancelled = Some(postio_storage::repository::InviteState::Cancelled);
+    eventually(&world, || {
+        (marker_on(&world, request).and_then(|marker| marker.invite_state) == cancelled)
+            .then_some(())
+    });
+    assert_eq!(
+        marker_on(&world, cancel).and_then(|marker| marker.invite_state),
+        cancelled
+    );
+}
+
+#[test]
+fn a_cancellation_read_before_its_invitation_still_cancels_it() {
+    // The catch-up reads newest first, so the cancellation comes before
+    // the request it cancels: the request is marked as the newer word says.
+    let world = World::new();
+    let start = ahead();
+    let stamp = Utc::now() - chrono::TimeDelta::hours(3);
+    let request = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(3),
+        &calendar("REQUEST", "review@example.org", 0, stamp, &when(start, 45)),
+    );
+    invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(1),
+        &calendar(
+            "CANCEL",
+            "review@example.org",
+            1,
+            stamp + chrono::TimeDelta::hours(1),
+            &when(start, 45),
+        ),
+    );
+
+    focus_caught_up(&world);
+
+    assert_eq!(
+        marker_on(&world, request).and_then(|marker| marker.invite_state),
+        Some(postio_storage::repository::InviteState::Cancelled)
+    );
+}
+
+#[test]
+fn an_update_moves_the_invitation_to_its_new_time() {
+    // FR-103: an updated invitation replaces the marker's time.
+    let world = World::new();
+    let start = ahead();
+    let moved = start + chrono::TimeDelta::hours(2);
+    let stamp = Utc::now() - chrono::TimeDelta::hours(3);
+    let request = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(3),
+        &calendar("REQUEST", "review@example.org", 0, stamp, &when(start, 45)),
+    );
+    invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(1),
+        &calendar(
+            "REQUEST",
+            "review@example.org",
+            1,
+            stamp + chrono::TimeDelta::hours(1),
+            &when(moved, 30),
+        ),
+    );
+
+    focus_caught_up(&world);
+
+    let marker = marker_on(&world, request).expect("a marker");
+    assert_eq!(marker.starts_at, Some(moved));
+    assert_eq!(marker.invite.map(|invite| invite.sequence), Some(1));
+}
+
+#[test]
+fn an_invitation_to_an_event_that_is_over_offers_no_answer() {
+    // US8 scenario 5: an event that has ended is past, and a series is
+    // past only once its last occurrence is; one with no end never is.
+    let world = World::new();
+    let ended = Utc::now() - chrono::TimeDelta::days(3);
+    let over = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(1),
+        &calendar(
+            "REQUEST",
+            "retro@example.org",
+            0,
+            Utc::now(),
+            &when(ended, 30),
+        ),
+    );
+    let mut finished_series = when(ended - chrono::TimeDelta::days(14), 30);
+    finished_series.push("RRULE:FREQ=WEEKLY;COUNT=2".to_owned());
+    let series_over = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(2),
+        &calendar(
+            "REQUEST",
+            "weekly@example.org",
+            0,
+            Utc::now(),
+            &finished_series,
+        ),
+    );
+    let mut endless = when(ended - chrono::TimeDelta::days(14), 30);
+    endless.push("RRULE:FREQ=WEEKLY".to_owned());
+    let ongoing = invitation_mail(
+        &world,
+        chrono::TimeDelta::hours(3),
+        &calendar("REQUEST", "forever@example.org", 0, Utc::now(), &endless),
+    );
+
+    focus_caught_up(&world);
+
+    let state = |message| marker_on(&world, message).and_then(|marker| marker.invite_state);
+    use postio_storage::repository::InviteState;
+    assert_eq!(state(over), Some(InviteState::Past));
+    assert_eq!(state(series_over), Some(InviteState::Past));
+    assert_eq!(state(ongoing), Some(InviteState::Open));
+}

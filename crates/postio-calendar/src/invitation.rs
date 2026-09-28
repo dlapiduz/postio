@@ -46,6 +46,24 @@ pub struct Invitation {
     /// `RECURRENCE-ID`: the one occurrence of a series this invitation is
     /// about, when it is about one. A reply to it has to name it too.
     pub recurrence_id: Option<EventTime>,
+    /// When a recurring event's last occurrence ends, for a series whose
+    /// rule says it ends (`COUNT` or `UNTIL`, or a set of `RDATE`s).
+    /// `None` for a series with no end, for one longer than the adapter
+    /// walks ([`crate::parse`]), and for an event that does not recur.
+    pub series_ends_at: Option<EventTime>,
+}
+
+impl Invitation {
+    /// When the event is over for good: when it ends, or when a series'
+    /// last occurrence does. `None` for a series that never ends. An
+    /// invitation to an event that is over offers no answer (FR-103).
+    pub fn last_end(&self) -> Option<EventTime> {
+        if self.recurring {
+            self.series_ends_at
+        } else {
+            Some(self.ends_at)
+        }
+    }
 }
 
 /// What a calendar asks of its recipients (RFC 5546 `METHOD`).

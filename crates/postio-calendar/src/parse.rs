@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use calcard::common::timezone::Tz;
+use calcard::icalendar::dates::TimeOrDelta;
 use calcard::icalendar::timezone::TzResolver;
 use calcard::icalendar::{
     ICalendar, ICalendarComponent, ICalendarComponentType, ICalendarEntry, ICalendarMethod,
@@ -116,7 +117,68 @@ pub fn parse(ics: &[u8]) -> Result<Invitation, CalendarError> {
             .property(&ICalendarProperty::RecurrenceId)
             .and_then(|entry| time(entry, &zones))
             .map(|(occurrence, _)| occurrence),
+        series_ends_at: series_end(&calendar, event),
     })
+}
+
+/// The most occurrences of a series the adapter walks to find its last. A
+/// weekly meeting for twenty years is under it; past it, a series is read
+/// as one with no end, whose invitation is never over.
+const OCCURRENCES_READ: usize = 1_024;
+
+/// When `event`'s last occurrence ends, for a recurring event whose rules
+/// all end: every `RRULE` with a `COUNT` or an `UNTIL`, and `RDATE`s, which
+/// are a list. Floating times stay floating, to be read on the user's clock.
+fn series_end(calendar: &ICalendar, event: &ICalendarComponent) -> Option<EventTime> {
+    if !event.is_recurrent() {
+        return None;
+    }
+    let ends = event.properties(&ICalendarProperty::Rrule).all(|entry| {
+        entry.values.iter().all(|value| match value {
+            ICalendarValue::RecurrenceRule(rule) => rule.until.is_some() || rule.count.is_some(),
+            _ => true,
+        })
+    });
+    if !ends {
+        return None;
+    }
+    let position = calendar
+        .components
+        .iter()
+        .position(|component| std::ptr::eq(component, event))?;
+    // calcard walks a series in its default zone unless the start names a
+    // TZID, so the default is the start's own: UTC for a `Z` time, its
+    // offset for one written with one, and floating otherwise.
+    let own_zone = event
+        .property(&ICalendarProperty::Dtstart)
+        .and_then(|entry| entry.values.first())
+        .and_then(ICalendarValue::as_partial_date_time)
+        .and_then(|value| value.to_date_time())
+        .and_then(|reading| reading.tz())
+        .unwrap_or(Tz::Floating);
+    let expanded = calendar.expand_dates(own_zone, OCCURRENCES_READ + 1);
+    let occurrences: Vec<_> = expanded
+        .events
+        .iter()
+        .filter(|occurrence| occurrence.comp_id as usize == position)
+        .collect();
+    if occurrences.is_empty() || occurrences.len() > OCCURRENCES_READ {
+        return None;
+    }
+    occurrences
+        .iter()
+        .map(|occurrence| match occurrence.end {
+            TimeOrDelta::Time(end) => end,
+            TimeOrDelta::Delta(length) => occurrence.start + length,
+        })
+        .max_by_key(|end| end.naive_utc())
+        .map(|end| {
+            if end.timezone().is_floating() {
+                EventTime::Floating(end.naive_local())
+            } else {
+                EventTime::At(end.with_timezone(&Utc))
+            }
+        })
 }
 
 /// The calendar's `METHOD`, which lives on the `VCALENDAR` itself.
@@ -683,6 +745,66 @@ mod tests {
         assert_eq!(invite.starts_at, at("2026-10-06T10:00:00Z"));
         assert!(invite.recurring);
         assert_eq!(invite.recurrence_id, None);
+    }
+
+    // --- When a series is over (T110) ---------------------------------------------
+
+    #[test]
+    fn a_series_with_an_end_is_over_when_its_last_occurrence_is() {
+        // The weekly fixture runs on Tuesdays until 22 December at 09:30 in
+        // Chicago, standard time by then, skipping two; each is a quarter of
+        // an hour. An invitation to it is past only once that last one ends.
+        let weekly = invitation("invite-weekly-exdate");
+
+        assert_eq!(weekly.series_ends_at, Some(at("2026-12-22T15:45:00Z")));
+        assert_eq!(weekly.last_end(), Some(at("2026-12-22T15:45:00Z")));
+    }
+
+    #[test]
+    fn a_count_ends_a_series_too() {
+        let daily = parse(&event(&[
+            "DTSTART:20261006T100000Z",
+            "DTEND:20261006T103000Z",
+            "RRULE:FREQ=DAILY;COUNT=3",
+        ]))
+        .expect("parses");
+
+        assert_eq!(daily.last_end(), Some(at("2026-10-08T10:30:00Z")));
+    }
+
+    #[test]
+    fn a_floating_series_ends_on_the_reader_s_clock() {
+        let floating_series = parse(&event(&[
+            "DTSTART:20261006T100000",
+            "DTEND:20261006T110000",
+            "RRULE:FREQ=WEEKLY;COUNT=2",
+        ]))
+        .expect("parses");
+
+        assert_eq!(
+            floating_series.last_end(),
+            Some(floating("2026-10-13T11:00:00"))
+        );
+    }
+
+    #[test]
+    fn a_series_with_no_end_is_never_over() {
+        let forever = parse(&event(&[
+            "DTSTART:20261006T100000Z",
+            "RRULE:FREQ=WEEKLY;BYDAY=TU",
+        ]))
+        .expect("parses");
+
+        assert_eq!(forever.series_ends_at, None);
+        assert_eq!(forever.last_end(), None);
+    }
+
+    #[test]
+    fn a_single_event_is_over_when_it_ends() {
+        let single = invitation("invite-iana-zone");
+
+        assert_eq!(single.series_ends_at, None);
+        assert_eq!(single.last_end(), Some(single.ends_at));
     }
 
     #[test]

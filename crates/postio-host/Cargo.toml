@@ -17,6 +17,9 @@ chrono = { workspace = true, features = ["std"] }
 # Focus mode's body stage asks the classifier what a body says (spec 007):
 # the classifier sends nothing and reaches nothing, by its boundary rule.
 postio-classify.workspace = true
+# An invitation's calendar part, read into the marker Focus draws (spec 007
+# T110). A pure leaf: no store, no network.
+postio-calendar.workspace = true
 # The newest message's own words, which is all the needs-action detector
 # reads and all a marker may quote (spec 007 FR-104).
 postio-body.workspace = true
