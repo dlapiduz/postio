@@ -82,6 +82,10 @@ const CASES: &[(&str, fn())] = &[
         bar::half_typed_operators_show_no_error_and_results_keep_updating as fn(),
     ),
     (
+        "bar::a_sentence_names_its_sender_from_the_address_book",
+        bar::a_sentence_names_its_sender_from_the_address_book as fn(),
+    ),
+    (
         "bar::in_rec_lists_receipts_newest_first",
         bar::in_rec_lists_receipts_newest_first as fn(),
     ),

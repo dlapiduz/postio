@@ -86,6 +86,8 @@ pub struct Bar {
     places: Rc<RefCell<Vec<Place>>>,
     /// Folder names by id, for a result's `in:`.
     folders: Rc<RefCell<Vec<(MailboxId, String)>>>,
+    /// Who a typed name can mean, read with the places.
+    names: Rc<RefCell<crate::names::Names>>,
     /// What each row of the list runs, in order.
     rows: Rc<RefCell<Vec<Row>>>,
     /// Moves with every keystroke, so a late answer to an earlier one is
@@ -174,6 +176,7 @@ impl Bar {
             footer,
             keymap: RefCell::new(keymap.clone()),
             places: Rc::default(),
+            names: Rc::default(),
             folders: Rc::default(),
             rows: Rc::default(),
             generation: Rc::default(),
@@ -428,10 +431,7 @@ impl Bar {
             self.heading.set_visible(false);
             return;
         }
-        let parsed =
-            postio_search::natural::lower(typed, chrono::Local::now().date_naive(), &|_: &str| {
-                None
-            });
+        let parsed = self.lowered(typed);
         let chips: Vec<String> = parsed
             .tokens()
             .iter()
@@ -449,6 +449,14 @@ impl Bar {
         }
     }
 
+    /// `typed`, read as plain English against today and the address book.
+    fn lowered(&self, typed: &str) -> postio_search::ParsedQuery {
+        let names = self.names.borrow();
+        postio_search::natural::lower(typed, chrono::Local::now().date_naive(), &|name| {
+            names.lookup(name)
+        })
+    }
+
     /// Search for what is typed now.
     fn search_typed(&self) {
         let typed = self.entry.text();
@@ -456,10 +464,7 @@ impl Bar {
         if typed.is_empty() {
             return;
         }
-        let parsed =
-            postio_search::natural::lower(typed, chrono::Local::now().date_naive(), &|_: &str| {
-                None
-            });
+        let parsed = self.lowered(typed);
         self.clear_rows();
         self.search(parsed, self.generation.get());
     }
@@ -670,10 +675,11 @@ impl Bar {
     }
 
     /// Read the places the bar can go: every account's mailboxes and
-    /// folders, and its labels.
+    /// folders, its labels, and the correspondents a typed name can mean.
     fn read_places(&self) {
         let client = self.client.clone();
         let (places, folders) = (Rc::clone(&self.places), Rc::clone(&self.folders));
+        let directory = Rc::clone(&self.names);
         let weak = self.self_weak();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
@@ -683,6 +689,7 @@ impl Bar {
             };
             let mut found = Vec::new();
             let mut names = Vec::new();
+            let mut correspondents = Vec::new();
             for account in accounts.iter().filter(|account| account.enabled) {
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.mailboxes(account.id).await;
@@ -704,6 +711,9 @@ impl Bar {
                     }
                 }
                 // POSTIO-GLIB-SAFE: as above.
+                let read = client.correspondents(account.id).await;
+                correspondents.extend(read.unwrap_or_default());
+                // POSTIO-GLIB-SAFE: as above.
                 let read = client.labels(account.id).await;
                 if let Ok(labels) = read {
                     for label in labels {
@@ -719,6 +729,7 @@ impl Bar {
             }
             places.replace(found);
             folders.replace(names);
+            directory.replace(crate::names::Names::new(&correspondents));
             // `in:` typed before the places landed is answered again, now
             // that it has folders to complete. Nothing else needs them to
             // answer, and a search is not asked for twice.

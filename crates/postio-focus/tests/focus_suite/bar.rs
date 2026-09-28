@@ -293,3 +293,71 @@ pub fn a_plain_word_offers_commands_and_searches_only_when_asked() {
         );
     });
 }
+
+/// US4 scenario 1 (screen 07): "the invoice Ada sent last month" is read as
+/// words, a correspondent and a month -- `from:ada` because the address
+/// book knows an Ada -- and finds only Ada's invoice from last month.
+pub fn a_sentence_names_its_sender_from_the_address_book() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        use chrono::Datelike as _;
+        let fixture = Fixture::empty().await;
+        // The bar reads "last month" against today's calendar, so the mail
+        // is dated in it: the tenth of last month, and today.
+        let today = chrono::Local::now().date_naive();
+        let last_month = today
+            .with_day(1)
+            .and_then(|first| first.checked_sub_months(chrono::Months::new(1)))
+            .and_then(|first| first.with_day(10))
+            .expect("a tenth of last month");
+        let then = last_month.and_hms_opt(12, 0, 0).expect("noon").and_utc();
+        let ago = (support::now() - then).num_minutes();
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Invoice 2026-08",
+                "Attached.",
+                ago,
+            )
+            .await;
+        fixture
+            .file(
+                ("Lena Park", "lena@example.org"),
+                "Invoice for the venue",
+                "Attached.",
+                ago,
+            )
+            .await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Invoice, this month's",
+                "Attached.",
+                (support::now() - chrono::Local::now().to_utc()).num_minutes(),
+            )
+            .await;
+        fixture.correspondent("Ada Moreno", "ada@example.com").await;
+        fixture.correspondent("Lena Park", "lena@example.org").await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        assert!(crate::settle_until(async || bar.places_known()).await);
+        bar.set_text("the invoice Ada sent last month");
+        assert!(
+            crate::settle_until(async || bar.chips().iter().any(|chip| chip == "from:ada")).await,
+            "Ada was not read as a sender: {:?}",
+            bar.chips()
+        );
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Invoice 2026-08"]).await,
+            "not only Ada's invoice from last month: {:?}",
+            bar.result_subjects()
+        );
+    });
+}

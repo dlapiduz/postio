@@ -300,6 +300,20 @@ impl Fixture {
             .expect("indexed");
     }
 
+    /// Record `name <address>` as a correspondent of the fixture's account,
+    /// as sync does for every address it sees.
+    pub async fn correspondent(&self, name: &str, address: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        postio_storage::repository::ContactRepository::new(&connection)
+            .record(
+                Some(self.account.id),
+                &EmailAddress::new(Some(name), address),
+                now(),
+            )
+            .await
+            .expect("a correspondent");
+    }
+
     /// A folder named `name` in the fixture's account.
     pub async fn folder(&self, name: &str) -> MailboxId {
         let connection = self.database.connect().await.expect("a connection");
