@@ -509,6 +509,16 @@ impl FocusWindow {
             }
             Ok(CommandId::ViewSource) => self.view_source(),
             Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(),
+            // Screen 04's toolbar verbs and the Invite card's answers, for
+            // the message on screen (US3, US8).
+            Ok(
+                id @ (CommandId::Reply
+                | CommandId::ReplyAll
+                | CommandId::Forward
+                | CommandId::Compose
+                | CommandId::AcceptInvite
+                | CommandId::DeclineInvite),
+            ) => self.act(id),
             Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
             Ok(CommandId::NextInConversation) => reading.step_thread(1),
             _ => return glib::Propagation::Proceed,
@@ -555,12 +565,8 @@ impl FocusWindow {
             return;
         }
         let window = self.downgrade();
-        let current: crate::compose::Current = Rc::new(move || {
-            window
-                .upgrade()
-                .and_then(|window| window.cursor_row())
-                .map(|row| row.id())
-        });
+        let current: crate::compose::Current =
+            Rc::new(move || window.upgrade().and_then(|window| window.aimed_message()));
         let compose = crate::compose::Compose::new(self, client, account, current);
         if self.imp().warm.get() {
             compose.warm();
@@ -664,8 +670,8 @@ impl FocusWindow {
             CommandId::Move => self.open_moves(),
             // Answered from the row (US8): the invitation the cursor is on.
             CommandId::AcceptInvite | CommandId::DeclineInvite => {
-                if let Some(row) = self.cursor_row() {
-                    self.answer(&row, id);
+                if let Some(message) = self.aimed_message() {
+                    self.answer(message, id);
                 }
             }
             // The classic app's composer, in its dialog (US3).
@@ -981,7 +987,9 @@ impl FocusWindow {
             #[weak(rename_to = window)]
             self,
             move |row, command| match command {
-                CommandId::AcceptInvite | CommandId::DeclineInvite => window.answer(row, command),
+                CommandId::AcceptInvite | CommandId::DeclineInvite => {
+                    window.answer(row.id(), command)
+                }
                 _ => {
                     if let Some(position) = window
                         .pane()
@@ -1188,14 +1196,23 @@ impl FocusWindow {
 
     /// Answer the invitation `row` carries, as `id` says: through the host,
     /// which queues the reply for the answer's window (FR-102).
-    fn answer(&self, row: &FocusRow, id: CommandId) {
-        let message = Some(row.id());
+    fn answer(&self, message: MessageId, id: CommandId) {
+        let message = Some(message);
         let command = match id {
             CommandId::DeclineInvite => Command::DeclineInvite { message },
             _ => Command::AcceptInvite { message },
         };
         self.imp().answering.set(true);
         self.post(command);
+    }
+
+    /// The one message a reply or an answer is about: the message open over
+    /// the list when one is, the cursor's row otherwise.
+    fn aimed_message(&self) -> Option<MessageId> {
+        match self.reading().filter(|reading| reading.is_open()) {
+            Some(reading) => reading.shown(),
+            None => self.cursor_row().map(|row| row.id()),
+        }
     }
 
     /// Say the counts the host last gave: the strip's, the toggle's, and

@@ -209,3 +209,60 @@ pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() 
         );
     });
 }
+
+/// US3 scenario 1 from the open message (T078's dialog half, screen 04's
+/// toolbar): `E` in the message dialog answers the message on screen, and
+/// `Esc` returns to that message, still open.
+pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        let message = fixture.harbor_thread().await;
+        fixture.label(message, &["Harbor"]).await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        // The cursor on Budget, then the Harbor thread opened: what is on
+        // screen is what a reply answers.
+        support::keys(&window, &["j", "j"]);
+        let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("Enter opened the message");
+        assert_eq!(reading.title(), "Harbor API draft v3");
+
+        support::keys(&window, &["E"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "E in the open message opened no composer"
+        );
+        let dialog = window.compose_dialog().expect("the compose dialog");
+        assert!(
+            crate::settle_until(async || {
+                field(&dialog, "Subject").as_deref() == Some("Re: Harbor API draft v3")
+            })
+            .await,
+            "the reply answers the message on screen: {:?}",
+            field(&dialog, "Subject")
+        );
+        assert_eq!(
+            field(&dialog, "To").as_deref(),
+            Some("Lena Park <lena@example.org>")
+        );
+
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_none()).await,
+            "Esc did not close the composer"
+        );
+        assert!(
+            reading.is_open() && reading.title() == "Harbor API draft v3",
+            "Esc returns to the message the reply was written from"
+        );
+    });
+}

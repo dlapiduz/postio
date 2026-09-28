@@ -96,8 +96,17 @@ impl ComposerHost for DialogHost {
         // resolver's "typing wins" would swallow the next key.
         if let Some(window) = self.window.upgrade() {
             gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
-            if let Some(pane) = window.pane() {
-                pane.view().grab_focus();
+            // Back to the message it was written from, when one is open;
+            // to the list otherwise.
+            match window.visible_dialog() {
+                Some(under) => {
+                    under.grab_focus();
+                }
+                None => {
+                    if let Some(pane) = window.pane() {
+                        pane.view().grab_focus();
+                    }
+                }
             }
         }
     }

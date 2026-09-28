@@ -70,6 +70,14 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it",
+        compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it as fn(),
+    ),
+    (
+        "invitations::the_open_invitation_s_card_answers_with_its_keys",
+        invitations::the_open_invitation_s_card_answers_with_its_keys as fn(),
+    ),
+    (
         "bar::a_plain_word_offers_commands_and_searches_only_when_asked",
         bar::a_plain_word_offers_commands_and_searches_only_when_asked as fn(),
     ),

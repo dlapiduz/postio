@@ -290,3 +290,39 @@ pub fn a_cancelled_or_past_invitation_offers_no_answer() {
         );
     });
 }
+
+/// The open message's Invite card (T113's dialog half, screen 04): it
+/// offers Accept `y` and Decline `Y`, and `Y` in the dialog declines the
+/// invitation on screen.
+pub fn the_open_invitation_s_card_answers_with_its_keys() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let invitation = open_invitation();
+        let (_fixture, window) = open_over(&[(&invitation, "Portfolio review")]).await;
+        support::keys(&window, &["j"]);
+        let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("Enter opened the invitation");
+        assert!(
+            crate::settle_until(async || !reading.marker_card_said().is_empty()).await,
+            "the dialog drew no marker card"
+        );
+        let card = reading.marker_card_said();
+        for offered in ["Invite", "Accept", "y", "Decline", "Y"] {
+            assert!(
+                card.contains(&offered.to_owned()),
+                "the card offers {offered:?}: {card:?}"
+            );
+        }
+
+        support::keys(&window, &["Y"]);
+        assert!(
+            crate::settle_until(async || window.toast_showing().as_deref() == Some("Declined"))
+                .await,
+            "Y in the open message said nothing: {:?}",
+            window.toast_showing()
+        );
+        assert!(reading.is_open(), "answering leaves the message open");
+    });
+}
