@@ -94,6 +94,7 @@ impl Req {
             Req::Correspondents(_) => "Correspondents",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
+            Req::ThreadLabels(_) => "ThreadLabels",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
             Req::CancelSend(_) => "CancelSend",
@@ -496,6 +497,23 @@ impl Client {
             Resp::Labels(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// The labels on each of `threads`: a page of Focus's list's pills,
+    /// read for the page at once.
+    pub async fn thread_labels(
+        &self,
+        threads: Vec<postio_model::ThreadId>,
+    ) -> Result<Vec<(postio_model::ThreadId, postio_model::Label)>, StoreError> {
+        self.read(
+            Req::ThreadLabels(threads),
+            "labels",
+            |answer| match answer {
+                Resp::ThreadLabels(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 
@@ -1267,6 +1285,22 @@ mod tests {
             vec![Req::Body(MessageId::new(9))]
         );
         assert_eq!(client.counts().of("Body"), 1);
+    }
+
+    #[tokio::test]
+    async fn a_page_s_labels_are_asked_for_by_conversation() {
+        let label = postio_model::Label::new(AccountId::new(1), "Atlas");
+        let thread = postio_model::ThreadId::new(4);
+        let (client, fake) = client(vec![Ok(Resp::ThreadLabels(vec![(thread, label.clone())]))]);
+        assert_eq!(
+            client.thread_labels(vec![thread]).await,
+            Ok(vec![(thread, label)])
+        );
+        assert_eq!(
+            *fake.asked.lock().unwrap(),
+            vec![Req::ThreadLabels(vec![thread])]
+        );
+        assert_eq!(client.counts().of("ThreadLabels"), 1);
     }
 
     #[tokio::test]

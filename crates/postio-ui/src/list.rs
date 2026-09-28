@@ -831,6 +831,21 @@ impl<T: ListRow> ListWindow<T> {
             .and_then(T::id)
     }
 
+    /// The row at `position`, if its page is here -- asking for nothing.
+    ///
+    /// [`peek`](Self::peek) for the row itself rather than its id: what a
+    /// caller answering a question about a stretch of positions needs --
+    /// Focus's day headings ask each position's day, around the one GTK
+    /// asked about -- without a lookup by id for every one.
+    pub fn resident_at(&self, position: u32) -> Option<&T> {
+        if position >= self.total {
+            return None;
+        }
+        self.pages
+            .get(&(position / PAGE_SIZE))
+            .and_then(|rows| rows.get((position % PAGE_SIZE) as usize))
+    }
+
     /// Where `message` sits, among the rows currently resident.
     ///
     /// `None` covers both "not in this scope" and "resident scope, but this
@@ -982,6 +997,24 @@ mod tests {
         for page in [1, 2, 4] {
             assert!(!window.is_pending(page), "page {page} was asked for");
         }
+    }
+
+    #[test]
+    fn a_resident_row_is_read_by_position_and_a_missing_one_asks_for_nothing() {
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(10_000);
+        deliver_fresh(&mut window, 2, 10_000);
+        assert_eq!(
+            window.resident_at(PAGE_SIZE * 2 + 7).map(|row| row.id),
+            Some(row(PAGE_SIZE * 2 + 7).id)
+        );
+        assert_eq!(
+            window.resident_at(PAGE_SIZE * 3),
+            None,
+            "page 3 is not here"
+        );
+        assert_eq!(window.resident_at(20_000), None, "past the end");
+        assert!(!window.is_pending(3), "and nothing was asked for");
     }
 
     // ── refreshing a stretch in place ────────────────────────────────────

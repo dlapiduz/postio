@@ -176,6 +176,9 @@ pub enum Req {
     RecipientDirectory(AccountId),
     /// The account's labels, for the finder's `+` and the label picker.
     Labels(AccountId),
+    /// The labels on each of these conversations, for a page of Focus's
+    /// list: its label pills (spec 007 T043).
+    ThreadLabels(Vec<postio_model::ThreadId>),
     /// The message a reply or forward is built from, and its account.
     ReplySource(MessageId),
     /// The local draft behind a Drafts row, if there is one.
@@ -445,6 +448,8 @@ pub enum Resp {
     RecipientDirectory(RecipientDirectory),
     /// Labels, by name.
     Labels(Vec<postio_model::Label>),
+    /// Each conversation's labels, in the order they were made.
+    ThreadLabels(Vec<(postio_model::ThreadId, postio_model::Label)>),
     /// A reply's source message and its account.
     ReplySource(Option<Box<(postio_model::Message, Account)>>),
     /// A draft, or none.

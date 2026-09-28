@@ -28,9 +28,10 @@ pub fn a_jump_to_the_bottom_reads_the_ends_and_nothing_between() {
             "the fixture is long enough to have a middle: {total} rows"
         );
         let at_the_top = client.counts().of("Page");
+        let top = pane.feed().pages_asked();
         assert!(
-            at_the_top <= 6,
-            "opening reads the pages around the top, not the inbox: {at_the_top} of {pages}"
+            top.iter().all(|page| *page < 6),
+            "opening reads the pages around the top, not the inbox: {top:?} of {pages}"
         );
 
         pane.view()
@@ -40,13 +41,22 @@ pub fn a_jump_to_the_bottom_reads_the_ends_and_nothing_between() {
             "the jump never brought the last page in"
         );
         crate::settle();
-        let jumped = client.counts().of("Page") - at_the_top;
+        let asked = pane.feed().pages_asked();
+        let middle: Vec<u32> = asked
+            .iter()
+            .copied()
+            .filter(|page| (6..pages - 6).contains(page))
+            .collect();
         assert!(
-            jumped <= 6,
+            middle.is_empty(),
             "a jump to the bottom reads the pages it shows, not the {} between: \
-             it read {jumped} (resident now {:?})",
-            pages - 12,
-            list.resident_pages()
+             it read {middle:?} of them (all asked: {asked:?})",
+            pages - 12
+        );
+        assert_eq!(
+            client.counts().of("Page") - at_the_top,
+            (asked.len() - top.len()) as u64,
+            "every page read is one the list asked for"
         );
         assert!(
             list.resident_rows() <= CACHE_PAGES * PAGE_SIZE as usize,

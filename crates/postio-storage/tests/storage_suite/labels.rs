@@ -237,3 +237,114 @@ async fn a_resync_does_not_take_a_label_off_a_message() {
          must survive the next sync of its mailbox"
     );
 }
+
+/// Files a message into `mailbox` under `rfc`, threaded, carrying `labels`.
+async fn a_threaded_message(
+    connection: &Connection,
+    account: AccountId,
+    mailbox: postio_model::MailboxId,
+    rfc: &str,
+    references: &[&str],
+    labels: &[LabelId],
+) -> postio_model::ThreadId {
+    let mut message = postio_model::Message::new(account, mailbox, chrono::Utc::now());
+    message.rfc_message_id = Some(postio_model::RfcMessageId::new(rfc));
+    message.references = references
+        .iter()
+        .map(postio_model::RfcMessageId::new)
+        .collect();
+    MessageRepository::new(connection)
+        .create(&mut message)
+        .await
+        .expect("create a message");
+    for label in labels {
+        LabelRepository::new(connection)
+            .attach(message.id, *label)
+            .await
+            .expect("attach");
+    }
+    postio_storage::repository::ThreadingRepository::new(connection, account)
+        .thread(&message)
+        .await
+        .expect("threaded")
+        .thread_id
+}
+
+#[tokio::test]
+async fn a_page_s_labels_are_one_statement_that_reads_them_and_scans_no_table() {
+    // A Focus page draws each conversation's label pills (spec 007 T043),
+    // read for the whole page at once: a conversation's labels are every
+    // label any of its messages carries, each once, in the order they were
+    // made -- and never one statement a row.
+    use postio_storage::test_support::counting::{counted_async, scans};
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let labels = LabelRepository::new(&connection);
+    let mut made = Vec::new();
+    for name in ["Atlas", "Harbor", "Home"] {
+        let mut label = Label::new(account.id, name);
+        labels.create(&mut label).await.expect("create");
+        made.push(label);
+    }
+    let (atlas, harbor, home) = (made[0].id, made[1].id, made[2].id);
+    // A conversation of two carrying all three between its messages, one
+    // label on both; another carrying one; a third carrying none.
+    let three = a_threaded_message(
+        &connection,
+        account.id,
+        inbox,
+        "<a@x.test>",
+        &[],
+        &[atlas, harbor],
+    )
+    .await;
+    a_threaded_message(
+        &connection,
+        account.id,
+        inbox,
+        "<b@x.test>",
+        &["<a@x.test>"],
+        &[harbor, home],
+    )
+    .await;
+    let one = a_threaded_message(&connection, account.id, inbox, "<c@x.test>", &[], &[home]).await;
+    let none = a_threaded_message(&connection, account.id, inbox, "<d@x.test>", &[], &[]).await;
+
+    let _ = labels.for_threads(&[three]).await.expect("warm");
+    let mut found = Vec::new();
+    let counts = counted_async(|| async {
+        found = labels
+            .for_threads(&[three, one, none])
+            .await
+            .expect("the page's labels");
+    })
+    .await;
+    let named: Vec<(postio_model::ThreadId, &str)> = found
+        .iter()
+        .map(|(thread, label)| (*thread, label.name.as_str()))
+        .collect();
+    let mut expected = vec![
+        (three, "Atlas"),
+        (three, "Harbor"),
+        (three, "Home"),
+        (one, "Home"),
+    ];
+    expected.sort_by_key(|(thread, _)| *thread);
+    assert_eq!(
+        named, expected,
+        "each conversation's labels once each, in the order they were made"
+    );
+    assert_eq!(
+        counts.statements, 1,
+        "one statement for the page: {counts:?}"
+    );
+    assert_eq!(counts.rows, 4, "every row read is a pill: {counts:?}");
+    assert!(
+        scans(&connection, &LabelRepository::explain_for_threads(3))
+            .await
+            .is_empty(),
+        "a page's labels are sought through the conversations' index, never a walk"
+    );
+}

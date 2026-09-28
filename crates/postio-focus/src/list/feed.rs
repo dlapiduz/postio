@@ -38,9 +38,9 @@ struct Inner {
     paging: RefCell<Paging>,
     /// The row count the store last gave for the scope in view.
     total: Cell<u32>,
-    /// Pages asked of the store, ever: "only the visible window is read" is
-    /// a count (US1 scenario 7), and this is it at the list's end.
-    pages_read: Cell<u64>,
+    /// Every page asked of the store, in order: "only the visible window is
+    /// read" (US1 scenario 7) is a question about which pages.
+    pages_asked: RefCell<Vec<u32>>,
     /// Whether the first page of the scope in view has landed.
     landed: Cell<bool>,
     /// Called when a page lands or the list is re-read.
@@ -70,7 +70,7 @@ impl Feed {
                 list: FocusList::default(),
                 paging: RefCell::new(Paging::default()),
                 total: Cell::new(0),
-                pages_read: Cell::new(0),
+                pages_asked: RefCell::new(Vec::new()),
                 landed: Cell::new(false),
                 on_filled: RefCell::new(Vec::new()),
             }),
@@ -92,9 +92,9 @@ impl Feed {
         self.inner.total.get()
     }
 
-    /// How many pages this feed has asked the store for.
-    pub fn pages_read(&self) -> u64 {
-        self.inner.pages_read.get()
+    /// Every page this feed has asked the store for, in order.
+    pub fn pages_asked(&self) -> Vec<u32> {
+        self.inner.pages_asked.borrow().clone()
     }
 
     /// Call `handler` each time rows land: a first page, a re-read.
@@ -180,7 +180,7 @@ impl Inner {
             return;
         };
         self.list.note_pending(page);
-        self.pages_read.set(self.pages_read.get() + 1);
+        self.pages_asked.borrow_mut().push(page);
         let generation = self.list.generation();
         let client = self.client.clone();
         let wanted = PageRequest {
@@ -194,10 +194,45 @@ impl Inner {
             // any executor can await (postio-host's `Local`).
             match client.list_page(wanted).await {
                 Ok(ListPage::Threads(answer)) => {
+                    // The page's label pills, for every row at once: one
+                    // round trip, one statement at the store (T043).
+                    let threads: Vec<_> = answer
+                        .rows
+                        .iter()
+                        .flat_map(|row| row.id.into_iter().chain(row.copies.iter().copied()))
+                        .collect();
+                    let mut labelled = match client.thread_labels(threads).await {
+                        Ok(labelled) => labelled,
+                        Err(error) => {
+                            tracing::warn!(page, %error, "Focus could not read a page's labels");
+                            Vec::new()
+                        }
+                    };
                     let rows = answer
                         .rows
                         .into_iter()
-                        .map(FocusRow::Conversation)
+                        .map(|summary| {
+                            let mine: Vec<_> = summary
+                                .id
+                                .into_iter()
+                                .chain(summary.copies.iter().copied())
+                                .collect();
+                            let mut labels = Vec::new();
+                            labelled.retain(|(thread, label)| {
+                                if mine.contains(thread) {
+                                    if !labels
+                                        .iter()
+                                        .any(|held: &postio_model::Label| held.id == label.id)
+                                    {
+                                        labels.push(label.clone());
+                                    }
+                                    false
+                                } else {
+                                    true
+                                }
+                            });
+                            FocusRow::Conversation(super::item::Conversation { summary, labels })
+                        })
                         .collect();
                     if generation == self.list.generation() {
                         self.total.set(answer.total);

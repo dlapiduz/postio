@@ -12,7 +12,7 @@
 //! `Flag` is; rewriting the whole row to add one label would race every other
 //! write to that message and would undo whatever landed in between.
 
-use postio_model::{AccountId, Label, LabelId, MessageId};
+use postio_model::{AccountId, Label, LabelId, MessageId, ThreadId};
 
 use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
@@ -121,6 +121,47 @@ impl<'a> LabelRepository<'a> {
         .await
     }
 
+    /// The labels on each of `threads`, for a page of Focus's list (spec 007
+    /// T043): a conversation's labels are every label any of its messages
+    /// carries, each once, in the order the labels were made.
+    ///
+    /// One statement for the whole page, sought through each conversation's
+    /// own index into its messages and from there by key: never a walk of a
+    /// table, and never a statement a row.
+    pub async fn for_threads(&self, threads: &[ThreadId]) -> Result<Vec<(ThreadId, Label)>> {
+        if threads.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut statement =
+            sql::statement(self.connection, &Self::explain_for_threads(threads.len())).await?;
+        sql::mapped(
+            &mut statement,
+            threads
+                .iter()
+                .map(|thread| thread.get())
+                .collect::<Vec<_>>(),
+            |row| Ok((ThreadId::new(row.col(0)?), read_label_at(row, 1)?)),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::for_threads`] runs for `threads` conversations, for
+    /// `EXPLAIN QUERY PLAN`.
+    pub fn explain_for_threads(threads: usize) -> String {
+        let placeholders = (1..=threads)
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "SELECT DISTINCT m.thread_id, l.id, l.account_id, l.name, l.color
+               FROM messages m
+               JOIN message_labels ml ON ml.message_id = m.id
+               JOIN labels l ON l.id = ml.label_id
+              WHERE m.thread_id IN ({placeholders})
+              ORDER BY m.thread_id, l.id"
+        )
+    }
+
     /// Removes a label entirely. Answers whether there was one.
     ///
     /// `message_labels` cascades, so this takes it off every message carrying
@@ -136,11 +177,16 @@ impl<'a> LabelRepository<'a> {
     }
 }
 
-fn read_label(row: &Row) -> Result<Label> {
+/// A label read from `row`, its four columns starting at `first`.
+fn read_label_at(row: &Row, first: usize) -> Result<Label> {
     Ok(Label {
-        id: LabelId::new(row.col(0)?),
-        account_id: AccountId::new(row.col(1)?),
-        name: row.col(2)?,
-        color: row.col(3)?,
+        id: LabelId::new(row.col(first)?),
+        account_id: AccountId::new(row.col(first + 1)?),
+        name: row.col(first + 2)?,
+        color: row.col(first + 3)?,
     })
+}
+
+fn read_label(row: &Row) -> Result<Label> {
+    read_label_at(row, 0)
 }

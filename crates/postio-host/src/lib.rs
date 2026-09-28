@@ -758,6 +758,9 @@ impl Inner {
             Req::Labels(account) => {
                 Resp::Labels(compose::labels(&self.wiring.database, account).await)
             }
+            Req::ThreadLabels(threads) => {
+                Resp::ThreadLabels(compose::thread_labels(&self.wiring.database, &threads).await)
+            }
             Req::ReplySource(message) => Resp::ReplySource(
                 compose::reply_source(&self.wiring.database, message)
                     .await

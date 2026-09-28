@@ -26,6 +26,7 @@ mod chrome;
 mod colours;
 mod harness;
 mod list_contract;
+mod rows;
 mod starts_offline;
 mod support;
 mod visible_window;
@@ -54,6 +55,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "colours::the_roles_resolve_and_follow_the_system_into_dark",
         colours::the_roles_resolve_and_follow_the_system_into_dark as fn(),
+    ),
+    (
+        "rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived",
+        rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived as fn(),
+    ),
+    (
+        "rows::a_third_label_draws_no_third_pill_and_none_is_the_accent",
+        rows::a_third_label_draws_no_third_pill_and_none_is_the_accent as fn(),
+    ),
+    (
+        "rows::rows_sit_under_their_day_s_heading",
+        rows::rows_sit_under_their_day_s_heading as fn(),
     ),
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",

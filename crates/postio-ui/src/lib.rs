@@ -20,6 +20,7 @@ pub mod dwell;
 pub mod editor;
 pub mod finder;
 pub mod focus;
+pub mod focus_row;
 pub mod format;
 pub mod hints;
 pub mod keymap;

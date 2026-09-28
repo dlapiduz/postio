@@ -1,5 +1,7 @@
 //! What one position of Focus's list stands for, with no toolkit in it.
 
+use chrono::{DateTime, Utc};
+use postio_model::Label;
 use postio_model::ids::{MessageId, ThreadId};
 use postio_model::listing::ThreadSummary;
 
@@ -11,22 +13,40 @@ use postio_model::listing::ThreadSummary;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusRow {
     /// A conversation, drawn from its newest message in the inbox.
-    Conversation(ThreadSummary),
+    Conversation(Conversation),
+}
+
+/// A conversation's row: the list's summary of it, and its labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conversation {
+    /// What the list read: the newest message, the counts, the marker.
+    pub summary: ThreadSummary,
+    /// Its labels, in the order they were made: the first two are its
+    /// pills (`postio_ui::focus_row::MAX_PILLS`).
+    pub labels: Vec<Label>,
 }
 
 impl FocusRow {
+    /// A conversation's row, before its labels have been read.
+    pub fn conversation(summary: ThreadSummary) -> Self {
+        FocusRow::Conversation(Conversation {
+            summary,
+            labels: Vec::new(),
+        })
+    }
+
     /// The message the row stands for: the one opening it opens, and the
     /// one the selection names it by.
     pub fn id(&self) -> MessageId {
         match self {
-            FocusRow::Conversation(summary) => summary.representative.id,
+            FocusRow::Conversation(row) => row.summary.representative.id,
         }
     }
 
     /// The conversation, when the row stands for one.
     pub fn thread(&self) -> Option<ThreadId> {
         match self {
-            FocusRow::Conversation(summary) => summary.id,
+            FocusRow::Conversation(row) => row.summary.id,
         }
     }
 
@@ -34,10 +54,11 @@ impl FocusRow {
     /// copies folded into it from the person's other accounts (T161).
     pub fn threads(&self) -> Vec<ThreadId> {
         match self {
-            FocusRow::Conversation(summary) => summary
+            FocusRow::Conversation(row) => row
+                .summary
                 .id
                 .into_iter()
-                .chain(summary.copies.iter().copied())
+                .chain(row.summary.copies.iter().copied())
                 .collect(),
         }
     }
@@ -46,7 +67,14 @@ impl FocusRow {
     /// Its kind decides its height, never its content (FR-013).
     pub fn two_lines(&self) -> bool {
         match self {
-            FocusRow::Conversation(summary) => summary.marker.is_some(),
+            FocusRow::Conversation(row) => row.summary.marker.is_some(),
+        }
+    }
+
+    /// When the row's mail arrived, for its day heading and its time.
+    pub fn at(&self) -> DateTime<Utc> {
+        match self {
+            FocusRow::Conversation(row) => row.summary.last_at,
         }
     }
 }
@@ -92,11 +120,11 @@ mod tests {
     fn a_folded_row_reaches_every_copy_of_its_conversation() {
         let mut summary = conversation(7, Some(3));
         summary.copies = vec![ThreadId::new(9)];
-        let item = FocusRow::Conversation(summary);
+        let item = FocusRow::conversation(summary);
         assert_eq!(item.id(), MessageId::new(7));
         assert_eq!(item.threads(), vec![ThreadId::new(3), ThreadId::new(9)]);
         assert_eq!(
-            FocusRow::Conversation(conversation(8, None)).threads(),
+            FocusRow::conversation(conversation(8, None)).threads(),
             Vec::<ThreadId>::new(),
             "a message in no conversation is aimed at by its id, not a thread"
         );
@@ -105,7 +133,7 @@ mod tests {
     #[test]
     fn a_row_is_two_lines_exactly_when_it_carries_a_marker() {
         let mut marked = conversation(1, Some(1));
-        assert!(!FocusRow::Conversation(marked.clone()).two_lines());
+        assert!(!FocusRow::conversation(marked.clone()).two_lines());
         marked.marker = Some(MarkerSummary {
             kind: MarkerKind::Question,
             when: None,
@@ -113,6 +141,6 @@ mod tests {
             answer: None,
             cancelled: false,
         });
-        assert!(FocusRow::Conversation(marked).two_lines());
+        assert!(FocusRow::conversation(marked).two_lines());
     }
 }

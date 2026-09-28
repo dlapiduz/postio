@@ -14,6 +14,7 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_model::ids::{MessageId, ThreadId};
 use postio_ui::list::ListRow;
+use postio_ui::list::PAGE_SIZE;
 use postio_widgets::list_model::{ModelRow, Windowed, WindowedModel};
 
 use super::item::FocusRow;
@@ -52,7 +53,13 @@ mod imp {
     impl ObjectSubclass for FocusList {
         const NAME: &'static str = "PostioFocusList";
         type Type = super::FocusList;
-        type Interfaces = (gio::ListModel,);
+        type Interfaces = (gio::ListModel, gtk::SectionModel);
+    }
+
+    impl SectionModelImpl for FocusList {
+        fn section(&self, position: u32) -> (u32, u32) {
+            self.obj().day_section(position)
+        }
     }
 
     impl ObjectImpl for FocusList {
@@ -85,8 +92,10 @@ glib::wrapper! {
 }
 
 glib::wrapper! {
-    /// Focus's list: a window over the paged store, never the mailbox.
-    pub struct FocusList(ObjectSubclass<imp::FocusList>) @implements gio::ListModel;
+    /// Focus's list: a window over the paged store, never the mailbox. Its
+    /// sections are days, for the day headings (FR-010).
+    pub struct FocusList(ObjectSubclass<imp::FocusList>)
+        @implements gio::ListModel, gtk::SectionModel;
 }
 
 impl Default for FocusList {
@@ -99,6 +108,11 @@ impl RowObject {
     /// What the row stands for, once its page has arrived.
     pub fn item(&self) -> Option<FocusRow> {
         self.imp().item.borrow().clone()
+    }
+
+    /// The local day the row's mail arrived on, once its page has.
+    pub fn day(&self) -> Option<chrono::NaiveDate> {
+        self.imp().item.borrow().as_ref().map(day_of)
     }
 
     /// Replace what the row says, keeping the object, and tell a bound
@@ -166,6 +180,56 @@ impl ModelRow for RowObject {
 
     fn id_of(data: &FocusRow) -> MessageId {
         data.id()
+    }
+}
+
+/// The local day a row's mail arrived on: what its heading names.
+pub fn day_of(row: &FocusRow) -> chrono::NaiveDate {
+    row.at().with_timezone(&chrono::Local).date_naive()
+}
+
+impl FocusList {
+    /// The run of positions around `position` that share its day: one day
+    /// heading's section. Read from the rows already here and nothing else:
+    /// a run whose page has not landed is its own section, bounded by its
+    /// page, until it does -- and a landed page says so
+    /// ([`Self::days_moved`]).
+    pub fn day_section(&self, position: u32) -> (u32, u32) {
+        let total = self.n_items();
+        if position >= total {
+            return (total, u32::MAX);
+        }
+        let window = self.windowed().window();
+        let day_at = |at: u32| window.resident_at(at).and_then(RowObject::day);
+        let day = day_at(position);
+        let page = PAGE_SIZE;
+        let (low, high) = match day {
+            // A day can run across pages: only what is here bounds it.
+            Some(_) => (0, total),
+            // Nothing here: the unloaded run, no wider than its page.
+            None => (
+                position / page * page,
+                ((position / page + 1) * page).min(total),
+            ),
+        };
+        let mut start = position;
+        while start > low && day_at(start - 1) == day {
+            start -= 1;
+        }
+        let mut end = position + 1;
+        while end < high && day_at(end) == day {
+            end += 1;
+        }
+        (start, end)
+    }
+
+    /// Rows have landed or moved: the day headings may have moved with
+    /// them, so the view asks the sections again.
+    pub fn days_moved(&self) {
+        let total = self.n_items();
+        if total > 0 {
+            self.sections_changed(0, total);
+        }
     }
 }
 

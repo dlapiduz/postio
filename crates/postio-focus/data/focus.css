@@ -165,3 +165,26 @@ button.postio-button-secondary:hover {
 .postio-chip {
   color: var(--postio-ink);
 }
+
+/* ── Day headings (32 px) ───────────────────────────────────────────── */
+/* GTK's own header node carries libadwaita's list spacing; Focus's heading
+   is its whole height, flush with the rows. */
+.focus-list > header {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+}
+
+focusdayheading {
+  min-height: 32px;
+  padding: 0 var(--postio-space-6);
+  background-color: var(--postio-ground);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-day-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}

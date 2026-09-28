@@ -523,6 +523,25 @@ pub async fn labels(database: &Store, account: AccountId) -> Vec<postio_model::L
     })
 }
 
+/// The labels on each of `threads`: a Focus page's pills, read for the page
+/// in one statement (spec 007 T043). Nothing, said in the log, when the
+/// store cannot answer: a row without its pills is still the row.
+pub async fn thread_labels(
+    database: &Store,
+    threads: &[postio_model::ThreadId],
+) -> Vec<(postio_model::ThreadId, postio_model::Label)> {
+    let found = async {
+        let connection = database.read().await?;
+        postio_storage::repository::LabelRepository::new(&connection)
+            .for_threads(threads)
+            .await
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not read a page's labels");
+        Vec::new()
+    })
+}
+
 /// Recipient completion: contact groups whose name matches `prefix`, then
 /// contacts ranked by [`ContactRepository::search`] — groups first, since a
 /// group is a deliberate choice the user is more likely typing towards.

@@ -5,6 +5,7 @@ use gtk::graphene;
 use gtk::prelude::*;
 
 use super::feed::Feed;
+use super::heading::DayHeading;
 use super::model::RowObject;
 use super::row::RowWidget;
 
@@ -53,6 +54,17 @@ impl ListPane {
         cursor.set_autoselect(false);
         cursor.set_can_unselect(true);
         let view = gtk::ListView::new(Some(cursor.clone()), Some(factory));
+        view.set_header_factory(Some(&day_headings()));
+        // A page landing may move where a day starts.
+        feed.list().connect_local("filled", false, {
+            let list = feed.list().downgrade();
+            move |_| {
+                if let Some(list) = list.upgrade() {
+                    list.days_moved();
+                }
+                None
+            }
+        });
         view.add_css_class("focus-list");
         view.update_property(&[gtk::accessible::Property::Label("Inbox")]);
         let scrolled = gtk::ScrolledWindow::builder()
@@ -116,6 +128,38 @@ impl ListPane {
         rows.sort_by(|a, b| a.0.total_cmp(&b.0));
         rows.into_iter().map(|(_, row)| row).collect()
     }
+}
+
+/// The day headings: "Today · Saturday 26 September" over a day's rows, a
+/// section header each (32 px), named from the section's first row.
+fn day_headings() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, header| {
+        if let Some(header) = header.downcast_ref::<gtk::ListHeader>() {
+            header.set_child(Some(&DayHeading::default()));
+        }
+    });
+    factory.connect_bind(|_, header| {
+        let Some(header) = header.downcast_ref::<gtk::ListHeader>() else {
+            return;
+        };
+        if let (Some(row), Some(heading)) = (
+            header.item().and_downcast::<RowObject>(),
+            header.child().and_downcast::<DayHeading>(),
+        ) {
+            heading.bind(&row);
+        }
+    });
+    factory.connect_unbind(|_, header| {
+        if let Some(heading) = header
+            .downcast_ref::<gtk::ListHeader>()
+            .and_then(|header| header.child())
+            .and_downcast::<DayHeading>()
+        {
+            heading.unbind();
+        }
+    });
+    factory
 }
 
 impl std::fmt::Debug for ListPane {

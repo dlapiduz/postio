@@ -258,3 +258,16 @@ impl Fixture {
         (window, client)
     }
 }
+
+impl Fixture {
+    /// Put labels named `names` on `message`, making each, in that order.
+    pub async fn label(&self, message: MessageId, names: &[&str]) {
+        let connection = self.database.connect().await.expect("a connection");
+        let labels = postio_storage::repository::LabelRepository::new(&connection);
+        for name in names {
+            let mut label = postio_model::Label::new(self.account.id, *name);
+            labels.create(&mut label).await.expect("a label");
+            labels.attach(message, label.id).await.expect("attached");
+        }
+    }
+}
