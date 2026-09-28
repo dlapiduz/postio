@@ -188,3 +188,16 @@ focusdayheading {
   font-size: var(--postio-text-label);
   color: var(--postio-ink-secondary);
 }
+
+/* ── The bulk bar (44 px, while anything is selected) ───────────────── */
+.focus-bulk-bar {
+  min-height: 44px;
+  padding: 0 var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+.focus-bulk-count {
+  font-weight: bold;
+  margin-right: var(--postio-space-4);
+}

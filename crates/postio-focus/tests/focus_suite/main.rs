@@ -28,6 +28,7 @@ mod harness;
 mod list_contract;
 mod marked_rows;
 mod rows;
+mod selection;
 mod starts_offline;
 mod support;
 mod visible_window;
@@ -72,6 +73,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "rows::rows_sit_under_their_day_s_heading",
         rows::rows_sit_under_their_day_s_heading as fn(),
+    ),
+    (
+        "selection::three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three",
+        selection::three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three as fn(),
+    ),
+    (
+        "selection::escape_clears_the_selection_and_the_cursor_stays",
+        selection::escape_clears_the_selection_and_the_cursor_stays as fn(),
     ),
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",

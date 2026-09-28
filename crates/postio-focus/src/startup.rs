@@ -97,7 +97,11 @@ pub fn adopt(window: &FocusWindow, host: Host, config: &postio_config::Config) -
     let focus = host.enable_focus(FocusSetup::default().with_config(config.focus.clone()));
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
-    window.show_inbox(client.clone(), postio_core::Keymap::resolve(&config.keys));
+    window.show_inbox(
+        client.clone(),
+        state.clone(),
+        postio_core::Keymap::resolve(&config.keys),
+    );
     Session {
         host,
         client,

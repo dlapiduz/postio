@@ -7,19 +7,24 @@
 //! ([`postio_ui::list_state::OPENING_THRESHOLD`]).
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, glib};
 use postio_client::Client;
-use postio_core::{CommandId, Keymap};
+use postio_core::state::{Selection, ViewScope};
+use postio_core::{Command, CommandId, Keymap, MessageTarget, SharedState};
+use postio_model::ids::{AccountId, MessageId, ThreadId};
 use postio_model::{FocusScope, ListScope};
 use postio_ui::keymap::{KeyContext, Outcome, Resolver};
 use postio_ui::list_state::{OPENING_THRESHOLD, Waiting, describe_wait};
+use postio_ui::selection::{Reach, SelectionState};
 
+use crate::bulk::Bulk;
 use crate::chrome::Chrome;
-use crate::list::{Feed, ListPane};
+use crate::list::{Feed, FocusRow, ListPane, RowObject};
 
 /// The window's pages, by name.
 const BLANK: &str = "blank";
@@ -51,6 +56,19 @@ mod imp {
         pub keymap: RefCell<Keymap>,
         /// Keys to commands, for Focus's commands alone (`crate::keys`).
         pub resolver: RefCell<Option<Resolver>>,
+        /// What `a` would archive: not the cursor, which is GTK's
+        /// selection model on the list (constitution II).
+        pub picked: SelectionState,
+        /// The conversations each picked row reaches: its own and the
+        /// copies folded into it (T161), kept from when it was picked, so a
+        /// row scrolled out of the window is still aimed at in full.
+        pub reach: RefCell<HashMap<MessageId, Vec<ThreadId>>>,
+        pub bulk: RefCell<Option<Rc<Bulk>>>,
+        /// The host's view of this window's aim: a whole-view selection is
+        /// a predicate the host resolves, and it reads it from here.
+        pub state: RefCell<Option<SharedState>>,
+        /// The enabled accounts, the aggregate a whole-view selection spans.
+        pub accounts: RefCell<Vec<AccountId>>,
     }
 
     impl Default for FocusWindow {
@@ -70,6 +88,11 @@ mod imp {
                 on_retry: RefCell::default(),
                 keymap: RefCell::new(Keymap::defaults().clone()),
                 resolver: RefCell::default(),
+                picked: SelectionState::new(),
+                reach: RefCell::default(),
+                bulk: RefCell::default(),
+                state: RefCell::default(),
+                accounts: RefCell::default(),
             }
         }
     }
@@ -204,6 +227,9 @@ impl FocusWindow {
         if let Some(pane) = imp.pane.borrow().as_ref() {
             pane.set_keymap(keymap.clone());
         }
+        if let Some(bulk) = imp.bulk.borrow().as_ref() {
+            bulk.set_keymap(&keymap);
+        }
         imp.keymap.replace(keymap);
     }
 
@@ -261,12 +287,205 @@ impl FocusWindow {
         KeyContext::List
     }
 
-    /// Run the command `id` means here, with the registry's default target.
+    /// Run the command `id` means here: the cursor and the selection are the
+    /// window's own, and a verb on mail goes to the host aimed at them.
     pub fn act(&self, id: CommandId) {
         match id {
+            CommandId::NextMessage => self.move_cursor(1),
+            CommandId::PrevMessage => self.move_cursor(-1),
+            CommandId::FirstMessage => self.cursor_to(Some(0)),
+            CommandId::LastMessage => {
+                let last = self.list_len().checked_sub(1);
+                self.cursor_to(last);
+            }
+            CommandId::ToggleSelection => {
+                if let Some(row) = self.cursor_row() {
+                    self.imp()
+                        .reach
+                        .borrow_mut()
+                        .insert(row.id(), row.threads());
+                    self.imp().picked.toggle(row.id());
+                }
+            }
+            CommandId::ExtendSelectionDown => self.extend(1),
+            CommandId::ExtendSelectionUp => self.extend(-1),
+            CommandId::SelectAll => self.imp().picked.select_all(Reach {
+                accounts: self.imp().accounts.borrow().clone(),
+                omitted: Vec::new(),
+            }),
+            CommandId::Back => self.clear_selection(),
+            CommandId::Archive | CommandId::Delete | CommandId::ToggleRead => {
+                self.send(Command::default_for(id));
+            }
             CommandId::Quit => self.close(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
+    }
+
+    /// How many rows the list has.
+    fn list_len(&self) -> u32 {
+        self.pane()
+            .map(|pane| pane.feed().list().n_items())
+            .unwrap_or(0)
+    }
+
+    /// Put the cursor on `position`, or on nothing, and bring it into view.
+    fn cursor_to(&self, position: Option<u32>) {
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        match position {
+            Some(position) if position < pane.feed().list().n_items() => {
+                pane.cursor().set_selected(position);
+                pane.view()
+                    .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+            }
+            _ => {}
+        }
+    }
+
+    /// Move the cursor `by` rows, and nothing else: nothing opens, nothing
+    /// is marked read, the selection stays as it was (FR-016).
+    fn move_cursor(&self, by: i32) {
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let len = pane.feed().list().n_items();
+        if len == 0 {
+            return;
+        }
+        let at = pane.cursor().selected();
+        let next = if at == gtk::INVALID_LIST_POSITION {
+            0
+        } else {
+            (i64::from(at) + i64::from(by)).clamp(0, i64::from(len) - 1) as u32
+        };
+        self.cursor_to(Some(next));
+    }
+
+    /// `J`/`K`: take the cursor's row into the selection and the next one
+    /// with it, moving the cursor onto it.
+    fn extend(&self, by: i32) {
+        if let Some(row) = self.cursor_row() {
+            self.imp()
+                .reach
+                .borrow_mut()
+                .insert(row.id(), row.threads());
+            self.imp().picked.extend_to(row.id());
+        }
+        self.move_cursor(by);
+        if let Some(row) = self.cursor_row() {
+            self.imp()
+                .reach
+                .borrow_mut()
+                .insert(row.id(), row.threads());
+            self.imp().picked.extend_to(row.id());
+        }
+    }
+
+    /// Drop the selection; the cursor stays where it is.
+    pub fn clear_selection(&self) {
+        self.imp().picked.clear();
+        self.imp().reach.borrow_mut().clear();
+    }
+
+    /// What is selected now: what `a` would archive.
+    pub fn selection(&self) -> Selection {
+        self.imp().picked.selection()
+    }
+
+    /// The row the cursor is on, once its page has landed.
+    pub fn cursor_row(&self) -> Option<FocusRow> {
+        let pane = self.pane()?;
+        let at = pane.cursor().selected();
+        if at == gtk::INVALID_LIST_POSITION {
+            return None;
+        }
+        pane.feed()
+            .list()
+            .item(at)
+            .and_downcast::<RowObject>()
+            .and_then(|row| row.item())
+    }
+
+    /// Where a verb goes: the selection when there is one, the cursor's row
+    /// otherwise. A row folded from several accounts is every copy
+    /// (`MessageTarget::Threads`, T161); a message in no conversation is
+    /// itself. A whole-view selection is a predicate the host resolves over
+    /// the inboxes, never a list of what happens to be on screen.
+    fn aims(&self) -> Vec<MessageTarget> {
+        let imp = self.imp();
+        match imp.picked.selection() {
+            Selection::Everything { except } => {
+                if let Some(state) = imp.state.borrow().as_ref() {
+                    let accounts = imp.accounts.borrow().clone();
+                    let (sink, _) = postio_core::bridge::event_channel();
+                    state.update(&sink, |app| {
+                        let mut events = app.open_view(ViewScope::Unified { accounts });
+                        events.extend(app.select_all());
+                        events
+                    });
+                    state.update(&sink, |app| {
+                        let mut events = Vec::new();
+                        for message in &except {
+                            events.extend(app.toggle_selection(*message));
+                        }
+                        events
+                    });
+                }
+                vec![MessageTarget::Selection]
+            }
+            Selection::These(picked) if !picked.is_empty() => {
+                let reach = imp.reach.borrow();
+                let mut threads = Vec::new();
+                let mut lone = Vec::new();
+                for message in picked {
+                    match reach.get(&message) {
+                        Some(theirs) if !theirs.is_empty() => {
+                            threads.extend(theirs.iter().copied())
+                        }
+                        _ => lone.push(message),
+                    }
+                }
+                let mut aims = Vec::new();
+                if !threads.is_empty() {
+                    aims.push(MessageTarget::Threads(threads));
+                }
+                if !lone.is_empty() {
+                    aims.push(MessageTarget::Messages(lone));
+                }
+                aims
+            }
+            Selection::These(_) => match self.cursor_row() {
+                Some(row) if !row.threads().is_empty() => {
+                    vec![MessageTarget::Threads(row.threads())]
+                }
+                Some(row) => vec![MessageTarget::Messages(vec![row.id()])],
+                None => Vec::new(),
+            },
+        }
+    }
+
+    /// Send `command` to the host, aimed as [`Self::aims`] says, and let
+    /// the selection go: what it named has been acted on.
+    fn send(&self, command: Command) {
+        let aims = self.aims();
+        if aims.is_empty() {
+            return;
+        }
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        self.clear_selection();
+        glib::spawn_future_local(async move {
+            for aim in aims {
+                // POSTIO-GLIB-SAFE: the client's in-process transport hands
+                // the command over and answers through a oneshot.
+                if let Err(error) = client.send(command.clone().with_target(aim)).await {
+                    tracing::warn!(%error, "Focus could not send a command: {error}");
+                }
+            }
+        });
     }
 
     /// Say what the store is being waited on for -- once the wait has
@@ -352,8 +571,10 @@ impl FocusWindow {
     }
 
     /// Show the inbox, read through `client` with `keymap`'s keys, and
-    /// follow what the store says from here on.
-    pub fn show_inbox(&self, client: Client, keymap: Keymap) {
+    /// follow what the store says from here on. `state` is the host's view
+    /// of this window's aim, which a whole-view selection is written to.
+    pub fn show_inbox(&self, client: Client, state: SharedState, keymap: Keymap) {
+        self.imp().state.replace(Some(state));
         let imp = self.imp();
         imp.waiting.set(None);
         imp.waiting_since.set(None);
@@ -374,8 +595,39 @@ impl FocusWindow {
             self,
             move || window.update_counts()
         ));
-        let pane = ListPane::new(feed.clone(), self.keymap());
+        let pane = ListPane::new(feed.clone(), self.keymap(), imp.picked.clone());
         imp.inbox.append(pane.widget());
+        let bulk = Rc::new(Bulk::new(&self.keymap()));
+        bulk.connect_command(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |id| window.act(id)
+        ));
+        imp.inbox.append(bulk.widget());
+        imp.bulk.replace(Some(Rc::clone(&bulk)));
+        imp.picked.connect_changed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| window.selection_moved()
+        ));
+        // The accounts a whole-view selection spans.
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[strong]
+            client,
+            async move {
+                if let Ok(accounts) = client.accounts().await {
+                    window.imp().accounts.replace(
+                        accounts
+                            .iter()
+                            .filter(|account| account.enabled)
+                            .map(|account| account.id)
+                            .collect(),
+                    );
+                }
+            }
+        ));
         imp.pane.replace(Some(pane));
         imp.client.replace(Some(client.clone()));
         imp.pages.set_visible_child_name(INBOX);
@@ -393,6 +645,20 @@ impl FocusWindow {
                 window.hear(&envelope.event);
             }
         });
+    }
+
+    /// The selection changed: the bar says so, and the rows redraw their
+    /// boxes.
+    fn selection_moved(&self) {
+        let imp = self.imp();
+        let total = imp.pane.borrow().as_ref().map(|pane| pane.feed().total());
+        let summary = postio_ui::selection::summary(&imp.picked.selection(), total, &[]);
+        if let Some(bulk) = imp.bulk.borrow().as_ref() {
+            bulk.set_summary(summary.as_deref());
+        }
+        if let Some(pane) = imp.pane.borrow().as_ref() {
+            pane.redraw_rows();
+        }
     }
 
     /// Bring the strip's counts into step with the list.

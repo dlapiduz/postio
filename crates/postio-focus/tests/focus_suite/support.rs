@@ -297,3 +297,74 @@ impl Fixture {
             .expect("a marker");
     }
 }
+
+/// Press `name` (a GDK key name: "x", "J", "exclam", "Escape") with
+/// `state`'s modifiers, through the window's one keyboard path.
+pub fn press(
+    window: &postio_focus::window::FocusWindow,
+    name: &str,
+    state: gtk::gdk::ModifierType,
+) {
+    let key = gtk::gdk::Key::from_name(name).unwrap_or_else(|| panic!("{name} is a key"));
+    let _ = window.handle_key(key, state);
+    crate::settle();
+}
+
+/// Press each of `keys`, unmodified but for shift on a capital.
+pub fn keys(window: &postio_focus::window::FocusWindow, keys: &[&str]) {
+    for name in keys {
+        let shifted = name.chars().count() == 1 && name.chars().all(char::is_uppercase);
+        let state = if shifted {
+            gtk::gdk::ModifierType::SHIFT_MASK
+        } else {
+            gtk::gdk::ModifierType::empty()
+        };
+        press(window, name, state);
+    }
+}
+
+/// The subjects of the rows on screen, top to bottom.
+pub fn subjects(window: &postio_focus::window::FocusWindow) -> Vec<String> {
+    window
+        .pane()
+        .map(|pane| {
+            pane.rows_on_screen()
+                .iter()
+                .filter_map(|row| row.item())
+                .map(|item| {
+                    let postio_focus::list::FocusRow::Conversation(row) = item;
+                    row.summary.representative.subject.unwrap_or_default()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+impl Fixture {
+    /// Five conversations in the inbox, "First" the newest, "Fifth" the
+    /// oldest, and a window open over them.
+    pub async fn five(&self) -> (postio_focus::window::FocusWindow, postio_client::Client) {
+        for (subject, minutes) in [
+            ("First", 10),
+            ("Second", 20),
+            ("Third", 30),
+            ("Fourth", 40),
+            ("Fifth", 50),
+        ] {
+            self.file(
+                ("Ada Moreno", "ada@example.com"),
+                subject,
+                "A line of text.",
+                minutes,
+            )
+            .await;
+        }
+        let (window, client) = self.open().await;
+        assert!(
+            crate::settle_until(async || subjects(&window).len() == 5).await,
+            "the five conversations never reached the screen: {:?}",
+            subjects(&window)
+        );
+        (window, client)
+    }
+}

@@ -19,19 +19,25 @@ pub struct ListPane {
     keymap: SharedKeymap,
 }
 
+/// The selection a list's rows draw their boxes from.
+pub type SharedSelection = postio_ui::selection::SelectionState;
+
 impl ListPane {
-    /// A pane drawing `feed`'s list, its rows' keycaps read from `keymap`.
-    pub fn new(feed: Feed, keymap: postio_core::Keymap) -> Self {
+    /// A pane drawing `feed`'s list, its rows' keycaps read from `keymap`
+    /// and their selection boxes from `picked`.
+    pub fn new(feed: Feed, keymap: postio_core::Keymap, picked: SharedSelection) -> Self {
         let keymap: SharedKeymap = std::rc::Rc::new(std::cell::RefCell::new(keymap));
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup({
             let keymap = keymap.clone();
+            let picked = picked.clone();
             move |_, item| {
                 let item = item
                     .downcast_ref::<gtk::ListItem>()
                     .expect("a list view's factory builds list items");
                 let row = RowWidget::default();
                 row.set_keymap(keymap.clone());
+                row.set_selection(picked.clone());
                 item.set_child(Some(&row));
             }
         });
@@ -89,10 +95,22 @@ impl ListPane {
         }
     }
 
+    /// Redraw every row on screen: what they draw from beside their own
+    /// data -- the selection, the keymap -- has changed.
+    pub fn redraw_rows(&self) {
+        let mut child = self.view.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if let Some(row) = widget.first_child().and_downcast::<RowWidget>() {
+                row.queue_draw();
+            }
+        }
+    }
+
     /// Read every row's keycaps from `keymap` from now on.
     pub fn set_keymap(&self, keymap: postio_core::Keymap) {
         self.keymap.replace(keymap);
-        self.view.queue_draw();
+        self.redraw_rows();
     }
 
     /// The pane's outermost widget, to place in a layout.

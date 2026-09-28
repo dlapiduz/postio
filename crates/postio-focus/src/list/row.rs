@@ -45,6 +45,9 @@ pub struct Drawn {
     pub pills: Vec<(String, gdk::RGBA)>,
     /// Whether the sender and subject were bold: an unread conversation.
     pub bold: bool,
+    /// Whether the row drew itself selected: the neutral ground and the
+    /// checked box.
+    pub picked: bool,
 }
 
 /// A one-line row's height, in pixels: the classic row's (research R3).
@@ -94,6 +97,7 @@ mod imp {
         pub bound: RefCell<Option<(RowObject, glib::SignalHandlerId)>>,
         pub drawn: RefCell<Drawn>,
         pub keymap: RefCell<Option<SharedKeymap>>,
+        pub picked: RefCell<Option<postio_ui::selection::SelectionState>>,
     }
 
     #[glib::object_subclass]
@@ -201,6 +205,25 @@ impl RowWidget {
     pub fn set_keymap(&self, keymap: SharedKeymap) {
         self.imp().keymap.replace(Some(keymap));
         self.queue_draw();
+    }
+
+    /// Draw the selection's box from `picked`, which the list shares with
+    /// every row.
+    pub fn set_selection(&self, picked: postio_ui::selection::SelectionState) {
+        self.imp().picked.replace(Some(picked));
+        self.queue_draw();
+    }
+
+    /// Whether this row is in the selection: what `a` would archive.
+    pub fn is_picked(&self) -> bool {
+        let Some(id) = self.imp().item.borrow().as_ref().map(FocusRow::id) else {
+            return false;
+        };
+        self.imp()
+            .picked
+            .borrow()
+            .as_ref()
+            .is_some_and(|picked| picked.contains(id))
     }
 
     /// Show what `row` stands for, and follow it as it changes.
@@ -321,8 +344,25 @@ impl RowWidget {
         let bold = summary.has_unread();
         let mut drawn = Drawn {
             bold,
+            picked: self.is_picked(),
             ..Drawn::default()
         };
+        if drawn.picked {
+            // Selected: a neutral ground and a checked box in the gutter,
+            // never the accent, which is the cursor's (FR-091).
+            let height = self.height() as f32;
+            snapshot.append_color(
+                &palette.raised,
+                &graphene::Rect::new(0.0, 0.0, width, height),
+            );
+            self.draw_icon(
+                snapshot,
+                "checkbox-checked-symbolic",
+                GUTTER_CENTRE - ICON / 2.0,
+                middle - ICON / 2.0,
+                &palette.ink,
+            );
+        }
 
         // The trailing column first, from the right edge in, so the middle
         // knows how much room it has: the time, the count, the attachment.
