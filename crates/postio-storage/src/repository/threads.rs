@@ -1761,6 +1761,43 @@ impl<'a> ThreadRepository<'a> {
         arms.join("\n UNION ALL\n")
     }
 
+    /// Which of `messages` are in `mailbox` and still Focus's: not held for
+    /// a digest, not filtered away, not moved since. What a notification
+    /// may be about (FR-153).
+    pub async fn stayed_in_focus(
+        &self,
+        mailbox: MailboxId,
+        messages: &[MessageId],
+    ) -> Result<Vec<MessageId>> {
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut arguments = vec![mailbox.get()];
+        arguments.extend(messages.iter().map(|message| message.get()));
+        sql::all(
+            self.connection,
+            &self.explain_stayed_in_focus(messages.len()),
+            arguments,
+            |row| Ok(MessageId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::stayed_in_focus`] runs over `messages` ids: each by
+    /// its key, asked Focus's membership and for a standing filter decision.
+    pub fn explain_stayed_in_focus(&self, messages: usize) -> String {
+        format!(
+            "SELECT messages.id FROM messages
+              WHERE messages.id IN ({}) AND messages.mailbox_id = ?1 AND {}
+                AND NOT EXISTS (SELECT 1 FROM filter_decisions d
+                                 WHERE d.message_id = messages.id
+                                   AND d.restored_at IS NULL)
+              ORDER BY messages.id",
+            placeholders(messages, 2),
+            Membership::Focus.test("messages.")
+        )
+    }
+
     /// How many rows Focus's inbox has over `inboxes`: one per conversation
     /// each holds, plus one per message there in none, less the rows that
     /// fold into another inbox's -- the rows [`Self::focus_page_at`] walks.

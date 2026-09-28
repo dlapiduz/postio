@@ -1470,3 +1470,56 @@ async fn a_surfaced_conversation_is_its_reminder_row_and_not_listed_twice() {
         "settled, the conversation is a row again"
     );
 }
+
+#[tokio::test]
+async fn which_arrivals_stayed_in_focus_is_one_statement() {
+    // FR-153: Focus never notifies for mail it filtered or held. Of the
+    // messages an arrival names, only those Focus's inbox still lists are
+    // worth one: not a held message, not a filtered one, not one that has
+    // since left the inbox.
+    use postio_storage::repository::{
+        FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason,
+    };
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    let (_, inbox) = inboxes[0];
+    let weir = id_of(&connection, "<weir@example.com>").await;
+    let sluice = id_of(&connection, "<sluice@example.com>").await;
+    let lock = id_of(&connection, "<lock@example.com>").await;
+    DigestRepository::new(&connection)
+        .hold(weir, "Newsletters", at(20))
+        .await
+        .expect("held");
+    FilterDecisionRepository::new(&connection)
+        .record(&FilterDecision {
+            message: sluice,
+            reason: FilterReason::Promotion,
+            source: None,
+            layer: FilterLayer::Header,
+            decided_at: at(20),
+        })
+        .await
+        .expect("filtered");
+    let threads = ThreadRepository::new(&connection);
+    let named = [weir, sluice, lock];
+    let _ = threads.stayed_in_focus(inbox, &named).await.expect("warm");
+    let mut stayed = Vec::new();
+    let counts = counted_async(|| async {
+        stayed = threads
+            .stayed_in_focus(inbox, &named)
+            .await
+            .expect("a read");
+    })
+    .await;
+    assert_eq!(stayed, [lock], "held and filtered mail are no arrival");
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    assert!(
+        scans(&connection, &threads.explain_stayed_in_focus(3))
+            .await
+            .is_empty(),
+        "sought by id"
+    );
+}

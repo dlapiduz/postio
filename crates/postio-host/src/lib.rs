@@ -483,6 +483,45 @@ impl Host {
         async move { deciding.await.ok().flatten() }
     }
 
+    /// [`Host::notification`], for Focus: only about the arrivals Focus's
+    /// inbox still lists, never mail it filtered or held (FR-153). `None`
+    /// when none of them stayed.
+    pub fn focus_notification(
+        &self,
+        mailbox: postio_model::MailboxId,
+        messages: Vec<postio_model::MessageId>,
+        attention: postio_ui::notify::Attention,
+    ) -> impl std::future::Future<Output = Option<postio_ui::notify::Notification>> + Send + 'static
+    {
+        let inner = Arc::clone(&self.inner);
+        let deciding = self.inner.runtime().spawn(async move {
+            let stayed = async {
+                let reader = inner.wiring.database.read().await?;
+                postio_storage::repository::ThreadRepository::new(&reader)
+                    .stayed_in_focus(mailbox, &messages)
+                    .await
+            };
+            let stayed = stayed.await.unwrap_or_else(|error| {
+                tracing::warn!(%error, "could not read which arrivals stayed in Focus");
+                Vec::new()
+            });
+            if stayed.is_empty() {
+                return None;
+            }
+            let config = inner.notify.lock().expect("never poisoned").clone();
+            notify::decide_arrival(
+                &inner.wiring.database,
+                inner.wiring.store.as_ref(),
+                &config,
+                mailbox,
+                &stayed,
+                attention,
+            )
+            .await
+        });
+        async move { deciding.await.ok().flatten() }
+    }
+
     /// The verbs each frontend's dispatcher answers, for a frontend that
     /// filters its gestures by them as the desktop's window does.
     pub fn wired(&self) -> Vec<postio_core::CommandId> {
