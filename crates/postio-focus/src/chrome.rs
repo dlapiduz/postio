@@ -286,6 +286,11 @@ impl Chrome {
         self.sync_icon.set_icon_name(Some(icon));
     }
 
+    /// What the sync label says.
+    pub fn sync_said(&self) -> String {
+        self.sync.text().to_string()
+    }
+
     /// Whether the has-action filter is on, and what the toggle and the
     /// strip say about it.
     pub fn set_has_action(&self, on: bool, label: &str, showing: Option<&str>) {

@@ -190,6 +190,39 @@ focusdayheading {
   color: var(--postio-ink-secondary);
 }
 
+/* ── The banner slot (42 px when shown; screens 17-19) ─────────────── */
+/* One AdwBanner, re-dressed: its own ground is a tint of the accent, and the
+   accent is reserved (FR-091). A neutral ground, or the error colour at low
+   opacity for a refused password. */
+banner.focus-banner > revealer > widget {
+  min-height: 42px;
+  background-color: var(--postio-raised-bg);
+  color: var(--postio-ink);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+banner.focus-banner-error > revealer > widget {
+  background-color: color-mix(in srgb, var(--postio-error) 12%, transparent);
+}
+
+banner.focus-banner button {
+  border: 1px solid var(--postio-hairline-strong);
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+  font-weight: bold;
+}
+
+/* The first sync's progress: a neutral bar, not the accent's fill. */
+.focus-banner-progress > trough {
+  min-height: 3px;
+  background-color: var(--postio-hairline);
+}
+
+.focus-banner-progress > trough > progress {
+  min-height: 3px;
+  background-color: var(--postio-ink-secondary);
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

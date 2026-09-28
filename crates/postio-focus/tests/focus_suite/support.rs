@@ -113,6 +113,25 @@ impl Fixture {
 
     /// A host over this store, started as Focus's startup starts one once
     /// the store is open: in this process, with its own runtime.
+    /// A host over the fixture's store, and the sink its events go out
+    /// through: the seam a case says what sync did with, as the engine
+    /// would, with no server behind it.
+    pub fn host_telling(&self) -> (Host, postio_core::bridge::EventSink) {
+        let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
+            .expect("a blob store");
+        let sink = std::rc::Rc::new(RefCell::new(None));
+        let host = Host::start(self.database.clone(), blobs, {
+            let sink = std::rc::Rc::clone(&sink);
+            move |wiring| {
+                sink.replace(Some(wiring.events.clone()));
+                wiring
+            }
+        })
+        .expect("a host");
+        let sink = sink.take().expect("the wiring's events");
+        (host, sink)
+    }
+
     pub fn host(&self) -> Host {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");

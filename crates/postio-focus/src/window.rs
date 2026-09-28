@@ -82,6 +82,18 @@ mod imp {
         /// A message to put the cursor back on once the list it is changing
         /// to has landed: `!` keeps the cursor on the same message.
         pub keep: Cell<Option<MessageId>>,
+        /// Where each account stands with its server, as sync has said.
+        pub trackers: RefCell<postio_ui::status::Trackers>,
+        /// The accounts sync has spoken about. Only those: a tracker says
+        /// `Offline` for an account it has heard nothing of, which is not
+        /// the same as the machine having no network.
+        pub tracked: RefCell<Vec<AccountId>>,
+        /// What the sign-in banner names for each account.
+        pub facts: RefCell<Vec<postio_ui::focus_state::AccountFacts>>,
+        /// When mail last finished arriving, in any account.
+        pub last_synced: Cell<Option<chrono::DateTime<chrono::Utc>>>,
+        /// The banner slot under the header strip.
+        pub state_banner: RefCell<Option<Rc<crate::banner::StateBanner>>>,
     }
 
     impl Default for FocusWindow {
@@ -110,6 +122,11 @@ mod imp {
                 has_action: Cell::default(),
                 counts: Cell::default(),
                 keep: Cell::default(),
+                trackers: RefCell::default(),
+                tracked: RefCell::default(),
+                facts: RefCell::default(),
+                last_synced: Cell::default(),
+                state_banner: RefCell::default(),
             }
         }
     }
@@ -347,6 +364,7 @@ impl FocusWindow {
             CommandId::Undo => self.post(Command::Undo),
             CommandId::ToggleHasAction => self.toggle_has_action(),
             CommandId::Quit => self.close(),
+            CommandId::Refresh => self.post(Command::Refresh),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -629,10 +647,23 @@ impl FocusWindow {
             self,
             move |id| window.act(id)
         ));
-        chrome.set_sync("Not synced yet", "emblem-synchronizing-symbolic");
         imp.inbox.append(chrome.top_bar());
         imp.inbox.append(chrome.strip());
         imp.chrome.replace(Some(Rc::clone(&chrome)));
+        let state_banner = crate::banner::StateBanner::new();
+        state_banner.connect_action(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |action| window.act(match action {
+                postio_ui::focus_state::BannerAction::Retry => CommandId::Refresh,
+                postio_ui::focus_state::BannerAction::UpdatePassword => {
+                    CommandId::UpdateCredential
+                }
+            })
+        ));
+        imp.inbox.append(state_banner.widget());
+        imp.state_banner.replace(Some(state_banner));
+        self.show_state();
         self.set_keymap(keymap);
         let feed = Feed::new(client.clone());
         feed.connect_filled(glib::clone!(
@@ -662,14 +693,46 @@ impl FocusWindow {
             #[strong]
             client,
             async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+                // answers on its own runtime (ADR 0041).
                 if let Ok(accounts) = client.accounts().await {
-                    window.imp().accounts.replace(
-                        accounts
+                    let enabled: Vec<&postio_model::Account> =
+                        accounts.iter().filter(|account| account.enabled).collect();
+                    window
+                        .imp()
+                        .accounts
+                        .replace(enabled.iter().map(|account| account.id).collect());
+                    window.imp().facts.replace(
+                        enabled
                             .iter()
-                            .filter(|account| account.enabled)
-                            .map(|account| account.id)
+                            .map(|account| postio_ui::focus_state::AccountFacts {
+                                id: account.id,
+                                server: account.incoming.host.clone(),
+                                address: account.address.address.clone(),
+                            })
                             .collect(),
                     );
+                    // When mail last arrived, from before this run: the
+                    // newest folder's last completed sync.
+                    let mut last = None;
+                    for account in &enabled {
+                        use postio_model::listing::MailStore as _;
+                        // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+                        // answers on its own runtime (ADR 0041).
+                        let read = client.mailboxes(account.id).await;
+                        if let Ok(mailboxes) = read {
+                            last = last.max(
+                                mailboxes
+                                    .iter()
+                                    .filter_map(|mailbox| mailbox.last_synced_at)
+                                    .max(),
+                            );
+                        }
+                    }
+                    if window.imp().last_synced.get().is_none() {
+                        window.imp().last_synced.set(last);
+                    }
+                    window.show_state();
                 }
             }
         ));
@@ -829,9 +892,70 @@ impl FocusWindow {
             }
             _ => {}
         }
+        self.hear_sync(event);
         if let Some(pane) = self.imp().pane.borrow().as_ref() {
             pane.feed().handle(event);
         }
+    }
+
+    /// What sync said about an account: the banner and the label follow.
+    fn hear_sync(&self, event: &postio_core::Event) {
+        use postio_core::Event;
+        let imp = self.imp();
+        if let Event::ConnectionChanged { account, .. }
+        | Event::SyncProgress { account, .. }
+        | Event::BackfillProgress { account, .. } = event
+        {
+            self.note_account(*account);
+        }
+        if !imp.trackers.borrow_mut().apply(event, None) {
+            return;
+        }
+        if let Event::SyncProgress { done, total, .. } = event
+            && done >= total
+        {
+            imp.last_synced.set(Some(chrono::Utc::now()));
+        }
+        self.show_state();
+    }
+
+    /// Follow `account`'s sync state from here on.
+    fn note_account(&self, account: AccountId) {
+        let mut tracked = self.imp().tracked.borrow_mut();
+        if !tracked.contains(&account) {
+            tracked.push(account);
+        }
+    }
+
+    /// Draw the banner and the sync label for where every account stands.
+    fn show_state(&self) {
+        let imp = self.imp();
+        let statuses = imp.trackers.borrow().statuses(&imp.tracked.borrow());
+        let banner = postio_ui::focus_state::banner(&statuses, &imp.facts.borrow());
+        if let Some(slot) = imp.state_banner.borrow().as_ref() {
+            slot.show(banner.as_ref());
+        }
+        let label = postio_ui::focus_state::sync_label_here(&statuses, imp.last_synced.get());
+        if let Some(chrome) = imp.chrome.borrow().as_ref() {
+            chrome.set_sync(&label.text, label.icon);
+        }
+    }
+
+    /// The banner under the strip, while one shows: what it says, its
+    /// button's label, and the first sync's progress.
+    pub fn banner_showing(&self) -> Option<(String, Option<String>, Option<f64>)> {
+        self.imp()
+            .state_banner
+            .borrow()
+            .as_ref()
+            .and_then(|slot| slot.showing())
+    }
+
+    /// What the top bar's sync label says.
+    pub fn sync_said(&self) -> String {
+        self.chrome()
+            .map(|chrome| chrome.sync_said())
+            .unwrap_or_default()
     }
 
     /// The list pane, once the inbox is showing.

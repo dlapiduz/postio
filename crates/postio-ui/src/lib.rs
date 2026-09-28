@@ -21,6 +21,7 @@ pub mod editor;
 pub mod finder;
 pub mod focus;
 pub mod focus_row;
+pub mod focus_state;
 pub mod format;
 pub mod hints;
 pub mod keymap;

@@ -33,6 +33,7 @@ mod rows;
 mod selection;
 mod shot;
 mod starts_offline;
+mod state;
 mod support;
 mod undo;
 mod visible_window;
@@ -45,6 +46,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "state::each_sync_state_shows_its_banner_and_label",
+        state::each_sync_state_shows_its_banner_and_label as fn(),
+    ),
     (
         "rows::the_inbox_opens_with_its_first_heading_on_screen",
         rows::the_inbox_opens_with_its_first_heading_on_screen as fn(),

@@ -8,6 +8,7 @@
 //! the same startup the binary runs.
 
 pub mod app;
+pub mod banner;
 pub mod bulk;
 pub mod chrome;
 pub mod keys;
