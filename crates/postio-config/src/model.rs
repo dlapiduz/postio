@@ -19,6 +19,109 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
+use crate::Extras;
+
+/// `[focus.model]`: the person's own model, as they named it (spec 007
+/// FR-165 to FR-169, contracts/config.md).
+///
+/// ```toml
+/// [focus.model]
+/// endpoint = "http://127.0.0.1:11434/v1"   # this computer only
+/// model    = "a-small-model"               # whatever the runtime serves
+/// needs_action   = true                    # questions and to-dos (FR-107)
+/// digest_summary = true                    # digest summaries (FR-172)
+/// like_this      = true                    # "Digest mail like this" (FR-171)
+/// ```
+///
+/// **Absent means off** (FR-166): with no section there is nothing to
+/// connect to, and Postio looks for no runtime. A section that cannot be
+/// used -- no endpoint, no model, or an endpoint on another computer -- is
+/// reported by validation and used by no feature, and the file still loads.
+/// Which runtime and model are the person's to say; none is named in code
+/// (FR-169).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FocusModel {
+    /// Where the runtime listens: a loopback address or a local socket
+    /// ([`ModelEndpoint::parse`]).
+    #[serde(default)]
+    pub endpoint: String,
+    /// The model's name, as the runtime serves it.
+    #[serde(default)]
+    pub model: String,
+    /// Ask the model the needs-action question, in place of the built-in
+    /// detector (FR-107).
+    #[serde(default = "crate::yes")]
+    pub needs_action: bool,
+    /// Have the model write digest summaries (FR-172).
+    #[serde(default = "crate::yes")]
+    pub digest_summary: bool,
+    /// Offer "Digest mail like this" (FR-171).
+    #[serde(default = "crate::yes")]
+    pub like_this: bool,
+    /// Keys in `[focus.model]` this version of Postio does not know.
+    #[serde(flatten)]
+    pub extras: Extras,
+}
+
+/// One of the things the model can be used for, each with its own switch
+/// (FR-166).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModelFeature {
+    /// Questions and to-dos (`needs_action`).
+    NeedsAction,
+    /// Digest summaries (`digest_summary`).
+    DigestSummary,
+    /// "Digest mail like this" (`like_this`).
+    LikeThis,
+}
+
+impl ModelFeature {
+    /// Every feature.
+    pub const ALL: [ModelFeature; 3] = [
+        ModelFeature::NeedsAction,
+        ModelFeature::DigestSummary,
+        ModelFeature::LikeThis,
+    ];
+}
+
+/// Why a `[focus.model]` section cannot be used, for validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelProblem {
+    /// It names no endpoint.
+    NoEndpoint,
+    /// It names no model.
+    NoModel,
+    /// Its endpoint is not on this computer, or not an address.
+    Refused(EndpointRefused),
+}
+
+impl FocusModel {
+    /// Whether `feature`'s switch is on.
+    pub fn switched_on(&self, feature: ModelFeature) -> bool {
+        match feature {
+            ModelFeature::NeedsAction => self.needs_action,
+            ModelFeature::DigestSummary => self.digest_summary,
+            ModelFeature::LikeThis => self.like_this,
+        }
+    }
+
+    /// The endpoint and model the section names, or what stops it being
+    /// used.
+    pub fn usable(&self) -> Result<(ModelEndpoint, &str), ModelProblem> {
+        if self.endpoint.trim().is_empty() {
+            return Err(ModelProblem::NoEndpoint);
+        }
+        let endpoint = ModelEndpoint::parse(&self.endpoint).map_err(ModelProblem::Refused)?;
+        let model = self.model.trim();
+        if model.is_empty() {
+            return Err(ModelProblem::NoModel);
+        }
+        Ok((endpoint, model))
+    }
+}
+
 /// The base address of the person's model runtime, known to be on this
 /// computer (FR-168).
 #[derive(Debug, Clone, PartialEq, Eq)]

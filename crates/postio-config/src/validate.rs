@@ -227,6 +227,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_never(config, &map, errors);
         check_stop_markers(config, &map, errors);
         check_digests(config, &map, errors);
+        check_model(config, &map, errors);
     }
     config
 }
@@ -665,6 +666,39 @@ fn check_digests(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationEr
             );
         }
     }
+}
+
+/// `[focus.model]` (spec 007 T152, contracts/config.md): a section that
+/// names no endpoint or no model, or an endpoint that is not on this
+/// computer, with the reason. Semantic: the section is used by no feature,
+/// and the rest of the file applies.
+fn check_model(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    let Some(model) = &config.focus.model else {
+        return;
+    };
+    let (path, at_value, message) = match model.usable() {
+        Ok(_) => return,
+        Err(crate::ModelProblem::NoEndpoint) => (
+            "focus.model".to_owned(),
+            false,
+            "`[focus.model]` names no `endpoint`, so no model is used; give the address the \
+             runtime listens on, such as `http://127.0.0.1:11434/v1`"
+                .to_owned(),
+        ),
+        Err(crate::ModelProblem::NoModel) => (
+            "focus.model".to_owned(),
+            false,
+            "`[focus.model]` names no `model`, so no model is used; give the name the \
+             runtime serves it by"
+                .to_owned(),
+        ),
+        Err(crate::ModelProblem::Refused(refused)) => (
+            "focus.model.endpoint".to_owned(),
+            true,
+            format!("`[focus.model]`: {refused}, so no model is used"),
+        ),
+    };
+    push(errors, map, path, at_value, message);
 }
 
 fn and_list(items: &[&str]) -> String {

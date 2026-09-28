@@ -753,3 +753,103 @@ fn a_stop_marker_with_no_sender_or_an_unknown_kind_is_reported_by_its_place() {
         );
     }
 }
+
+// --------------------------------------------------------- [focus.model] --
+//
+// Spec 007 T152, contracts/config.md: the person's own model, off unless the
+// section is there. Its endpoint must be on this computer, and anything else
+// is reported with the reason; a section that cannot be used names no model
+// for any feature, and the file still loads.
+
+const MODEL: &str = r#"[focus.model]
+endpoint = "http://127.0.0.1:11434/v1"
+model    = "a-small-model"
+"#;
+
+#[test]
+fn no_model_section_names_no_model_for_any_feature() {
+    // SC-016's first half at the config: absent means off, and nothing in
+    // the file points anywhere.
+    let checked = check("[focus]\nfiltering = true\n");
+    assert!(checked.validation.is_valid());
+    let config = checked.config.expect("a config");
+    assert_eq!(config.focus.model, None);
+    for feature in postio_config::ModelFeature::ALL {
+        assert!(config.focus.model_for(feature).is_none(), "{feature:?}");
+    }
+}
+
+#[test]
+fn a_model_section_names_the_model_for_each_feature_it_leaves_on() {
+    let checked = check(MODEL);
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+    let config = checked.config.expect("a config");
+    for feature in postio_config::ModelFeature::ALL {
+        let (endpoint, model) = config.focus.model_for(feature).expect("switched on");
+        assert_eq!(model, "a-small-model");
+        assert_eq!(endpoint.authority(), "127.0.0.1:11434");
+    }
+
+    let off = check(&format!("{MODEL}needs_action = false\nlike_this = false\n"))
+        .config
+        .expect("a config");
+    use postio_config::ModelFeature::{DigestSummary, LikeThis, NeedsAction};
+    assert!(off.focus.model_for(NeedsAction).is_none());
+    assert!(off.focus.model_for(LikeThis).is_none());
+    assert!(off.focus.model_for(DigestSummary).is_some());
+}
+
+#[test]
+fn an_endpoint_on_another_computer_is_refused_and_says_why() {
+    let text = MODEL.replace("127.0.0.1", "192.0.2.7");
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (path, message) = &found[0];
+    assert_eq!(path, "focus.model.endpoint");
+    assert!(
+        message.contains("the model must run on this computer"),
+        "{message}"
+    );
+    let config = check(&text).config.expect("the file still loads");
+    for feature in postio_config::ModelFeature::ALL {
+        assert!(
+            config.focus.model_for(feature).is_none(),
+            "a refused endpoint is used by no feature"
+        );
+    }
+}
+
+#[test]
+fn a_model_section_with_no_endpoint_or_no_model_is_reported() {
+    let found = errors("[focus.model]\nmodel = \"a-small-model\"\n");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "focus.model");
+    assert!(found[0].1.contains("endpoint"), "{}", found[0].1);
+
+    let found = errors("[focus.model]\nendpoint = \"http://localhost:8080/v1\"\n");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "focus.model");
+    assert!(found[0].1.contains("model"), "{}", found[0].1);
+    let config = check("[focus.model]\nendpoint = \"http://localhost:8080/v1\"\n")
+        .config
+        .expect("a config");
+    assert!(
+        config
+            .focus
+            .model_for(postio_config::ModelFeature::NeedsAction)
+            .is_none()
+    );
+}
+
+#[test]
+fn a_model_section_keeps_what_this_version_does_not_know() {
+    let config = check(&format!("{MODEL}temperature = 0.2\n"))
+        .config
+        .expect("a config");
+    let model = config.focus.model.expect("the section");
+    assert!(model.extras.contains_key("temperature"));
+}

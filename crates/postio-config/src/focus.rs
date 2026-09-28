@@ -46,6 +46,9 @@ pub struct FocusConfig {
     /// `[[focus.digests]]`, in the file's order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub digests: Vec<DigestRule>,
+    /// `[focus.model]`: the person's own model, off unless present (FR-166).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::model::FocusModel>,
     /// Keys in `[focus]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
@@ -57,6 +60,7 @@ impl Default for FocusConfig {
             filtering: true,
             filter: FocusFilter::default(),
             digests: Vec::new(),
+            model: None,
             extras: Extras::default(),
         }
     }
@@ -327,6 +331,20 @@ impl DigestRule {
 }
 
 impl FocusConfig {
+    /// The model to ask for `feature`, and its endpoint: `None` unless
+    /// `[focus.model]` is present, usable, and has `feature`'s switch on.
+    /// Reading it connects to nothing and looks nothing up (FR-166).
+    pub fn model_for(
+        &self,
+        feature: crate::model::ModelFeature,
+    ) -> Option<(crate::model::ModelEndpoint, &str)> {
+        let model = self.model.as_ref()?;
+        if !model.switched_on(feature) {
+            return None;
+        }
+        model.usable().ok()
+    }
+
     /// The rules that apply, in the file's order, with when each comes due.
     ///
     /// A rule validation reports is left out and the others still apply
