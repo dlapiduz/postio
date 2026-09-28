@@ -333,3 +333,107 @@ pub fn during_a_first_sync_what_has_arrived_is_listed() {
 fn counts(window: &postio_focus::window::FocusWindow) -> String {
     support::texts(&support::only(window, "focus-counts")).join(" ")
 }
+
+/// US6 scenario 1, the label and search halves (T053): with no network, a
+/// label chosen in the picker is on the row at once and waits in the queue
+/// for sync, and the command bar finds mail from this machine's index.
+pub fn offline_a_label_shows_at_once_and_queues_and_search_answers() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        fixture
+            .file(("Lena Park", "lena@example.org"), "Draft", "Comments.", 9)
+            .await;
+        fixture.index().await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        assert!(sink.emit(Event::ConnectionChanged {
+            account: fixture.account.id,
+            state: ConnectionState::Offline,
+        }));
+        assert!(
+            crate::settle_until(async || window.sync_said() == "Offline").await,
+            "the window never heard it was offline"
+        );
+
+        // `l` on Budget, a new label typed, and Enter: made and applied.
+        support::keys(&window, &["j", "l"]);
+        let picker = window.open_picker().expect("l opened the label picker");
+        assert!(crate::settle_until(async || picker.is_shown()).await);
+        picker.entry().set_text("Receipts");
+        assert!(
+            crate::settle_until(async || picker
+                .texts()
+                .iter()
+                .any(|line| line == "Create label \u{201c}Receipts\u{201d}"))
+            .await,
+            "no Create label row: {:?}",
+            picker.texts()
+        );
+        picker.entry().emit_activate();
+        let pills = || {
+            window
+                .pane()
+                .map(|pane| {
+                    pane.rows_on_screen()
+                        .iter()
+                        .filter(|row| {
+                            row.item().is_some_and(|item| {
+                                item.row().summary.representative.subject.as_deref()
+                                    == Some("Budget")
+                            })
+                        })
+                        .flat_map(|row| row.drawn().pills)
+                        .map(|(name, _)| name)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        assert!(
+            crate::settle_until(async || pills() == ["Receipts"]).await,
+            "offline, the label is not on the row at once: {:?}",
+            pills()
+        );
+        let connection = fixture.database.connect().await.expect("a connection");
+        let queued = postio_storage::repository::OperationQueueRepository::new(&connection)
+            .pending(fixture.account.id, chrono::Utc::now())
+            .await
+            .expect("the queue reads");
+        assert_eq!(
+            queued.len(),
+            1,
+            "the label waits in the queue for sync: {queued:?}"
+        );
+
+        // `/` and a query: answered here, with the network gone.
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opened the bar");
+        bar.set_text("from:lena");
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Draft"]).await,
+            "offline, the bar found nothing: {:?}",
+            bar.result_subjects()
+        );
+        assert!(
+            window
+                .banner_showing()
+                .is_some_and(|(title, ..)| title.starts_with("You're offline")),
+            "the offline banner stays while the change waits"
+        );
+    });
+}

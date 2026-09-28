@@ -325,6 +325,10 @@ const CASES: &[(&str, fn())] = &[
         state::offline_an_archive_takes_effect_at_once_and_queues as fn(),
     ),
     (
+        "state::offline_a_label_shows_at_once_and_queues_and_search_answers",
+        state::offline_a_label_shows_at_once_and_queues_and_search_answers as fn(),
+    ),
+    (
         "state::each_sync_state_shows_its_banner_and_label",
         state::each_sync_state_shows_its_banner_and_label as fn(),
     ),
