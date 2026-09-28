@@ -243,6 +243,37 @@ banner.focus-banner button {
   color: var(--postio-ink);
 }
 
+/* ── The key map (screen 20) ─────────────────────────────────────────── */
+.focus-keymap {
+  padding: var(--postio-space-6) var(--postio-space-6) var(--postio-space-4);
+}
+
+.focus-keymap-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-title);
+  color: var(--postio-ink);
+}
+
+.focus-keymap-group-title {
+  font-weight: bold;
+  color: var(--postio-ink);
+  margin-bottom: var(--postio-space-2);
+}
+
+.focus-keymap-row {
+  min-height: 30px;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-keymap-title {
+  color: var(--postio-ink);
+}
+
+.focus-keymap-footer {
+  padding-top: var(--postio-space-3);
+  border-top: 1px solid var(--postio-hairline);
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

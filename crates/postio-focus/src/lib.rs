@@ -12,6 +12,7 @@ pub mod banner;
 pub mod bulk;
 pub mod chrome;
 pub mod empty;
+pub mod keymap_dialog;
 pub mod keys;
 pub mod list;
 pub mod startup;

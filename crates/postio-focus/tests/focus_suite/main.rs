@@ -28,6 +28,7 @@ mod cursor;
 mod empty;
 mod harness;
 mod has_action;
+mod keymap;
 mod list_contract;
 mod marked_rows;
 mod rows;
@@ -47,6 +48,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "keymap::every_key_the_key_map_shows_runs_its_command",
+        keymap::every_key_the_key_map_shows_runs_its_command as fn(),
+    ),
     (
         "empty::with_filtering_the_empty_inbox_counts_what_was_filtered_today",
         empty::with_filtering_the_empty_inbox_counts_what_was_filtered_today as fn(),

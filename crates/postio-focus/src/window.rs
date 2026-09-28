@@ -34,6 +34,8 @@ const UNAVAILABLE: &str = "unavailable";
 const INBOX: &str = "inbox";
 /// The inbox's list, and the empty inbox in its place.
 const LIST: &str = "list";
+/// The key map dialog's name, so it can be told from another dialog.
+const KEY_MAP: &str = "focus-key-map";
 const EMPTY: &str = "empty";
 
 mod imp {
@@ -316,6 +318,23 @@ impl FocusWindow {
                 std::time::Instant::now(),
             )
         };
+        // A dialog over the window has the keyboard: only the keys that
+        // close it are the window's, and the rest go on to the dialog
+        // rather than moving the list underneath.
+        if let Some(dialog) = self.visible_dialog() {
+            return match outcome {
+                Outcome::Command(id)
+                    if matches!(
+                        id.parse::<CommandId>(),
+                        Ok(CommandId::CheatSheet | CommandId::Back)
+                    ) =>
+                {
+                    dialog.close();
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            };
+        }
         match outcome {
             Outcome::Command(id) => match id.parse::<CommandId>() {
                 Ok(id) => {
@@ -377,6 +396,7 @@ impl FocusWindow {
             CommandId::ToggleHasAction => self.toggle_has_action(),
             CommandId::Quit => self.close(),
             CommandId::Refresh => self.post(Command::Refresh),
+            CommandId::CheatSheet => self.show_key_map(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -1021,6 +1041,19 @@ impl FocusWindow {
         self.chrome()
             .map(|chrome| chrome.sync_said())
             .unwrap_or_default()
+    }
+
+    /// `?`: the key map, over the window (screen 20).
+    fn show_key_map(&self) {
+        let dialog = crate::keymap_dialog::build(&self.keymap());
+        dialog.set_widget_name(KEY_MAP);
+        dialog.present(Some(self));
+    }
+
+    /// The key map, while it is open.
+    pub fn key_map(&self) -> Option<adw::Dialog> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == KEY_MAP)
     }
 
     /// The list pane, once the inbox is showing.

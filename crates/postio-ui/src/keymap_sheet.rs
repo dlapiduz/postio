@@ -256,3 +256,128 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::RenderPartOnce => None,
     }
 }
+
+/// One row of the key map: the command, its registry title, and every key
+/// the keymap in force binds it to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyMapRow {
+    /// The command.
+    pub command: CommandId,
+    /// What the registry calls it.
+    pub title: &'static str,
+    /// Its keys, the default first, as `[keys]` spells them.
+    pub keys: Vec<String>,
+}
+
+/// Focus's key map under `keymap`: each group with a row, in the key map's
+/// order, and in each group the commands Focus offers in the key map's
+/// contexts, in the registry's order. A group with no rows is left out, so
+/// Obsidian appears when its commands do (spec C9).
+pub fn key_map(keymap: &postio_core::Keymap) -> Vec<(Group, Vec<KeyMapRow>)> {
+    let shown = postio_core::ContextSet::from_slice(KEY_MAP_CONTEXTS);
+    let mut rows: Vec<(Group, KeyMapRow)> = postio_core::registry::all()
+        .filter(|spec| spec.requires.offered_by(postio_core::Frontend::Focus))
+        .filter(|spec| spec.contexts.intersects(shown))
+        .filter_map(|spec| {
+            Some((
+                group(spec.id)?,
+                KeyMapRow {
+                    command: spec.id,
+                    title: spec.title,
+                    keys: keymap.bindings(spec.id).to_vec(),
+                },
+            ))
+        })
+        .collect();
+    Group::ALL
+        .iter()
+        .filter_map(|group| {
+            let (in_group, rest): (Vec<_>, Vec<_>) =
+                rows.drain(..).partition(|(of, _)| of == group);
+            rows = rest;
+            let in_group: Vec<KeyMapRow> = in_group.into_iter().map(|(_, row)| row).collect();
+            (!in_group.is_empty()).then_some((*group, in_group))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use postio_core::{Frontend, Keymap, registry};
+
+    use super::*;
+
+    #[test]
+    fn every_row_shows_the_keys_the_keymap_binds() {
+        let keymap = Keymap::defaults();
+        let map = key_map(keymap);
+        assert!(!map.is_empty(), "the key map has groups");
+        for (_, rows) in &map {
+            for row in rows {
+                assert_eq!(
+                    row.keys,
+                    keymap.bindings(row.command).to_vec(),
+                    "{} shows the keymap's keys",
+                    row.title
+                );
+            }
+        }
+        let archive = map
+            .iter()
+            .flat_map(|(_, rows)| rows)
+            .find(|row| row.command == CommandId::Archive)
+            .expect("archive is in the key map");
+        assert_eq!(archive.title, "Archive");
+        assert_eq!(archive.keys, ["a"]);
+    }
+
+    #[test]
+    fn a_rebind_reaches_the_key_map() {
+        let config =
+            postio_config::Config::from_toml_str("[keys]\narchive = \"w\"\n").expect("a config");
+        let keymap = postio_core::Keymap::resolve(&config.keys);
+        let map = key_map(&keymap);
+        let archive = map
+            .iter()
+            .flat_map(|(_, rows)| rows)
+            .find(|row| row.command == CommandId::Archive)
+            .expect("archive is in the key map");
+        assert_eq!(archive.keys, ["w"]);
+    }
+
+    #[test]
+    fn the_groups_come_in_order_and_hold_only_what_focus_offers() {
+        let map = key_map(Keymap::defaults());
+        let order: Vec<Group> = map.iter().map(|(group, _)| *group).collect();
+        let mut expected: Vec<Group> = Group::ALL.to_vec();
+        expected.retain(|group| order.contains(group));
+        assert_eq!(order, expected, "the key map's own order");
+        assert!(
+            !order.contains(&Group::Obsidian),
+            "no Obsidian group before its commands exist"
+        );
+        for (group, rows) in &map {
+            assert!(!rows.is_empty(), "{group:?} has rows");
+            for row in rows {
+                let spec = registry::spec(row.command.into()).expect("a registered command");
+                assert!(
+                    spec.requires.offered_by(Frontend::Focus),
+                    "{} is not Focus's",
+                    row.title
+                );
+                assert_eq!(super::group(row.command), Some(*group));
+            }
+        }
+        let rows: Vec<CommandId> = map
+            .iter()
+            .flat_map(|(_, rows)| rows.iter().map(|row| row.command))
+            .collect();
+        assert!(!rows.contains(&CommandId::Flag), "a three-pane verb");
+        assert!(
+            !rows.contains(&CommandId::Send),
+            "the composer teaches its own"
+        );
+        assert!(rows.contains(&CommandId::ToggleHasAction));
+        assert!(rows.contains(&CommandId::Undo));
+    }
+}
