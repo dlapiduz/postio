@@ -274,9 +274,10 @@ impl Chrome {
         caps_for(&self.has_action_key, keymap, CommandId::ToggleHasAction);
     }
 
-    /// The counts the strip shows: the conversations in view.
-    pub fn set_counts(&self, conversations: u32) {
-        self.counts.set_text(&conversations.to_string());
+    /// The counts the strip shows: the conversations and the unread.
+    pub fn set_counts(&self, conversations: u32, unread: u32) {
+        self.counts
+            .set_text(&postio_ui::focus_row::strip_counts(conversations, unread));
     }
 
     /// What the sync label says, and its icon.

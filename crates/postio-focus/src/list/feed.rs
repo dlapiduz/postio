@@ -140,10 +140,12 @@ impl Feed {
             inner.total.set(total);
             let source: Rc<dyn PageSource> = Rc::new(Source(Rc::clone(&inner)));
             inner.list.replace_source(source, false);
-            if total == 0 {
-                inner.landed.set(true);
-                inner.filled();
-            }
+            // Asked for here rather than left to the view: rows already on
+            // screen stay until this page lands and the list changes over,
+            // and nothing else would ask for it (the classic feed's rule).
+            // An empty scope's first page is empty, which is the change-over
+            // to nothing.
+            Rc::clone(&inner).request(0);
         });
     }
 

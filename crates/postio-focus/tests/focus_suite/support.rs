@@ -342,8 +342,9 @@ pub fn subjects(window: &postio_focus::window::FocusWindow) -> Vec<String> {
 
 impl Fixture {
     /// Five conversations in the inbox, "First" the newest, "Fifth" the
-    /// oldest, and a window open over them.
-    pub async fn five(&self) -> (postio_focus::window::FocusWindow, postio_client::Client) {
+    /// oldest. Answers their messages, in that order.
+    pub async fn file_five(&self) -> Vec<MessageId> {
+        let mut filed = Vec::new();
         for (subject, minutes) in [
             ("First", 10),
             ("Second", 20),
@@ -351,14 +352,27 @@ impl Fixture {
             ("Fourth", 40),
             ("Fifth", 50),
         ] {
-            self.file(
-                ("Ada Moreno", "ada@example.com"),
-                subject,
-                "A line of text.",
-                minutes,
-            )
-            .await;
+            let (message, _) = self
+                .file(
+                    ("Ada Moreno", "ada@example.com"),
+                    subject,
+                    "A line of text.",
+                    minutes,
+                )
+                .await;
+            filed.push(message);
         }
+        filed
+    }
+
+    /// [`Self::file_five`], and a window open over them.
+    pub async fn five(&self) -> (postio_focus::window::FocusWindow, postio_client::Client) {
+        self.file_five().await;
+        self.open_five().await
+    }
+
+    /// A window open over five conversations already filed.
+    pub async fn open_five(&self) -> (postio_focus::window::FocusWindow, postio_client::Client) {
         let (window, client) = self.open().await;
         assert!(
             crate::settle_until(async || subjects(&window).len() == 5).await,

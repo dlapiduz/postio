@@ -47,6 +47,9 @@ mod imp {
     #[derive(Default)]
     pub struct FocusList {
         pub core: Windowed<super::RowObject>,
+        /// One heading over the whole list instead of a day's, while a
+        /// filter is on: "Has action · 7" (screen 03).
+        pub single: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
@@ -199,6 +202,9 @@ impl FocusList {
         if position >= total {
             return (total, u32::MAX);
         }
+        if self.imp().single.borrow().is_some() {
+            return (0, total);
+        }
         let window = self.windowed().window();
         let day_at = |at: u32| window.resident_at(at).and_then(RowObject::day);
         let day = day_at(position);
@@ -221,6 +227,18 @@ impl FocusList {
             end += 1;
         }
         (start, end)
+    }
+
+    /// Put one heading over the whole list -- a filter's, "Has action · 7"
+    /// -- or, with `None`, go back to a heading a day.
+    pub fn set_single_heading(&self, heading: Option<String>) {
+        self.imp().single.replace(heading);
+        self.days_moved();
+    }
+
+    /// The one heading over the whole list, while there is one.
+    pub fn single_heading(&self) -> Option<String> {
+        self.imp().single.borrow().clone()
     }
 
     /// Rows have landed or moved: the day headings may have moved with

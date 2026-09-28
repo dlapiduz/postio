@@ -76,10 +76,15 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
             place.contains(&"Inbox".to_owned()) && place.contains(&key(CommandId::GoToFolders)),
             "Inbox names its key: {place:?}"
         );
-        let counts = texts(&only(&window, "focus-counts"));
         assert!(
-            counts.first().is_some_and(|said| said.starts_with('3')),
-            "the strip counts the three conversations: {counts:?}"
+            crate::settle_until(async || {
+                texts(&only(&window, "focus-counts"))
+                    .first()
+                    .is_some_and(|said| said.starts_with('3'))
+            })
+            .await,
+            "the strip counts the three conversations: {:?}",
+            texts(&only(&window, "focus-counts"))
         );
         let toggle = texts(&only(&window, "focus-has-action"));
         assert!(

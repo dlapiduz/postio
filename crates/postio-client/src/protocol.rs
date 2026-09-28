@@ -36,6 +36,20 @@ pub enum ClientKind {
     Test,
 }
 
+/// What Focus's header strip counts (spec 007 FR-018; data-model
+/// `FocusCounts`): the rows of its inbox, how many are unread, and how many
+/// draw a marker -- the has-action toggle's number. The filtered-today and
+/// digest-rule counts join them with their features.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FocusCounts {
+    /// The conversations in Focus's inbox.
+    pub conversations: u32,
+    /// Of those, the ones with unread mail.
+    pub unread: u32,
+    /// Of those, the ones that draw a marker.
+    pub has_action: u32,
+}
+
 /// The host's name for one connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClientId(pub u64);
@@ -179,6 +193,9 @@ pub enum Req {
     /// The labels on each of these conversations, for a page of Focus's
     /// list: its label pills (spec 007 T043).
     ThreadLabels(Vec<postio_model::ThreadId>),
+    /// Focus's header strip: its conversations, unread and has-action
+    /// counts (spec 007 FR-018, T048).
+    FocusCounts,
     /// The message a reply or forward is built from, and its account.
     ReplySource(MessageId),
     /// The local draft behind a Drafts row, if there is one.
@@ -450,6 +467,8 @@ pub enum Resp {
     Labels(Vec<postio_model::Label>),
     /// Each conversation's labels, in the order they were made.
     ThreadLabels(Vec<(postio_model::ThreadId, postio_model::Label)>),
+    /// Focus's counts.
+    FocusCounts(FocusCounts),
     /// A reply's source message and its account.
     ReplySource(Option<Box<(postio_model::Message, Account)>>),
     /// A draft, or none.

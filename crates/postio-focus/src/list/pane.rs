@@ -67,7 +67,7 @@ impl ListPane {
         cursor.set_autoselect(false);
         cursor.set_can_unselect(true);
         let view = gtk::ListView::new(Some(cursor.clone()), Some(factory));
-        view.set_header_factory(Some(&day_headings()));
+        view.set_header_factory(Some(&day_headings(feed.list())));
         // A page landing may move where a day starts.
         feed.list().connect_local("filled", false, {
             let list = feed.list().downgrade();
@@ -164,22 +164,24 @@ impl ListPane {
 
 /// The day headings: "Today · Saturday 26 September" over a day's rows, a
 /// section header each (32 px), named from the section's first row.
-fn day_headings() -> gtk::SignalListItemFactory {
+fn day_headings(list: &super::model::FocusList) -> gtk::SignalListItemFactory {
+    let list = list.downgrade();
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, header| {
         if let Some(header) = header.downcast_ref::<gtk::ListHeader>() {
             header.set_child(Some(&DayHeading::default()));
         }
     });
-    factory.connect_bind(|_, header| {
+    factory.connect_bind(move |_, header| {
         let Some(header) = header.downcast_ref::<gtk::ListHeader>() else {
             return;
         };
-        if let (Some(row), Some(heading)) = (
+        if let (Some(row), Some(heading), Some(list)) = (
             header.item().and_downcast::<RowObject>(),
             header.child().and_downcast::<DayHeading>(),
+            list.upgrade(),
         ) {
-            heading.bind(&row);
+            heading.bind(&row, &list);
         }
     });
     factory.connect_unbind(|_, header| {

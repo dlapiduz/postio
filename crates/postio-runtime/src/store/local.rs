@@ -727,8 +727,9 @@ impl LocalStore {
         scope: FocusScope,
         request: PageRequest,
     ) -> Result<ThreadPage, StoreError> {
-        // One list today; the scopes to come each get a window of their own.
-        let FocusScope::Inbox = scope;
+        if scope == FocusScope::HasAction {
+            return self.read_has_action_page(request).await;
+        }
         let marks = self.focus_marks.clone();
         let cache = self.focus_count.clone();
         self.read(move |connection| async move {
@@ -780,7 +781,41 @@ impl LocalStore {
         .await
     }
 
+    /// One page of the has-action filter (spec 007 T048): the inbox's rows
+    /// that draw a marker, read from the markers -- which conversations
+    /// carry one, then those conversations' rows -- rather than by walking
+    /// the inbox. Five statements: the inboxes, the marked, the window, its
+    /// participants and its markers.
+    async fn read_has_action_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
+        self.read(move |connection| async move {
+            let threads = ThreadRepository::new(&connection);
+            let inboxes = threads.unified_inboxes().await?;
+            let marked = threads.focus_marked(&inboxes).await?;
+            let groups = threads
+                .focus_marked_page(&inboxes, &marked, request.offset, request.limit)
+                .await?;
+            let rows = groups
+                .into_iter()
+                .map(summarise_group)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ThreadPage {
+                total: marked.len(),
+                rows,
+            })
+        })
+        .await
+    }
+
     async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
+        if let ListScope::Focus(FocusScope::HasAction) = scope {
+            return self
+                .read(move |connection| async move {
+                    let threads = ThreadRepository::new(&connection);
+                    let inboxes = threads.unified_inboxes().await?;
+                    Ok(threads.focus_marked(&inboxes).await?.len())
+                })
+                .await;
+        }
         if let ListScope::Focus(FocusScope::Inbox) = scope {
             let cache = self.focus_count.clone();
             return self

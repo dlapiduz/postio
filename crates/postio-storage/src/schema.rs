@@ -889,6 +889,11 @@ CREATE INDEX idx_markers_answer_until ON markers (answer_until);
 
 CREATE INDEX idx_markers_invite ON markers (invite_uid);
 
+-- The has-action filter's seek (spec 007 T048): the markers the person has
+-- not dismissed, a few hundred where an inbox is a hundred thousand. A full
+-- index, because this engine's planner does not read a partial one.
+CREATE INDEX idx_markers_dismissed ON markers (dismissed_at, message_id);
+
 CREATE INDEX idx_message_labels_label ON message_labels (label_id, message_id);
 
 CREATE INDEX idx_messages_account_list

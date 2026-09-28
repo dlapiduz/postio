@@ -71,6 +71,11 @@ pub enum FocusScope {
     /// it asks the store's one Focus membership test so that its rows, its
     /// count and its seek marks agree about them.
     Inbox,
+    /// The inbox's rows that draw a marker -- an invitation, a question, a
+    /// to-do, a reminder -- and nothing else: what `!` narrows it to
+    /// (spec 007 FR-017). Read from the markers rather than by walking the
+    /// inbox, since they are few and it is not.
+    HasAction,
 }
 
 impl ListScope {
@@ -188,7 +193,7 @@ impl ListScope {
             // Focus's inbox is the same inboxes, and it never inserts either:
             // Focus may hold an arrival for a digest or file it away before it
             // is ever a row, and only the store knows which.
-            ListScope::Unified | ListScope::Focus(FocusScope::Inbox) => match arrival {
+            ListScope::Unified | ListScope::Focus(_) => match arrival {
                 NewMail | MessagesRemoved | MessageListChanged if inbox == Some(false) => Ignore,
                 NewMail | MessagesRemoved | MessageListChanged => Reload,
                 MessagesChanged => Refetch,
@@ -278,6 +283,30 @@ mod reaction_tests {
             None,
             "Focus's inbox is a view over every inbox, not a folder"
         );
+    }
+
+    #[test]
+    fn the_has_action_filter_reacts_as_focus_s_inbox_does() {
+        // A marker arrives with a message, and a row leaves the filter when
+        // its mail leaves the inbox: the same events, the same reloads.
+        for arrival in [
+            Arrival::NewMail,
+            Arrival::MessagesRemoved,
+            Arrival::MessageListChanged,
+            Arrival::MessagesChanged,
+        ] {
+            for (mailbox, inbox) in [
+                (Some(INBOX), Some(true)),
+                (Some(ARCHIVE), Some(false)),
+                (None, None),
+            ] {
+                assert_eq!(
+                    ListScope::Focus(FocusScope::HasAction).reaction(arrival, HOME, mailbox, inbox),
+                    ListScope::Focus(FocusScope::Inbox).reaction(arrival, HOME, mailbox, inbox),
+                    "{arrival:?} in {mailbox:?}"
+                );
+            }
+        }
     }
 
     #[test]

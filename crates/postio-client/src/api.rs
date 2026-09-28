@@ -95,6 +95,7 @@ impl Req {
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::ThreadLabels(_) => "ThreadLabels",
+            Req::FocusCounts => "FocusCounts",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
             Req::CancelSend(_) => "CancelSend",
@@ -514,6 +515,16 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// Focus's header strip counts: its conversations, unread and
+    /// has-action rows, read as one request.
+    pub async fn focus_counts(&self) -> Result<crate::protocol::FocusCounts, StoreError> {
+        self.read(Req::FocusCounts, "Focus's counts", |answer| match answer {
+            Resp::FocusCounts(counts) => Some(counts),
+            _ => None,
+        })
         .await
     }
 
@@ -1301,6 +1312,19 @@ mod tests {
             vec![Req::ThreadLabels(vec![thread])]
         );
         assert_eq!(client.counts().of("ThreadLabels"), 1);
+    }
+
+    #[tokio::test]
+    async fn focus_s_counts_are_one_request() {
+        let counts = crate::protocol::FocusCounts {
+            conversations: 312,
+            unread: 41,
+            has_action: 7,
+        };
+        let (client, fake) = client(vec![Ok(Resp::FocusCounts(counts))]);
+        assert_eq!(client.focus_counts().await, Ok(counts));
+        assert_eq!(*fake.asked.lock().unwrap(), vec![Req::FocusCounts]);
+        assert_eq!(client.counts().of("FocusCounts"), 1);
     }
 
     #[tokio::test]

@@ -256,7 +256,7 @@ pub fn summary(selection: &Selection, total: Option<u32>, omitted: &[String]) ->
 
 /// A count with thousands separated, because a selection is a number the user
 /// is about to act on and "50000" is not a number anybody reads.
-fn count(value: u32) -> String {
+pub(crate) fn count(value: u32) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {

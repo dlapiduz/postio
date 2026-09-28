@@ -761,6 +761,9 @@ impl Inner {
             Req::ThreadLabels(threads) => {
                 Resp::ThreadLabels(compose::thread_labels(&self.wiring.database, &threads).await)
             }
+            Req::FocusCounts => compose::focus_counts(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::FocusCounts),
             Req::ReplySource(message) => Resp::ReplySource(
                 compose::reply_source(&self.wiring.database, message)
                     .await

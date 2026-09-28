@@ -291,3 +291,74 @@ mod marker_tests {
         assert_eq!(line.actions, [(CommandId::Reply, "Reply")]);
     }
 }
+
+/// The header strip's counts: `312 · 41 unread`, or the conversations alone
+/// while nothing is unread.
+pub fn strip_counts(conversations: u32, unread: u32) -> String {
+    let conversations = crate::selection::count(conversations);
+    if unread == 0 {
+        return conversations;
+    }
+    format!(
+        "{conversations} \u{b7} {} unread",
+        crate::selection::count(unread)
+    )
+}
+
+/// The has-action toggle's words: `Has action · 7`, or `Has action` before
+/// the count is known.
+pub fn has_action_label(count: Option<u32>) -> String {
+    match count {
+        Some(count) => format!("Has action \u{b7} {}", crate::selection::count(count)),
+        None => "Has action".to_owned(),
+    }
+}
+
+/// What the strip says while the has-action filter is on: `Showing 7 of
+/// 312 · ! again to show all`, naming the key the keymap gives the toggle,
+/// or `Showing 7 of 312` when nothing is bound to it.
+pub fn showing(shown: u32, total: u32, key: Option<&str>) -> String {
+    let said = format!(
+        "Showing {} of {}",
+        crate::selection::count(shown),
+        crate::selection::count(total)
+    );
+    match key {
+        Some(key) => format!("{said} \u{b7} {key} again to show all"),
+        None => said,
+    }
+}
+
+#[cfg(test)]
+mod strip_tests {
+    use super::*;
+
+    #[test]
+    fn the_strip_counts_conversations_and_unread() {
+        assert_eq!(strip_counts(312, 41), "312 \u{b7} 41 unread");
+        assert_eq!(
+            strip_counts(12_408, 0),
+            "12,408",
+            "nothing unread says nothing"
+        );
+    }
+
+    #[test]
+    fn the_toggle_carries_its_count() {
+        assert_eq!(has_action_label(Some(7)), "Has action \u{b7} 7");
+        assert_eq!(has_action_label(None), "Has action");
+    }
+
+    #[test]
+    fn the_filter_says_how_many_of_how_many_and_the_key_back() {
+        assert_eq!(
+            showing(7, 312, Some("!")),
+            "Showing 7 of 312 \u{b7} ! again to show all"
+        );
+        assert_eq!(
+            showing(7, 312, None),
+            "Showing 7 of 312",
+            "no key, no promise"
+        );
+    }
+}

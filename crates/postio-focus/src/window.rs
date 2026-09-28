@@ -25,6 +25,7 @@ use postio_ui::selection::{Reach, SelectionState};
 use crate::bulk::Bulk;
 use crate::chrome::Chrome;
 use crate::list::{Feed, FocusRow, ListPane, RowObject};
+use postio_widgets::list_model::WindowedModel;
 
 /// The window's pages, by name.
 const BLANK: &str = "blank";
@@ -74,6 +75,13 @@ mod imp {
         pub state: RefCell<Option<SharedState>>,
         /// The enabled accounts, the aggregate a whole-view selection spans.
         pub accounts: RefCell<Vec<AccountId>>,
+        /// Whether `!` has narrowed the list to the rows with a marker.
+        pub has_action: Cell<bool>,
+        /// The strip's counts, as the host last said.
+        pub counts: Cell<Option<postio_client::protocol::FocusCounts>>,
+        /// A message to put the cursor back on once the list it is changing
+        /// to has landed: `!` keeps the cursor on the same message.
+        pub keep: Cell<Option<MessageId>>,
     }
 
     impl Default for FocusWindow {
@@ -99,6 +107,9 @@ mod imp {
                 bulk: RefCell::default(),
                 state: RefCell::default(),
                 accounts: RefCell::default(),
+                has_action: Cell::default(),
+                counts: Cell::default(),
+                keep: Cell::default(),
             }
         }
     }
@@ -334,6 +345,7 @@ impl FocusWindow {
             // The last action this window took, whatever it was and however
             // long ago the toast went (FR-041): the host keeps the stack.
             CommandId::Undo => self.post(Command::Undo),
+            CommandId::ToggleHasAction => self.toggle_has_action(),
             CommandId::Quit => self.close(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
@@ -623,7 +635,7 @@ impl FocusWindow {
         feed.connect_filled(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move || window.update_counts()
+            move || window.list_landed()
         ));
         let pane = ListPane::new(feed.clone(), self.keymap(), imp.picked.clone());
         imp.inbox.append(pane.widget());
@@ -691,12 +703,96 @@ impl FocusWindow {
         }
     }
 
-    /// Bring the strip's counts into step with the list.
-    fn update_counts(&self) {
+    /// `!`: narrow the list to the rows with a marker, or back (FR-017).
+    /// The selection goes, since what it named may not be shown; the cursor
+    /// stays on the same message when that message is still shown.
+    fn toggle_has_action(&self) {
         let imp = self.imp();
-        let total = imp.pane.borrow().as_ref().map(|pane| pane.feed().total());
-        if let (Some(total), Some(chrome)) = (total, imp.chrome.borrow().as_ref()) {
-            chrome.set_counts(total);
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let on = !imp.has_action.get();
+        imp.has_action.set(on);
+        imp.keep.set(self.cursor_row().map(|row| row.id()));
+        self.clear_selection();
+        pane.feed().list().set_single_heading(on.then(|| {
+            postio_ui::focus_row::has_action_label(imp.counts.get().map(|counts| counts.has_action))
+        }));
+        pane.feed().open(ListScope::Focus(if on {
+            FocusScope::HasAction
+        } else {
+            FocusScope::Inbox
+        }));
+        self.show_counts();
+    }
+
+    /// The list has landed or moved: put the cursor back where `!` left
+    /// it, and ask the host for the strip's counts again.
+    fn list_landed(&self) {
+        let imp = self.imp();
+        if let (Some(message), Some(pane)) = (imp.keep.get(), self.pane())
+            && pane.feed().has_landed()
+        {
+            imp.keep.set(None);
+            let list = pane.feed().list().clone();
+            match list.position_of(message) {
+                Some(position) => self.cursor_to(Some(position)),
+                None if list.n_items() > 0 => self.cursor_to(Some(0)),
+                None => {}
+            }
+        }
+        self.update_counts();
+    }
+
+    /// Ask the host for the strip's counts, and show them when they come.
+    fn update_counts(&self) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: the client's transport answers through a
+            // oneshot.
+            match client.focus_counts().await {
+                Ok(counts) => {
+                    if let Some(window) = window.upgrade() {
+                        window.imp().counts.set(Some(counts));
+                        window.show_counts();
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "Focus could not count its inbox: {error}"),
+            }
+        });
+    }
+
+    /// Say the counts the host last gave: the strip's, the toggle's, and
+    /// how many of how many the filter is showing.
+    fn show_counts(&self) {
+        let imp = self.imp();
+        let Some(chrome) = imp.chrome.borrow().clone() else {
+            return;
+        };
+        let counts = imp.counts.get();
+        if let Some(counts) = counts {
+            chrome.set_counts(counts.conversations, counts.unread);
+        }
+        let has_action = counts.map(|counts| counts.has_action);
+        let label = postio_ui::focus_row::has_action_label(has_action);
+        let on = imp.has_action.get();
+        let showing = match (on, counts) {
+            (true, Some(counts)) => Some(postio_ui::focus_row::showing(
+                counts.has_action,
+                counts.conversations,
+                postio_ui::hints::key(&self.keymap(), CommandId::ToggleHasAction).as_deref(),
+            )),
+            _ => None,
+        };
+        chrome.set_has_action(on, &label, showing.as_deref());
+        if on
+            && let Some(pane) = self.pane()
+            && pane.feed().list().single_heading().as_deref() != Some(label.as_str())
+        {
+            pane.feed().list().set_single_heading(Some(label));
         }
     }
 

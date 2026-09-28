@@ -2301,7 +2301,9 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
         // Focus's inbox, read flat: the unified view's inboxes, less what
         // Focus holds back -- the same `focus_excludes` its window asks
         // (spec 007).
-        ListScope::Focus(postio_model::FocusScope::Inbox) => {
+        // The has-action filter too: nothing reads either flat -- both list
+        // conversations -- and a flat read of it is its inbox's messages.
+        ListScope::Focus(_) => {
             focus = format!(
                 "messages.mailbox_id IN (
                  SELECT m.id FROM accounts a JOIN mailboxes m

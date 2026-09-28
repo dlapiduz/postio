@@ -11,7 +11,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
-use super::model::RowObject;
+use super::model::{FocusList, RowObject};
 
 mod imp {
     use super::*;
@@ -20,6 +20,7 @@ mod imp {
     pub struct DayHeading {
         pub label: gtk::Label,
         pub bound: RefCell<Option<(RowObject, glib::SignalHandlerId)>>,
+        pub list: glib::WeakRef<FocusList>,
     }
 
     #[glib::object_subclass]
@@ -66,8 +67,10 @@ impl Default for DayHeading {
 }
 
 impl DayHeading {
-    /// Name the day `row` arrived on, and follow it as its page lands.
-    pub fn bind(&self, row: &RowObject) {
+    /// Name the day `row` arrived on -- or the heading `list` puts over
+    /// everything while a filter is on -- and follow it as its page lands.
+    pub fn bind(&self, row: &RowObject, list: &FocusList) {
+        self.imp().list.set(Some(list));
         self.unbind();
         let handler = row.connect_changed({
             let heading = self.downgrade();
@@ -89,6 +92,15 @@ impl DayHeading {
     }
 
     fn name(&self, row: &RowObject) {
+        if let Some(single) = self
+            .imp()
+            .list
+            .upgrade()
+            .and_then(|list| list.single_heading())
+        {
+            self.imp().label.set_text(&single);
+            return;
+        }
         let today = chrono::Local::now().date_naive();
         let said = row
             .day()

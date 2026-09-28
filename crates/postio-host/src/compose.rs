@@ -542,6 +542,30 @@ pub async fn thread_labels(
     })
 }
 
+/// Focus's header strip counts (spec 007 FR-018, T048), each a counted read
+/// over Focus's own membership rather than the per-folder trigger counts,
+/// which cannot see held mail: the inboxes (one statement), the rows (one,
+/// and the fold's two more with several accounts), the unread (one) and
+/// the rows that draw a marker (one, sought from the markers).
+pub async fn focus_counts(
+    database: &Store,
+) -> Result<postio_client::protocol::FocusCounts, postio_model::listing::StoreError> {
+    let counted = async {
+        let connection = database.read().await?;
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        let inboxes = threads.unified_inboxes().await?;
+        Ok::<_, postio_storage::Error>(postio_client::protocol::FocusCounts {
+            conversations: threads.focus_count(&inboxes).await?,
+            unread: threads.focus_unread(&inboxes).await?,
+            has_action: threads.focus_marked(&inboxes).await?.len(),
+        })
+    };
+    counted.await.map_err(|error| {
+        tracing::warn!(%error, "could not count Focus's inbox");
+        postio_model::listing::StoreError::new(error.to_string())
+    })
+}
+
 /// Recipient completion: contact groups whose name matches `prefix`, then
 /// contacts ranked by [`ContactRepository::search`] — groups first, since a
 /// group is a deliberate choice the user is more likely typing towards.

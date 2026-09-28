@@ -1096,3 +1096,143 @@ async fn leaving_held_mail_out_costs_no_statement_and_scans_nothing() {
         "one inbox never sorts:\n{plan}"
     );
 }
+
+#[tokio::test]
+async fn which_conversations_draw_a_marker_is_one_statement_sought_from_the_markers() {
+    // The has-action filter (spec 007 US1 scenario 5, T048): its rows are
+    // the Focus rows that draw a marker, and which those are is read from
+    // the markers -- a few hundred -- rather than by walking an inbox of a
+    // hundred thousand to ask each row. `idx_markers_open` was planned as a
+    // partial index, which this engine's planner does not read.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    mark_ada_s(&connection).await;
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    let _ = threads.focus_marked(alone).await.expect("warm");
+
+    let mut marked = None;
+    let counts = counted_async(|| async {
+        marked = Some(threads.focus_marked(alone).await.expect("the marked"));
+    })
+    .await;
+    let marked = marked.expect("read");
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    assert_eq!(
+        marked.len(),
+        4,
+        "dam, lock, weir and gate draw markers; sluice's was dismissed: {marked:?}"
+    );
+    assert_eq!(
+        counts.rows, 4,
+        "a row read per conversation, none thrown away"
+    );
+    let sql = threads.explain_focus_marked(alone.len());
+    assert!(
+        scans(&connection, &sql).await.is_empty(),
+        "the marked conversations are sought from the markers, never a walk:\n{}",
+        test_support::plan(&connection, &sql).await
+    );
+}
+
+#[tokio::test]
+async fn a_has_action_page_is_the_marked_rows_newest_first_in_three_statements() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    more_of_ada_s(&connection, inboxes[0]).await;
+    let expected = mark_ada_s(&connection).await;
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    let marked = threads.focus_marked(alone).await.expect("the marked");
+    let _ = threads
+        .focus_marked_page(alone, &marked, 0, 50)
+        .await
+        .expect("warm");
+
+    let mut page = Vec::new();
+    let counts = counted_async(|| async {
+        page = rows(
+            threads
+                .focus_marked_page(alone, &marked, 0, 50)
+                .await
+                .expect("a page"),
+        );
+    })
+    .await;
+    let subjects: Vec<_> = page.iter().filter_map(subject).collect();
+    assert_eq!(
+        subjects,
+        [
+            "About <dam-2@example.com>",
+            "About <lock@example.com>",
+            "About <weir@example.com>",
+            "About <gate-2@example.com>",
+        ],
+        "the rows that draw a marker, newest first, each drawn from its \
+         newest message in the inbox as the inbox draws it"
+    );
+    for row in &page {
+        let drawn = subject(row).expect("a subject");
+        let wanted = expected
+            .iter()
+            .find(|(subject, _)| *subject == drawn)
+            .map(|(_, marker)| marker.clone())
+            .expect("a row the markers named");
+        assert_eq!(row.marker, wanted, "{drawn} draws its marker");
+    }
+    assert!(
+        counts.statements <= 3,
+        "a has-action page is the window, its participants and its markers: {counts:?}"
+    );
+    let second = rows(
+        threads
+            .focus_marked_page(alone, &marked, 2, 50)
+            .await
+            .expect("a later page"),
+    );
+    assert_eq!(
+        second.iter().filter_map(subject).collect::<Vec<_>>(),
+        ["About <weir@example.com>", "About <gate-2@example.com>"],
+        "a page by offset"
+    );
+    let sql = threads.explain_focus_marked_page(
+        alone.len(),
+        marked.threads.len(),
+        marked.lone.len(),
+        0,
+        50,
+    );
+    let scanned = scans(&connection, &sql).await;
+    assert!(
+        scanned.is_empty(),
+        "the page seeks the marked conversations, never the inbox: {scanned:?}\n{}",
+        test_support::plan(&connection, &sql).await
+    );
+}
+
+#[tokio::test]
+async fn focus_s_unread_count_is_its_unread_conversations_in_one_statement() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let inboxes = world(&connection).await;
+    let alone = &inboxes[..1];
+    let threads = ThreadRepository::new(&connection);
+    // Every fixture message arrives unread: gate and tide are Ada's two
+    // conversations, and the snoozed one is not a row.
+    let mut unread = 0;
+    let counts = counted_async(|| async {
+        unread = threads.focus_unread(alone).await.expect("the count");
+    })
+    .await;
+    assert_eq!(unread, 2);
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    let sql = threads.explain_focus_unread(alone.len());
+    assert!(
+        scans(&connection, &sql).await.is_empty(),
+        "sought through an inbox index:\n{}",
+        test_support::plan(&connection, &sql).await
+    );
+}

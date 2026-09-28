@@ -26,6 +26,7 @@ mod chrome;
 mod colours;
 mod cursor;
 mod harness;
+mod has_action;
 mod list_contract;
 mod marked_rows;
 mod rows;
@@ -43,6 +44,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "has_action::has_action_narrows_to_the_marked_rows_and_back",
+        has_action::has_action_narrows_to_the_marked_rows_and_back as fn(),
+    ),
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
