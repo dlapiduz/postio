@@ -160,8 +160,9 @@ fn open_fold(out: &mut String, lines: usize) {
 
 /// What a quote's fold says, open or closed: how many lines of words it
 /// holds (spec 007 FR-034, "31 quoted lines"). One label for a single
-/// message and a conversation, in every app that draws the document.
-fn fold_label(lines: usize) -> String {
+/// message and a conversation, in every app that draws a fold -- the
+/// terminal's too.
+pub fn fold_label(lines: usize) -> String {
     if lines == 1 {
         "1 quoted line".to_owned()
     } else {

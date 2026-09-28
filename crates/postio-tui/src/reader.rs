@@ -51,12 +51,18 @@ impl Rendered {
                 Block::Fold {
                     folded: true,
                     lines,
-                } => out.push(Line::raw(format!("▸ quoted text ({} lines)", lines.len()))),
+                } => out.push(Line::raw(format!(
+                    "▸ {}",
+                    postio_body::quote::fold_label(lines.len())
+                ))),
                 Block::Fold {
                     folded: false,
                     lines,
                 } => {
-                    out.push(Line::raw("▾ quoted text"));
+                    out.push(Line::raw(format!(
+                        "▾ {}",
+                        postio_body::quote::fold_label(lines.len())
+                    )));
                     out.extend(lines.iter().cloned());
                 }
             }
@@ -345,7 +351,8 @@ mod tests {
             drawn.contains("Sounds good.") && drawn.contains("Thanks"),
             "{drawn}"
         );
-        assert!(drawn.contains("▸ quoted text (2 lines)"), "{drawn}");
+        // The desktop documents' words (spec 007 FR-034, T067).
+        assert!(drawn.contains("▸ 2 quoted lines"), "{drawn}");
         assert!(!drawn.contains("the old words"), "{drawn}");
     }
 
@@ -391,7 +398,7 @@ mod tests {
         let rendered = from_html(&html);
         let drawn = text(&rendered);
         assert!(drawn.contains("Thanks!"), "{drawn}");
-        assert!(drawn.contains("▸ quoted text"), "{drawn}");
+        assert!(drawn.contains("▸ 1 quoted line"), "{drawn}");
         assert!(!drawn.contains("Earlier words"), "folded: {drawn}");
     }
 

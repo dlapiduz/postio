@@ -394,6 +394,61 @@ impl BodyView {
         })
     }
 
+    /// Every fold in the message on screen: its id, what its line says,
+    /// and whether it is open -- for a surface outside the body that names
+    /// them (Focus's fold line, screen 04).
+    pub fn folds(&self) -> Vec<(String, String, bool)> {
+        let Some(document) = self.document() else {
+            return Vec::new();
+        };
+        document
+            .folds
+            .iter()
+            .map(|fold| {
+                // The line's words are the text drawn inside its summary.
+                let inside: Vec<&postio_render::Cluster> = document
+                    .text
+                    .clusters
+                    .iter()
+                    .filter(|cluster| {
+                        let middle = postio_render::Point::new(
+                            (cluster.rect.x0 + cluster.rect.x1) / 2.0,
+                            (cluster.rect.y0 + cluster.rect.y1) / 2.0,
+                        );
+                        fold.summary_rect.contains(middle)
+                    })
+                    .collect();
+                let label = match (
+                    inside.iter().map(|c| c.range.start).min(),
+                    inside.iter().map(|c| c.range.end).max(),
+                ) {
+                    // Less the disclosure triangle the summary draws.
+                    (Some(start), Some(end)) => document
+                        .text
+                        .slice(start..end)
+                        .trim_start_matches(['\u{25b8}', '\u{25be}', '\u{25b6}', '\u{25bc}'])
+                        .trim()
+                        .to_owned(),
+                    _ => String::new(),
+                };
+                (fold.id.clone(), label, fold.open)
+            })
+            .collect()
+    }
+
+    /// Open the fold `id` if it is closed; an open one stays open.
+    pub fn open_fold(&self, id: &str) {
+        let closed = self.document().is_some_and(|document| {
+            document
+                .folds
+                .iter()
+                .any(|fold| fold.id == id && !fold.open)
+        });
+        if closed {
+            self.toggle_fold(id);
+        }
+    }
+
     /// Open a closed fold, or close an open one, and re-render.
     fn toggle_fold(&self, id: &str) {
         {

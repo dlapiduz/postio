@@ -30,6 +30,7 @@ mod list_model_generic;
 mod present_config;
 mod present_onboarding;
 mod present_reading;
+mod quote_folds;
 mod reader_verbs;
 mod support;
 mod widgets_css;
@@ -42,6 +43,14 @@ mod widgets_css;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "quote_folds::a_quote_is_folded_behind_its_line_count_and_opens_when_clicked",
+        quote_folds::a_quote_is_folded_behind_its_line_count_and_opens_when_clicked as fn(),
+    ),
+    (
+        "quote_folds::the_dialog_s_fold_line_opens_the_quote_it_names",
+        quote_folds::the_dialog_s_fold_line_opens_the_quote_it_names as fn(),
+    ),
     (
         "body_view_highlight::a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view",
         body_view_highlight::a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view

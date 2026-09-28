@@ -6249,7 +6249,7 @@ pub(crate) mod tests {
         app.reading = Some(reading_of(crate::reader::from_text(
             "Sounds good.\n> earlier\n> words",
         )));
-        let marker = line_of(&app, "quoted text");
+        let marker = line_of(&app, "quoted line");
         update(&mut app, click(Target::Reader(Some(marker)), false, false));
         let (lines, _) = app.reading().unwrap().layout(chrono::Local::now());
         let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
@@ -7213,7 +7213,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(drawn.contains("Hello Ada,"), "{drawn}");
-        assert!(drawn.contains("▸ quoted text"), "{drawn}");
+        assert!(drawn.contains("quoted line"), "{drawn}");
     }
 
     #[test]

@@ -134,6 +134,7 @@ mod gtk_reader_fonts;
 mod gtk_reader_notices;
 mod gtk_reader_outgoing;
 mod gtk_reader_pane_owner;
+mod gtk_reader_quote_fold;
 mod gtk_reader_scroll;
 mod gtk_reader_styles;
 mod gtk_reader_teardown;
@@ -198,6 +199,10 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_reader_quote_fold::a_reply_s_quote_is_folded_and_opens_when_clicked",
+        gtk_reader_quote_fold::a_reply_s_quote_is_folded_and_opens_when_clicked as fn(),
+    ),
     (
         "gtk_composer_detached_scheme::a_detached_composer_follows_dark_mode",
         gtk_composer_detached_scheme::a_detached_composer_follows_dark_mode as fn(),
