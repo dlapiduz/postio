@@ -62,6 +62,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "bar::offline_search_answers_locally_one_request_a_keystroke",
+        bar::offline_search_answers_locally_one_request_a_keystroke as fn(),
+    ),
+    (
         "places::g_o_then_trav_and_enter_shows_travel",
         places::g_o_then_trav_and_enter_shows_travel as fn(),
     ),

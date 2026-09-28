@@ -97,6 +97,8 @@ pub struct Bar {
     me: RefCell<std::rc::Weak<Bar>>,
     /// The pinned saved searches, in order: each name and its query.
     saved: RefCell<Vec<(String, String)>>,
+    /// Whether the places have been read since the bar last opened.
+    places_known: Cell<bool>,
     /// The saved row across the top.
     saved_row: gtk::Box,
 }
@@ -179,6 +181,7 @@ impl Bar {
             handler: RefCell::default(),
             me: RefCell::default(),
             saved: RefCell::default(),
+            places_known: Cell::new(false),
             saved_row,
         });
         bar.me.replace(Rc::downgrade(&bar));
@@ -293,6 +296,7 @@ impl Bar {
     /// Open the bar, empty, and read the places it can go.
     pub fn open(&self) {
         self.open.set(true);
+        self.places_known.set(false);
         self.root.set_visible(true);
         self.entry.set_text("");
         self.update("");
@@ -305,6 +309,11 @@ impl Bar {
         self.open.set(false);
         self.root.set_visible(false);
         self.generation.set(self.generation.get() + 1);
+    }
+
+    /// Whether the places the bar can go have been read since it opened.
+    pub fn places_known(&self) -> bool {
+        self.places_known.get()
     }
 
     /// Whether the bar is up.
@@ -681,10 +690,15 @@ impl Bar {
             }
             places.replace(found);
             folders.replace(names);
-            // What was typed before the places landed is answered again,
-            // now that `in:` has folders to complete.
+            // `in:` typed before the places landed is answered again, now
+            // that it has folders to complete. Nothing else needs them to
+            // answer, and a search is not asked for twice.
             if let Some(bar) = weak.upgrade().filter(|bar| bar.is_open()) {
-                bar.update(&bar.entry.text());
+                bar.places_known.set(true);
+                let typed = bar.entry.text();
+                if typed.trim().starts_with("in:") {
+                    bar.update(&typed);
+                }
             }
         });
     }

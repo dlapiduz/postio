@@ -175,3 +175,73 @@ pub fn alt_2_runs_the_second_saved_search() {
         );
     });
 }
+
+/// US4 scenario 7: with no network, a search answers from this machine's
+/// index, and within its budget -- counted, not timed. Each keystroke is
+/// one search request to the store's owner and nothing else; what that
+/// request costs at the store is the index's own budget, a flat four
+/// statements a page whatever it matches (postio-index
+/// `search_statement_budget.rs`).
+pub fn offline_search_answers_locally_one_request_a_keystroke() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Budget",
+                "The numbers.",
+                5,
+            )
+            .await;
+        fixture
+            .file(
+                ("Lena Park", "lena@example.org"),
+                "Harbor draft",
+                "Version three.",
+                10,
+            )
+            .await;
+        fixture.index().await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        let session =
+            postio_focus::startup::adopt(&window, host, &postio_config::Config::default());
+        let client = session.client().clone();
+        support::keep(session);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        assert!(sink.emit(postio_core::Event::ConnectionChanged {
+            account: fixture.account.id,
+            state: postio_core::ConnectionState::Offline,
+        }));
+        assert!(crate::settle_until(async || window.sync_said() == "Offline").await);
+
+        let bar = open_bar(&window);
+        // Opening reads where the bar can go; typing is what is counted.
+        assert!(crate::settle_until(async || bar.places_known()).await);
+        let before = client.counts().snapshot();
+        type_in(&bar, "from:ada").await;
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Budget"]).await,
+            "offline, the local index did not answer: {:?}",
+            bar.result_subjects()
+        );
+        let after = client.counts().snapshot();
+        let asked: Vec<(&str, u64)> = after
+            .iter()
+            .map(|(family, count)| (*family, count - before.get(family).copied().unwrap_or(0)))
+            .filter(|(_, count)| *count > 0)
+            .collect();
+        assert_eq!(
+            asked,
+            [("SearchHits", 8)],
+            "eight keystrokes, eight searches, and nothing else asked for"
+        );
+    });
+}
