@@ -13,7 +13,7 @@ use gtk::graphene;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
-use super::item::FocusItem;
+use super::item::FocusRow;
 use super::model::RowObject;
 
 /// A one-line row's height, in pixels: the classic row's (research R3).
@@ -35,7 +35,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct RowWidget {
-        pub item: RefCell<Option<FocusItem>>,
+        pub item: RefCell<Option<FocusRow>>,
         pub bound: RefCell<Option<(RowObject, glib::SignalHandlerId)>>,
     }
 
@@ -111,22 +111,21 @@ impl RowWidget {
     }
 
     /// What this row says, as a screen reader hears it and a test reads it:
-    /// empty while its page has not arrived.
+    /// "Loading" while its page has not arrived.
     pub fn spoken(&self) -> String {
         self.imp()
             .item
             .borrow()
             .as_ref()
-            .map(spoken)
-            .unwrap_or_default()
+            .map_or_else(|| "Loading".to_owned(), spoken)
     }
 
     /// The item shown, if its page has arrived.
-    pub fn item(&self) -> Option<FocusItem> {
+    pub fn item(&self) -> Option<FocusRow> {
         self.imp().item.borrow().clone()
     }
 
-    fn show(&self, item: Option<FocusItem>) {
+    fn show(&self, item: Option<FocusRow>) {
         let height_before = self.height();
         self.imp().item.replace(item);
         self.update_property(&[gtk::accessible::Property::Label(&self.spoken())]);
@@ -146,9 +145,10 @@ impl RowWidget {
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
         let Some(item) = self.imp().item.borrow().clone() else {
+            self.draw_skeleton(snapshot);
             return;
         };
-        let FocusItem::Conversation(summary) = &item;
+        let FocusRow::Conversation(summary) = &item;
         let width = f64::from(self.width());
         let ink = self.color();
         let sender = summary
@@ -182,10 +182,28 @@ impl RowWidget {
     }
 }
 
+impl RowWidget {
+    /// A row whose page has not landed: two quiet bars where the sender and
+    /// the subject will be, drawn from nothing but the row's own size, so a
+    /// jump's 205 binds cost no read (spike S3).
+    fn draw_skeleton(&self, snapshot: &gtk::Snapshot) {
+        let mut shade = self.color();
+        shade.set_alpha(shade.alpha() * 0.08);
+        let middle = (ONE_LINE as f32) / 2.0;
+        let room = (self.width() as f32 - SUBJECT_X as f32 - TRAILING as f32).max(0.0);
+        for (x, width) in [
+            (SENDER_X as f32, (SENDER_WIDTH as f32) * 0.6),
+            (SUBJECT_X as f32, room * 0.45),
+        ] {
+            snapshot.append_color(&shade, &graphene::Rect::new(x, middle - 5.0, width, 10.0));
+        }
+    }
+}
+
 /// What a row says, in the order a screen reader should say it: the sender,
 /// the subject, the first line, and whether it is unread (FR-096).
-pub fn spoken(item: &FocusItem) -> String {
-    let FocusItem::Conversation(summary) = item;
+pub fn spoken(item: &FocusRow) -> String {
+    let FocusRow::Conversation(summary) = item;
     let mut parts = Vec::new();
     if let Some(from) = &summary.representative.from {
         parts.push(from.display().to_owned());

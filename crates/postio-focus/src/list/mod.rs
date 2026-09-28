@@ -8,7 +8,7 @@ pub mod pane;
 pub mod row;
 
 pub use feed::Feed;
-pub use item::FocusItem;
+pub use item::FocusRow;
 pub use model::{FocusList, RowObject};
 pub use pane::ListPane;
 pub use row::RowWidget;

@@ -23,7 +23,7 @@ use postio_model::mailbox::MailboxRole;
 use postio_ui::paging::{Fetch, Paging, Plan};
 use postio_widgets::list_model::{PageSource, WindowedModel};
 
-use super::item::FocusItem;
+use super::item::FocusRow;
 use super::model::FocusList;
 
 /// The list, and where its pages come from.
@@ -197,7 +197,7 @@ impl Inner {
                     let rows = answer
                         .rows
                         .into_iter()
-                        .map(FocusItem::Conversation)
+                        .map(FocusRow::Conversation)
                         .collect();
                     if generation == self.list.generation() {
                         self.total.set(answer.total);

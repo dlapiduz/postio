@@ -28,6 +28,7 @@ mod harness;
 mod list_contract;
 mod starts_offline;
 mod support;
+mod visible_window;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
 /// `#[ignore]`, which means one thing here: this machine may not have what
@@ -57,6 +58,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
         starts_offline::the_inbox_is_listed_from_the_store_with_no_network as fn(),
+    ),
+    (
+        "visible_window::a_row_whose_page_has_not_landed_draws_a_skeleton",
+        visible_window::a_row_whose_page_has_not_landed_draws_a_skeleton as fn(),
+    ),
+    (
+        "visible_window::a_jump_to_the_bottom_reads_the_ends_and_nothing_between",
+        visible_window::a_jump_to_the_bottom_reads_the_ends_and_nothing_between as fn(),
     ),
 ];
 

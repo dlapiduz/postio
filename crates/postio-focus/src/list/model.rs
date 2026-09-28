@@ -1,5 +1,5 @@
 //! Focus's list model: `postio_widgets::list_model`'s window over the paged
-//! store, holding [`FocusItem`]s.
+//! store, holding [`FocusRow`]s.
 //!
 //! The windowing, the page cache, the fill-in-place and the refresh are the
 //! shared model's (T021, ADR 0043). What is here is the two `GObject`s a
@@ -16,14 +16,14 @@ use postio_model::ids::{MessageId, ThreadId};
 use postio_ui::list::ListRow;
 use postio_widgets::list_model::{ModelRow, Windowed, WindowedModel};
 
-use super::item::FocusItem;
+use super::item::FocusRow;
 
 mod imp {
     use super::*;
 
     #[derive(Default)]
     pub struct RowObject {
-        pub item: RefCell<Option<FocusItem>>,
+        pub item: RefCell<Option<FocusRow>>,
     }
 
     #[glib::object_subclass]
@@ -79,7 +79,7 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// One position of Focus's list: a loaded [`FocusItem`], or a
+    /// One position of Focus's list: a loaded [`FocusRow`], or a
     /// placeholder until its page arrives.
     pub struct RowObject(ObjectSubclass<imp::RowObject>);
 }
@@ -97,13 +97,13 @@ impl Default for FocusList {
 
 impl RowObject {
     /// What the row stands for, once its page has arrived.
-    pub fn item(&self) -> Option<FocusItem> {
+    pub fn item(&self) -> Option<FocusRow> {
         self.imp().item.borrow().clone()
     }
 
     /// Replace what the row says, keeping the object, and tell a bound
     /// widget -- quietly when nothing changed.
-    pub fn set_item(&self, item: FocusItem) {
+    pub fn set_item(&self, item: FocusRow) {
         {
             let mut held = self.imp().item.borrow_mut();
             if held.as_ref() == Some(&item) {
@@ -128,15 +128,11 @@ impl RowObject {
 
 impl ListRow for RowObject {
     fn id(&self) -> Option<MessageId> {
-        self.imp().item.borrow().as_ref().map(FocusItem::id)
+        self.imp().item.borrow().as_ref().map(FocusRow::id)
     }
 
     fn thread(&self) -> Option<ThreadId> {
-        self.imp()
-            .item
-            .borrow()
-            .as_ref()
-            .and_then(FocusItem::thread)
+        self.imp().item.borrow().as_ref().and_then(FocusRow::thread)
     }
 
     fn reconcile(existing: &Self, incoming: Self) -> Self {
@@ -148,27 +144,27 @@ impl ListRow for RowObject {
 }
 
 impl ModelRow for RowObject {
-    type Data = FocusItem;
+    type Data = FocusRow;
 
     fn placeholder() -> Self {
         glib::Object::new()
     }
 
-    fn with_contents(data: FocusItem) -> Self {
+    fn with_contents(data: FocusRow) -> Self {
         let row = Self::placeholder();
         row.set_item(data);
         row
     }
 
-    fn contents(&self) -> Option<FocusItem> {
+    fn contents(&self) -> Option<FocusRow> {
         self.item()
     }
 
-    fn fill(&self, data: FocusItem) {
+    fn fill(&self, data: FocusRow) {
         self.set_item(data);
     }
 
-    fn id_of(data: &FocusItem) -> MessageId {
+    fn id_of(data: &FocusRow) -> MessageId {
         data.id()
     }
 }

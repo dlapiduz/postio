@@ -221,3 +221,40 @@ pub async fn three_in_the_inbox() -> (Fixture, postio_focus::window::FocusWindow
     keep(session);
     (fixture, window)
 }
+
+impl Fixture {
+    /// A store seeded with `messages` synthetic messages, threaded into
+    /// conversations of mixed lengths and spread over the folders as a real
+    /// account's are: the large fixture the paging benches read.
+    pub async fn large(messages: usize) -> Fixture {
+        let database = test_support::memory().await;
+        let report = postio_storage::seed::seed_large(&database, 7, messages).await;
+        let inbox = report
+            .mailbox(postio_model::MailboxRole::Inbox)
+            .expect("the seed files an inbox")
+            .id;
+        Fixture {
+            database,
+            account: report.account,
+            inbox,
+            blobs: tempfile::tempdir().expect("a blob directory"),
+        }
+    }
+
+    /// A Focus window adopted over this store, and the client it reads
+    /// through, once the first rows are on screen.
+    pub async fn open(&self) -> (postio_focus::window::FocusWindow, postio_client::Client) {
+        use gtk::prelude::*;
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.present();
+        let session =
+            postio_focus::startup::adopt(&window, self.host(), &postio_config::Config::default());
+        let client = session.client().clone();
+        keep(session);
+        assert!(
+            crate::settle_until(async || !window.rows_on_screen().is_empty()).await,
+            "the store's inbox never reached the screen"
+        );
+        (window, client)
+    }
+}

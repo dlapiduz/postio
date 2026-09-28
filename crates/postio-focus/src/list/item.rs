@@ -9,24 +9,24 @@ use postio_model::listing::ThreadSummary;
 /// rows spliced among the conversations (research R3, data-model
 /// `FocusRow`), which is why this is an enum from the start.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FocusItem {
+pub enum FocusRow {
     /// A conversation, drawn from its newest message in the inbox.
     Conversation(ThreadSummary),
 }
 
-impl FocusItem {
+impl FocusRow {
     /// The message the row stands for: the one opening it opens, and the
     /// one the selection names it by.
     pub fn id(&self) -> MessageId {
         match self {
-            FocusItem::Conversation(summary) => summary.representative.id,
+            FocusRow::Conversation(summary) => summary.representative.id,
         }
     }
 
     /// The conversation, when the row stands for one.
     pub fn thread(&self) -> Option<ThreadId> {
         match self {
-            FocusItem::Conversation(summary) => summary.id,
+            FocusRow::Conversation(summary) => summary.id,
         }
     }
 
@@ -34,7 +34,7 @@ impl FocusItem {
     /// copies folded into it from the person's other accounts (T161).
     pub fn threads(&self) -> Vec<ThreadId> {
         match self {
-            FocusItem::Conversation(summary) => summary
+            FocusRow::Conversation(summary) => summary
                 .id
                 .into_iter()
                 .chain(summary.copies.iter().copied())
@@ -46,7 +46,7 @@ impl FocusItem {
     /// Its kind decides its height, never its content (FR-013).
     pub fn two_lines(&self) -> bool {
         match self {
-            FocusItem::Conversation(summary) => summary.marker.is_some(),
+            FocusRow::Conversation(summary) => summary.marker.is_some(),
         }
     }
 }
@@ -92,11 +92,11 @@ mod tests {
     fn a_folded_row_reaches_every_copy_of_its_conversation() {
         let mut summary = conversation(7, Some(3));
         summary.copies = vec![ThreadId::new(9)];
-        let item = FocusItem::Conversation(summary);
+        let item = FocusRow::Conversation(summary);
         assert_eq!(item.id(), MessageId::new(7));
         assert_eq!(item.threads(), vec![ThreadId::new(3), ThreadId::new(9)]);
         assert_eq!(
-            FocusItem::Conversation(conversation(8, None)).threads(),
+            FocusRow::Conversation(conversation(8, None)).threads(),
             Vec::<ThreadId>::new(),
             "a message in no conversation is aimed at by its id, not a thread"
         );
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn a_row_is_two_lines_exactly_when_it_carries_a_marker() {
         let mut marked = conversation(1, Some(1));
-        assert!(!FocusItem::Conversation(marked.clone()).two_lines());
+        assert!(!FocusRow::Conversation(marked.clone()).two_lines());
         marked.marker = Some(MarkerSummary {
             kind: MarkerKind::Question,
             when: None,
@@ -113,6 +113,6 @@ mod tests {
             answer: None,
             cancelled: false,
         });
-        assert!(FocusItem::Conversation(marked).two_lines());
+        assert!(FocusRow::Conversation(marked).two_lines());
     }
 }
