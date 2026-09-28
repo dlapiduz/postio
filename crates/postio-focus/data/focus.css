@@ -65,6 +65,7 @@ window.focus-window {
 .focus-header-strip {
   min-height: 36px;
   padding: 0 var(--postio-space-4);
+  background-color: var(--postio-surface);
   border-bottom: 1px solid var(--postio-hairline);
 }
 
