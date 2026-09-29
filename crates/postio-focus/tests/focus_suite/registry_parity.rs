@@ -86,6 +86,11 @@ const NOT_YET: &[&str] = &[
     "filtered_tab_5",
     "filtered_tab_6",
     "filtered_tab_7",
+    // The capture sheet's own keys (T158): each has its control in the
+    // sheet, and the bar lists what the list reaches, as with the pickers'.
+    "capture_change_project",
+    "capture_use_subject",
+    "capture_write",
 ];
 
 pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {

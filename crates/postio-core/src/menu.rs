@@ -255,7 +255,12 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::FilteredTab5
         | C::FilteredTab6
         | C::FilteredTab7
-        | C::SweepInbox => None,
+        | C::SweepInbox
+        | C::CaptureTask
+        | C::CaptureNote
+        | C::CaptureChangeProject
+        | C::CaptureUseSubject
+        | C::CaptureWrite => None,
     }
 }
 

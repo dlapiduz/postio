@@ -132,7 +132,12 @@ const CONTRACT: &[Row] = &[
         "Escape",
         &[],
         All,
-        &[Context::Picker, Context::Digest, Context::Filtered],
+        &[
+            Context::Picker,
+            Context::Digest,
+            Context::Filtered,
+            Context::Capture,
+        ],
     ),
     with(
         "next_in_conversation",
@@ -226,6 +231,44 @@ const CONTRACT: &[Row] = &[
     with("picker_type_date", "Tab", &[], Focus, &[Context::Picker]),
     with("picker_toggle", "space", &[], Focus, &[Context::Picker]),
     with("picker_confirm", "Return", &[], Focus, &[Context::Picker]),
+    // -- Obsidian: the capture sheet (milestone 3, T158) ------------------
+    // `t` and `n` open it from a message, and switch it between a task and
+    // a note while it is up, as its toggles' keycaps say (screen 25).
+    with(
+        "capture_task",
+        "t",
+        &[],
+        Focus,
+        &[Context::List, Context::Reader, Context::Capture],
+    ),
+    with(
+        "capture_note",
+        "n",
+        &[],
+        Focus,
+        &[Context::List, Context::Reader, Context::Capture],
+    ),
+    with(
+        "capture_change_project",
+        "mod+p",
+        &[],
+        Focus,
+        &[Context::Capture],
+    ),
+    with(
+        "capture_use_subject",
+        "alt+s",
+        &[],
+        Focus,
+        &[Context::Capture],
+    ),
+    with(
+        "capture_write",
+        "mod+Return",
+        &[],
+        Focus,
+        &[Context::Capture],
+    ),
     // -- Digests and Filtered -------------------------------------------
     with(
         "stop_digesting_sender",

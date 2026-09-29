@@ -146,6 +146,7 @@ mod imp {
         pub keymap: RefCell<Option<SharedKeymap>>,
         pub picked: RefCell<Option<postio_ui::selection::SelectionState>>,
         pub on_action: RefCell<Option<ActionHandler>>,
+        pub capture: RefCell<Option<Rc<std::cell::Cell<bool>>>>,
     }
 
     #[glib::object_subclass]
@@ -271,6 +272,13 @@ impl RowWidget {
     /// Read keycaps from `keymap`, which the list shares with every row.
     pub fn set_keymap(&self, keymap: SharedKeymap) {
         self.imp().keymap.replace(Some(keymap));
+        self.queue_draw();
+    }
+
+    /// Offer Task on a to-do while `capture` says a vault is configured;
+    /// the list shares it with every row.
+    pub fn set_capture(&self, capture: Rc<std::cell::Cell<bool>>) {
+        self.imp().capture.replace(Some(capture));
         self.queue_draw();
     }
 
@@ -599,7 +607,13 @@ impl RowWidget {
         palette: &Palette,
         drawn: &mut Drawn,
     ) {
-        let line = marker_line(marker, chrono::Utc::now(), &chrono::Local);
+        let capture = self
+            .imp()
+            .capture
+            .borrow()
+            .as_ref()
+            .is_some_and(|capture| capture.get());
+        let line = marker_line(marker, chrono::Utc::now(), &chrono::Local).capturing(capture);
         let width = self.width() as f32;
         drawn.accent = Some(palette.accent);
 

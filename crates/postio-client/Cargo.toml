@@ -18,6 +18,9 @@ postio-core.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
 postio-ui.workspace = true
+# The vault's own types -- a task, a note entry, a project -- carried by the
+# capture requests as they are (spec 007 US15).
+postio-vault.workspace = true
 thiserror = { workspace = true }
 
 [dev-dependencies]

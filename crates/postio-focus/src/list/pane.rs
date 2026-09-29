@@ -24,6 +24,8 @@ pub struct ListPane {
     pinned: Rc<Cell<bool>>,
     /// What a press on a row's drawn action runs, once the window says.
     on_action: Rc<std::cell::RefCell<Option<ActionHandler>>>,
+    /// Whether a to-do's row offers Task: once a vault is configured.
+    capture: Rc<Cell<bool>>,
 }
 
 /// The selection a list's rows draw their boxes from.
@@ -35,9 +37,11 @@ impl ListPane {
     pub fn new(feed: Feed, keymap: postio_core::Keymap, picked: SharedSelection) -> Self {
         let keymap: SharedKeymap = std::rc::Rc::new(std::cell::RefCell::new(keymap));
         let on_action: Rc<std::cell::RefCell<Option<ActionHandler>>> = Rc::default();
+        let capture: Rc<Cell<bool>> = Rc::default();
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup({
             let keymap = keymap.clone();
+            let capture = Rc::clone(&capture);
             let picked = picked.clone();
             let on_action = Rc::clone(&on_action);
             move |_, item| {
@@ -46,6 +50,7 @@ impl ListPane {
                     .expect("a list view's factory builds list items");
                 let row = RowWidget::default();
                 row.set_keymap(keymap.clone());
+                row.set_capture(Rc::clone(&capture));
                 row.set_selection(picked.clone());
                 let on_action = Rc::clone(&on_action);
                 row.set_on_action(Rc::new(move |item, command| {
@@ -111,6 +116,15 @@ impl ListPane {
             keymap,
             pinned,
             on_action,
+            capture,
+        }
+    }
+
+    /// Whether a to-do's row offers Task `t` beside Snooze: once a vault is
+    /// configured (spec C9).
+    pub fn set_capture(&self, capture: bool) {
+        if self.capture.replace(capture) != capture {
+            self.redraw_rows();
         }
     }
 

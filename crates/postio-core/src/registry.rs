@@ -378,6 +378,14 @@ const CHROME: RequirementSet = RequirementSet::NONE;
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
 const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Conversation, Context::Reader];
+/// Where the capture sheet's `t` and `n` work: from a message, and in the
+/// sheet itself, where they switch it between a task and a note.
+const CAPTURE_SURFACES: &[Context] = &[
+    Context::List,
+    Context::Conversation,
+    Context::Reader,
+    Context::Capture,
+];
 /// `MESSAGE_SURFACES` plus the composer.
 ///
 /// Reply, reply-all and forward have to *resolve* while a draft is already
@@ -2310,6 +2318,62 @@ static SPECS: &[CommandSpec] = &[
         // It files mail away, many at a time: one undo takes it back.
         destructive: true,
         recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+    },
+    // -- Obsidian capture (specs/007-postio-focus milestone 3, T158) --------
+    CommandSpec {
+        id: CommandId::CaptureTask,
+        // The ellipsis says a sheet opens before anything is written.
+        title: "Capture a task…",
+        default_binding: "t",
+        alternate_bindings: &[],
+        // From a message, and inside the sheet, where its Task toggle shows
+        // the same key (screen 25).
+        contexts: ctx(CAPTURE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CaptureNote,
+        title: "Capture a note…",
+        default_binding: "n",
+        alternate_bindings: &[],
+        contexts: ctx(CAPTURE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CaptureChangeProject,
+        title: "Change project",
+        default_binding: "mod+p",
+        alternate_bindings: &[],
+        contexts: Context::Capture.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CaptureUseSubject,
+        title: "Use the subject instead",
+        default_binding: "alt+s",
+        alternate_bindings: &[],
+        contexts: Context::Capture.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CaptureWrite,
+        title: "Add to the vault",
+        default_binding: "mod+Return",
+        alternate_bindings: &[],
+        contexts: Context::Capture.as_set(),
+        // It appends a line to a note on this computer, which the person
+        // can delete there; Postio never edits a note beyond appending.
+        destructive: false,
+        recovery: Recovery::None,
         requires: FOCUS_MAIL,
     },
 ];

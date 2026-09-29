@@ -34,6 +34,7 @@ mod model;
 pub(crate) mod rules;
 mod summary;
 mod surfaced;
+pub(crate) mod vault;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};

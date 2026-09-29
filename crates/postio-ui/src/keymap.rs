@@ -556,6 +556,8 @@ pub enum KeyContext {
     Digest,
     /// The Filtered view (spec 007).
     Filtered,
+    /// The capture sheet (spec 007, milestone 3).
+    Capture,
 }
 
 impl KeyContext {
@@ -601,6 +603,9 @@ impl KeyContext {
             Self::Picker => &[Self::Picker, Self::Global],
             Self::Digest => &[Self::Digest, Self::Global],
             Self::Filtered => &[Self::Filtered, Self::Global],
+            // The capture sheet sits over a message, as a picker does: a
+            // letter falling through would act on the mail under it.
+            Self::Capture => &[Self::Capture, Self::Global],
         }
     }
 }
@@ -627,6 +632,7 @@ impl From<Context> for KeyContext {
             Context::Picker => Self::Picker,
             Context::Digest => Self::Digest,
             Context::Filtered => Self::Filtered,
+            Context::Capture => Self::Capture,
         }
     }
 }

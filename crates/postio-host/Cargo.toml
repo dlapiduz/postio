@@ -39,6 +39,9 @@ postio-session.workspace = true
 postio-storage.workspace = true
 postio-sync.workspace = true
 postio-ui.workspace = true
+# The Obsidian vault Focus captures into (spec 007 US15): read and appended
+# to on this computer, answering the client's capture requests.
+postio-vault.workspace = true
 # A digest's summary, kept with its delivery as JSON (spec 007 T154).
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }

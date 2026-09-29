@@ -24,6 +24,7 @@
 
 mod across_apps;
 mod bar;
+mod capture;
 mod chrome;
 mod colours;
 mod compose;
@@ -119,6 +120,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once",
         surfaced::a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once as fn(),
+    ),
+    (
+        "capture::t_appends_one_tasks_line_with_the_link_before_the_date",
+        capture::t_appends_one_tasks_line_with_the_link_before_the_date as fn(),
+    ),
+    (
+        "capture::n_appends_a_note_and_alt_s_uses_the_subject",
+        capture::n_appends_a_note_and_alt_s_uses_the_subject as fn(),
+    ),
+    (
+        "capture::without_a_vault_there_is_no_task_and_t_says_why",
+        capture::without_a_vault_there_is_no_task_and_t_says_why as fn(),
     ),
     (
         "desktop::a_postio_link_opens_its_message_and_an_unknown_one_is_refused",

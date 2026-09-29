@@ -90,6 +90,12 @@ pub enum Context {
     /// The Filtered view: what Focus archived on arrival, by reason (spec
     /// 007 US9). `R` there restores.
     Filtered,
+    /// The capture sheet: a task or a note from a message, written into the
+    /// person's Obsidian vault (spec 007 US15, milestone 3). Its own context,
+    /// for the picker's reason: it sits over the mail, and its keys --
+    /// `mod+p` for the project, `alt+s` for the subject, `mod+Return` to
+    /// write -- mean nothing to the list underneath.
+    Capture,
 }
 
 impl Context {
@@ -111,6 +117,7 @@ impl Context {
         Context::Picker,
         Context::Digest,
         Context::Filtered,
+        Context::Capture,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -129,6 +136,7 @@ impl Context {
             Context::Picker => "picker",
             Context::Digest => "digest",
             Context::Filtered => "filtered",
+            Context::Capture => "capture",
         }
     }
 

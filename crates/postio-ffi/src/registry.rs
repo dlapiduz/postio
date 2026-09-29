@@ -61,6 +61,8 @@ pub enum UiContext {
     Digest,
     /// The Filtered view: Postio Focus's (spec 007).
     Filtered,
+    /// The capture sheet: Postio Focus's (spec 007, milestone 3).
+    Capture,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -80,6 +82,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Picker => UiContext::Picker,
             Context::Digest => UiContext::Digest,
             Context::Filtered => UiContext::Filtered,
+            Context::Capture => UiContext::Capture,
         }
     }
 }
@@ -108,6 +111,7 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Picker => Context::Picker,
             UiContext::Digest => Context::Digest,
             UiContext::Filtered => Context::Filtered,
+            UiContext::Capture => Context::Capture,
         }
     }
 }

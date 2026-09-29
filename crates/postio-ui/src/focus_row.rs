@@ -111,6 +111,8 @@ mod tests {
 pub struct MarkerLine {
     /// The kind chip: "Invite", "Question", "To-do" or "No reply".
     pub chip: &'static str,
+    /// What the marker is, which decides what else it may offer.
+    pub kind: postio_model::listing::MarkerKind,
     /// The date: "Tue 29 Sep · 10:00–10:45", "Wed 30 Sep", "since Sat 26 Sep".
     pub date: Option<String>,
     /// The sentence the marker is about, verbatim, for a question or to-do.
@@ -119,6 +121,19 @@ pub struct MarkerLine {
     pub status: Option<&'static str>,
     /// The commands that answer it, in order, each with its button's words.
     pub actions: Vec<(postio_core::CommandId, &'static str)>,
+}
+
+impl MarkerLine {
+    /// This line in a Focus that can capture into a vault (`[focus.vault]`
+    /// configured, milestone 3): a to-do then offers Task `t` before
+    /// Snooze (spec C9, screens 01, 03 and 04). Nothing else changes.
+    pub fn capturing(mut self, capture: bool) -> Self {
+        if capture && self.kind == postio_model::listing::MarkerKind::Todo {
+            self.actions
+                .insert(0, (postio_core::CommandId::CaptureTask, "Task"));
+        }
+        self
+    }
 }
 
 /// The second line for `marker`, as of `now`, in `zone`.
@@ -184,6 +199,7 @@ where
     };
     MarkerLine {
         chip,
+        kind: marker.kind,
         date,
         quote,
         status,
@@ -324,6 +340,47 @@ mod marker_tests {
         assert_eq!(line.chip, "No reply");
         assert_eq!(line.date.as_deref(), Some("since Sat 26 Sep"));
         assert_eq!(line.actions, [(CommandId::Reply, "Reply")]);
+    }
+    #[test]
+    fn with_a_vault_a_to_do_offers_task_before_snooze_and_nothing_else_changes() {
+        // Spec C9: Task joins Snooze on a to-do once Obsidian exists, which
+        // is once `[focus.vault]` is configured (T158).
+        let todo = MarkerSummary {
+            kind: MarkerKind::Todo,
+            when: Some(MarkerWhen::Due(at(30, 12, 0))),
+            excerpt: Some("Please leave comments by Wednesday".into()),
+            answer: None,
+            cancelled: false,
+        };
+        let line = marker_line(&todo, at(26, 14, 9), &Utc).capturing(true);
+        assert_eq!(
+            line.actions,
+            [
+                (CommandId::CaptureTask, "Task"),
+                (CommandId::Snooze, "Snooze")
+            ]
+        );
+        assert_eq!(
+            marker_line(&todo, at(26, 14, 9), &Utc)
+                .capturing(false)
+                .actions,
+            [(CommandId::Snooze, "Snooze")],
+            "no vault, no Task"
+        );
+        let question = MarkerSummary {
+            kind: MarkerKind::Question,
+            when: None,
+            excerpt: Some("Can you approve these by Friday?".into()),
+            answer: None,
+            cancelled: false,
+        };
+        assert_eq!(
+            marker_line(&question, at(26, 14, 9), &Utc)
+                .capturing(true)
+                .actions,
+            [(CommandId::Reply, "Reply")],
+            "a question is answered, not captured"
+        );
     }
 }
 

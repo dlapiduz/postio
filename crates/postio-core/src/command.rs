@@ -340,6 +340,16 @@ command_ids! {
     FilteredTab7 => "filtered_tab_7",
     /// File away what is already in the inbox by Focus's filtering rules.
     SweepInbox => "sweep_inbox",
+    /// Capture a task from this message into the Obsidian vault.
+    CaptureTask => "capture_task",
+    /// Capture a note from this message into the Obsidian vault.
+    CaptureNote => "capture_note",
+    /// Choose another project for the capture.
+    CaptureChangeProject => "capture_change_project",
+    /// Use the message's subject as the capture's text.
+    CaptureUseSubject => "capture_use_subject",
+    /// Write the capture into the vault.
+    CaptureWrite => "capture_write",
 }
 
 impl fmt::Display for CommandId {
@@ -1098,6 +1108,21 @@ pub enum Command {
     /// filtering to mail filed before it was turned on. The frontend shows
     /// what would move first (`Client::sweep_preview`).
     SweepInbox,
+
+    // -- Obsidian capture (specs/007-postio-focus milestone 3) -------------
+    /// Open the capture sheet for a task from the message (spec 007 US15),
+    /// or switch the open sheet to a task. Frontend-only: the sheet writes
+    /// through `Client::capture_task`.
+    CaptureTask,
+    /// Open the capture sheet for a note from the message, or switch the
+    /// open sheet to a note.
+    CaptureNote,
+    /// Choose another project for the capture.
+    CaptureChangeProject,
+    /// Use the message's subject as the capture's text.
+    CaptureUseSubject,
+    /// Write the capture into the vault.
+    CaptureWrite,
     /// Undo's way back from a sweep: the messages return to their inboxes,
     /// and the decisions that filed them away go with the sweep that made
     /// them.
@@ -1326,6 +1351,11 @@ impl Command {
             Command::FilteredTab6 => CommandId::FilteredTab6,
             Command::FilteredTab7 => CommandId::FilteredTab7,
             Command::SweepInbox | Command::UnsweepInbox { .. } => CommandId::SweepInbox,
+            Command::CaptureTask => CommandId::CaptureTask,
+            Command::CaptureNote => CommandId::CaptureNote,
+            Command::CaptureChangeProject => CommandId::CaptureChangeProject,
+            Command::CaptureUseSubject => CommandId::CaptureUseSubject,
+            Command::CaptureWrite => CommandId::CaptureWrite,
         }
     }
 
@@ -1517,6 +1547,11 @@ impl Command {
             CommandId::FilteredTab6 => Command::FilteredTab6,
             CommandId::FilteredTab7 => Command::FilteredTab7,
             CommandId::SweepInbox => Command::SweepInbox,
+            CommandId::CaptureTask => Command::CaptureTask,
+            CommandId::CaptureNote => Command::CaptureNote,
+            CommandId::CaptureChangeProject => Command::CaptureChangeProject,
+            CommandId::CaptureUseSubject => Command::CaptureUseSubject,
+            CommandId::CaptureWrite => Command::CaptureWrite,
         }
     }
 

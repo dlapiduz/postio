@@ -316,8 +316,9 @@ fn contexts_round_trip_through_strings() {
     // is no longer written down twice -- `context.rs`'s
     // `every_context_fits_the_set` derives it from the integer itself, so
     // this is only the deliberate-act tripwire. Postio Focus's picker, digest
-    // and Filtered view (spec 007) make thirteen.
-    assert_eq!(Context::ALL.len(), 13);
+    // and Filtered view (spec 007) make thirteen, and its capture sheet
+    // (milestone 3) fourteen.
+    assert_eq!(Context::ALL.len(), 14);
 }
 
 #[test]

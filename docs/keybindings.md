@@ -185,6 +185,11 @@ command from inside a text field.
 | `6` | Reason 6 | Filtered view (Postio Focus) |  | `filtered_tab_6` |
 | `7` | Reason 7 | Filtered view (Postio Focus) |  | `filtered_tab_7` |
 | `F` | Filter what is in the inbox… | List (Postio Focus) | Undoable | `sweep_inbox` |
+| `t` | Capture a task… | List, conversation, reader, capture sheet (Postio Focus) |  | `capture_task` |
+| `n` | Capture a note… | List, conversation, reader, capture sheet (Postio Focus) |  | `capture_note` |
+| `ctrl+p` | Change project | Capture sheet (Postio Focus) |  | `capture_change_project` |
+| `alt+s` | Use the subject instead | Capture sheet (Postio Focus) |  | `capture_use_subject` |
+| `ctrl+Return` | Add to the vault | Capture sheet (Postio Focus) |  | `capture_write` |
 
 ## The one box
 

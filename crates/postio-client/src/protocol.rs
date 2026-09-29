@@ -429,6 +429,28 @@ pub enum Req {
     /// delivered and not archived, and the reminders that fired, each with
     /// its time and position (spec 007, contracts/engine.md).
     Surfaced,
+    /// What the capture sheet reads from the vault for a message with
+    /// `subject` (spec 007 US15): its projects, the one suggested, and the
+    /// tasks Postio captured. Fails with a sentence when no `[focus.vault]`
+    /// is configured.
+    Vault {
+        /// The message's subject, which the suggestion is read from.
+        subject: String,
+    },
+    /// Append `task` to `project`'s note, or the tasks note with none.
+    CaptureTask {
+        /// The project chosen.
+        project: Option<postio_vault::Project>,
+        /// The task.
+        task: postio_vault::Task,
+    },
+    /// Append `entry` to `note`, relative to the vault.
+    CaptureNote {
+        /// The note.
+        note: std::path::PathBuf,
+        /// The entry.
+        entry: postio_vault::NoteEntry,
+    },
     /// A digest's summary, with every reference resolved again as it is
     /// read: `None` when none is written, or none is left to show (spec 007
     /// FR-172 to FR-175).
@@ -623,6 +645,10 @@ pub enum Resp {
     DigestSummary(Option<postio_model::summary::DigestSummary>),
     /// A message's raw source, every byte as the server sent it.
     RawSource(Vec<u8>),
+    /// What the capture sheet reads from the vault.
+    Vault(VaultPicture),
+    /// What a capture appended.
+    Captured(postio_vault::Captured),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }
@@ -914,4 +940,17 @@ pub struct RecipientDirectory {
     /// Contacts, best first, each with how often the user wrote to it:
     /// what `postio_ui::recipients::suggest` ranks by (spec 007 T076).
     pub contacts: Vec<postio_ui::recipients::Correspondent>,
+}
+
+/// What the capture sheet reads from the vault (spec 007 US15, FR-181).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VaultPicture {
+    /// The vault's projects, by name.
+    pub projects: Vec<postio_vault::Project>,
+    /// The project suggested for the message, and why.
+    pub suggestion: Option<postio_vault::Suggestion>,
+    /// The note a task goes to with no project, relative to the vault.
+    pub tasks_note: std::path::PathBuf,
+    /// Every task Postio captured, in the tasks note and the projects'.
+    pub tasks: Vec<postio_vault::CapturedTask>,
 }

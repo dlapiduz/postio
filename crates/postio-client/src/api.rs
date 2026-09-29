@@ -148,6 +148,9 @@ impl Req {
             Req::DigestLikeThis(_) => "DigestLikeThis",
             Req::SaveDigestRule { .. } => "SaveDigestRule",
             Req::DeleteDigestRule(_) => "DeleteDigestRule",
+            Req::Vault { .. } => "Vault",
+            Req::CaptureTask { .. } => "CaptureTask",
+            Req::CaptureNote { .. } => "CaptureNote",
         }
     }
 }
@@ -1207,6 +1210,60 @@ impl Client {
             Resp::Surfaced(rows) => Some(rows),
             _ => None,
         })
+        .await
+    }
+
+    /// What the capture sheet needs from the vault for a message with
+    /// `subject`: its projects, the one suggested with why, and the tasks
+    /// Postio captured (spec 007 US15). Fails with a sentence when no
+    /// `[focus.vault]` is configured.
+    pub async fn vault(&self, subject: &str) -> Result<crate::protocol::VaultPicture, StoreError> {
+        self.read(
+            Req::Vault {
+                subject: subject.to_owned(),
+            },
+            "the vault",
+            |answer| match answer {
+                Resp::Vault(picture) => Some(picture),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Append `task` to `project`'s note in the vault, or to the tasks note
+    /// with none: exactly one line, the note's own bytes untouched.
+    pub async fn capture_task(
+        &self,
+        project: Option<postio_vault::Project>,
+        task: postio_vault::Task,
+    ) -> Result<postio_vault::Captured, StoreError> {
+        self.read(
+            Req::CaptureTask { project, task },
+            "the task written to the vault",
+            |answer| match answer {
+                Resp::Captured(captured) => Some(captured),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Append `entry` to `note` in the vault, creating the note if it is
+    /// not there.
+    pub async fn capture_note(
+        &self,
+        note: std::path::PathBuf,
+        entry: postio_vault::NoteEntry,
+    ) -> Result<postio_vault::Captured, StoreError> {
+        self.read(
+            Req::CaptureNote { note, entry },
+            "the note written to the vault",
+            |answer| match answer {
+                Resp::Captured(captured) => Some(captured),
+                _ => None,
+            },
+        )
         .await
     }
 

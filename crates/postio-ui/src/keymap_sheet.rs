@@ -84,6 +84,7 @@ pub const KEY_MAP_CONTEXTS: &[Context] = &[
     Context::Picker,
     Context::Digest,
     Context::Filtered,
+    Context::Capture,
 ];
 
 /// The group Focus's key map draws `command` in, or `None` for a command it
@@ -206,6 +207,13 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::NextReference
         | C::PrevReference
         | C::ToggleDigestSummary => Some(G::DigestsAndFiltering),
+
+        // ── Obsidian ────────────────────────────────────────────────────
+        C::CaptureTask
+        | C::CaptureNote
+        | C::CaptureChangeProject
+        | C::CaptureUseSubject
+        | C::CaptureWrite => Some(G::Obsidian),
 
         // ── Not in the key map ──────────────────────────────────────────
         // The composer's own keys, which the compose dialog teaches on its
@@ -386,9 +394,13 @@ mod tests {
         let mut expected: Vec<Group> = Group::ALL.to_vec();
         expected.retain(|group| order.contains(group));
         assert_eq!(order, expected, "the key map's own order");
+        // Obsidian appeared with its commands (milestone 3, T158).
         assert!(
-            !order.contains(&Group::Obsidian),
-            "no Obsidian group before its commands exist"
+            map.iter().any(|(group, rows)| *group == Group::Obsidian
+                && rows
+                    .iter()
+                    .any(|row| row.action == CommandId::CaptureTask.into())),
+            "the capture sheet's commands are taught under Obsidian"
         );
         for (group, rows) in &map {
             assert!(!rows.is_empty(), "{group:?} has rows");

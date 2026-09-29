@@ -4758,6 +4758,7 @@ dependencies = [
  "postio-model",
  "postio-search",
  "postio-ui",
+ "postio-vault",
  "thiserror",
  "tokio",
 ]
@@ -4851,6 +4852,7 @@ dependencies = [
  "postio-sync",
  "postio-test-support",
  "postio-ui",
+ "postio-vault",
  "postio-widgets",
  "tempfile",
  "tokio",
@@ -4926,6 +4928,7 @@ dependencies = [
  "postio-sync",
  "postio-test-support",
  "postio-ui",
+ "postio-vault",
  "serde-xml-rs",
  "serde_json",
  "tempfile",

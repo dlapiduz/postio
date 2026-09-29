@@ -98,6 +98,8 @@ pub struct OpenMessage {
     /// The body on screen, once it has landed: where the marker's sentence
     /// is looked for.
     body: Rc<RefCell<Option<MessageBody>>>,
+    /// Whether a to-do's card offers Task: once a vault is configured.
+    capture: Cell<bool>,
 }
 
 impl OpenMessage {
@@ -273,6 +275,7 @@ impl OpenMessage {
             marker: RefCell::default(),
             card: RefCell::default(),
             body: Rc::default(),
+            capture: Cell::new(false),
         });
 
         let weak = Rc::downgrade(&page);
@@ -321,6 +324,12 @@ impl OpenMessage {
         });
         page.set_keymap(keymap);
         page
+    }
+
+    /// Whether a to-do's card offers Task `t` beside Snooze: once a vault is
+    /// configured (spec C9). Read when a card is next drawn.
+    pub fn set_capture(&self, capture: bool) {
+        self.capture.set(capture);
     }
 
     /// Run `handler` with the command a control stands for.
@@ -774,7 +783,8 @@ impl OpenMessage {
     /// its date, its sentence, and the actions that answer it with their
     /// keys -- or what is true instead.
     fn marker_card(&self, marker: &postio_model::listing::MarkerSummary) -> gtk::Box {
-        let line = postio_ui::focus_row::marker_line(marker, chrono::Utc::now(), &chrono::Local);
+        let line = postio_ui::focus_row::marker_line(marker, chrono::Utc::now(), &chrono::Local)
+            .capturing(self.capture.get());
         let card = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         card.add_css_class("focus-marker-card");
         let chip = gtk::Label::new(Some(line.chip));

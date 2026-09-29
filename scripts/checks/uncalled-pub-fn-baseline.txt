@@ -19,8 +19,6 @@
 # say why on the same line.
 add_member                        # crates/postio-storage/src/repository/contact_groups.rs:95
 advertises_special_use            # crates/postio-account/src/imap/dispatch.rs:215
-append_note                       # crates/postio-vault/src/lib.rs -- spec 007's capture sheet (T158, the Focus window's lane) calls it
-append_task                       # crates/postio-vault/src/lib.rs -- spec 007's capture sheet (T158, the Focus window's lane) calls it
 back_depth                        # crates/postio-core/src/state.rs:478
 backfill_policy_at                # crates/postio-session/src/lib.rs:92
 backfill_progress                 # crates/postio-runtime/src/engine.rs:595

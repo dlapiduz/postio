@@ -187,6 +187,9 @@ mod imp {
         /// Whether the composer's editing surface should start as soon as
         /// the composer is mounted: asked for before an account was known.
         pub warm: Cell<bool>,
+        /// The capture sheet (US15), built the first time `t` or `n` opens
+        /// it.
+        pub capture: RefCell<Option<Rc<crate::capture::CaptureSheet>>>,
     }
 
     impl Default for FocusWindow {
@@ -246,6 +249,7 @@ mod imp {
                 config_path: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
+                capture: RefCell::default(),
             }
         }
     }
@@ -414,6 +418,9 @@ impl FocusWindow {
         if let Some(compose) = imp.compose.borrow().as_ref() {
             compose.set_keymap(&keymap);
         }
+        if let Some(capture) = imp.capture.borrow().as_ref() {
+            capture.set_keymap(&keymap);
+        }
         imp.keymap.replace(keymap);
         // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
@@ -486,6 +493,9 @@ impl FocusWindow {
             if dialog.widget_name() == crate::digest::DIALOG_NAME {
                 return self.digest_key(outcome);
             }
+            if dialog.widget_name() == crate::capture::DIALOG_NAME {
+                return self.capture_key(outcome);
+            }
             return match outcome {
                 Outcome::Command(id)
                     if matches!(
@@ -532,6 +542,8 @@ impl FocusWindow {
             .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
         {
             KeyContext::Reader
+        } else if self.capture().is_some() {
+            KeyContext::Capture
         } else if self.digest().is_some() {
             KeyContext::Digest
         } else if self.bar().is_some_and(|bar| bar.is_open()) {
@@ -543,6 +555,100 @@ impl FocusWindow {
         } else {
             KeyContext::List
         }
+    }
+
+    /// A key while the capture sheet is up: its own commands, and `Esc`.
+    fn capture_key(&self, outcome: Outcome) -> glib::Propagation {
+        match outcome {
+            Outcome::Command(id) => match (id.parse::<CommandId>(), self.capture()) {
+                (Ok(id), Some(sheet)) => {
+                    sheet.run(id);
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            },
+            Outcome::Pending(_) => glib::Propagation::Stop,
+            Outcome::Unhandled => glib::Propagation::Proceed,
+        }
+    }
+
+    /// The capture sheet, once `t` or `n` has opened it.
+    pub fn capture(&self) -> Option<Rc<crate::capture::CaptureSheet>> {
+        self.imp().capture.borrow().clone()
+    }
+
+    /// `t` or `n`: the capture sheet for the message aimed at, as a task or
+    /// a note (US15). With no vault configured, it says so instead.
+    fn open_capture(&self, mode: crate::capture::Mode) {
+        let imp = self.imp();
+        if imp.focus_config.borrow().vault.is_none() {
+            imp.toast.show_notice(crate::capture::NO_VAULT);
+            self.follow_toast();
+            return;
+        }
+        let (Some(client), Some(source)) = (imp.client.borrow().clone(), self.capture_source())
+        else {
+            return;
+        };
+        let sheet = imp.capture.borrow().clone();
+        let sheet = sheet.unwrap_or_else(|| {
+            let sheet = crate::capture::CaptureSheet::new(client, &self.keymap());
+            sheet.connect_written(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |said| {
+                    window.imp().toast.show_notice(&said);
+                    window.follow_toast();
+                }
+            ));
+            imp.capture.replace(Some(Rc::clone(&sheet)));
+            sheet
+        });
+        sheet.open(self, source, mode);
+    }
+
+    /// What a capture is made from: the message open over the list when one
+    /// is, the cursor's row otherwise, with its marker's sentence and day.
+    fn capture_source(&self) -> Option<crate::capture::Source> {
+        let message = self.aimed_message()?;
+        let row = self.cursor_row().filter(|row| row.id() == message);
+        let Some(row) = row else {
+            let subject = self
+                .reading()
+                .map(|reading| reading.title())
+                .unwrap_or_default();
+            return Some(crate::capture::Source {
+                message,
+                sender: String::new(),
+                subject,
+                when: String::new(),
+                sentence: None,
+                due: None,
+            });
+        };
+        let conversation = row.row();
+        let summary = &conversation.summary;
+        let representative = &summary.representative;
+        let marker = summary.marker.as_ref();
+        Some(crate::capture::Source {
+            message,
+            sender: representative
+                .from
+                .as_ref()
+                .map(|from| from.display().to_owned())
+                .unwrap_or_default(),
+            subject: representative.subject.clone().unwrap_or_default(),
+            when: postio_ui::row::timestamp(summary.last_at, chrono::Local::now()),
+            sentence: marker.and_then(|marker| marker.excerpt.clone()),
+            due: marker.and_then(|marker| match marker.when {
+                Some(postio_model::listing::MarkerWhen::Due(at))
+                    if marker.kind == postio_model::listing::MarkerKind::Todo =>
+                {
+                    Some(at.with_timezone(&chrono::Local).date_naive())
+                }
+                _ => None,
+            }),
+        })
     }
 
     /// A key while a message is open over the list (US2 scenarios 1-3):
@@ -797,6 +903,9 @@ impl FocusWindow {
             }
             // `g t`: the Drafts folder, where Enter opens a draft to edit.
             CommandId::GoToDrafts => self.go_to_drafts(),
+            // The capture sheet (US15), from the row or the open message.
+            CommandId::CaptureTask => self.open_capture(crate::capture::Mode::Task),
+            CommandId::CaptureNote => self.open_capture(crate::capture::Mode::Note),
             // The classic app's composer, in its dialog (US3).
             CommandId::Compose | CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 if let Some(compose) = self.compose() {
@@ -1223,6 +1332,7 @@ impl FocusWindow {
                 }
             }
         ));
+        pane.set_capture(imp.focus_config.borrow().vault.is_some());
         imp.pane.replace(Some(pane));
         imp.client.replace(Some(client.clone()));
         if let Some(uri) = imp.pending_link.take() {
@@ -1450,9 +1560,22 @@ impl FocusWindow {
         if let Some(bar) = self.bar() {
             bar.set_digesting(!focus.digests.is_empty());
         }
+        let capture = focus.vault.is_some();
         self.imp().focus_config.replace(focus);
+        self.show_capture(capture);
         self.show_empty_or_list();
         self.show_counts();
+    }
+
+    /// Whether rows and the marker card offer Task: once a vault is
+    /// configured (spec C9, milestone 3).
+    fn show_capture(&self, capture: bool) {
+        if let Some(pane) = self.pane() {
+            pane.set_capture(capture);
+        }
+        if let Some(reading) = self.reading() {
+            reading.set_capture(capture);
+        }
     }
 
     /// The window's chrome, once the inbox is showing.
@@ -2355,6 +2478,7 @@ impl FocusWindow {
                     self,
                     move |id| window.act(id)
                 ));
+                reading.set_capture(self.imp().focus_config.borrow().vault.is_some());
                 reading
             })
             .clone();
@@ -2725,6 +2849,7 @@ impl FocusWindow {
         commands.extend([CommandId::GoToFiltered, CommandId::GoToDigestRules]);
         commands.push(CommandId::Undo);
         commands.extend(crate::compose::Compose::controls());
+        commands.extend(crate::capture::CaptureSheet::controls());
         // The answering actions a marked row draws, each a button.
         commands.extend([CommandId::AcceptInvite, CommandId::DeclineInvite]);
         commands.sort_by_key(|command| command.as_str());

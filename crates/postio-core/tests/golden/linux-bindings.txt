@@ -138,3 +138,8 @@ filtered_tab_5	5
 filtered_tab_6	6
 filtered_tab_7	7
 sweep_inbox	F
+capture_task	t
+capture_note	n
+capture_change_project	ctrl+p
+capture_use_subject	alt+s
+capture_write	ctrl+Return

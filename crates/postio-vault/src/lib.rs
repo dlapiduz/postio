@@ -187,7 +187,7 @@ impl Task {
 impl NoteEntry {
     /// The lines the entry appends: the text and its link, then the quote,
     /// when asked for, as quoted lines under it.
-    fn lines(&self) -> String {
+    pub fn lines(&self) -> String {
         let mut lines = format!("- {} {LINK}{})\n", one_line(&self.text), self.message.get());
         if let Some(quote) = &self.quote {
             for line in quote.lines() {

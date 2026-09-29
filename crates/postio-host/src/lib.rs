@@ -1170,6 +1170,15 @@ impl Inner {
             } => focus::filtered::page(self, reason, offset, limit)
                 .await
                 .map_or_else(Resp::Failed, Resp::Filtered),
+            Req::Vault { subject } => focus::vault::picture(self, subject)
+                .await
+                .map_or_else(Resp::Failed, Resp::Vault),
+            Req::CaptureTask { project, task } => focus::vault::capture_task(self, project, task)
+                .await
+                .map_or_else(Resp::Failed, Resp::Captured),
+            Req::CaptureNote { note, entry } => focus::vault::capture_note(self, note, entry)
+                .await
+                .map_or_else(Resp::Failed, Resp::Captured),
             Req::SweepPreview => match self.wiring.focus.config() {
                 Some(config) => {
                     postio_session::focus::sweep_preview(&self.wiring.database, &config)

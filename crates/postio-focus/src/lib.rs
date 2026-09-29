@@ -11,6 +11,7 @@ pub mod app;
 pub mod banner;
 pub mod bar;
 pub mod bulk;
+pub mod capture;
 pub mod chooser;
 pub mod chrome;
 pub mod compose;
