@@ -272,6 +272,7 @@ impl RowWidget {
     /// Read keycaps from `keymap`, which the list shares with every row.
     pub fn set_keymap(&self, keymap: SharedKeymap) {
         self.imp().keymap.replace(Some(keymap));
+        self.announce();
         self.queue_draw();
     }
 
@@ -279,6 +280,7 @@ impl RowWidget {
     /// the list shares it with every row.
     pub fn set_capture(&self, capture: Rc<std::cell::Cell<bool>>) {
         self.imp().capture.replace(Some(capture));
+        self.announce();
         self.queue_draw();
     }
 
@@ -333,6 +335,52 @@ impl RowWidget {
             .map_or_else(|| "Loading".to_owned(), spoken)
     }
 
+    /// Say what the row is to a screen reader: its name, and the keys of the
+    /// marker's actions as its shortcuts (FR-096) -- the caps drawn beside
+    /// them are pixels, and say nothing.
+    fn announce(&self) {
+        self.update_property(&[gtk::accessible::Property::Label(&self.spoken())]);
+        let keys = self.action_keys();
+        if keys.is_empty() {
+            self.reset_property(gtk::AccessibleProperty::KeyShortcuts);
+        } else {
+            self.update_property(&[gtk::accessible::Property::KeyShortcuts(&keys)]);
+        }
+    }
+
+    /// The marker's actions' keys, in the ARIA spelling, space-separated as
+    /// `aria-keyshortcuts` lists alternatives: empty with no marker.
+    fn action_keys(&self) -> String {
+        let Some(line) = self.marker_line() else {
+            return String::new();
+        };
+        let keymap = self.imp().keymap.borrow().clone();
+        let Some(keymap) = keymap else {
+            return String::new();
+        };
+        let keymap = keymap.borrow();
+        line.actions
+            .iter()
+            .filter_map(|(command, _)| postio_ui::hints::key(&keymap, *command))
+            .map(|key| postio_ui::hints::shortcut(&key))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The second line the row's marker draws, when it has one.
+    fn marker_line(&self) -> Option<postio_ui::focus_row::MarkerLine> {
+        let item = self.imp().item.borrow().clone()?;
+        let row = item.row();
+        let marker = row.summary.marker.as_ref()?;
+        let capture = self
+            .imp()
+            .capture
+            .borrow()
+            .as_ref()
+            .is_some_and(|capture| capture.get());
+        Some(marker_line(marker, chrono::Utc::now(), &chrono::Local).capturing(capture))
+    }
+
     /// What the row drew in its last snapshot.
     pub fn drawn(&self) -> Drawn {
         self.imp().drawn.borrow().clone()
@@ -368,7 +416,7 @@ impl RowWidget {
     fn show(&self, item: Option<FocusRow>) {
         let height_before = self.height();
         self.imp().item.replace(item);
-        self.update_property(&[gtk::accessible::Property::Label(&self.spoken())]);
+        self.announce();
         if self.height() != height_before {
             self.queue_resize();
         }
@@ -919,7 +967,8 @@ impl RowWidget {
 }
 
 /// What a row says, in the order a screen reader should say it: the sender,
-/// the subject, the first line, and whether it is unread (FR-096).
+/// the subject, the first line, whether it is unread, and its marker -- the
+/// kind, the day, the sentence verbatim, or what is true instead (FR-096).
 pub fn spoken(item: &FocusRow) -> String {
     let Some(row) = item.as_conversation() else {
         let FocusRow::Digest(digest) = item else {
@@ -944,6 +993,21 @@ pub fn spoken(item: &FocusRow) -> String {
     }
     if summary.has_unread() {
         parts.push("unread".to_owned());
+    }
+    if let Some(marker) = &summary.marker {
+        let line = marker_line(marker, chrono::Utc::now(), &chrono::Local);
+        let mut said = line.chip.to_owned();
+        if let Some(date) = &line.date {
+            said.push(' ');
+            said.push_str(date);
+        }
+        if let Some(quote) = &line.quote {
+            said.push_str(&format!(": \u{201c}{quote}\u{201d}"));
+        }
+        if let Some(status) = line.status {
+            said.push_str(&format!(", {status}"));
+        }
+        parts.push(said);
     }
     parts.join(", ")
 }

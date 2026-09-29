@@ -7,6 +7,7 @@
 //! [`app::run`]; everything else is here, where `tests/focus_suite` can drive
 //! the same startup the binary runs.
 
+pub mod a11y;
 pub mod app;
 pub mod banner;
 pub mod bar;

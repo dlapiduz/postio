@@ -84,6 +84,7 @@ impl ComposerHost for DialogHost {
         if let Some(window) = self.window.upgrade() {
             self.dialog.present(Some(&window));
         }
+        crate::a11y::teach_shortcuts(&self.dialog);
     }
 
     fn release_pane(&self) {

@@ -22,6 +22,7 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+mod a11y;
 mod across_apps;
 mod bar;
 mod capture;
@@ -73,6 +74,10 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut",
+        a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut as fn(),
+    ),
     (
         "compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it",
         compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it as fn(),
@@ -564,6 +569,9 @@ fn hermetic(arguments: &[String]) {
         // State too: the remote-image allow list lives there, and a case
         // about blocked images must not read the developer's own.
         .env("XDG_STATE_HOME", config.path().join("state"))
+        // Accessible properties are recorded only with a backend: the test
+        // one, so a case can ask what a screen reader would be told (T142).
+        .env("GTK_A11Y", "test")
         .status()
         .expect("the suite runs again in its own configuration");
     drop(config);

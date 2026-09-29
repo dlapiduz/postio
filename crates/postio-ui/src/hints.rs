@@ -65,6 +65,49 @@ pub fn hint_as(keymap: &Keymap, command: CommandId, preferred: &str, label: &str
     })
 }
 
+/// `key`, as the registry spells it, spelled for a screen reader: the
+/// `aria-keyshortcuts` form GTK's `KeyShortcuts` property carries
+/// (FR-096). Modifiers are named in full and joined by `+`, `Return` is
+/// `Enter`, and a capital letter says its Shift. A sequence (`g i`) has no
+/// ARIA spelling and is left as it is.
+pub fn shortcut(key: &str) -> String {
+    if key.contains(' ') {
+        return key.to_owned();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut pieces = key.split('+').peekable();
+    while let Some(piece) = pieces.next() {
+        let last = pieces.peek().is_none();
+        if !last {
+            parts.push(
+                match piece {
+                    "ctrl" | "control" | "mod" => "Control",
+                    "alt" => "Alt",
+                    "shift" => "Shift",
+                    "super" | "meta" | "cmd" => "Meta",
+                    other => other,
+                }
+                .to_owned(),
+            );
+            continue;
+        }
+        let name = match piece {
+            "Return" => "Enter".to_owned(),
+            letter
+                if letter.chars().count() == 1
+                    && letter.chars().all(char::is_uppercase)
+                    && !parts.iter().any(|part| part == "Shift") =>
+            {
+                parts.push("Shift".to_owned());
+                letter.to_owned()
+            }
+            other => other.to_owned(),
+        };
+        parts.push(name);
+    }
+    parts.join("+")
+}
+
 /// Just the key for `command`, for a control that draws its own label.
 pub fn key(keymap: &Keymap, command: CommandId) -> Option<String> {
     keymap.binding(command).map(str::to_owned)
@@ -116,6 +159,22 @@ pub fn line<'a>(hints: impl IntoIterator<Item = &'a Hint>) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_key_is_spelled_for_a_screen_reader_as_aria_keyshortcuts_spells_it() {
+        // FR-096: a keycap is announced as its control's shortcut. ARIA's
+        // `aria-keyshortcuts` names modifiers in full, joined by `+`, and a
+        // shifted letter by its Shift. ARIA has no spelling for a sequence,
+        // so one is left as the registry spells it.
+        assert_eq!(shortcut("e"), "e");
+        assert_eq!(shortcut("ctrl+Return"), "Control+Enter");
+        assert_eq!(shortcut("ctrl+shift+a"), "Control+Shift+a");
+        assert_eq!(shortcut("alt+s"), "Alt+s");
+        assert_eq!(shortcut("Escape"), "Escape");
+        assert_eq!(shortcut("E"), "Shift+E");
+        assert_eq!(shortcut("g i"), "g i");
+        assert_eq!(shortcut("super+k"), "Meta+k");
+    }
     use super::*;
 
     fn rebound(command: CommandId, key: &str) -> Keymap {

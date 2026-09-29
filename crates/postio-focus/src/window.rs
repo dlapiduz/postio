@@ -422,6 +422,8 @@ impl FocusWindow {
             capture.set_keymap(&keymap);
         }
         imp.keymap.replace(keymap);
+        // Every cap was drawn again: its control's shortcut follows it.
+        crate::a11y::teach_shortcuts(self);
         // An open key map is drawn from the keymap: draw it again.
         if let Some(open) = self.key_map() {
             open.force_close();
@@ -605,6 +607,7 @@ impl FocusWindow {
             sheet
         });
         sheet.open(self, source, mode);
+        crate::a11y::teach_shortcuts(sheet.dialog());
     }
 
     /// What a capture is made from: the message open over the list when one
@@ -1339,6 +1342,7 @@ impl FocusWindow {
             self.open_link(&uri);
         }
         imp.pages.set_visible_child_name(INBOX);
+        crate::a11y::teach_shortcuts(self);
         feed.open(ListScope::Focus(FocusScope::Inbox));
 
         // Exactly one reader of the client's events, on the main loop:
@@ -2507,6 +2511,7 @@ impl FocusWindow {
             total: pane.feed().list().n_items(),
         };
         reading.show(self, &row, position);
+        crate::a11y::teach_shortcuts(&reading.dialog());
     }
 
     /// Open URIs through `launch` rather than the desktop: what a test
