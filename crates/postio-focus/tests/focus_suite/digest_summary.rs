@@ -4,7 +4,6 @@
 //! window makes of it.
 
 use gtk::gdk;
-use gtk::prelude::*;
 use postio_focus::digest::DigestPage;
 
 use crate::digest::{delivered_holding, open_digest};
@@ -19,10 +18,7 @@ const MARKED: &str = "The rate held <a href=\"https://rates.example/\">here</a>;
 /// The two held messages with bodies, and a summary of them: two
 /// statements on one topic, one on another, and one citing a message the
 /// digest does not hold -- which must not be shown (FR-173).
-async fn summarised() -> (
-    crate::support::Fixture,
-    [postio_model::MessageId; 2],
-) {
+async fn summarised() -> (crate::support::Fixture, [postio_model::MessageId; 2]) {
     let (fixture, delivery, held) = delivered_holding().await;
     let (weekly, rate) = (held[0], held[1]);
     fixture
@@ -55,7 +51,13 @@ async fn summarised() -> (
                 rate,
                 "for a third month",
             ),
-            statement("Trade", "Shops had a flat week.", 2, weekly, "numbers were flat"),
+            statement(
+                "Trade",
+                "Shops had a flat week.",
+                2,
+                weekly,
+                "numbers were flat",
+            ),
             statement(
                 "Elsewhere",
                 "A statement citing nothing held.",
@@ -123,7 +125,10 @@ pub fn a_digest_with_a_summary_opens_on_it_and_every_statement_cites_its_mail() 
         assert!(
             paragraphs.iter().any(|label| label.text().contains(MARKED)),
             "the model's markup is not shown as its characters: {:?}",
-            paragraphs.iter().map(|label| label.text()).collect::<Vec<_>>()
+            paragraphs
+                .iter()
+                .map(|label| label.text())
+                .collect::<Vec<_>>()
         );
         assert!(
             paragraphs.iter().all(|label| !label.uses_markup()),
@@ -137,7 +142,11 @@ pub fn a_digest_with_a_summary_opens_on_it_and_every_statement_cites_its_mail() 
             "the list has its cursor for j and k"
         );
         support::press(&window, "Tab", gdk::ModifierType::empty());
-        assert_eq!(digest.showing(), DigestPage::Summary, "Tab again, the summary");
+        assert_eq!(
+            digest.showing(),
+            DigestPage::Summary,
+            "Tab again, the summary"
+        );
     });
 }
 

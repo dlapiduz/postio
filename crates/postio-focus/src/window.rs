@@ -1820,11 +1820,18 @@ impl FocusWindow {
             return glib::Propagation::Proceed;
         };
         match id.parse::<CommandId>() {
-            Ok(CommandId::Back) => window.close(),
+            Ok(CommandId::Back) => {
+                if !window.back() {
+                    window.close();
+                }
+            }
             Ok(CommandId::ArchiveThread) => {
                 self.digest_action(crate::digest::DigestAction::ArchiveAll)
             }
             Ok(CommandId::DigestRule) => self.digest_action(crate::digest::DigestAction::EditRule),
+            Ok(CommandId::NextReference) => window.step_reference(1),
+            Ok(CommandId::PrevReference) => window.step_reference(-1),
+            Ok(CommandId::ToggleDigestSummary) => window.toggle_summary(),
             Ok(CommandId::StopDigestingSender) => {
                 if let Some(message) = window.focused() {
                     self.ask_stop_digesting(&message);
