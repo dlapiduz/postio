@@ -199,8 +199,8 @@ maintainer asks.
 **Goal**: Screens 16–19. **Independent test**: spec US6.
 
 - [X] T052 [US6] One `AdwBanner` for first sync, offline or a sign-in error, chosen in that priority, with the sync label to match. Test first: drive each state through the host's test seam, and the banner and label read as contracts/focus-surface.md says
-- [ ] T053 [US6] With no network, archiving, labelling and searching take effect at once and queue. Test first: scenario 1. The archive half is done: offline, an archive takes effect at once and queues. The label and search halves come with the label picker (T097) and the command bar (US4)
-- [ ] T054 [US6] First sync: what has arrived can be read and searched, and progress shows. Test first: scenario 2. The listing half is done. Reading and searching during a first sync come with T069 and US4
+- [X] T053 [US6] With no network, archiving, labelling and searching take effect at once and queue. Test first: scenario 1. The archive half is done: offline, an archive takes effect at once and queues. The label and search halves come with the label picker (T097) and the command bar (US4)
+- [X] T054 [US6] First sync: what has arrived can be read and searched, and progress shows. Test first: scenario 2. The listing half is done. Reading and searching during a first sync come with T069 and US4
 - [X] T055 [US6] Update password… opens the shared credential dialog. Test first: scenario 3. The credential dialog is still in `postio-gtk` (T022): route onboarding through `postio-client` first. Blocked on T165
 - [X] T056 [US6] The empty inbox lists only what exists. Test first: scenario 4, with and without digests or filtering
 - [X] T057 [US6] Compare screens 16–19, and record them
@@ -274,7 +274,7 @@ maintainer asks.
 - [X] T093 [US5] `messages.sort_at` (per T012): the schema, the list's order, seek marks and indexes, and a woken snooze setting it. Test first: a woken snooze lists at the top, and `list_statement_count.rs` and `threads.rs:340` are unchanged. **If T012 chose the alternative:** change screen 11's copy instead, and record it. S6's conditions (R7): the folder and conversation lists move while the query views and search stay on `received_at`; `write_update` keeps `sort_at` at least `received_at` so drafts still rise, with a test; raw test inserts name the column. Move Focus's own window too: `focus_arm`'s `ORDER BY`, cursor and `focus_at`, and `representative_filter`
 - [X] T094 [US5] The `reminders` table, `remind_if_no_reply { at }` (undoable), cancellation by the filing pass on a reply from someone else, and firing on the tick. Test first: scenarios 3 and 4, including Focus closed at the due time and offline. `Command::RemindIfNoReply` has no `at` yet. The due timer does not fire reminders yet
 - [X] T095 [US5] Surfaced reminder rows: splice positions in `crates/postio-ui/src/list.rs`, `FocusRow::Reminder` as a two-line "No reply since …" row, and the Focus scope leaving out the conversation's ordinary row. Test first: the position is 1 statement, and a surfaced conversation is not listed twice. The host already fires reminders and lists them through `surfaced()`. Settling a reminder when the person replies or archives is still to do here. The rows are done: `FocusRow::Reminder` spliced at its place, listed once, and gone when archived, with undo. Still to do: settling when the person themselves replies, in the filing pass in `postio-sync`, which today settles only on other people's replies
-- [ ] T096 [US5] `Draft.remind_at` (Remind if no reply, `mod+h`, in the composer) becomes a reminder on send. Test first: US3's scenario 5
+- [X] T096 [US5] `Draft.remind_at` (Remind if no reply, `mod+h`, in the composer) becomes a reminder on send. Test first: US3's scenario 5
 - [X] T097 [US5] The label picker: filter, `Space` toggles (`add_label` on or off), create, "✓ applied", counts. Test first: scenario 5
 - [X] T098 [US5] The move picker: filter, Recent (`settings` key `focus.move_recent`), All folders, `Enter` moves, and `Ctrl+Z` undoes. Test first: scenario 6
 - [X] T170 [US5] The label picker reads the labels of the row's own account. Today it reads the first account's, because a row does not say which account it belongs to. Test first: with two accounts, labelling a row of the second offers the second's labels
@@ -329,7 +329,7 @@ maintainer asks.
 - [X] T117 [US12] The body task writes question and to-do markers for mail sent directly to the user. The catch-up covers the inbox and the last 30 days. Test first: scenarios 1–3 and 7 (no model configured: markers still appear, and nothing connects). Cut the excerpt as a plain prefix of the sentence, at most 200 characters, with no ellipsis, or the locator cannot find it (R2). Pass `BodyMessage.identities`, and `Senders::shipped()` through `Rules::senders()`. Cut own text with `postio_body::own_text`, and switch the gate test in `crates/postio-classify/tests/needs_action.rs` from the spike's approximation to it
 - [X] T118 [US12] `dismiss_marker { dismissed }` (undoable), and three dismissals write `[focus.filter] stop_markers`. Test first: scenario 5
 - [X] T119 [US12] Instruction-shaped text produces no action and no request. Test first: scenario 4, on ADR 0009's fixture
-- [ ] T120 [US12] Compare question and to-do markers on screens 01 and 03, and record them
+- [X] T120 [US12] Compare question and to-do markers on screens 01 and 03, and record them
 
 ## Phase 14: User Story 9: spam and updates filtered, with reasons (P2)
 
@@ -367,8 +367,8 @@ maintainer asks.
 
 ## Phase 16: Polish and cross-cutting (closes milestone 1)
 
-- [ ] T142 [P] Accessibility (FR-096): each row announces the sender, subject, first line, unread and marker, and keycaps are exposed as shortcuts. Test first: an accessible-tree assertion in `focus_suite`, followed by an Orca pass by hand
-- [ ] T143 [P] No transition over 100 ms, and reduced motion honoured (FR-094)
+- [X] T142 [P] Accessibility (FR-096): each row announces the sender, subject, first line, unread and marker, and keycaps are exposed as shortcuts. Test first: an accessible-tree assertion in `focus_suite`, followed by an Orca pass by hand. Done in code, with an accessible-tree case in `focus_suite`. The Orca pass by hand is the maintainer's
+- [X] T143 [P] No transition over 100 ms, and reduced motion honoured (FR-094)
 - [X] T144 [P] Packaging: `flatpak/dev.postio.Postio.json` builds `postio-focus`, `crates/postio-focus/data/dev.postio.Postio.Focus.desktop` is added, and release.yml's `flatpak` job carries both apps. Test first: the packaging test pattern of `crates/postio-tui/tests/packaging.rs`. Focus is a second launcher in the one Flatpak, so the classic metainfo names it rather than a second component, and the release job checks that the build carries both apps
 - [X] T145 [P] Documentation:
   - `docs/PRODUCT.md` §2 and §23;
@@ -404,9 +404,9 @@ maintainer asks.
 ## Phase 18: Milestone 3: Obsidian and `postio://` (P3)
 
 - [X] T157 [US15] `crates/postio-vault`: the Tasks line with the link before the date (spec C21), notes appended, project suggestion, and finished tasks read back. Test first: against a temporary vault, scenario 1's bytes, and nothing else changed
-- [ ] T158 [US15] The capture sheet (screen 25): `t` and `n`, and `Context::Capture`'s keys. Test first: a `focus_suite` case. `postio_vault::Vault` has `append_task`, `append_note`, `projects`, `suggest` and `tasks`. Wire them through a host request, and delete their baseline lines
+- [X] T158 [US15] The capture sheet (screen 25): `t` and `n`, and `Context::Capture`'s keys. Test first: a `focus_suite` case. `postio_vault::Vault` has `append_task`, `append_note`, `projects`, `suggest` and `tasks`. Wire them through a host request, and delete their baseline lines
 - [X] T159 [US15] `postio://`: `x-scheme-handler/postio` in Focus's desktop file, and `open` only navigates. Test first: scenario 2, including an unknown id refused with a message. The desktop entry registers `x-scheme-handler/postio` (T144). Still to do: `HANDLES_OPEN`, and navigating from the URI. Done: `HANDLES_OPEN`, and `postio://message/<id>`, where the id is the local message id, opens that message and does nothing else. An unknown id or link is refused with a sentence
-- [ ] T160 Compare screen 25, and record it
+- [X] T160 Compare screen 25, and record it
 
 ---
 
