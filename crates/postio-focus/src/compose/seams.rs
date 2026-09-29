@@ -1,37 +1,33 @@
 //! The composer's seams, answered through Focus's client (ADR 0041).
 //!
-//! The classic app answers the same seams in `postio-app`'s `compose.rs`,
-//! which Focus may not depend on. What each does is the host's: a save is
-//! `Req::SaveDraft`, a send `Req::QueueSend`, and the message that leaves is
-//! built by the host from the draft the composer hands over -- the same
-//! draft, from the same composer, whichever app holds it (FR-050, T081).
-//!
-//! As there, a seam that has to answer on the spot (recipient completion,
-//! an inline image's bytes) answers from memory or from one bounded local
-//! read; every other one asks the client on the main context and answers
-//! when the host does.
+//! Most of these are exactly the classic app's own seams, in
+//! `postio-app`'s `compose.rs` -- which Focus may not depend on -- and both
+//! now call the one implementation, `postio_widgets::present::compose`
+//! (`shared` below; specs/007-postio-focus T022). What is Focus's own is its
+//! dialog's chrome: [`resume`]'s and [`autosave`]'s notes go to the frame's
+//! footer rather than a toast or a status line, and [`reply_source`]
+//! additionally reads the thread's labels and draws them (R15), which
+//! [`label_names`] fills in the names of when a resumed draft opens knowing
+//! only their ids. A composer's seam is one slot, not a signal several
+//! listeners share, so neither `reply_source` nor `label_names` can be the
+//! shared, plainer version -- see `present::compose`'s own module doc.
 
-use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gio, glib};
 use postio_client::Client;
-use postio_client::protocol::RecipientDirectory;
 use postio_model::ids::{AccountId, MessageId};
-use postio_model::{DraftId, DraftState};
-use postio_widgets::composer::{Closing, Composer, ReplyAnswer};
+use postio_widgets::composer::{Composer, ReplyAnswer};
+use postio_widgets::present::compose as shared;
 
 use super::frame::Frame;
-
-/// How many recipient suggestions to offer at once, as the classic app does.
-const SUGGESTION_LIMIT: usize = 8;
 
 /// Which message `e`, `E` and `f` answer: the row the cursor is on.
 pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
 
 /// Open the draft behind a Drafts row for editing.
-pub type Resume = Rc<dyn Fn(MessageId)>;
+pub type Resume = shared::Resume;
 
 /// What the frame's subtitle says once opening a queued draft has cancelled
 /// its send, as the classic app says it (#433).
@@ -47,223 +43,67 @@ pub fn wire(
     current: Current,
 ) -> Resume {
     composer.set_account(account);
-    identities(composer, client, account);
-    signature_default(composer, client, account);
+    let identities_composer = composer.downgrade();
+    let identities_client = client.clone();
+    glib::spawn_future_local(async move {
+        if let Some(composer) = identities_composer.upgrade() {
+            // Focus has no conversation pane and marks nothing from the
+            // account row's own use of it (that is `postio-app`'s), so the
+            // account this answers with goes nowhere else.
+            shared::install_identities(&composer, &identities_client, account).await;
+        }
+    });
+    // Focus has no folder selected, so the account's default decides.
+    shared::install_signature_default(composer, client, account, || None);
     let last_id = autosave(composer, frame, client);
-    send(composer, client, Rc::clone(&last_id));
-    recipients(composer, client, account);
+    shared::install_send(composer, client, Rc::clone(&last_id), account, None);
+    shared::install_recipients(composer, client, account);
     reply_source(composer, frame, client, current);
     label_names(composer, frame, client, account);
-    attach(composer, client);
-    inline_images(composer, client);
-    resume(composer, frame, client, last_id)
+    shared::install_attach(composer, client);
+    shared::install_inline_images(composer, client);
+    resume(composer, client, last_id, frame)
 }
 
-/// A draft left in Drafts -- by Focus or by the classic app -- opens in the
-/// composer for editing (US3 scenario 3, US11 scenario 3), as the classic
-/// app's `install_resume` opens one: a draft whose send is still queued is
-/// taken back first, so an edit cannot race the drainer (#433), and a
-/// failed send says why.
-fn resume(
+/// Autosave, with the frame's "Saved at HH:MM" footer stamped from
+/// [`shared::install_autosave`]'s own hook.
+fn autosave(
     composer: &Composer,
     frame: &Rc<Frame>,
     client: &Client,
-    last_id: Rc<Cell<Option<DraftId>>>,
-) -> Resume {
-    let weak = composer.downgrade();
+) -> Rc<std::cell::Cell<Option<postio_model::DraftId>>> {
     let frame = Rc::downgrade(frame);
-    let client = client.clone();
-    Rc::new(move |message| {
-        let weak = weak.clone();
-        let frame = frame.clone();
-        let client = client.clone();
-        let last_id = Rc::clone(&last_id);
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: client calls are oneshot receives.
-            let draft = match client.draft_behind(message).await {
-                Ok(Some(draft)) => draft,
-                Ok(None) => return,
-                Err(error) => {
-                    tracing::warn!(%error, "could not read the draft behind a row");
-                    return;
-                }
-            };
-            let (draft, note) = if draft.state == DraftState::Queued {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                let Ok(Some(reopened)) = client.cancel_send(draft.id).await else {
-                    return;
-                };
-                (reopened, Some(SEND_CANCELLED.to_owned()))
-            } else if draft.state == DraftState::Failed {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                let why = client.send_failure(draft.id).await.ok().flatten();
-                (draft, why.map(|why| format!("Not sent \u{2014} {why}")))
-            } else {
-                (draft, None)
-            };
-            let Some(composer) = weak.upgrade() else {
-                return;
-            };
-            last_id.set(Some(draft.id));
-            composer.resume(draft);
-            if let (Some(note), Some(frame)) = (note, frame.upgrade()) {
-                frame.note(&note);
-            }
-        });
-    })
+    let on_saved: shared::OnSaved = Rc::new(move |_id| {
+        if let Some(frame) = frame.upgrade() {
+            frame.saved(chrono::Utc::now());
+        }
+    });
+    shared::install_autosave(composer, client, Some(on_saved))
 }
 
-/// The account's identities and signatures, read once.
-fn identities(composer: &Composer, client: &Client, account: AccountId) {
-    let client = client.clone();
-    let composer = composer.downgrade();
-    glib::spawn_future_local(async move {
-        // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-        // answers on its own runtime.
-        let Ok(accounts) = client.accounts().await else {
+/// A draft left in Drafts -- by Focus or by the classic app -- opens in the
+/// composer for editing (US3 scenario 3, US11 scenario 3), through
+/// [`shared::install_resume`]; the note it hands back becomes the frame's
+/// footer rather than the classic app's toast or status line.
+fn resume(
+    composer: &Composer,
+    client: &Client,
+    last_id: Rc<std::cell::Cell<Option<postio_model::DraftId>>>,
+    frame: &Rc<Frame>,
+) -> Resume {
+    let frame = Rc::downgrade(frame);
+    let on_note: shared::OnResumeNote = Rc::new(move |note| {
+        let Some(frame) = frame.upgrade() else {
             return;
         };
-        let (Some(account), Some(composer)) = (
-            accounts.into_iter().find(|found| found.id == account),
-            composer.upgrade(),
-        ) else {
-            return;
-        };
-        composer.set_size_limit(account.max_message_size);
-        composer.set_identities(account.identities);
-        composer.set_signatures(account.signatures);
-    });
-}
-
-/// What a new draft signs with: Focus has no folder selected, so the
-/// account's default decides.
-fn signature_default(composer: &Composer, client: &Client, account: AccountId) {
-    let client = client.clone();
-    composer.connect_signature_default(move |answer| {
-        let client = client.clone();
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-            answer(client.default_signature(account, None).await.ok().flatten());
-        });
-    });
-}
-
-/// Autosave through the host's draft writer, and clearing the row once there
-/// is nothing left to keep. `Esc` keeps what was written (FR-051): the close
-/// flushes a pending save, and a kept draft stays in Drafts.
-fn autosave(composer: &Composer, frame: &Rc<Frame>, client: &Client) -> Rc<Cell<Option<DraftId>>> {
-    let last_id: Rc<Cell<Option<DraftId>>> = Rc::default();
-    let weak = composer.downgrade();
-    composer.connect_save({
-        let client = client.clone();
-        let weak = weak.clone();
-        let last_id = Rc::clone(&last_id);
-        let frame = Rc::downgrade(frame);
-        move |draft| {
-            let Some(composer) = weak.upgrade() else {
-                return;
-            };
-            let generation = composer.generation();
-            // Handed over now, in the order the composer saved.
-            let saved = client.save_draft(generation, draft.clone());
-            let last_id = Rc::clone(&last_id);
-            let weak = weak.clone();
-            let frame = frame.clone();
-            glib::spawn_future_local(async move {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
-                // write runs in the host's draft writer.
-                let Ok(id) = saved.await else {
-                    return;
-                };
-                let Some(composer) = weak.upgrade() else {
-                    return;
-                };
-                if composer.generation() == generation {
-                    last_id.set(Some(id));
-                    if let Some(frame) = frame.upgrade() {
-                        frame.saved(chrono::Utc::now());
-                    }
-                }
-                composer.adopt_id(generation, id);
-            });
-        }
-    });
-    composer.connect_closed({
-        let client = client.clone();
-        let last_id = Rc::clone(&last_id);
-        move |outcome| {
-            if outcome != Closing::Drop {
-                return;
+        match note {
+            shared::ResumeNote::Cancelled => frame.note(SEND_CANCELLED),
+            shared::ResumeNote::Failed(reason) => {
+                frame.note(&format!("Not sent \u{2014} {reason}"));
             }
-            let Some(composer) = weak.upgrade() else {
-                return;
-            };
-            drop(client.discard_draft(composer.previous_generation(), last_id.take()));
         }
     });
-    last_id
-}
-
-/// Sending, now or later: the draft becomes a queue row in the Outbox, and
-/// nothing waits for the network (FR-055, ADR 0021).
-fn send(composer: &Composer, client: &Client, last_id: Rc<Cell<Option<DraftId>>>) {
-    let weak = composer.downgrade();
-    composer.connect_send({
-        let client = client.clone();
-        let last_id = Rc::clone(&last_id);
-        let weak = weak.clone();
-        move |draft| {
-            let Some(composer) = weak.upgrade() else {
-                return;
-            };
-            // Taken, so the close that follows a send does not discard the
-            // draft just queued (postio-app's `install_send` says why).
-            last_id.set(None);
-            drop(client.queue_send(composer.generation(), draft.clone(), None));
-        }
-    });
-    composer.connect_send_later({
-        let client = client.clone();
-        move |draft, at| {
-            let Some(composer) = weak.upgrade() else {
-                return;
-            };
-            last_id.set(None);
-            drop(client.queue_send(composer.generation(), draft.clone(), Some(at)));
-        }
-    });
-}
-
-/// Recipient completion from the directory, read when the composer opens
-/// and ranked by the one rule both apps use (T076).
-fn recipients(composer: &Composer, client: &Client, account: AccountId) {
-    let directory: Rc<RefCell<Rc<RecipientDirectory>>> = Rc::default();
-    let reload = {
-        let directory = Rc::clone(&directory);
-        let client = client.clone();
-        move || {
-            let client = client.clone();
-            let directory = Rc::clone(&directory);
-            glib::spawn_future_local(async move {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                match client.recipient_directory(account).await {
-                    Ok(read) => *directory.borrow_mut() = Rc::new(read),
-                    Err(error) => tracing::warn!(%error, "could not read the contacts"),
-                }
-            });
-        }
-    };
-    reload();
-    composer.connect_opened(reload);
-    composer.connect_recipient_suggestions(move |prefix| {
-        let directory = Rc::clone(&directory.borrow());
-        postio_ui::recipients::suggest(
-            &directory.groups,
-            &directory.contacts,
-            prefix,
-            SUGGESTION_LIMIT,
-        )
-    });
+    shared::install_resume(composer, client, last_id, Some(on_note))
 }
 
 /// `e`, `E` and `f` answer the row the cursor is on. A reply starts with its
@@ -343,110 +183,5 @@ fn label_names(composer: &Composer, frame: &Rc<Frame>, client: &Client, account:
             frame.know(labels);
             frame.draw_labels(&composer);
         });
-    });
-}
-
-/// A chosen or dropped file, stored as an attachment: the type sniffed off
-/// the main loop, the bytes stored by the host.
-fn attach(composer: &Composer, client: &Client) {
-    let client = client.clone();
-    composer.connect_attach(move |path, then| {
-        let client = client.clone();
-        glib::spawn_future_local(async move {
-            let sniffed = path.clone();
-            // POSTIO-GLIB-SAFE: the sniff is a blocking gio call, run on a
-            // thread; the store is a client call, a oneshot receive.
-            let mime_type = gio::spawn_blocking(move || mime_type_of(&sniffed))
-                // POSTIO-GLIB-SAFE: gio's own thread pool answers the sniff.
-                .await
-                .unwrap_or_else(|_| "application/octet-stream".to_owned());
-            let attachment = client
-                .attach_as(path, Some(mime_type))
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
-                // host stores the bytes on its own blocking pool.
-                .await
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%error, "could not store the attachment");
-                    None
-                });
-            then(attachment);
-        });
-    });
-}
-
-/// `path`'s type, as a file manager would sniff it.
-fn mime_type_of(path: &std::path::Path) -> String {
-    gio::File::for_path(path)
-        .query_info(
-            "standard::content-type",
-            gio::FileQueryInfoFlags::NONE,
-            gio::Cancellable::NONE,
-        )
-        .ok()
-        .and_then(|info| info.content_type())
-        .map(|content_type| content_type.to_string())
-        .unwrap_or_else(|| "application/octet-stream".to_owned())
-}
-
-/// Inline images' bytes, by blob, held for the editing surface: its `cid:`
-/// resolver is a synchronous callback, and Focus answers it from memory
-/// rather than wait on the store on the thread that draws
-/// (`check-blocking-now-sites.py`).
-type InlineBytes = Rc<RefCell<std::collections::HashMap<postio_model::ids::BlobId, Vec<u8>>>>;
-
-/// A pasted image, stored as an inline part, its bytes kept for the surface
-/// that shows it; a draft that opens with inline images has theirs read.
-fn inline_images(composer: &Composer, client: &Client) {
-    let held: InlineBytes = Rc::default();
-    composer.connect_inline_image({
-        let client = client.clone();
-        let held = Rc::clone(&held);
-        move |bytes, mime_type, then| {
-            let client = client.clone();
-            let held = Rc::clone(&held);
-            glib::spawn_future_local(async move {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                let stored = client.inline_image(bytes.clone(), mime_type).await;
-                let stored = stored.unwrap_or_else(|error| {
-                    tracing::warn!(%error, "could not store the pasted image");
-                    None
-                });
-                if let Some(blob) = stored.as_ref().and_then(|part| part.blob_id.clone()) {
-                    held.borrow_mut().insert(blob, bytes);
-                }
-                then(stored);
-            });
-        }
-    });
-    let weak = composer.downgrade();
-    composer.connect_opened({
-        let client = client.clone();
-        let held = Rc::clone(&held);
-        move || {
-            let Some(composer) = weak.upgrade() else {
-                return;
-            };
-            let wanted: Vec<_> = composer
-                .draft()
-                .attachments
-                .iter()
-                .filter(|part| part.content_id.is_some())
-                .filter_map(|part| part.blob_id.clone())
-                .filter(|blob| !held.borrow().contains_key(blob))
-                .collect();
-            for blob in wanted {
-                let client = client.clone();
-                let held = Rc::clone(&held);
-                glib::spawn_future_local(async move {
-                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                    if let Ok(Some(bytes)) = client.attachment_bytes(blob.clone()).await {
-                        held.borrow_mut().insert(blob, bytes);
-                    }
-                });
-            }
-        }
-    });
-    composer.connect_attachment_bytes(move |attachment| {
-        held.borrow().get(attachment.blob_id.as_ref()?).cloned()
     });
 }
