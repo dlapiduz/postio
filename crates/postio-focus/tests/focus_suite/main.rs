@@ -289,6 +289,10 @@ const CASES: &[(&str, fn())] = &[
         open_message::arrows_and_paging_keys_scroll_the_message_not_the_list as fn(),
     ),
     (
+        "open_message::j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog",
+        open_message::j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog as fn(),
+    ),
+    (
         "open_message::brackets_step_through_the_thread",
         open_message::brackets_step_through_the_thread as fn(),
     ),

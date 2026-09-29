@@ -390,3 +390,38 @@ pub fn arrows_and_paging_keys_scroll_the_message_not_the_list() {
         assert_eq!(reading.title(), "Long 1");
     });
 }
+
+/// T176: `j` and `k` step to the next and previous message whichever
+/// control inside the dialog has the keyboard -- the way a person's focus
+/// is, after opening it, and not only when nothing is focused.
+pub fn j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = five_with_bodies().await;
+        support::keys(&window, &["j", "j", "j"]);
+        enter(&window);
+        let reading = window.reading().expect("open");
+        let mut title = "Subject 3".to_owned();
+        let mut visited = Vec::new();
+        for _ in 0..16 {
+            let dialog = reading.dialog();
+            gtk::prelude::WidgetExt::child_focus(&dialog, gtk::DirectionType::TabForward);
+            crate::settle();
+            let focus = gtk::prelude::GtkWindowExt::focus(&window);
+            visited.push(focus.as_ref().map(|widget| widget.type_().name()));
+            for (key, expected) in [("j", "Subject 4"), ("k", "Subject 3")] {
+                support::keys(&window, &[key]);
+                assert_eq!(
+                    reading.title(),
+                    expected,
+                    "{key} did nothing with the keyboard on {visited:?}"
+                );
+            }
+            title = reading.title();
+        }
+        assert_eq!(title, "Subject 3");
+        assert!(visited.len() > 3, "the keyboard never moved: {visited:?}");
+    });
+}
