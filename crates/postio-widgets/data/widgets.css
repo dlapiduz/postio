@@ -147,6 +147,18 @@ button.postio-icon-button {
   color: var(--postio-dim);
 }
 
+/* `circular` (libadwaita) promises a round hit target, but a type selector
+   plus a class outweighs a bare class: `button.postio-icon-button` above
+   wins the cascade over libadwaita's own `.circular` rule, at application
+   priority either way, so every icon button that also wears `circular` --
+   Focus's top-bar close among them -- drew as a barely-rounded square
+   instead, most visibly once the hover fill made its edges visible
+   (specs/007-postio-focus T173). This selector is more specific than both:
+   an icon button that says it is circular gets to be one. */
+button.postio-icon-button.circular {
+  border-radius: 999px;
+}
+
 button.postio-icon-button:hover {
   background-color: var(--postio-hover-bg);
   color: var(--postio-ink);

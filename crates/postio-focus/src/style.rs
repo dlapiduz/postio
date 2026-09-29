@@ -154,4 +154,106 @@ mod tests {
              has-action toggle; these rules still paint with it in Focus: {stray:#?}"
         );
     }
+
+    /// A selector's specificity, in this stylesheet's own narrow subset: one
+    /// compound selector, no combinators -- an optional leading type, then
+    /// any number of `.class` or `:pseudo-class` parts, which CSS weighs the
+    /// same. `(classes, types)`, compared as a tuple: a selector with more
+    /// classes always outweighs one with more types, whatever the counts.
+    fn specificity(selector: &str) -> (u32, u32) {
+        let mut rest = selector;
+        let mut types = 0;
+        if let Some(end) = rest.find(['.', ':']) {
+            if end > 0 {
+                types = 1;
+            }
+            rest = &rest[end..];
+        } else if !rest.is_empty() {
+            types = 1;
+            rest = "";
+        }
+        let mut classes = 0;
+        while let Some(marker) = rest.chars().next() {
+            debug_assert!(marker == '.' || marker == ':');
+            let end = rest[1..].find(['.', ':']).map_or(rest.len(), |i| i + 1);
+            classes += 1;
+            rest = &rest[end..];
+        }
+        (classes, types)
+    }
+
+    /// Whether `selector` (as [`declarations`] parsed it) matches a `button`
+    /// wearing every one of `classes`, `:hover` or not. `false` for a
+    /// selector this narrow matcher cannot parse -- a combinator, a
+    /// pseudo-element -- so a candidate this helper misjudges is at least
+    /// never counted as a match it should not be.
+    fn matches_button(selector: &str, classes: &[&str], hovered: bool) -> bool {
+        let Some(mut rest) = selector.strip_prefix("button") else {
+            return false;
+        };
+        let mut wants_hover = false;
+        while let Some(marker) = rest.chars().next() {
+            let end = rest[1..].find(['.', ':']).map_or(rest.len(), |i| i + 1);
+            let part = &rest[1..end];
+            match marker {
+                '.' if !classes.contains(&part) => return false,
+                ':' if part == "hover" => wants_hover = true,
+                '.' | ':' => {}
+                _ => return false,
+            }
+            rest = &rest[end..];
+        }
+        wants_hover == hovered || !wants_hover
+    }
+
+    /// The `border-radius` a `button` wearing every one of `classes` ends up
+    /// with once every declaration in `sheets` (in order) has cascaded: the
+    /// most specific match wins, and a tie goes to whichever comes later --
+    /// GTK's own rule, applied here in text rather than on a live widget, so
+    /// this needs no display (T173).
+    fn winning_border_radius(sheets: &[&str], classes: &[&str], hovered: bool) -> Option<String> {
+        let mut winner: Option<((u32, u32), String)> = None;
+        for sheet in sheets {
+            for (selector, property, value) in declarations(sheet) {
+                if property != "border-radius" || !matches_button(&selector, classes, hovered) {
+                    continue;
+                }
+                let spec = specificity(&selector);
+                if winner.as_ref().is_none_or(|(held, _)| spec >= *held) {
+                    winner = Some((spec, value));
+                }
+            }
+        }
+        winner.map(|(_, value)| value)
+    }
+
+    #[test]
+    fn specificity_weighs_a_class_over_any_number_of_types() {
+        assert_eq!(specificity("button"), (0, 1));
+        assert_eq!(specificity(".circular"), (1, 0));
+        assert_eq!(specificity("button.circular"), (1, 1));
+        assert_eq!(specificity("button.postio-icon-button.circular"), (2, 1));
+        assert_eq!(specificity("button.postio-icon-button:hover"), (2, 1));
+    }
+
+    /// T173: the top bar's close button (`chrome.rs`) wears
+    /// `postio-icon-button`, `focus-close` and `circular`. Its `circular`
+    /// class is a promise -- a round hit target -- and the shared sheet's
+    /// plain `button.postio-icon-button` must not outrank it merely by
+    /// pairing a class with a type selector.
+    #[test]
+    fn a_circular_icon_button_keeps_its_round_radius_at_rest_and_on_hover() {
+        let classes = ["postio-icon-button", "focus-close", "circular"];
+        let resting = winning_border_radius(&[SHARED, SURFACES], &classes, false);
+        let hovered = winning_border_radius(&[SHARED, SURFACES], &classes, true);
+        assert_eq!(
+            resting, hovered,
+            "the close button's radius should not change on hover"
+        );
+        assert_ne!(
+            resting.as_deref(),
+            Some("var(--postio-radius-sm)"),
+            "the icon button's plain radius still outranks `circular`: {resting:?}"
+        );
+    }
 }
