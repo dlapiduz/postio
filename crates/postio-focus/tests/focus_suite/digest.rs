@@ -379,3 +379,90 @@ pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
         );
     });
 }
+
+/// US10 scenario 7 (T140): held mail is never hidden from search, and a
+/// result says where it waits -- the rule that holds it -- rather than
+/// the folder it is filed in.
+pub fn held_mail_is_found_by_search_and_says_where_it_waits() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
+            .await;
+        let (held, _) = fixture
+            .file(
+                ("Ledger", "news@ledger.test"),
+                "The weekly numbers",
+                "Rates.",
+                40,
+            )
+            .await;
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::DigestRepository::new(&connection)
+                .hold(held, "Newsletters", chrono::Utc::now())
+                .await
+                .expect("held");
+        }
+        fixture.index().await;
+        let config = postio_config::Config::from_toml_str(
+            "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.test\"]\n\
+             cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
+        )
+        .expect("a config");
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            fixture.host(),
+            &config,
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Atlas budget"]).await,
+            "held mail is in the inbox: {:?}",
+            support::subjects(&window)
+        );
+        // T140: the strip says how many rules there are, with g d.
+        let chrome = window.chrome().expect("the strip");
+        assert!(
+            crate::settle_until(async || {
+                chrome.digest_rules_said().as_deref() == Some("1 digest rule")
+            })
+            .await,
+            "the strip does not count the rules: {:?}",
+            chrome.digest_rules_said()
+        );
+        assert!(
+            support::texts(chrome.strip())
+                .iter()
+                .any(|text| text == "g d"),
+            "with its key"
+        );
+        support::press(&window, "slash", gdk::ModifierType::empty());
+        let bar = window.bar().expect("the bar");
+        bar.set_text("from:news@ledger.test");
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["The weekly numbers"]).await,
+            "search did not find the held message: {:?}",
+            bar.result_subjects()
+        );
+        assert!(
+            crate::settle_until(async || {
+                bar.texts()
+                    .iter()
+                    .any(|text| text == "held \u{b7} Newsletters")
+            })
+            .await,
+            "the result does not say where it waits: {:?}",
+            bar.texts()
+        );
+    });
+}

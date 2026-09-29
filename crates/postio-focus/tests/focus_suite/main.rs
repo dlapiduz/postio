@@ -152,6 +152,10 @@ const CASES: &[(&str, fn())] = &[
         digest::g_d_lists_the_rules_and_delete_releases_what_one_held as fn(),
     ),
     (
+        "digest::held_mail_is_found_by_search_and_says_where_it_waits",
+        digest::held_mail_is_found_by_search_and_says_where_it_waits as fn(),
+    ),
+    (
         "digest::d_stops_digesting_the_sender_once_confirmed",
         digest::d_stops_digesting_the_sender_once_confirmed as fn(),
     ),

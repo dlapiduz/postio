@@ -1117,6 +1117,7 @@ impl FocusWindow {
         // The command bar lies over the list, never beside it.
         let bar = crate::bar::Bar::new(client.clone(), &self.keymap());
         bar.set_saved(imp.saved.borrow().clone());
+        bar.set_digesting(!imp.focus_config.borrow().digests.is_empty());
         bar.connect_action(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -1353,6 +1354,7 @@ impl FocusWindow {
         let Some(chrome) = imp.chrome.borrow().clone() else {
             return;
         };
+        chrome.set_digest_rules(imp.focus_config.borrow().digests.len());
         let counts = imp.counts.get();
         if let Some(counts) = counts {
             chrome.set_counts(counts.conversations, counts.unread);
@@ -1421,8 +1423,12 @@ impl FocusWindow {
 
     /// `[focus]`, for what the empty inbox names.
     pub fn set_focus_config(&self, focus: postio_config::FocusConfig) {
+        if let Some(bar) = self.bar() {
+            bar.set_digesting(!focus.digests.is_empty());
+        }
         self.imp().focus_config.replace(focus);
         self.show_empty_or_list();
+        self.show_counts();
     }
 
     /// The window's chrome, once the inbox is showing.
@@ -2641,6 +2647,9 @@ impl FocusWindow {
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
         commands.extend(crate::digest::DigestWindow::controls());
+        // The strip's counts are ways there: "186 filtered today g f" and
+        // "4 digest rules g d".
+        commands.extend([CommandId::GoToFiltered, CommandId::GoToDigestRules]);
         commands.push(CommandId::Undo);
         commands.extend(crate::compose::Compose::controls());
         // The answering actions a marked row draws, each a button.

@@ -105,6 +105,9 @@ pub struct Bar {
     places_known: Cell<bool>,
     /// The saved row across the top.
     saved_row: gtk::Box,
+    /// Whether any digest rule can hold mail: a result then says where
+    /// held mail waits (US10 scenario 7).
+    digesting: Rc<Cell<bool>>,
 }
 
 impl Bar {
@@ -204,6 +207,7 @@ impl Bar {
             saved: RefCell::default(),
             places_known: Cell::new(false),
             saved_row,
+            digesting: Rc::default(),
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
@@ -340,6 +344,12 @@ impl Bar {
         self.open();
         self.set_text(&query);
         true
+    }
+
+    /// Say whether a digest rule can hold mail, so results ask where held
+    /// mail waits; with no rule, nothing is held and nothing is asked.
+    pub fn set_digesting(&self, digesting: bool) {
+        self.digesting.set(digesting);
     }
 
     /// Open the bar, empty, and read the places it can go.
@@ -581,6 +591,7 @@ impl Bar {
         let client = self.client.clone();
         let current = Rc::clone(&self.generation);
         let folders = Rc::clone(&self.folders);
+        let digesting = self.digesting.get();
         let weak = self.self_weak();
         glib::spawn_future_local(async move {
             let search = client.search_hits(
@@ -624,13 +635,33 @@ impl Bar {
                 if rows.len() == 1 { "" } else { "es" }
             ));
             bar.heading.set_visible(true);
+            // Held mail says where it waits, not the folder it is filed in.
+            let held = if digesting {
+                let ids = rows.iter().map(|hit| hit.message_id).collect();
+                // POSTIO-GLIB-SAFE: as the search's.
+                let read = client.held(ids).await;
+                if current.get() != generation {
+                    return;
+                }
+                read.unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let names = folders.borrow().clone();
             for hit in rows {
                 let subject = hit.subject.clone().unwrap_or_default();
-                let place = names
+                let place = match held
                     .iter()
-                    .find(|(id, _)| *id == hit.mailbox_id)
-                    .map(|(_, name)| format!("in:{name}"));
+                    .find(|(message, _, _)| *message == hit.message_id)
+                {
+                    Some((_, rule, delivered)) => {
+                        Some(postio_ui::digest::held_place(rule, *delivered))
+                    }
+                    None => names
+                        .iter()
+                        .find(|(id, _)| *id == hit.mailbox_id)
+                        .map(|(_, name)| format!("in:{name}")),
+                };
                 bar.append_message(
                     hit.message_id,
                     hit.from.as_ref().map(said_of),

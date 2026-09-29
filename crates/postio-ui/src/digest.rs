@@ -132,6 +132,17 @@ pub fn preview_day(
     }
 }
 
+/// Where held mail waits, as a search result says it in place of its
+/// folder: "held · Newsletters" until its digest comes, "digest ·
+/// Newsletters" once it has (US10 scenario 7).
+pub fn held_place(rule: &str, delivered: bool) -> String {
+    if delivered {
+        format!("digest \u{b7} {rule}")
+    } else {
+        format!("held \u{b7} {rule}")
+    }
+}
+
 /// The `g d` view's title (spec C15, T139).
 pub const RULES_TITLE: &str = "Digest rules";
 

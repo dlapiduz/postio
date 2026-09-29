@@ -62,6 +62,9 @@ pub struct Chrome {
     filtered_today_key: gtk::Box,
     filtered_today_button: gtk::Button,
     digest_rules: gtk::Box,
+    /// "4 digest rules", inside the strip's button to `g d`.
+    digest_rules_label: gtk::Label,
+    digest_rules_key: gtk::Box,
     handler: RefCell<Option<Handler>>,
 }
 
@@ -220,6 +223,17 @@ impl Chrome {
         let digest_rules = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         digest_rules.add_css_class("focus-digest-rules");
         digest_rules.set_visible(false);
+        // "4 digest rules g d": the way to the rules list (T140).
+        let digest_rules_label = gtk::Label::new(None);
+        let digest_rules_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let digest_rules_words = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        digest_rules_words.append(&digest_rules_label);
+        digest_rules_words.append(&digest_rules_key);
+        let digest_rules_button = gtk::Button::new();
+        digest_rules_button.add_css_class("flat");
+        digest_rules_button.add_css_class("focus-filtered-today-button");
+        digest_rules_button.set_child(Some(&digest_rules_words));
+        digest_rules.append(&digest_rules_button);
 
         let strip = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         strip.add_css_class("focus-header-strip");
@@ -252,7 +266,17 @@ impl Chrome {
             filtered_today_key,
             filtered_today_button,
             digest_rules,
+            digest_rules_label,
+            digest_rules_key,
             handler: RefCell::default(),
+        });
+        digest_rules_button.connect_clicked({
+            let chrome = Rc::downgrade(&chrome);
+            move |_| {
+                if let Some(chrome) = chrome.upgrade() {
+                    chrome.run(CommandId::GoToDigestRules);
+                }
+            }
         });
         chrome.filtered_today_button.connect_clicked({
             let chrome = Rc::downgrade(&chrome);
@@ -327,6 +351,17 @@ impl Chrome {
         caps_for(&self.place_key, keymap, CommandId::GoToFolders);
         caps_for(&self.has_action_key, keymap, CommandId::ToggleHasAction);
         caps_for(&self.filtered_today_key, keymap, CommandId::GoToFiltered);
+        caps_for(&self.digest_rules_key, keymap, CommandId::GoToDigestRules);
+    }
+
+    /// Say how many digest rules there are, or nothing with none.
+    pub fn set_digest_rules(&self, count: usize) {
+        self.digest_rules_label.set_text(&if count == 1 {
+            "1 digest rule".to_owned()
+        } else {
+            format!("{count} digest rules")
+        });
+        self.digest_rules.set_visible(count > 0);
     }
 
     /// Say how many were filtered since local midnight, or, with `None` --
@@ -396,6 +431,13 @@ impl Chrome {
             .copied()
             .chain(MENU.iter().filter_map(|(_, command)| *command))
             .collect()
+    }
+
+    /// What the strip says of the digest rules, while it says anything.
+    pub fn digest_rules_said(&self) -> Option<String> {
+        self.digest_rules
+            .is_visible()
+            .then(|| self.digest_rules_label.text().to_string())
     }
 
     /// What the strip says was filtered today, while it says anything.

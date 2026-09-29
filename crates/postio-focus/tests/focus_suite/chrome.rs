@@ -93,9 +93,8 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
             "the has-action toggle names its key: {toggle:?}"
         );
 
-        // What says nothing when there is nothing to say: no mail was
-        // filtered today (C10), and the digest-rule count waits for its
-        // feature (FR-018).
+        // What says nothing when there is nothing to say (C10): no mail
+        // was filtered today, and there is no digest rule.
         for class in ["focus-filtered-today", "focus-digest-rules"] {
             assert!(
                 !only(&window, class).is_mapped(),
