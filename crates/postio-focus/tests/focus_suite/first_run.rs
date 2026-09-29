@@ -200,3 +200,90 @@ pub fn compose_with_no_account_says_so_and_offers_to_add_one() {
         let _ = backend;
     });
 }
+
+/// The scrolled body of the account form: the pane the server fields would
+/// have to be scrolled in.
+fn body_scroller(form: &Onboarding) -> gtk::ScrolledWindow {
+    support::descendants(form)
+        .into_iter()
+        .find_map(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+        .expect("the form's scrolled body")
+}
+
+/// What the account form with its server fields and a refusal showing needs,
+/// with room to spare for a larger font.
+const FORM_HEIGHT: i32 = 600;
+
+/// T174: the form opens large enough that the mail-server details, once
+/// shown, fit without scrolling.
+pub fn the_wizard_opens_large_enough_for_the_server_details() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _backend) = opened(MockBackend::new()).await;
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_some()).await,
+            "an empty store opened no add-account form"
+        );
+        let dialog = window.add_account_dialog().expect("the wizard");
+        let form = form_in(dialog.upcast_ref()).expect("the account form in the dialog");
+        form.set_status(Status::Found(typed_settings("grace@example.test")));
+        form.show_manual(true);
+        // As it stands after a first attempt: the settings found and a
+        // refusal to read.
+        form.test_set_password("an app password");
+        form.set_status(Status::Failed(
+            "The server refused the password.".to_owned(),
+        ));
+        form.show_manual(true);
+        crate::settle();
+        let scroller = body_scroller(&form);
+        let adjustment = scroller.vadjustment();
+        assert!(
+            crate::settle_until(async || adjustment.page_size() > 0.0).await,
+            "the form was never laid out"
+        );
+        assert!(
+            dialog.content_height() >= FORM_HEIGHT,
+            "the form opens {}px tall, less than the {FORM_HEIGHT}px its details want",
+            dialog.content_height()
+        );
+        assert!(
+            adjustment.upper() <= adjustment.page_size() + 1.0,
+            "the server details need scrolling: {} of {} px show",
+            adjustment.page_size(),
+            adjustment.upper()
+        );
+    });
+}
+
+/// T174: the window's close button still closes the app while the form is
+/// open. The form's dialog covers the window and takes a click meant for it,
+/// so the click has to be the window's before the dialog sees it.
+pub fn the_window_close_button_closes_the_app_with_the_form_open() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _backend) = opened(MockBackend::new()).await;
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_some()).await,
+            "an empty store opened no add-account form"
+        );
+        crate::settle();
+        let close = support::only(&window, "focus-close");
+        let bounds = close
+            .compute_bounds(&window)
+            .expect("the close button has a place in the window");
+        let (x, y) = (
+            f64::from(bounds.x() + bounds.width() / 2.0),
+            f64::from(bounds.y() + bounds.height() / 2.0),
+        );
+        assert!(window.click_through_dialog(x, y), "the click was not taken");
+        assert!(
+            crate::settle_until(async || !window.is_visible()).await,
+            "the window's close button did nothing with the form open"
+        );
+    });
+}

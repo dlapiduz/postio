@@ -80,6 +80,14 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "first_run::the_wizard_opens_large_enough_for_the_server_details",
+        first_run::the_wizard_opens_large_enough_for_the_server_details as fn(),
+    ),
+    (
+        "first_run::the_window_close_button_closes_the_app_with_the_form_open",
+        first_run::the_window_close_button_closes_the_app_with_the_form_open as fn(),
+    ),
+    (
         "buttons::the_open_message_toolbar_is_compact_with_its_keycaps_inside",
         buttons::the_open_message_toolbar_is_compact_with_its_keycaps_inside as fn(),
     ),

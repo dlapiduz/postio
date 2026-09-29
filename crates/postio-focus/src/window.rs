@@ -898,6 +898,12 @@ impl FocusWindow {
         imp.adding_account.replace(Some(dialog));
     }
 
+    /// A pointer press at (`x`, `y`) in the window, before any dialog over it
+    /// sees it. Whether the window took it.
+    pub fn click_through_dialog(&self, _x: f64, _y: f64) -> bool {
+        false
+    }
+
     /// The add-account form's dialog, while it is open.
     pub fn add_account_dialog(&self) -> Option<adw::Dialog> {
         self.imp().adding_account.borrow().clone()

@@ -180,6 +180,24 @@ impl NoAccount {
     }
 }
 
+/// Every widget under `root`, in tree order.
+pub fn descendants(root: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<gtk::Widget> {
+    use gtk::prelude::*;
+    let mut found = Vec::new();
+    let mut stack = vec![root.as_ref().clone()];
+    while let Some(widget) = stack.pop() {
+        found.push(widget.clone());
+        let mut children = Vec::new();
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            children.push(next);
+        }
+        stack.extend(children.into_iter().rev());
+    }
+    found
+}
+
 /// Every widget under `root`, `root` included, that wears `class`, in tree
 /// order.
 pub fn with_class(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> Vec<gtk::Widget> {
