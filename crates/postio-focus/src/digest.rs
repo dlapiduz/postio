@@ -29,7 +29,7 @@ use postio_model::summary::DigestSummary;
 use postio_ui::hints;
 use postio_widgets::reader::Verbs;
 use postio_widgets::widgets::keyhint;
-use postio_widgets::widgets::space::{S1, S2, S3};
+use postio_widgets::widgets::space::{S1, S2, S3, S4, S6};
 
 use crate::list::Digest;
 
@@ -203,10 +203,10 @@ impl DigestWindow {
         // under the paragraphs; a footer naming what wrote it.
         let summary_box = gtk::Box::new(gtk::Orientation::Vertical, S3);
         summary_box.add_css_class("focus-digest-summary");
-        summary_box.set_margin_start(20);
-        summary_box.set_margin_end(20);
-        summary_box.set_margin_top(12);
-        summary_box.set_margin_bottom(12);
+        summary_box.set_margin_start(S6);
+        summary_box.set_margin_end(S6);
+        summary_box.set_margin_top(S4);
+        summary_box.set_margin_bottom(S4);
         let summary_scroll = gtk::ScrolledWindow::builder()
             .child(&summary_box)
             .hscrollbar_policy(gtk::PolicyType::Never)
