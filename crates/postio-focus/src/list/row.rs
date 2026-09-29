@@ -370,7 +370,7 @@ impl RowWidget {
     /// The second line the row's marker draws, when it has one.
     fn marker_line(&self) -> Option<postio_ui::focus_row::MarkerLine> {
         let item = self.imp().item.borrow().clone()?;
-        let row = item.row();
+        let row = item.as_conversation()?;
         let marker = row.summary.marker.as_ref()?;
         let capture = self
             .imp()

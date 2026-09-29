@@ -630,7 +630,7 @@ impl FocusWindow {
                 due: None,
             });
         };
-        let conversation = row.row();
+        let conversation = row.as_conversation()?;
         let summary = &conversation.summary;
         let representative = &summary.representative;
         let marker = summary.marker.as_ref();
