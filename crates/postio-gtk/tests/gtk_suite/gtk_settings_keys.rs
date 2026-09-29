@@ -51,15 +51,17 @@ pub fn capturing_a_free_key_writes_the_new_binding_to_the_buffer() {
     assert_eq!(binding_in(&row), "press a key…");
 
     panel.test_capture_key(
-        gdk::Key::from_name("n").unwrap(),
+        // `n` was free until the one keymap gave it to Focus's capture_note
+        // (spec 007, T158); no app binds `q`.
+        gdk::Key::from_name("q").unwrap(),
         gdk::ModifierType::empty(),
     );
     pump();
 
     let row = row_for(&panel, "Next message");
-    assert_eq!(binding_in(&row), "n");
+    assert_eq!(binding_in(&row), "q");
     assert!(
-        panel.text().contains("next_message = \"n\""),
+        panel.text().contains("next_message = \"q\""),
         "the capture must reach the buffer: {}",
         panel.text()
     );
