@@ -467,6 +467,41 @@ impl Fixture {
         message.id
     }
 
+    /// File a message from `from` about `subject`, `minutes` before the
+    /// fixture's now, whose `List-Id` is `list_id` (US14 scenario 1): what
+    /// a `list:` rule matches.
+    pub async fn file_from_list(
+        &self,
+        from: (&str, &str),
+        subject: &str,
+        list_id: &str,
+        minutes: i64,
+    ) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut message = Message::new(
+            self.account.id,
+            self.inbox,
+            now() - Duration::minutes(minutes),
+        );
+        message.from = vec![EmailAddress::new(Some(from.0), from.1)];
+        message.subject = Some(subject.to_owned());
+        message.list_id = Some(list_id.to_owned());
+        static FILED_LIST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = FILED_LIST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<fixture-list.{serial}@example.test>"
+        )));
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        ThreadingRepository::new(&connection, self.account.id)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        message.id
+    }
+
     /// Store `html` as `message`'s body, fetched in full.
     pub async fn write_html_body(&self, message: MessageId, html: &str) {
         let connection = self.database.connect().await.expect("a connection");

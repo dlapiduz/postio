@@ -260,7 +260,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::CaptureNote
         | C::CaptureChangeProject
         | C::CaptureUseSubject
-        | C::CaptureWrite => None,
+        | C::CaptureWrite
+        | C::DigestLikeThis => None,
     }
 }
 

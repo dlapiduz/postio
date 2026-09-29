@@ -350,6 +350,10 @@ command_ids! {
     CaptureUseSubject => "capture_use_subject",
     /// Write the capture into the vault.
     CaptureWrite => "capture_write",
+    /// "Digest mail like this" (spec 007 US14, T155): a rule dialog
+    /// pre-filled from a message, its candidate queries checked by the
+    /// user's local model.
+    DigestLikeThis => "digest_like_this",
 }
 
 impl fmt::Display for CommandId {
@@ -1135,6 +1139,16 @@ pub enum Command {
         /// What the sweep moved.
         target: MessageTarget,
     },
+    /// "Digest mail like this" (spec 007 US14, T155): open the rule dialog
+    /// pre-filled from `message`, its candidate queries checked by the
+    /// user's local model (`Client::digest_like_this`). Present only when
+    /// `[focus.model]` has `like_this` on (FR-171); a UI-only command, with
+    /// no store write of its own.
+    DigestLikeThis {
+        /// The message to check other mail against, resolved by app state
+        /// the way [`Command::OpenMessage`]'s is.
+        message: Option<MessageId>,
+    },
 }
 
 impl Command {
@@ -1356,6 +1370,7 @@ impl Command {
             Command::CaptureChangeProject => CommandId::CaptureChangeProject,
             Command::CaptureUseSubject => CommandId::CaptureUseSubject,
             Command::CaptureWrite => CommandId::CaptureWrite,
+            Command::DigestLikeThis { .. } => CommandId::DigestLikeThis,
         }
     }
 
@@ -1552,6 +1567,7 @@ impl Command {
             CommandId::CaptureChangeProject => Command::CaptureChangeProject,
             CommandId::CaptureUseSubject => Command::CaptureUseSubject,
             CommandId::CaptureWrite => Command::CaptureWrite,
+            CommandId::DigestLikeThis => Command::DigestLikeThis { message: None },
         }
     }
 

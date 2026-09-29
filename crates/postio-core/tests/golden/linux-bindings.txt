@@ -143,3 +143,4 @@ capture_note	n
 capture_change_project	ctrl+p
 capture_use_subject	alt+s
 capture_write	ctrl+Return
+digest_like_this	L

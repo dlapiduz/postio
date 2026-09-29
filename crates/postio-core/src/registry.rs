@@ -2376,6 +2376,25 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
     },
+    CommandSpec {
+        id: CommandId::DigestLikeThis,
+        title: "Digest mail like this",
+        // Additive (specs/007-postio-focus T155): a rule-dialog control,
+        // reached from a message the way `d` (`DigestRule`) is; contracts/
+        // keymap.md names no key for it, the same as `SweepInbox` above.
+        // It reads mail (the candidate queries and their preview), so
+        // `FOCUS_MAIL` -- `Requirement::Focus` plus the store being open --
+        // the same as `DigestRule`'s. Whether it is offered *at all* is a
+        // further, narrower check the dialog makes on its own
+        // (`config.focus.model_for(ModelFeature::LikeThis)`), because that
+        // depends on `[focus.model]`, which the registry does not read.
+        default_binding: "L",
+        alternate_bindings: &[],
+        contexts: Context::List.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
