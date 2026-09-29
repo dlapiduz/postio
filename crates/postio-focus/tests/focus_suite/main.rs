@@ -25,6 +25,7 @@
 mod a11y;
 mod across_apps;
 mod bar;
+mod buttons;
 mod capture;
 mod chrome;
 mod colours;
@@ -78,6 +79,14 @@ mod visible_window;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "buttons::the_open_message_toolbar_is_compact_with_its_keycaps_inside",
+        buttons::the_open_message_toolbar_is_compact_with_its_keycaps_inside as fn(),
+    ),
+    (
+        "buttons::the_compose_dialog_draws_every_button_one_way",
+        buttons::the_compose_dialog_draws_every_button_one_way as fn(),
+    ),
     (
         "a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut",
         a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut as fn(),

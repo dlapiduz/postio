@@ -182,6 +182,7 @@ impl Frame {
 
         let attach = gtk::Button::new();
         postio_widgets::widgets::button::style(&attach, Kind::Ghost, Size::Small);
+        attach.add_css_class("focus-compose-attach");
         let remind = gtk::Button::new();
         postio_widgets::widgets::button::style(&remind, Kind::Ghost, Size::Small);
         remind.add_css_class("focus-compose-remind");

@@ -26,6 +26,11 @@ use postio_ui::hints::{self, Hint};
 pub fn cap(key: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(key));
     label.add_css_class("postio-keyhint");
+    // Its own height, never its container's: a cap beside a control's words
+    // in a row taller than itself would otherwise stretch to fill the row,
+    // and a framed cap stretched that way is a second box inside the
+    // control that doubles its height.
+    label.set_valign(gtk::Align::Center);
     label.set_accessible_role(gtk::AccessibleRole::Presentation);
     label
 }
@@ -36,6 +41,7 @@ pub fn cap(key: &str) -> gtk::Label {
 pub fn framed_cap(key: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(key));
     label.add_css_class("postio-key");
+    label.set_valign(gtk::Align::Center);
     label.set_accessible_role(gtk::AccessibleRole::Presentation);
     label
 }

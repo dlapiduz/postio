@@ -90,6 +90,10 @@ impl KeycapButton {
         }
 
         let button = gtk::Button::new();
+        // A button is as tall as its own words, whatever row it stands in:
+        // a bar taller than its buttons centres them rather than stretching
+        // each to the bar's height.
+        button.set_valign(gtk::Align::Center);
         button.set_child(Some(&content));
         button.add_css_class(class);
         button.add_css_class("postio-keycap-button");
