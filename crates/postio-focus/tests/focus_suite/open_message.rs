@@ -323,6 +323,25 @@ pub fn a_message_opens_at_its_top_every_time() {
         assert_eq!(scrolled(&window), 0.0, "the next message opens at its top");
 
         support::press(&window, "End", gdk::ModifierType::empty());
+        // Closed at the bottom and opened again: the top, not the place
+        // it was left.
+        support::press(&window, "Escape", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || !reading.is_open()).await,
+            "Escape did not close the dialog"
+        );
+        let loads = reading.reader().loads();
+        enter(&window);
+        assert!(
+            crate::settle_until(async || reading.reader().loads() >= loads + 2).await,
+            "the reopened message was never drawn"
+        );
+        assert!(
+            crate::settle_until(async || scrolled(&window) == 0.0).await,
+            "a reopened message keeps its place: {}",
+            scrolled(&window)
+        );
+        support::press(&window, "End", gdk::ModifierType::empty());
         support::keys(&window, &["k"]);
         assert!(
             crate::settle_until(async || reading.body_text().contains("Body 1")).await,

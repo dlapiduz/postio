@@ -1880,6 +1880,21 @@ impl Reader {
         self.view.page(true);
     }
 
+    /// Scroll the pane `lines` steps (negative is up). See
+    /// [`Reader::page_down`].
+    pub fn scroll_lines(&self, lines: i32) {
+        if self.showing() {
+            self.view.scroll_lines(lines);
+        }
+    }
+
+    /// Scroll the pane to its top, or to the end of its document.
+    pub fn scroll_to_edge(&self, bottom: bool) {
+        if self.showing() {
+            self.view.scroll_to_edge(bottom);
+        }
+    }
+
     /// Scroll a thread document to one of its messages: its top, read from
     /// the snapshot's geometry.
     ///

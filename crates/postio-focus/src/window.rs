@@ -501,6 +501,12 @@ impl FocusWindow {
         // rather than moving the list underneath.
         if let Some(dialog) = self.visible_dialog() {
             if dialog.widget_name() == crate::open::DIALOG_NAME {
+                // The arrows and the paging keys read the message: they are
+                // the dialog's own, though the list's `Down` and `Up` are
+                // the same chords, and the list is not what is being read.
+                if self.scroll_reading(key, state) {
+                    return glib::Propagation::Stop;
+                }
                 return self.reading_key(outcome);
             }
             if dialog.widget_name() == crate::digest::DIALOG_NAME {
@@ -664,6 +670,34 @@ impl FocusWindow {
                 _ => None,
             }),
         })
+    }
+
+    /// Scroll the open message for `key`, when it is one that scrolls:
+    /// the arrows a line, `Page_Up`/`Page_Down` and `space` a screen, `Home`
+    /// and `End` to the ends. Whether it did.
+    fn scroll_reading(&self, key: gdk::Key, state: gdk::ModifierType) -> bool {
+        let Some(reading) = self.reading() else {
+            return false;
+        };
+        let reader = reading.reader();
+        let plain = !state.intersects(
+            gdk::ModifierType::CONTROL_MASK
+                | gdk::ModifierType::ALT_MASK
+                | gdk::ModifierType::SUPER_MASK,
+        );
+        let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+        match key {
+            gdk::Key::Down if plain && !shift => reader.scroll_lines(1),
+            gdk::Key::Up if plain && !shift => reader.scroll_lines(-1),
+            gdk::Key::Page_Down if plain => reader.page_down(),
+            gdk::Key::Page_Up if plain => reader.page_up(),
+            gdk::Key::space if plain && !shift => reader.page_down(),
+            gdk::Key::space if plain => reader.page_up(),
+            gdk::Key::Home if plain && !shift => reader.scroll_to_edge(false),
+            gdk::Key::End if plain && !shift => reader.scroll_to_edge(true),
+            _ => return false,
+        }
+        true
     }
 
     /// A key while a message is open over the list (US2 scenarios 1-3):

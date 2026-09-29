@@ -428,6 +428,10 @@ impl OpenMessage {
         self.fold_line.set_visible(false);
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
+        // Whatever the last message was read down to, this one is read from
+        // its top: the view is put there now, and the new document's first
+        // snapshot starts there too.
+        self.reader.view().scroll_to_edge(false);
         self.load(message, generation);
     }
 

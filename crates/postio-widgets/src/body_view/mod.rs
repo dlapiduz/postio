@@ -787,6 +787,27 @@ impl BodyView {
         adjustment.set_value(adjustment.value() + step);
     }
 
+    /// Scroll by `lines` steps of the view's own line increment: down for
+    /// a positive count, up for a negative one. The adjustment clamps.
+    pub fn scroll_lines(&self, lines: i32) {
+        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+            return;
+        };
+        adjustment.set_value(adjustment.value() + f64::from(lines) * adjustment.step_increment());
+    }
+
+    /// Scroll to the top of the document, or to the end of it.
+    pub fn scroll_to_edge(&self, bottom: bool) {
+        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+            return;
+        };
+        adjustment.set_value(if bottom {
+            adjustment.upper() - adjustment.page_size()
+        } else {
+            adjustment.lower()
+        });
+    }
+
     /// The snapshot on screen, if one has arrived.
     pub fn document(&self) -> Option<Arc<RenderedDocument>> {
         self.imp().document.borrow().clone()
