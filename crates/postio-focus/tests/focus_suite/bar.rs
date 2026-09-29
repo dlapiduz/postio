@@ -566,8 +566,12 @@ pub fn the_bar_opens_in_the_top_bars_field() {
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         let bar = window.bar().expect("the bar");
         type_in(&bar, "arch").await;
-        crate::settle();
         let entry = bar.input();
+        assert!(
+            crate::settle_until(async || entry.is_mapped() && entry.width() > 0).await,
+            "the bar's input was never laid out"
+        );
+        crate::settle();
         let at = entry
             .compute_bounds(&window)
             .expect("the input has a place in the window");
