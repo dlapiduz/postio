@@ -378,6 +378,9 @@ pub enum Req {
     /// Which of these messages a digest holds, and for which rule: what a
     /// search result says instead of its folder (spec 007 T140).
     Held(Vec<MessageId>),
+    /// The account a message is in: whose labels its picker offers (spec
+    /// 007 T170).
+    AccountOf(MessageId),
     /// A page of the Filtered view, newest first.
     Filtered {
         /// One reason, as the store spells it, or every reason.
@@ -562,6 +565,8 @@ pub enum Resp {
     Counts(Vec<u32>),
     /// Each held message, its rule, and whether its digest was delivered.
     Held(Vec<(MessageId, String, bool)>),
+    /// An account, or none for a message not in the store.
+    AccountOf(Option<AccountId>),
     /// A page of filtered mail.
     Filtered(Vec<FilteredRow>),
     /// Each label with how many conversations carry it; a label nothing

@@ -1139,6 +1139,18 @@ impl Inner {
             Req::Surfaced => focus::surfaced(self)
                 .await
                 .map_or_else(Resp::Failed, Resp::Surfaced),
+            Req::AccountOf(message) => {
+                let found = async {
+                    let reader = self.wiring.database.read().await?;
+                    postio_storage::repository::MessageRepository::new(&reader)
+                        .get(message)
+                        .await
+                };
+                found.await.map_or_else(
+                    |error| Resp::Failed(error.into()),
+                    |found| Resp::AccountOf(found.map(|message| message.account_id)),
+                )
+            }
             Req::Held(messages) => focus::digests::held(self, &messages)
                 .await
                 .map_or_else(Resp::Failed, Resp::Held),

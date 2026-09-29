@@ -133,6 +133,7 @@ impl Req {
             Req::DeliveryMessages(_) => "DeliveryMessages",
             Req::DigestWaiting(_) => "DigestWaiting",
             Req::Held(_) => "Held",
+            Req::AccountOf(_) => "AccountOf",
             Req::Filtered { .. } => "Filtered",
             Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
@@ -1040,6 +1041,19 @@ impl Client {
             Resp::MoveRecent(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// The account `message` is in; `None` for a message not in the store.
+    pub async fn account_of(&self, message: MessageId) -> Result<Option<AccountId>, StoreError> {
+        self.read(
+            Req::AccountOf(message),
+            "a message's account",
+            |answer| match answer {
+                Resp::AccountOf(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 
