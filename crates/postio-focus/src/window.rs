@@ -748,6 +748,8 @@ impl FocusWindow {
                 | CommandId::ReplyAll
                 | CommandId::Forward
                 | CommandId::Compose
+                | CommandId::Archive
+                | CommandId::Delete
                 | CommandId::AcceptInvite
                 | CommandId::DeclineInvite),
             ) => self.act(id),

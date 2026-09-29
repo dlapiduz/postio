@@ -43,6 +43,7 @@ const TOOLBAR: &[Action] = &[
     Action::new(CommandId::RemindIfNoReply, "Remind", "focus-open-remind"),
     Action::new(CommandId::AddLabel, "Label", "focus-open-label"),
     Action::new(CommandId::Move, "Move", "focus-open-move"),
+    Action::new(CommandId::Delete, "Delete", "focus-open-delete"),
 ];
 
 /// What a control in the dialog asks the window to do.

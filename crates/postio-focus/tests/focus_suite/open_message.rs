@@ -425,3 +425,39 @@ pub fn j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog() {
         assert!(visited.len() > 3, "the keyboard never moved: {visited:?}");
     });
 }
+
+/// T179: the toolbar's Delete deletes the message on screen, and so does its
+/// key, in the dialog as over the list.
+pub fn delete_in_the_dialog_deletes_the_message_on_screen() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = three_with_bodies().await;
+        enter(&window);
+        let reading = window.reading().expect("open");
+        let delete = support::only(&reading.dialog(), "focus-open-delete")
+            .downcast::<gtk::Button>()
+            .expect("a button");
+        delete.emit_clicked();
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Harbor draft", "Staffing"])
+                .await,
+            "the toolbar's Delete left the message in the inbox: {:?}",
+            support::subjects(&window)
+        );
+        support::press(&window, "Escape", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || !reading.is_open()).await,
+            "Escape did not close the dialog"
+        );
+        support::keys(&window, &["j"]);
+        enter(&window);
+        support::press(&window, "Delete", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the Delete key did nothing in the dialog: {:?}",
+            support::subjects(&window)
+        );
+    });
+}

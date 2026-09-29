@@ -80,6 +80,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "open_message::delete_in_the_dialog_deletes_the_message_on_screen",
+        open_message::delete_in_the_dialog_deletes_the_message_on_screen as fn(),
+    ),
+    (
         "selection::the_bulk_bar_has_a_delete_button_that_deletes_the_selection",
         selection::the_bulk_bar_has_a_delete_button_that_deletes_the_selection as fn(),
     ),

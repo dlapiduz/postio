@@ -67,14 +67,16 @@ window.focus-window {
    quiet 26px kind -- no frame of their own, a tint under the pointer. The
    shared sheet is the classic app's, whose action bars draw every verb
    framed. */
-.focus-open-toolbar button.postio-button-regular {
+.focus-open-toolbar button.postio-button-regular,
+.focus-bulk-actions button.postio-button-regular {
   min-height: 26px;
   padding: 0 var(--postio-space-2);
   border-color: transparent;
   background-color: transparent;
 }
 
-.focus-open-toolbar button.postio-button-regular:hover {
+.focus-open-toolbar button.postio-button-regular:hover,
+.focus-bulk-actions button.postio-button-regular:hover {
   background-color: var(--postio-hover-bg);
 }
 

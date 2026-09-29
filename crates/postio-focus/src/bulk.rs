@@ -2,7 +2,7 @@
 //! (contracts/focus-surface.md, "The window": 44 px, while anything is
 //! selected).
 //!
-//! The count; Archive, Snooze, Mark read, Digest these…, Label and Move,
+//! The count; Archive, Snooze, Mark read, Digest these…, Label, Move and Delete,
 //! each with its key; and on the right the selection's own keys. Every
 //! button is the shared action bar's, so a press runs the command's id
 //! through the window's one `act`, the path its key takes.
@@ -27,6 +27,7 @@ const ACTIONS: &[Action] = &[
     ),
     Action::new(CommandId::AddLabel, "Label", "focus-bulk-label"),
     Action::new(CommandId::Move, "Move", "focus-bulk-move"),
+    Action::new(CommandId::Delete, "Delete", "focus-bulk-delete"),
 ];
 
 /// The bar, its count and its keys.

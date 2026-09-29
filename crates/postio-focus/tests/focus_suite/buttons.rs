@@ -65,10 +65,17 @@ pub fn the_open_message_toolbar_is_compact_with_its_keycaps_inside() {
             "the body never arrived"
         );
         let dialog = reading.dialog();
-        let buttons: Vec<gtk::Widget> = support::with_class(&dialog, "postio-keycap-button")
-            .into_iter()
-            .filter(|button| button.is_mapped())
-            .collect();
+        let shown = |dialog: &adw::Dialog| -> Vec<gtk::Widget> {
+            support::with_class(dialog, "postio-keycap-button")
+                .into_iter()
+                .filter(|button| button.is_mapped() && button.height() > 1)
+                .collect()
+        };
+        assert!(
+            crate::settle_until(async || shown(&dialog).len() >= 6).await,
+            "the toolbar was never drawn"
+        );
+        let buttons = shown(&dialog);
         assert!(
             buttons.len() >= 6,
             "the toolbar's buttons: {}",
