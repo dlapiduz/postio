@@ -59,7 +59,6 @@ const NOT_YET: &[&str] = &[
     "numbered_list",
     "insert_link",
     "quote_block",
-    "add_account",
     "edit_config",
     "show_images",
     "always_show_images",

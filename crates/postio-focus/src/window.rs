@@ -190,6 +190,15 @@ mod imp {
         /// The capture sheet (US15), built the first time `t` or `n` opens
         /// it.
         pub capture: RefCell<Option<Rc<crate::capture::CaptureSheet>>>,
+        /// The add-account form's dialog, while it is open (T171, T172):
+        /// Focus's first run, and what `c` and `CommandId::AddAccount` offer
+        /// while there is no account to write from.
+        pub adding_account: RefCell<Option<adw::Dialog>>,
+        /// Brings every enabled account's connection up, once there is one
+        /// to bring up: the host's `start_syncing`, set from
+        /// `startup::adopt_at` (ADR 0041). Called again once an account is
+        /// added after a first run that started with none (T171).
+        pub start_syncing: RefCell<Option<Rc<dyn Fn()>>>,
     }
 
     impl Default for FocusWindow {
@@ -250,6 +259,8 @@ mod imp {
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
                 capture: RefCell::default(),
+                adding_account: RefCell::default(),
+                start_syncing: RefCell::default(),
             }
         }
     }
@@ -746,6 +757,137 @@ impl FocusWindow {
         self.imp().compose.replace(Some(compose));
     }
 
+    /// Refresh which accounts are enabled, mount the composer for the
+    /// first one once there is one, and offer the first-run form
+    /// (T171) while there still is none -- once when the inbox is shown,
+    /// and again once an account has just been saved.
+    fn refresh_accounts(&self, client: Client) {
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let Ok(accounts) = client.accounts().await else {
+                return;
+            };
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let enabled: Vec<&postio_model::Account> =
+                accounts.iter().filter(|account| account.enabled).collect();
+            window
+                .imp()
+                .accounts
+                .replace(enabled.iter().map(|account| account.id).collect());
+            // A new message is written from the first account, as the
+            // classic app's is.
+            if let Some(account) = enabled.first() {
+                window.mount_compose(&client, account.id);
+            }
+            window.imp().facts.replace(
+                enabled
+                    .iter()
+                    .map(|account| postio_ui::focus_state::AccountFacts {
+                        id: account.id,
+                        server: account.incoming.host.clone(),
+                        address: account.address.address.clone(),
+                    })
+                    .collect(),
+            );
+            // No account at all: Focus's first run (T171), or a `c` or
+            // `CommandId::AddAccount` while none has been added yet.
+            if enabled.is_empty() {
+                window.open_add_account();
+                return;
+            }
+            // When mail last arrived, from before this run: the newest
+            // folder's last completed sync.
+            let mut last = None;
+            for account in &enabled {
+                use postio_model::listing::MailStore as _;
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
+                // host answers on its own runtime (ADR 0041).
+                let read = client.mailboxes(account.id).await;
+                if let Ok(mailboxes) = read {
+                    last = last.max(
+                        mailboxes
+                            .iter()
+                            .filter_map(|mailbox| mailbox.last_synced_at)
+                            .max(),
+                    );
+                }
+            }
+            if window.imp().last_synced.get().is_none() {
+                window.imp().last_synced.set(last);
+            }
+            window.show_state();
+        });
+    }
+
+    /// The add-account form over this window (T171, T172,
+    /// `CommandId::AddAccount`): the shared form both desktop apps drive
+    /// (`postio_widgets::present::onboarding::add_account`, T165). Saving
+    /// refreshes the accounts Focus knows -- mounting the composer among
+    /// them -- and brings every account's connection up, the order the
+    /// classic app's own first run brings a window up over a new account.
+    ///
+    /// A second call while the form is already open reuses it rather than
+    /// stacking a second wizard over the first.
+    fn open_add_account(&self) {
+        let imp = self.imp();
+        if imp.adding_account.borrow().is_some() {
+            return;
+        }
+        let Some(client) = imp.client.borrow().clone() else {
+            return;
+        };
+        let open_link = postio_widgets::present::onboarding::open_in_browser(self);
+        let dialog = postio_widgets::present::onboarding::add_account(self, &client, open_link, {
+            let window = self.downgrade();
+            let client = client.clone();
+            move |_submission| {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                window.refresh_accounts(client.clone());
+                if let Some(start) = window.imp().start_syncing.borrow().clone() {
+                    start();
+                }
+            }
+        });
+        dialog.connect_closed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                window.imp().adding_account.replace(None);
+            }
+        ));
+        imp.adding_account.replace(Some(dialog));
+    }
+
+    /// The add-account form's dialog, while it is open.
+    pub fn add_account_dialog(&self) -> Option<adw::Dialog> {
+        self.imp().adding_account.borrow().clone()
+    }
+
+    /// What `c` and the top bar's compose button say while there is no
+    /// account to write from (T172): the composer is mounted only once one
+    /// is known (`Self::mount_compose`), so this says what is missing and
+    /// offers the same form T171 opens on a first run, rather than doing
+    /// nothing.
+    fn offer_add_account_for_compose(&self) {
+        let window = self.downgrade();
+        self.imp().toast.show_prompt(
+            "There's no account to write from yet.",
+            "Add account",
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.open_add_account();
+                }
+            },
+        );
+        self.follow_toast();
+    }
+
     /// Open the draft behind the Drafts row `message` for editing, in the
     /// composer's dialog: what a Drafts row does when it is opened, whichever
     /// app left the draft there (US11 scenario 3).
@@ -910,12 +1052,20 @@ impl FocusWindow {
             // The capture sheet (US15), from the row or the open message.
             CommandId::CaptureTask => self.open_capture(crate::capture::Mode::Task),
             CommandId::CaptureNote => self.open_capture(crate::capture::Mode::Note),
-            // The classic app's composer, in its dialog (US3).
-            CommandId::Compose | CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
+            // The classic app's composer, in its dialog (US3). With no
+            // account there is nothing to write from yet (T172).
+            CommandId::Compose => match self.compose() {
+                Some(compose) => compose.dispatch(id),
+                None => self.offer_add_account_for_compose(),
+            },
+            CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 if let Some(compose) = self.compose() {
                     compose.dispatch(id);
                 }
             }
+            // Focus's first run (T171), and what `c` offers with no
+            // account (T172).
+            CommandId::AddAccount => self.open_add_account(),
             _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
         }
     }
@@ -1282,60 +1432,7 @@ impl FocusWindow {
             move |_| window.selection_moved()
         ));
         // The accounts a whole-view selection spans.
-        glib::spawn_future_local(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            #[strong]
-            client,
-            async move {
-                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-                // answers on its own runtime (ADR 0041).
-                if let Ok(accounts) = client.accounts().await {
-                    let enabled: Vec<&postio_model::Account> =
-                        accounts.iter().filter(|account| account.enabled).collect();
-                    window
-                        .imp()
-                        .accounts
-                        .replace(enabled.iter().map(|account| account.id).collect());
-                    // A new message is written from the first account, as the
-                    // classic app's is.
-                    if let Some(account) = enabled.first() {
-                        window.mount_compose(&client, account.id);
-                    }
-                    window.imp().facts.replace(
-                        enabled
-                            .iter()
-                            .map(|account| postio_ui::focus_state::AccountFacts {
-                                id: account.id,
-                                server: account.incoming.host.clone(),
-                                address: account.address.address.clone(),
-                            })
-                            .collect(),
-                    );
-                    // When mail last arrived, from before this run: the
-                    // newest folder's last completed sync.
-                    let mut last = None;
-                    for account in &enabled {
-                        use postio_model::listing::MailStore as _;
-                        // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-                        // answers on its own runtime (ADR 0041).
-                        let read = client.mailboxes(account.id).await;
-                        if let Ok(mailboxes) = read {
-                            last = last.max(
-                                mailboxes
-                                    .iter()
-                                    .filter_map(|mailbox| mailbox.last_synced_at)
-                                    .max(),
-                            );
-                        }
-                    }
-                    if window.imp().last_synced.get().is_none() {
-                        window.imp().last_synced.set(last);
-                    }
-                    window.show_state();
-                }
-            }
-        ));
+        self.refresh_accounts(client.clone());
         pane.set_capture(imp.focus_config.borrow().vault.is_some());
         imp.pane.replace(Some(pane));
         imp.client.replace(Some(client.clone()));
@@ -1656,6 +1753,15 @@ impl FocusWindow {
     /// what stayed in Focus's inbox (FR-153).
     pub fn set_notifier(&self, notifier: Notifier) {
         self.imp().notifier.replace(Some(notifier));
+    }
+
+    /// Bring every enabled account's connection up, through `start`: the
+    /// host's own `start_syncing` (ADR 0041), set once from
+    /// `startup::adopt_at`. Called again once an account is saved on a
+    /// first run that began with none (T171), so its engine comes up
+    /// without a restart.
+    pub fn set_start_syncing(&self, start: Rc<dyn Fn()>) {
+        self.imp().start_syncing.replace(Some(start));
     }
 
     /// New mail in `mailbox`: a notification, if the host decides it is
@@ -2868,8 +2974,9 @@ impl FocusWindow {
 
     /// Every command a person can reach with the mouse somewhere in the
     /// window: the chrome and its menu, the bulk bar, the banner's button,
-    /// the empty inbox's shortcuts, and the toast's Undo. Each is read from
-    /// the table that builds it.
+    /// the empty inbox's shortcuts, the toast's Undo, and the toast that
+    /// offers to add an account when compose has none to write from
+    /// (T172). Each is read from the table that builds it.
     pub fn controls(&self) -> Vec<CommandId> {
         let mut commands = Chrome::commands();
         commands.extend(Bulk::commands());
@@ -2904,6 +3011,7 @@ impl FocusWindow {
         // "4 digest rules g d".
         commands.extend([CommandId::GoToFiltered, CommandId::GoToDigestRules]);
         commands.push(CommandId::Undo);
+        commands.push(CommandId::AddAccount);
         commands.extend(crate::compose::Compose::controls());
         commands.extend(crate::capture::CaptureSheet::controls());
         // The answering actions a marked row draws, each a button.

@@ -185,6 +185,18 @@ pub fn adopt_at(
             },
         )
     });
+    // What a first run with no account brings up once one is saved (T171):
+    // the same `start_syncing` `Session::start_syncing` calls after the
+    // first frame, reachable from the window that just gained an account
+    // rather than through the session it does not hold.
+    window.set_start_syncing({
+        let host = std::rc::Rc::downgrade(&host);
+        std::rc::Rc::new(move || {
+            if let Some(host) = host.upgrade() {
+                host.start_syncing();
+            }
+        })
+    });
     window.show_inbox(
         client.clone(),
         state.clone(),

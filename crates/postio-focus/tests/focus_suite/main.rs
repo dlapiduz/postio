@@ -37,6 +37,7 @@ mod digest_summary;
 mod drafts;
 mod empty;
 mod filtered;
+mod first_run;
 mod harness;
 mod has_action;
 mod invitations;
@@ -80,6 +81,15 @@ const CASES: &[(&str, fn())] = &[
     (
         "a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut",
         a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut as fn(),
+    ),
+    (
+        "first_run::first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox",
+        first_run::first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox
+            as fn(),
+    ),
+    (
+        "first_run::compose_with_no_account_says_so_and_offers_to_add_one",
+        first_run::compose_with_no_account_says_so_and_offers_to_add_one as fn(),
     ),
     (
         "motion::no_transition_outruns_the_budget_and_reduced_motion_stills_them",

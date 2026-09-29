@@ -139,6 +139,47 @@ impl Fixture {
     }
 }
 
+/// A store with no account at all: the shape a brand-new installation is in
+/// (T171's "first run"), where `Fixture::empty` always seeds one.
+pub struct NoAccount {
+    pub database: Store,
+    blobs: tempfile::TempDir,
+}
+
+impl NoAccount {
+    /// An empty store, no account, nothing synced.
+    pub async fn new() -> NoAccount {
+        NoAccount {
+            database: test_support::memory().await,
+            blobs: tempfile::tempdir().expect("a blob directory"),
+        }
+    }
+
+    /// A host over this store, as Focus's startup would open one, proving
+    /// any account added against `backend` rather than a real network or
+    /// keyring (T171): the seam `postio-host`'s own onboarding tests use
+    /// (`Wiring::with_mail`), with the secrets store it also has to
+    /// override -- `Wiring::new`'s default reaches the platform keyring,
+    /// which no test in the default suite may touch.
+    pub fn host_signing_in_to(&self, backend: postio_account::backend::MockBackend) -> Host {
+        let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
+            .expect("a blob store");
+        Host::start(self.database.clone(), blobs, move |wiring| {
+            wiring
+                .with_secrets(std::sync::Arc::new(
+                    postio_account::secret::MemorySecretStore::new(),
+                ))
+                .with_mail(postio_session::MailOverride {
+                    backend: std::sync::Arc::new(backend),
+                    smtp: std::sync::Arc::new(postio_smtp::transport::ScriptedConnector::new(
+                        postio_smtp::transport::SmtpScript::new("220 ready"),
+                    )),
+                })
+        })
+        .expect("a host")
+    }
+}
+
 /// Every widget under `root`, `root` included, that wears `class`, in tree
 /// order.
 pub fn with_class(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> Vec<gtk::Widget> {

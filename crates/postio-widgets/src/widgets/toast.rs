@@ -174,6 +174,25 @@ impl Toast {
         self.push(toast);
     }
 
+    /// A sentence with one button that runs `on_click`, replacing whatever
+    /// toast was showing (`push`'s rule).
+    ///
+    /// Unlike [`Self::show_removable`], not reachable through `u` -- the
+    /// button is not an undo, so it never joins `pending_undo`. For a
+    /// gesture that could not run for a reason with a fix on offer, such as
+    /// Focus's compose with no account yet to write from
+    /// (specs/007-postio-focus T172): the sentence names what is missing,
+    /// and the button starts fixing it.
+    pub fn show_prompt(&self, sentence: &str, button_label: &str, on_click: impl Fn() + 'static) {
+        let toast = adw::Toast::builder()
+            .title(sentence)
+            .timeout(TOAST_TIMEOUT)
+            .button_label(button_label)
+            .build();
+        toast.connect_button_clicked(move |_| on_click());
+        self.push(toast);
+    }
+
     /// Dismisses whatever is showing and shows `toast` instead.
     fn push(&self, toast: adw::Toast) {
         // A new toast replaces the old one's offer too: an undo whose toast
