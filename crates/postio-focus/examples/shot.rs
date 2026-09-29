@@ -773,7 +773,9 @@ fn stage(
         }
         "04" => {
             pick_three();
-            pane.cursor().set_selected(OPENED as u32);
+            // OPENED counts the conversations filed; the digest's row sits
+            // above them in the list.
+            pane.cursor().set_selected(OPENED as u32 + 1);
             window.act(CommandId::OpenMessage);
             let Some(reading) = window.reading() else {
                 return Err("Enter opened nothing".into());
