@@ -28,6 +28,7 @@ mod harness;
 mod list_contract;
 mod list_model_generic;
 mod pickers;
+mod present_compose;
 mod present_config;
 mod present_onboarding;
 mod present_reading;
@@ -121,6 +122,10 @@ const CASES: &[(&str, fn())] = &[
         present_config::an_edit_reaches_the_app_and_a_broken_one_keeps_the_last_good_keys as fn(),
     ),
     (
+        "present_compose::dispatching_send_queues_the_draft_through_the_client",
+        present_compose::dispatching_send_queues_the_draft_through_the_client as fn(),
+    ),
+    (
         "present_onboarding::the_credential_dialog_reads_the_account_and_saves_through_the_client",
         present_onboarding::the_credential_dialog_reads_the_account_and_saves_through_the_client
             as fn(),
@@ -128,6 +133,15 @@ const CASES: &[(&str, fn())] = &[
     (
         "present_reading::fetched_images_come_back_under_the_documents_spelling",
         present_reading::fetched_images_come_back_under_the_documents_spelling as fn(),
+    ),
+    (
+        "present_reading::a_cid_reference_resolves_through_the_client_for_the_message_on_screen",
+        present_reading::a_cid_reference_resolves_through_the_client_for_the_message_on_screen
+            as fn(),
+    ),
+    (
+        "present_reading::nothing_showing_resolves_to_nothing_without_asking_the_host",
+        present_reading::nothing_showing_resolves_to_nothing_without_asking_the_host as fn(),
     ),
     (
         "capture::a_window_the_compositor_never_showed_is_an_error",

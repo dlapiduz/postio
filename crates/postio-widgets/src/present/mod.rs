@@ -8,12 +8,19 @@
 //!   probe, its proof, its browser sign-in and its writes, and the
 //!   add-account and credential dialogs built on them.
 //! * [`reading`] -- the reader's remote images, fetched off the main loop by
-//!   whatever the app's composition root owns, and handed back on it.
+//!   whatever the app's composition root owns, and handed back on it; and its
+//!   `cid:` images, resolved through `postio-client` scoped to the message on
+//!   screen (specs/007-postio-focus T022).
+//! * [`compose`] -- the composer's seams answered through `postio-client`
+//!   (T022, T078): autosave and crash recovery, sending now or later,
+//!   recipient completion, replying to a message, attaching a file, and an
+//!   inline image's bytes.
 //!
 //! What an app does with a reload, which reader it feeds, or what a saved
 //! account starts, stays in that app: these reach no window, no store and no
 //! network of their own.
 
+pub mod compose;
 pub mod config;
 pub mod onboarding;
 pub mod reading;
