@@ -21,6 +21,8 @@
 #   scripts/run-isolated.sh HEAD --inspect  # with the GTK Inspector attached
 #   scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
+#   scripts/run-isolated.sh HEAD --focus    # run Postio Focus instead (spec 007)
+#   scripts/run-isolated.sh HEAD --focus --shot  # render Focus's screen 01 to a PNG
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
 # The store lives under $ROOT/state and persists between runs, so a synced
@@ -45,11 +47,13 @@ shift || true
 INSPECT=0
 SHOT=0
 PROVISION=0
+FOCUS=0
 for arg in "$@"; do
     case "$arg" in
         --inspect) INSPECT=1 ;;
         --shot) SHOT=1 ;;
         --provision) PROVISION=1 ;;
+        --focus) FOCUS=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -114,6 +118,22 @@ if [ "$PROVISION" = 1 ]; then
         exit 2
     fi
     exec cargo run --release -p postio-session --bin postio-provision
+fi
+
+# Postio Focus (spec 007) is a second app on the same store: the same
+# scratch store and XDG dirs, so an account provisioned above is there too,
+# and one app holds the store at a time (ADR 0041).
+if [ "$FOCUS" = 1 ]; then
+    if [ "$SHOT" = 1 ]; then
+        OUT="$ROOT/focus-shot-$SHA.png"
+        cargo run --release -p postio-focus --example shot -- "$OUT" 01
+        echo "wrote $OUT"
+        exit 0
+    fi
+    echo "building Postio Focus (first run compiles GTK deps; later runs are incremental)…"
+    cargo build --release -p postio-focus
+    echo "running — Ctrl-C to stop"
+    exec "$TARGET/release/postio-focus"
 fi
 
 if [ "$SHOT" = 1 ]; then
