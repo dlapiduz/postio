@@ -90,7 +90,11 @@ impl RuleDialog {
         let heading = gtk::Label::new(None);
         heading.add_css_class("focus-rule-heading");
         let create = gtk::Button::new();
-        create.add_css_class("suggested-action");
+        postio_widgets::widgets::button::style(
+            &create,
+            postio_widgets::widgets::Kind::Primary,
+            postio_widgets::widgets::Size::Regular,
+        );
         create.add_css_class("focus-rule-create");
         let create_words = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         create.set_child(Some(&create_words));

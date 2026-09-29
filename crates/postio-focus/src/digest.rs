@@ -84,7 +84,11 @@ impl DigestWindow {
         titles.append(&title);
         titles.append(&subtitle);
         let archive = gtk::Button::new();
-        archive.add_css_class("suggested-action");
+        postio_widgets::widgets::button::style(
+            &archive,
+            postio_widgets::widgets::Kind::Primary,
+            postio_widgets::widgets::Size::Regular,
+        );
         archive.add_css_class("focus-digest-archive");
         let archive_words = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         archive.set_child(Some(&archive_words));

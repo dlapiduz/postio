@@ -686,3 +686,42 @@ banner.focus-banner button {
 .focus-rules-empty-title {
   font-weight: bold;
 }
+
+/* The strip's counts are ways there, quiet as the counts beside "Inbox". */
+.focus-filtered-today-button {
+  min-height: 0;
+  padding: 0 var(--postio-space-1);
+  font-weight: normal;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* ── "Digest this sender" (screen 24): a 620 px dialog ──────────────── */
+.focus-rule-header {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-rule-heading {
+  font-weight: bold;
+}
+
+.focus-rule-body {
+  padding: var(--postio-space-4);
+}
+
+.focus-rule-from {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-hover-bg);
+  font-family: var(--postio-font-mono);
+}
+
+.focus-rule-preview-heading {
+  font-weight: bold;
+}
+
+.focus-rule-preview-row {
+  min-height: 32px;
+  padding: 0 var(--postio-space-3);
+}

@@ -75,6 +75,25 @@ use postio_storage::repository::{
 };
 use postio_storage::{BlobStore, Store};
 
+/// This week's newsletters, held and delivered as screen 01's digest row:
+/// who, about what, and how many minutes before 16:09 each came.
+const NEWSLETTERS: &[((&str, &str), &str, i64)] = &[
+    (("Ledger", "news@ledger.example"), "The rate decision", 1500),
+    (("Ledger", "news@ledger.example"), "Rail funding vote", 4400),
+    (("Soil Weekly", "hello@soil.example"), "Fall planting", 2900),
+    (
+        ("Crate Notes", "notes@crate.example"),
+        "CRDT libraries compared",
+        3600,
+    ),
+    (("Tide Tables", "tides@tide.example"), "October tides", 5200),
+    (
+        ("Harbor Digest", "digest@harbor.example"),
+        "Lisbon, again",
+        6100,
+    ),
+];
+
 /// Screen 21's filtered mail: the sender, the subject, the first line, the
 /// reason and its source, and how many minutes before 16:09 it was filed.
 type Filtered = (
@@ -183,6 +202,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("13", "the label picker at the row"),
     ("14", "the move picker at the row"),
     ("21", "the Filtered view"),
+    ("24", "\"Digest this sender\" over the inbox"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -193,8 +213,8 @@ const SIZE: (i32, i32) = (1440, 900);
 
 /// The rows screen 01 selects, by position in [`TODAY`], and where its
 /// cursor rests: the references' choice.
-const PICKED: &[u32] = &[2, 4, 7];
-const CURSOR: u32 = 1;
+const PICKED: &[u32] = &[3, 5, 8];
+const CURSOR: u32 = 2;
 
 /// What a row's second line says, when it has one.
 enum Ask {
@@ -462,7 +482,7 @@ const TODAY: &[Row] = &[
 
 /// The demo's config.toml: filtering on, and one digest rule.
 const CONFIG: &str = "[focus]\nfiltering = true\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
-queries = [\"from:news@example.com\"]\ncadence = \"weekly\"\nday = \"saturday\"\nat = \"16:00\"\n\n\
+match = [\"from:news@ledger.example\", \"from:hello@soil.example\", \"from:notes@crate.example\", \"from:tides@tide.example\", \"from:digest@harbor.example\"]\ncadence = \"weekly\"\nday = \"saturday\"\nat = \"16:00\"\n\n\
 [filters.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\nname = \"Waiting on reply\"\n\n\
 [filters.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\nname = \"Atlas\"\n\n\
 [filters.receipts]\nquery = \"in:Receipts\"\npinned = true\norder = 3\nname = \"Receipts this month\"\n\n\
@@ -801,6 +821,40 @@ fn stage(
                 picker.is_shown() && picker.texts().iter().any(|line| line == wanted)
             }) {
                 return Err(format!("the picker never listed {wanted:?}"));
+            }
+        }
+        "24" => {
+            // The Oak Hill row, whose sender the reference digests.
+            let Some(position) = (0..pane.cursor().n_items()).find(|position| {
+                pane.cursor()
+                    .item(*position)
+                    .and_downcast::<postio_focus::list::RowObject>()
+                    .and_then(|row| row.item())
+                    .and_then(|item| {
+                        item.as_conversation()
+                            .and_then(|row| row.summary.representative.from.clone())
+                    })
+                    .is_some_and(|from| from.address == "board@oakhill.example")
+            }) else {
+                return Err("no Oak Hill row to digest".into());
+            };
+            pane.cursor().set_selected(position);
+            window.act(CommandId::DigestRule);
+            if !settle_until(|| {
+                // Drawn, not only built: the sheet maps its content once
+                // it has opened.
+                window.rule_dialog().is_some_and(|dialog| {
+                    dialog
+                        .dialog()
+                        .child()
+                        .is_some_and(|content| content.is_mapped() && content.width() > 0)
+                        && dialog
+                            .texts()
+                            .iter()
+                            .any(|text| text.starts_with("Would have caught"))
+                })
+            }) {
+                return Err("the rule dialog never previewed".into());
             }
         }
         "21" => {
@@ -1227,6 +1281,31 @@ pub async fn demo() -> (Store, AccountId) {
         )
         .await;
     }
+    // Screen 01's digest row: this week's newsletters, held for
+    // "Newsletters" and delivered at 16:00 today.
+    let digests = postio_storage::repository::DigestRepository::new(&connection);
+    for (index, (from, subject, minutes)) in NEWSLETTERS.iter().enumerate() {
+        let at = today - chrono::Duration::minutes(*minutes);
+        let mut message = Message::new(report.account.id, inbox, at);
+        message.date = Some(at);
+        message.from = vec![EmailAddress::new(Some(from.0), from.1)];
+        message.subject = Some((*subject).to_owned());
+        message.preview = Some("This week's issue.".to_owned());
+        message.flags = [Flag::Seen].into_iter().collect();
+        message.rfc_message_id = Some(RfcMessageId::new(format!(
+            "<newsletter.{index}@example.test>"
+        )));
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a newsletter");
+        digests.hold(id, "Newsletters", at).await.expect("held");
+    }
+    let due = today - chrono::Duration::minutes(9);
+    digests
+        .deliver("Newsletters", due, due)
+        .await
+        .expect("delivered");
     // Screen 21: what filing archived today, each with its reason.
     for (index, (from, subject, preview, reason, source, minutes)) in FILTERED.iter().enumerate() {
         let at = today - chrono::Duration::minutes(*minutes);
