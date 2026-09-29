@@ -346,6 +346,21 @@ impl FocusWindow {
         ));
         self.add_controller(keys);
 
+        // The pointer, before a dialog's scrim takes it: see
+        // `click_through_dialog`.
+        let clicks = gtk::GestureClick::new();
+        clicks.set_propagation_phase(gtk::PropagationPhase::Capture);
+        clicks.connect_pressed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |gesture, _, x, y| {
+                if window.click_through_dialog(x, y) {
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
+                }
+            }
+        ));
+        self.add_controller(clicks);
+
         // What the main menu's items run: a command by its id, through the
         // same `act` a key press reaches, and About.
         let run = gio::SimpleAction::new("run", Some(glib::VariantTy::STRING));
@@ -900,8 +915,38 @@ impl FocusWindow {
 
     /// A pointer press at (`x`, `y`) in the window, before any dialog over it
     /// sees it. Whether the window took it.
-    pub fn click_through_dialog(&self, _x: f64, _y: f64) -> bool {
-        false
+    ///
+    /// Only the add-account form's dialog is a way in that must not shut the
+    /// window's own close button out: it covers the window on a first run,
+    /// where closing the app is the one other thing a person can want, and a
+    /// modal dialog gives its scrim the click. A click on the button while
+    /// that form is up closes the app.
+    pub fn click_through_dialog(&self, x: f64, y: f64) -> bool {
+        let imp = self.imp();
+        if imp.adding_account.borrow().is_none() {
+            return false;
+        }
+        let Some(chrome) = imp.chrome.borrow().clone() else {
+            return false;
+        };
+        let Some(bounds) = chrome.close_button().compute_bounds(self) else {
+            return false;
+        };
+        let (x, y) = (x as f32, y as f32);
+        if x < bounds.x()
+            || x > bounds.x() + bounds.width()
+            || y < bounds.y()
+            || y > bounds.y() + bounds.height()
+        {
+            return false;
+        }
+        // A window asked to close with a dialog over it closes the dialog
+        // and stays; the app is closing, so the form goes first.
+        if let Some(form) = imp.adding_account.take() {
+            form.force_close();
+        }
+        self.act(CommandId::Quit);
+        true
     }
 
     /// The add-account form's dialog, while it is open.

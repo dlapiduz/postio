@@ -45,6 +45,7 @@ pub struct Chrome {
     top: gtk::CenterBox,
     strip: gtk::Box,
     compose: gtk::Button,
+    close: gtk::Button,
     field_keys: gtk::Box,
     sync: gtk::Label,
     sync_icon: gtk::Image,
@@ -250,6 +251,7 @@ impl Chrome {
             top,
             strip,
             compose: compose.clone(),
+            close: close.clone(),
             field_keys,
             sync,
             sync_icon,
@@ -308,6 +310,11 @@ impl Chrome {
             }
         });
         chrome
+    }
+
+    /// The window's own close button, at the top bar's end.
+    pub fn close_button(&self) -> &gtk::Button {
+        &self.close
     }
 
     /// The top bar, to place in a layout.

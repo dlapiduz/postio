@@ -62,7 +62,7 @@ fn scope_line(icon: &str, text: &str) -> gtk::Box {
 ///
 /// Chosen so the whole plate — header, body and all — still fits inside the
 /// shortest window Postio supports.
-const BODY_MAX_HEIGHT: i32 = 520;
+const BODY_MAX_HEIGHT: i32 = 600;
 
 type SubmitHandler = Box<dyn Fn(&Submission)>;
 type ProbeHandler = Box<dyn Fn(&str)>;

@@ -314,8 +314,10 @@ pub fn open_in_browser(parent: &impl IsA<gtk::Widget>) -> impl Fn(&str) + 'stati
 fn dialog(screen: &Onboarding, title: &str, presenter: &Presenter) -> adw::Dialog {
     let dialog = adw::Dialog::builder()
         .title(title)
-        .content_width(420)
-        .content_height(420)
+        // Tall enough for the server fields and a refusal to show without
+        // the body scrolling; the window it floats over is larger still.
+        .content_width(560)
+        .content_height(680)
         .child(screen)
         .build();
     dialog.connect_closed({
