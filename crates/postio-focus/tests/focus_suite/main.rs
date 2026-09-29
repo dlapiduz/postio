@@ -80,6 +80,14 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search",
+        bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search as fn(),
+    ),
+    (
+        "bar::the_bar_opens_in_the_top_bars_field",
+        bar::the_bar_opens_in_the_top_bars_field as fn(),
+    ),
+    (
         "first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox",
         first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox as fn(),
     ),

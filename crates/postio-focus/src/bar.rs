@@ -404,6 +404,11 @@ impl Bar {
         true
     }
 
+    /// The bar's input, where the words are typed.
+    pub fn input(&self) -> gtk::Widget {
+        self.entry.clone().upcast()
+    }
+
     /// What the entry holds now.
     pub fn typed(&self) -> String {
         self.entry.text().to_string()

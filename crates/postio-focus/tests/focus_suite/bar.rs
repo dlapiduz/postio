@@ -479,3 +479,114 @@ pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
         );
     });
 }
+
+async fn three_and_open() -> postio_focus::window::FocusWindow {
+    let fixture = Fixture::empty().await;
+    fixture
+        .file(("Ada Moreno", "ada@example.com"), "Archive plan", "Boxes.", 5)
+        .await;
+    fixture.index().await;
+    let (window, _client) = fixture.open().await;
+    assert!(
+        crate::settle_until(async || support::subjects(&window).len() == 1).await,
+        "the inbox never reached the screen"
+    );
+    support::keep(fixture);
+    window
+}
+
+/// C24 (T182): `Ctrl K` opens the bar in command mode -- `>` already filled
+/// in, so only commands show -- and `/` opens it for mail search.
+pub fn ctrl_k_opens_the_bar_for_commands_and_slash_for_search() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let window = three_and_open().await;
+
+        support::press(&window, "k", gtk::gdk::ModifierType::CONTROL_MASK);
+        let bar = window.bar().expect("Ctrl K opened the bar");
+        assert!(bar.is_open(), "Ctrl K opened no bar");
+        assert_eq!(bar.typed(), ">", "Ctrl K fills in the command prefix");
+        let said = bar.texts();
+        assert!(
+            said.iter().any(|line| line == "Commands"),
+            "the commands: {said:?}"
+        );
+        assert!(
+            !said.iter().any(|line| line.starts_with("Search mail for")),
+            "a search row in command mode: {said:?}"
+        );
+        assert!(
+            !said.iter().any(|line| line == "Go to"),
+            "places in command mode: {said:?}"
+        );
+        // What is typed after the prefix narrows the commands.
+        type_in(&bar, ">arch").await;
+        assert!(
+            bar.texts().iter().any(|line| line == "Archive"),
+            "the narrowed command: {:?}",
+            bar.texts()
+        );
+
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(!bar.is_open(), "Escape did not close the bar");
+
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        assert!(bar.is_open(), "/ opened no bar");
+        assert_eq!(bar.typed(), "", "/ opens the bar for search, not commands");
+        type_in(&bar, "arch").await;
+        let said = bar.texts();
+        assert!(
+            said.iter().any(|line| line.starts_with("Search mail for")),
+            "the search row: {said:?}"
+        );
+    });
+}
+
+/// C24 (T182): the bar opens in place -- the top bar's own field is where
+/// the typing happens, and the results drop below it -- not as a panel
+/// somewhere else over the list.
+pub fn the_bar_opens_in_the_top_bars_field() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let window = three_and_open().await;
+        let field = support::only(&window, "focus-command-field");
+        let before = field
+            .compute_bounds(&window)
+            .expect("the field has a place in the window");
+
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("the bar");
+        type_in(&bar, "arch").await;
+        crate::settle();
+        let entry = bar.input();
+        let at = entry
+            .compute_bounds(&window)
+            .expect("the input has a place in the window");
+        let (x, y) = (
+            at.x() + at.width() / 2.0,
+            at.y() + at.height() / 2.0,
+        );
+        assert!(
+            x >= before.x()
+                && x <= before.x() + before.width()
+                && y >= before.y()
+                && y <= before.y() + before.height(),
+            "the bar's input is at ({x}, {y}), not in the top bar's field {before:?}"
+        );
+        let results = support::only(&window, "focus-bar-results")
+            .compute_bounds(&window)
+            .expect("the results have a place in the window");
+        assert!(
+            results.y() >= before.y() + before.height() - 1.0,
+            "the results are not below the field: {results:?} under {before:?}"
+        );
+        assert!(
+            !field.is_mapped() || field.opacity() < 0.1,
+            "the field's own prompt still shows under the bar's input"
+        );
+    });
+}
