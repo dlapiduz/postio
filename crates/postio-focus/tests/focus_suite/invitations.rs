@@ -115,12 +115,13 @@ fn open_invitation() -> Vec<u8> {
 fn row(window: &FocusWindow, subject: &str) -> Option<RowWidget> {
     window.pane()?.rows_on_screen().into_iter().find(|row| {
         row.item().is_some_and(|item| {
-            item.row()
-                .summary
-                .representative
-                .subject
-                .as_deref()
-                .is_some_and(|said| said.contains(subject))
+            item.as_conversation().is_some_and(|row| {
+                row.summary
+                    .representative
+                    .subject
+                    .as_deref()
+                    .is_some_and(|said| said.contains(subject))
+            })
         })
     })
 }

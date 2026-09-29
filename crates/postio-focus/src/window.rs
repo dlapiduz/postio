@@ -2353,7 +2353,10 @@ impl FocusWindow {
         };
         // A draft is written, not read: it opens in the composer (US11
         // scenario 3), whichever app left it.
-        if row.row().summary.representative.send_state.is_some() {
+        if row
+            .as_conversation()
+            .is_some_and(|row| row.summary.representative.send_state.is_some())
+        {
             self.open_draft(row.id());
             return;
         }
