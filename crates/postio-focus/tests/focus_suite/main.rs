@@ -57,6 +57,7 @@ mod reload;
 mod remind_on_send;
 mod remote_images;
 mod rows;
+mod rule_query;
 mod selection;
 mod shot;
 mod starts_offline;
@@ -196,6 +197,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "digest_summary::a_reference_opens_its_email_in_place_with_the_passage_highlighted",
         digest_summary::a_reference_opens_its_email_in_place_with_the_passage_highlighted as fn(),
+    ),
+    (
+        "rule_query::match_a_list_or_a_search_instead_previews_and_saves_the_typed_query",
+        rule_query::match_a_list_or_a_search_instead_previews_and_saves_the_typed_query as fn(),
+    ),
+    (
+        "rule_query::digest_mail_like_this_is_absent_with_no_model_configured",
+        rule_query::digest_mail_like_this_is_absent_with_no_model_configured as fn(),
+    ),
+    (
+        "rule_query::digest_mail_like_this_present_with_a_message_says_so_with_no_model",
+        rule_query::digest_mail_like_this_present_with_a_message_says_so_with_no_model as fn(),
     ),
     (
         "desktop::focus_says_which_application_it_is",

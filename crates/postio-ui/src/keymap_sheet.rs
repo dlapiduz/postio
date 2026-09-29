@@ -206,7 +206,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::SweepInbox
         | C::NextReference
         | C::PrevReference
-        | C::ToggleDigestSummary => Some(G::DigestsAndFiltering),
+        | C::ToggleDigestSummary
+        | C::DigestLikeThis => Some(G::DigestsAndFiltering),
 
         // ── Obsidian ────────────────────────────────────────────────────
         C::CaptureTask

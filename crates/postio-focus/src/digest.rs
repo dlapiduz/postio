@@ -606,6 +606,8 @@ impl DigestWindow {
         if page == DigestPage::Summary {
             self.show_focused_reference();
         }
+        crate::a11y::teach_shortcuts(&self.dialog);
+        crate::motion::keep_to_budget(&self.dialog);
     }
 
     /// The title, its line, Archive all and the rule's line.
@@ -979,6 +981,8 @@ impl DigestWindow {
                     .reader
                     .show_absent(postio_ui::reader::document::Absent::ForeignDraft),
             }
+            crate::a11y::teach_shortcuts(&window.dialog);
+            crate::motion::keep_to_budget(&window.dialog);
         });
     }
 

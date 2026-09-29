@@ -1952,11 +1952,34 @@ impl FocusWindow {
         if senders.is_empty() {
             return;
         }
+        let like_this = self.aimed_message_for_like_this();
         if let Some(dialog) = self.rule_dialog_built() {
-            dialog.open_new(self, &senders);
+            dialog.open_new(self, &senders, like_this);
             crate::a11y::teach_shortcuts(dialog.dialog());
             crate::motion::keep_to_budget(dialog.dialog());
         }
+    }
+
+    /// The one message "Digest mail like this" would check other mail
+    /// against: the cursor's, when nothing beyond it is selected, and only
+    /// when the user has brought a model with `like_this` on (US14, FR-171)
+    /// -- whether it connects is a further question the dialog leaves to
+    /// `Client::digest_like_this`.
+    fn aimed_message_for_like_this(&self) -> Option<MessageId> {
+        let single = match self.selection() {
+            Selection::These(picked) => picked.len() <= 1,
+            Selection::Everything { .. } => false,
+        };
+        if !single {
+            return None;
+        }
+        self.imp()
+            .focus_config
+            .borrow()
+            .model_for(postio_config::model::ModelFeature::LikeThis)?;
+        let row = self.cursor_row()?;
+        let conversation = row.as_conversation()?;
+        Some(conversation.summary.representative.id)
     }
 
     /// The senders of the selection, or of the cursor's conversation, once

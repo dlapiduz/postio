@@ -190,6 +190,7 @@ command from inside a text field.
 | `ctrl+p` | Change project | Capture sheet (Postio Focus) |  | `capture_change_project` |
 | `alt+s` | Use the subject instead | Capture sheet (Postio Focus) |  | `capture_use_subject` |
 | `ctrl+Return` | Add to the vault | Capture sheet (Postio Focus) |  | `capture_write` |
+| `L` | Digest mail like this | List (Postio Focus) |  | `digest_like_this` |
 
 ## The one box
 

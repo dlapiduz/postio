@@ -78,6 +78,7 @@ const NOT_YET: &[&str] = &[
     "next_reference",
     "prev_reference",
     "toggle_digest_summary",
+    "digest_like_this",
     "restore_filtered",
     "filtered_tab_1",
     "filtered_tab_2",

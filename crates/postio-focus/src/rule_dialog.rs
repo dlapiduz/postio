@@ -15,8 +15,8 @@ use postio_client::Client;
 use postio_client::protocol::{DigestRuleDraft, RuleDay};
 use postio_config::{DigestRule, Due};
 use postio_core::{CommandId, Keymap};
-use postio_model::EmailAddress;
 use postio_model::listing::Cadence;
+use postio_model::{EmailAddress, MessageId};
 use postio_ui::{digest, hints};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
@@ -56,6 +56,9 @@ pub struct RuleDialog {
     dialog: adw::Dialog,
     heading: gtk::Label,
     from: gtk::Label,
+    match_instead: gtk::Button,
+    query_entry: gtk::Entry,
+    like_this_button: gtk::Button,
     cadence: gtk::DropDown,
     on: gtk::Label,
     weekday: gtk::DropDown,
@@ -71,6 +74,10 @@ pub struct RuleDialog {
     name: RefCell<String>,
     queries: RefCell<Vec<String>>,
     replacing: RefCell<Option<String>>,
+    /// The message "Digest mail like this" would check other mail against,
+    /// when the user has brought a model with `like_this` on: `None` makes
+    /// the control absent (US14, FR-171).
+    like_this: RefCell<Option<MessageId>>,
     generation: Cell<u64>,
     saved: RefCell<Option<Saved>>,
     me: RefCell<std::rc::Weak<RuleDialog>>,
@@ -110,6 +117,34 @@ impl RuleDialog {
         from.set_hexpand(true);
         from.set_selectable(true);
         from.set_wrap(true);
+        // "Match a list or a search instead…" (US14, T155): swaps `from`
+        // for a typed `list:` or query rule, previewed the same way.
+        let query_entry = gtk::Entry::new();
+        query_entry.set_hexpand(true);
+        query_entry.set_placeholder_text(Some("list:weekly.example.org or a search"));
+        query_entry.set_visible(false);
+        let from_value = gtk::Box::new(gtk::Orientation::Vertical, S1);
+        from_value.append(&from);
+        from_value.append(&query_entry);
+        let match_instead = gtk::Button::new();
+        match_instead.add_css_class("flat");
+        match_instead.add_css_class("focus-rule-match-instead");
+        match_instead.set_child(Some(&gtk::Label::new(Some(
+            "Match a list or a search instead…",
+        ))));
+        match_instead.set_halign(gtk::Align::Start);
+        // "Digest mail like this" (US14, FR-171): only when a message is
+        // given -- which the window only does once the user has brought a
+        // model with `like_this` on (`ModelFeature::LikeThis`).
+        let like_this_button = gtk::Button::new();
+        like_this_button.add_css_class("flat");
+        like_this_button.add_css_class("focus-rule-like-this");
+        like_this_button.set_child(Some(&gtk::Label::new(Some("Digest mail like this"))));
+        like_this_button.set_halign(gtk::Align::Start);
+        like_this_button.set_visible(false);
+        let links = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+        links.append(&match_instead);
+        links.append(&like_this_button);
         let cadence = gtk::DropDown::from_strings(&CADENCES.map(|(_, name)| name));
         cadence.set_selected(1);
         let on = gtk::Label::new(Some("on"));
@@ -150,7 +185,7 @@ impl RuleDialog {
             label
         };
         grid.attach(&label("From"), 0, 0, 1, 1);
-        grid.attach(&from, 1, 0, 1, 1);
+        grid.attach(&from_value, 1, 0, 1, 1);
         grid.attach(&label("Deliver"), 0, 1, 1, 1);
         grid.attach(&deliver, 1, 1, 1, 1);
 
@@ -176,6 +211,7 @@ impl RuleDialog {
         let body = gtk::Box::new(gtk::Orientation::Vertical, S3);
         body.add_css_class("focus-rule-body");
         body.append(&grid);
+        body.append(&links);
         body.append(&preview_heading);
         body.append(&preview);
         body.append(&more);
@@ -196,6 +232,9 @@ impl RuleDialog {
             dialog,
             heading,
             from,
+            match_instead,
+            query_entry,
+            like_this_button,
             cadence,
             on,
             weekday,
@@ -211,6 +250,7 @@ impl RuleDialog {
             name: RefCell::default(),
             queries: RefCell::default(),
             replacing: RefCell::default(),
+            like_this: RefCell::default(),
             generation: Cell::new(0),
             saved: RefCell::default(),
             me: RefCell::default(),
@@ -241,9 +281,36 @@ impl RuleDialog {
                 }
             }
         });
-        this.cadence.connect_selected_notify(move |_| {
-            if let Some(this) = weak.upgrade() {
-                this.show_day();
+        this.cadence.connect_selected_notify({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_day();
+                }
+            }
+        });
+        this.match_instead.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.match_instead();
+                }
+            }
+        });
+        this.query_entry.connect_changed({
+            let weak = weak.clone();
+            move |entry| {
+                if let Some(this) = weak.upgrade() {
+                    this.apply_query(&entry.text());
+                }
+            }
+        });
+        this.like_this_button.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.like_this();
+                }
             }
         });
         this.show_create();
@@ -261,7 +328,16 @@ impl RuleDialog {
     }
 
     /// Open over `parent` for a new rule holding mail from `senders`.
-    pub fn open_new(&self, parent: &impl IsA<gtk::Widget>, senders: &[EmailAddress]) {
+    /// `like_this`, when given, is the message "Digest mail like this"
+    /// checks other mail against -- the window gives one only once the
+    /// user has brought a model with `like_this` on (US14, FR-171); with
+    /// none, the control is absent.
+    pub fn open_new(
+        &self,
+        parent: &impl IsA<gtk::Widget>,
+        senders: &[EmailAddress],
+        like_this: Option<MessageId>,
+    ) {
         let names: Vec<String> = senders
             .iter()
             .map(|sender| sender.display().to_owned())
@@ -274,12 +350,13 @@ impl RuleDialog {
                 .collect(),
         );
         self.replacing.replace(None);
+        self.like_this.replace(like_this);
         self.heading.set_text(if senders.len() > 1 {
             "Digest these senders"
         } else {
             "Digest this sender"
         });
-        self.from.set_text(
+        self.show_senders(
             &senders
                 .iter()
                 .map(|sender| sender.address.to_lowercase())
@@ -295,13 +372,27 @@ impl RuleDialog {
     }
 
     /// Open over `parent` to edit `rule` where it stands in `config.toml`.
+    /// "Digest mail like this" is never offered while editing (US14 is
+    /// about a new rule from a selected message).
     pub fn open_edit(&self, parent: &impl IsA<gtk::Widget>, rule: &DigestRule) {
         self.name.replace(rule.name.clone());
         self.queries.replace(rule.queries.clone());
         self.replacing.replace(Some(rule.name.clone()));
+        self.like_this.replace(None);
         self.heading
             .set_text(&format!("Digest rule \u{b7} {}", rule.name));
-        self.from.set_text(&rule.queries.join(", "));
+        // A rule whose every query is `from:` reads as senders, editable
+        // through the plain label; anything else -- a `list:` or free
+        // query -- opens straight into the query entry it was made with.
+        if rule
+            .queries
+            .iter()
+            .all(|query| query.trim().to_lowercase().starts_with("from:"))
+        {
+            self.show_senders(&rule.queries.join(", "));
+        } else {
+            self.enter_query_mode(&rule.queries.join(", "));
+        }
         self.note.set_text(digest::rule_note(rule.queries.len()));
         match rule.due() {
             Ok(Due::Daily { at }) => {
@@ -322,6 +413,82 @@ impl RuleDialog {
             Err(_) => {}
         }
         self.open(parent);
+    }
+
+    /// Show `text` as the plain-senders "From" line: the label, with the
+    /// query entry, its link and "Digest mail like this" all put away.
+    fn show_senders(&self, text: &str) {
+        self.from.set_text(text);
+        self.from.set_visible(true);
+        self.query_entry.set_visible(false);
+        self.match_instead.set_visible(true);
+        self.like_this_button
+            .set_visible(self.like_this.borrow().is_some());
+    }
+
+    /// "Match a list or a search instead…": swap the senders' label for a
+    /// typed query, starting from `text` (US14 scenario 1).
+    fn enter_query_mode(&self, text: &str) {
+        self.from.set_visible(false);
+        self.match_instead.set_visible(false);
+        self.like_this_button.set_visible(false);
+        self.query_entry.set_visible(true);
+        self.query_entry.set_text(text);
+        self.query_entry.grab_focus();
+        self.apply_query(text);
+    }
+
+    /// What typing into the query entry does: one query per comma-
+    /// separated piece becomes the rule's `match` list, previewed the same
+    /// way a sender's `from:` is (US14 scenario 2, ADR 0008: the one query
+    /// language).
+    fn apply_query(&self, text: &str) {
+        let queries: Vec<String> = text
+            .split(',')
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+            .map(str::to_owned)
+            .collect();
+        self.name.replace(queries.join(", "));
+        self.queries.replace(queries);
+        self.read_preview();
+    }
+
+    /// "Match a list or a search instead…", clicked.
+    pub fn match_instead(&self) {
+        self.enter_query_mode("");
+    }
+
+    /// Set the query entry's text, as if typed: what a test drives instead
+    /// of a keystroke-by-keystroke `Entry`.
+    pub fn set_query(&self, text: &str) {
+        self.query_entry.set_text(text);
+    }
+
+    /// "Digest mail like this", clicked: ask the user's model which
+    /// candidate query is alike, and preview it once it answers. Absent
+    /// when `like_this` names no message (US14, FR-171); a model that
+    /// finds nothing alike, or answers with none, says so rather than
+    /// entering query mode on nothing.
+    pub fn like_this(&self) {
+        let Some(message) = *self.like_this.borrow() else {
+            return;
+        };
+        let client = self.client.clone();
+        let weak = self.me.borrow().clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let read = client.digest_like_this(message).await;
+            let Some(this) = weak.upgrade() else {
+                return;
+            };
+            match read {
+                Ok(Some(rule)) => this.enter_query_mode(&rule.queries.join(", ")),
+                Ok(None) => this.say(Some("The model found nothing alike to digest")),
+                Err(error) => this.say(Some(&error.to_string())),
+            }
+        });
     }
 
     /// Create: write the rule, then close; or say why not.
