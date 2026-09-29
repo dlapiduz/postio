@@ -45,11 +45,11 @@ command from inside a text field.
 
 | Keys | Command | Where | Undo | Id |
 |---|---|---|---|---|
-| `j` or `Down` | Next message | List, conversation, reader, search |  | `next_message` |
-| `k` or `Up` | Previous message | List, conversation, reader, search |  | `prev_message` |
+| `j` or `Down` | Next message | List, conversation, reader, search, digest, Filtered view |  | `next_message` |
+| `k` or `Up` | Previous message | List, conversation, reader, search, digest, Filtered view |  | `prev_message` |
 | `g g` | First message | List, conversation, reader, search |  | `first_message` |
 | `G` | Last message | List, conversation, reader, search |  | `last_message` |
-| `Return` or `Right` | Open message | List, conversation, search |  | `open_message` |
+| `Return` or `Right` | Open message | List, conversation, search, digest, Filtered view |  | `open_message` |
 | `x` | Toggle selection | List, conversation, reader, search |  | `toggle_selection` |
 | `J` or `shift+Down` | Extend selection down | List, reader, search |  | `extend_selection_down` |
 | `K` or `shift+Up` | Extend selection up | List, reader, search |  | `extend_selection_up` |
@@ -126,7 +126,7 @@ command from inside a text field.
 | `U` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
 | `ctrl+b` | Toggle sidebar | List, conversation, reader, folder list (not Postio Focus) |  | `toggle_sidebar` |
 | `g o` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |
-| `g i` | Go to inbox | List, conversation, reader, search, folder list |  | `go_to_inbox` |
+| `g i` | Go to inbox | List, conversation, reader, search, folder list, digest, Filtered view |  | `go_to_inbox` |
 | `g t` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |
 | `g s` | Go to sent | List, conversation, reader, search, folder list |  | `go_to_sent` |
 | `g *` | Go to flagged | List, conversation, reader, search, folder list |  | `go_to_flagged` |
