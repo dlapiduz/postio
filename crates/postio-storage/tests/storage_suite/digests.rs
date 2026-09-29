@@ -361,3 +361,65 @@ async fn each_rule_counts_what_it_holds_now_in_one_statement() {
         .collect();
     assert!(walks.is_empty(), "{walks:?}");
 }
+
+#[tokio::test]
+async fn which_messages_a_digest_holds_is_one_statement_by_key() {
+    // US10 scenario 7 (T140): a search result says where held mail waits.
+    // Of the messages asked about: which a rule holds, waiting or
+    // delivered; not one whose digest was archived; not one never held.
+    use postio_storage::test_support::counting::{counted_async, scans};
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages(&connection, 4).await;
+    let digests = DigestRepository::new(&connection);
+    digests
+        .hold(ids[0], "Newsletters", at(1, 9))
+        .await
+        .expect("held");
+    let delivery = digests
+        .deliver("Newsletters", at(2, 9), at(2, 9))
+        .await
+        .expect("delivered")
+        .expect("a delivery");
+    digests
+        .hold(ids[1], "Newsletters", at(3, 9))
+        .await
+        .expect("held");
+    digests
+        .hold(ids[2], "Receipts", at(3, 9))
+        .await
+        .expect("held");
+    digests
+        .deliver("Receipts", at(4, 9), at(4, 9))
+        .await
+        .expect("delivered")
+        .expect("a delivery");
+    let receipts = DeliveryId::new(delivery.get() + 1);
+    digests
+        .archive_delivery(receipts, at(5, 9))
+        .await
+        .expect("archived");
+
+    let _ = digests.held(&ids).await.expect("warm");
+    let mut held = Vec::new();
+    let counts = counted_async(|| async {
+        held = digests.held(&ids).await.expect("a read");
+    })
+    .await;
+    assert_eq!(
+        held,
+        [
+            (ids[0], "Newsletters".to_owned(), true),
+            (ids[1], "Newsletters".to_owned(), false),
+        ],
+        "delivered, waiting; the archived one and the never-held one are not"
+    );
+    assert_eq!(counts.statements, 1, "{counts:?}");
+    assert!(
+        scans(&connection, &DigestRepository::explain_held(4))
+            .await
+            .is_empty(),
+        "each message by its key"
+    );
+}

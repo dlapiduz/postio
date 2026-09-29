@@ -231,6 +231,47 @@ impl<'a> DigestRepository<'a> {
         .await
     }
 
+    /// Which of `messages` a digest holds, and for which rule: waiting for
+    /// its delivery (`false`) or delivered and not archived (`true`). What
+    /// a search result says instead of its folder (US10 scenario 7). One
+    /// statement, each message by its key.
+    pub async fn held(&self, messages: &[MessageId]) -> Result<Vec<(MessageId, String, bool)>> {
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+        sql::all(
+            self.connection,
+            &Self::explain_held(messages.len()),
+            messages
+                .iter()
+                .map(|message| message.get())
+                .collect::<Vec<_>>(),
+            |row| {
+                Ok((
+                    MessageId::new(row.col(0)?),
+                    row.col(1)?,
+                    row.col::<i64>(2)? != 0,
+                ))
+            },
+        )
+        .await
+    }
+
+    /// The SQL [`Self::held`] runs over `messages` messages.
+    pub fn explain_held(messages: usize) -> String {
+        let placeholders = (1..=messages)
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "SELECT h.message_id, h.rule, h.delivery_id IS NOT NULL
+               FROM digest_holds h
+               LEFT JOIN digest_deliveries d ON d.id = h.delivery_id
+              WHERE h.message_id IN ({placeholders}) AND d.archived_at IS NULL
+              ORDER BY h.message_id"
+        )
+    }
+
     /// How many messages each of `rules` holds now, waiting for its next
     /// delivery, in their order: the `g d` list's "holds N".
     ///

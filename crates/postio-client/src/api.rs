@@ -132,6 +132,7 @@ impl Req {
             Req::FilteredTabs => "FilteredTabs",
             Req::DeliveryMessages(_) => "DeliveryMessages",
             Req::DigestWaiting(_) => "DigestWaiting",
+            Req::Held(_) => "Held",
             Req::Filtered { .. } => "Filtered",
             Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
@@ -1037,6 +1038,19 @@ impl Client {
     pub async fn move_recent(&self) -> Result<Vec<MailboxId>, StoreError> {
         self.read(Req::MoveRecent, "recent moves", |answer| match answer {
             Resp::MoveRecent(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Which of `messages` a digest holds, and for which rule; with whether
+    /// its digest has been delivered.
+    pub async fn held(
+        &self,
+        messages: Vec<MessageId>,
+    ) -> Result<Vec<(MessageId, String, bool)>, StoreError> {
+        self.read(Req::Held(messages), "held mail", |answer| match answer {
+            Resp::Held(found) => Some(found),
             _ => None,
         })
         .await

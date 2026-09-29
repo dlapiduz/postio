@@ -375,6 +375,9 @@ pub enum Req {
     /// How many messages each named rule holds now, waiting for its next
     /// delivery: the `g d` list's "holds N" (spec 007 T139).
     DigestWaiting(Vec<String>),
+    /// Which of these messages a digest holds, and for which rule: what a
+    /// search result says instead of its folder (spec 007 T140).
+    Held(Vec<MessageId>),
     /// A page of the Filtered view, newest first.
     Filtered {
         /// One reason, as the store spells it, or every reason.
@@ -557,6 +560,8 @@ pub enum Resp {
     FilteredTabs(Vec<(String, u32)>),
     /// Counts, in the order asked for.
     Counts(Vec<u32>),
+    /// Each held message, its rule, and whether its digest was delivered.
+    Held(Vec<(MessageId, String, bool)>),
     /// A page of filtered mail.
     Filtered(Vec<FilteredRow>),
     /// Each label with how many conversations carry it; a label nothing

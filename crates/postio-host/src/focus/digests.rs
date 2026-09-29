@@ -8,6 +8,15 @@ use postio_storage::repository::DigestRepository;
 
 use crate::Inner;
 
+/// Which of `messages` a digest holds, and for which rule.
+pub(crate) async fn held(
+    inner: &Inner,
+    messages: &[postio_model::MessageId],
+) -> Result<Vec<(postio_model::MessageId, String, bool)>, StoreError> {
+    let reader = inner.wiring.database.read().await?;
+    Ok(DigestRepository::new(&reader).held(messages).await?)
+}
+
 /// How many messages each of `rules` holds now, in their order.
 pub(crate) async fn waiting(inner: &Inner, rules: &[String]) -> Result<Vec<u32>, StoreError> {
     let reader = inner.wiring.database.read().await?;
