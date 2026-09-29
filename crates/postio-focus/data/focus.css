@@ -55,6 +55,29 @@ window.focus-window {
   opacity: 1;
 }
 
+/* Inside a control the cap is a light hint beside the control's words, not a
+   second frame competing with the control's own edge: hairline, not the
+   strong rule a cap standing alone needs (T175). */
+.postio-keyhint {
+  border-color: var(--postio-hairline);
+}
+
+/* Buttons at the design's proportions (screens 04 and 05; T175, T177): a
+   regular button is 30px, a small one 26px, and a bar's verbs are the
+   quiet 26px kind -- no frame of their own, a tint under the pointer. The
+   shared sheet is the classic app's, whose action bars draw every verb
+   framed. */
+.focus-open-toolbar button.postio-button-regular {
+  min-height: 26px;
+  padding: 0 var(--postio-space-2);
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.focus-open-toolbar button.postio-button-regular:hover {
+  background-color: var(--postio-hover-bg);
+}
+
 .focus-sync {
   color: var(--postio-dim);
   font-size: var(--postio-text-ui);

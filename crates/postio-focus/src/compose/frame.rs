@@ -97,7 +97,9 @@ pub struct Frame {
     title: gtk::Label,
     saved: gtk::Label,
     detach: gtk::Button,
-    send_later: gtk::MenuButton,
+    send_later: gtk::Button,
+    /// Send later's menu, hung on its button and rebuilt each time it opens.
+    send_later_menu: gtk::PopoverMenu,
     send: gtk::Button,
     labels: gtk::Box,
     from_thread: gtk::Label,
@@ -136,14 +138,32 @@ impl Frame {
         detach.update_property(&[gtk::accessible::Property::Label(
             "Write in a window of its own",
         )]);
-        let send_later = gtk::MenuButton::new();
+        // A button with a menu hung on it rather than a `GtkMenuButton`,
+        // whose own nodes the button sheet never reaches: it draws as every
+        // other button here does.
+        let send_later = gtk::Button::new();
         postio_widgets::widgets::button::style(&send_later, Kind::Ghost, Size::Small);
-        send_later.set_label("Send later");
+        send_later.set_child(Some(&gtk::Label::new(Some("Send later"))));
+        let send_later_menu = gtk::PopoverMenu::from_model(None::<&gio::MenuModel>);
+        send_later_menu.set_parent(&send_later);
+        send_later_menu.set_has_arrow(false);
+        send_later.connect_destroy({
+            let menu = send_later_menu.clone();
+            move |_| menu.unparent()
+        });
         send_later.add_css_class("focus-compose-send-later");
         let send = gtk::Button::new();
         postio_widgets::widgets::button::style(&send, Kind::Primary, Size::Small);
         send.add_css_class("focus-compose-send");
         let trailing = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        // Each as tall as its own words, not as the tallest beside it.
+        for widget in [
+            detach.upcast_ref::<gtk::Widget>(),
+            send_later.upcast_ref(),
+            send.upcast_ref(),
+        ] {
+            widget.set_valign(gtk::Align::Center);
+        }
         trailing.append(&detach);
         trailing.append(&send_later);
         trailing.append(&send);
@@ -193,6 +213,9 @@ impl Frame {
         words.set_xalign(1.0);
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         footer.add_css_class("focus-compose-footer");
+        // Each is as tall as its own words, not the footer's.
+        attach.set_valign(gtk::Align::Center);
+        remind.set_valign(gtk::Align::Center);
         footer.append(&attach);
         footer.append(&remind);
         footer.append(&words);
@@ -206,6 +229,7 @@ impl Frame {
             saved,
             detach,
             send_later,
+            send_later_menu,
             send,
             labels,
             from_thread,
@@ -247,17 +271,11 @@ impl Frame {
 
         // Send later: the composer's own presets, rebuilt as the menu opens,
         // since they are relative to the moment it does.
-        self.send_later.set_create_popup_func(|button| {
-            let menu = gio::Menu::new();
-            for (label, when) in postio_ui::schedule::schedule_presets(Local::now()) {
-                let item = gio::MenuItem::new(Some(label), None);
-                item.set_action_and_target_value(
-                    Some("focus-send-later.choose"),
-                    Some(&when.with_timezone(&Utc).timestamp_millis().to_variant()),
-                );
-                menu.append_item(&item);
+        let frame = Rc::downgrade(self);
+        self.send_later.connect_clicked(move |_| {
+            if let Some(frame) = frame.upgrade() {
+                frame.pop_send_later();
             }
-            button.set_popover(Some(&gtk::PopoverMenu::from_model(Some(&menu))));
         });
         let actions = gio::SimpleActionGroup::new();
         let choose = gio::SimpleAction::new("choose", Some(glib::VariantTy::INT64));
@@ -307,6 +325,17 @@ impl Frame {
             "Send",
             key(CommandId::Send).as_deref(),
         )));
+        // Send later opens a menu: its words and key like the others, then
+        // the arrow that says so (screen 05).
+        let later = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        later.append(&keyhint::labelled(
+            "Send later",
+            key(CommandId::ScheduleSend).as_deref(),
+        ));
+        let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
+        arrow.set_accessible_role(gtk::AccessibleRole::Presentation);
+        later.append(&arrow);
+        self.send_later.set_child(Some(&later));
         self.attach.set_child(Some(&keyhint::labelled(
             "Attach",
             key(CommandId::AttachFile).as_deref(),
@@ -345,7 +374,17 @@ impl Frame {
 
     /// Open the Send later menu, as its key does.
     pub fn pop_send_later(&self) {
-        self.send_later.popup();
+        let menu = gio::Menu::new();
+        for (label, when) in postio_ui::schedule::schedule_presets(Local::now()) {
+            let item = gio::MenuItem::new(Some(label), None);
+            item.set_action_and_target_value(
+                Some("focus-send-later.choose"),
+                Some(&when.with_timezone(&Utc).timestamp_millis().to_variant()),
+            );
+            menu.append_item(&item);
+        }
+        self.send_later_menu.set_menu_model(Some(&menu));
+        self.send_later_menu.popup();
     }
 
     /// Learn the names of `labels`, so the row can draw them.
