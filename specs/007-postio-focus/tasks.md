@@ -381,7 +381,7 @@ maintainer asks.
   - the filing catch-up alone: 61,188 messages in 177 s, against 300 s;
   - the two together: each about 184 s (T169)
 - [X] T169 First open on a large backlog: the filing catch-up and the needs-action pass share one background connection. Together they take about 184 s, missing needs-action's 60 s budget, and inbox page reads reach 380 ms. Give the passes their own connections or a priority, and have both yield to interactive reads. Test first: T147's measurement with both passes running, needs-action inside its budget, and page reads within 16 ms at the median. Done. The filing catch-up held the write permit through its pause. Now it drops the permit before pausing, starts only once needs-action has caught up, and both passes yield to a read in flight. With both running: needs-action 3.9 s, filing 163.5 s, page reads 6 ms at the median
-- [ ] T148 `screens.md` complete for 01–20, with every difference and its reason (SC-009)
+- [X] T148 `screens.md` complete for 01–20, with every difference and its reason (SC-009)
 - [ ] T149 Walk quickstart.md by hand (scenarios 1–11) on a throwaway store, and record the outcomes in `screens.md`'s notes
 - [ ] T150 Rebase onto `main`, and run the full suites the diff touches (quickstart, "Automated"). **Do not land**
 
