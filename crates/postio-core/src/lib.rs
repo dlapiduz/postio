@@ -51,6 +51,7 @@
 
 pub mod action;
 pub mod aim;
+pub mod blocking;
 pub mod bridge;
 pub mod command;
 pub mod config;
