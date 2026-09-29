@@ -188,6 +188,7 @@ and scrubbed it (constitution VI).
 | C21 | 25, the brief | The task line ends in its link: `- [ ] … 📅 2026-09-30 [✉](postio://message/…)` | The Obsidian Tasks plugin reads its fields from the end of the line, so text after the date hides the date from it (plan research) | **Behaviour wins.** The link goes before the date: `- [ ] … [✉](postio://message/…) 📅 2026-09-30` |
 | C22 | 01–20 | Shifted keys drawn with a glyph: `⇧J ⇧K`, `⇧X`, `⇧A` | Key hints are generated from the registry. The shared hint code refuses the `⇧` glyph (`check-key-hints-are-derived.py`) | **The derived hint wins.** The comparison records the notation difference |
 | C23 | 05 | Recipient suggestions open after three characters ("gra") | The shared completion rule opens them at four (`postio-ui/src/recipients.rs`) | One rule for both apps. Whether it becomes three is a `/ux-architect` call. Until then the comparison records the difference |
+| C24 | 09 | The command bar opens as an overlay, and `/` and `Ctrl K` both open it the same way | — | **Maintainer (2026-09-29):** `ctrl+k` opens the bar in command mode with `>` filled in, and `/` opens it for mail search. The bar opens in place, in the top bar's field, with its results below, rather than as a separate popup |
 
 ## The message view waits for the new renderer
 
