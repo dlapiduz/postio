@@ -80,6 +80,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "selection::the_bulk_bar_has_a_delete_button_that_deletes_the_selection",
+        selection::the_bulk_bar_has_a_delete_button_that_deletes_the_selection as fn(),
+    ),
+    (
         "first_run::the_wizard_opens_large_enough_for_the_server_details",
         first_run::the_wizard_opens_large_enough_for_the_server_details as fn(),
     ),

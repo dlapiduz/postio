@@ -132,3 +132,43 @@ pub fn a_select_all_archives_what_focus_lists_and_never_held_mail() {
         );
     });
 }
+
+/// The button named `class` under `root`, as a person would press it.
+fn button(root: &impl IsA<gtk::Widget>, class: &str) -> gtk::Button {
+    only(root, class)
+        .downcast::<gtk::Button>()
+        .expect("a button")
+}
+
+/// T179: Delete has a button with its key on the bulk bar, and pressing it
+/// deletes what is selected, as the key does.
+pub fn the_bulk_bar_has_a_delete_button_that_deletes_the_selection() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        support::keys(&window, &["j", "x", "j", "x", "j"]);
+        let bar = only(&window, "focus-bulk-bar");
+        let delete = button(&bar, "focus-bulk-delete");
+        let key = postio_ui::hints::key(Keymap::defaults(), CommandId::Delete).expect("a key");
+        assert!(
+            texts(&delete).contains(&key),
+            "the button shows Delete's key {key:?}: {:?}",
+            texts(&delete)
+        );
+        assert!(
+            texts(&delete).iter().any(|text| text == "Delete"),
+            "the button says what it does: {:?}",
+            texts(&delete)
+        );
+        delete.emit_clicked();
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Third", "Fourth", "Fifth"])
+                .await,
+            "the two selected conversations left the inbox: {:?}",
+            support::subjects(&window)
+        );
+    });
+}

@@ -81,6 +81,9 @@ pub fn the_open_message_toolbar_is_compact_with_its_keycaps_inside() {
             );
             assert_compact("a toolbar button", button, TOOLBAR);
         }
+        // T179: Delete is there beside the rest, with its key.
+        let delete = support::only(&dialog, "focus-open-delete");
+        assert!(!keycaps(&delete).is_empty(), "Delete shows no key");
         for close in support::with_class(&dialog, "focus-open-close") {
             assert_compact("Close", &close, REGULAR);
             assert!(!keycaps(&close).is_empty(), "Close shows no key");
