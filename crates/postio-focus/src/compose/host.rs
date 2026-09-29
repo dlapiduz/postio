@@ -85,6 +85,7 @@ impl ComposerHost for DialogHost {
             self.dialog.present(Some(&window));
         }
         crate::a11y::teach_shortcuts(&self.dialog);
+        crate::motion::keep_to_budget(&self.dialog);
     }
 
     fn release_pane(&self) {

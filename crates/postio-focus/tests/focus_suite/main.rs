@@ -43,6 +43,7 @@ mod keymap;
 mod list_contract;
 mod marked_rows;
 mod marker_card;
+mod motion;
 mod offline_send;
 mod one_composer;
 mod one_keymap;
@@ -77,6 +78,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut",
         a11y::a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut as fn(),
+    ),
+    (
+        "motion::no_transition_outruns_the_budget_and_reduced_motion_stills_them",
+        motion::no_transition_outruns_the_budget_and_reduced_motion_stills_them as fn(),
     ),
     (
         "compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it",

@@ -608,6 +608,7 @@ impl FocusWindow {
         });
         sheet.open(self, source, mode);
         crate::a11y::teach_shortcuts(sheet.dialog());
+        crate::motion::keep_to_budget(sheet.dialog());
     }
 
     /// What a capture is made from: the message open over the list when one
@@ -1343,6 +1344,7 @@ impl FocusWindow {
         }
         imp.pages.set_visible_child_name(INBOX);
         crate::a11y::teach_shortcuts(self);
+        crate::motion::keep_to_budget(self);
         feed.open(ListScope::Focus(FocusScope::Inbox));
 
         // Exactly one reader of the client's events, on the main loop:
@@ -2512,6 +2514,7 @@ impl FocusWindow {
         };
         reading.show(self, &row, position);
         crate::a11y::teach_shortcuts(&reading.dialog());
+        crate::motion::keep_to_budget(&reading.dialog());
     }
 
     /// Open URIs through `launch` rather than the desktop: what a test
@@ -2720,6 +2723,7 @@ impl FocusWindow {
                 .map(|counts| counts.filtered_today),
         );
         places.open();
+        crate::motion::keep_to_budget(self);
     }
 
     /// Show `destination` in the list, and name it in the header strip. A
@@ -2807,6 +2811,7 @@ impl FocusWindow {
     fn show_key_map(&self) {
         let dialog = crate::keymap_dialog::build(&self.keymap());
         dialog.set_widget_name(KEY_MAP);
+        crate::motion::keep_to_budget(&dialog);
         dialog.present(Some(self));
     }
 
