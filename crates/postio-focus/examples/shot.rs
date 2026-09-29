@@ -202,6 +202,8 @@ const SCREENS: &[(&str, &str)] = &[
     ("13", "the label picker at the row"),
     ("14", "the move picker at the row"),
     ("21", "the Filtered view"),
+    ("22", "the digest window's summary"),
+    ("23", "the email from a summary's reference"),
     ("24", "\"Digest this sender\" over the inbox"),
     ("25", "the capture sheet: a task from a to-do, into a vault"),
 ];
@@ -837,6 +839,46 @@ fn stage(
                 return Err(format!("the picker never listed {wanted:?}"));
             }
         }
+        "22" | "23" => {
+            // The digest row: this week's newsletters, with its summary.
+            let Some(position) = (0..pane.cursor().n_items()).find(|position| {
+                pane.cursor()
+                    .item(*position)
+                    .and_downcast::<postio_focus::list::RowObject>()
+                    .and_then(|row| row.item())
+                    .is_some_and(|item| matches!(item, postio_focus::list::FocusRow::Digest(_)))
+            }) else {
+                return Err("no digest row to open".into());
+            };
+            pane.cursor().set_selected(position);
+            window.act(CommandId::OpenMessage);
+            if !settle_until(|| {
+                window.digest().is_some_and(|digest| {
+                    digest
+                        .dialog()
+                        .child()
+                        .is_some_and(|content| content.is_mapped() && content.width() > 0)
+                })
+            }) {
+                return Err("Enter never opened the digest".into());
+            }
+            let digest = window.digest().expect("checked");
+            if !settle_until(|| digest.showing() == postio_focus::digest::DigestPage::Summary) {
+                return Err(format!(
+                    "the digest never opened on its summary: {:?}",
+                    digest.showing()
+                ));
+            }
+            if screen == "23" {
+                digest.activate();
+                if !settle_until(|| digest.showing() == postio_focus::digest::DigestPage::Email) {
+                    return Err("Enter never opened the reference's email".into());
+                }
+                if !settle_until(|| !digest.reader().view().highlight_rects().is_empty()) {
+                    return Err("the cited passage was never highlighted".into());
+                }
+            }
+        }
         "24" => {
             // The Oak Hill row, whose sender the reference digests.
             let Some(position) = (0..pane.cursor().n_items()).find(|position| {
@@ -1336,6 +1378,7 @@ pub async fn demo() -> (Store, AccountId) {
     // Screen 01's digest row: this week's newsletters, held for
     // "Newsletters" and delivered at 16:00 today.
     let digests = postio_storage::repository::DigestRepository::new(&connection);
+    let mut newsletter_ids = Vec::with_capacity(NEWSLETTERS.len());
     for (index, (from, subject, minutes)) in NEWSLETTERS.iter().enumerate() {
         let at = today - chrono::Duration::minutes(*minutes);
         let mut message = Message::new(report.account.id, inbox, at);
@@ -1352,12 +1395,82 @@ pub async fn demo() -> (Store, AccountId) {
             .await
             .expect("a newsletter");
         digests.hold(id, "Newsletters", at).await.expect("held");
+        newsletter_ids.push(id);
     }
     let due = today - chrono::Duration::minutes(9);
-    digests
+    let delivery = digests
         .deliver("Newsletters", due, due)
         .await
-        .expect("delivered");
+        .expect("delivered")
+        .expect("a delivery");
+    // Screens 22 and 23: a summary of two of the newsletters, citing the
+    // rate decision and the CRDT comparison, each with a body the cited
+    // passage is found in verbatim.
+    let rate_body = "Good morning.\n\n\
+        The committee held the rate at four percent for a third month.\n\n\
+        The Ledger\n";
+    let crdt_body = "This week: three CRDT libraries compared on the same workload, \
+        and a long read on garbage collection for long-lived documents.\n\n\
+        1. The comparison\n\nWe replayed the same editing trace, 260,000 operations \
+        recorded from a real shared document.\n";
+    for (id, body) in [
+        (newsletter_ids[0], rate_body),
+        (newsletter_ids[3], crdt_body),
+    ] {
+        MessageRepository::new(&connection)
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some(body.to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("a body");
+    }
+    let statement = |topic: &str, text: &str, number: u32, message, excerpt: &str| {
+        postio_model::summary::SummaryStatement {
+            topic: topic.to_owned(),
+            text: text.to_owned(),
+            reference: postio_model::summary::SummaryReference {
+                number,
+                message,
+                excerpt: excerpt.to_owned(),
+            },
+        }
+    };
+    let summary = postio_model::summary::DigestSummary {
+        statements: vec![
+            statement(
+                "Rates",
+                "The committee held the rate at four percent for a third month.",
+                1,
+                newsletter_ids[0],
+                "held the rate at four percent",
+            ),
+            statement(
+                "Engineering reading",
+                "Crate Notes compares three CRDT libraries on the same workload.",
+                2,
+                newsletter_ids[3],
+                "three CRDT libraries compared on the same workload",
+            ),
+        ],
+        messages: NEWSLETTERS.len() as u32,
+        senders: 5,
+    };
+    postio_storage::repository::DigestRepository::new(&connection)
+        .set_summary(
+            delivery,
+            &serde_json::to_string(&summary).expect("it serialises"),
+            due,
+        )
+        .await
+        .expect("a summary");
     // Screen 21: what filing archived today, each with its reason.
     for (index, (from, subject, preview, reason, source, minutes)) in FILTERED.iter().enumerate() {
         let at = today - chrono::Duration::minutes(*minutes);
