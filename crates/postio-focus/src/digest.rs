@@ -47,6 +47,17 @@ pub enum DigestAction {
 
 type Handler = Rc<dyn Fn(DigestAction)>;
 
+/// What the window shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DigestPage {
+    /// The summary (screen 22).
+    Summary,
+    /// The plain list of its messages.
+    List,
+    /// The email from a reference (screen 23).
+    Email,
+}
+
 /// The window. See the module.
 pub struct DigestWindow {
     client: Client,
@@ -64,11 +75,17 @@ pub struct DigestWindow {
     generation: Cell<u64>,
     handler: RefCell<Option<Handler>>,
     me: RefCell<std::rc::Weak<DigestWindow>>,
+    reader: postio_widgets::reader::Reader,
 }
 
 impl DigestWindow {
     /// A closed window, reading through `client`, its keys from `keymap`.
-    pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
+    pub fn new(client: Client, keymap: &Keymap, allowlist: &std::path::Path) -> Rc<Self> {
+        let reader = postio_widgets::reader::Reader::sharing(
+            Rc::new(|_: &str| None),
+            allowlist,
+            postio_widgets::reader::Verbs::NONE,
+        );
         let close = gtk::Button::new();
         close.add_css_class("flat");
         close.add_css_class("focus-digest-close");
@@ -147,6 +164,7 @@ impl DigestWindow {
             generation: Cell::new(0),
             handler: RefCell::default(),
             me: RefCell::default(),
+            reader,
         });
         window.me.replace(Rc::downgrade(&window));
         let weak = Rc::downgrade(&window);
@@ -266,6 +284,36 @@ impl DigestWindow {
         if let Some(row) = self.list.selected_row() {
             row.activate();
         }
+    }
+
+    /// What the window shows.
+    pub fn showing(&self) -> DigestPage {
+        DigestPage::List
+    }
+
+    /// The numbers of the references shown, in reading order.
+    pub fn references(&self) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /// Which of them is focused, from 0.
+    pub fn focused_reference(&self) -> Option<usize> {
+        None
+    }
+
+    /// The summary's paragraphs, as drawn.
+    pub fn paragraphs(&self) -> Vec<gtk::Label> {
+        Vec::new()
+    }
+
+    /// The email on screen, from a reference.
+    pub fn shown(&self) -> Option<MessageId> {
+        None
+    }
+
+    /// The email's message view.
+    pub fn reader(&self) -> &postio_widgets::reader::Reader {
+        &self.reader
     }
 
     /// The listed messages' subjects, top to bottom.

@@ -33,6 +33,7 @@ mod corrections;
 mod cursor;
 mod desktop;
 mod digest;
+mod digest_summary;
 mod drafts;
 mod empty;
 mod filtered;
@@ -186,6 +187,15 @@ const CASES: &[(&str, fn())] = &[
     (
         "digest::d_stops_digesting_the_sender_once_confirmed",
         digest::d_stops_digesting_the_sender_once_confirmed as fn(),
+    ),
+    (
+        "digest_summary::a_digest_with_a_summary_opens_on_it_and_every_statement_cites_its_mail",
+        digest_summary::a_digest_with_a_summary_opens_on_it_and_every_statement_cites_its_mail
+            as fn(),
+    ),
+    (
+        "digest_summary::a_reference_opens_its_email_in_place_with_the_passage_highlighted",
+        digest_summary::a_reference_opens_its_email_in_place_with_the_passage_highlighted as fn(),
     ),
     (
         "desktop::focus_says_which_application_it_is",

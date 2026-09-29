@@ -4854,6 +4854,7 @@ dependencies = [
  "postio-ui",
  "postio-vault",
  "postio-widgets",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

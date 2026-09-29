@@ -11,6 +11,16 @@ use crate::support::{self, Fixture};
 /// Three conversations, and two newsletters held for "Newsletters" and
 /// delivered fifteen minutes ago: the digest's row is second.
 async fn delivered() -> Fixture {
+    delivered_holding().await.0
+}
+
+/// As [`delivered`], with the delivery and what it holds, newest first:
+/// "The weekly numbers", then "The rate decision".
+pub async fn delivered_holding() -> (
+    Fixture,
+    postio_model::DeliveryId,
+    Vec<postio_model::MessageId>,
+) {
     let fixture = Fixture::empty().await;
     for (from, subject, minutes) in [
         (("Ada Moreno", "ada@example.com"), "Atlas budget", 30),
@@ -34,7 +44,7 @@ async fn delivered() -> Fixture {
             .await
             .expect("held");
     }
-    digests
+    let delivery = digests
         .deliver(
             "Newsletters",
             support::now() - Duration::minutes(15),
@@ -44,11 +54,11 @@ async fn delivered() -> Fixture {
         .expect("delivered")
         .expect("a delivery");
     drop(connection);
-    fixture
+    (fixture, delivery, held)
 }
 
 /// Open the digest's row: the cursor on it, then `Enter`.
-async fn open_digest(
+pub async fn open_digest(
     window: &postio_focus::window::FocusWindow,
 ) -> std::rc::Rc<postio_focus::digest::DigestWindow> {
     assert!(
@@ -82,6 +92,18 @@ pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
             digest.subjects(),
             ["The weekly numbers", "The rate decision"],
             "newest first"
+        );
+        // US13 scenario 4: with no summary it opens on its plain list, and
+        // offers no Summary tab.
+        assert_eq!(
+            digest.showing(),
+            postio_focus::digest::DigestPage::List,
+            "no summary, the list"
+        );
+        assert!(
+            digest.texts().iter().all(|text| text != "Summary"),
+            "a Summary tab with no summary: {:?}",
+            digest.texts()
         );
         // j walks the digest's rows, as the list's (Context::Digest).
         let first = digest.focused().map(|row| row.id);

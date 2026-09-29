@@ -1750,7 +1750,11 @@ impl FocusWindow {
         };
         let window = imp.digest_window.borrow().clone();
         let window = window.unwrap_or_else(|| {
-            let window = crate::digest::DigestWindow::new(client, &self.keymap());
+            let window = crate::digest::DigestWindow::new(
+                client,
+                &self.keymap(),
+                &crate::open::allowlist_path(),
+            );
             window.connect_action(glib::clone!(
                 #[weak(rename_to = focus)]
                 self,
