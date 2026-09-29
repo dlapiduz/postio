@@ -63,8 +63,8 @@ it.
 
 | Key | Command id | Offered by | Change |
 |---|---|---|---|
-| `/` | `search` | All | Unchanged |
-| `mod+k` | `command_palette` | All | Unchanged. Focus's command bar |
+| `/` | `search` | All | Unchanged. Focus's command bar, open for mail search (spec C24) |
+| `mod+k` | `command_palette` | All | Unchanged. Focus's command bar, open in command mode with `>` already typed, so only commands show (spec C24) |
 | `g i` | `go_to_inbox` | All | Unchanged |
 | `g o` | `go_to_folders` | All | **New id, replaces `focus_sidebar` (`g f`).** The classic app focuses its folder list, and Focus opens its folders popover |
 | `g t` | `go_to_drafts` | All | Was `g d` |
@@ -87,6 +87,8 @@ it.
 | `Tab` | the search field's own chip navigation | All | Unchanged. It is not a registry command (#494) |
 
 The `>` prefix in the command bar is the finder's mode prefix, not a key.
+`Ctrl K` types it for you; `/` leaves the bar empty, for search. Both open the
+bar in place, in the top bar's own field, with the results below it.
 
 ## Pickers: `Context::Picker` (new)
 

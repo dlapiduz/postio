@@ -390,8 +390,15 @@ banner.focus-banner button {
   background-color: color-mix(in srgb, black 16%, transparent);
 }
 
+/* The bar opens in place (spec C24): its input is the top bar's field,
+   drawn where the field is (7 px down a 46 px bar, 32 px tall, the same
+   width), and the results hang below it as a panel of their own. */
 .focus-bar {
-  margin-top: var(--postio-space-3);
+  margin-top: 7px;
+}
+
+.focus-bar-panel {
+  margin-top: var(--postio-space-2);
   padding: var(--postio-space-3);
   border: 1px solid var(--postio-hairline);
   border-radius: var(--postio-radius-lg);
@@ -415,9 +422,12 @@ banner.focus-banner button {
 }
 
 .focus-bar-input {
-  min-height: 36px;
-  padding: 0 var(--postio-space-2);
-  border-bottom: 1px solid var(--postio-hairline);
+  min-height: 32px;
+  padding: 0 var(--postio-space-3);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-raised-bg);
+  box-shadow: var(--postio-shadow-lg);
 }
 
 .focus-bar-entry {

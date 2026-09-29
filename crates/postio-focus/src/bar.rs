@@ -27,6 +27,8 @@ use postio_widgets::widgets::space::{S1, S2, S3};
 
 /// The bar's width, as the screens draw it.
 const WIDTH: i32 = 860;
+/// The top bar's field, which the bar's input takes the place of.
+const FIELD_WIDTH: i32 = 480;
 /// How many conversations a folder lists in the bar.
 const FOLDER_ROWS: u32 = 30;
 /// How many search hits the bar lists.
@@ -96,6 +98,8 @@ pub struct Bar {
     /// dropped.
     generation: Rc<Cell<u64>>,
     open: Cell<bool>,
+    /// The top bar's field, which the bar's input stands in for while open.
+    field: RefCell<Option<gtk::Widget>>,
     handler: RefCell<Option<Handler>>,
     /// This bar, weakly: what a future comes back to.
     me: RefCell<std::rc::Weak<Bar>>,
@@ -170,17 +174,25 @@ impl Bar {
         let saved_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         saved_row.add_css_class("focus-bar-saved");
         saved_row.set_visible(false);
-        let root = gtk::Box::new(gtk::Orientation::Vertical, S2);
+        // The bar opens in place (C24): its input is drawn where the top
+        // bar's own field is -- same width, centred the same way -- and the
+        // results hang below it as a panel of their own.
+        input.set_halign(gtk::Align::Center);
+        input.set_width_request(FIELD_WIDTH);
+        let panel = gtk::Box::new(gtk::Orientation::Vertical, S2);
+        panel.add_css_class("focus-bar-panel");
+        panel.append(&saved_row);
+        panel.append(&echo);
+        panel.append(&heading);
+        panel.append(&scrolled);
+        panel.append(&footer);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-bar");
-        root.append(&saved_row);
         root.set_width_request(WIDTH);
         root.set_halign(gtk::Align::Center);
         root.set_valign(gtk::Align::Start);
         root.append(&input);
-        root.append(&echo);
-        root.append(&heading);
-        root.append(&scrolled);
-        root.append(&footer);
+        root.append(&panel);
         // The list dims behind the bar (screens 07-09). The dimming is
         // paint only: it takes no pointer, so the list under it behaves as
         // it did.
@@ -209,6 +221,7 @@ impl Bar {
             rows: Rc::default(),
             generation: Rc::default(),
             open: Cell::new(false),
+            field: RefCell::default(),
             handler: RefCell::default(),
             me: RefCell::default(),
             saved: RefCell::default(),
@@ -277,7 +290,20 @@ impl Bar {
         bar
     }
 
-    /// The bar, to lay over the list.
+    /// The top bar's field: the input takes its place while the bar is open,
+    /// so the field is hidden (still laid out) until the bar closes.
+    pub fn set_field(&self, field: gtk::Widget) {
+        field.set_opacity(if self.open.get() { 0.0 } else { 1.0 });
+        self.field.replace(Some(field));
+    }
+
+    fn show_field(&self, shown: bool) {
+        if let Some(field) = self.field.borrow().as_ref() {
+            field.set_opacity(if shown { 1.0 } else { 0.0 });
+        }
+    }
+
+    /// The bar, to lay over the window.
     pub fn widget(&self) -> &gtk::Overlay {
         &self.over
     }
@@ -362,16 +388,35 @@ impl Bar {
         self.words.replace(None);
         self.editing.set(None);
         self.over.set_visible(true);
+        self.show_field(false);
         self.entry.set_text("");
         self.update("");
         self.entry.grab_focus();
         self.read_places();
     }
 
+    /// Open the bar in command mode (`Ctrl K`): the command prefix already
+    /// typed, so only commands are offered, and what is typed after it
+    /// narrows them.
+    pub fn open_commands(&self) {
+        self.open();
+        self.set_text(&finder::COMMANDS_ONLY.to_string());
+    }
+
     /// Close the bar. Nothing it showed is kept.
     pub fn close(&self) {
         self.open.set(false);
+        // The keyboard leaves the entry with the bar: left in a hidden
+        // entry, every single-letter key after it would be taken for typing.
+        if let Some(root) = self.entry.root()
+            && root
+                .focus()
+                .is_some_and(|focus| focus.is_ancestor(&self.root) || focus == self.root)
+        {
+            root.set_focus(None::<&gtk::Widget>);
+        }
         self.over.set_visible(false);
+        self.show_field(true);
         self.generation.set(self.generation.get() + 1);
     }
 

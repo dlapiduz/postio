@@ -76,6 +76,8 @@ mod imp {
 
     pub struct FocusWindow {
         pub pages: gtk::Stack,
+        /// The pages, with what lies over the whole window: the command bar.
+        pub stage: gtk::Overlay,
         pub opening: adw::StatusPage,
         pub unavailable: adw::StatusPage,
         pub retry: gtk::Button,
@@ -205,6 +207,7 @@ mod imp {
         fn default() -> Self {
             FocusWindow {
                 pages: gtk::Stack::new(),
+                stage: gtk::Overlay::new(),
                 opening: adw::StatusPage::new(),
                 unavailable: adw::StatusPage::new(),
                 retry: gtk::Button::with_label("Try again"),
@@ -329,7 +332,8 @@ impl FocusWindow {
         imp.pages.add_named(&imp.unavailable, Some(UNAVAILABLE));
         imp.pages.add_named(&imp.inbox, Some(INBOX));
         imp.pages.set_visible_child_name(BLANK);
-        imp.toast.overlay().set_child(Some(&imp.pages));
+        imp.stage.set_child(Some(&imp.pages));
+        imp.toast.overlay().set_child(Some(&imp.stage));
         self.set_content(Some(imp.toast.overlay()));
 
         // Capture, not bubble: a single-key binding has to be seen before the
@@ -1066,9 +1070,16 @@ impl FocusWindow {
                     self.follow_toast();
                 }
             }
-            CommandId::Search | CommandId::CommandPalette => {
+            // `/` is for mail, `Ctrl K` for commands: one bar, opened two
+            // ways (spec C24).
+            CommandId::Search => {
                 if let Some(bar) = self.bar() {
                     bar.open();
+                }
+            }
+            CommandId::CommandPalette => {
+                if let Some(bar) = self.bar() {
+                    bar.open_commands();
                 }
             }
             CommandId::Archive if self.digest_at_cursor().is_some() => {
@@ -1488,7 +1499,7 @@ impl FocusWindow {
         list_or_empty.add_named(pane.widget(), Some(LIST));
         list_or_empty.add_named(empty.widget(), Some(EMPTY));
         list_or_empty.set_visible_child_name(LIST);
-        // The command bar lies over the list, never beside it.
+        // The command bar lies over the window, never beside the list.
         let bar = crate::bar::Bar::new(client.clone(), &self.keymap());
         bar.set_saved(imp.saved.borrow().clone());
         bar.set_digesting(!imp.focus_config.borrow().digests.is_empty());
@@ -1497,11 +1508,15 @@ impl FocusWindow {
             self,
             move |action| window.bar_action(action)
         ));
-        let over_list = gtk::Overlay::new();
-        over_list.set_child(Some(&list_or_empty));
-        over_list.add_overlay(bar.widget());
-        over_list.set_vexpand(true);
-        imp.inbox.append(&over_list);
+        // In place (spec C24): the bar's input is drawn over the top bar's
+        // own field and its results hang below, so the bar lies over the
+        // whole window rather than over the list.
+        if let Some(chrome) = imp.chrome.borrow().as_ref() {
+            bar.set_field(chrome.field().clone().upcast());
+        }
+        imp.stage.add_overlay(bar.widget());
+        list_or_empty.set_vexpand(true);
+        imp.inbox.append(&list_or_empty);
         imp.bar.replace(Some(bar));
         imp.list_or_empty.replace(Some(list_or_empty));
         imp.empty.replace(Some(empty));

@@ -45,6 +45,7 @@ pub struct Chrome {
     top: gtk::CenterBox,
     strip: gtk::Box,
     compose: gtk::Button,
+    field: gtk::Button,
     close: gtk::Button,
     field_keys: gtk::Box,
     sync: gtk::Label,
@@ -251,6 +252,7 @@ impl Chrome {
             top,
             strip,
             compose: compose.clone(),
+            field: field.clone(),
             close: close.clone(),
             field_keys,
             sync,
@@ -310,6 +312,11 @@ impl Chrome {
             }
         });
         chrome
+    }
+
+    /// The command-bar field at the top bar's middle.
+    pub fn field(&self) -> &gtk::Button {
+        &self.field
     }
 
     /// The window's own close button, at the top bar's end.

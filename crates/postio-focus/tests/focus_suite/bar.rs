@@ -483,7 +483,12 @@ pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
 async fn three_and_open() -> postio_focus::window::FocusWindow {
     let fixture = Fixture::empty().await;
     fixture
-        .file(("Ada Moreno", "ada@example.com"), "Archive plan", "Boxes.", 5)
+        .file(
+            ("Ada Moreno", "ada@example.com"),
+            "Archive plan",
+            "Boxes.",
+            5,
+        )
         .await;
     fixture.index().await;
     let (window, _client) = fixture.open().await;
@@ -566,10 +571,7 @@ pub fn the_bar_opens_in_the_top_bars_field() {
         let at = entry
             .compute_bounds(&window)
             .expect("the input has a place in the window");
-        let (x, y) = (
-            at.x() + at.width() / 2.0,
-            at.y() + at.height() / 2.0,
-        );
+        let (x, y) = (at.x() + at.width() / 2.0, at.y() + at.height() / 2.0);
         assert!(
             x >= before.x()
                 && x <= before.x() + before.width()

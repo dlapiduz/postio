@@ -150,7 +150,10 @@ Differences recorded against the PNGs:
 
 ## The command bar (07, 08, 09)
 
-The bar is an overlay 860 px wide, 60 px from the top.
+The bar opens in place (spec C24): its input is drawn over the top bar's own
+field -- same width, same place -- and the results hang below it in a panel
+860 px wide. `/` opens it for mail search; `Ctrl K` opens it in command mode,
+`>` already typed.
 
 - **Saved row.** "Saved" pills, each with its count and `Alt n`. On the
   right, "Ctrl S saves the current query".
