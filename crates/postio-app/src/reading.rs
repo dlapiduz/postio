@@ -1948,28 +1948,11 @@ pub(crate) use postio_host::parts::{part_bytes, read_message, wait_for_body};
 /// Resolve a `cid:` reference against the message on screen, through the
 /// store's owner.
 ///
-/// What a `Content-ID` may resolve to is a security property every frontend
-/// has to agree on (#608), so the host answers it with the one resolution in
-/// `postio_session::reading`: scoped to `showing`'s message, never fetched.
-///
-/// # Why this blocks
-///
-/// [`BlobSource::resolve`](postio_gtk::reader::BlobSource) is synchronous,
-/// because WebKit calls it while laying out a document: the `cid:` URI has to
-/// resolve to bytes before the image can be placed, and there is nothing to
-/// hand a future to. It was a blocking store read before; it is a blocking
-/// call to the host now, the same indexed read on the host's runtime.
-pub(crate) fn cid_source(
-    showing: impl Fn() -> Option<MessageId> + 'static,
-    client: Client,
-) -> Rc<dyn postio_ui::reader::parts::BlobSource> {
-    Rc::new(move |content_id: &str| {
-        let message = showing()?;
-        postio_session::blocking::now(client.inline_part(message, content_id.to_owned()))
-            .ok()
-            .flatten()
-    })
-}
+/// The GTK-facing implementation moved to `postio-widgets`
+/// (specs/007-postio-focus T022): the reader is shared with Focus (ADR
+/// 0043), and this is one of its presenters. Re-exported under this crate's
+/// own name because `search.rs`'s preview still names it that way.
+pub(crate) use postio_widgets::present::reading::cid_source;
 
 #[cfg(test)]
 mod tests {

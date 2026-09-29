@@ -136,6 +136,11 @@ pub fn install_signature_default(
     });
 }
 
+/// A caller's reaction to an id a save just landed -- Focus's footer
+/// stamps "Saved at HH:MM" from it; the classic app has no such row and
+/// passes `None`.
+pub type OnSaved = Rc<dyn Fn(DraftId)>;
+
 /// Autosave through the host's `DraftWriter`, and clearing the row once
 /// there is nothing left to keep -- sent, discarded, or closed empty.
 ///
@@ -144,7 +149,11 @@ pub fn install_signature_default(
 /// composition-root decision (the classic app's does, at mount; Focus's
 /// dialog is built lazily, well after startup, and opening a dialog nobody
 /// asked for would be a surprise). See [`recover_draft`].
-pub fn install_autosave(composer: &Composer, client: &Client) -> Rc<Cell<Option<DraftId>>> {
+pub fn install_autosave(
+    composer: &Composer,
+    client: &Client,
+    on_saved: Option<OnSaved>,
+) -> Rc<Cell<Option<DraftId>>> {
     // The id of whatever `connect_save`'s handler last persisted. Not read
     // from the composer's own draft afterward because `connect_closed` does
     // not carry the draft -- only what became of it -- so this is the one
@@ -155,6 +164,7 @@ pub fn install_autosave(composer: &Composer, client: &Client) -> Rc<Cell<Option<
         let client = client.clone();
         let weak = weak.clone();
         let last_id = Rc::clone(&last_id);
+        let on_saved = on_saved.clone();
         move |draft| {
             let Some(composer) = weak.upgrade() else {
                 return;
@@ -164,6 +174,7 @@ pub fn install_autosave(composer: &Composer, client: &Client) -> Rc<Cell<Option<
             let saved = client.save_draft(generation, draft.clone());
             let last_id = Rc::clone(&last_id);
             let weak = weak.clone();
+            let on_saved = on_saved.clone();
             glib::spawn_future_local(async move {
                 // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
                 // write runs on the host's runtime in its `DraftWriter`.
@@ -175,6 +186,9 @@ pub fn install_autosave(composer: &Composer, client: &Client) -> Rc<Cell<Option<
                 };
                 if composer.generation() == generation {
                     last_id.set(Some(id));
+                    if let Some(on_saved) = on_saved {
+                        on_saved(id);
+                    }
                 }
                 composer.adopt_id(generation, id);
             });

@@ -54,18 +54,22 @@ NEEDLE = "blocking::now("
 # file -> how many `blocking::now(` calls it may hold. May only shrink.
 ALLOWED = {
     "crates/postio-app/src/add_account.rs": 1,
-    # install_resume (2), install_autosave's one-time recovery at mount (1).
-    "crates/postio-app/src/compose.rs": 3,
     "crates/postio-app/src/lib.rs": 1,
     "crates/postio-app/src/onboarding.rs": 1,
     "crates/postio-app/src/orientation.rs": 2,
-    "crates/postio-app/src/reading.rs": 1,
     "crates/postio-app/src/search.rs": 1,
     "crates/postio-app/src/settings_accounts.rs": 9,
     "crates/postio-app/src/settings_credential.rs": 1,
     "crates/postio-app/src/settings_egress.rs": 1,
     "crates/postio-app/src/settings_privacy.rs": 1,
     "crates/postio-app/src/sidebar_backfill.rs": 1,
+    # present::reading::cid_source: WebKit's `cid:` resolver is a synchronous
+    # foreign callback that cannot be made async -- the one legitimate site
+    # above's own doc names (specs/007-postio-focus T022). It moved here from
+    # `postio-app/src/reading.rs`, through `postio_core::blocking::now`
+    # instead of `postio_session`'s, because this crate may not depend on
+    # `postio-session` (ADR 0043).
+    "crates/postio-widgets/src/present/reading.rs": 1,
 }
 
 

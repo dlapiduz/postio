@@ -62,7 +62,7 @@ pub fn dispatching_send_queues_the_draft_through_the_client() {
 
     let composer = Composer::new();
     composer.set_account(account);
-    let last_id = postio_widgets::present::compose::install_autosave(&composer, &client);
+    let last_id = postio_widgets::present::compose::install_autosave(&composer, &client, None);
     postio_widgets::present::compose::install_send(&composer, &client, last_id, account, None);
 
     let window = gtk::Window::new();
