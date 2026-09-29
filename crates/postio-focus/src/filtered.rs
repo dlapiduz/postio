@@ -573,6 +573,11 @@ impl FilteredView {
         }
         drop(rows);
         self.shown.replace(shown);
+        // Rows are rebuilt here, including after `read_page`'s async
+        // fetch lands, so a cap taught only once after `open()` would miss
+        // every row a later page adds (T142, T143).
+        crate::a11y::teach_shortcuts(&self.root);
+        crate::motion::keep_to_budget(&self.root);
     }
 }
 

@@ -380,6 +380,11 @@ impl RulesView {
             item.set_child(Some(&line));
             self.list.append(&item);
         }
+        // Rows are rebuilt here, including after `read_holds`'s async
+        // fetch lands, so a cap taught only once after `open()` would miss
+        // every row this redraw replaces (T142, T143).
+        crate::a11y::teach_shortcuts(&self.root);
+        crate::motion::keep_to_budget(&self.root);
     }
 }
 

@@ -97,6 +97,10 @@ pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
                 "no {wanted:?} in {said:?}"
             );
         }
+        assert!(
+            support::keycaps_are_taught(digest.dialog()),
+            "the digest window's keycaps do not teach their controls (T142)"
+        );
         support::press(&window, "A", gdk::ModifierType::SHIFT_MASK);
         assert!(
             crate::settle_until(async || {
@@ -252,6 +256,10 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
                 "no {wanted:?} in {said:?}"
             );
         }
+        assert!(
+            support::keycaps_are_taught(dialog.dialog()),
+            "the rule dialog's keycaps do not teach their controls (T142)"
+        );
         dialog.create();
         assert!(
             crate::settle_until(async || {
@@ -354,6 +362,11 @@ pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
                 "no {wanted:?} in {said:?}"
             );
         }
+
+        assert!(
+            support::keycaps_are_taught(rules.widget()),
+            "the rules list's keycaps do not teach their controls (T142)"
+        );
 
         support::press(&window, "Delete", gdk::ModifierType::empty());
         assert!(

@@ -1767,6 +1767,8 @@ impl FocusWindow {
             .find(|rule| rule.name.trim() == digest.rule.trim())
             .and_then(postio_ui::digest::rule_when);
         window.show(self, digest, rule_when);
+        crate::a11y::teach_shortcuts(window.dialog());
+        crate::motion::keep_to_budget(window.dialog());
     }
 
     /// The digest window, while it is open.
@@ -1927,6 +1929,8 @@ impl FocusWindow {
         };
         if let Some(dialog) = self.rule_dialog_built() {
             dialog.open_edit(self, &rule);
+            crate::a11y::teach_shortcuts(dialog.dialog());
+            crate::motion::keep_to_budget(dialog.dialog());
         }
     }
 
@@ -1939,6 +1943,8 @@ impl FocusWindow {
         }
         if let Some(dialog) = self.rule_dialog_built() {
             dialog.open_new(self, &senders);
+            crate::a11y::teach_shortcuts(dialog.dialog());
+            crate::motion::keep_to_budget(dialog.dialog());
         }
     }
 
@@ -2050,6 +2056,9 @@ impl FocusWindow {
             view
         });
         imp.pages.set_visible_child_name(RULES);
+        // `RulesView::show` teaches its own caps: it redraws rows again
+        // once `read_holds`'s async fetch lands, and a call only here
+        // would miss those.
         view.open(imp.focus_config.borrow().digests.clone());
     }
 
@@ -2289,6 +2298,9 @@ impl FocusWindow {
             imp.filtered.replace(Some(Rc::clone(&view)));
             view
         });
+        // `FilteredView::show_rows` teaches its own caps: `open` reads
+        // its rows asynchronously, and a call only here would run before
+        // any row exists.
         view.open();
         imp.pages.set_visible_child_name(FILTERED);
         view.focus_list();

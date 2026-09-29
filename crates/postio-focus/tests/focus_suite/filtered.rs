@@ -103,6 +103,10 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
                 "no {wanted:?} in {said:?}"
             );
         }
+        assert!(
+            support::keycaps_are_taught(view.widget()),
+            "the Filtered view's keycaps do not teach their controls (T142)"
+        );
 
         let before = client.counts().snapshot();
         support::press(&window, "4", gdk::ModifierType::empty());

@@ -160,6 +160,35 @@ pub fn with_class(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> Ve
     found
 }
 
+/// Whether every visible keycap under `root` has taught its control the
+/// key as `KeyShortcuts` (`a11y::teach_shortcuts`, T142) -- and there was
+/// at least one keycap to teach, so a surface with none does not pass by
+/// vacuously finding nothing.
+pub fn keycaps_are_taught(root: &impl gtk::prelude::IsA<gtk::Widget>) -> bool {
+    use gtk::prelude::*;
+    let mut found_a_cap = false;
+    for cap in with_class(root, "postio-keyhint") {
+        if !cap.is_visible() {
+            continue;
+        }
+        let mut up = cap.parent();
+        while let Some(widget) = up {
+            if widget.is::<gtk::Button>() || widget.is::<gtk::MenuButton>() {
+                found_a_cap = true;
+                if !gtk::test_accessible_has_property(
+                    &widget,
+                    gtk::AccessibleProperty::KeyShortcuts,
+                ) {
+                    return false;
+                }
+                break;
+            }
+            up = widget.parent();
+        }
+    }
+    found_a_cap
+}
+
 /// The one widget under `root` wearing `class`; fails the case if there is
 /// not exactly one.
 pub fn only(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> gtk::Widget {
