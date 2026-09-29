@@ -397,9 +397,9 @@ maintainer asks.
   - the boundary rule
 - [X] T152 `[focus.model]` and its validation: endpoints on this machine only, per-feature switches, and no probing. Test first: SC-016, with no section and no connection attempt
 - [X] T153 [US12] The model answers the needs-action question in place of the built-in detector, and the detector answers when the model is down (FR-107, FR-170). Test first: scenario 6
-- [ ] T154 [US13] The digest summariser: statements with references resolved by excerpt, plain text only, the Summary tab (22), and the email from a reference (23), falling back to the list. Test first: scenarios 1–6 and SC-014. The engine half is done: `client.digest_summary(delivery)`, and `Surfaced::Digest.summary_line` re-read on `SurfacedChanged`. The Summary tab and dialog remain
-- [ ] T155 [US14] `list:` and query rules, and "Match a list or a search instead…". "More like this" goes through the model. Test first: scenarios 1 and 2. The engine half is done: list and query rules; `client.digest_like_this(message)`, present only when `model_for(ModelFeature::LikeThis)` is set. The command needs a registry id, and the dialog remains
-- [ ] T156 Compare screens 22 and 23, and record them
+- [X] T154 [US13] The digest summariser: statements with references resolved by excerpt, plain text only, the Summary tab (22), and the email from a reference (23), falling back to the list. Test first: scenarios 1–6 and SC-014. The engine half is done: `client.digest_summary(delivery)`, and `Surfaced::Digest.summary_line` re-read on `SurfacedChanged`. The Summary tab and dialog remain
+- [X] T155 [US14] `list:` and query rules, and "Match a list or a search instead…". "More like this" goes through the model. Test first: scenarios 1 and 2. The engine half is done: list and query rules; `client.digest_like_this(message)`, present only when `model_for(ModelFeature::LikeThis)` is set. The command needs a registry id, and the dialog remains
+- [X] T156 Compare screens 22 and 23, and record them
 
 ## Phase 18: Milestone 3: Obsidian and `postio://` (P3)
 
