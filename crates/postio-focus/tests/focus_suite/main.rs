@@ -281,6 +281,14 @@ const CASES: &[(&str, fn())] = &[
         open_message::j_and_k_step_the_list_behind_the_dialog as fn(),
     ),
     (
+        "open_message::a_message_opens_at_its_top_every_time",
+        open_message::a_message_opens_at_its_top_every_time as fn(),
+    ),
+    (
+        "open_message::arrows_and_paging_keys_scroll_the_message_not_the_list",
+        open_message::arrows_and_paging_keys_scroll_the_message_not_the_list as fn(),
+    ),
+    (
         "open_message::brackets_step_through_the_thread",
         open_message::brackets_step_through_the_thread as fn(),
     ),

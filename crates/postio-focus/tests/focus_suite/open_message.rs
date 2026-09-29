@@ -249,3 +249,125 @@ pub fn brackets_step_through_the_thread() {
         assert_eq!(reading.subtitle(), "Message 1 of 1 \u{b7} thread of 3");
     });
 }
+
+/// Three one-message conversations whose bodies are long enough to scroll,
+/// the cursor on the first, its message open in the dialog.
+async fn three_long_open() -> (Fixture, postio_focus::window::FocusWindow) {
+    let fixture = Fixture::empty().await;
+    for (n, minutes) in [10, 20, 30].into_iter().enumerate() {
+        let subject = format!("Long {}", n + 1);
+        let (message, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                &subject,
+                "A line.",
+                minutes,
+            )
+            .await;
+        let body = format!("Body {}. A line long enough to scroll. ", n + 1).repeat(600);
+        fixture.write_body(message, &body).await;
+    }
+    let (window, _client) = fixture.open().await;
+    assert!(
+        crate::settle_until(async || support::subjects(&window).len() == 3).await,
+        "the inbox never reached the screen"
+    );
+    support::keys(&window, &["j"]);
+    enter(&window);
+    let reading = window.reading().expect("Enter opened the message");
+    drawn_tall(&reading).await;
+    (fixture, window)
+}
+
+/// Wait until the open message is drawn tall enough to scroll through.
+async fn drawn_tall(reading: &std::rc::Rc<postio_focus::open::OpenMessage>) {
+    assert!(
+        crate::settle_until(async || {
+            let view = reading.reader().view().clone();
+            view.height() > 0
+                && view
+                    .document()
+                    .is_some_and(|d| d.size.height > 3.0 * f64::from(view.height()))
+        })
+        .await,
+        "the message was never drawn tall enough to scroll"
+    );
+}
+
+fn scrolled(window: &postio_focus::window::FocusWindow) -> f64 {
+    window.reading().expect("open").reader().scrolled_for_test()
+}
+
+/// T180: a message opens at its top -- the first time, and every time the
+/// dialog steps to another one, however far the last was read.
+pub fn a_message_opens_at_its_top_every_time() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = three_long_open().await;
+        assert_eq!(scrolled(&window), 0.0, "the first message opens at its top");
+
+        support::press(&window, "Page_Down", gdk::ModifierType::empty());
+        support::press(&window, "Page_Down", gdk::ModifierType::empty());
+        assert!(scrolled(&window) > 0.0, "the message was never read down");
+
+        support::keys(&window, &["j"]);
+        let reading = window.reading().expect("open");
+        assert_eq!(reading.title(), "Long 2");
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("Body 2")).await,
+            "the next message never arrived"
+        );
+        drawn_tall(&reading).await;
+        assert_eq!(scrolled(&window), 0.0, "the next message opens at its top");
+
+        support::press(&window, "End", gdk::ModifierType::empty());
+        support::keys(&window, &["k"]);
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("Body 1")).await,
+            "the previous message never arrived"
+        );
+        drawn_tall(&reading).await;
+        assert_eq!(
+            scrolled(&window),
+            0.0,
+            "the previous message opens at its top"
+        );
+    });
+}
+
+/// T181: while the dialog is open, the arrows and the paging keys scroll
+/// its message and leave the list behind it alone; `j`/`k` still step.
+pub fn arrows_and_paging_keys_scroll_the_message_not_the_list() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = three_long_open().await;
+        let cursor = cursor_id(&window);
+        let reading = window.reading().expect("open");
+        let none = gdk::ModifierType::empty();
+
+        support::press(&window, "Down", none);
+        let line = scrolled(&window);
+        assert!(line > 0.0, "Down did not scroll the message");
+        assert_eq!(cursor_id(&window), cursor, "Down moved the list");
+        assert_eq!(reading.title(), "Long 1", "Down stepped to another message");
+
+        support::press(&window, "Page_Down", none);
+        let page = scrolled(&window);
+        assert!(page > line, "Page_Down did not scroll further");
+        support::press(&window, "Up", none);
+        assert!(scrolled(&window) < page, "Up did not scroll back");
+        assert_eq!(cursor_id(&window), cursor, "Up moved the list");
+        support::press(&window, "Page_Up", none);
+        support::press(&window, "End", none);
+        let end = scrolled(&window);
+        assert!(end > page, "End did not scroll to the bottom");
+        support::press(&window, "Home", none);
+        assert_eq!(scrolled(&window), 0.0, "Home did not scroll to the top");
+        assert_eq!(cursor_id(&window), cursor, "the list moved");
+        assert_eq!(reading.title(), "Long 1");
+    });
+}
