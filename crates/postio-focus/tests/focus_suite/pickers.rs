@@ -328,3 +328,60 @@ pub fn m_moves_three_to_receipts_and_ctrl_z_returns_them() {
         );
     });
 }
+
+/// T170: the label picker offers the labels of the row's own account --
+/// labelling a row of the second account offers the second's labels, not
+/// the first's.
+pub fn l_offers_the_labels_of_the_row_s_own_account() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = support::Fixture::empty().await;
+        let (atlas, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                30,
+            )
+            .await;
+        fixture.label(atlas, &["Atlas"]).await;
+        let (second, second_inbox) = fixture.second_account().await;
+        let harbor = fixture
+            .file_as(second.id, second_inbox, "Harbor draft", 10)
+            .await;
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            let labels = postio_storage::repository::LabelRepository::new(&connection);
+            let mut label = postio_model::Label::new(second.id, "Harbor");
+            labels.create(&mut label).await.expect("a label");
+            labels.attach(harbor, label.id).await.expect("attached");
+        }
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "both accounts' mail never reached the screen: {:?}",
+            support::subjects(&window)
+        );
+        // The newest first: the second account's row is on top.
+        support::press(&window, "j", gdk::ModifierType::empty());
+        assert_eq!(
+            window.cursor_row().map(|row| row.id()),
+            Some(harbor),
+            "the cursor is on the second account's row"
+        );
+        support::press(&window, "l", gdk::ModifierType::empty());
+        let picker = window.open_picker().expect("l opened the label picker");
+        assert!(
+            crate::settle_until(async || picker.texts().iter().any(|text| text == "Harbor")).await,
+            "the second account's labels are not offered: {:?}",
+            picker.texts()
+        );
+        assert!(
+            !picker.texts().iter().any(|text| text == "Atlas"),
+            "the first account's labels are offered: {:?}",
+            picker.texts()
+        );
+    });
+}

@@ -100,6 +100,10 @@ const CASES: &[(&str, fn())] = &[
         pickers::h_then_3_reminds_at_the_end_of_the_week as fn(),
     ),
     (
+        "pickers::l_offers_the_labels_of_the_row_s_own_account",
+        pickers::l_offers_the_labels_of_the_row_s_own_account as fn(),
+    ),
+    (
         "pickers::l_toggles_a_label_and_creates_a_new_one",
         pickers::l_toggles_a_label_and_creates_a_new_one as fn(),
     ),

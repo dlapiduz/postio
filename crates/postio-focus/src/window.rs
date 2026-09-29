@@ -2752,25 +2752,23 @@ impl FocusWindow {
             return;
         };
         let target = self.picker_target();
-        picker.open(
-            &anchor,
-            Some(&rect),
-            &target,
+        let aim = crate::label_picker::LabelAim {
             account,
+            message: self.cursor_row().map(|row| row.id()),
             threads,
-            move |command| {
-                let (client, aims) = (client.clone(), aims.clone());
-                glib::spawn_future_local(async move {
-                    for aim in aims {
-                        // POSTIO-GLIB-SAFE: as `send`'s.
-                        let sent = client.send(command.clone().with_target(aim)).await;
-                        if let Err(error) = sent {
-                            tracing::warn!(%error, "Focus could not send a command: {error}");
-                        }
+        };
+        picker.open(&anchor, Some(&rect), &target, aim, move |command| {
+            let (client, aims) = (client.clone(), aims.clone());
+            glib::spawn_future_local(async move {
+                for aim in aims {
+                    // POSTIO-GLIB-SAFE: as `send`'s.
+                    let sent = client.send(command.clone().with_target(aim)).await;
+                    if let Err(error) = sent {
+                        tracing::warn!(%error, "Focus could not send a command: {error}");
                     }
-                });
-            },
-        );
+                }
+            });
+        });
     }
 
     /// Open the snooze or remind picker at the cursor's row, aimed at the

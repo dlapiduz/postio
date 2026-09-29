@@ -27,6 +27,18 @@ enum Entry {
     Label(Label),
 }
 
+/// What the label picker opens on.
+#[derive(Debug, Clone)]
+pub struct LabelAim {
+    /// The account whose labels are offered while `message`'s cannot be
+    /// read.
+    pub account: AccountId,
+    /// The message whose account's labels are offered (T170).
+    pub message: Option<postio_model::MessageId>,
+    /// The conversations whose labels are shown as applied.
+    pub threads: Vec<ThreadId>,
+}
+
 /// What sends a label change: the command, aimed at what the picker opened
 /// on.
 type Sender = Rc<dyn Fn(Command)>;
@@ -93,31 +105,52 @@ impl LabelPicker {
         self.picker.set_footnote(&pickers::label_footnote(keymap));
     }
 
-    /// Open from `parent` at `rect`, naming `target`, over `account`'s
-    /// labels; `threads` are the conversations whose labels are shown as
-    /// applied, and `send` sends each change.
+    /// Open from `parent` at `rect`, naming `target`, over what `aim`
+    /// says; `send` sends each change.
     pub fn open(
         &self,
         parent: &impl gtk::prelude::IsA<gtk::Widget>,
         rect: Option<&gtk::gdk::Rectangle>,
         target: &str,
-        account: AccountId,
-        threads: Vec<ThreadId>,
+        aim: LabelAim,
         send: impl Fn(Command) + 'static,
     ) {
+        let LabelAim {
+            account,
+            message,
+            threads,
+        } = aim;
         self.account.replace(Some(account));
         self.sender.replace(Some(Rc::new(send)));
         self.picker.set_target(target);
         self.picker.set_rows(Vec::new());
         self.picker.open(parent, rect);
-        self.read(account, threads);
+        self.read(account, message, threads);
     }
 
     /// Read the labels, their counts, and which the conversations carry.
-    fn read(&self, account: AccountId, threads: Vec<ThreadId>) {
+    fn read(
+        &self,
+        account: AccountId,
+        message: Option<postio_model::MessageId>,
+        threads: Vec<ThreadId>,
+    ) {
         let client = self.client.clone();
         let weak = self.me.borrow().clone();
         glib::spawn_future_local(async move {
+            // The row's own account: a label is an account's, and a message
+            // can carry only its account's (T170).
+            let account = match message {
+                Some(message) => {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                    let found = client.account_of(message).await;
+                    found.ok().flatten().unwrap_or(account)
+                }
+                None => account,
+            };
+            if let Some(this) = weak.upgrade() {
+                this.account.replace(Some(account));
+            }
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
             let labels = client.labels(account).await.unwrap_or_default();

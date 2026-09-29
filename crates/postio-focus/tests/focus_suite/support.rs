@@ -356,6 +356,55 @@ impl Fixture {
         id
     }
 
+    /// A second account, enabled, with an inbox of its own.
+    pub async fn second_account(&self) -> (Account, MailboxId) {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut account = Account::new(
+            "Second",
+            EmailAddress::new(Some("Second User"), "second@example.org"),
+        );
+        account.incoming.host = "imap.example.org".to_owned();
+        account.outgoing.host = "smtp.example.org".to_owned();
+        postio_storage::repository::AccountRepository::new(&connection)
+            .create(&mut account)
+            .await
+            .expect("a second account");
+        let inbox = test_support::mailbox(&connection, &account, "INBOX")
+            .await
+            .id;
+        (account, inbox)
+    }
+
+    /// File a message from Lena about `subject` into `account`'s
+    /// `mailbox`, `minutes` before the fixture's now, threaded.
+    pub async fn file_as(
+        &self,
+        account: postio_model::AccountId,
+        mailbox: MailboxId,
+        subject: &str,
+        minutes: i64,
+    ) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut message = Message::new(account, mailbox, now() - Duration::minutes(minutes));
+        message.from = vec![EmailAddress::new(Some("Lena Park"), "lena@example.org")];
+        message.subject = Some(subject.to_owned());
+        message.preview = Some(format!("About {subject}."));
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<file-as.{}.{}@example.test>",
+            account.get(),
+            subject.replace(' ', ".")
+        )));
+        let id = MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        ThreadingRepository::new(&connection, account)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        id
+    }
+
     /// A folder named `name` in the fixture's account.
     pub async fn folder(&self, name: &str) -> MailboxId {
         let connection = self.database.connect().await.expect("a connection");
