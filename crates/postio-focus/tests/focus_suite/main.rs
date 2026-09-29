@@ -188,6 +188,10 @@ const CASES: &[(&str, fn())] = &[
         bar::a_sentence_names_its_sender_from_the_address_book as fn(),
     ),
     (
+        "bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query",
+        bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query as fn(),
+    ),
+    (
         "bar::in_rec_lists_receipts_newest_first",
         bar::in_rec_lists_receipts_newest_first as fn(),
     ),

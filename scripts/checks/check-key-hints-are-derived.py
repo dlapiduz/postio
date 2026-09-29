@@ -58,6 +58,7 @@ ALLOWED_FIXED: dict[str, tuple[int, str]] = {
     ),
     "unavailable.rs": (1, "Return is the default action of the screen's only button"),
     "search.rs": (1, "Tab into the refine column is the toolkit's focus order"),
+    "bar.rs": (1, "Tab steps between the command bar's chips: the entry's own key, not a command"),
 }
 
 # file -> why it may still say something this check forbids

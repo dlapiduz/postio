@@ -108,6 +108,13 @@ pub struct Bar {
     /// Whether any digest rule can hold mail: a result then says where
     /// held mail waits (US10 scenario 7).
     digesting: Rc<Cell<bool>>,
+    /// The plain words typed, while `Tab` has stepped into the chips they
+    /// were lowered to: what `Ctrl+Backspace` goes back to (T086).
+    words: RefCell<Option<String>>,
+    /// The chip being edited, while the entry holds the chips.
+    editing: Cell<Option<usize>>,
+    /// The chips shown now, in order.
+    shown_chips: RefCell<Vec<String>>,
 }
 
 impl Bar {
@@ -208,6 +215,9 @@ impl Bar {
             places_known: Cell::new(false),
             saved_row,
             digesting: Rc::default(),
+            words: RefCell::default(),
+            editing: Cell::new(None),
+            shown_chips: RefCell::default(),
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
@@ -257,16 +267,9 @@ impl Bar {
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed({
             let weak = weak.clone();
-            move |_, key, _, _| {
-                let Some(bar) = weak.upgrade() else {
-                    return glib::Propagation::Proceed;
-                };
-                match key {
-                    gtk::gdk::Key::Down => bar.step(1),
-                    gtk::gdk::Key::Up => bar.step(-1),
-                    _ => return glib::Propagation::Proceed,
-                }
-                glib::Propagation::Stop
+            move |_, key, _, state| match weak.upgrade() {
+                Some(bar) if bar.press(key, state) => glib::Propagation::Stop,
+                _ => glib::Propagation::Proceed,
             }
         });
         bar.entry.add_controller(keys);
@@ -356,6 +359,8 @@ impl Bar {
     pub fn open(&self) {
         self.open.set(true);
         self.places_known.set(false);
+        self.words.replace(None);
+        self.editing.set(None);
         self.over.set_visible(true);
         self.entry.set_text("");
         self.update("");
@@ -384,6 +389,121 @@ impl Bar {
     /// Whether the bar is up.
     pub fn is_open(&self) -> bool {
         self.open.get()
+    }
+
+    /// Handle one key in the bar's entry, as its key controller does;
+    /// `true` when the bar used it. The arrows walk the results; `Tab`
+    /// steps into the chips, and on from chip to chip.
+    pub fn press(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
+        match key {
+            gtk::gdk::Key::Down => self.step(1),
+            gtk::gdk::Key::Up => self.step(-1),
+            gtk::gdk::Key::Tab if state.is_empty() => return self.next_chip(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// What the entry holds now.
+    pub fn typed(&self) -> String {
+        self.entry.text().to_string()
+    }
+
+    /// The query a search would ask: the chips the words were lowered to,
+    /// or the words themselves when they lower to no chip.
+    pub fn query(&self) -> String {
+        let chips = self.shown_chips.borrow();
+        if chips.is_empty() {
+            self.entry.text().trim().to_owned()
+        } else {
+            chips.join(" ")
+        }
+    }
+
+    /// `Tab`: from the words into the first chip, then to the next; the
+    /// entry holds the chips and selects the one being edited. `false`
+    /// with no chip to step into.
+    fn next_chip(&self) -> bool {
+        let chips = self.shown_chips.borrow().clone();
+        if chips.is_empty() {
+            return false;
+        }
+        let next = match self.editing.get() {
+            None => {
+                self.words.replace(Some(self.entry.text().to_string()));
+                0
+            }
+            Some(at) => (at + 1) % chips.len(),
+        };
+        self.editing.set(Some(next));
+        let query = chips.join(" ");
+        if self.entry.text() != query {
+            self.entry.set_text(&query);
+        } else {
+            self.show_editing();
+        }
+        let start: usize = chips[..next]
+            .iter()
+            .map(|chip| chip.chars().count() + 1)
+            .sum();
+        let end = start + chips[next].chars().count();
+        self.entry.grab_focus();
+        self.entry.select_region(start as i32, end as i32);
+        true
+    }
+
+    /// `Ctrl+Backspace`: back from the chips to the words they were
+    /// lowered from; whether there were words to go back to.
+    pub fn back_to_words(&self) -> bool {
+        let Some(words) = self.words.take() else {
+            return false;
+        };
+        self.editing.set(None);
+        self.entry.set_text(&words);
+        self.entry.set_position(-1);
+        true
+    }
+
+    /// The echo while a chip is edited: the words typed, which chip, and
+    /// the keys that move on and go back.
+    fn show_editing(&self) {
+        let (Some(at), Some(words)) = (self.editing.get(), self.words.borrow().clone()) else {
+            return;
+        };
+        let chips = self.shown_chips.borrow().clone();
+        let Some(chip) = chips.get(at.min(chips.len().saturating_sub(1))) else {
+            return;
+        };
+        let editing = match chip.split_once(':') {
+            Some((operator, _)) => format!("{operator}:"),
+            None => chip.clone(),
+        };
+        let keymap = self.keymap.borrow();
+        let mut hints = vec![postio_ui::hints::fixed(
+            "Tab",
+            "next chip",
+            "Tab moves between the bar's chips: the toolkit's focus order, not a command",
+        )];
+        hints.extend(postio_ui::hints::hint(
+            &keymap,
+            CommandId::BackToWords,
+            "back to plain words",
+        ));
+        self.echo.set_text(&format!(
+            "You typed \u{201c}{words}\u{201d} \u{b7} editing {editing} \u{b7} {}",
+            postio_ui::hints::line(&hints)
+        ));
+        let mut child = self.chips.first_child();
+        let mut index = 0;
+        while let Some(label) = child {
+            child = label.next_sibling();
+            if index == at {
+                label.add_css_class("focus-bar-chip-editing");
+            } else {
+                label.remove_css_class("focus-bar-chip-editing");
+            }
+            index += 1;
+        }
     }
 
     /// Put `text` in the bar, as typing it would.
@@ -500,6 +620,7 @@ impl Bar {
                 .map(|token| token.raw.clone())
                 .collect();
             self.show_chips(&chips);
+            self.show_editing();
             self.search(parsed, generation);
         } else {
             self.show_chips(&[]);
@@ -529,6 +650,7 @@ impl Bar {
 
     /// The chips the words were lowered to, in order.
     fn show_chips(&self, chips: &[String]) {
+        self.shown_chips.replace(chips.to_vec());
         while let Some(child) = self.chips.first_child() {
             self.chips.remove(&child);
         }

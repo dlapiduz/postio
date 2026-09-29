@@ -382,3 +382,100 @@ pub fn a_sentence_names_its_sender_from_the_address_book() {
         );
     });
 }
+
+/// T086, US4: `Tab` steps from the words into the chips they were lowered
+/// to, and on from chip to chip, the echo naming the one being edited;
+/// `Ctrl+Backspace` goes back to the plain words; `Ctrl+S` saves the query
+/// to `config.toml`, pinned, and the saved row shows it.
+pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Invoice 2026-08",
+                "Attached.",
+                5,
+            )
+            .await;
+        fixture.correspondent("Ada Moreno", "ada@example.com").await;
+        fixture.index().await;
+        let directory = tempfile::tempdir().expect("a config directory");
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, "# Mine.\n").expect("a config");
+        let config = postio_config::Config::load_from_path(&path).expect("it reads");
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_focus::startup::adopt_at(
+            &window,
+            fixture.host(),
+            &config,
+            Some(&path),
+        ));
+        support::keep(directory);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        assert!(crate::settle_until(async || bar.places_known()).await);
+        let words = "invoices from Ada";
+        bar.set_text(words);
+        assert!(
+            crate::settle_until(async || bar.chips() == ["invoices", "from:ada"]).await,
+            "the words were not lowered: {:?}",
+            bar.chips()
+        );
+
+        assert!(bar.press(gtk::gdk::Key::Tab, gtk::gdk::ModifierType::empty()));
+        assert_eq!(
+            bar.typed(),
+            "invoices from:ada",
+            "the entry holds the chips"
+        );
+        assert!(
+            bar.texts()
+                .iter()
+                .any(|text| text.contains("editing invoices")),
+            "the echo names the chip: {:?}",
+            bar.texts()
+        );
+        assert!(bar.press(gtk::gdk::Key::Tab, gtk::gdk::ModifierType::empty()));
+        assert!(
+            bar.texts()
+                .iter()
+                .any(|text| text.contains("editing from:")),
+            "Tab moved on to the next chip: {:?}",
+            bar.texts()
+        );
+
+        support::press(&window, "BackSpace", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert_eq!(bar.typed(), words, "Ctrl+Backspace went back to the words");
+
+        support::press(&window, "s", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || {
+                std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("query = \"invoices from:ada\"")
+            })
+            .await,
+            "Ctrl+S saved no query:\n{}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .contains("# Mine."),
+            "the rest of the file is kept"
+        );
+        assert!(
+            crate::settle_until(async || bar.texts().iter().any(|text| text == "alt+1")).await,
+            "the saved row does not show it: {:?}",
+            bar.texts()
+        );
+    });
+}

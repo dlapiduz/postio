@@ -123,7 +123,7 @@ impl Session {
 
 /// The pinned saved searches `config` holds, in the order `Alt+1`-`Alt+4`
 /// take them: each name as the person called it, and its query.
-fn saved_searches(config: &postio_config::Config) -> Vec<(String, String)> {
+pub(crate) fn saved_searches(config: &postio_config::Config) -> Vec<(String, String)> {
     config
         .ordered_filter_keys()
         .into_iter()
@@ -170,6 +170,7 @@ pub fn adopt_at(
     window.set_focus_config(config.focus.clone());
     window.set_saved_searches(saved_searches(config));
     window.set_remote_runtime(host.runtime());
+    window.set_config_path(config_path.map(std::path::Path::to_path_buf));
     // Focus's notifications follow the classic app's `[sync]` settings,
     // and are only ever about mail that stayed in its inbox (FR-153).
     host.notify_with(config.sync.clone());

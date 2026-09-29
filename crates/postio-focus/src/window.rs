@@ -165,6 +165,8 @@ mod imp {
         pub notifier: RefCell<Option<super::Notifier>>,
         /// Where a test takes notifications instead of the desktop.
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
+        /// Where `config.toml` is: what `Ctrl+S` writes a saved search to.
+        pub config_path: RefCell<Option<std::path::PathBuf>>,
         /// The digest rules list, built the first time `g d` opens it.
         pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,
         /// The digest rule dialog, built the first time `d` opens it.
@@ -241,6 +243,7 @@ mod imp {
                 digest_window: RefCell::default(),
                 rule_dialog: RefCell::default(),
                 rules_view: RefCell::default(),
+                config_path: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
             }
@@ -531,6 +534,10 @@ impl FocusWindow {
             KeyContext::Reader
         } else if self.digest().is_some() {
             KeyContext::Digest
+        } else if self.bar().is_some_and(|bar| bar.is_open()) {
+            // The bar is `Context::Search`: `Ctrl+S` saves what it holds,
+            // `Ctrl+Backspace` goes back to the words (T086).
+            KeyContext::Search
         } else if self.filtered().is_some() {
             KeyContext::Filtered
         } else {
@@ -741,6 +748,12 @@ impl FocusWindow {
             CommandId::SweepInbox => self.ask_sweep(),
             CommandId::DismissMarker => self.dismiss_marker(),
             CommandId::DigestRule => self.new_digest_rule(),
+            CommandId::BackToWords => {
+                if let Some(bar) = self.bar() {
+                    bar.back_to_words();
+                }
+            }
+            CommandId::SaveSearch => self.save_search(),
             CommandId::GoToDigestRules => self.show_rules(),
             CommandId::RestoreFiltered => {
                 if let Some(message) = self.filtered().and_then(|view| view.focused()) {
@@ -1821,6 +1834,48 @@ impl FocusWindow {
             }
         }
         senders
+    }
+
+    /// Where `config.toml` is, for the corrections the window writes itself.
+    pub fn set_config_path(&self, path: Option<std::path::PathBuf>) {
+        self.imp().config_path.replace(path);
+    }
+
+    /// `Ctrl+S` in the bar (T086): save its query to `config.toml` as a
+    /// pinned search -- `[filters]` alone, the rest of the file as it
+    /// was -- and show it in the saved row.
+    fn save_search(&self) {
+        let Some(bar) = self.bar().filter(|bar| bar.is_open()) else {
+            return;
+        };
+        let query = bar.query();
+        if query.is_empty() {
+            return;
+        }
+        let Some(path) = self.imp().config_path.borrow().clone() else {
+            self.imp()
+                .toast
+                .show_notice("There is no config.toml to save the search to");
+            self.follow_toast();
+            return;
+        };
+        let original = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
+        config.save_filter(&query);
+        let written = postio_config::patch_filters(&original, &config.filters)
+            .and_then(|patched| postio_config::Config::write_text_to_path(&patched, &path));
+        let said = match written {
+            Ok(()) => {
+                self.set_saved_searches(crate::startup::saved_searches(&config));
+                format!("Saved \u{201c}{query}\u{201d}")
+            }
+            Err(error) => {
+                tracing::warn!(%error, "Focus could not save the search");
+                "Focus could not write the search to config.toml".to_owned()
+            }
+        };
+        self.imp().toast.show_notice(&said);
+        self.follow_toast();
     }
 
     /// The digest rules list, while it is the page on screen.
