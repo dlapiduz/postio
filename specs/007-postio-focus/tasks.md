@@ -119,7 +119,7 @@ maintainer asks.
 - [X] T019 `git mv` the reader (`reader/{view,message_header,banner,notices}.rs`, and `parts::Chips`) into `crates/postio-widgets/src/reader/`. Then a wiring commit in which the verb bars become configuration and the classic app passes its three. `gtk_suite` and `app_suite` pass unchanged
 - [X] T020 One remote-image allowlist per app, shared by its readers. Test first: two readers in one app see one "always allow"
 - [X] T021 [P] `git mv` `MessageList` (`crates/postio-gtk/src/list.rs:283-376`) to `crates/postio-widgets/src/list_model.rs`, generalised over its row type. The classic list's tests are unchanged
-- [ ] T022 Move the presenters to `crates/postio-widgets/src/present/`:. Partial: the config and remote-image presenters moved. Two things stay in `postio-gtk`, because they reach `postio-session` or `postio-host` directly, which `postio-widgets` may not: the compose seams and the cid blob source (T078). The credential and add-account dialogs moved with T165
+- [X] T022 Move the presenters to `crates/postio-widgets/src/present/`:. Partial: the config and remote-image presenters moved. Done: the compose seams and the cid blob source now go through `postio-client`, in `postio_widgets::present::{compose, reading}`, which the classic app and Focus both call. The credential dialogs moved with T165, and the frontend's blocking bridge moved to `postio_core::blocking`. The classic reader still resolves `cid:` with that bridge, while Focus prefetches; unifying them would reshape the classic reading pipeline, and was left
   - the compose seams (`crates/postio-app/src/compose.rs:77-98`);
   - the reading wiring (`reading.rs`);
   - the config service and watcher glue (`crates/postio-gtk/src/config.rs:111`);
