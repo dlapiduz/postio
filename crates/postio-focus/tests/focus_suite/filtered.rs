@@ -127,6 +127,28 @@ pub fn g_f_lists_filtered_mail_and_its_number_keys_narrow_it() {
             crate::settle_until(async || window.filtered().is_none()).await,
             "Escape went back to the inbox"
         );
+
+        // Screen 21's footer: j walks the rows, g i goes to the inbox.
+        support::keys(&window, &["g", "f"]);
+        let view = window.filtered().expect("Filtered again");
+        assert!(crate::settle_until(async || listed(&window).len() == 4).await);
+        let first = view.focused();
+        support::press(&window, "j", gdk::ModifierType::empty());
+        assert!(
+            view.focused().is_some() && view.focused() != first,
+            "j did not move to the next row"
+        );
+        let cursor_before = window.cursor_row().map(|row| row.id());
+        support::keys(&window, &["g", "i"]);
+        assert!(
+            crate::settle_until(async || window.filtered().is_none()).await,
+            "g i did not go to the inbox"
+        );
+        assert_eq!(
+            window.cursor_row().map(|row| row.id()),
+            cursor_before,
+            "j in Filtered did not move the inbox's cursor"
+        );
     });
 }
 

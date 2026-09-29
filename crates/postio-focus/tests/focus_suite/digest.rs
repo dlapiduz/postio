@@ -83,6 +83,13 @@ pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
             ["The weekly numbers", "The rate decision"],
             "newest first"
         );
+        // j walks the digest's rows, as the list's (Context::Digest).
+        let first = digest.focused().map(|row| row.id);
+        support::press(&window, "j", gdk::ModifierType::empty());
+        assert!(
+            digest.focused().is_some() && digest.focused().map(|row| row.id) != first,
+            "j did not move in the digest"
+        );
         let said = digest.texts();
         for wanted in ["Newsletters", "Archive all 2", "2 messages from 1 sender"] {
             assert!(

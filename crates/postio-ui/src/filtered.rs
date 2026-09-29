@@ -121,12 +121,8 @@ pub fn footer(keymap: &Keymap) -> Vec<Hint> {
             label: "reason tabs".to_owned(),
         });
     }
-    said.push(hints::fixed(
-        "Return",
-        "open",
-        "Return activates the focused row: the list's own, not a command of Filtered",
-    ));
-    said.extend(hints::hint(keymap, CommandId::Back, "inbox"));
+    said.extend(hints::hint(keymap, CommandId::OpenMessage, "open"));
+    said.extend(hints::hint(keymap, CommandId::GoToInbox, "inbox"));
     said
 }
 
@@ -172,7 +168,7 @@ mod tests {
         let said = hints::line(&footer(Keymap::defaults()));
         assert_eq!(
             said,
-            "R restore + never filter sender \u{b7} 1\u{2013}7 reason tabs \u{b7} Return open \u{b7} Escape inbox"
+            "R restore + never filter sender \u{b7} 1\u{2013}7 reason tabs \u{b7} Return open \u{b7} g i inbox"
         );
     }
 }

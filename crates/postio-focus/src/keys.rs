@@ -53,6 +53,35 @@ mod tests {
     }
 
     #[test]
+    fn filtered_and_a_digest_walk_open_and_go_back_as_the_list_does() {
+        // Screen 21's footer, and the digest window's list: j and k walk
+        // the rows, Return opens the focused one, g i goes to the inbox.
+        let (mut resolver, _) = resolver(Keymap::defaults());
+        for context in [KeyContext::Filtered, KeyContext::Digest] {
+            for (key, command) in [
+                ("j", "next_message"),
+                ("k", "prev_message"),
+                ("Return", "open_message"),
+            ] {
+                assert_eq!(
+                    press(&mut resolver, key, context),
+                    Outcome::Command(command.into()),
+                    "{key} in {context:?}"
+                );
+            }
+            assert!(matches!(
+                press(&mut resolver, "g", context),
+                Outcome::Pending(_)
+            ));
+            assert_eq!(
+                press(&mut resolver, "i", context),
+                Outcome::Command("go_to_inbox".into()),
+                "g i in {context:?}"
+            );
+        }
+    }
+
+    #[test]
     fn mod_z_undoes_in_a_digest_and_in_filtered() {
         // contracts/keymap.md, "Digests and Filtered": archiving a whole
         // digest and restoring from Filtered are each one undoable action

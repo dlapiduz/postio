@@ -661,6 +661,17 @@ impl FocusWindow {
         if self.rules().is_some() && self.rules_act(id) {
             return;
         }
+        // So does Filtered: its rows are walked and opened as the list's
+        // are, and `g i` goes back (screen 21's footer).
+        if let Some(view) = self.filtered() {
+            match id {
+                CommandId::NextMessage => return view.step(1),
+                CommandId::PrevMessage => return view.step(-1),
+                CommandId::OpenMessage => return view.open_focused(),
+                CommandId::GoToInbox => return self.leave_filtered(),
+                _ => {}
+            }
+        }
         match id {
             CommandId::NextMessage => self.move_cursor(1),
             CommandId::PrevMessage => self.move_cursor(-1),
@@ -1690,6 +1701,10 @@ impl FocusWindow {
                 }
             }
             Ok(CommandId::Undo) => self.act(CommandId::Undo),
+            Ok(CommandId::NextMessage) => window.step(1),
+            Ok(CommandId::PrevMessage) => window.step(-1),
+            Ok(CommandId::OpenMessage) => window.open_focused(),
+            Ok(CommandId::GoToInbox) => window.close(),
             _ => return glib::Propagation::Proceed,
         }
         glib::Propagation::Stop

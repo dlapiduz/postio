@@ -311,6 +311,32 @@ impl FilteredView {
         said
     }
 
+    /// Move the focus `by` rows, over the day headings: `j` and `k`.
+    pub fn step(&self, by: i32) {
+        let rows = self.shown.borrow().clone();
+        let mut at = self.list.selected_row().map_or(-1, |row| row.index());
+        loop {
+            at += by;
+            let Some(slot) = usize::try_from(at).ok().and_then(|at| rows.get(at)) else {
+                return;
+            };
+            if slot.is_some() {
+                if let Some(row) = self.list.row_at_index(at) {
+                    self.list.select_row(Some(&row));
+                    row.grab_focus();
+                }
+                return;
+            }
+        }
+    }
+
+    /// Open the focused row: `Enter`.
+    pub fn open_focused(&self) {
+        if let Some(row) = self.list.selected_row() {
+            row.activate();
+        }
+    }
+
     /// Give the list the keyboard, on its first row.
     pub fn focus_list(&self) {
         if self.list.selected_row().is_none()

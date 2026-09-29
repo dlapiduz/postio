@@ -445,7 +445,11 @@ static SPECS: &[CommandSpec] = &[
         title: "Next message",
         default_binding: "j",
         alternate_bindings: &["Down"],
-        contexts: ctx(LIST_SURFACES),
+        // And Focus's Filtered view and digest window, whose rows are
+        // walked as the list's are (screen 21's footer).
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Filtered)
+            .with(Context::Digest),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -455,7 +459,11 @@ static SPECS: &[CommandSpec] = &[
         title: "Previous message",
         default_binding: "k",
         alternate_bindings: &["Up"],
-        contexts: ctx(LIST_SURFACES),
+        // And Focus's Filtered view and digest window, whose rows are
+        // walked as the list's are (screen 21's footer).
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Filtered)
+            .with(Context::Digest),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -493,7 +501,10 @@ static SPECS: &[CommandSpec] = &[
         // contracts/keymap.md).
         default_binding: "Return",
         alternate_bindings: &["Right"],
-        contexts: ctx(&[Context::List, Context::Conversation, Context::Search]),
+        // And a row of Focus's Filtered view or digest window.
+        contexts: ctx(&[Context::List, Context::Conversation, Context::Search])
+            .with(Context::Filtered)
+            .with(Context::Digest),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1542,7 +1553,11 @@ static SPECS: &[CommandSpec] = &[
         // The surfaces a person is standing on when they want to be somewhere
         // else -- the folder list included. Not the composer, where `g` is a
         // letter being typed.
-        contexts: ctx(GO_SURFACES),
+        // And back from Focus's Filtered view and digest window (screen
+        // 21's footer: "g i inbox").
+        contexts: ctx(GO_SURFACES)
+            .with(Context::Filtered)
+            .with(Context::Digest),
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,

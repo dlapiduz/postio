@@ -252,6 +252,22 @@ impl DigestWindow {
         self.rows.borrow().get(index).cloned()
     }
 
+    /// Move the focus `by` rows: `j` and `k`.
+    pub fn step(&self, by: i32) {
+        let at = self.list.selected_row().map_or(-1, |row| row.index());
+        if let Some(row) = self.list.row_at_index((at + by).max(0)) {
+            self.list.select_row(Some(&row));
+            row.grab_focus();
+        }
+    }
+
+    /// Open the focused message: `Enter`.
+    pub fn open_focused(&self) {
+        if let Some(row) = self.list.selected_row() {
+            row.activate();
+        }
+    }
+
     /// The listed messages' subjects, top to bottom.
     pub fn subjects(&self) -> Vec<String> {
         self.rows
