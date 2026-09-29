@@ -80,6 +80,10 @@ const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
     (
+        "first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox",
+        first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox as fn(),
+    ),
+    (
         "open_message::delete_in_the_dialog_deletes_the_message_on_screen",
         open_message::delete_in_the_dialog_deletes_the_message_on_screen as fn(),
     ),

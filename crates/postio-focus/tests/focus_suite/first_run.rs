@@ -287,3 +287,78 @@ pub fn the_window_close_button_closes_the_app_with_the_form_open() {
         );
     });
 }
+
+/// A message of the first sync's, as the server's mailbox holds it.
+fn arriving(subject: &str, minutes: i64) -> postio_account::backend::MockMessage {
+    let date = (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc2822();
+    postio_account::backend::MockMessage::new(format!(
+        "From: Ada Moreno <ada@example.com>\r\nTo: grace@example.test\r\n\
+         Subject: {subject}\r\nDate: {date}\r\nMessage-ID: <{subject}@example.com>\r\n\r\n\
+         A line about {subject}.\r\n"
+    ))
+}
+
+/// T178: the list's keys work in the state the maintainer's first run left
+/// it in -- the account just added through the form, the first sync filling
+/// the inbox -- not only on a store that was full from the start. `x` took
+/// no row and the bulk bar never showed, which is the whole of selecting.
+pub fn the_list_keys_work_while_the_first_sync_fills_the_inbox() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let backend = MockBackend::builder()
+            .mailbox(
+                postio_account::backend::MockMailbox::new("INBOX")
+                    .message(arriving("First", 30))
+                    .message(arriving("Second", 20))
+                    .message(arriving("Third", 10)),
+            )
+            .build();
+        let (window, _backend) = opened(backend).await;
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_some()).await,
+            "an empty store opened no add-account form"
+        );
+        let dialog = window.add_account_dialog().expect("the wizard");
+        let form = form_in(dialog.upcast_ref()).expect("the account form in the dialog");
+        // A person types into the form: the keyboard is in its fields.
+        form.focus_password();
+        crate::settle();
+        add_through(
+            &form,
+            "Grace Okafor",
+            "grace@example.test",
+            "an app password",
+        );
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_none()).await,
+            "the wizard stayed open after the save: {:?}",
+            form.status()
+        );
+        crate::settle();
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "the first sync's mail never reached the list: {:?}",
+            support::subjects(&window)
+        );
+
+        support::keys(&window, &["j", "x"]);
+        let bar = support::only(&window, "focus-bulk-bar");
+        assert!(
+            crate::settle_until(async || bar.is_mapped()).await,
+            "x selected nothing: the bulk bar never showed"
+        );
+        assert!(
+            support::texts(&bar).iter().any(|text| text == "1 selected"),
+            "the bar counts one: {:?}",
+            support::texts(&bar)
+        );
+        support::keys(&window, &["a"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "a archived nothing: {:?}",
+            support::subjects(&window)
+        );
+    });
+}
