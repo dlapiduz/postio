@@ -441,7 +441,9 @@ impl CaptureSheet {
         self.show_project();
         self.open.set(true);
         self.dialog.present(Some(parent));
-        self.entry.grab_focus();
+        // The keyboard in the text, the text left as it is: selecting it
+        // all would let the first key typed replace the sentence.
+        self.entry.grab_focus_without_selecting();
         self.read_vault(subject);
     }
 
@@ -560,7 +562,13 @@ impl CaptureSheet {
         picks.push(("None".to_owned(), None));
         for (words, day) in picks {
             let pick = gtk::ToggleButton::with_label(&words);
-            pick.add_css_class("pill");
+            // The day chosen is ringed, the rest are quiet (screen 25).
+            let kind = if day == chosen {
+                Kind::Secondary
+            } else {
+                Kind::Ghost
+            };
+            postio_widgets::widgets::button::style(&pick, kind, Size::Small);
             pick.add_css_class("focus-capture-pick");
             pick.set_active(day == chosen);
             let weak = self.weak();

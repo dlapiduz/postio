@@ -203,6 +203,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("14", "the move picker at the row"),
     ("21", "the Filtered view"),
     ("24", "\"Digest this sender\" over the inbox"),
+    ("25", "the capture sheet: a task from a to-do, into a vault"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -587,7 +588,19 @@ fn render(args: &[String]) -> Result<String, String> {
     })
     .map_err(|error| format!("the host did not start: {error}"))?;
     let sink = sink.take().ok_or("the host kept its events to itself")?;
-    let config = postio_config::Config::from_toml_str(CONFIG)
+    // Screen 25 captures into a vault: a throwaway one, with projects.
+    let vault = (request.screen == "25")
+        .then(demo_vault)
+        .transpose()
+        .map_err(|error| format!("no vault: {error}"))?;
+    let text = match &vault {
+        Some(vault) => format!(
+            "{CONFIG}\n[focus.vault]\npath = \"{}\"\nprojects = \"Projects\"\n",
+            vault.path().display()
+        ),
+        None => CONFIG.to_owned(),
+    };
+    let config = postio_config::Config::from_toml_str(&text)
         .map_err(|error| format!("the demo's config: {error}"))?;
 
     let window = FocusWindow::new(None);
@@ -604,6 +617,7 @@ fn render(args: &[String]) -> Result<String, String> {
     drop(session);
     manager.set_color_scheme(adw::ColorScheme::Default);
     settings.set_gtk_enable_animations(animated);
+    drop(vault);
     let written = outcome?;
     let mut said = format!("{}x{} -> {}", written.width, written.height, request.path);
     if (written.width, written.height) != request.size {
@@ -918,11 +932,49 @@ fn stage(
                 return Err("the reply's labels and quote never showed".into());
             }
         }
+        "25" => {
+            pick_three();
+            pane.cursor().set_selected(HARBOR);
+            window.act(CommandId::CaptureTask);
+            let sheet = window.capture().ok_or("t opened no capture sheet")?;
+            // The project list open, as the reference draws it.
+            if !settle_until(|| {
+                sheet.is_shown()
+                    && sheet
+                        .texts()
+                        .iter()
+                        .any(|text| text.starts_with("Project \u{b7} suggested"))
+            }) {
+                return Err("the capture sheet never read the vault".into());
+            }
+            sheet.run(CommandId::CaptureChangeProject);
+            let opened = Instant::now();
+            settle_until(|| opened.elapsed() > Duration::from_millis(300));
+        }
         _ => unreachable!("checked against SCREENS"),
     }
     // Once more, so what the last change queued is drawn.
     settle_until(|| settled(window));
     Ok(())
+}
+
+/// Screen 25's vault: three projects in `Projects/`, each with open tasks,
+/// and the tasks note.
+fn demo_vault() -> std::io::Result<tempfile::TempDir> {
+    let vault = tempfile::tempdir()?;
+    let projects = vault.path().join("Projects");
+    std::fs::create_dir(&projects)?;
+    for (name, open) in [("Harbor", 12), ("Atlas", 9), ("Kitchen reno", 4)] {
+        let mut note = format!("# {name}\n\n");
+        for n in 1..=open {
+            note.push_str(&format!(
+                "- [ ] Step {n} [\u{2709}](postio://message/{n})\n"
+            ));
+        }
+        std::fs::write(projects.join(format!("{name}.md")), note)?;
+    }
+    std::fs::write(vault.path().join("Tasks.md"), "# Tasks\n")?;
+    Ok(vault)
 }
 
 /// The row screen 06 replies to: "Harbor API draft v3".
