@@ -728,6 +728,6 @@ banner.focus-banner button {
 
 /* The chip Tab has stepped into (T086): the one the entry's selection is. */
 .focus-bar-chip-editing {
-  border-color: var(--postio-accent);
-  box-shadow: inset 0 0 0 1px var(--postio-accent);
+  border-color: var(--postio-ink);
+  box-shadow: inset 0 0 0 1px var(--postio-ink);
 }

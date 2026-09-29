@@ -123,10 +123,12 @@ mod tests {
 
     /// The three places FR-091 gives the accent. The list's cursor is its
     /// focus ring: GTK marks the row the keyboard is on `:selected`, and
-    /// Focus draws that as the ring, never as a fill.
+    /// Focus draws that as the ring, never as a fill -- in the inbox, and in
+    /// the full views drawn in Filtered's frame (Filtered, the rules list).
     fn reserved(rule: &str) -> bool {
         rule.contains(":focus")
             || rule.starts_with(".focus-list > row:selected ")
+            || rule.starts_with(".focus-filtered-list > row:selected ")
             || rule.contains(".focus-marker")
             || rule.contains(".focus-has-action:checked")
     }
