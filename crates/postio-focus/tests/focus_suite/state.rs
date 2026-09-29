@@ -395,8 +395,7 @@ pub fn offline_a_label_shows_at_once_and_queues_and_search_answers() {
                         .filter(|row| {
                             row.item().is_some_and(|item| {
                                 item.as_conversation().is_some_and(|row| {
-                                    row.summary.representative.subject.as_deref()
-                                        == Some("Budget")
+                                    row.summary.representative.subject.as_deref() == Some("Budget")
                                 })
                             })
                         })
