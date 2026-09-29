@@ -40,7 +40,7 @@ use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 pub(crate) use catch_up::FILED_THROUGH;
-pub(crate) use due::{deliver_due, fire_reminders, settle_answers};
+pub(crate) use due::{deliver_due, fire_reminders, settle_answers, settle_replied};
 pub(crate) use rules::like_this;
 pub(crate) use summary::digest_summary;
 pub(crate) use surfaced::surfaced;
@@ -323,6 +323,12 @@ fn due_timer(
                     Err(error) => {
                         tracing::warn!(%error, "Focus could not fire its reminders: {error}");
                     }
+                }
+                // Somebody wrote in a surfaced conversation -- the person
+                // among them, whose reply is filed in Sent -- so it stands
+                // no longer (T095).
+                if let Err(error) = settle_replied(&database, chrono::Utc::now()).await {
+                    tracing::warn!(%error, "Focus could not settle its answered reminders: {error}");
                 }
                 // A surfaced reminder can stop standing without this timer:
                 // the filing pass settles one when its reply arrives. Asked

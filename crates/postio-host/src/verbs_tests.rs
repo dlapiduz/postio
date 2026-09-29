@@ -489,6 +489,73 @@ fn the_person_s_own_message_does_not_cancel_their_reminder() {
     assert_eq!(fire_at(&world, due), 1, "and it fires when its time comes");
 }
 
+#[test]
+fn the_person_s_own_reply_settles_a_surfaced_reminder() {
+    // T095: the conversation came back marked "No reply since"; the person
+    // then wrote in it themselves -- their reply is filed in Sent, which
+    // the filing pass does not read -- and the surfaced row stops
+    // standing, as a reply from anyone else's does.
+    let world = World::new();
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let (budget, thread) = letter(
+        &world,
+        "tove@example.org",
+        "Atlas Q3 budget",
+        "<atlas@example.org>",
+        None,
+        Utc::now() - chrono::TimeDelta::days(3),
+    );
+    let due = Utc::now() - chrono::TimeDelta::hours(2);
+    world.send(&client, remind(budget, Some(due)));
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert_eq!(
+        fire_at(&world, due + chrono::TimeDelta::minutes(1)),
+        1,
+        "it fired"
+    );
+    // The world's account as one that sends: its identity and its Sent.
+    sending(&world);
+    let sent = crate::tests::folder(&world, postio_model::MailboxRole::Sent);
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        let mut message = postio_model::Message::new(
+            world.account,
+            sent,
+            Utc::now() - chrono::TimeDelta::minutes(30),
+        );
+        message.subject = Some("Re: Atlas Q3 budget".to_owned());
+        message.from = vec![postio_model::EmailAddress::new(
+            Some("Test User"),
+            "test@example.com",
+        )];
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new("<nudge@example.com>"));
+        message.in_reply_to = Some(postio_model::RfcMessageId::new("<atlas@example.org>"));
+        message.references = vec![postio_model::RfcMessageId::new("<atlas@example.org>")];
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("the reply");
+        let threaded =
+            postio_storage::repository::ThreadingRepository::new(&connection, world.account)
+                .thread(&message)
+                .await
+                .expect("threaded");
+        assert_eq!(
+            threaded.thread_id, thread,
+            "the reply joined the conversation"
+        );
+    });
+
+    let settled = world
+        .rt
+        .block_on(crate::focus::settle_replied(world.database(), Utc::now()))
+        .expect("the timer's pass");
+    assert_eq!(settled, 1, "one surfaced reminder settled");
+    assert_eq!(reminder_on(&world, thread), None, "it no longer stands");
+}
+
 // ── Answering an invitation (T112) ──────────────────────────────────────────
 
 /// The world's account as one that sends: an identity at its address, the

@@ -124,6 +124,56 @@ pub(crate) async fn fire_reminders(database: &Store, now: DateTime<Utc>) -> Resu
     Ok(fired)
 }
 
+/// Settle every surfaced reminder somebody has written in since it fired
+/// (T095), and answer how many: the person's own reply as much as anyone
+/// else's.
+///
+/// The filing pass settles one as another participant's reply is filed,
+/// but the person's own reply is filed in Sent, which that pass does not
+/// read -- and a reply of anyone's can reach the store by a folder another
+/// app synced. So the timer asks, each tick, who has written in each
+/// surfaced conversation since its reminder fired: one seek for the
+/// surfaced reminders, and one a surfaced reminder -- a few, at most.
+pub(crate) async fn settle_replied(database: &Store, now: DateTime<Utc>) -> Result<usize, Failure> {
+    let surfaced = {
+        let reader = database.read().await?;
+        ReminderRepository::new(&reader).surfaced().await?
+    };
+    let mut replied = Vec::new();
+    {
+        let reader = database.read().await?;
+        let reminders = ReminderRepository::new(&reader);
+        for reminder in surfaced {
+            let Some(fired_at) = reminder.fired_at else {
+                continue;
+            };
+            if !reminders
+                .writers_since(reminder.thread, fired_at)
+                .await?
+                .is_empty()
+            {
+                replied.push(reminder.id);
+            }
+        }
+    }
+    if replied.is_empty() {
+        return Ok(0);
+    }
+    let connection = database.connect_background().await?;
+    let _permit = connection
+        .write_gate()
+        .acquire(WritePriority::Background)
+        .await;
+    let reminders = ReminderRepository::new(&connection);
+    let mut settled = 0;
+    for reminder in replied {
+        if reminders.settle(reminder, now).await? {
+            settled += 1;
+        }
+    }
+    Ok(settled)
+}
+
 /// Make final every answer whose window has closed by `now` (spec 007
 /// research R9): `accepting` becomes `accepted`, `declining` `declined`.
 /// Answers each message it settled, with its account.
