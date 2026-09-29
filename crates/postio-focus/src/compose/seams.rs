@@ -50,6 +50,8 @@ pub fn wire(
             // Focus has no conversation pane and marks nothing from the
             // account row's own use of it (that is `postio-app`'s), so the
             // account this answers with goes nowhere else.
+            // POSTIO-GLIB-SAFE: `install_identities` awaits one client call,
+            // a oneshot receive; the host answers on its own runtime.
             shared::install_identities(&composer, &identities_client, account).await;
         }
     });
