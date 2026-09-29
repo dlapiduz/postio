@@ -383,7 +383,7 @@ maintainer asks.
 - [X] T169 First open on a large backlog: the filing catch-up and the needs-action pass share one background connection. Together they take about 184 s, missing needs-action's 60 s budget, and inbox page reads reach 380 ms. Give the passes their own connections or a priority, and have both yield to interactive reads. Test first: T147's measurement with both passes running, needs-action inside its budget, and page reads within 16 ms at the median. Done. The filing catch-up held the write permit through its pause. Now it drops the permit before pausing, starts only once needs-action has caught up, and both passes yield to a read in flight. With both running: needs-action 3.9 s, filing 163.5 s, page reads 6 ms at the median
 - [X] T148 `screens.md` complete for 01–20, with every difference and its reason (SC-009)
 - [ ] T149 Walk quickstart.md by hand (scenarios 1–11) on a throwaway store, and record the outcomes in `screens.md`'s notes
-- [ ] T150 Rebase onto `main`, and run the full suites the diff touches (quickstart, "Automated"). **Do not land**
+- [X] T150 Rebase onto `main`, and run the full suites the diff touches (quickstart, "Automated"). **Do not land**. Done 2026-09-29: `main` had not moved, so the rebase was a no-op. The run covered fmt, the workspace check, 4,328 engine and terminal tests, config (serial), host and app libs, 844 GTK, widget and Focus tests, `app_suite`, the two nightly measurements and `scripts/check.sh`. All green but the known load flakes (#1677, #1703, and an a11y timeout that passes alone in 1 s), plus one real fix: the settings test's "free" key had become `capture_note`
 
 ---
 
