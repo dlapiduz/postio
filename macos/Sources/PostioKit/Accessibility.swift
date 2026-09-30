@@ -198,6 +198,11 @@ public enum Intercepted {
     public static let openPartExternally = "open_part_externally"
     public static let openPart = "open_part"
     public static let renderPartOnce = "render_part_once"
+    /// The reader's `i i`: the same one-view render as `renderPartOnce`, so
+    /// the key, the palette row and the notice's Show button cannot drift.
+    public static let showImages = "show_images"
+    /// The palette's "Quit Postio"; AppKit answers `⌘Q` from the menu itself.
+    public static let quit = "quit"
     /// The settings window's account verbs. Every one acts on the row the
     /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
     /// alone; two of them need a sheet on top of that.
@@ -226,7 +231,8 @@ public enum Intercepted {
         toggleResultOrder, saveSearch, renameSavedSearch, deleteSavedSearch,
         moveSavedSearchUp, moveSavedSearchDown,
         openParts, nextPart, prevPart,
-        savePart, saveAllParts, openPartExternally, openPart, renderPartOnce,
+        savePart, saveAllParts, openPartExternally, openPart, renderPartOnce, showImages,
+        quit,
         compose, reply, replyAll, forward, toggleRail,
     ] + composeVerbs
 }

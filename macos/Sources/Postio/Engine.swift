@@ -1184,7 +1184,7 @@ final class Engine {
         case Intercepted.prevPart:
             guard showingParts else { return false }
             parts.step(forward: false)
-        case Intercepted.renderPartOnce:
+        case Intercepted.renderPartOnce, Intercepted.showImages:
             // No grant is written and no sender is allowed: this loads the
             // one message in front of you, for as long as it is in front of
             // you. `allow_remote_images` is the other gesture.
@@ -1202,6 +1202,10 @@ final class Engine {
         case Intercepted.openPart:
             guard showingParts else { return false }
             parts.ask(.preview)
+        case Intercepted.quit:
+            // Through AppKit rather than around it, so the application
+            // delegate's own termination path runs exactly as for `⌘Q`.
+            NSApplication.shared.terminate(nil)
         case Intercepted.openMessage:
             // The row is already open — the cursor opens it as it moves — so
             // `Return` is about the *keyboard*: it goes where the message is.

@@ -293,6 +293,12 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::OpenPartExternally,
         C::RenderPartOnce,
         C::OpenPart,
+        // "Show remote images" is render-once under the reader's own name:
+        // this message, this view, no grant written (#1706).
+        C::ShowImages,
+        // AppKit's own Quit is the menu item; the registry's is the palette
+        // row and whatever `[keys]` binds it to (#1706).
+        C::Quit,
         // The list has to be told to redraw after the query is re-asked.
         C::ToggleResultOrder,
         // The picker is a surface, and the four times it offers come from

@@ -53,18 +53,10 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ZoomIn, "#1705"),
     (CommandId::ZoomOut, "#1705"),
     (CommandId::ZoomReset, "#1705"),
-    (CommandId::Quit, "#1706"),
-    (CommandId::ShowImages, "#1706"),
     (CommandId::AlwaysShowImages, "#1706"),
     (CommandId::Unsubscribe, "#1706"),
 ];
 
-/// The bus the FFI session builds, asked what it answers.
-///
-/// Composed exactly as `postio_host`'s verbs compose it -- the session is the
-/// host's client, and `Host::wired` is what it filters a command by -- so this
-/// is the same list a running Postio would check a command against rather
-/// than a second opinion about one.
 /// Whether the Mac offers `id` at all. See the module note.
 ///
 /// Two ways not to: scoped away from the platform, or asking for something a
@@ -78,6 +70,12 @@ fn offered_on_the_mac(id: CommandId) -> bool {
             .contains(postio_core::registry::Requirement::Terminal)
 }
 
+/// The bus the FFI session builds, asked what it answers.
+///
+/// Composed exactly as `postio_host`'s verbs compose it -- the session is the
+/// host's client, and `Host::wired` is what it filters a command by -- so this
+/// is the same list a running Postio would check a command against rather
+/// than a second opinion about one.
 async fn wired() -> Vec<CommandId> {
     let database = postio_storage::test_support::memory().await;
     let state = postio_core::state::SharedState::default();
