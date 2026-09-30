@@ -196,9 +196,13 @@ reuse:
 4. attachment cards;
 5. the quoted-history fold line.
 
-`BodyView` is its own scroller (`reader/view.rs:376-385`), so the header and
-marker cards stay put while the body scrolls. Screen 04 draws one scrolling
-column; the screen comparison records this difference.
+**Revised (T183, 2026-09-29).** The dialog is one scrolling column, as
+screen 04 draws it: header card, marker card, body, attachments and fold line
+scroll together. `BodyView::flow_in` makes the view as tall as its document;
+it reads its visible window from the outer scroller's adjustment, so tiling
+stays windowed. A plain-text body has no frame; mail that paints its own page
+keeps a hairline one. The classic reader is unchanged: flow mode is Focus's
+presentation option (`Reader::flow_in`).
 
 The alternatives were both worse:
 
