@@ -804,3 +804,57 @@ impl Fixture {
         (window, client)
     }
 }
+
+impl Fixture {
+    /// A message from `from`, to `to` and copied to `cc` (each a name and an
+    /// address), dated `date`, with a plain body. Answers its id.
+    pub async fn file_addressed(
+        &self,
+        from: (&str, &str),
+        to: &[(&str, &str)],
+        cc: &[(&str, &str)],
+        subject: &str,
+        date: DateTime<Utc>,
+    ) -> MessageId {
+        let connection = self.database.connect().await.expect("a connection");
+        let mut message = Message::new(self.account.id, self.inbox, date);
+        message.date = Some(date);
+        message.from = vec![EmailAddress::new(Some(from.0), from.1)];
+        message.to = to
+            .iter()
+            .map(|(name, address)| EmailAddress::new(Some(*name), *address))
+            .collect();
+        message.cc = cc
+            .iter()
+            .map(|(name, address)| EmailAddress::new(Some(*name), *address))
+            .collect();
+        message.subject = Some(subject.to_owned());
+        message.preview = Some("Body.".to_owned());
+        static ADDRESSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = ADDRESSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+            "<addressed.{serial}@example.test>"
+        )));
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        ThreadingRepository::new(&connection, self.account.id)
+            .thread(&message)
+            .await
+            .expect("threaded");
+        drop(connection);
+        self.write_body(message.id, "Body of the message.").await;
+        message.id
+    }
+
+    /// Put a label named `name`, drawn in `colour` (`#rrggbb`), on `message`.
+    pub async fn label_in(&self, message: MessageId, name: &str, colour: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        let labels = postio_storage::repository::LabelRepository::new(&connection);
+        let mut label = postio_model::Label::new(self.account.id, name);
+        label.color = Some(colour.to_owned());
+        labels.create(&mut label).await.expect("a label");
+        labels.attach(message, label.id).await.expect("attached");
+    }
+}

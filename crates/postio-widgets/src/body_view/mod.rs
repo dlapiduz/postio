@@ -123,6 +123,10 @@ pub(super) mod imp {
         pub(super) highlight: RefCell<Option<std::ops::Range<usize>>>,
         /// Where a drag began, in the view's coordinates.
         pub(super) drag_start: Cell<Option<gtk::graphene::Point>>,
+        /// The scroller this view is laid out inside, when it takes its
+        /// place from that instead of scrolling itself: see
+        /// [`super::BodyView::flow_in`].
+        pub(super) flow: RefCell<Option<glib::WeakRef<gtk::ScrolledWindow>>>,
         /// The messages the user darkened (FR-013a): for this session only,
         /// never stored.
         pub(super) darkened: RefCell<Vec<String>>,
@@ -156,6 +160,7 @@ pub(super) mod imp {
                 current: RefCell::default(),
                 to_top: Cell::new(false),
                 darkened: RefCell::default(),
+                flow: RefCell::default(),
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
                 find: RefCell::default(),
@@ -242,6 +247,21 @@ pub(super) mod imp {
     }
 
     impl WidgetImpl for BodyView {
+        /// A view that flows inside a scroller is as tall as its document,
+        /// so the scroller's column is what scrolls; on its own it asks for
+        /// nothing and takes what it is given.
+        fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
+            if orientation == gtk::Orientation::Vertical && self.flow.borrow().is_some() {
+                let height = self
+                    .document
+                    .borrow()
+                    .as_ref()
+                    .map_or(0, |doc| doc.size.height.ceil() as i32);
+                return (height, height, -1, -1);
+            }
+            (0, 0, -1, -1)
+        }
+
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
             if width != self.laid_out_width.get() && self.content.borrow().is_some() {
@@ -335,7 +355,7 @@ impl BodyView {
         let Some(document) = imp.document.borrow().clone() else {
             return;
         };
-        let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
+        let top = self.window().0;
         let offset = document.text.char_at_top(top);
         let at = document
             .text
@@ -376,13 +396,7 @@ impl BodyView {
     /// tile it needed.
     #[doc(hidden)]
     pub fn tiles_settled(&self) -> bool {
-        let top = self
-            .imp()
-            .vadjustment
-            .borrow()
-            .as_ref()
-            .map_or(0.0, |a| a.value());
-        self.imp().tiles.borrow().settled(top)
+        self.imp().tiles.borrow().settled(self.window().0)
     }
 
     /// Call `f` when the fallback notice's "View source" is chosen.
@@ -498,8 +512,8 @@ impl BodyView {
         use postio_render::Presentation::{Darkened, Paper};
         let imp = self.imp();
         let document = imp.document.borrow().clone()?;
-        let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
-        let line = top + f64::from(self.height()) / 3.0;
+        let (top, page) = self.window();
+        let line = top + page / 3.0;
         let message = document
             .messages
             .iter()
@@ -675,9 +689,6 @@ impl BodyView {
                 let Some(document) = self.document() else {
                     return;
                 };
-                let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
-                    return;
-                };
                 // The element with that id, or failing that its message's top.
                 let top = document
                     .anchors
@@ -692,7 +703,7 @@ impl BodyView {
                             .map(|m| m.rect.y0)
                     });
                 if let Some(top) = top {
-                    adjustment.set_value(top);
+                    self.scroll_document_to(top);
                 }
             }
         }
@@ -700,14 +711,11 @@ impl BodyView {
 
     /// Scroll so `rect`, in document coordinates, is in view.
     pub(super) fn scroll_into_view(&self, rect: postio_render::Rect) {
-        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
-            return;
-        };
-        let (top, page) = (adjustment.value(), adjustment.page_size());
+        let (top, page) = self.window();
         if rect.y0 < top {
-            adjustment.set_value(rect.y0);
+            self.scroll_document_to(rect.y0);
         } else if rect.y1 > top + page {
-            adjustment.set_value(rect.y1 - page);
+            self.scroll_document_to(rect.y1 - page);
         }
     }
 
@@ -715,7 +723,7 @@ impl BodyView {
     /// on screen (001 FR-035).
     pub fn current_message(&self) -> Option<String> {
         let document = self.document()?;
-        let adjustment = self.imp().vadjustment.borrow().clone()?;
+        let (top, page) = self.window();
         let extents: Vec<postio_ui::reader::rail::Extent> = document
             .messages
             .iter()
@@ -724,8 +732,7 @@ impl BodyView {
                 height: m.rect.height(),
             })
             .collect();
-        let at =
-            postio_ui::reader::rail::current(&extents, adjustment.value(), adjustment.page_size())?;
+        let at = postio_ui::reader::rail::current(&extents, top, page)?;
         Some(document.messages[at].scope.clone())
     }
 
@@ -764,19 +771,18 @@ impl BodyView {
 
     /// Scroll `scope`'s message to the top of the view.
     pub fn scroll_to_message(&self, scope: &str) {
-        let (Some(document), Some(adjustment)) =
-            (self.document(), self.imp().vadjustment.borrow().clone())
-        else {
+        let Some(document) = self.document() else {
             return;
         };
         if let Some(message) = document.messages.iter().find(|m| m.scope == scope) {
-            adjustment.set_value(message.rect.y0);
+            self.scroll_document_to(message.rect.y0);
         }
     }
 
-    /// Scroll one page down (`forward`) or up: the view's own height.
+    /// Scroll one page down (`forward`) or up: the view's own height, or a
+    /// flowing view's scroller's.
     pub fn page(&self, forward: bool) {
-        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+        let Some(adjustment) = self.scrolling() else {
             return;
         };
         let step = if forward {
@@ -790,15 +796,16 @@ impl BodyView {
     /// Scroll by `lines` steps of the view's own line increment: down for
     /// a positive count, up for a negative one. The adjustment clamps.
     pub fn scroll_lines(&self, lines: i32) {
-        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+        let Some(adjustment) = self.scrolling() else {
             return;
         };
         adjustment.set_value(adjustment.value() + f64::from(lines) * adjustment.step_increment());
     }
 
-    /// Scroll to the top of the document, or to the end of it.
+    /// Scroll to the top of the document, or to the end of it; for a view
+    /// that flows, the top or end of the whole column.
     pub fn scroll_to_edge(&self, bottom: bool) {
-        let Some(adjustment) = self.imp().vadjustment.borrow().clone() else {
+        let Some(adjustment) = self.scrolling() else {
             return;
         };
         adjustment.set_value(if bottom {
@@ -806,6 +813,104 @@ impl BodyView {
         } else {
             adjustment.lower()
         });
+    }
+
+    /// Lay this view out inside `scroller`, one column with whatever sits
+    /// beside it, instead of scrolling itself.
+    ///
+    /// The view is then as tall as its document and never scrolls; what is
+    /// in view is read from `scroller`'s adjustment each time it draws, so
+    /// only the tiles under the scroller's window are rasterised and a long
+    /// message costs what a screenful does (research R8 still holds). Keys
+    /// and finds scroll the scroller.
+    pub fn flow_in(&self, scroller: &gtk::ScrolledWindow) {
+        let imp = self.imp();
+        imp.flow.replace(Some(scroller.downgrade()));
+        // Its own adjustments stay at rest, so a point in the view is a
+        // point in the document.
+        self.set_vadjustment(Some(&gtk::Adjustment::new(0.0, 0.0, 0.0, 1.0, 1.0, 0.0)));
+        self.set_hadjustment(Some(&gtk::Adjustment::new(0.0, 0.0, 0.0, 1.0, 1.0, 0.0)));
+        let view = self.downgrade();
+        scroller.vadjustment().connect_value_changed(move |_| {
+            if let Some(view) = view.upgrade() {
+                view.queue_draw();
+                view.report_current_message();
+            }
+        });
+        self.queue_resize();
+    }
+
+    /// Whether the view flows inside a scroller.
+    pub fn flows(&self) -> bool {
+        self.imp().flow.borrow().is_some()
+    }
+
+    fn flow_scroller(&self) -> Option<gtk::ScrolledWindow> {
+        self.imp()
+            .flow
+            .borrow()
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+    }
+
+    /// What scrolls the document: the view's own adjustment, or the column's.
+    fn scrolling(&self) -> Option<gtk::Adjustment> {
+        match self.flow_scroller() {
+            Some(scroller) => Some(scroller.vadjustment()),
+            None => self.imp().vadjustment.borrow().clone(),
+        }
+    }
+
+    /// The part of the document in view: its top, and its height, in
+    /// document coordinates.
+    pub(super) fn window(&self) -> (f64, f64) {
+        if self.flows() {
+            let Some(scroller) = self.flow_scroller() else {
+                return (0.0, 0.0);
+            };
+            let Some(bounds) = self.compute_bounds(&scroller) else {
+                return (0.0, 0.0);
+            };
+            // `bounds` is where the view is in the scroller's window, which
+            // already has the scrolling in it.
+            let above = f64::from(bounds.y()).min(0.0).abs();
+            let below = (f64::from(scroller.height()) - f64::from(bounds.y()))
+                .min(f64::from(self.height()));
+            return (above, (below - above).max(0.0));
+        }
+        let top = self
+            .imp()
+            .vadjustment
+            .borrow()
+            .as_ref()
+            .map_or(0.0, |a| a.value());
+        (top, f64::from(self.height()))
+    }
+
+    /// Scroll so document height `y` is at the top of what is in view.
+    pub(super) fn scroll_document_to(&self, y: f64) {
+        match self.flow_scroller() {
+            Some(scroller) => {
+                let Some(bounds) = self.compute_bounds(&scroller) else {
+                    return;
+                };
+                let adjustment = scroller.vadjustment();
+                // Where the view starts in the column, whatever the column
+                // is scrolled to now.
+                let start = adjustment.value() + f64::from(bounds.y());
+                adjustment.set_value(start + y);
+            }
+            None => {
+                if let Some(adjustment) = self.imp().vadjustment.borrow().as_ref() {
+                    adjustment.set_value(y);
+                }
+            }
+        }
+    }
+
+    /// How far the message is scrolled: the column's for a flowing view.
+    pub fn scrolled(&self) -> f64 {
+        self.scrolling().map_or(0.0, |a| a.value())
     }
 
     /// The snapshot on screen, if one has arrived.
@@ -957,11 +1062,16 @@ impl BodyView {
         imp.document.replace(Some(document));
         self.configure_adjustments();
         if imp.to_top.take() {
-            if let Some(adjustment) = imp.vadjustment.borrow().as_ref() {
-                adjustment.set_value(0.0);
+            match self.flow_scroller() {
+                // The top of the column, not of the body inside it.
+                Some(scroller) => scroller.vadjustment().set_value(0.0),
+                None => self.scroll_document_to(0.0),
             }
-        } else if let (Some(y), Some(adjustment)) = (anchor, imp.vadjustment.borrow().as_ref()) {
-            adjustment.set_value(y);
+        } else if let Some(y) = anchor {
+            self.scroll_document_to(y);
+        }
+        if self.flows() {
+            self.queue_resize();
         }
         // The text is the same, so a find carries over to the new snapshot.
         self.refresh_find();
@@ -973,6 +1083,9 @@ impl BodyView {
 
     fn configure_adjustments(&self) {
         let imp = self.imp();
+        if self.flows() {
+            return;
+        }
         let height = f64::from(self.height());
         let upper = imp
             .document
@@ -1000,15 +1113,26 @@ impl BodyView {
         let Some(document) = imp.document.borrow().clone() else {
             return;
         };
-        let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
+        let (top, height) = self.window();
         let left = imp.hadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
-        let (width, height) = (f64::from(self.width()), f64::from(self.height()));
-        snapshot.push_clip(&gtk::graphene::Rect::new(
-            0.0,
-            0.0,
-            width as f32,
-            height as f32,
-        ));
+        let width = f64::from(self.width());
+        if self.flows() {
+            // Only the window in the scroller is drawn, placed where it is.
+            snapshot.push_clip(&gtk::graphene::Rect::new(
+                0.0,
+                top as f32,
+                width as f32,
+                height as f32,
+            ));
+            snapshot.translate(&gtk::graphene::Point::new(0.0, top as f32));
+        } else {
+            snapshot.push_clip(&gtk::graphene::Rect::new(
+                0.0,
+                0.0,
+                width as f32,
+                height as f32,
+            ));
+        }
         // A pinch scales what is already drawn; the render comes at its end.
         let pinch = imp.pinch.get();
         if let Some(scale) = pinch {

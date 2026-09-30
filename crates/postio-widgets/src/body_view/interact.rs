@@ -110,10 +110,13 @@ pub(super) fn install(view: &BodyView) {
 
 /// Scroll a drag that reaches the view's edge.
 fn autoscroll(view: &BodyView, y: f32) {
-    let Some(adjustment) = view.imp().vadjustment.borrow().clone() else {
+    let Some(adjustment) = view.scrolling() else {
         return;
     };
-    let height = view.height() as f32;
+    // Against the part of the view in the window, which is all of it unless
+    // the view flows inside a scroller.
+    let (top, page) = view.window();
+    let (y, height) = (y - top as f32, page as f32);
     let step = if y < 24.0 {
         -24.0_f64
     } else if y > height - 24.0 {

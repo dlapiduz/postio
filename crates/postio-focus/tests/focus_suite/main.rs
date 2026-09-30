@@ -52,6 +52,7 @@ mod one_composer;
 mod one_keymap;
 mod open_choice;
 mod open_message;
+mod open_reading;
 mod pickers;
 mod places;
 mod registry_parity;
@@ -336,6 +337,39 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_message::enter_opens_the_conversation_over_the_list_at_once",
         open_message::enter_opens_the_conversation_over_the_list_at_once as fn(),
+    ),
+    (
+        "open_reading::the_open_message_is_one_scrolling_column",
+        open_reading::the_open_message_is_one_scrolling_column as fn(),
+    ),
+    (
+        "open_reading::the_column_draws_only_the_window_of_a_long_body",
+        open_reading::the_column_draws_only_the_window_of_a_long_body as fn(),
+    ),
+    (
+        "open_reading::a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one",
+        open_reading::a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one as fn(),
+    ),
+    (
+        "open_reading::the_header_card_names_from_to_and_cc_and_dates_today_relatively",
+        open_reading::the_header_card_names_from_to_and_cc_and_dates_today_relatively as fn(),
+    ),
+    (
+        "open_reading::the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full",
+        open_reading::the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full
+            as fn(),
+    ),
+    (
+        "open_reading::an_attachment_is_a_card_under_the_body",
+        open_reading::an_attachment_is_a_card_under_the_body as fn(),
+    ),
+    (
+        "open_reading::a_label_pill_carries_its_colour_dot",
+        open_reading::a_label_pill_carries_its_colour_dot as fn(),
+    ),
+    (
+        "open_reading::close_is_as_compact_as_the_toolbar_s_buttons",
+        open_reading::close_is_as_compact_as_the_toolbar_s_buttons as fn(),
     ),
     (
         "open_message::a_hundredth_open_builds_no_second_message_view",

@@ -28,6 +28,20 @@ pub fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
     }
 }
 
+/// The date on an open message's header card (screen 04): relative for
+/// today, "Today, 15:22", and the header's absolute date beyond it -- a
+/// message once opened is not "yesterday", it is dated.
+pub fn message_date(
+    at: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    let local = at.with_timezone(&now.timezone());
+    if local.date_naive() == now.date_naive() {
+        return format!("Today, {}", local.format("%H:%M"));
+    }
+    crate::reader::header::absolute_date(at, now)
+}
+
 /// The badge a conversation's count draws, or none for a conversation of
 /// one: the badge says how big the conversation is, and one is not big.
 pub fn count_badge(message_count: u32) -> Option<String> {
@@ -94,6 +108,29 @@ mod tests {
             "Wednesday 31 December 2025",
             "a day in another year says which"
         );
+    }
+
+    #[test]
+    fn an_open_message_is_dated_relatively_today_and_absolutely_after() {
+        use chrono::TimeZone;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 9, 29, 16, 9, 0)
+            .single()
+            .expect("a real time");
+        let at = |d: u32, h: u32, m: u32| {
+            chrono::Local
+                .with_ymd_and_hms(2026, 9, d, h, m, 0)
+                .single()
+                .expect("a real time")
+                .with_timezone(&chrono::Utc)
+        };
+        assert_eq!(message_date(at(29, 15, 22), now), "Today, 15:22");
+        assert_eq!(message_date(at(29, 0, 5), now), "Today, 00:05");
+        assert_eq!(
+            message_date(at(28, 15, 22), now),
+            "Mon, 28 Sep 2026 at 15:22"
+        );
+        assert_eq!(message_date(at(3, 9, 0), now), "Thu, 3 Sep 2026 at 09:00");
     }
 
     #[test]

@@ -197,7 +197,7 @@ impl BodyView {
         // Keep the place: the character under the pointer at the pointer's
         // height, or the one at the top at the top.
         if let Some(document) = self.document() {
-            let top = imp.vadjustment.borrow().as_ref().map_or(0.0, |a| a.value());
+            let top = self.window().0;
             let anchor = match pointer {
                 Some(at) => document
                     .text

@@ -226,14 +226,12 @@ impl BodyView {
     pub fn set_highlight(&self, range: Option<std::ops::Range<usize>>) {
         self.imp().highlight.replace(range);
         let rects = self.highlight_rects();
-        if let (Some(first), Some(adjustment)) =
-            (rects.first(), self.imp().vadjustment.borrow().clone())
-        {
+        if let Some(first) = rects.first() {
             let y0 = rects.iter().map(|rect| rect.y0).fold(first.y0, f64::min);
             let y1 = rects.iter().map(|rect| rect.y1).fold(first.y1, f64::max);
-            let (top, page) = (adjustment.value(), adjustment.page_size());
+            let (top, page) = self.window();
             if y0 < top || y1 > top + page {
-                adjustment.set_value((y0 - page / 3.0).max(0.0));
+                self.scroll_document_to((y0 - page / 3.0).max(0.0));
             }
         }
         self.queue_draw();

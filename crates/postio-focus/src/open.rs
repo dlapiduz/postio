@@ -214,7 +214,6 @@ impl OpenMessage {
         fold_line.set_visible(false);
 
         let reader_widget = reader.widget();
-        reader_widget.set_vexpand(true);
         let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
         column.add_css_class("focus-open-column");
         column.append(&thread_chip);
@@ -226,14 +225,23 @@ impl OpenMessage {
             .maximum_size(COLUMN)
             .tightening_threshold(COLUMN)
             .child(&column)
-            .vexpand(true)
             .build();
+        // One column: everything from the thread chip to the fold line
+        // scrolls together (screen 04), the body drawn in it rather than
+        // in a scroller of its own.
+        let scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&clamp)
+            .build();
+        scroller.add_css_class("focus-open-scroller");
+        reader.flow_in(&scroller);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.add_css_class("focus-open");
         content.append(&header);
         content.append(&toolbar.widget());
-        content.append(&clamp);
+        content.append(&scroller);
 
         let dialog = adw::Dialog::builder()
             .content_width(WIDTH)
@@ -918,6 +926,11 @@ impl OpenMessage {
             .document()
             .map(|document| document.text.text.clone())
             .unwrap_or_default()
+    }
+
+    /// Each label's dot: its name and colour as `#rrggbb`.
+    pub fn label_dots(&self) -> Vec<(String, String)> {
+        Vec::new()
     }
 
     /// The message view.

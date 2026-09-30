@@ -92,6 +92,10 @@ pub struct Reader {
     /// while empty, so the notices and the body start where they did.
     under_header: gtk::Box,
     view: crate::body_view::BodyView,
+    /// The view's own scroller, and the overlay it sits in: what
+    /// [`Reader::flow_in`] takes the view out of.
+    scroller: gtk::ScrolledWindow,
+    body: gtk::Overlay,
     /// Find in the message (spec 006 FR-018), above the body.
     find: Rc<crate::body_view::find::FindBar>,
     /// The zoom, when it is not actual size, over the body's corner.
@@ -323,6 +327,8 @@ struct Place {
     /// "Always allow", a message's own Show -- so its images are asked for
     /// at once rather than after the dwell.
     consented: std::cell::Cell<bool>,
+    /// The reader flows in its owner's column ([`Reader::flow_in`]).
+    flow: std::cell::Cell<bool>,
 }
 
 /// What a reader's owner fetches remote images with: the URLs one document
@@ -343,6 +349,7 @@ impl Place {
             remote: RefCell::default(),
             asked: RefCell::default(),
             consented: std::cell::Cell::new(false),
+            flow: std::cell::Cell::new(false),
         }
     }
 }
@@ -506,6 +513,8 @@ impl Reader {
             container,
             under_header,
             view,
+            scroller,
+            body,
             find,
             zoom_indicator,
             header,
@@ -1372,6 +1381,22 @@ impl Reader {
         self.originals.borrow_mut().clear();
     }
 
+    /// Draw the message in its owner's column instead of a pane of its own
+    /// (Focus's open message, screen 04): the header, the notices, the body
+    /// and the parts scroll together in `scroller`, and the body is drawn
+    /// flat on the column's ground -- no frame around correspondence, at the
+    /// reading measure -- keeping a quiet one only for mail that paints its
+    /// own page. What the view rasterises is still only what `scroller`
+    /// shows ([`BodyView::flow_in`](crate::body_view::BodyView::flow_in)).
+    ///
+    /// Called once, before anything is shown.
+    pub fn flow_in(&self, scroller: &gtk::ScrolledWindow) {
+        self.scroller.set_child(None::<&gtk::Widget>);
+        self.body.set_child(Some(&self.view));
+        self.view.flow_in(scroller);
+        self.place.flow.set(true);
+    }
+
     /// How far down the pane is scrolled, in view pixels. Test-facing.
     ///
     /// Without an observable #1431 was invisible: the three scrolling
@@ -1379,7 +1404,7 @@ impl Reader {
     /// success.
     #[doc(hidden)]
     pub fn scrolled_for_test(&self) -> f64 {
-        self.view.vadjustment().map_or(0.0, |a| a.value())
+        self.view.scrolled()
     }
 
     /// The document currently composed for the open thread. Test-facing.
@@ -1616,6 +1641,10 @@ impl Reader {
 
     /// Open find in the message (`find_in_message`, FR-018).
     pub fn find_in_message(&self) {
+        // In a column the bar is at its top: bring it into view.
+        if self.view.flows() {
+            self.view.scroll_to_edge(false);
+        }
         self.find.open();
     }
 
@@ -1998,11 +2027,47 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
         }
     }
     crate::body_view::Content {
-        document: document.to_owned(),
+        document: if place.flow.get() {
+            flow_document(document)
+        } else {
+            document.to_owned()
+        },
         resources: std::sync::Arc::new(resources),
         plain_text: place.plain.borrow().clone(),
         over_cap: None,
     }
+}
+
+/// The rules a column that scrolls as one adds to every document
+/// ([`Reader::flow_in`]): the ground is the column's own, so the body needs
+/// no page of its own; and the body's frame goes, as does the padding
+/// inside it, with the text at a reading measure and size. Mail that paints
+/// its own page -- the sender's sheet, or a page background the sender set --
+/// keeps the frame, hairline and quiet, because its edge is the only thing
+/// telling it apart from the column.
+///
+/// The ground's two values are libadwaita's `view-bg-color`, the colour the
+/// dialog is drawn on, since the renderer cannot read a GTK named colour.
+const FLOW_CSS: &str = "\n:root { --flow-ground: #ffffff; }\n\
+    @media (prefers-color-scheme: dark) { :root { --flow-ground: #1e1e1e; } }\n\
+    body { background: var(--flow-ground); padding: 0; }\n";
+
+/// What is added for correspondence, which has no page of its own.
+const FLOW_FLAT_CSS: &str = "body { font-size: 15px; line-height: 1.6; }\n\
+    .postio-body { max-width: 700px; padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
+
+/// `document` as the column draws it.
+fn flow_document(document: &str) -> String {
+    let own_page = document.contains("class=\"postio-canvas\"")
+        || document.contains(&format!(
+            "class=\"{}\"",
+            postio_ui::reader::document::SENDERS_SHEET_CLASS
+        ));
+    let mut css = String::from(FLOW_CSS);
+    if !own_page {
+        css.push_str(FLOW_FLAT_CSS);
+    }
+    document.replacen("</style>", &format!("{css}</style>"), 1)
 }
 
 /// Ask the owner's fetcher for the remote images `document` names that

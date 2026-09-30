@@ -283,11 +283,21 @@ async fn three_long_open() -> (Fixture, postio_focus::window::FocusWindow) {
 async fn drawn_tall(reading: &std::rc::Rc<postio_focus::open::OpenMessage>) {
     assert!(
         crate::settle_until(async || {
+            // The message flows in the dialog's column: it is as tall as its
+            // words, and the column is what it scrolls through.
             let view = reading.reader().view().clone();
-            view.height() > 0
+            let Some(column) = view.ancestor(gtk::ScrolledWindow::static_type()) else {
+                return false;
+            };
+            let Some(column) = column.downcast_ref::<gtk::ScrolledWindow>() else {
+                return false;
+            };
+            let scroll = column.vadjustment();
+            scroll.page_size() > 0.0
+                && scroll.upper() > 3.0 * scroll.page_size()
                 && view
                     .document()
-                    .is_some_and(|d| d.size.height > 3.0 * f64::from(view.height()))
+                    .is_some_and(|d| d.size.height > 3.0 * scroll.page_size())
         })
         .await,
         "the message was never drawn tall enough to scroll"
