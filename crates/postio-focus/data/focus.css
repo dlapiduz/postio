@@ -351,6 +351,40 @@ banner.focus-banner button {
   color: var(--postio-ink-secondary);
 }
 
+/* The header card (04.4): a tinted card, small dim field names, the
+   sender's name bold and their address dim and mono. */
+.focus-open-header-card {
+  margin: var(--postio-space-2) 0;
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-open-field {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-meta);
+}
+
+.focus-open-sender-name {
+  font-weight: bold;
+  color: var(--postio-ink);
+}
+
+.focus-open-address {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.focus-open-date {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-meta);
+}
+
+.focus-open-recipient {
+  color: var(--postio-ink-secondary);
+}
+
 .focus-open-fold-line label {
   color: var(--postio-dim);
   font-size: var(--postio-text-meta);

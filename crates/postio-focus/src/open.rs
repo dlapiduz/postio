@@ -25,6 +25,7 @@ use postio_widgets::widgets::space::{S1, S2};
 use postio_widgets::widgets::{Action, ActionBar, Kind, Size, icon_button};
 
 use crate::list::FocusRow;
+use crate::open_header::HeaderCard;
 
 /// The dialog's size, as screen 04 draws it.
 const WIDTH: i32 = 980;
@@ -71,6 +72,9 @@ pub struct OpenMessage {
     thread_chip: gtk::Box,
     subject: gtk::Label,
     labels: gtk::Box,
+    /// Who it is from, to and copied, and when (screen 04): drawn here, in
+    /// place of the reader's own header, which Focus does not show.
+    header_card: Rc<HeaderCard>,
     reader: Reader,
     fold_line: gtk::Button,
     fold_label: gtk::Label,
@@ -144,7 +148,8 @@ impl OpenMessage {
         };
         let reader = Reader::sharing(source, allowlist, Verbs::NONE);
         // The subject is the column's heading, over the header card.
-        reader.header().set_subject_visible(false);
+        reader.header().widget().set_visible(false);
+        let header_card = Rc::new(HeaderCard::new());
         if let Some(runtime) = runtime {
             reader.set_remote_fetch(remote_fetch(runtime));
         }
@@ -219,6 +224,7 @@ impl OpenMessage {
         column.append(&thread_chip);
         column.append(&subject);
         column.append(&labels);
+        column.append(&header_card.widget());
         column.append(&reader_widget);
         column.append(&fold_line);
         let clamp = adw::Clamp::builder()
@@ -267,6 +273,7 @@ impl OpenMessage {
             thread_chip,
             subject,
             labels,
+            header_card,
             reader,
             fold_line,
             fold_label,
@@ -434,6 +441,7 @@ impl OpenMessage {
         self.shown.set(Some(message));
         self.body.replace(None);
         self.show_marker_card(message);
+        self.header_card.clear();
         self.fold_line.set_visible(false);
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
@@ -518,6 +526,7 @@ impl OpenMessage {
         let shown_parts = Rc::clone(&self.parts);
         let shown_body = Rc::clone(&self.body);
         let inline = Rc::clone(&self.inline);
+        let header_card = Rc::clone(&self.header_card);
         shown_parts.borrow_mut().clear();
         inline.borrow_mut().clear();
         glib::spawn_future_local(async move {
@@ -532,6 +541,12 @@ impl OpenMessage {
                 return;
             };
             if let Some(row) = reading.row.as_deref() {
+                header_card.set(
+                    &row.from,
+                    &row.to,
+                    &row.cc,
+                    row.date.unwrap_or(row.received_at),
+                );
                 reader.set_message_header(
                     &row.from,
                     &row.to,

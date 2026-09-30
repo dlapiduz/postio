@@ -278,7 +278,11 @@ pub fn the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full() {
             .downcast::<gtk::Label>()
             .expect("a label")
             .text();
-        assert_eq!(date, "Sat, 26 Sep 2026 at 16:09");
+        let full = support::now()
+            .with_timezone(&chrono::Local)
+            .format("%a, %-d %b %Y at %H:%M")
+            .to_string();
+        assert_eq!(date, full);
     });
 }
 
