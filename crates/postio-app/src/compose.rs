@@ -164,17 +164,6 @@ async fn install_inline_image(composer: &Composer, client: Client) {
     });
 }
 
-/// Blocking half of [`install_inline_image`].
-///
-/// The part itself is `postio_session::attaching::inline_image`'s, which the
-/// macOS composer calls too: one rule for what an inline picture's
-/// `Content-ID` is, rather than one per frontend.
-fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> Option<Attachment> {
-    postio_session::attaching::inline_image(blobs, &bytes, mime_type)
-        .map_err(|error| tracing::warn!(%error, "could not store the pasted image"))
-        .ok()
-}
-
 /// Resolves an attachment's bytes for the composer's inline-image display.
 ///
 /// Synchronous, as the scheme handler requires; a blob read is a local file

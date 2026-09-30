@@ -2001,7 +2001,6 @@ mod tests {
     use postio_storage::{BlobStore, Store, test_support};
 
     use super::*;
-    use postio_model::ids::AttachmentId;
     use postio_runtime::Engine;
 
     /// [`super::save_all_parts`] over a store rather than a client: the same

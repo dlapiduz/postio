@@ -647,20 +647,15 @@ pub fn attach_file(
 
 /// Writes pasted image bytes into `blobs` as an inline part the body can
 /// point at by `cid:`.
+///
+/// The rule is `postio_session::attaching::inline_image`'s, which the macOS
+/// composer calls too: one answer for what an inline picture's `Content-ID`
+/// is, and the same refusal of a non-image or an oversized one, whichever
+/// frontend it was pasted into.
 pub fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> Option<Attachment> {
-    let size = bytes.len() as u64;
-    let blob_id = blobs
-        .put(&bytes)
+    postio_session::attaching::inline_image(blobs, &bytes, mime_type)
         .map_err(|error| tracing::warn!(%error, "could not store the pasted image"))
-        .ok()?;
-
-    let extension = mime_type.strip_prefix("image/").unwrap_or("png");
-    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
-    attachment.filename = Some(format!("inline-image.{extension}"));
-    attachment.disposition = postio_model::attachment::Disposition::Inline;
-    attachment.content_id = Some(format!("{}@postio.invalid", blob_id.as_str()));
-    attachment.blob_id = Some(blob_id);
-    Some(attachment)
+        .ok()
 }
 
 /// A MIME type for `path` from its first bytes, then its extension, for a
