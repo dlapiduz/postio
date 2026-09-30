@@ -134,6 +134,10 @@ const CASES: &[(&str, fn())] = &[
         motion::no_transition_outruns_the_budget_and_reduced_motion_stills_them as fn(),
     ),
     (
+        "motion::the_list_rows_cursor_has_no_transition",
+        motion::the_list_rows_cursor_has_no_transition as fn(),
+    ),
+    (
         "compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it",
         compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it as fn(),
     ),

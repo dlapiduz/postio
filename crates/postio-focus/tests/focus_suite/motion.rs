@@ -193,3 +193,40 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
         );
     });
 }
+
+/// The declarations of the first rule in `css` whose selector is exactly
+/// `selector`.
+fn rule_body<'a>(css: &'a str, selector: &str) -> Option<&'a str> {
+    let mut rest = css;
+    while let Some(open) = rest.find('{') {
+        let head = rest[..open].rsplit('}').next().unwrap_or("").trim();
+        let close = rest[open..].find('}')? + open;
+        if head == selector {
+            return Some(&rest[open + 1..close]);
+        }
+        rest = &rest[close + 1..];
+    }
+    None
+}
+
+/// T191: the cursor is where the keyboard is, and a move is instant. The
+/// list row's own node -- which carries the `:selected` state and the focus
+/// ring libadwaita animates -- runs no transition, so the ring is on the
+/// next row the moment `j` or `k` lands.
+pub fn the_list_rows_cursor_has_no_transition() {
+    let css = postio_focus::style::SURFACES;
+    let row = rule_body(css, ".focus-list > row").expect("the list row's rule");
+    assert!(
+        row.lines()
+            .any(|line| line.trim().trim_end_matches(';').replace("  ", " ")
+                == "transition: none"),
+        "the list row must say `transition: none`; it says: {row}"
+    );
+    for state in [".focus-list > row:selected", ".focus-list > row:focus-visible"] {
+        let body = rule_body(css, state).expect("the cursor's rule");
+        assert!(
+            !body.contains("transition") || body.contains("transition: none"),
+            "{state} transitions: {body}"
+        );
+    }
+}
