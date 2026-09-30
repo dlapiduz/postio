@@ -99,6 +99,27 @@ pub(super) struct Tiles {
     visible: (u32, u32),
 }
 
+/// Where tiles `first..=last` go, as `(index, y, height)` in logical
+/// pixels, relative to a space whose own top is `origin` logical pixels
+/// from the surface's: tile `n` starts `n * TILE - top` down.
+///
+/// Every edge is on a device pixel, and a tile ends where the next one
+/// begins. Left where they fall, edges at a fractional device pixel let
+/// the ground show between two tiles -- a line across the message that
+/// comes and goes as it scrolls (T188).
+pub(super) fn placements(
+    first: u32,
+    last: u32,
+    top: f64,
+    origin: f64,
+    scale: f64,
+) -> Vec<(u32, f64, f64)> {
+    let edge = |index: u32| f64::from(index) * TILE - top;
+    (first..=last)
+        .map(|index| (index, edge(index), TILE))
+        .collect()
+}
+
 impl Tiles {
     /// Start over for a new snapshot.
     pub(super) fn reset(&mut self, document: Arc<RenderedDocument>) {
@@ -270,5 +291,51 @@ impl Tiles {
     /// Redraw once the pool has sent something.
     fn wake(&self, redraw: impl Fn() + 'static) {
         glib::timeout_add_local_once(Duration::from_millis(8), redraw);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tiles meet exactly, and every edge is on a device pixel, at every
+    /// scale GNOME offers, wherever the view sits in its window and
+    /// however far it is scrolled.
+    #[test]
+    fn adjacent_tiles_meet_on_device_pixels() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.5] {
+            for origin in [0.0, 37.0, 50.5, 123.25] {
+                for top in [0.0, 1.0, 333.0, 511.5, 700.37, 1023.6, 1500.75] {
+                    let first = (top / TILE).floor() as u32;
+                    let rects = placements(first, first + 4, top, origin, scale);
+                    let device = |logical: f64| (origin + logical) * scale;
+                    for (index, y, height) in &rects {
+                        let (near, far) = (device(*y), device(*y + *height));
+                        assert!(
+                            (near - near.round()).abs() < 1e-6 && (far - far.round()).abs() < 1e-6,
+                            "tile {index} at scale {scale}, origin {origin}, top {top}: \
+                             edges {near} and {far} are between device pixels"
+                        );
+                        assert!(
+                            (far - near - TILE * scale).abs() < 1.0,
+                            "tile {index} is {} device px tall, not {}",
+                            far - near,
+                            TILE * scale
+                        );
+                    }
+                    for pair in rects.windows(2) {
+                        let (_, y, height) = pair[0];
+                        assert!(
+                            (y + height - pair[1].1).abs() < 1e-9,
+                            "a gap or overlap after tile {} at scale {scale}, origin {origin}, \
+                             top {top}: {} against {}",
+                            pair[0].0,
+                            y + height,
+                            pair[1].1
+                        );
+                    }
+                }
+            }
+        }
     }
 }
