@@ -459,37 +459,50 @@ fn mark(mark: &Mark, name: &str, accent_hue: f64) -> gtk::Widget {
             image.set_accessible_role(gtk::AccessibleRole::Presentation);
             image.upcast()
         }
-        Mark::Dot(stored) => {
-            let colour = label_colour(name, stored.as_deref().and_then(Rgb::from_hex), accent_hue);
-            let dot = gtk::DrawingArea::new();
-            dot.set_content_width(DOT_BOX);
-            dot.set_content_height(DOT_BOX);
-            dot.set_valign(gtk::Align::Center);
-            dot.set_accessible_role(gtk::AccessibleRole::Presentation);
-            dot.set_draw_func(move |_, cairo, width, height| {
-                let unit = |channel: u8| f64::from(channel) / 255.0;
-                cairo.set_source_rgb(unit(colour.r), unit(colour.g), unit(colour.b));
-                cairo.arc(
-                    f64::from(width) / 2.0,
-                    f64::from(height) / 2.0,
-                    DOT_RADIUS,
-                    0.0,
-                    std::f64::consts::TAU,
-                );
-                let _ = cairo.fill();
-            });
-            dot.upcast()
-        }
+        Mark::Dot(stored) => colour_dot(label_colour(
+            name,
+            stored.as_deref().and_then(Rgb::from_hex),
+            accent_hue,
+        ))
+        .upcast(),
     }
+}
+
+/// A dot in `colour`: what a label is marked with, in the places list and
+/// on a label's pill.
+pub(crate) fn colour_dot(colour: Rgb) -> gtk::DrawingArea {
+    let dot = gtk::DrawingArea::new();
+    dot.set_content_width(DOT_BOX);
+    dot.set_content_height(DOT_BOX);
+    dot.set_valign(gtk::Align::Center);
+    dot.set_accessible_role(gtk::AccessibleRole::Presentation);
+    dot.set_draw_func(move |_, cairo, width, height| {
+        let unit = |channel: u8| f64::from(channel) / 255.0;
+        cairo.set_source_rgb(unit(colour.r), unit(colour.g), unit(colour.b));
+        cairo.arc(
+            f64::from(width) / 2.0,
+            f64::from(height) / 2.0,
+            DOT_RADIUS,
+            0.0,
+            std::f64::consts::TAU,
+        );
+        let _ = cairo.fill();
+    });
+    dot
+}
+
+/// A label's colour: its own, or the one its name gets from the wheel.
+pub(crate) fn label_rgb(label: &postio_model::Label) -> Rgb {
+    label_colour(
+        &label.name,
+        label.color.as_deref().and_then(Rgb::from_hex),
+        accent_hue(),
+    )
 }
 
 /// A label's colour, as its pill and its dot draw it.
 pub(crate) fn label_rgba(label: &postio_model::Label) -> gtk::gdk::RGBA {
-    let colour = label_colour(
-        &label.name,
-        label.color.as_deref().and_then(Rgb::from_hex),
-        accent_hue(),
-    );
+    let colour = label_rgb(label);
     gtk::gdk::RGBA::new(
         f32::from(colour.r) / 255.0,
         f32::from(colour.g) / 255.0,

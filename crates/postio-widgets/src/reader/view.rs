@@ -1389,12 +1389,14 @@ impl Reader {
     /// own page. What the view rasterises is still only what `scroller`
     /// shows ([`BodyView::flow_in`](crate::body_view::BodyView::flow_in)).
     ///
-    /// Called once, before anything is shown.
+    /// The attachments are drawn as cards, not pills. Called once, before
+    /// anything is shown.
     pub fn flow_in(&self, scroller: &gtk::ScrolledWindow) {
         self.scroller.set_child(None::<&gtk::Widget>);
         self.body.set_child(Some(&self.view));
         self.view.flow_in(scroller);
         self.place.flow.set(true);
+        self.chips.set_cards(true);
     }
 
     /// How far down the pane is scrolled, in view pixels. Test-facing.

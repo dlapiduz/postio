@@ -98,6 +98,8 @@ pub struct OpenMessage {
     parts: Rc<RefCell<Vec<Attachment>>>,
     /// The row's marker, and the message it belongs to.
     marker: RefCell<Option<(MessageId, postio_model::listing::MarkerSummary)>>,
+    /// The dot each label's pill carries: its name and colour, `#rrggbb`.
+    dots: RefCell<Vec<(String, String)>>,
     /// The card drawn for it, while it is shown.
     card: RefCell<Option<gtk::Box>>,
     /// The body on screen, once it has landed: where the marker's sentence
@@ -156,7 +158,9 @@ impl OpenMessage {
 
         // The header: Close, the title and position, and the steps.
         let close = gtk::Button::new();
-        postio_widgets::widgets::button::style(&close, Kind::Secondary, Size::Regular);
+        // The toolbar's compact pill (T187), keeping the frame that sets
+        // Close apart from the verbs.
+        postio_widgets::widgets::button::style(&close, Kind::Secondary, Size::Small);
         close.add_css_class("focus-open-close");
         let close_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         close_row.append(&gtk::Label::new(Some("Close")));
@@ -289,6 +293,7 @@ impl OpenMessage {
             messages: Cell::new(1),
             parts: Rc::default(),
             marker: RefCell::default(),
+            dots: RefCell::default(),
             card: RefCell::default(),
             body: Rc::default(),
             capture: Cell::new(false),
@@ -637,11 +642,21 @@ impl OpenMessage {
         while let Some(child) = self.labels.first_child() {
             self.labels.remove(&child);
         }
+        let mut dots = Vec::new();
         for label in labels {
-            let pill = gtk::Label::new(Some(&label.name));
+            // The pill: the label's colour dot, as the list's pills draw it,
+            // and its name.
+            let colour = crate::places::label_rgb(label);
+            let pill = gtk::Box::new(gtk::Orientation::Horizontal, S1);
             pill.add_css_class("focus-open-label-pill");
+            let dot = crate::places::colour_dot(colour);
+            dot.add_css_class("focus-open-label-dot");
+            pill.append(&dot);
+            pill.append(&gtk::Label::new(Some(&label.name)));
             self.labels.append(&pill);
+            dots.push((label.name.clone(), colour.to_hex()));
         }
+        self.dots.replace(dots);
         let add = gtk::Button::new();
         postio_widgets::widgets::button::style(&add, Kind::Ghost, Size::Regular);
         add.add_css_class("focus-open-add-label");
@@ -945,7 +960,7 @@ impl OpenMessage {
 
     /// Each label's dot: its name and colour as `#rrggbb`.
     pub fn label_dots(&self) -> Vec<(String, String)> {
-        Vec::new()
+        self.dots.borrow().clone()
     }
 
     /// The message view.

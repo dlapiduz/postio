@@ -4,7 +4,7 @@
 //! (ADR 0043; specs/007-postio-focus T019). The tree they are drawn from is
 //! `postio_ui::reader::parts`; the panel they open is the classic app's.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::pango;
@@ -30,6 +30,9 @@ type NodeHandler = Box<dyn Fn(&Node)>;
 pub struct Chips {
     row: gtk::Box,
     handlers: Rc<RefCell<Vec<NodeHandler>>>,
+    /// Drawn as cards -- an icon, the name in mono and the size beneath --
+    /// rather than as pills ([`Chips::set_cards`]).
+    cards: Rc<Cell<bool>>,
 }
 
 impl Default for Chips {
@@ -48,7 +51,15 @@ impl Chips {
         Chips {
             row,
             handlers: Rc::new(RefCell::new(Vec::new())),
+            cards: Rc::new(Cell::new(false)),
         }
+    }
+
+    /// Draw each attachment as a card, as Focus's open message does (screen
+    /// 04): a file icon, the name in mono and the size beneath it. Read
+    /// when the parts are next set.
+    pub fn set_cards(&self, cards: bool) {
+        self.cards.set(cards);
     }
 
     /// The widget to place under a message body.
@@ -93,13 +104,28 @@ impl Chips {
         size.add_css_class("postio-attachment-size");
         size.set_accessible_role(gtk::AccessibleRole::Presentation);
 
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-        line.append(&name);
-        line.append(&size);
-
         let button = gtk::Button::new();
         button.add_css_class("postio-attachment");
-        button.set_child(Some(&line));
+        if self.cards.get() {
+            button.add_css_class("postio-attachment-card");
+            name.set_xalign(0.0);
+            size.set_xalign(0.0);
+            let text = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            text.append(&name);
+            text.append(&size);
+            let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
+            icon.add_css_class("postio-attachment-icon");
+            icon.set_accessible_role(gtk::AccessibleRole::Presentation);
+            let card = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            card.append(&icon);
+            card.append(&text);
+            button.set_child(Some(&card));
+        } else {
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+            line.append(&name);
+            line.append(&size);
+            button.set_child(Some(&line));
+        }
         button.update_property(&[gtk::accessible::Property::Label(&spoken(&node))]);
         // What it *is*, not what activating it will do: activating opens the
         // parts panel, which is where the verbs live. A chip that promised to

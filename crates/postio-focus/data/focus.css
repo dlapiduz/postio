@@ -310,6 +310,11 @@ banner.focus-banner button {
   border-bottom: 1px solid var(--postio-hairline);
 }
 
+button.focus-open-close {
+  min-height: 26px;
+  padding: 0 var(--postio-space-2);
+}
+
 .focus-open-title {
   font-weight: bold;
   color: var(--postio-ink);
@@ -383,6 +388,46 @@ banner.focus-banner button {
 
 .focus-open-recipient {
   color: var(--postio-ink-secondary);
+}
+
+/* Attachments (04.6): cards in a row under the body -- a file icon, the
+   name in mono and the size beneath it. */
+.postio-attachments {
+  margin: var(--postio-space-3) 0 var(--postio-space-2);
+}
+
+button.postio-attachment-card {
+  min-height: 0;
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background: none;
+  box-shadow: none;
+}
+
+button.postio-attachment-card:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-attachment-card .postio-attachment-name {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-ui);
+  font-weight: normal;
+  color: var(--postio-ink);
+}
+
+.postio-attachment-card .postio-attachment-size {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.postio-attachment-icon {
+  color: var(--postio-dim);
+}
+
+button.focus-open-fold-line {
+  padding-left: 0;
 }
 
 .focus-open-fold-line label {

@@ -1249,6 +1249,16 @@ pub async fn demo() -> (Store, AccountId) {
             let mut message = message(report.account.id, inbox, row, when, newest);
             if newest && index == OPENED {
                 message.attachments = opened_parts();
+                // Who it went to and who was copied, as screen 04 draws them.
+                message.to = vec![
+                    EmailAddress::new(Some("You"), "you@example.com"),
+                    EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net"),
+                    EmailAddress::new(Some("Grace Oyelaran"), "grace@example.org"),
+                ];
+                message.cc = vec![EmailAddress::new(
+                    Some("Harbor API"),
+                    "harbor-api@example.org",
+                )];
             }
             let id = RfcMessageId::new(format!("<demo.{index}.{step}@example.test>"));
             message.rfc_message_id = Some(id.clone());

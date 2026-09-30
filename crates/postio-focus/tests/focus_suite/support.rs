@@ -593,6 +593,8 @@ impl Fixture {
         let mut attachment =
             postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", 48_000);
         attachment.filename = Some(name.to_owned());
+        // A part the reader draws is one it can address.
+        attachment.part_id = Some("2".to_owned());
         message.attachments.push(attachment);
         MessageRepository::new(&connection)
             .create(&mut message)
