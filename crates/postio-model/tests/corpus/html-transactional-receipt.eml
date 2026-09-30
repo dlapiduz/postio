@@ -1,0 +1,28 @@
+Message-ID: <20260921T091500.receipt.4410@shop.example.org>
+Date: Mon, 21 Sep 2026 09:15:00 +0000
+From: Fernhill Books <orders@fernhill.example.org>
+To: Ines Marwick <ines.marwick@example.com>
+Subject: Your receipt for order 4410
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Receipt 4410</title></head>
+<body style="margin:0;background:#ffffff;font-family:Helvetica,Arial,sans-serif;color:#1c1c1c;">
+<div style="display:none;max-height:0;overflow:hidden;">Preheader: thanks for your order, it ships tomorrow.</div>
+<table role="presentation" width="560" align="center" cellpadding="0" cellspacing="0">
+ <tr><td style="padding:24px 0 8px 0;"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAH0lEQVR42mPItp9HFcQwatCoQaMGjRo0atCoQQNvEACAC+Ifuu/PpQAAAABJRU5ErkJggg==" width="24" height="24" alt="Fernhill Books"> <span style="font-size:20px;font-weight:bold;vertical-align:top;">Fernhill Books</span></td></tr>
+ <tr><td style="padding:8px 0 16px 0;font-size:15px;">Order 4410, placed 21 September 2026.</td></tr>
+ <tr><td>
+  <table role="presentation" width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;font-size:14px;">
+   <tr style="background:#f1f1f1;"><th align="left">Item</th><th align="right">Qty</th><th align="right">Price</th></tr>
+   <tr><td>The Salt Road, paperback</td><td align="right">1</td><td align="right">14.00</td></tr>
+   <tr><td>Field Guide to Lichens</td><td align="right">2</td><td align="right">38.00</td></tr>
+   <tr><td>Gift wrap</td><td align="right">1</td><td align="right">2.50</td></tr>
+   <tr style="border-top:2px solid #1c1c1c;"><td><strong>Total</strong></td><td></td><td align="right"><strong>54.50</strong></td></tr>
+  </table>
+ </td></tr>
+ <tr><td style="padding:16px 0;font-size:13px;color:#555555;">Questions? Reply to this message or visit <a href="https://fernhill.example.org/help" style="color:#6b3f9e;">our help pages</a>.</td></tr>
+</table>
+</body></html>

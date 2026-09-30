@@ -39,6 +39,8 @@ struct Fake {
     broken: RefCell<Vec<(i64, String)>>,
     /// Mailboxes whose reads fail a few times and then recover.
     flaky: RefCell<Vec<(i64, u8, String)>>,
+    /// Mail delivered to the top of a mailbox since it was first read.
+    arrived: RefCell<Vec<(i64, u32)>>,
 }
 
 /// The folder a request names. These tests open folders, not smart folders —
@@ -88,6 +90,30 @@ impl Fake {
         self.clone()
     }
 
+    /// `count` new messages land at the top of `mailbox`: every row already
+    /// there moves down, keeping its id.
+    fn deliver(self: &Rc<Self>, mailbox: i64, count: u32) {
+        for (id, total) in self.totals.borrow_mut().iter_mut() {
+            if *id == mailbox {
+                *total += count;
+            }
+        }
+        let mut arrived = self.arrived.borrow_mut();
+        match arrived.iter_mut().find(|(id, _)| *id == mailbox) {
+            Some((_, newer)) => *newer += count,
+            None => arrived.push((mailbox, count)),
+        }
+    }
+
+    fn newer(&self, mailbox: MailboxId) -> u32 {
+        self.arrived
+            .borrow()
+            .iter()
+            .find(|(id, _)| MailboxId::new(*id) == mailbox)
+            .map(|(_, newer)| *newer)
+            .unwrap_or(0)
+    }
+
     fn drain(&self) -> Vec<PageRequest> {
         self.asked.borrow_mut().drain(..).collect()
     }
@@ -121,13 +147,23 @@ impl MessageSource for Fake {
             });
         let total = self.total_of(scope_mailbox(&request));
         let mailbox = scope_mailbox(&request);
+        let newer = self.newer(mailbox);
         Box::pin(async move {
             if let Some(reason) = broken {
                 return Err(reason);
             }
             let end = (request.offset + request.limit).min(total);
             let rows = (request.offset..end)
-                .map(|position| row(mailbox, position))
+                .map(|position| match position.checked_sub(newer) {
+                    Some(original) => row(mailbox, original),
+                    // The newest first: the one delivered last is on top.
+                    None => Row {
+                        id: MessageId::new(
+                            mailbox.get() * 1_000_000 + 900_000 + (newer - position) as i64,
+                        ),
+                        ..row(mailbox, 0)
+                    },
+                })
                 .collect();
             Ok(Page { total, rows })
         })
@@ -256,19 +292,37 @@ pub fn the_message_list_is_fed_from_the_runtime() {
         move |_, position, removed, added| changes.borrow_mut().push((position, removed, added))
     });
 
+    source.deliver(INBOX, 2);
     feed.apply(&Event::NewMail {
         account: postio_model::AccountId::new(1),
         mailbox: MailboxId::new(INBOX),
         messages: vec![MessageId::new(9_001), MessageId::new(9_002)],
     });
+    // Read first, then inserted with its contents: the list does not put
+    // two skeletons on top and fill them in later (maintainer,
+    // 2026-09-25).
+    settle();
 
-    assert_eq!(
-        *changes.borrow(),
-        [(0, 0, 2)],
-        "new mail has to arrive as an insertion at the top. A reset here \
-         reads as `(0, 200, 202)` and costs every row widget on screen"
+    assert!(
+        changes.borrow().contains(&(0, 0, 2)),
+        "new mail has to arrive as an insertion at the top: {:?}",
+        changes.borrow()
+    );
+    assert!(
+        changes
+            .borrow()
+            .iter()
+            .all(|(_, removed, added)| *removed <= 2 && *added <= 2),
+        "new mail replaced a stretch of the list rather than inserting \
+         above it -- a reset reads as `(0, 200, 202)` and costs every row \
+         widget on screen: {:?}",
+        changes.borrow()
     );
     assert_eq!(list.n_items(), 202, "two arrived");
+    assert!(
+        loaded(&list, 0).is_some(),
+        "the new row is inserted with its contents"
+    );
     assert_eq!(
         anchor.id(),
         anchored,

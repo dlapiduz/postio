@@ -36,15 +36,20 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
-#[path = "../webkit_probe.rs"]
-mod webkit_probe;
-
+mod body_view;
+mod body_view_a11y;
+mod body_view_find;
+mod body_view_select;
+mod body_view_theme;
+mod body_view_zoom;
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
+mod gtk_banner_keys;
 mod gtk_capture;
 mod gtk_cheatsheet;
 mod gtk_checkrow;
+mod gtk_components;
 mod gtk_composer_action_row;
 mod gtk_composer_attachments;
 mod gtk_composer_autosave;
@@ -56,6 +61,7 @@ mod gtk_composer_header;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
 mod gtk_composer_many;
+mod gtk_composer_markdown;
 mod gtk_composer_recipient_select;
 mod gtk_composer_recipients;
 mod gtk_composer_reply;
@@ -90,11 +96,13 @@ mod gtk_folder_reload_scope;
 mod gtk_folder_sections;
 mod gtk_go_to;
 mod gtk_identity;
+mod gtk_jank;
 mod gtk_keymap_lazy;
 mod gtk_layout_intent;
 mod gtk_list_focus_return;
 mod gtk_list_mark_read;
 mod gtk_list_recycling;
+mod gtk_list_refresh;
 mod gtk_list_reload;
 mod gtk_list_select_message;
 mod gtk_list_state;
@@ -116,7 +124,10 @@ mod gtk_prev_view;
 mod gtk_rail;
 mod gtk_reader_account;
 mod gtk_reader_actions;
+mod gtk_reader_anchor;
+mod gtk_reader_commands;
 mod gtk_reader_fonts;
+mod gtk_reader_notices;
 mod gtk_reader_outgoing;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
@@ -174,7 +185,74 @@ mod no_stray_prints;
 /// this is for; nothing here is held out today.
 const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
+/// The render deadline for every test that is not about the deadline: the
+/// production bound, scaled by `POSTIO_TEST_PATIENCE`, so a debug build on a
+/// busy runner does not fall back by accident (spec 006 research R6).
+pub(crate) fn reader_deadline() -> std::time::Duration {
+    postio_test_support::scaled(postio_gtk::body_view::DEFAULT_RENDER_DEADLINE)
+}
+
 const CASES: &[(&str, fn())] = &[
+    (
+        "body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once",
+        body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once as fn(),
+    ),
+    (
+        "body_view_zoom::zoom_steps_keep_the_place_and_the_selection",
+        body_view_zoom::zoom_steps_keep_the_place_and_the_selection as fn(),
+    ),
+    (
+        "body_view_select::the_rail_follows_the_snapshot",
+        body_view_select::the_rail_follows_the_snapshot as fn(),
+    ),
+    (
+        "body_view_a11y::the_accessible_text_is_the_text_index",
+        body_view_a11y::the_accessible_text_is_the_text_index as fn(),
+    ),
+    (
+        "body_view_find::find_highlights_steps_and_survives_a_re_render",
+        body_view_find::find_highlights_steps_and_survives_a_re_render as fn(),
+    ),
+    (
+        "body_view_select::links_are_followed_by_pointer_and_keyboard",
+        body_view_select::links_are_followed_by_pointer_and_keyboard as fn(),
+    ),
+    (
+        "body_view_select::clicking_a_fold_opens_it",
+        body_view_select::clicking_a_fold_opens_it as fn(),
+    ),
+    (
+        "body_view_select::a_drag_across_cells_selects_and_copies_them_as_rows",
+        body_view_select::a_drag_across_cells_selects_and_copies_them_as_rows as fn(),
+    ),
+    (
+        "body_view_select::double_and_triple_clicks_select_a_word_and_a_line",
+        body_view_select::double_and_triple_clicks_select_a_word_and_a_line as fn(),
+    ),
+    (
+        "body_view_theme::darken_is_its_own_undo",
+        body_view_theme::darken_is_its_own_undo as fn(),
+    ),
+    (
+        "body_view_theme::a_theme_change_re_renders_once_and_keeps_the_place",
+        body_view_theme::a_theme_change_re_renders_once_and_keeps_the_place as fn(),
+    ),
+    (
+        "body_view::a_very_tall_message_scrolls_to_its_end_within_budget",
+        body_view::a_very_tall_message_scrolls_to_its_end_within_budget as fn(),
+    ),
+    (
+        "body_view::a_render_past_its_deadline_shows_the_plain_text",
+        body_view::a_render_past_its_deadline_shows_the_plain_text as fn(),
+    ),
+    (
+        "body_view::no_frame_shows_only_the_ground",
+        body_view::no_frame_shows_only_the_ground as fn(),
+    ),
+    (
+        "body_view::a_snapshot_fills_the_view_and_scrolls_with_it",
+        body_view::a_snapshot_fills_the_view_and_scrolls_with_it as fn(),
+    ),
     (
         "gtk_conversation::dropping_a_conversation_releases_its_pane",
         gtk_conversation::dropping_a_conversation_releases_its_pane as fn(),
@@ -212,24 +290,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_styles::a_body_that_has_not_arrived_says_so_in_the_thread as fn(),
     ),
     (
-        "gtk_reader_styles::moving_between_messages_never_loads_an_error_page",
-        gtk_reader_styles::moving_between_messages_never_loads_an_error_page as fn(),
-    ),
-    (
         "gtk_reader_styles::the_readers_verbs_live_in_its_header",
         gtk_reader_styles::the_readers_verbs_live_in_its_header as fn(),
-    ),
-    (
-        "gtk_reader_styles::the_users_own_message_is_marked_in_the_document",
-        gtk_reader_styles::the_users_own_message_is_marked_in_the_document as fn(),
-    ),
-    (
-        "gtk_reader_styles::from_to_and_cc_share_a_column",
-        gtk_reader_styles::from_to_and_cc_share_a_column as fn(),
-    ),
-    (
-        "gtk_reader_styles::a_page_key_moves_the_document_itself",
-        gtk_reader_styles::a_page_key_moves_the_document_itself as fn(),
     ),
     (
         "gtk_reader_styles::a_redraw_of_an_unchanged_thread_sanitises_nothing",
@@ -242,10 +304,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_outgoing::a_message_being_sent_offers_sending_verbs_and_not_replies",
         gtk_reader_outgoing::a_message_being_sent_offers_sending_verbs_and_not_replies as fn(),
-    ),
-    (
-        "gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message",
-        gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message as fn(),
     ),
     (
         "gtk_settings_sync::the_pane_shows_the_files_values",
@@ -310,6 +368,34 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_ui::the_density_line_says_what_the_choice_costs",
         gtk_settings_ui::the_density_line_says_what_the_choice_costs as fn(),
+    ),
+    (
+        "gtk_components::a_kicker_is_capitals_whatever_its_source_case",
+        gtk_components::a_kicker_is_capitals_whatever_its_source_case as fn(),
+    ),
+    (
+        "gtk_components::the_compose_button_holds_its_width_while_composing",
+        gtk_components::the_compose_button_holds_its_width_while_composing as fn(),
+    ),
+    (
+        "gtk_components::a_rebind_reaches_the_headers_key_caps",
+        gtk_components::a_rebind_reaches_the_headers_key_caps as fn(),
+    ),
+    (
+        "gtk_components::every_overlay_is_one_plate",
+        gtk_components::every_overlay_is_one_plate as fn(),
+    ),
+    (
+        "gtk_components::every_primary_button_is_the_same_kind",
+        gtk_components::every_primary_button_is_the_same_kind as fn(),
+    ),
+    (
+        "gtk_components::every_settings_heading_keeps_one_rhythm",
+        gtk_components::every_settings_heading_keeps_one_rhythm as fn(),
+    ),
+    (
+        "gtk_components::a_type_role_resolves_to_its_size",
+        gtk_components::a_type_role_resolves_to_its_size as fn(),
     ),
     (
         "gtk_checkrow::showing_the_files_value_is_not_changing_it",
@@ -412,6 +498,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_focus::the_keyboard_walks_the_composer_in_a_defined_order as fn(),
     ),
     (
+        "gtk_composer_recipient_select::destroying_a_composer_releases_recipient_completion",
+        gtk_composer_recipient_select::destroying_a_composer_releases_recipient_completion as fn(),
+    ),
+    (
         "gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field",
         gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field as fn(),
     ),
@@ -453,6 +543,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick",
         gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick as fn(),
+    ),
+    (
+        "gtk_feeds::destroying_a_fed_window_releases_its_sources",
+        gtk_feeds::destroying_a_fed_window_releases_its_sources as fn(),
     ),
     (
         "gtk_first_frame::work_deferred_to_the_first_frame_runs_even_if_the_window_is_up",
@@ -519,6 +613,34 @@ const CASES: &[(&str, fn())] = &[
         gtk_list_recycling::a_list_view_builds_a_bounded_window_however_big_the_model_is as fn(),
     ),
     (
+        "gtk_list_refresh::a_resync_that_moved_nothing_tells_the_view_nothing",
+        gtk_list_refresh::a_resync_that_moved_nothing_tells_the_view_nothing as fn(),
+    ),
+    (
+        "gtk_list_refresh::mail_landing_on_top_arrives_with_its_contents",
+        gtk_list_refresh::mail_landing_on_top_arrives_with_its_contents as fn(),
+    ),
+    (
+        "gtk_list_refresh::a_message_leaving_is_one_row_taken_out_where_it_stood",
+        gtk_list_refresh::a_message_leaving_is_one_row_taken_out_where_it_stood as fn(),
+    ),
+    (
+        "gtk_list_refresh::a_conversation_moving_to_the_top_keeps_the_cursor_on_it",
+        gtk_list_refresh::a_conversation_moving_to_the_top_keeps_the_cursor_on_it as fn(),
+    ),
+    (
+        "gtk_list_refresh::switching_folders_keeps_the_rows_until_the_new_ones_land",
+        gtk_list_refresh::switching_folders_keeps_the_rows_until_the_new_ones_land as fn(),
+    ),
+    (
+        "gtk_list_refresh::leaving_a_search_puts_the_folder_back_without_reading_it",
+        gtk_list_refresh::leaving_a_search_puts_the_folder_back_without_reading_it as fn(),
+    ),
+    (
+        "gtk_list_refresh::an_empty_folder_does_not_speak_for_the_next_one_while_it_loads",
+        gtk_list_refresh::an_empty_folder_does_not_speak_for_the_next_one_while_it_loads as fn(),
+    ),
+    (
         "gtk_list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
         gtk_list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone
             as fn(),
@@ -568,8 +690,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_prev_view::h_steps_back_out_of_a_thread_the_same_way_escape_does as fn(),
     ),
     (
-        "gtk_reader_scroll::page_down_and_page_up_move_a_marker_at_a_time",
-        gtk_reader_scroll::page_down_and_page_up_move_a_marker_at_a_time as fn(),
+        "gtk_reader_scroll::page_down_and_page_up_move_a_screen_at_a_time",
+        gtk_reader_scroll::page_down_and_page_up_move_a_screen_at_a_time as fn(),
     ),
     (
         "gtk_reader_scroll::a_new_message_resets_the_scroll_position",
@@ -582,6 +704,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer",
         gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer as fn(),
+    ),
+    (
+        "gtk_row::rows_under_one_cascade_read_one_palette",
+        gtk_row::rows_under_one_cascade_read_one_palette as fn(),
     ),
     (
         "gtk_row::the_row_draws_the_canvas_anatomy_at_every_density",
@@ -598,6 +724,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_list_mark_read::marking_a_message_read_does_not_rebuild_the_list",
         gtk_list_mark_read::marking_a_message_read_does_not_rebuild_the_list as fn(),
+    ),
+    (
+        "gtk_list_mark_read::another_account_s_changes_do_not_reload_this_sidebar",
+        gtk_list_mark_read::another_account_s_changes_do_not_reload_this_sidebar as fn(),
+    ),
+    (
+        "gtk_list_mark_read::an_archive_of_rows_on_screen_takes_them_out_where_they_stand",
+        gtk_list_mark_read::an_archive_of_rows_on_screen_takes_them_out_where_they_stand as fn(),
     ),
     (
         "gtk_list_mark_read::a_removal_is_told_to_the_source_before_the_list_reloads",
@@ -632,12 +766,20 @@ const CASES: &[(&str, fn())] = &[
         gtk_search_live::the_readout_answers_the_query_on_screen_and_no_other as fn(),
     ),
     (
+        "gtk_search_panel::destroying_a_search_window_releases_its_surfaces",
+        gtk_search_panel::destroying_a_search_window_releases_its_surfaces as fn(),
+    ),
+    (
         "gtk_search_panel::a_search_with_no_hits_does_not_leave_the_last_message_on_screen",
         gtk_search_panel::a_search_with_no_hits_does_not_leave_the_last_message_on_screen as fn(),
     ),
     (
         "gtk_search_panel::a_search_that_found_nothing_offers_the_word_that_was_meant",
         gtk_search_panel::a_search_that_found_nothing_offers_the_word_that_was_meant as fn(),
+    ),
+    (
+        "gtk_search_panel::results_for_another_word_say_so_and_offer_the_typed_one",
+        gtk_search_panel::results_for_another_word_say_so_and_offer_the_typed_one as fn(),
     ),
     (
         "gtk_search_panel::the_scope_column_narrows_a_search_without_retyping_it",
@@ -963,6 +1105,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back as fn(),
     ),
     (
+        "gtk_banner_keys::the_banner_commands_do_what_their_buttons_do",
+        gtk_banner_keys::the_banner_commands_do_what_their_buttons_do as fn(),
+    ),
+    (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
         gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b
             as fn(),
@@ -1028,6 +1174,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_accelerators::menu_items_carry_parseable_accelerators as fn(),
     ),
     (
+        "gtk_jank::a_blocked_main_loop_is_reported_with_the_action_before_it",
+        gtk_jank::a_blocked_main_loop_is_reported_with_the_action_before_it as fn(),
+    ),
+    (
         "gtk_capture::a_window_the_compositor_never_showed_is_an_error",
         gtk_capture::a_window_the_compositor_never_showed_is_an_error as fn(),
     ),
@@ -1090,6 +1240,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back",
         gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back as fn(),
+    ),
+    (
+        "gtk_composer_markdown::a_draft_the_desktop_saves_carries_no_markdown",
+        gtk_composer_markdown::a_draft_the_desktop_saves_carries_no_markdown as fn(),
     ),
     (
         "gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own",
@@ -1188,6 +1342,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_folder_reload_scope::a_folder_reload_leaves_the_list_in_the_unified_view as fn(),
     ),
     (
+        "gtk_folder_reload_scope::unified_rereads_for_its_inboxes_and_not_for_the_archive",
+        gtk_folder_reload_scope::unified_rereads_for_its_inboxes_and_not_for_the_archive as fn(),
+    ),
+    (
         "gtk_folder_reload_scope::switching_accounts_still_opens_the_new_accounts_inbox",
         gtk_folder_reload_scope::switching_accounts_still_opens_the_new_accounts_inbox as fn(),
     ),
@@ -1245,6 +1403,49 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::the_rail_lists_a_thread_and_marks_what_is_on_screen as fn(),
     ),
     (
+        "gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before",
+        gtk_conversation::a_pane_shown_again_does_not_show_the_thread_it_held_before as fn(),
+    ),
+    (
+        "gtk_reader_notices::the_body_starts_at_the_same_place_whatever_the_notices",
+        gtk_reader_notices::the_body_starts_at_the_same_place_whatever_the_notices as fn(),
+    ),
+    (
+        "gtk_reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to",
+        gtk_reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to
+            as fn(),
+    ),
+    (
+        "gtk_reader_notices::the_body_starts_at_the_same_place_in_the_reader_and_the_conversation",
+        gtk_reader_notices::the_body_starts_at_the_same_place_in_the_reader_and_the_conversation
+            as fn(),
+    ),
+    (
+        "gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before",
+        gtk_reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before
+            as fn(),
+    ),
+    (
+        "gtk_reader_commands::the_keys_darken_zoom_and_find_in_the_message_on_screen",
+        gtk_reader_commands::the_keys_darken_zoom_and_find_in_the_message_on_screen as fn(),
+    ),
+    (
+        "gtk_reader_commands::view_source_draws_what_was_sent",
+        gtk_reader_commands::view_source_draws_what_was_sent as fn(),
+    ),
+    (
+        "gtk_reader_anchor::a_late_body_does_not_throw_the_reader_back_to_the_top",
+        gtk_reader_anchor::a_late_body_does_not_throw_the_reader_back_to_the_top as fn(),
+    ),
+    (
+        "gtk_reader_anchor::showing_a_messages_images_keeps_its_place",
+        gtk_reader_anchor::showing_a_messages_images_keeps_its_place as fn(),
+    ),
+    (
+        "gtk_rail::the_same_thread_again_keeps_the_rails_rows_and_scroll",
+        gtk_rail::the_same_thread_again_keeps_the_rails_rows_and_scroll as fn(),
+    ),
+    (
         "gtk_rail::activating_a_row_reports_the_message_it_names",
         gtk_rail::activating_a_row_reports_the_message_it_names as fn(),
     ),
@@ -1261,8 +1462,12 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::hiding_the_rail_outlasts_the_conversation_and_the_width as fn(),
     ),
     (
-        "gtk_rail::a_single_message_conversation_has_no_rail",
-        gtk_rail::a_single_message_conversation_has_no_rail as fn(),
+        "gtk_rail::a_single_message_conversation_has_no_rail_and_no_column",
+        gtk_rail::a_single_message_conversation_has_no_rail_and_no_column as fn(),
+    ),
+    (
+        "gtk_rail::the_body_keeps_its_width_between_threads_and_a_single_message_takes_the_pane",
+        gtk_rail::the_body_keeps_its_width_between_threads_and_a_single_message_takes_the_pane as fn(),
     ),
     (
         "gtk_rail::below_the_floor_the_header_carries_the_index",
@@ -1293,8 +1498,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::marking_a_message_read_does_not_redraw_the_conversation as fn(),
     ),
     (
-        "gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows",
-        gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows as fn(),
+        "gtk_rail::the_conversation_header_is_pinned_and_is_the_readers",
+        gtk_rail::the_conversation_header_is_pinned_and_is_the_readers as fn(),
     ),
     (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",
@@ -1305,8 +1510,13 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_actions::the_action_bar_follows_the_pane_carries_the_keymap_and_runs_registry_commands as fn(),
     ),
     (
-        "gtk_reader_fonts::the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document",
-        gtk_reader_fonts::the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document as fn(),
+        "gtk_reader_fonts::the_faces_are_the_readers_own_and_not_carried_by_the_document",
+        gtk_reader_fonts::the_faces_are_the_readers_own_and_not_carried_by_the_document as fn(),
+    ),
+    (
+        "gtk_reader_fonts::a_warmed_reader_draws_its_first_message_in_full",
+        gtk_reader_fonts::a_warmed_reader_draws_its_first_message_in_full
+            as fn(),
     ),
     (
         "gtk_shell::hiding_the_focused_pane_keeps_focus_in_the_workspace",
@@ -1351,6 +1561,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside",
         gtk_window_open_message::open_mailbox_and_open_message_switch_the_window_from_outside as fn(),
+    ),
+    (
+        "list_model::giving_up_a_first_page_there_is_none_of_ends_the_wait",
+        list_model::giving_up_a_first_page_there_is_none_of_ends_the_wait as fn(),
     ),
     (
         "list_model::an_empty_list_has_nothing_in_it",
@@ -1429,16 +1643,16 @@ const CASES: &[(&str, fn())] = &[
         list_model::a_held_delivery_is_not_postponed_by_a_window_that_is_repainting as fn(),
     ),
     (
-        "gtk_reader_teardown::a_dropped_reader_releases_its_webview",
-        gtk_reader_teardown::a_dropped_reader_releases_its_webview as fn(),
+        "gtk_reader_teardown::a_dropped_reader_releases_its_view",
+        gtk_reader_teardown::a_dropped_reader_releases_its_view as fn(),
     ),
     (
-        "gtk_reader_teardown::readers_do_not_accumulate_webviews",
-        gtk_reader_teardown::readers_do_not_accumulate_webviews as fn(),
+        "gtk_reader_teardown::readers_do_not_accumulate_views",
+        gtk_reader_teardown::readers_do_not_accumulate_views as fn(),
     ),
     (
-        "gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_web_process",
-        gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_web_process as fn(),
+        "gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_renderer",
+        gtk_window_teardown::a_destroyed_window_releases_its_reader_and_its_renderer as fn(),
     ),
     (
         "gtk_window_teardown::dropping_a_window_without_destroying_it_is_not_enough",
@@ -1493,6 +1707,31 @@ pub fn settle_until(what: &str, done: impl Fn() -> bool) {
         },
         done,
     );
+}
+
+/// A plain, read message at `position`, the row the list and selection
+/// tests page through.
+pub fn row(position: u32) -> postio_gtk::list::Row {
+    postio_gtk::list::Row {
+        id: postio_model::ids::MessageId::new(position as i64 + 1),
+        thread: None,
+        from: Some(postio_model::address::EmailAddress::new(
+            Some("Ada Lovelace"),
+            "ada@example.com",
+        )),
+        subject: Some(format!("Note {position}")),
+        preview: Some("…".into()),
+        received_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 8, 23, 9, 0, 0)
+            .unwrap(),
+        seen: true,
+        flagged: false,
+        answered: false,
+        send_state: None,
+        send_at: None,
+        has_attachments: false,
+        thread_count: 1,
+        participants: Vec::new(),
+    }
 }
 
 /// Turn the main loop a fixed number of times, draining it each time.

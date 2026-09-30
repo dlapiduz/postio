@@ -44,7 +44,9 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
-use crate::sidebar::{SyncStatus, age};
+use postio_core::Keymap;
+
+use crate::sidebar::SyncStatus;
 
 /// The list pane's state machine, derived rather than stored.
 // Moved to `postio-ui` so the macOS list pane derives the same six states,
@@ -52,149 +54,9 @@ use crate::sidebar::{SyncStatus, age};
 // itself. The names are re-exported so nothing in this crate had to change,
 // and so every comment that names `derive` still reads.
 pub use postio_ui::list_state::{
-    OPENING_THRESHOLD, Placement, State, Waiting, derive, derive_aggregate, derive_opening,
-    describe_wait, is_current,
+    Content, OPENING_THRESHOLD, Offer, Placement, State, Waiting, derive, derive_aggregate,
+    derive_opening, describe, describe_wait, is_current, resolve,
 };
-
-/// One key hint: what it does, and the key that does it.
-///
-/// Every key named here is already a live [`postio_core::CommandId`] with
-/// its own binding and palette entry — this widget only points at it, the
-/// same way the focused row's key hints do, rather than growing a fourth
-/// clickable-button idiom the app does not otherwise have.
-type Hint = (&'static str, &'static str);
-
-struct Content {
-    icon: &'static str,
-    icon_class: &'static str,
-    title: String,
-    detail: String,
-    hints: Vec<Hint>,
-}
-
-fn plural(count: u64, noun: &str) -> String {
-    if count == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{count} {noun}s")
-    }
-}
-
-fn describe(state: &State, now: Instant) -> Content {
-    match state {
-        State::InboxZero {
-            last_sync,
-            stored,
-            mailbox,
-        } => {
-            let synced = match last_sync {
-                Some(at) => format!(
-                    "Last synced {} ago.",
-                    age(now.saturating_duration_since(*at))
-                ),
-                None => "Never synced yet.".to_string(),
-            };
-            // The inbox's emptiness is an achievement; any other folder's is
-            // a fact about that folder, named so it cannot be mistaken for
-            // the inbox (#1535).
-            let (title, lead) = match mailbox {
-                None => ("Inbox is empty".to_string(), "Nothing left to triage. "),
-                Some(name) => (format!("{name} is empty"), ""),
-            };
-            Content {
-                icon: "emblem-ok-symbolic",
-                icon_class: "inbox-zero",
-                title,
-                detail: format!(
-                    "{lead}{} still in the local store and searchable. {synced}",
-                    plural(*stored, "message")
-                ),
-                hints: vec![("Search all mail", "/"), ("Compose", "c")],
-            }
-        }
-        State::Offline { queued } => Content {
-            icon: "network-offline-symbolic",
-            icon_class: "offline",
-            title: "Offline — reading local mail".to_string(),
-            detail: if *queued == 0 {
-                "Everything already synced still opens.".to_string()
-            } else {
-                format!(
-                    "Everything already synced still opens. {} waiting to send when the link is back.",
-                    plural(*queued, "change")
-                )
-            },
-            hints: vec![("Retry now", "R")],
-        },
-        State::Failing { reason } => Content {
-            icon: "dialog-error-symbolic",
-            icon_class: "failing",
-            title: "Sync failed".to_string(),
-            detail: format!("{reason} Local mail is untouched."),
-            hints: vec![("Retry now", "R")],
-        },
-        // The query is echoed back rather than described, because what to
-        // change is the thing the user cannot see from here: the box holds
-        // chips, and the operators they stand for are what actually ran.
-        //
-        // The wording is `postio_ui::list_state`'s, not this file's. It was
-        // written here, which meant the macOS list had no way to reach it and
-        // drew "This store has no mail in it yet." over a search that matched
-        // nothing -- a confident false statement about somebody's own mail,
-        // and the exact scenario ADR 0005 Q10 names. Quotes rather than a
-        // mono span, because a query is user-typed and a Pango markup span
-        // would mean escaping it; a label that renders `&` wrong is a worse
-        // bug than a face that is not quite the token.
-        State::NoMatches { query, incomplete } => Content {
-            icon: "system-search-symbolic",
-            icon_class: "no-matches",
-            title: postio_ui::list_state::no_matches_title().to_string(),
-            detail: postio_ui::list_state::no_matches_detail(query, incomplete),
-            hints: vec![("Back to the folder", "Esc")],
-        },
-        // The one plate in the family that offers no verb, and that is
-        // correct rather than an omission: the work is in flight, so `R`
-        // would either do nothing or restart a read that is already running.
-        State::Opening { waiting } => {
-            let (title, detail) = describe_wait(*waiting);
-            Content {
-                icon: "content-loading-symbolic",
-                icon_class: "opening",
-                title: title.to_string(),
-                detail: detail.to_string(),
-                hints: Vec::new(),
-            }
-        }
-        State::Partial { accounts } => Content {
-            icon: "network-offline-symbolic",
-            icon_class: "offline",
-            // Named in the title, because the account is the fact. A title
-            // that said "Some accounts are offline" would make the reader
-            // open something else to find out which.
-            title: "Showing local mail".to_string(),
-            detail: format!(
-                "{} not reachable, so {} mail is what was already synced. \
-                 Everything here still opens.",
-                naming(accounts),
-                if accounts.len() == 1 { "its" } else { "their" },
-            ),
-            hints: vec![("Retry now", "R")],
-        },
-    }
-}
-
-/// "Personal is", "Personal and Work are", "Personal, Work and Archive are".
-///
-/// Every name, never "and 2 others": naming one of three absent accounts is
-/// its own omission, and the list is bounded by how many accounts a person
-/// configures.
-fn naming(accounts: &[String]) -> String {
-    let verb = if accounts.len() == 1 { "is" } else { "are" };
-    // The joining itself is `postio_ui::format::names`, shared with the
-    // selection summary: the banner and the summary name the same absent
-    // accounts and must spell the list the same way (#811).
-    format!("{} {verb}", postio_ui::format::names(accounts))
-}
 
 mod imp {
     use std::cell::RefCell;
@@ -206,6 +68,9 @@ mod imp {
         pub title: gtk::Label,
         pub detail: gtk::Label,
         pub hints: gtk::Box,
+        /// The keymap the hints are read from; the registry's own until
+        /// the window hands over the one in force.
+        pub keymap: RefCell<Keymap>,
         pub inputs: RefCell<(SyncStatus, u64, u64, u64, Option<String>)>,
         /// The folder in view, by the name the sidebar shows, when it is
         /// not the inbox -- what an empty plate is titled with (#1535). Its
@@ -234,6 +99,9 @@ mod imp {
         /// this one has to fire exactly once, a fixed interval after the
         /// wait began.
         pub opening_tick: RefCell<Option<glib::SourceId>>,
+        /// Whether the list's first page for what it now shows is still on
+        /// its way. See [`super::ListStateView::set_loading`].
+        pub loading: std::cell::Cell<bool>,
     }
 
     impl Default for ListStateView {
@@ -243,12 +111,14 @@ mod imp {
                 title: gtk::Label::new(None),
                 detail: gtk::Label::new(None),
                 hints: gtk::Box::new(gtk::Orientation::Horizontal, 16),
+                keymap: RefCell::new(Keymap::defaults().clone()),
                 inputs: RefCell::new((SyncStatus::default(), 0, 0, 0, None)),
                 place: RefCell::new(None),
                 accounts: RefCell::new(None),
                 opening: RefCell::new(None),
                 tick: RefCell::new(None),
                 opening_tick: RefCell::new(None),
+                loading: std::cell::Cell::new(false),
             }
         }
     }
@@ -327,6 +197,13 @@ impl ListStateView {
         self.render();
     }
 
+    /// Name the keys the keymap in force binds, redrawing the state on
+    /// screen if there is one.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        *self.imp().keymap.borrow_mut() = keymap.clone();
+        self.render();
+    }
+
     /// What the list pane currently knows: the connection, how many rows are
     /// loaded for the mailbox in view, how many messages the local store
     /// still holds, and how many local writes have not reached the server.
@@ -374,6 +251,20 @@ impl ListStateView {
         }
         self.imp().inputs.borrow_mut().4 = query;
         self.render();
+    }
+
+    /// Say whether the list is still waiting for its first page.
+    ///
+    /// Waiting is not empty. With nothing to show yet the row count is zero,
+    /// and the plate used to read that as an empty folder -- "Inbox is
+    /// empty" for the frame or two before the inbox's first page landed.
+    /// While loading, the verdicts that are about emptiness -- an empty
+    /// folder, a search that matched nothing -- are withheld; what the
+    /// connection is doing is still said, because it is true either way.
+    pub fn set_loading(&self, loading: bool) {
+        if self.imp().loading.replace(loading) != loading {
+            self.render();
+        }
     }
 
     /// Which folder the empty plate is about: `None` for the inbox, the
@@ -486,6 +377,16 @@ impl ListStateView {
     /// picture and whose description of itself come from different code is a
     /// widget that can be wrong in exactly the way nothing catches.
     fn derived(&self) -> Option<State> {
+        let state = self.derived_ignoring_load();
+        if self.imp().loading.get() {
+            return state.filter(|state| {
+                !matches!(state, State::InboxZero { .. } | State::NoMatches { .. })
+            });
+        }
+        state
+    }
+
+    fn derived_ignoring_load(&self) -> Option<State> {
         let imp = self.imp();
         // Before everything, and answering `None` below the threshold rather
         // than falling through: with no store there is no connection worth
@@ -539,10 +440,10 @@ impl ListStateView {
             imp.title.set_text(&content.title);
             imp.detail.set_text(&content.detail);
 
-            let spoken = content
-                .hints
+            let hints = resolve(&content.hints, &imp.keymap.borrow());
+            let spoken = hints
                 .iter()
-                .map(|(label, key)| format!("{label}, press {key}"))
+                .map(|hint| format!("{}, press {}", hint.label, hint.key))
                 .collect::<Vec<_>>()
                 .join(". ");
             self.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -553,8 +454,11 @@ impl ListStateView {
             while let Some(child) = imp.hints.first_child() {
                 imp.hints.remove(&child);
             }
-            for hint in &content.hints {
-                imp.hints.append(&hint_widget(hint));
+            for hint in &hints {
+                imp.hints.append(&crate::widgets::keyhint::chip(
+                    hint,
+                    "postio-liststate-hint",
+                ));
             }
 
             let placement = state.placement(item_count);
@@ -669,183 +573,4 @@ fn banner_container(
     row.append(&text);
     row.append(hints);
     row
-}
-
-fn hint_widget((label, key): &Hint) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    row.add_css_class("postio-liststate-hint");
-    row.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let text = gtk::Label::new(Some(label));
-    text.add_css_class("postio-liststate-hint-label");
-    text.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    let key = gtk::Label::new(Some(key));
-    key.add_css_class("postio-keyhint");
-    key.set_accessible_role(gtk::AccessibleRole::Presentation);
-
-    row.append(&text);
-    row.append(&key);
-    row
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-
-    #[test]
-    fn the_opening_plate_offers_no_verb() {
-        // The one plate in the family with no key hint and no retry, and
-        // that is correct rather than an omission: the work is in flight, so
-        // `R` would either do nothing or restart a read that is already
-        // running.
-        let content = describe(
-            &State::Opening {
-                waiting: Waiting::Keyring,
-            },
-            Instant::now(),
-        );
-        assert!(
-            content.hints.is_empty(),
-            "offering a verb here promises something to press, and there is \
-             nothing: {:?}",
-            content.hints
-        );
-    }
-
-    #[test]
-    fn the_no_matches_plate_says_the_query_and_the_way_out() {
-        let content = describe(
-            &State::NoMatches {
-                query: "from:ada invoice".to_string(),
-                incomplete: Vec::new(),
-            },
-            Instant::now(),
-        );
-        assert!(
-            content.detail.contains("from:ada invoice"),
-            "the plate does not say what was searched for: {}",
-            content.detail
-        );
-        // Never a dead end: every named state names a key.
-        assert_eq!(content.hints, vec![("Back to the folder", "Esc")]);
-    }
-
-    #[test]
-    fn every_state_offers_a_working_key() {
-        let now = Instant::now();
-        for state in [
-            State::InboxZero {
-                last_sync: Some(now - Duration::from_secs(12)),
-                stored: 4291,
-                mailbox: None,
-            },
-            State::Offline { queued: 2 },
-            State::Failing {
-                reason: "IMAP rejected the credentials.".to_string(),
-            },
-            State::NoMatches {
-                query: "from:ada invoice".to_string(),
-                incomplete: Vec::new(),
-            },
-        ] {
-            let content = describe(&state, now);
-            assert!(!content.hints.is_empty(), "{} offers no key", content.title);
-            for (label, key) in &content.hints {
-                assert!(!label.is_empty());
-                assert!(!key.is_empty());
-            }
-        }
-    }
-
-    #[test]
-    fn no_state_ever_shrugs() {
-        let now = Instant::now();
-        for state in [
-            State::InboxZero {
-                last_sync: None,
-                stored: 0,
-                mailbox: None,
-            },
-            State::Offline { queued: 0 },
-            State::Failing {
-                reason: "IMAP rejected the credentials.".to_string(),
-            },
-            State::NoMatches {
-                query: "from:ada invoice".to_string(),
-                incomplete: Vec::new(),
-            },
-        ] {
-            let content = describe(&state, now);
-            assert_ne!(content.detail.to_lowercase(), "something went wrong");
-            assert!(!content.detail.is_empty());
-            assert!(content.detail.len() > 10, "too terse to name anything");
-        }
-    }
-
-    #[test]
-    fn inbox_zero_names_when_it_last_synced() {
-        let now = Instant::now();
-        let never = describe(
-            &State::InboxZero {
-                last_sync: None,
-                stored: 4291,
-                mailbox: None,
-            },
-            now,
-        );
-        assert!(never.detail.contains("Never synced"));
-
-        let recently = describe(
-            &State::InboxZero {
-                last_sync: Some(now - Duration::from_secs(12)),
-                stored: 4291,
-                mailbox: None,
-            },
-            now,
-        );
-        assert!(recently.detail.contains("Last synced"));
-        assert!(recently.detail.contains("12s"));
-    }
-
-    #[test]
-    fn an_empty_folder_is_named_and_not_called_the_inbox() {
-        let now = Instant::now();
-        let archive = describe(
-            &State::InboxZero {
-                last_sync: None,
-                stored: 4291,
-                mailbox: Some("Archive".to_string()),
-            },
-            now,
-        );
-        assert_eq!(archive.title, "Archive is empty");
-        assert!(
-            !archive.detail.contains("triage"),
-            "an empty archive is not an inbox cleared: {}",
-            archive.detail
-        );
-        let inbox = describe(
-            &State::InboxZero {
-                last_sync: None,
-                stored: 4291,
-                mailbox: None,
-            },
-            now,
-        );
-        assert_eq!(inbox.title, "Inbox is empty");
-        assert!(inbox.detail.contains("Nothing left to triage"));
-    }
-
-    #[test]
-    fn offline_names_the_local_store_and_what_is_queued() {
-        let now = Instant::now();
-        let nothing_queued = describe(&State::Offline { queued: 0 }, now);
-        assert!(nothing_queued.detail.contains("still opens"));
-
-        let queued = describe(&State::Offline { queued: 3 }, now);
-        assert!(queued.detail.contains("3 changes"));
-    }
 }

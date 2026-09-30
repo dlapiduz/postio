@@ -41,12 +41,10 @@ use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::time::Instant;
 
-use chrono::{DateTime, Utc};
 use gtk::glib;
 use gtk::prelude::*;
-use postio_core::{ConnectionState, Event};
+use postio_core::Event;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
 use postio_ui::paging::{Fetch, Paging, Plan};
@@ -220,6 +218,12 @@ impl Inner {
     fn request(self: Rc<Self>, page: u32) {
         FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Some(fetch) = self.paging.borrow().fetch_for(page) else {
+            // Nothing to read -- a result set with no hits has no page 0.
+            // A list keeping the last rows on screen until this page lands
+            // would otherwise wait for good; the answer is that there is none.
+            if let Some(list) = self.list.upgrade() {
+                list.give_up(list.generation(), page);
+            }
             return;
         };
         let Some(list) = self.list.upgrade() else {
@@ -326,10 +330,14 @@ impl Inner {
             return;
         }
 
-        // Out of attempts: now it is worth saying, and it is said once.
+        // Out of attempts: now it is worth saying, and it is said once --
+        // and the list stops waiting for a page that is not coming, or a
+        // refresh holding its other pages for this one would hold them for
+        // good.
         for handler in self.errors.borrow().iter() {
             handler(message.clone());
         }
+        list.give_up(generation, page);
     }
 }
 
@@ -340,7 +348,21 @@ impl Inner {
 #[derive(Clone)]
 pub struct Feed(Rc<Inner>);
 
+/// A callback's non-owning reference to a message feed.
+#[derive(Clone)]
+pub(crate) struct WeakFeed(std::rc::Weak<Inner>);
+
+impl WeakFeed {
+    pub(crate) fn upgrade(&self) -> Option<Feed> {
+        self.0.upgrade().map(Feed)
+    }
+}
+
 impl Feed {
+    pub(crate) fn downgrade(&self) -> WeakFeed {
+        WeakFeed(Rc::downgrade(&self.0))
+    }
+
     /// Feed `list` from `source`. Shows nothing until [`open`](Self::open).
     pub fn new(list: &MessageList, source: Rc<dyn MessageSource>) -> Self {
         Feed(Rc::new(Inner {
@@ -356,12 +378,30 @@ impl Feed {
         }))
     }
 
+    /// Tell the list which folders are inboxes: the tree the sidebar just
+    /// read, every account it draws.
+    ///
+    /// Unified is the inboxes (#1692), so mail moving in any other folder
+    /// cannot move one of its rows, and knowing which is which is what lets
+    /// a sync of the Archive leave the view alone rather than re-read it.
+    /// The sidebar's synthetic rows are not folders and are left out.
+    pub fn set_folders(&self, mailboxes: &[Mailbox]) {
+        self.0.paging.borrow_mut().set_folders(
+            mailboxes
+                .iter()
+                .filter(|mailbox| mailbox.id.get() > 0)
+                .map(|mailbox| (mailbox.id, mailbox.role == MailboxRole::Inbox)),
+        );
+    }
+
     /// Show `scope`, discarding whatever the list was showing.
     ///
     /// Returns immediately: the first page is on its way, and until it lands
-    /// the list is empty rather than wrong. There is no spinner, because a
-    /// local read is not something to wait for — if this ever feels like a
-    /// wait, the query is the bug.
+    /// the list goes on showing what it was showing
+    /// ([`MessageList::replace_source`]) rather than a screenful of
+    /// skeletons. There is no spinner, because a local read is not
+    /// something to wait for — if this ever feels like a wait, the query is
+    /// the bug.
     pub fn open(&self, scope: ListScope) {
         let inner = &self.0;
         // Opening a folder is leaving the results, if there were any: the
@@ -370,7 +410,7 @@ impl Feed {
         inner.total.set(0);
         inner.mailbox_total.set(0);
         if let Some(list) = inner.list.upgrade() {
-            list.set_source(Rc::new(Source(inner.clone())));
+            list.replace_source(Rc::new(Source(inner.clone())), false);
         }
         // Asked for here rather than left to the view: the list is empty
         // until something says how long it is, and an empty list never asks
@@ -445,7 +485,9 @@ impl Feed {
         let total = inner.paging.borrow_mut().show_results(messages);
         inner.total.set(total);
         if let Some(list) = inner.list.upgrade() {
-            list.set_source(Rc::new(Source(inner.clone())));
+            // The mailbox is kept whole underneath, so `Esc` puts it back
+            // without a read.
+            list.replace_source(Rc::new(Source(inner.clone())), true);
         }
         inner.clone().request(0);
         // After the list is the result set, not before: a handler that reads
@@ -469,10 +511,20 @@ impl Feed {
             return false;
         }
         inner.total.set(inner.mailbox_total.get());
-        if let Some(list) = inner.list.upgrade() {
-            list.set_source(Rc::new(Source(inner.clone())));
+        let Some(list) = inner.list.upgrade() else {
+            return true;
+        };
+        // The mailbox the results covered, rows and all, in one step: no
+        // read before it is back, and the scroll offset the window restores
+        // next has the mailbox's length to land in. Then a refresh, which
+        // re-reads only what is on screen and moves only what changed while
+        // the search was up.
+        if list.restore(Rc::new(Source(inner.clone()))) {
+            list.refresh();
+        } else {
+            list.replace_source(Rc::new(Source(inner.clone())), false);
+            inner.clone().request(0);
         }
-        inner.clone().request(0);
         true
     }
 
@@ -517,10 +569,59 @@ impl Feed {
         let plan = inner.paging.borrow().plan(event);
         match plan {
             Plan::Ignore => {}
-            Plan::InsertAtTop(count) => list.inserted_at_top(count),
+            // Not `inserted_at_top`, which dropped every page and drew the
+            // new rows as skeletons: a refresh reads the new rows first and
+            // then inserts them, with their contents, where they belong.
+            Plan::InsertAtTop(_) => self.reload(),
             Plan::Refetch(messages) => self.refetch(messages),
-            Plan::Reload => self.reload(),
+            Plan::Reload => match event {
+                Event::MessagesRemoved {
+                    mailbox, messages, ..
+                } if inner.paging.borrow().scope()
+                    == Some(postio_model::ListScope::Mailbox(*mailbox))
+                    && list.all_resident(messages) =>
+                {
+                    self.remove_or_reload(*mailbox, messages.clone());
+                }
+                _ => self.reload(),
+            },
         }
+    }
+
+    /// Take rows that left the folder on screen out where they stand, or
+    /// reload when that cannot be done exactly (#1607).
+    ///
+    /// A reload rebuilt every row's widget, dropped every seek mark and read
+    /// page 0 again, to take out rows the list was holding. What has to be
+    /// known first is whether each row really left: a conversation that
+    /// still has a member here stays, drawn from another message, so the
+    /// store is asked for the rows these ids have now. None at all is the
+    /// case this is for -- every one of them gone -- and anything else, or a
+    /// list that moved while the question was out, reloads as before.
+    fn remove_or_reload(&self, mailbox: MailboxId, messages: Vec<MessageId>) {
+        let inner = &self.0;
+        let Some(list) = inner.list.upgrade() else {
+            return;
+        };
+        let future = inner
+            .source
+            .rows_in(postio_model::ListScope::Mailbox(mailbox), messages.clone());
+        let generation = list.generation();
+        let feed = self.clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: `MessageSource::rows_in`, under the contract
+            // `refetch` states above.
+            let still_here = future.await;
+            let Some(list) = feed.0.list.upgrade() else {
+                return;
+            };
+            let removed = generation == list.generation()
+                && matches!(still_here, Ok(ref rows) if rows.is_empty())
+                && list.remove_in_place(&messages);
+            if !removed {
+                feed.reload();
+            }
+        });
     }
 
     /// A change named these messages. Their rows are patched in place from
@@ -598,19 +699,18 @@ impl Feed {
         }
     }
 
-    /// Drop everything cached and ask again, keeping the scroll position.
+    /// Re-read what is on screen and move only what changed, keeping the
+    /// scroll position and every other row. See [`MessageList::refresh`].
     ///
-    /// The count corrects itself: every page carries the total, so the first
-    /// reply back tells the list how long it now is.
+    /// The count corrects itself: every page carries the total, so the
+    /// refresh's reply tells the list how long it now is -- and a list with
+    /// nothing on screen reads the top, so an emptied mailbox does not keep
+    /// the rows it used to have.
     pub fn reload(&self) {
         let Some(list) = self.0.list.upgrade() else {
             return;
         };
-        list.invalidate();
-        // A list that shrank to nothing stops asking for pages, so the
-        // reload has to ask once itself or an emptied mailbox would keep
-        // showing the rows it used to have.
-        self.0.clone().request(0);
+        list.refresh();
     }
 }
 
@@ -650,231 +750,7 @@ pub trait MailboxSource {
 /// The answer to a request for an account's draft counts.
 pub type DraftCountsFuture = Pin<Box<dyn Future<Output = Result<Option<ViewCounts>, String>>>>;
 
-/// The status line, folded out of the runtime's events.
-///
-/// Pure, and separate from the widget, because "what does the status line
-/// say when the connection drops mid-resync" is a question worth answering
-/// without a display in the loop.
-///
-/// # Where the failure reason comes from
-///
-/// [`ConnectionState::Failing`] carries a typed category — what *kind* of
-/// help the account needs (ADR 0005 Q10) — but not prose. The prose travels
-/// beside it as [`Event::Error`], so the tracker keeps the last one it saw
-/// and promotes it the moment the connection starts failing. Leaving that
-/// state clears it: a reason that outlived the failure it explained would be
-/// worse than none.
-#[derive(Clone, Debug, Default)]
-pub struct SyncTracker {
-    status: SyncStatus,
-    /// The last error seen, waiting to explain a failure that may not come.
-    reason: Option<String>,
-}
-
-/// One [`SyncTracker`] per account, so no account's server speaks for another.
-///
-/// Every status-bearing event names the account it is about, and a single
-/// tracker threw that away: with two accounts configured, the status line
-/// showed whichever server reported most recently. That is invisible with one
-/// account, which is why it survived — and it is load-bearing for ADR 0005
-/// Q10, whose whole subject is *which* account is not answering.
-///
-/// [`Event::Error`] is the exception, because it carries no account. It goes
-/// to the account whose line is on screen, which is exactly what the single
-/// tracker did with it; writing it down here makes it a decision rather than
-/// an accident of which arm ran first.
-#[derive(Clone, Debug, Default)]
-pub struct Trackers {
-    per_account: std::collections::BTreeMap<AccountId, SyncTracker>,
-}
-
-impl Trackers {
-    /// Fold `event` in, routed to the account it names.
-    ///
-    /// `current` is the account whose status line is on screen, used only
-    /// for the events that name none. Returns whether anything changed.
-    pub fn apply(&mut self, event: &Event, current: Option<AccountId>) -> bool {
-        let account = match event {
-            Event::ConnectionChanged { account, .. }
-            | Event::SyncProgress { account, .. }
-            | Event::BackfillProgress { account, .. } => Some(*account),
-            _ => current,
-        };
-        let Some(account) = account else {
-            return false;
-        };
-        self.per_account.entry(account).or_default().apply(event)
-    }
-
-    /// What `account`'s line should say.
-    ///
-    /// An account nothing has been heard about is offline — the same default
-    /// [`postio_core::AppState::connection`] gives, and for the same reason:
-    /// silence is not a claim that the server is reachable.
-    pub fn status(&self, account: AccountId) -> SyncStatus {
-        self.per_account
-            .get(&account)
-            .map(|tracker| tracker.status().clone())
-            .unwrap_or_default()
-    }
-
-    /// Fold `account`'s own folders' last-sync time into its tracker.
-    ///
-    /// Per account and not over the whole flat list: in section mode the
-    /// sidebar reads every account's tree into one vector, and the newest
-    /// `last_synced_at` in it belongs to whichever account synced most
-    /// recently — which is exactly the cross-account confusion this type
-    /// exists to end.
-    pub fn note_last_sync(&mut self, account: AccountId, mailboxes: &[Mailbox]) -> bool {
-        let theirs: Vec<Mailbox> = mailboxes
-            .iter()
-            .filter(|mailbox| mailbox.account_id == account)
-            .cloned()
-            .collect();
-        self.per_account
-            .entry(account)
-            .or_default()
-            .note_last_sync(&theirs)
-    }
-
-    /// The statuses of `accounts`, in the order given.
-    ///
-    /// The caller's order, because it is the sidebar's, which is the order
-    /// the per-account hues are keyed to. An account nothing has been heard
-    /// about still gets an entry: dropping it would be its own omission, in
-    /// the one place whose subject is not omitting things.
-    pub fn statuses(&self, accounts: &[AccountId]) -> Vec<(AccountId, SyncStatus)> {
-        accounts
-            .iter()
-            .map(|account| (*account, self.status(*account)))
-            .collect()
-    }
-}
-
-impl SyncTracker {
-    /// A tracker that has heard nothing yet: offline, never synced.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// What the status line should say.
-    pub fn status(&self) -> &SyncStatus {
-        &self.status
-    }
-
-    /// Fold `event` in. Returns whether the status line changed.
-    pub fn apply(&mut self, event: &Event) -> bool {
-        let before = self.status.clone();
-        match event {
-            Event::ConnectionChanged { state, .. } => {
-                self.status.state = *state;
-                if matches!(state, ConnectionState::Failing { .. }) {
-                    self.status.detail = self.reason.clone();
-                } else {
-                    // Connected, connecting or deliberately offline: whatever
-                    // went wrong before is no longer what is happening.
-                    self.status.detail = None;
-                    self.reason = None;
-                }
-                // A pass's progress belongs to that pass. The engine announces
-                // a connection state at the *boundaries* — a pass starting or
-                // finishing, or the link itself moving — and never between two
-                // batches, so any of them means the number on screen is no
-                // longer being made.
-                //
-                // Including `Online`, which is the case that matters: a pass
-                // ends by moving the tracker to idle, and idle is announced as
-                // `Online`. `SyncProgress` only clears itself when `done`
-                // reaches `total`, and `total` is `UIDNEXT - 1` — an upper
-                // bound that expunged messages leave gaps in, so a pass can
-                // finish having never reached it. Leaving `Online` alone left
-                // the line reading `syncing 89%` on a folder that had finished,
-                // for as long as the account stayed connected.
-                self.status.progress = None;
-                // The body queue's number is deliberately *not* cleared here
-                // (issue #316). The reasoning above is true for a list pass,
-                // which really does end at a connection boundary — but a
-                // backfill does not: it spans many IDLE cycles and
-                // reconnects while it keeps running, so `ConnectionChanged`
-                // fires constantly in the middle of one. Dropping the count
-                // on every one of those left the line reading `idle` for as
-                // long as it took the *next* body to settle and the 250 ms
-                // floor on top of that, while a body was genuinely still on
-                // the wire. `BackfillProgress` clears the count itself once
-                // the queue actually drains — that is the boundary that
-                // matters for this number, not a connection event.
-            }
-            Event::BackfillProgress {
-                done,
-                total,
-                footprint,
-                ..
-            } => {
-                self.status.backfill = Some((*done, *total));
-                // Kept even when the queue drains below: the size of an
-                // account's mail is true whether or not a backfill is
-                // running, and the settings panel asks for it at a moment
-                // that has nothing to do with one.
-                if footprint.is_some() {
-                    self.status.footprint = *footprint;
-                }
-                // Drained. Clear it rather than leaving `2000 of 2000` on
-                // screen -- the same trap `SyncProgress` documents above,
-                // and the same answer. `last_sync` is deliberately not
-                // touched: it means a *list* pass completed, and a body
-                // queue draining is not that.
-                if done >= total {
-                    self.status.backfill = None;
-                }
-            }
-            Event::SyncProgress { done, total, .. } => {
-                self.status.progress = Some((*done, *total));
-                // A resync that reached its own total is a sync that
-                // finished, and that is when "last sync" moved.
-                if done >= total {
-                    self.status.last_sync = Some(Instant::now());
-                    self.status.progress = None;
-                }
-            }
-            Event::Error { message } => {
-                self.reason = Some(message.clone());
-                if matches!(self.status.state, ConnectionState::Failing { .. }) {
-                    self.status.detail = Some(message.clone());
-                }
-            }
-            _ => return false,
-        }
-        self.status != before
-    }
-
-    /// Record when this account last completed a sync, from its folders.
-    ///
-    /// [`SyncStatus::last_sync`] is an [`Instant`] on purpose: the line shows
-    /// an *age*, and an age that jumped when the system clock was corrected
-    /// would be worse than no age at all. The stored time is wall-clock, so
-    /// the conversion happens here, once, at the boundary.
-    pub fn note_last_sync(&mut self, mailboxes: &[Mailbox]) -> bool {
-        let Some(latest) = mailboxes.iter().filter_map(|m| m.last_synced_at).max() else {
-            return false;
-        };
-        let converted = to_instant(latest, Utc::now(), Instant::now());
-        if converted.is_some() && self.status.last_sync.is_none() {
-            self.status.last_sync = converted;
-            return true;
-        }
-        false
-    }
-}
-
-/// A wall-clock time as a point on the monotonic clock, relative to `now`.
-///
-/// `None` for a time in the future or further back than the process has been
-/// running: neither can be expressed as an `Instant`, and inventing one would
-/// put a fabricated age on the status line.
-pub fn to_instant(at: DateTime<Utc>, now: DateTime<Utc>, monotonic: Instant) -> Option<Instant> {
-    let age = now.signed_duration_since(at).to_std().ok()?;
-    monotonic.checked_sub(age)
-}
+pub use postio_ui::status::{SyncTracker, Trackers, to_instant};
 
 /// What to call when the status line moves.
 type StatusHandler = Box<dyn Fn(&SyncStatus)>;
@@ -1071,7 +947,21 @@ impl FolderInner {
 #[derive(Clone)]
 pub struct Folders(Rc<FolderInner>);
 
+/// A callback's non-owning reference to the folder feed.
+#[derive(Clone)]
+pub(crate) struct WeakFolders(std::rc::Weak<FolderInner>);
+
+impl WeakFolders {
+    pub(crate) fn upgrade(&self) -> Option<Folders> {
+        self.0.upgrade().map(Folders)
+    }
+}
+
 impl Folders {
+    pub(crate) fn downgrade(&self) -> WeakFolders {
+        WeakFolders(Rc::downgrade(&self.0))
+    }
+
     /// Feed `sidebar` from `source`. Shows nothing until [`open`](Self::open).
     pub fn new(sidebar: &crate::sidebar::Sidebar, source: Rc<dyn MailboxSource>) -> Self {
         let folders = Folders(Rc::new(FolderInner {
@@ -1250,15 +1140,26 @@ impl Folders {
             inner.publish();
         }
         let ours = |account: &AccountId| inner.account.get() == Some(*account);
+        // Every account the sidebar draws: the one account, or each section
+        // of the unified tree.
+        let drawn =
+            |account: &AccountId| ours(account) || inner.sections.borrow().contains(account);
         match event {
             // The tree itself moved: renamed, created, unsubscribed.
             Event::MailboxesChanged { account } if ours(account) => self.reload(),
             // Counts move with read state and with mail arriving or leaving.
-            // Which mailbox is irrelevant — the sidebar shows all of them.
-            Event::MessagesChanged { .. }
-            | Event::MessagesRemoved { .. }
-            | Event::NewMail { .. }
-            | Event::MessageListChanged { .. } => self.reload(),
+            // Which mailbox is irrelevant — the sidebar shows all of them —
+            // but which account is not: another account's sync burst used to
+            // re-read these folders for numbers it could not have moved
+            // (#1607).
+            Event::MessagesChanged { account, .. }
+            | Event::MessagesRemoved { account, .. }
+            | Event::NewMail { account, .. }
+            | Event::MessageListChanged { account, .. }
+                if drawn(account) =>
+            {
+                self.reload()
+            }
             _ => {}
         }
     }
@@ -1334,408 +1235,5 @@ impl Feeds {
         for handler in self.others.borrow().iter() {
             handler(event);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use postio_model::mailbox::MailboxRole;
-
-    fn account() -> AccountId {
-        AccountId::new(1)
-    }
-
-    fn connection(state: ConnectionState) -> Event {
-        Event::ConnectionChanged {
-            account: account(),
-            state,
-        }
-    }
-
-    /// Issue #74: the backfill's progress reached nobody, so the longest
-    /// phase of a first sync drew `idle`.
-    #[test]
-    fn a_backfill_moves_the_status_line_and_then_gets_out_of_the_way() {
-        let mut tracker = SyncTracker::new();
-        assert!(tracker.apply(&Event::ConnectionChanged {
-            account: AccountId::new(1),
-            state: ConnectionState::Online,
-        }));
-        assert_eq!(tracker.status().backfill, None);
-
-        assert!(
-            tracker.apply(&Event::BackfillProgress {
-                account: AccountId::new(1),
-                done: 412,
-                total: 2000,
-                // Nothing measured yet: these predate the field, and they are
-                // about the counter, not the size.
-                footprint: None,
-            }),
-            "the status changed and the tracker said it had not"
-        );
-        assert_eq!(tracker.status().backfill, Some((412, 2000)));
-
-        // Drained. It must clear itself the way `SyncProgress` does, or the
-        // line reads `downloading` for as long as the account stays up.
-        tracker.apply(&Event::BackfillProgress {
-            account: AccountId::new(1),
-            done: 2000,
-            total: 2000,
-            // Nothing measured yet: these predate the field, and they are
-            // about the counter, not the size.
-            footprint: None,
-        });
-        assert_eq!(
-            tracker.status().backfill,
-            None,
-            "a queue that has drained is not a backfill in progress"
-        );
-        assert_eq!(tracker.status().lines(Instant::now()).0, "idle · imap");
-    }
-
-    /// Issue #316: `ConnectionChanged` cleared `backfill` unconditionally, on
-    /// the reasoning that "the engine announces a connection state at the
-    /// boundaries" — true for a list pass, which really does end there, but
-    /// not for a backfill, which spans many IDLE cycles and reconnects while
-    /// it keeps running. A connection blip mid-backfill erased the count the
-    /// line was showing and the sidebar read `idle` while a body was still
-    /// on the wire — seen live at the same moment the reading pane showed
-    /// "Downloading this message" for the selected message.
-    #[test]
-    fn a_connection_announcement_mid_backfill_does_not_erase_its_count() {
-        let mut tracker = SyncTracker::new();
-        tracker.apply(&connection(ConnectionState::Online));
-        tracker.apply(&Event::BackfillProgress {
-            account: account(),
-            done: 412,
-            total: 2000,
-            // Nothing measured yet: these predate the field, and they are
-            // about the counter, not the size.
-            footprint: None,
-        });
-        assert_eq!(
-            tracker.status().lines(Instant::now()).0,
-            "downloading · imap"
-        );
-
-        // The engine announces an IDLE cycle or a reconnect mid-backfill the
-        // same way it announces anything else on the link: a connection
-        // state, here `Online` again rather than a drain.
-        tracker.apply(&connection(ConnectionState::Online));
-
-        assert_eq!(
-            tracker.status().backfill,
-            Some((412, 2000)),
-            "a connection announcement mid-backfill must not erase its count"
-        );
-        assert_eq!(
-            tracker.status().lines(Instant::now()).0,
-            "downloading · imap",
-            "the status line must not claim idle while a body is still in flight"
-        );
-    }
-
-    #[test]
-    fn a_backfill_does_not_pretend_to_be_a_sync() {
-        // `last_sync` is what "last sync 4h" reads, and it means a *list*
-        // pass completed. A backfill finishing is not that, and moving it
-        // would date the mailbox from the wrong event.
-        let mut tracker = SyncTracker::new();
-        tracker.apply(&Event::ConnectionChanged {
-            account: AccountId::new(1),
-            state: ConnectionState::Online,
-        });
-        let before = tracker.status().last_sync;
-        tracker.apply(&Event::BackfillProgress {
-            account: AccountId::new(1),
-            done: 2000,
-            total: 2000,
-            // Nothing measured yet: these predate the field, and they are
-            // about the counter, not the size.
-            footprint: None,
-        });
-        assert_eq!(
-            tracker.status().last_sync,
-            before,
-            "a drained body queue is not a completed sync"
-        );
-    }
-
-    #[test]
-    fn the_status_line_follows_a_connection_all_the_way_round() {
-        let mut tracker = SyncTracker::new();
-        assert_eq!(tracker.status().state, ConnectionState::Offline);
-        assert_eq!(tracker.status().last_sync, None);
-
-        assert!(tracker.apply(&connection(ConnectionState::Connecting)));
-        assert_eq!(tracker.status().state, ConnectionState::Connecting);
-
-        assert!(tracker.apply(&connection(ConnectionState::Online)));
-        assert!(tracker.apply(&Event::SyncProgress {
-            account: account(),
-            done: 40,
-            total: 100,
-        }));
-        assert_eq!(tracker.status().progress, Some((40, 100)));
-
-        // A resync that reaches its own total is a sync that finished.
-        assert!(tracker.apply(&Event::SyncProgress {
-            account: account(),
-            done: 100,
-            total: 100,
-        }));
-        assert_eq!(tracker.status().progress, None);
-        assert!(tracker.status().last_sync.is_some());
-    }
-
-    #[test]
-    fn a_failing_connection_carries_the_reason_it_was_given() {
-        let mut tracker = SyncTracker::new();
-        // The reason arrives beside the state change, not inside it.
-        tracker.apply(&Event::Error {
-            message: "the server rejected the password".to_string(),
-        });
-        tracker.apply(&connection(ConnectionState::Failing {
-            reason: postio_core::FailureReason::Auth,
-        }));
-        assert_eq!(
-            tracker.status().detail.as_deref(),
-            Some("the server rejected the password")
-        );
-
-        // And an error that arrives while already failing replaces it.
-        tracker.apply(&Event::Error {
-            message: "the certificate expired".to_string(),
-        });
-        assert_eq!(
-            tracker.status().detail.as_deref(),
-            Some("the certificate expired")
-        );
-
-        // Recovering clears it: a reason that outlived its failure is worse
-        // than no reason.
-        tracker.apply(&connection(ConnectionState::Online));
-        assert_eq!(tracker.status().detail, None);
-
-        // And it does not come back on the next unrelated failure.
-        tracker.apply(&connection(ConnectionState::Failing {
-            reason: postio_core::FailureReason::Auth,
-        }));
-        assert_eq!(tracker.status().detail, None);
-    }
-
-    #[test]
-    fn a_dropped_connection_stops_reporting_progress_it_is_not_making() {
-        let mut tracker = SyncTracker::new();
-        tracker.apply(&connection(ConnectionState::Online));
-        tracker.apply(&Event::SyncProgress {
-            account: account(),
-            done: 3,
-            total: 90,
-        });
-        tracker.apply(&connection(ConnectionState::Offline));
-        assert_eq!(tracker.status().progress, None, "syncing 3% while offline");
-    }
-
-    #[test]
-    fn a_pass_that_ends_short_of_its_own_total_stops_reporting_a_percentage() {
-        // `total` is `UIDNEXT - 1`: an upper bound, not a promise, because
-        // expunged messages leave gaps in the UID space. So a pass can finish
-        // having fetched everything there is and still never reach it, and the
-        // last report before it ended is a percentage below 100.
-        //
-        // The pass ending is announced as idle, which reaches the tracker as
-        // `Online`. If that did not clear the number, the line would read
-        // `syncing 89% · imap` for as long as the account stayed connected —
-        // on a folder with nothing left to sync.
-        let mut tracker = SyncTracker::new();
-        tracker.apply(&connection(ConnectionState::Online));
-        tracker.apply(&Event::SyncProgress {
-            account: account(),
-            done: 89,
-            total: 100,
-        });
-        assert_eq!(tracker.status().progress, Some((89, 100)), "mid-pass");
-
-        tracker.apply(&connection(ConnectionState::Online));
-        assert_eq!(
-            tracker.status().progress,
-            None,
-            "the pass finished; there is no percentage to be a percentage of"
-        );
-    }
-
-    #[test]
-    fn events_the_status_line_is_not_about_change_nothing() {
-        let mut tracker = SyncTracker::new();
-        assert!(!tracker.apply(&Event::MailboxesChanged { account: account() }));
-        assert!(!tracker.apply(&Event::BodyLoaded {
-            account: account(),
-            message: postio_model::ids::MessageId::new(1),
-        }));
-    }
-
-    #[test]
-    fn the_last_sync_age_comes_off_the_monotonic_clock() {
-        let now = Utc::now();
-        let monotonic = Instant::now();
-
-        // An hour ago is an hour ago, whatever the wall clock does next.
-        let hour = to_instant(now - chrono::Duration::hours(1), now, monotonic)
-            .expect("an hour is expressible");
-        assert!((monotonic.duration_since(hour).as_secs() as i64 - 3600).abs() <= 1);
-
-        // A time in the future is not an age, and is refused rather than
-        // turned into one.
-        assert_eq!(
-            to_instant(now + chrono::Duration::hours(1), now, monotonic),
-            None
-        );
-    }
-
-    #[test]
-    fn folders_report_when_the_account_last_synced() {
-        let synced = |id: i64, at: Option<DateTime<Utc>>| {
-            let mut mailbox = Mailbox::new(account(), "INBOX", Some('/'));
-            mailbox.id = MailboxId::new(id);
-            mailbox.role = MailboxRole::Inbox;
-            mailbox.last_synced_at = at;
-            mailbox
-        };
-        let now = Utc::now();
-
-        let mut tracker = SyncTracker::new();
-        assert!(!tracker.note_last_sync(&[synced(1, None)]), "never synced");
-        assert_eq!(tracker.status().last_sync, None);
-
-        // The newest of them wins: one stale folder does not make the
-        // account look stale.
-        assert!(tracker.note_last_sync(&[
-            synced(1, Some(now - chrono::Duration::days(2))),
-            synced(2, Some(now - chrono::Duration::seconds(12))),
-        ]));
-        let age = Instant::now().saturating_duration_since(tracker.status().last_sync.unwrap());
-        assert!(age.as_secs() <= 13, "the age came out as {age:?}");
-    }
-}
-
-#[cfg(test)]
-mod trackers_tests {
-    use super::*;
-
-    const WORK: AccountId = AccountId::new(1);
-    const HOME: AccountId = AccountId::new(2);
-
-    #[test]
-    fn each_account_keeps_its_own_connection_state() {
-        // The bug this type exists to fix: one tracker folded every
-        // account's `ConnectionChanged` into one status, last writer wins,
-        // so with two accounts the sidebar's line showed whichever server
-        // happened to report most recently.
-        let mut trackers = Trackers::default();
-        trackers.apply(
-            &Event::ConnectionChanged {
-                account: WORK,
-                state: ConnectionState::Online,
-            },
-            Some(WORK),
-        );
-        trackers.apply(
-            &Event::ConnectionChanged {
-                account: HOME,
-                state: ConnectionState::Offline,
-            },
-            Some(WORK),
-        );
-
-        assert_eq!(
-            trackers.status(WORK).state,
-            ConnectionState::Online,
-            "Home going offline said nothing about Work"
-        );
-        assert_eq!(trackers.status(HOME).state, ConnectionState::Offline);
-    }
-
-    #[test]
-    fn an_account_nothing_has_been_heard_about_is_working_locally() {
-        // The same default `AppState::connection` gives, and for the same
-        // reason: silence is not a claim that the server is reachable.
-        let trackers = Trackers::default();
-        assert_eq!(trackers.status(WORK).state, ConnectionState::Offline);
-    }
-
-    #[test]
-    fn progress_lands_on_the_account_it_names_and_no_other() {
-        let mut trackers = Trackers::default();
-        trackers.apply(
-            &Event::SyncProgress {
-                account: HOME,
-                done: 3,
-                total: 10,
-            },
-            Some(WORK),
-        );
-        assert_eq!(trackers.status(HOME).progress, Some((3, 10)));
-        assert_eq!(
-            trackers.status(WORK).progress,
-            None,
-            "Work is not syncing and its line must not say it is"
-        );
-    }
-
-    #[test]
-    fn an_error_carries_no_account_so_it_lands_on_the_one_in_view() {
-        // `Event::Error` has no account field. Routing it to the account
-        // whose line is on screen is exactly what the single tracker did,
-        // so this is no worse -- and it is written down here rather than
-        // left as an accident of which arm ran.
-        let mut trackers = Trackers::default();
-        trackers.apply(
-            &Event::Error {
-                message: "the server refused the password".to_owned(),
-            },
-            Some(WORK),
-        );
-        trackers.apply(
-            &Event::ConnectionChanged {
-                account: WORK,
-                state: ConnectionState::Failing {
-                    reason: postio_core::FailureReason::Auth,
-                },
-            },
-            Some(WORK),
-        );
-        assert_eq!(
-            trackers.status(WORK).detail.as_deref(),
-            Some("the server refused the password")
-        );
-        assert_eq!(
-            trackers.status(HOME).detail,
-            None,
-            "an error with no account named must not be attributed to one"
-        );
-    }
-
-    #[test]
-    fn statuses_are_reported_for_the_accounts_asked_for_in_that_order() {
-        // The order is the caller's -- the sidebar's -- because that is the
-        // order the hues are keyed to, and an account absent from the map
-        // still has to appear rather than silently drop out of the banner.
-        let mut trackers = Trackers::default();
-        trackers.apply(
-            &Event::ConnectionChanged {
-                account: HOME,
-                state: ConnectionState::Offline,
-            },
-            Some(WORK),
-        );
-        let named = trackers.statuses(&[WORK, HOME]);
-        assert_eq!(named.len(), 2);
-        assert_eq!(named[0].0, WORK);
-        assert_eq!(named[0].1.state, ConnectionState::Offline, "never heard of");
-        assert_eq!(named[1].0, HOME);
-        assert_eq!(named[1].1.state, ConnectionState::Offline);
     }
 }

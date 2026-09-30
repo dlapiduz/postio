@@ -157,8 +157,9 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
         );
 
         press(&window, "e");
+        // The reply's source is read on the runtime (#1608).
         assert!(
-            composer.is_open(),
+            settle_until(async || composer.is_open()).await,
             "`e` on a message in a second account did not open a reply"
         );
         let draft = composer.draft();

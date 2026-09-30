@@ -116,6 +116,18 @@ pub fn ctrl_return_queues_the_draft_for_sending() {
         press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
 
         // ── and now ask the store, not the widget ────────────────────────────
+        // The queue write happens on the runtime (#1608): wait for the row
+        // rather than reading the instant the key returns.
+        crate::settle_until(async || {
+            let connection = database.connect().await.expect("a connection");
+            OperationQueueRepository::new(&connection)
+                .pending(account, chrono::Utc::now())
+                .await
+                .expect("read the queue")
+                .iter()
+                .any(|row| matches!(row.operation, Operation::Send { .. }))
+        })
+        .await;
         let connection = database.connect().await.expect("a connection");
         let queued = OperationQueueRepository::new(&connection)
             .pending(account, chrono::Utc::now())

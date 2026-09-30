@@ -23,7 +23,6 @@ use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
 use postio_ui::reader::rail::{LENGTH_THRESHOLD, rows};
-use webkit6::prelude::*;
 
 /// A realized rail, or `None` with no display.
 fn rail() -> Option<(gtk::Window, RailColumn)> {
@@ -138,6 +137,53 @@ pub fn the_rail_lists_a_thread_and_marks_what_is_on_screen() {
     assert!(
         !rail.row_is_marked(0),
         "exactly one row is marked at a time"
+    );
+
+    window.close();
+}
+
+pub fn the_same_thread_again_keeps_the_rails_rows_and_scroll() {
+    let Some((window, rail)) = rail() else {
+        return;
+    };
+    window.set_default_size(200, 160);
+
+    // Forty messages, so the rail's own list has somewhere to scroll.
+    let count = 40;
+    let senders: Vec<String> = (0..count).map(|at| format!("Sender {at}")).collect();
+    let initials: Vec<String> = (0..count).map(|_| "SE".to_owned()).collect();
+    let whens: Vec<String> = (0..count).map(|_| "1 Sep".to_owned()).collect();
+    let lengths: Vec<Option<u32>> = vec![None; count];
+    let thread = rows(&senders, &initials, &whens, &lengths);
+    rail.show_thread(&thread);
+    lay_out();
+
+    let scroller = rail
+        .widget()
+        .observe_children()
+        .into_iter()
+        .filter_map(|child| child.ok()?.downcast::<gtk::ScrolledWindow>().ok())
+        .next()
+        .expect("the rail scrolls its rows");
+    let adjustment = scroller.vadjustment();
+    let first = rail.row_widget(0).expect("a first row");
+    adjustment.set_value(adjustment.upper() / 2.0);
+    let scrolled = adjustment.value();
+    assert!(scrolled > 0.0, "forty rows did not overflow the rail");
+
+    // The conversation re-reads its thread -- the list's row, then the whole
+    // conversation, then a flag changing -- and hands the rail the same rows.
+    rail.show_thread(&thread);
+    lay_out();
+    assert_eq!(
+        rail.row_widget(0),
+        Some(first),
+        "the same thread must keep the rows it has, not rebuild them"
+    );
+    assert_eq!(
+        adjustment.value(),
+        scrolled,
+        "and a rail somebody scrolled stays where they left it"
     );
 
     window.close();
@@ -322,21 +368,126 @@ pub fn hiding_the_rail_outlasts_the_conversation_and_the_width() {
     window.close();
 }
 
-pub fn a_single_message_conversation_has_no_rail() {
+pub fn a_single_message_conversation_has_no_rail_and_no_column() {
     let Some((window, pane)) = pane() else {
         return;
     };
 
-    // FR-045. Not at any width: there is nothing for an index to index, and
-    // most of the mail a person reads is one message.
-    pane.open(vec![message(1)]);
-    for width in [1000, 1150, 1400, 1900] {
+    // FR-045: one message has nothing to index, so there is no rail. For a
+    // day the column it would stand in was kept, empty, so the body held its
+    // width between single messages and threads -- and a person reading mail
+    // saw a bordered empty column beside every message that was not a
+    // thread, which reads as a rail with nothing in it. The maintainer called
+    // it a bug (2026-09-25): a single message takes the pane.
+    let mut single = message(1);
+    single.thread_count = 1;
+    pane.open(vec![single]);
+    for width in [1000, 1150, 1400] {
         pane.set_window_width(width);
+        let rail = pane.rail().widget();
         assert!(
-            !pane.rail().widget().is_visible(),
-            "one message needs no rail, and none is drawn at {width}px"
+            !rail.is_visible(),
+            "a single message kept a rail column at {width}px"
+        );
+        assert!(
+            shown_labels(rail).is_empty(),
+            "one message needs no rail, and none is drawn at {width}px: {:?}",
+            shown_labels(rail)
         );
     }
+
+    window.close();
+}
+
+/// Every label a person could see under `root`: visible itself and in every
+/// ancestor up to `root`.
+fn shown_labels(root: &gtk::Widget) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut next = root.first_child();
+    while let Some(child) = next {
+        if child.is_visible() {
+            if let Some(label) = child.downcast_ref::<gtk::Label>()
+                && !label.label().is_empty()
+            {
+                found.push(label.label().to_string());
+            }
+            found.extend(shown_labels(&child));
+        }
+        next = child.next_sibling();
+    }
+    found
+}
+
+/// Let the window lay itself out: a size is only allocated on a frame, and
+/// `settle` does not wait for one.
+fn lay_out() {
+    let until = std::time::Instant::now()
+        + postio_test_support::scaled(std::time::Duration::from_millis(200));
+    while std::time::Instant::now() < until {
+        crate::settle();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+pub fn the_body_keeps_its_width_between_threads_and_a_single_message_takes_the_pane() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    window.set_default_size(1400, 800);
+    pane.set_window_width(1400);
+    pane.set_one_document(true);
+
+    // What a person moving down a folder meets: threads of every length, one
+    // message most often, and a thread first shown from the one row the
+    // list held before the rest of it is read.
+    let thread = |id: i64, count: i64| -> Vec<ListRow> {
+        (0..count)
+            .map(|at| {
+                let mut row = message(id * 100 + at);
+                row.thread = Some(ThreadId::new(id));
+                row.thread_count = count as u32;
+                row
+            })
+            .collect()
+    };
+    let body_width = |rows: Vec<ListRow>| {
+        pane.open(rows);
+        // Past the pane's 400ms redraw deadline: these rows carry no bodies,
+        // so a thread is never whole and the header and rail change over
+        // with the document when the deadline draws it.
+        for _ in 0..3 {
+            lay_out();
+        }
+        pane.document_reader()
+            .expect("the one-document pane draws through a reader")
+            .widget()
+            .width()
+    };
+    // Threads of any length keep one width, a thread first shown from the one
+    // row the list held included: its row says it holds four.
+    let mut widths = Vec::new();
+    for rows in [
+        thread(1, 6),
+        thread(3, 3),
+        thread(5, 4)[3..].to_vec(),
+        thread(5, 4),
+    ] {
+        widths.push(body_width(rows));
+    }
+    assert!(widths[0] > 0, "the body was never laid out: {widths:?}");
+    assert!(
+        widths.iter().all(|width| *width == widths[0]),
+        "the body changed width moving between threads: {widths:?}"
+    );
+    // A single message has no rail and keeps no column, so it takes the
+    // pane (maintainer, 2026-09-25).
+    let single = body_width(thread(2, 1));
+    assert!(
+        single > widths[0],
+        "a single message is drawn as narrow as a thread, beside an empty \
+         rail column: {single}px against {}px",
+        widths[0]
+    );
 
     window.close();
 }
@@ -366,23 +517,19 @@ pub fn below_the_floor_the_header_carries_the_index() {
         counter.is_visible(),
         "below the floor the header takes over saying where you are"
     );
-    // Screen 29's narrow header is `6 messages · 22-25 Aug` and nothing else.
-    // With the names still in it the line ellipsised to a single letter once
-    // the counter took the trailing edge, which says less than leaving them
-    // out -- and the avatar chips still say who is here.
+    // The names used to go here: the counter took the one meta line's
+    // trailing edge and the names ellipsised to a single letter. Since #1671
+    // the header is the reader's, the counter sits on the `To` row, and the
+    // `From` row keeps the names -- the count and the dates beside them do
+    // not ellipsise, so the names are what gives way to a narrow pane.
     let narrow_meta = pane.header().meta();
     assert!(
-        !narrow_meta.contains("Ada Norwood"),
-        "the names are the first thing to go when the header is short of \
-         room: {narrow_meta}"
-    );
-    assert!(
         narrow_meta.contains("6 messages"),
-        "but the count stays, because nothing else says it: {narrow_meta}"
+        "the count stays, because nothing else says it: {narrow_meta}"
     );
-    // The names going was not enough on its own: with the chips and the
-    // scoping note still there, the *dates* then ellipsised to one character.
-    // Screen 29's narrow row is the count, the dates and the counter.
+    // With the chips and the scoping note still there, the *dates*
+    // ellipsised to one character. Screen 29's narrow row is the count, the
+    // dates and the counter.
     assert!(
         !pane.header().scoping_visible(),
         "the scoping note stands down with the names"
@@ -452,7 +599,9 @@ pub fn a_conversation_with_no_rail_has_no_counter_either() {
     };
 
     // FR-045: one message has no position worth stating, at any width.
-    pane.open(vec![message(1)]);
+    let mut single = message(1);
+    single.thread_count = 1;
+    pane.open(vec![single]);
     pane.set_window_width(1000);
     assert!(!pane.header().counter().is_visible());
 
@@ -481,10 +630,9 @@ pub fn opening_a_conversation_narrow_keeps_the_header_short() {
     pane.set_window_width(1000);
     pane.open((1..=6).map(message).collect());
 
-    let meta = pane.header().meta();
     assert!(
-        !meta.contains("Ada Norwood"),
-        "opening a conversation must not undo the ladder's step: {meta}"
+        !pane.header().scoping_visible() && !pane.header().participants_visible(),
+        "opening a conversation must not undo the ladder's step"
     );
     assert!(
         pane.header().counter().is_visible(),
@@ -557,12 +705,12 @@ pub fn a_conversation_opens_on_its_most_recent_message() {
 }
 
 pub fn one_rail_report_runs_the_current_message_handlers_once() {
-    // The handler that turns the injected observer's scroll reports into
+    // The handler that turns the view's scroll reports into
     // `connect_current_message` calls was connected twice, byte for byte,
     // in the reader's constructor, so every report ran the conversation's
     // focus bookkeeping twice: the focus change, the dwell timer, the rail
     // mark, the header. Found by the 2026-09-22 felt-speed review. This
-    // posts one report through the channel the observer uses and counts
+    // raises one report through the view's own signal and counts
     // what reaches the handlers; both connections fire on the one signal
     // emission, so the count is settled the moment the first arrives.
     let Some((window, pane)) = pane() else {
@@ -583,22 +731,18 @@ pub fn one_rail_report_runs_the_current_message_handlers_once() {
     });
 
     // The pane draws on a timer, and the handler drops a report naming a
-    // scope the document has not rendered, so wait for the first paint and
-    // for WebKit to have the document before posting.
+    // scope the document has not rendered, so wait for the first snapshot
+    // before reporting.
     assert!(
-        crate::wait_until(|| reader.paints() > 0 && !reader.view().is_loading()),
+        crate::wait_until(|| reader.paints() > 0 && reader.view().document().is_some()),
         "the conversation document was never drawn"
     );
-    // A report names a scope the document rendered -- the rows opened above
-    // are scopes "1" to "3" -- and anything else is dropped before the
-    // handlers run.
-    reader.view().evaluate_javascript(
-        "window.webkit.messageHandlers.postioRail.postMessage('2')",
-        None,
-        None,
-        None::<&gtk::gio::Cancellable>,
-        |_| {},
-    );
+    // One report, through the signal the view raises as it scrolls. It names
+    // a scope the document rendered -- the rows opened above are scopes "1"
+    // to "3" -- and anything else is dropped before the handlers run.
+    reader
+        .view()
+        .emit_by_name::<()>("current-message", &[&"2".to_owned()]);
     assert!(
         crate::wait_until(|| fired.get() > 0),
         "the report never reached a current-message handler"
@@ -767,7 +911,7 @@ pub fn marking_a_message_read_does_not_redraw_the_conversation() {
     window.close();
 }
 
-pub fn the_conversation_header_is_pinned_and_stays_two_rows() {
+pub fn the_conversation_header_is_pinned_and_is_the_readers() {
     let Some((window, pane)) = pane() else {
         return;
     };
@@ -798,28 +942,24 @@ pub fn the_conversation_header_is_pinned_and_stays_two_rows() {
          conversation it names"
     );
 
-    // ── two rows, whatever the subject ───────────────────────────────────
-    let rows = {
-        let mut count = 0;
-        let mut child = header.first_child();
-        while let Some(row) = child {
-            count += 1;
-            child = row.next_sibling();
-        }
-        count
-    };
-    assert_eq!(
-        rows, 2,
-        "screen 30's header is two rows: the subject and its verbs, then the \
-         conversation's own line"
+    // ── the reader's header, not one of its own ──────────────────────────
+    // Two rows until #1671, 68px against the single reader's 95px, so the
+    // body jumped on every change of surface. It is the reader's header now
+    // (maintainer, 2026-09-25): the same widget, which is what keeps the two
+    // from drifting apart again by a row or a padding.
+    assert!(
+        header.has_css_class("postio-message-header"),
+        "the conversation's header is the single reader's header, filled with \
+         the thread"
     );
 
     // ── and the subject truncates rather than wrapping ───────────────────
     // The label, not the height: this display lays nothing out, so a measured
     // height would be zero and prove nothing (#1307). Ellipsizing is the
-    // property that keeps the header two rows, and it is a DOM-style fact
+    // property that keeps the header its height, and it is a DOM-style fact
     // about the widget rather than about the layout.
-    let subject = find_label(&header, "conversation-subject").expect("the header draws a subject");
+    let subject =
+        find_label(&header, "postio-message-header-subject").expect("the header draws a subject");
     assert_eq!(
         subject.ellipsize(),
         gtk::pango::EllipsizeMode::End,

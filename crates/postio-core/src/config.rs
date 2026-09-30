@@ -194,7 +194,12 @@ impl Keymap {
 
         // Alternates last, and only where nothing else wanted them: a second
         // way to reach a command must never cost another command its first.
+        // A command the platform does not offer gets no alternate either, for
+        // the reason it gets no default above.
         for spec in registry::every_action() {
+            if !registry::offered_on(spec.id, platform) {
+                continue;
+            }
             for alternate in spec.alternate_bindings {
                 let alternate = keys::expand_mod(alternate, platform);
                 if keymap.holder_of(&alternate, spec.contexts).is_none() {

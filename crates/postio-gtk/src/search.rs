@@ -52,6 +52,9 @@ use postio_model::ids::MessageId;
 use postio_search::ParsedQuery;
 use postio_search::SearchHit;
 use postio_search::facets::{Facets, Refinement, Scope};
+use postio_ui::hints::{self, Hint};
+
+use crate::widgets::{KeyLine, keyhint};
 
 // Moved to `postio-ui` in #1157 so the macOS search bar reads the same query
 // as chips, says the same thing about a result set, and debounces at the same
@@ -408,13 +411,9 @@ impl Live {
 // Scope and refine — canvas 2b's left column
 // ---------------------------------------------------------------------------
 
-/// What the refine column says when it has nothing to offer.
-///
-/// Never a blank space and never a shrug: the two reasons a shortlist can be
-/// empty are different, and which one it is decides what the next keystroke
-/// should be.
-const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
-const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
+// What the refine column says when it has nothing to offer: postio-ui's, so
+// the terminal's facet row says the same.
+use postio_ui::search::{NOTHING_MATCHED, NOTHING_TO_NARROW};
 
 /// What the offer says. A statement of what the other word would find, not a
 /// question: the app has already looked, so "did you mean" asks something it
@@ -434,22 +433,16 @@ fn offer_text(term: &str, documents: u64) -> String {
 /// literal it used to be. A command whose binding the user cleared drops out
 /// rather than printing a blank key, the same rule
 /// [`crate::reader::actions`] follows.
-fn panel_keys(keymap: &Keymap) -> String {
-    let mut parts = Vec::new();
-    if let Some(key) = keymap.binding(CommandId::OpenMessage) {
-        parts.push(format!("{key} open"));
-    }
-    parts.push("Tab refine".to_owned());
-    if let Some(key) = keymap.binding(CommandId::SaveSearch) {
-        parts.push(format!("{key} save as folder"));
-    }
-    parts.join(" · ")
-}
-
-/// The registry's defaults, for a panel built before any `config.toml` has
-/// been read — the same fallback `crate::parts::default_hints` provides.
-fn default_panel_keys() -> String {
-    panel_keys(&Keymap::resolve(&Default::default()))
+fn panel_keys(keymap: &Keymap) -> Vec<Hint> {
+    hints::hint(keymap, CommandId::OpenMessage, "open")
+        .into_iter()
+        .chain([hints::fixed(
+            "Tab",
+            "refine",
+            "moving into the refine column is the toolkit's focus order, not a command",
+        )])
+        .chain(hints::hint(keymap, CommandId::SaveSearch, "save as folder"))
+        .collect()
 }
 
 type ScopeHandler = Box<dyn Fn(Scope)>;
@@ -466,6 +459,10 @@ mod panel_imp {
         /// hidden until there is something to offer.
         pub(super) suggestion: gtk::Box,
         pub(super) on_suggest: RefCell<Vec<RefineHandler>>,
+        /// Which word the list is for, when it is not the one typed: a line
+        /// saying so and a button back to the typed word. Hidden otherwise.
+        pub(super) instead: gtk::Box,
+        pub(super) on_exact: RefCell<Vec<RefineHandler>>,
         /// The footer's key line, kept so a rebind can rewrite it (#828).
         pub(super) keys: gtk::Label,
         /// The tokens currently drawn, in the order they are drawn.
@@ -486,6 +483,8 @@ mod panel_imp {
                 nothing: gtk::Label::new(None),
                 suggestion: gtk::Box::new(gtk::Orientation::Vertical, 6),
                 on_suggest: RefCell::new(Vec::new()),
+                instead: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                on_exact: RefCell::new(Vec::new()),
                 keys: gtk::Label::new(None),
                 offered: RefCell::new(Vec::new()),
                 scope: Cell::new(Scope::default()),
@@ -544,7 +543,7 @@ impl Panel {
     /// promise [`crate::parts::PartsPanel::set_keymap`] already keeps for the
     /// parts panel's own footer.
     pub fn set_keymap(&self, keymap: &Keymap) {
-        self.imp().keys.set_text(&panel_keys(keymap));
+        KeyLine::adopt(&self.imp().keys, "postio-panel-keys").set(&panel_keys(keymap));
     }
 
     /// Which scope is active.
@@ -645,6 +644,51 @@ impl Panel {
         self.imp().on_suggest.borrow_mut().push(Box::new(handler));
     }
 
+    /// Say which word the list is for, when it is not the one typed, or
+    /// withdraw that.
+    ///
+    /// `Some((term, typed))`: the results are for `term` because `typed`
+    /// found nothing (ADR 0037, amended). At the top of the column, since it
+    /// changes what every row below means -- the list is not answering the
+    /// letters in the box. The button beside it searches for `typed` itself,
+    /// quoted, which is how the query language says "this word, exactly".
+    pub fn set_instead(&self, instead: Option<(&str, &str)>) {
+        let imp = self.imp();
+        while let Some(child) = imp.instead.first_child() {
+            imp.instead.remove(&child);
+        }
+        let Some((term, typed)) = instead else {
+            imp.instead.set_visible(false);
+            return;
+        };
+
+        let said = gtk::Label::new(Some(&format!("Showing results for {term}")));
+        crate::widgets::empty_note(&said, "postio-refine-empty");
+        imp.instead.append(&said);
+
+        let exact = format!("\"{typed}\"");
+        let button =
+            crate::widgets::chip_button(&exact, &format!("Search exactly for {typed} instead"));
+        button.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                for handler in panel.imp().on_exact.borrow().iter() {
+                    handler(&exact);
+                }
+            }
+        ));
+        imp.instead.append(&button);
+        imp.instead.set_visible(true);
+    }
+
+    /// Called when the typed word is asked for exactly, with the query to
+    /// put in the box -- the word in quotes. Replaces what is there, as
+    /// taking an offer does.
+    pub fn connect_exact(&self, handler: impl Fn(&str) + 'static) {
+        self.imp().on_exact.borrow_mut().push(Box::new(handler));
+    }
+
     /// Called when the user picks a scope.
     pub fn connect_scope(&self, handler: impl Fn(Scope) + 'static) {
         self.imp().on_scope.borrow_mut().push(Box::new(handler));
@@ -730,12 +774,13 @@ impl Panel {
         imp.chips
             .update_property(&[gtk::accessible::Property::Label("Refine the search")]);
 
-        imp.nothing.add_css_class("postio-refine-empty");
-        imp.nothing.set_xalign(0.0);
-        imp.nothing.set_wrap(true);
+        crate::widgets::empty_note(&imp.nothing, "postio-refine-empty");
         imp.nothing.set_visible(false);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        imp.instead.set_visible(false);
+        imp.instead.set_margin_bottom(12);
+        column.append(&imp.instead);
         column.append(&crate::widgets::kicker("Scope"));
         column.append(&imp.scopes);
 
@@ -755,11 +800,9 @@ impl Panel {
         // The keys this column offers, where the canvas puts them. Mono, and
         // the same shape the focused message row uses for its own hints.
         let keys = self.imp().keys.clone();
-        keys.set_text(&default_panel_keys());
-        keys.add_css_class("postio-panel-keys");
-        keys.set_xalign(0.0);
-        keys.set_wrap(true);
-        keys.set_accessible_role(gtk::AccessibleRole::Presentation);
+        // The registry's defaults, for a panel built before any
+        // `config.toml` has been read.
+        KeyLine::adopt(&keys, "postio-panel-keys").set(&panel_keys(Keymap::defaults()));
         column.append(&keys);
 
         self.set_child(Some(&column));
@@ -810,22 +853,10 @@ pub fn spoken_refinement(refinement: &Refinement) -> String {
 
 /// One scope row: the name, and how many of the matches are in it.
 fn scope_row(scope: Scope) -> gtk::ListBoxRow {
-    let name = gtk::Label::new(Some(scope.label()));
-    name.add_css_class("postio-folder-name");
-    name.set_xalign(0.0);
-    name.set_hexpand(true);
-    name.set_ellipsize(pango::EllipsizeMode::End);
-
-    let count = gtk::Label::new(None);
-    count.add_css_class("postio-folder-count");
-
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    line.append(&name);
-    line.append(&count);
-
-    let row = gtk::ListBoxRow::new();
-    row.add_css_class("postio-folder");
-    row.set_child(Some(&line));
+    let row = crate::widgets::nav_row("postio-folder");
+    if let Some(name) = crate::widgets::nav_name(&row) {
+        name.set_text(scope.label());
+    }
     set_scope_count(&row, scope, 0);
     row
 }
@@ -836,11 +867,7 @@ fn scope_row(scope: Scope) -> gtk::ListBoxRow {
 /// empty scope is a fact worth knowing before switching to it, where an inbox
 /// with nothing unread is just an ordinary inbox.
 fn set_scope_count(row: &gtk::ListBoxRow, scope: Scope, hits: u64) {
-    let Some(count) = row
-        .child()
-        .and_then(|line| line.last_child())
-        .and_then(|label| label.downcast::<gtk::Label>().ok())
-    else {
+    let Some(count) = crate::widgets::nav_count(row) else {
         return;
     };
     count.set_text(&hits.to_string());
@@ -1008,13 +1035,26 @@ impl Preview {
     /// a body, and a body that landed in the wrong preview would be worse
     /// than one that never landed.
     pub fn set_body(&self, message: MessageId, body: &MessageBody, sender: Option<&str>) {
+        self.set_prepared_body(message, body, sender, None);
+    }
+
+    /// [`set_body`](Self::set_body), with the body already judged and
+    /// sanitised off the main thread -- see
+    /// [`Reader::render_prepared`](crate::reader::Reader::render_prepared).
+    pub fn set_prepared_body(
+        &self,
+        message: MessageId,
+        body: &MessageBody,
+        sender: Option<&str>,
+        prepared: Option<postio_ui::reader::document::Prepared>,
+    ) {
         let imp = self.imp();
         if *imp.focused.borrow() != Some(message) {
             return;
         }
         let reader = self.reader();
         reader.set_highlight(imp.terms.borrow().clone());
-        reader.render(body, sender);
+        reader.render_prepared(body, sender, prepared);
         imp.body.set_visible(true);
         imp.filler.set_visible(false);
         imp.snippet.set_visible(false);
@@ -1058,6 +1098,13 @@ impl Preview {
         for handler in imp.on_open.borrow().iter() {
             handler(message);
         }
+    }
+
+    /// Which remote-image policy the preview draws `sender`'s mail under,
+    /// for a body being prepared off the main thread -- see
+    /// [`Reader::remote_images_for`](crate::reader::Reader::remote_images_for).
+    pub fn remote_images_for(&self, sender: Option<&str>) -> crate::reader::RemoteImages {
+        self.reader().remote_images_for(sender)
     }
 
     /// The hardened reader, built the first time a body actually arrives.
@@ -1120,9 +1167,17 @@ impl Preview {
         imp.body.set_vexpand(true);
         imp.body.set_visible(false);
 
-        imp.open
-            .set_child(Some(&crate::header::labelled("Open", "Ret")));
-        imp.open.add_css_class("suggested-action");
+        // `Return` opens the previewed message because it is `OpenMessage`'s
+        // key; the button says whichever key that is.
+        imp.open.set_child(Some(&keyhint::labelled(
+            "Open",
+            hints::key(Keymap::defaults(), CommandId::OpenMessage).as_deref(),
+        )));
+        crate::widgets::button::style(
+            &imp.open,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         imp.open.set_halign(gtk::Align::Start);
         imp.open
             .update_property(&[gtk::accessible::Property::Label("Open this message")]);
@@ -1292,8 +1347,11 @@ impl View {
         // a second place the search is written down, and the two would
         // disagree the first time anyone edited either.
         view.panel().connect_refine({
-            let finder = finder.clone();
+            let finder = finder.downgrade();
             move |token| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
                 let query = finder.query();
                 finder.set_query(crate::finder::Query {
                     mode: crate::finder::Mode::Search,
@@ -1311,11 +1369,30 @@ impl View {
         // executor refuses to guess when there are two terms or a filter --
         // so replacing the whole text is replacing exactly that word.
         view.panel().connect_suggestion({
-            let finder = finder.clone();
+            let finder = finder.downgrade();
             move |term| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
                 finder.set_query(crate::finder::Query {
                     mode: crate::finder::Mode::Search,
                     text: term.to_owned(),
+                });
+            }
+        });
+
+        // Asking for the typed word exactly replaces the box's text with it,
+        // quoted: the same replace a taken offer makes, and a query the user
+        // could have typed.
+        view.panel().connect_exact({
+            let finder = finder.downgrade();
+            move |exact| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
+                finder.set_query(crate::finder::Query {
+                    mode: crate::finder::Mode::Search,
+                    text: exact.to_owned(),
                 });
             }
         });
@@ -1325,8 +1402,11 @@ impl View {
         // again, against the new scope, which whoever answers reads off the
         // panel.
         view.panel().connect_scope({
-            let finder = finder.clone();
+            let finder = finder.downgrade();
             move |_| {
+                let Some(finder) = finder.upgrade() else {
+                    return;
+                };
                 if let Some(live) = finder.live() {
                     live.rerun();
                 }
@@ -1408,6 +1488,14 @@ impl View {
         self.inner
             .panel
             .set_suggestion(offer.map(|offer| (offer.term.as_str(), offer.documents)));
+    }
+
+    /// Say which word the list is for, when it is not the one typed. See
+    /// [`Panel::set_instead`].
+    pub fn set_instead(&self, instead: Option<&postio_search::Instead>) {
+        self.inner
+            .panel
+            .set_instead(instead.map(|instead| (instead.term.as_str(), instead.typed.as_str())));
     }
 
     /// Show or hide the search surface.
@@ -2183,6 +2271,7 @@ mod tests {
             corpus_complete: true,
             // Fourteen hits, so there is nothing to suggest instead.
             suggestion: None,
+            instead: None,
         };
         assert_eq!(Outcome::of(&results), outcome(14, false, 11));
 
@@ -2265,7 +2354,7 @@ mod tests {
         // folder" -- a notation nothing else writes, and one that went on
         // saying `C-s` after the user rebound `save_search`.
         assert_eq!(
-            panel_keys(&Keymap::resolve(&Default::default())),
+            hints::line(&panel_keys(Keymap::defaults())),
             "Return open · Tab refine · ctrl+s save as folder"
         );
     }
@@ -2278,7 +2367,7 @@ mod tests {
             .insert("save_search".to_string(), "mod+shift+s".to_string());
 
         assert_eq!(
-            panel_keys(&Keymap::resolve(&overrides)),
+            hints::line(&panel_keys(&Keymap::resolve(&overrides))),
             "Return open · Tab refine · ctrl+shift+s save as folder"
         );
     }

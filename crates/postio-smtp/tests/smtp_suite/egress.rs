@@ -34,7 +34,7 @@ async fn every_connection_reaches_the_sink_success_and_failure_alike() {
     let sink = Arc::new(Recorded::default());
     let connector = RustlsConnector::new()
         .expect("a connector")
-        .with_egress(sink.clone());
+        .with_egress(sink.clone(), postio_model::egress::EgressSubsystem::Smtp);
 
     let connected = connector.connect_tcp("127.0.0.1", port).await;
     assert!(connected.is_ok(), "the loopback listener accepts");

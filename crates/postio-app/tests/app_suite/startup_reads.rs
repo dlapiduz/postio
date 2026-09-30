@@ -62,6 +62,10 @@ const LARGE: usize = 10_000;
 /// than measuring one.
 struct Opened {
     counts: Counts,
+    /// Store connections opened while the window was pointed at the store.
+    /// Each is a cold page cache and a round of `PRAGMA`s (#1602); the warm
+    /// readers already open answer the same reads for nothing.
+    connections: u64,
     database: postio_storage::Store,
     account: postio_model::AccountId,
     _blobs: tempfile::TempDir,
@@ -111,10 +115,12 @@ async fn opening(size: usize) -> Opened {
     // on screen, and a panel's own figures are not the first frame's to wait
     // for — which is a claim about the code under test, so the case has to
     // put the window in the state the claim is about.
+    let before = test_support::counting::checkouts();
     let counts = counted_async(async || {
         let _ = feed_the_window(&window, &wiring).await;
     })
     .await;
+    let connections = test_support::counting::checkouts() - before;
     for phase in [
         postio_gtk::startup::Phase::Account,
         postio_gtk::startup::Phase::Feeds,
@@ -129,6 +135,7 @@ async fn opening(size: usize) -> Opened {
     }
     Opened {
         counts,
+        connections,
         database,
         account: report.account.id,
         _blobs: directory,
@@ -154,6 +161,20 @@ pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
         let large = opened.counts;
         eprintln!("  opening over {SMALL:>6} messages: {small:?}");
         eprintln!("  opening over {LARGE:>6} messages: {large:?}");
+        eprintln!("  connections opened: {}", opened.connections);
+        // Twelve, before: the accounts table was read six times over as
+        // many fresh connections, and so were the identities, the reader's
+        // account names, the settings account list, and the hidden settings
+        // panel's connection log. What is left is the floor: the store's
+        // three warm readers, opened once on first use and every read's
+        // after that, and the session marker's write, which is a write and
+        // so takes a connection of its own.
+        assert!(
+            opened.connections <= 4,
+            "pointing a window at the store opened {} store connections; the \
+             warm readers answer these reads without one",
+            opened.connections
+        );
 
         assert_eq!(
             small.statements, large.statements,

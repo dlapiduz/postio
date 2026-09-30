@@ -16,23 +16,27 @@ gio = "0.22.9"
 glib = { version = "0.22.9", features = ["v2_72"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 pango = { version = "0.22.9", features = ["v1_56"] }
-pangocairo = "0.22.9"
 postio-body.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
 postio-model.workspace = true
 postio-ui.workspace = true
+# The reading renderer (spec 006): BodyView draws its snapshots.
+postio-render.workspace = true
 postio-search.workspace = true
 thiserror = { workspace = true }
 tracing = { workspace = true }
 webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
-postio-test-support.workspace = true
+postio-test-support = { workspace = true, features = ["logs"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 tracing-subscriber = { workspace = true }
 gtk4-sys = "0.11.4"
 postio-config.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
+# The render-thread hooks: hold a render while a test looks at the frame.
+postio-render = { workspace = true, features = ["test-hooks"] }
 tempfile = { workspace = true }
 
 [build-dependencies]

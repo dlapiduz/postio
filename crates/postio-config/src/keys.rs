@@ -58,6 +58,10 @@ pub const KEY_NAMES: &[&str] = &[
     "left",
     "right",
     "menu",
+    // The keypad's own keys, for zoom (spec 006): GDK's names.
+    "kp_add",
+    "kp_subtract",
+    "kp_0",
     "plus",
     "minus",
     "equal",

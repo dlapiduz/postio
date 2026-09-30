@@ -29,6 +29,17 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-config`` must not depend on ``rusqlite``/``turso``/``gtk4``. It parses and
     validates TOML and watches the file for changes; it does no SQL and links
     no toolkit.
+  * ``postio-ui`` must not depend on ``gtk4``/``libadwaita``/``webkit6`` or the
+    engine. It is the toolkit-free presentation logic every frontend shares
+    (ADR 0019), and its own ``lib.rs`` says this check holds it to that.
+  * ``postio-client`` must not depend on a toolkit, the engine, or
+    ``io-imap``: it is the vocabulary between a frontend and the store's host
+    (ADR 0041), and every frontend links it.
+  * ``postio-tui`` must not depend on a toolkit or WebKit. It opens the store
+    itself -- one app at a time has it, the terminal or the desktop app (ADR
+    0041) -- so the engine and the protocol are in its graph by design; a
+    toolkit is how it would stop being small (``specs/005-tui-frontend``
+    FR-051).
 
 Not enforced here: ADR 0001's rule that ``postio-sync`` never reaches
 ``io-imap``/``io-sasl``. Cargo unifies features workspace-wide, so
@@ -48,7 +59,9 @@ Kinds considered:
   * normal and build dependencies, transitively, from the guarded crate;
   * dev-dependencies of the guarded crate itself (a test that pulls rusqlite
     into postio-gtk violates the invariant just as much as the library would),
-    but not dev-dependencies of its dependencies, which are never built.
+    but not dev-dependencies of its dependencies, which are never built --
+    unless the rule says ``"edges": "product"``, as ``postio-render``'s does:
+    its invariant is about what ships, and its tests need a socket.
 
 Exit status: 0 clean, 1 violation found, 2 the check itself could not run.
 """
@@ -70,6 +83,78 @@ from collections import deque
 # depending on the lower layer directly.
 
 RULES: dict[str, dict[str, object]] = {
+    "postio-ui": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+        ],
+        "why": (
+            "postio-ui is the presentation logic every frontend shares -- "
+            "keymap, list window, selection, palette, reader document "
+            "(ADR 0019). A toolkit or the store here would put one frontend's "
+            "assumptions, or a second store owner, into all of them."
+        ),
+    },
+    "postio-client": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "io-imap",
+        ],
+        "why": (
+            "postio-client is what a frontend holds: commands down, events "
+            "up, reads answered by the store's host (ADR 0041). It is the "
+            "vocabulary every frontend links, the macOS one included, so the "
+            "engine or a toolkit here would be in all of them; the store is "
+            "opened by postio-host, never through this crate."
+        ),
+    },
+    "postio-tui": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+        ],
+        "why": (
+            "postio-tui opens the store itself when no other Postio has it "
+            "(ADR 0041), so the engine and the protocol are in its graph on "
+            "purpose. It must stay small (specs/005-tui-frontend FR-051): no "
+            "toolkit and no WebKit."
+        ),
+    },
     "postio-ffi": {
         "banned": [
             "gtk4",
@@ -287,6 +372,58 @@ RULES: dict[str, dict[str, object]] = {
             "by accident instead of on purpose."
         ),
     },
+    "postio-render": {
+        "banned": [
+            # toolkit / web engine
+            "gtk4",
+            "gtk4-sys",
+            "glib",
+            "gio",
+            "webkit6",
+            "webkit6-sys",
+            # Postio crates that network or store
+            "postio-transport",
+            "postio-sync",
+            "postio-runtime",
+            "postio-storage",
+            "postio-account",
+            "postio-jmap",
+            "postio-gmail",
+            "postio-smtp",
+            "io-http",
+            "pimalaya-stream",
+            # Blitz's own networking
+            "blitz",
+            "blitz-net",
+            # network and TLS stacks
+            "reqwest",
+            "hyper",
+            "h2",
+            "ureq",
+            "curl",
+            "curl-sys",
+            "isahc",
+            "surf",
+            "rustls",
+            "tokio-rustls",
+            "native-tls",
+            "openssl",
+            "openssl-sys",
+            "socket2",
+            "mio",
+            "tokio",
+            "async-std",
+        ],
+        # The product graph only: the renderer's own tests bind a loopback
+        # socket to prove it never connects, and use postio-test-support,
+        # which pulls in tokio. Neither ever links into the app.
+        "edges": "product",
+        "why": (
+            "spec 006 FR-001 / ADR 0042: the renderer is incapable of a "
+            "network connection by construction; remote bytes enter only "
+            "through postio-runtime's RemoteImageFetcher"
+        ),
+    },
     "postio-config": {
         "banned": [
             "rusqlite",
@@ -351,8 +488,13 @@ def dep_kind_label(kinds: set[str | None]) -> str:
     return "dependency"
 
 
-def find_violations(meta: dict, crate: str, banned: set[str]) -> dict[str, list[tuple[str, str]]]:
+def find_violations(
+    meta: dict, crate: str, banned: set[str], own_dev: bool = True
+) -> dict[str, list[tuple[str, str]]]:
     """Breadth-first search of `crate`'s dependency closure.
+
+    ``own_dev`` walks the guarded crate's own dev-dependencies too; a rule
+    with ``"edges": "product"`` turns it off, to guard only what ships.
 
     Returns ``{banned_crate_name: shortest_path}`` where a path is a list of
     ``(crate_name, edge_kind)`` pairs starting at the guarded crate itself.
@@ -388,7 +530,7 @@ def find_violations(meta: dict, crate: str, banned: set[str]) -> dict[str, list[
             # dev-dependencies only count for the guarded crate itself: a
             # dependency's own dev-dependencies are never built.
             allowed: set[str | None] = {None, "build"}
-            if current == root:
+            if current == root and own_dev:
                 allowed.add("dev")
             kinds &= allowed
             if not kinds:
@@ -441,7 +583,9 @@ def main(argv: list[str] | None = None) -> int:
     for crate, rule in RULES.items():
         banned = set(rule["banned"])  # type: ignore[arg-type]
         try:
-            violations = find_violations(meta, crate, banned)
+            violations = find_violations(
+                meta, crate, banned, own_dev=rule.get("edges") != "product"
+            )
         except CheckError as exc:
             print(f"crate-boundary check: {exc}", file=sys.stderr)
             return 2

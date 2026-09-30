@@ -14,6 +14,14 @@ next_in_conversation	J | alt+Down
 prev_in_conversation	K | alt+Up
 toggle_fold	z
 view_original	ctrl+o
+toggle_reader_view	ctrl+shift+o | alt+o
+darken_message	D
+find_in_message	ctrl+f
+find_next	ctrl+g | F3
+find_previous	ctrl+shift+g | shift+F3
+zoom_in	ctrl+plus | ctrl+equal | ctrl+KP_Add
+zoom_out	ctrl+minus | ctrl+KP_Subtract
+zoom_reset	ctrl+0 | ctrl+KP_0
 expand_all	O | ctrl+shift+e
 toggle_rail	I
 reply	e | ctrl+r
@@ -31,29 +39,35 @@ add_label	L
 search	/ | alt+ctrl+f
 save_search	ctrl+s
 compose	c | ctrl+n
-send	ctrl+shift+d | ctrl+Return
-schedule_send	ctrl+shift+Return
+send	ctrl+shift+d | ctrl+Return | alt+s | alt+Return
+schedule_send	ctrl+shift+Return | alt+S
 save_draft	ctrl+s
 discard_draft	ctrl+d
-mark_sent	ctrl+shift+m
-retry_send	ctrl+shift+y
-cancel_send	ctrl+shift+x
-attach_file	ctrl+shift+a
-detach_composer	ctrl+shift+o
-copy_fields	ctrl+shift+c
-insert_image	ctrl+shift+g
+mark_sent	ctrl+shift+m | alt+m
+retry_send	ctrl+shift+y | alt+r
+cancel_send	ctrl+shift+x | alt+x
+attach_file	ctrl+shift+a | alt+a
+detach_composer	ctrl+shift+o | alt+o
+copy_fields	ctrl+shift+c | alt+c
+insert_image	ctrl+shift+g | alt+g
+edit_externally	ctrl+shift+e | alt+e
+toggle_preview	ctrl+shift+p | alt+p
 bold	ctrl+b
-italic	ctrl+i
-bullet_list	ctrl+shift+8
-numbered_list	ctrl+shift+7
-insert_link	ctrl+shift+k
-quote_block	ctrl+shift+9
+italic	ctrl+i | alt+i
+bullet_list	ctrl+shift+8 | alt+8
+numbered_list	ctrl+shift+7 | alt+7
+insert_link	ctrl+shift+k | alt+k
+quote_block	ctrl+shift+9 | alt+9
 undo	u | ctrl+z
 command_palette	ctrl+k
 cheat_sheet	?
-settings	ctrl+comma
-add_account	ctrl+shift+n
+settings	ctrl+comma | alt+comma
+add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
+quit	ctrl+q
+show_images	i i
+always_show_images	i a
+unsubscribe	X
 toggle_sidebar	ctrl+b
 focus_sidebar	g f
 go_to_inbox	g i

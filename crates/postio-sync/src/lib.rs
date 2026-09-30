@@ -49,6 +49,7 @@
 
 pub mod backfill;
 pub mod blob_sink;
+mod carry;
 pub mod coalesce;
 pub mod connect;
 mod contacts;

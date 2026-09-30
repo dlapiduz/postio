@@ -95,17 +95,11 @@ import Testing
 
     @Test func theTableIsToldTheHeightTheDensityAsksFor() {
         let controller = MessageTableController(source: StubRowSource(rowCount: 0))
-        // Hints are on by default and their line is reserved on every row, so
-        // the table's height is the one that includes it.
         controller.density = .compact
-        #expect(
-            controller.rowHeight
-                == MessageRowCell.preferredHeight(for: .compact, reservingHints: true))
+        #expect(controller.rowHeight == MessageRowCell.preferredHeight(for: .compact))
 
         controller.density = .airy
-        #expect(
-            controller.rowHeight
-                == MessageRowCell.preferredHeight(for: .airy, reservingHints: true))
+        #expect(controller.rowHeight == MessageRowCell.preferredHeight(for: .airy))
     }
 
     @Test func theViewBuildsATableAtTheDensitysHeight() {
@@ -132,9 +126,7 @@ import Testing
         for density in [DensityFfi.airy, .comfortable, .compact] {
             let controller = MessageTableController(source: StubRowSource(rowCount: 0))
             controller.density = density
-            let shown = Int(
-                MessageRowCell.preferredHeight(
-                    for: density, reservingHints: controller.ui.showKeyHints))
+            let shown = Int(MessageRowCell.preferredHeight(for: density))
             #expect(CGFloat(shown) == controller.rowHeight.rounded(.down))
         }
     }

@@ -438,3 +438,127 @@ fn is_separator(block: &Block) -> bool {
     // hyphens.
     matches!(inlines.get(1), None | Some(Inline::Break))
 }
+/// Which draft a reply command starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplyKind {
+    /// To the sender.
+    Reply,
+    /// To the sender and everyone else on it.
+    ReplyAll,
+    /// The whole message, to someone new.
+    Forward,
+}
+
+/// The draft `kind` starts from `source`, sent from `account`: its
+/// recipients and subject from [`postio_model::reply`], its body the quote
+/// or the forwarded message.
+///
+/// Here rather than in a frontend so the desktop and the terminal start a
+/// reply from the same draft.
+pub fn reply_draft(
+    kind: ReplyKind,
+    source: &postio_model::Message,
+    account: &postio_model::Account,
+) -> postio_model::Draft {
+    match kind {
+        ReplyKind::Reply => postio_model::reply::reply(source, account, quoted_body(source, false)),
+        ReplyKind::ReplyAll => {
+            postio_model::reply::reply_all(source, account, quoted_body(source, false))
+        }
+        ReplyKind::Forward => {
+            postio_model::reply::forward(source, account, quoted_body(source, true))
+        }
+    }
+}
+
+/// The body a reply or forward starts from, done in the crate that has both
+/// halves.
+///
+/// Rich in both renderings: the HTML half is what the editor opens
+/// (`document_of` prefers it), and the text half keeps the `> ` convention
+/// every mail client expects.
+///
+/// A **reply** quotes what the reader showed (ADR 0033): the original's
+/// sanitised markup, through [`quote_of`], so a table and a
+/// colour reach the quote instead of being narrowed away. The security
+/// property is unchanged and lives in that constructor — remote images
+/// blocked whatever the reader was allowed, and the reader's own permitted
+/// set rather than a second one.
+///
+/// A **forward** still goes through the parsed [`Document`].
+/// It presents the whole message as the body of a new one rather than as a
+/// quotation inside a reply, so it is the *user's* content once sent, and
+/// `Block::Quoted` is specifically the thing that is not that. Bringing the
+/// two together is #1483.
+pub fn quoted_body(source: &postio_model::Message, forward: bool) -> postio_model::MessageBody {
+    let rich = if forward {
+        // The same carried content a reply gets (#1483). The asymmetry was
+        // never decided -- a forward flattened its content only because ADR
+        // 0033 happened to be about replies -- so forwarding a table-based
+        // newsletter reduced it to a column of text while replying to the
+        // same message kept it. What stays different is the presentation: a
+        // forward is not a quote and is not wrapped as one.
+        let carried = quote_of(
+            source.body.html.as_deref(),
+            &forward_text(source),
+            QUOTE_SCOPE,
+        );
+        forwarded(&carried, &postio_model::reply::forward_header(source))
+    } else {
+        // The text half still goes through `source_document` when there is
+        // no markup, because that is where `format=flowed` is unwrapped
+        // (#456): handing `quote_of` the raw `text/plain` would quote a
+        // sender's soft wrap back at them as line breaks they never typed.
+        // With markup present the text part is the sender's own alternative
+        // and is taken as written.
+        let text = match source.body.html {
+            Some(_) => source.body.text.clone().unwrap_or_default(),
+            None => source_document(source).to_text(),
+        };
+        let quoted = quote_of(source.body.html.as_deref(), &text, QUOTE_SCOPE);
+        quoted_reply(&quoted, &postio_model::reply::attribution(source))
+    };
+    let (text, html) = crate::render(&rich);
+    postio_model::MessageBody {
+        text: Some(text),
+        html: Some(html),
+    }
+}
+
+/// The scope a reply's quoted styles are rewritten under: the parser's own
+/// word, so a round trip through the editor does not renumber anything.
+pub use crate::parse::QUOTE_SCOPE;
+
+/// The plain half a forward carries.
+///
+/// The same rule a reply's uses: the sender's own text alternative when there
+/// is one, and otherwise the flowed-aware narrowing of what they sent, so a
+/// `format=flowed` message is not quoted back with breaks nobody typed
+/// (#456).
+pub fn forward_text(source: &postio_model::Message) -> String {
+    match source.body.html {
+        Some(_) => source.body.text.clone().unwrap_or_default(),
+        None => source_document(source).to_text(),
+    }
+}
+
+/// The document `source`'s body means — the markup the reader showed when
+/// there is markup, the plain text otherwise.
+///
+/// The plain-text fallback goes through [`Document::from_flowed_text`]
+/// rather than [`Document::from_text`] exactly when `source` itself
+/// declared `format=flowed` (#456): unwrapping unconditionally would take
+/// an ordinary sender's own short lines as soft breaks and join them, and
+/// never unwrapping would show a `format=flowed` sender's wrapped sentence
+/// — including this app's own past sends — as line breaks nobody typed.
+///
+/// [`Document::from_flowed_text`]: crate::Document::from_flowed_text
+/// [`Document::from_text`]: crate::Document::from_text
+pub fn source_document(source: &postio_model::Message) -> Document {
+    match (&source.body.html, &source.body.text) {
+        (Some(html), _) => crate::parse(html),
+        (None, Some(text)) if source.text_is_flowed => Document::from_flowed_text(text),
+        (None, Some(text)) => Document::from_text(text),
+        (None, None) => Document::new(),
+    }
+}

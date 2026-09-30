@@ -406,3 +406,41 @@ POSTIO_STORE=/tmp/big.db cargo run --release -p postio-app &
 sleep 45   # let the catch-up passes settle, or you measure the transient
 grep -E '^(VmRSS|RssAnon|RssFile):' /proc/$(pgrep -n postio)/status
 ```
+
+### The terminal against the desktop (SC-004)
+
+`specs/005-tui-frontend` claims the terminal app holds the same mailbox in
+under half the desktop app's memory. Measured on 2026-09-25 on the
+maintainer's real store, about 83,000 messages, with release builds of one
+commit. Each app ran alone, since only one can open the store: the desktop on
+the headless compositor at 1280×800 and the terminal in a 140×40 tmux
+window, each on its inbox with the newest message in the reader. Five
+samples, three seconds apart, after 30 seconds to settle. Both were syncing
+in the background, as they would be in use.
+
+| | Terminal | Desktop |
+|---|---|---|
+| Processes | 1 | 14 (the app, and WebKit's) |
+| The app's own resident memory | 146 MiB, steady | 341–446 MiB, still climbing |
+| Proportional share (PSS), every process | 143 MiB | 400–487 MiB |
+
+**Under half on every sample**, however it is counted. Against the app
+process alone the terminal is at most 43 % (the desktop's lowest sample);
+counting what the desktop needs to draw a message at all, its WebKit
+processes, the terminal is under 36 %. PSS is the fair total across
+processes because shared libraries are split between the processes that
+map them, rather than counted in full once per process as RSS does.
+
+The desktop figure is above the 177 MiB in the table above because this is
+real mail with a message drawn by WebKit and a sync running, not a seeded
+store at rest. Both apps were measured the same way.
+
+Reproduce it, one app at a time:
+
+```sh
+cargo build --release -p postio-app -p postio-tui
+target/release/postio &                  # or target/release/postio-tui in a terminal
+sleep 30
+grep VmRSS /proc/$(pgrep -f 'release/postio$')/status      # or pgrep -x postio-tui
+grep Pss /proc/<pid>/smaps_rollup        # and each WebKit child's, for the desktop
+```

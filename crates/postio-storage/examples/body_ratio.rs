@@ -14,6 +14,8 @@
 //! cargo run -p postio-storage --example body_ratio --features test-support
 //! ```
 
+#![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
+
 fn main() {
     let bodies: Vec<String> = postio_model::test_corpus::all()
         .iter()

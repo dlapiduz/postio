@@ -52,6 +52,30 @@ pub const CONFIG_FILE_NAME: &str = "config.toml";
 /// `postio --config`.
 pub const CONFIG_PATH_ENV: &str = "POSTIO_CONFIG";
 
+/// The XDG base directory `name` (`XDG_DATA_HOME`, `XDG_CONFIG_HOME`) that
+/// Postio's *shared* files live under, or `None` for the default under
+/// `$HOME`.
+///
+/// Inside a Flatpak the sandbox points every XDG variable at the app's own
+/// directory under `~/.var/app`, which would give the desktop and terminal
+/// packages a store and a config each. They share both
+/// (`specs/005-tui-frontend` FR-040, research R10): each manifest grants the
+/// host's `postio` directories, and here the host's value is read instead --
+/// `HOST_<name>`, which Flatpak sets from the host. `$HOME` is the host's
+/// inside a sandbox, so the default needs no such care.
+pub fn shared_xdg<F>(env: &F, name: &str) -> Option<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let sandboxed = env("FLATPAK_ID").is_some_and(|id| !id.is_empty());
+    let key = if sandboxed {
+        format!("HOST_{name}")
+    } else {
+        name.to_owned()
+    };
+    env(&key).filter(|value| !value.is_empty())
+}
+
 /// The directory holding Postio's configuration, resolved from an arbitrary
 /// environment lookup so it is testable without touching the process
 /// environment.
@@ -67,7 +91,7 @@ pub fn config_dir_from<F>(env: F, platform: Platform) -> Result<PathBuf>
 where
     F: Fn(&str) -> Option<String>,
 {
-    if let Some(xdg) = env("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+    if let Some(xdg) = shared_xdg(&env, "XDG_CONFIG_HOME") {
         return Ok(PathBuf::from(xdg).join("postio"));
     }
     if let Some(home) = env("HOME").filter(|v| !v.is_empty()) {
@@ -117,6 +141,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(dir, PathBuf::from("/x/conf/postio"));
+    }
+
+    #[test]
+    fn inside_a_flatpak_the_config_is_the_hosts() {
+        // The sandbox points XDG_CONFIG_HOME at the app's own directory;
+        // both packages share one config.toml, so the host's is read.
+        let sandboxed = [
+            ("FLATPAK_ID", "dev.postio.PostioTui"),
+            (
+                "XDG_CONFIG_HOME",
+                "/home/p/.var/app/dev.postio.PostioTui/config",
+            ),
+            ("HOME", "/home/p"),
+        ];
+        assert_eq!(
+            config_dir_from(env_of(&sandboxed), Platform::Freedesktop).unwrap(),
+            PathBuf::from("/home/p/.config/postio")
+        );
+        let mut with_host = sandboxed.to_vec();
+        with_host.push(("HOST_XDG_CONFIG_HOME", "/x/conf"));
+        assert_eq!(
+            config_dir_from(env_of(&with_host), Platform::Freedesktop).unwrap(),
+            PathBuf::from("/x/conf/postio")
+        );
     }
 
     #[test]

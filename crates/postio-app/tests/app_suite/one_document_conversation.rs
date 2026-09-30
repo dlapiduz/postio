@@ -124,7 +124,12 @@ fn open_messages(window: &Window) -> Vec<String> {
         let Some((scope, rest)) = piece.split_once('"') else {
             continue;
         };
-        if rest.starts_with(" open>") {
+        // The rest of the opening tag, whatever attributes follow the id.
+        if rest
+            .split('>')
+            .next()
+            .is_some_and(|tag| tag.split_whitespace().any(|a| a == "open"))
+        {
             open.push(scope.to_string());
         }
     }

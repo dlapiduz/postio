@@ -54,11 +54,13 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
-use postio_core::{ActionId, Availability, Context, Keymap, Scope};
+use postio_core::{ActionId, Availability, CommandId, Context, Keymap, Scope};
 use postio_model::ids::{LabelId, MailboxId};
 use postio_model::mailbox::Mailbox;
 use postio_model::{Contact, Label};
+
 use postio_search::ParsedQuery;
+pub use postio_ui::finder::{ContactHit, LabelHit, contact_query, contacts, labels};
 
 use crate::palette::{Entry, entries, highlight, score};
 use crate::search::{Backspace, Chip, Live, backspace, chips};
@@ -236,44 +238,6 @@ pub struct FolderHit {
     pub score: i32,
 }
 
-/// One label the `+` box can offer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LabelHit {
-    /// The label to apply.
-    pub id: LabelId,
-    /// Its name, which is also what travels as an IMAP keyword.
-    pub name: String,
-    /// Byte indices in `name` the query matched, for highlighting.
-    pub positions: Vec<usize>,
-    /// How well it matched. Rows come out highest first.
-    pub score: i32,
-}
-
-/// The labels matching `query`, best first.
-///
-/// The same matcher `folders` and the command palette use, so `wk` finds
-/// `Work` here exactly as `cp` finds "Command palette" there.
-pub fn labels(labels: &[Label], query: &str) -> Vec<LabelHit> {
-    let query = query.trim();
-    let mut found: Vec<LabelHit> = labels
-        .iter()
-        .filter_map(|label| {
-            let matched = score(query, &label.name)?;
-            Some(LabelHit {
-                id: label.id,
-                name: label.name.clone(),
-                positions: matched.positions,
-                score: matched.score,
-            })
-        })
-        .collect();
-    // Stable, so an empty query leaves the repository's own order -- by name
-    // -- alone, which is what makes the list scannable.
-    found.sort_by_key(|hit| std::cmp::Reverse(hit.score));
-    found.truncate(crate::palette::MAX_ROWS);
-    found
-}
-
 /// The folders matching `query`, best first.
 ///
 /// Scored with the palette's own matcher, so `wd` finds `wayland-devel` in
@@ -299,102 +263,6 @@ pub fn folders(mailboxes: &[Mailbox], query: &str) -> Vec<FolderHit> {
     found.sort_by_key(|hit| std::cmp::Reverse(hit.score));
     found.truncate(crate::palette::MAX_ROWS);
     found
-}
-
-/// One correspondent the box matched.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ContactHit {
-    /// What to call them: the name the user set, then the last name seen on
-    /// the address, then the address itself.
-    pub name: String,
-    /// The addr-spec, which is what `from:` will be given.
-    pub address: String,
-    /// How many messages this address has been seen on, for the cap beside
-    /// the row — a correspondent you write to daily reads differently from
-    /// one who mailed you once.
-    pub times_seen: u32,
-    /// Byte indices in `name` the query matched, for highlighting.
-    pub positions: Vec<usize>,
-    /// How well it matched. Rows come out highest first.
-    pub score: i32,
-}
-
-/// The correspondents matching `query`, best first.
-///
-/// Scored with the palette's own matcher over the *name*, and again over the
-/// address when the name did not match — people look for `grace`, and they
-/// look for `gh`, and they look for `@example.org`. One matcher across the
-/// whole box, so `gh` finds Grace Hopper here exactly as `wd` finds
-/// `wayland-devel` one mode over.
-///
-/// Ties break on how often the correspondent has been seen, which is the
-/// reason an empty query offers the people you actually write to.
-///
-/// This is deliberately *not* the order `ContactRepository::search` returns
-/// any more. #424 put recency first there, because composing to somebody is
-/// about who you are writing to now. Finding is a different question — it
-/// asks whose mail to go and read — and the people worth offering for that
-/// are the ones there is a lot of mail from. The two surfaces answer
-/// differently on purpose; if that ever stops being true, this is the comment
-/// that was wrong.
-pub fn contacts(contacts: &[Contact], query: &str) -> Vec<ContactHit> {
-    let query = query.trim();
-    let mut found: Vec<ContactHit> = contacts
-        .iter()
-        .filter_map(|contact| {
-            let name = contact_name(contact);
-            let address = contact.address.address.clone();
-            // The name first, so the highlight lands on what the row shows.
-            // Falling back to the address means `@example.org` still finds
-            // people, and costs nothing when the name already matched.
-            let matched = match score(query, &name) {
-                Some(matched) => matched,
-                None => score(query, &address).map(|matched| crate::palette::Match {
-                    score: matched.score,
-                    positions: Vec::new(),
-                })?,
-            };
-            Some(ContactHit {
-                name,
-                address,
-                times_seen: contact.times_seen,
-                positions: matched.positions,
-                score: matched.score,
-            })
-        })
-        .collect();
-    found.sort_by_key(|hit| {
-        (
-            std::cmp::Reverse(hit.score),
-            std::cmp::Reverse(hit.times_seen),
-        )
-    });
-    found.truncate(crate::palette::MAX_ROWS);
-    found
-}
-
-/// What to call a correspondent: the name the user set, then the last display
-/// name seen on the address, then the address itself. Never empty, so a row
-/// always has something to say.
-fn contact_name(contact: &Contact) -> String {
-    contact
-        .name
-        .clone()
-        .or_else(|| contact.address.name.clone())
-        .unwrap_or_else(|| contact.address.address.clone())
-}
-
-/// The query picking `hit` puts in the box.
-///
-/// A `from:` chip, quoted if the address could not survive being typed back
-/// in. Deliberately *the query*, not a search that has already run: the point
-/// of landing in [`Mode::Search`] is that the user can go on building on it.
-pub fn contact_query(hit: &ContactHit) -> String {
-    if hit.address.chars().any(char::is_whitespace) {
-        format!("from:\"{}\"", hit.address.replace('"', ""))
-    } else {
-        format!("from:{}", hit.address)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +292,9 @@ type LabelHandler = Box<dyn Fn(LabelId)>;
 type ContactHandler = Box<dyn Fn(&ContactHit)>;
 type QueryHandler = Box<dyn Fn(&ParsedQuery)>;
 
+/// What [`Finder::set_live_titles`] holds.
+type LiveTitles = Box<dyn Fn(ActionId) -> Option<&'static str>>;
+
 mod imp {
     use std::cell::{Cell, RefCell};
 
@@ -444,6 +315,10 @@ mod imp {
         /// surface has focus, this is what that surface is showing, and a
         /// command can need either (#182).
         pub(super) availability: RefCell<Availability>,
+        /// A title the window gives a command for what is on screen now,
+        /// where the registry's is only half the story: `darken_message`
+        /// reads "Show as sent" on a darkened message (spec 006).
+        pub(super) live_titles: RefCell<Option<LiveTitles>>,
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
         pub(super) contacts: RefCell<Vec<Contact>>,
         pub(super) query: RefCell<Query>,
@@ -451,6 +326,8 @@ mod imp {
         /// The hit count and timing, once `attach` has a field to draw it in.
         pub(super) live: RefCell<Option<Live>>,
         pub(super) commands: RefCell<Vec<ActionId>>,
+        /// The listed commands' titles, as drawn.
+        pub(super) command_titles: RefCell<Vec<&'static str>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
         /// What the empty box is offering, as a person reads it.
         pub(super) hints: RefCell<Vec<String>>,
@@ -492,13 +369,16 @@ mod imp {
                 availability: RefCell::new(Availability {
                     scope: Scope::default(),
                     store_open: false,
+                    terminal: false,
                 }),
+                live_titles: RefCell::new(None),
                 mailboxes: RefCell::new(Vec::new()),
                 contacts: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
                 parsed: RefCell::new(ParsedQuery::default()),
                 live: RefCell::new(None),
                 commands: RefCell::new(Vec::new()),
+                command_titles: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
                 hints: RefCell::new(Vec::new()),
                 hinted: RefCell::new(Vec::new()),
@@ -660,6 +540,12 @@ impl Finder {
         self.refresh();
     }
 
+    /// Give commands titles that depend on what is on screen: `title_for`
+    /// answers a command's title now, or `None` for the registry's.
+    pub fn set_live_titles(&self, title_for: impl Fn(ActionId) -> Option<&'static str> + 'static) {
+        self.imp().live_titles.replace(Some(Box::new(title_for)));
+    }
+
     /// The folders `#` can jump to.
     pub fn set_mailboxes(&self, mailboxes: &[Mailbox]) {
         *self.imp().mailboxes.borrow_mut() = mailboxes.to_vec();
@@ -763,6 +649,12 @@ impl Finder {
     /// The commands listed, best first.
     pub fn commands(&self) -> Vec<ActionId> {
         self.imp().commands.borrow().clone()
+    }
+
+    /// The listed commands' titles, as drawn, best first.
+    #[doc(hidden)]
+    pub fn command_titles(&self) -> Vec<&'static str> {
+        self.imp().command_titles.borrow().clone()
     }
 
     /// The folders listed, best first.
@@ -1146,7 +1038,9 @@ impl Finder {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("postio-finder");
+        // The plate's surface, not a dressed plate: it hangs from the search
+        // field rather than sitting centred, and it is a list, not a dialog.
+        crate::widgets::plate::surface(self, "postio-finder");
         self.set_halign(gtk::Align::Start);
         self.set_valign(gtk::Align::Start);
         self.set_visible(false);
@@ -1155,7 +1049,7 @@ impl Finder {
         imp.list.add_css_class("postio-finder-list");
         imp.list.set_accessible_role(gtk::AccessibleRole::ListBox);
 
-        imp.empty.add_css_class("postio-finder-empty");
+        crate::widgets::empty_note(&imp.empty, "postio-finder-empty");
         imp.empty.set_visible(false);
 
         imp.scroller
@@ -1281,16 +1175,25 @@ impl Finder {
                 if let Some(live) = imp.live.borrow().as_ref() {
                     live.clear();
                 }
-                let found = entries(
+                let mut found = entries(
                     &imp.keymap.borrow(),
                     *imp.context.borrow(),
                     *imp.availability.borrow(),
                     &query.text,
                 );
+                if let Some(title_for) = imp.live_titles.borrow().as_ref() {
+                    for entry in &mut found {
+                        if let Some(title) = title_for(entry.id) {
+                            entry.title = title;
+                            entry.positions.clear();
+                        }
+                    }
+                }
                 for entry in &found {
                     imp.list.append(&command_row(entry));
                 }
                 *imp.commands.borrow_mut() = found.iter().map(|entry| entry.id).collect();
+                *imp.command_titles.borrow_mut() = found.iter().map(|entry| entry.title).collect();
             }
             Mode::Mailbox => {
                 if let Some(live) = imp.live.borrow().as_ref() {
@@ -1354,8 +1257,13 @@ impl Finder {
             // get out, so the same slot carries the way back while one is on.
             // In search there is nothing to back out of, so it goes.
             let way_back = (open && !searching).then_some(WAY_BACK);
-            field.hint.set_text(way_back.unwrap_or("/"));
-            field.hint.set_visible(!open || way_back.is_some());
+            let invite = postio_ui::hints::key(&imp.keymap.borrow(), CommandId::Search);
+            field
+                .hint
+                .set_text(way_back.or(invite.as_deref()).unwrap_or_default());
+            field
+                .hint
+                .set_visible(way_back.is_some() || (!open && invite.is_some()));
 
             // The chip stays decoration -- a screen reader announcing a bare
             // "⌫" would be reading furniture. The fact it carries belongs to

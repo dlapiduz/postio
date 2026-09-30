@@ -133,10 +133,6 @@ pub struct AppearanceFfi {
     pub theme: ThemeFfi,
     /// Show per-row actions when the pointer is over a row.
     pub show_hover_actions: bool,
-    /// Show the focused row's key hints (`e reply`, `a archive`). Off leaves
-    /// every binding in force — it only stops the row from naming them, for
-    /// someone who already knows the keyboard (#422).
-    pub show_key_hints: bool,
     /// Show each row's sender-initials chip, per canvas 1b's row anatomy.
     pub sender_avatars: bool,
 }
@@ -364,7 +360,6 @@ pub fn settings_appearance(text: String) -> Option<AppearanceFfi> {
         density: ui.density.into(),
         theme: ui.theme.into(),
         show_hover_actions: ui.show_hover_actions,
-        show_key_hints: ui.show_key_hints,
         sender_avatars: ui.sender_avatars,
     })
 }
@@ -386,7 +381,6 @@ pub fn settings_patch_appearance(
     ui.density = appearance.density.into();
     ui.theme = appearance.theme.into();
     ui.show_hover_actions = appearance.show_hover_actions;
-    ui.show_key_hints = appearance.show_key_hints;
     ui.sender_avatars = appearance.sender_avatars;
     patch_ui(&text, &ui).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
@@ -579,6 +573,34 @@ pub fn settings_add_filter(
     })
 }
 
+/// The reading pane's zoom from `[reader]`, in percent, or `None` when the
+/// file will not parse (spec 006 FR-021) -- `settings_appearance`'s reason.
+#[uniffi::export]
+pub fn settings_reader_zoom(text: String) -> Option<u16> {
+    Some(Config::from_toml_str(&text).ok()?.reader.zoom)
+}
+
+/// Every zoom step, in percent: the ones `[reader] zoom` takes.
+#[uniffi::export]
+pub fn settings_zoom_steps() -> Vec<u16> {
+    postio_config::ZOOM_STEPS.to_vec()
+}
+
+/// Write `zoom` into `text`'s `[reader]` table, as the nearest step, leaving
+/// the rest verbatim.
+#[uniffi::export]
+pub fn settings_patch_reader_zoom(text: String, zoom: u16) -> Result<String, SettingsError> {
+    let mut reader = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .reader;
+    reader.zoom = postio_config::nearest_zoom(zoom);
+    postio_config::patch_reader(&text, &reader).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
 /// Why a settings write could not be made.
 ///
 /// Shared with the saved-search verbs in [`crate::saved_search`], which are
@@ -695,8 +717,6 @@ pub struct RowMetricsFfi {
     pub gap: f32,
     /// Between the sender line and the subject.
     pub subject_gap: f32,
-    /// Between the snippet and the key hints the focused row reveals.
-    pub hints_gap: f32,
     /// Whether the snippet line is drawn at all — `false` at the tightest
     /// density, which is the whole of what makes it the tightest.
     pub snippet: bool,
@@ -712,7 +732,6 @@ pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
         avatar: metrics.avatar,
         gap: metrics.gap,
         subject_gap: metrics.subject_gap,
-        hints_gap: metrics.hints_gap,
         snippet: metrics.snippet,
     }
 }
@@ -729,12 +748,12 @@ pub fn row_timestamp(received_at: i64) -> String {
     postio_ui::row::timestamp(received, chrono::Local::now())
 }
 
-/// One key hint on the focused row: the key, and what it does.
+/// One key hint: the key, and what it does -- the search bar's footer.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct RowHintFfi {
+pub struct KeyHintFfi {
     /// The key as the user would press it, from their own bindings.
     pub key: String,
-    /// The verb, in the canvas' words — "reply", "archive".
+    /// The verb, in the canvas' words — "open", "refine".
     pub label: String,
 }
 

@@ -33,17 +33,17 @@ impl<'a> UnsubscribeRepository<'a> {
         &self,
         activation: &mut UnsubscribeActivation,
     ) -> Result<UnsubscribeActivationId> {
-        self.connection
-            .execute(
-                "INSERT INTO unsubscribe_activations (account_id, list_identifier, activated_at)
+        sql::execute(
+            self.connection,
+            "INSERT INTO unsubscribe_activations (account_id, list_identifier, activated_at)
              VALUES (?1, ?2, ?3)",
-                bind![
-                    activation.account_id.get(),
-                    activation.list_identifier,
-                    to_millis(activation.activated_at),
-                ],
-            )
-            .await?;
+            bind![
+                activation.account_id.get(),
+                activation.list_identifier,
+                to_millis(activation.activated_at),
+            ],
+        )
+        .await?;
         let id = UnsubscribeActivationId::new(self.connection.last_insert_rowid());
         activation.id = id;
         Ok(id)

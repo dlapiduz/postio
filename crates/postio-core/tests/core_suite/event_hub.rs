@@ -21,8 +21,6 @@
 //! Not `#[tokio::test]`, for the reason `bridge.rs` gives: the frontend drives
 //! this from a plain thread that owns no runtime.
 
-use std::io;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use postio_core::bridge::{Bridge, EventHub, EventSink, EventStream, handler_fn};
@@ -219,33 +217,7 @@ fn origin_tagging_survives_the_hub() {
 }
 
 /// A writer every `tracing` line lands in, so a test can read them back.
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl Captured {
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().expect("not poisoned")).into_owned()
-    }
-}
-
-impl io::Write for Captured {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().expect("not poisoned").extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-    type Writer = Captured;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
+use postio_test_support::logs::Captured;
 
 #[test]
 fn a_subscriber_that_never_drains_becomes_a_line_in_the_log() {

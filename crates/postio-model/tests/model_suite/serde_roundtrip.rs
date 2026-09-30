@@ -200,6 +200,7 @@ fn sample_draft() -> Draft {
         identity_id: Some(IdentityId::new(7)),
         kind: DraftKind::Reply,
         in_reply_to: Some(MessageId::new(5)),
+        forwarded_from: Some(MessageId::new(6)),
         thread_id: Some(ThreadId::new(9)),
         to: vec![EmailAddress::new(Some("Alice"), "alice@example.com")],
         cc: vec![],
@@ -212,6 +213,7 @@ fn sample_draft() -> Draft {
         // `true` rather than the default, for this file's own reason: a
         // field set to its default proves nothing about a round trip.
         rich: true,
+        body_markdown: Some("sure".into()),
         attachments: vec![],
         state: DraftState::Editing,
         // Populated rather than `None`: this test exists to prove a field

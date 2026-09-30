@@ -118,6 +118,28 @@ pub fn verb_of(uri: &str) -> Option<(MessageVerb, String)> {
     })
 }
 
+/// The attribute every fold in a conversation carries: its stable id, by
+/// which the renderer opens or closes it across re-renders (spec 006 R15).
+/// A message's fold is its anchor; a quote's is `<anchor>-q<n>`, numbered
+/// in document order within its message.
+pub const FOLD_ATTRIBUTE: &str = "data-postio-fold";
+
+/// The opening tag `postio-body` folds quoted text with. A sender cannot
+/// write it: the sanitizer strips every `postio-` class.
+const QUOTE_FOLD: &str = "<details class=\"postio-quote\"";
+
+/// Give every quote fold in one message's body its id.
+fn number_quote_folds(body: &str, anchor: &str) -> String {
+    let mut parts = body.split(QUOTE_FOLD);
+    let mut out = String::with_capacity(body.len());
+    out.push_str(parts.next().unwrap_or_default());
+    for (n, rest) in parts.enumerate() {
+        out.push_str(&format!("{QUOTE_FOLD} {FOLD_ATTRIBUTE}=\"{anchor}-q{n}\""));
+        out.push_str(rest);
+    }
+    out
+}
+
 /// The element id a message carries, so a pane can scroll to it.
 ///
 /// One function rather than two format strings, because the id and the
@@ -352,26 +374,24 @@ pub struct ThreadMessage {
 pub fn compose(
     messages: &[ThreadMessage],
     allowed: impl Fn(&str) -> bool,
-    originals: &std::collections::HashSet<String>,
+    originals: &std::collections::HashMap<String, super::document::Rendering>,
     renders: &mut super::document::RenderCache,
 ) -> String {
-    use super::document::{Absent, Rendered, Rendering, absent_html};
+    use super::document::{Absent, Rendered, absent_html};
 
-    // Rendered first, and held, because `Entry` borrows the markup. Reader
-    // view is decided per message, from the message: bulk mail opens reduced,
-    // correspondence never does, and a thread can hold both.
+    // Rendered first, and held, because `Entry` borrows the markup. Every
+    // message opens as its sender built it (spec 006 FR-031), exactly as
+    // `render` decides it for one.
     let rendered: Vec<Rendered> = messages
         .iter()
         .map(|message| {
-            // The reader's own choice first: `⌃O` on a message overrules what
-            // its content suggests, for that message and no other (#1398).
-            let rendering = if originals.contains(&message.scope) {
-                Rendering::Original
-            } else if super::document::suits_reader_view(&message.body) {
-                Rendering::Reader
-            } else {
-                Rendering::Original
-            };
+            // The reader's own choice first -- `⌃O` or reader view on one
+            // message, for that message and no other (#1398) -- and how every
+            // message opens otherwise.
+            let rendering = originals
+                .get(&message.scope)
+                .copied()
+                .unwrap_or_else(super::document::opening_rendering);
             // Per **message**, from its own sender (`PRODUCT.md` §21), so one
             // allowed correspondent does not carry the rest of the thread with
             // them (#1353).
@@ -553,6 +573,7 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // were scoped to, and without it they match nothing.
     let body = contain_body_in(entry.body, Some(entry.scope));
     let anchor = message_anchor(entry.scope);
+    let body = number_quote_folds(&body, &anchor);
     let recipients = recipients_html(entry.recipients, entry.cc);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
@@ -563,7 +584,8 @@ fn entry_html(entry: &Entry<'_>) -> String {
         String::new()
     };
     format!(
-        "<details class=\"postio-message{mine}\" id=\"{anchor}\"{open}>\
+        "<details class=\"postio-message{mine}\" id=\"{anchor}\" \
+         {FOLD_ATTRIBUTE}=\"{anchor}\"{open}>\
          <summary class=\"postio-message-head\">\
          <span class=\"postio-recipients-label\">From</span>\
          <span class=\"postio-from\">{sender}</span>\
@@ -870,8 +892,8 @@ mod tests {
             1,
             "exactly one message should start open: {document}"
         );
-        assert!(document.contains(r#"id="m-2" open>"#));
-        assert!(document.contains(r#"id="m-1">"#));
+        assert!(document.contains(r#"id="m-2" data-postio-fold="m-2" open>"#));
+        assert!(document.contains(r#"id="m-1" data-postio-fold="m-1">"#));
     }
 
     /// #323's edge, which matters more here than in a single-message document:
@@ -925,7 +947,7 @@ mod tests {
 
         assert_eq!(document.matches("<details").count(), 1);
         assert!(
-            document.contains(r#"id="m-7" open>"#),
+            document.contains(r#"id="m-7" data-postio-fold="m-7" open>"#),
             "the one message has to be open, or a single message opens closed"
         );
         assert!(document.contains("orders@marketside.example"));
@@ -1083,6 +1105,83 @@ mod tests {
              {grace}"
         );
     }
+
+    #[test]
+    fn every_fold_carries_a_stable_id_unique_in_the_document() {
+        // The renderer toggles a fold by this id (spec 006 R15), and a toggle
+        // has to survive a re-render and land on the fold the user touched:
+        // so every `<details>` has one, no two share it, and it is the same
+        // each time the conversation is composed.
+        let quoted = "<p>a</p><details class=\"postio-quote\"><summary>q</summary>\
+                      <blockquote>one</blockquote></details><details class=\"postio-quote\">\
+                      <summary>q</summary><blockquote>two</blockquote></details>";
+        let compose = || {
+            conversation_document(
+                &[
+                    entry("7", "Ada", quoted, true),
+                    entry("11", "Grace", quoted, true),
+                ],
+                postio_body::RemoteImages::Blocked,
+                crate::reader::document::Sheet::Theme,
+            )
+        };
+        let document = compose();
+        let ids: Vec<&str> = document
+            .split("<details")
+            .skip(1)
+            .map(|tag| {
+                tag.split_once("data-postio-fold=\"")
+                    .filter(|(before, _)| !before.contains('>'))
+                    .and_then(|(_, rest)| rest.split('"').next())
+                    .unwrap_or_else(|| panic!("a fold without an id: <details{tag}"))
+            })
+            .collect();
+        assert_eq!(ids.len(), 6, "two messages and four quotes: {ids:?}");
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "fold ids collide: {ids:?}");
+        assert_eq!(compose(), document, "the ids are not stable");
+        assert!(ids.contains(&message_anchor("7").as_str()));
+    }
+}
+
+/// Who a message went to is drawn under its head, labelled, and escaped:
+/// a display name is the sender's to write (#1437).
+#[cfg(test)]
+mod recipients_tests {
+    use super::*;
+
+    #[test]
+    fn to_and_cc_are_labelled_rows_and_empty_ones_are_left_out() {
+        let rows = recipients_html("Quinn <quinn@example.net>", "");
+        assert!(rows.contains(">To</span>"), "{rows}");
+        assert!(
+            !rows.contains(">Cc</span>"),
+            "an empty Cc drew a row: {rows}"
+        );
+        assert!(
+            rows.contains("Quinn &lt;quinn@example.net&gt;"),
+            "the address was not escaped: {rows}"
+        );
+        let both = recipients_html("a@example.com", "b@example.com");
+        assert_eq!(
+            both.matches("postio-message-recipients").count(),
+            2,
+            "{both}"
+        );
+        assert_eq!(
+            recipients_html("  ", ""),
+            "",
+            "blank recipients draw nothing"
+        );
+    }
+
+    #[test]
+    fn chrome_text_escapes_everything_markup_could_use() {
+        assert_eq!(
+            escape(r#"<b>"Ada" & 'Bo'</b>"#),
+            "&lt;b&gt;&quot;Ada&quot; &amp; &#39;Bo&#39;&lt;/b&gt;"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1090,7 +1189,7 @@ mod compose_tests {
     use super::*;
     use crate::reader::document::RenderCache;
     use postio_model::MessageBody;
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
     /// One message from `address`, open, with a remote image in its body.
     fn from(scope: &str, address: &str) -> ThreadMessage {
@@ -1119,7 +1218,7 @@ mod compose_tests {
         let document = compose(
             &messages,
             |address| address == "ada@example.com",
-            &HashSet::new(),
+            &HashMap::new(),
             &mut RenderCache::default(),
         );
         assert!(
@@ -1141,7 +1240,7 @@ mod compose_tests {
         let nobody = compose(
             &messages,
             |_| false,
-            &HashSet::new(),
+            &HashMap::new(),
             &mut RenderCache::default(),
         );
         assert!(
@@ -1151,7 +1250,7 @@ mod compose_tests {
         let someone = compose(
             &messages,
             |_| true,
-            &HashSet::new(),
+            &HashMap::new(),
             &mut RenderCache::default(),
         );
         assert!(someone.contains("img-src postio-cid: data: http: https:"));
@@ -1168,7 +1267,7 @@ mod compose_tests {
         let document = compose(
             &[open, shut],
             |_| false,
-            &HashSet::new(),
+            &HashMap::new(),
             &mut RenderCache::default(),
         );
         assert_eq!(document.matches("role=\"status\"").count(), 1, "{document}");
@@ -1180,7 +1279,7 @@ mod compose_tests {
         let document = compose(
             &messages,
             |_| false,
-            &HashSet::new(),
+            &HashMap::new(),
             &mut RenderCache::default(),
         );
         for scope in ["1", "2"] {

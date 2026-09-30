@@ -1,0 +1,34 @@
+Message-ID: <20260925T060000.vectors@abuse.example.com>
+Date: Fri, 25 Sep 2026 06:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: Every way to name a URL
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  @import url("https://beacon.example.com/import.css");
+  @font-face { font-family: "Beacon Sans"; src: url("https://beacon.example.com/font.woff2") format("woff2"); }
+  .bg { background: url("https://beacon.example.com/bg.png"); height: 20px; }
+  .list { list-style-image: url("https://beacon.example.com/bullet.png"); }
+  .cur { cursor: url("https://beacon.example.com/cursor.png"), auto; }
+  .border { border: 10px solid; border-image: url("https://beacon.example.com/border.png") 30 round; }
+  .content::before { content: url("https://beacon.example.com/content.png"); }
+  .font { font-family: "Beacon Sans", sans-serif; }
+  @media (min-width: 500px) { .wide { background-image: url("https://beacon.example.com/wide.png"); height: 20px; } }
+</style></head>
+<body>
+<p class="bg">Background image.</p>
+<ul class="list"><li>List marker image.</li></ul>
+<p class="cur">Cursor image.</p>
+<p class="border">Border image.</p>
+<p class="content">Generated content image.</p>
+<p class="font">Remote web font.</p>
+<p class="wide">Conditional background.</p>
+<p style="background-image:url('https://beacon.example.com/inline.png')">Inline style background.</p>
+<table><tr><td background="https://beacon.example.com/cell.png">Cell background attribute.</td></tr></table>
+<p><img src="https://beacon.example.com/pixel.gif" width="1" height="1" alt=""></p>
+</body></html>

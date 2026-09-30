@@ -226,6 +226,34 @@ impl CommandSender {
     }
 }
 
+/// Commands a [`CommandSender`] queued, for a frontend that runs them
+/// somewhere other than a [`Bridge`] of its own: `postio-app` hands its window
+/// a sender and passes each command to `postio-client` (ADR 0041).
+#[derive(Debug)]
+pub struct CommandReceiver(async_channel::Receiver<Queued>);
+
+impl CommandReceiver {
+    /// The next command, once one is sent; `None` when every sender is gone.
+    pub async fn recv(&self) -> Option<Command> {
+        self.0.recv().await.ok().map(|queued| queued.command)
+    }
+
+    /// The next command already sent, if there is one.
+    pub fn try_recv(&self) -> Option<Command> {
+        self.0.try_recv().ok().map(|queued| queued.command)
+    }
+}
+
+/// A sender and the receiver its commands arrive on, unbounded like the
+/// bridge's own so [`CommandSender::send`] still never blocks.
+///
+/// Untracked only: an id a tracked send takes here would not be the one the
+/// runtime that finally runs the command reports under.
+pub fn command_channel() -> (CommandSender, CommandReceiver) {
+    let (sender, receiver) = async_channel::unbounded();
+    (CommandSender(sender), CommandReceiver(receiver))
+}
+
 /// A handler's end of the event channel.
 ///
 /// Cloneable and `Send`, so a spawned background task can keep reporting after
@@ -872,5 +900,22 @@ impl Drop for Bridge {
             return;
         }
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_forwarded_command_arrives_in_the_order_it_was_sent() {
+        let (sender, receiver) = command_channel();
+        sender.send(Command::Undo).expect("open");
+        sender.send(Command::Refresh).expect("open");
+        assert_eq!(receiver.try_recv(), Some(Command::Undo));
+        assert_eq!(receiver.try_recv(), Some(Command::Refresh));
+        assert_eq!(receiver.try_recv(), None);
+        drop(receiver);
+        assert!(sender.is_closed(), "a sender with nobody reading says so");
     }
 }

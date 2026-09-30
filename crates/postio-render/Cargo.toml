@@ -1,0 +1,77 @@
+[package]
+name = "postio-render"
+description = "The reading renderer: message bodies drawn in-process, with no network and no C on the content path."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[features]
+# Hooks the render-thread tests drive (a lookup that panics, a lookup held
+# until released). Never enabled by a product build.
+test-hooks = []
+
+[dependencies]
+# `net` and `system-fonts` off deliberately (research R3): no network crate,
+# and no fontconfig -- C that reads a message's codepoints -- on the content
+# path. `scripts/checks/check-renderer-is-memory-safe.py` holds the graph to
+# that. `blitz-dom` and `blitz-paint` build from `vendor/`, with Postio's
+# patch queue (research R1).
+blitz-dom = { version = "=0.3.0-beta.2", default-features = false, features = ["floats", "svg"] }
+blitz-html = { version = "=0.3.0-beta.2", default-features = false }
+blitz-paint = { version = "=0.3.0-beta.2", default-features = false, features = ["svg"] }
+blitz-traits = { version = "=0.3.0-beta.2", default-features = false }
+anyrender = "=0.13.0"
+anyrender_vello_cpu = "=0.17.0"
+parley = { version = "0.11", default-features = false, features = ["std"] }
+# Fonts are discovered by fontdb, which is pure Rust (research R3), and
+# memory-mapped through it; skrifa reads their character maps.
+fontdb = "0.24"
+skrifa = "0.44"
+# Pure-Rust decoders only; no avif, tiff or exr (research R4).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+kurbo = "0.13"
+base64 = { workspace = true }
+# A render panic is logged by location only (research R6).
+tracing = { workspace = true }
+# SVG images are re-serialised with no external references (research R5).
+usvg = "=0.48"
+# The sanitizer's part URI scheme, and its decoding.
+postio-body = { workspace = true }
+url = { workspace = true }
+# Computed styles, read for the text index (display, visibility, colour).
+style = { package = "stylo", version = "0.20" }
+# Find folds diacritics: decompose, then drop the marks.
+unicode-normalization = "0.1"
+# RenderedDocument crosses from the render thread to the UI thread (R7).
+static_assertions = "1.1"
+
+[dev-dependencies]
+# The crate's own tests, with their hooks on.
+postio-render = { path = ".", features = ["test-hooks"] }
+# Arm B of the engine evaluation (research R0, T023) is a harness in
+# `examples/` that reaches into Blitz's styles and parses markup itself.
+# Stamps every element of a composed document with an index, so the
+# harness can address its overrides as a stylesheet and lay out afresh.
+html5ever = "0.39.0"
+markup5ever_rcdom = "0.39.0"
+postio-model = { version = "0.3.0", path = "../postio-model", features = ["test-corpus"] }
+postio-ui = { version = "0.3.0", path = "../postio-ui" }
+postio-test-support = { workspace = true, features = ["fidelity"] }
+tempfile = { workspace = true }
+
+[lints.rust]
+# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
+# One site, `fonts.rs`'s `map_installed`: installed font files are
+# memory-mapped rather than read (research R3), because reading every one
+# cost 198 MiB resident. fontdb's mapping call is `unsafe fn`. No parser
+# here is unsafe; every one is Rust's own (FR-023a).
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+# A crate that keeps its own `[lints.rust]` inherits none of the workspace
+# lints, so the clippy floor's most load-bearing rule is restated here.
+[lints.clippy]
+let_underscore_future = "deny"

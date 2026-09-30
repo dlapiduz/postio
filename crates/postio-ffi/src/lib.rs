@@ -112,7 +112,7 @@ pub use search::{
 pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
-    FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, RowActionFfi, RowHintFfi, RowMetricsFfi,
+    FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, KeyHintFfi, RowActionFfi, RowMetricsFfi,
     SettingsError, SettingsSectionFfi, SettingsStatusFfi, SignaturePlacementFfi, SyncingFfi,
     ThemeFfi, row_actions, row_metrics, row_timestamp, settings_add_filter, settings_appearance,
     settings_composing, settings_filters, settings_group_label, settings_handoff_label,

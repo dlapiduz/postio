@@ -225,70 +225,10 @@ async fn an_irreversible_operation_stores_no_inverse() {
         .expect("enqueue");
 
     assert_eq!(queued.inverse, None);
-    assert!(!queued.is_undoable(), "the UI must not offer undo for it");
-}
-
-#[tokio::test]
-async fn undoing_enqueues_the_inverse_down_the_same_path() {
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("checkout");
-    let fixture = fixture(&connection).await;
-    let message = insert_message(&connection, fixture.inbox).await;
-    let queue = OperationQueueRepository::new(&connection);
-
-    let archived = queue
-        .enqueue(
-            fixture.account.id,
-            OperationTarget::Message(message),
-            &Operation::Move {
-                from: fixture.inbox,
-                to: fixture.archive,
-            },
-            at(9),
-        )
-        .await
-        .expect("enqueue");
-
-    let undo = queue
-        .enqueue_inverse(&archived, at(10))
-        .await
-        .expect("undo");
-
-    assert_eq!(
-        undo.operation,
-        Operation::Move {
-            from: fixture.archive,
-            to: fixture.inbox
-        }
+    assert!(
+        !queued.inverse.is_some(),
+        "the UI must not offer undo for it"
     );
-    assert_eq!(undo.target, archived.target, "the same message");
-    assert_eq!(undo.state, OperationState::Pending, "an ordinary queue row");
-    assert!(undo.id.get() > archived.id.get(), "and it drains after it");
-}
-
-#[tokio::test]
-async fn there_is_no_inverse_to_enqueue_for_an_irreversible_operation() {
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("checkout");
-    let fixture = fixture(&connection).await;
-    let queue = OperationQueueRepository::new(&connection);
-
-    let expunge = queue
-        .enqueue(
-            fixture.account.id,
-            OperationTarget::Mailbox(fixture.trash),
-            &Operation::Expunge {
-                mailbox: fixture.trash,
-            },
-            at(9),
-        )
-        .await
-        .expect("enqueue");
-
-    assert!(matches!(
-        queue.enqueue_inverse(&expunge, at(10)).await,
-        Err(postio_storage::Error::NotUndoable { op_type }) if op_type == "expunge"
-    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +288,14 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
         )
         .await
         .expect("enqueue");
+    // What a session action does on an early `?`: the transaction and the
+    // checkout it was opened on go together. A dropped transaction is only
+    // rolled back by the engine's next uncached statement on that same
+    // handle, and the storage layer's statements are cached, so the handle
+    // going is what ends it.
     drop(transaction);
+    drop(connection);
+    let connection = database.connect().await.expect("checkout");
 
     assert!(
         !is_seen(&connection, message).await,

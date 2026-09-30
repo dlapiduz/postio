@@ -17,7 +17,6 @@
 #
 # Add a line only for genuinely public API with no in-workspace caller, and
 # say why on the same line.
-account_counts                    # crates/postio-storage/src/repository/mailboxes.rs:314
 add_member                        # crates/postio-storage/src/repository/contact_groups.rs:95
 advertises_special_use            # crates/postio-account/src/imap/dispatch.rs:215
 back_depth                        # crates/postio-core/src/state.rs:478
@@ -29,18 +28,16 @@ check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-account/src/imap/transport.rs:634
 conformance_cases                 # crates/postio-core/src/aim.rs:346
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
-enqueue_inverse                   # crates/postio-storage/src/repository/operations.rs:375
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
 fts_match                         # crates/postio-search/src/query.rs:417
 get_all                           # crates/postio-model/src/headers.rs:52
-handler_fn                        # crates/postio-core/src/bridge.rs:144 -- the closure form of `CommandHandler`. `postio-ffi` used it for the no-op bus that dropped every verb, and now builds a real one; the callers left are `postio-app/examples/shot.rs` and the app suite's integration tests, neither of which this check scans
+handler_fn                        # crates/postio-core/src/bridge.rs:144 -- a test bus: suites and shot.rs build one; postio-ffi was its last production caller (T019)
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
 idles                             # crates/postio-sync/src/watch.rs:290
 immediate                         # crates/postio-storage/src/blob.rs:551
-in_thread                         # crates/postio-storage/src/repository/drafts.rs:459
 interactive_is_waiting            # crates/postio-storage/src/db.rs:469
 into_mailbox                      # crates/postio-account/src/backend/message.rs:156
 invocation_id                     # crates/postio-core/src/dispatch.rs:152
@@ -60,21 +57,17 @@ is_over                           # crates/postio-config/src/storage.rs:59
 is_paused                         # crates/postio-sync/src/backfill.rs:507
 is_reversible                     # crates/postio-model/src/operation.rs:351
 is_settled                        # crates/postio-model/src/operation.rs:172
-is_undoable                       # crates/postio-storage/src/repository/operations.rs:65
 latest_message_id                 # crates/postio-model/src/thread.rs:91
-len_of                            # crates/postio-storage/src/blob.rs:287
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
 message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
-next_scope                        # crates/postio-core/src/state.rs:460
 normalized_subject                # crates/postio-model/src/message.rs:313
 on_data_body                      # crates/postio-smtp/src/transport.rs:436
 on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
-open_search                       # crates/postio-core/src/state.rs:607
 partials                          # crates/postio-search/src/query.rs:369
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
 record_seen                       # crates/postio-model/src/contact.rs:95
@@ -84,12 +77,10 @@ recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
-remove_message                    # crates/postio-storage/src/repository/threads.rs:370
 reopen                            # crates/postio-account/src/secret.rs:670
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
 requeue_in_flight                 # crates/postio-storage/src/repository/operations.rs:510
 resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:144
-rethread_orphans                  # crates/postio-storage/src/repository/threading.rs:268
 root_message_id                   # crates/postio-model/src/thread.rs:86
 section_spec                      # crates/postio-account/src/backend/message.rs:585
 seed_backfill                     # crates/postio-runtime/src/engine.rs:671 -- a test lever: the runtime suite drives the body queue through it; the app seeds nothing itself since #1593
@@ -114,4 +105,3 @@ with_blobs                        # crates/postio-sync/src/drain.rs:206
 with_connect_timeout              # crates/postio-account/src/imap/settings.rs:102
 with_html                         # crates/postio-model/src/account.rs:188
 with_internal_date                # crates/postio-account/src/backend/message.rs:638
-yes                               # crates/postio-config/src/lib.rs:105

@@ -160,16 +160,16 @@ impl<'a> ThreadingRepository<'a> {
         // Cached: a sync pass runs this once per id every message claims, so
         // it is one of the handful of statements a first sync compiles
         // hundreds of thousands of times (#728).
-        connection
-            .prepare_cached(
-                "INSERT INTO thread_links (account_id, rfc_message_id, thread_id)
+        sql::statement(
+            connection,
+            "INSERT INTO thread_links (account_id, rfc_message_id, thread_id)
              VALUES (?1, ?2, ?3)
              ON CONFLICT (account_id, rfc_message_id) DO UPDATE
                 SET thread_id = excluded.thread_id",
-            )
-            .await?
-            .execute(bind![self.account_id.get(), id.folded(), thread_id.get()])
-            .await?;
+        )
+        .await?
+        .execute(bind![self.account_id.get(), id.folded(), thread_id.get()])
+        .await?;
         Ok(())
     }
 
@@ -184,24 +184,23 @@ impl<'a> ThreadingRepository<'a> {
         absorbed: ThreadId,
         into: ThreadId,
     ) -> Result<()> {
-        connection
-            .execute(
-                "UPDATE OR REPLACE thread_links SET thread_id = ?2 WHERE thread_id = ?1",
-                bind![absorbed.get(), into.get()],
-            )
-            .await?;
+        sql::execute(
+            connection,
+            "UPDATE OR REPLACE thread_links SET thread_id = ?2 WHERE thread_id = ?1",
+            bind![absorbed.get(), into.get()],
+        )
+        .await?;
         Ok(())
     }
 
     /// Every id a thread claims, for diagnostics and tests.
     pub async fn claims(&self, thread_id: ThreadId) -> Result<Vec<RfcMessageId>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT rfc_message_id FROM thread_links
+        let mut statement = sql::statement(
+            self.connection,
+            "SELECT rfc_message_id FROM thread_links
               WHERE account_id = ?1 AND thread_id = ?2 ORDER BY rfc_message_id",
-            )
-            .await?;
+        )
+        .await?;
         let rows = sql::mapped(
             &mut statement,
             bind![self.account_id.get(), thread_id.get()],

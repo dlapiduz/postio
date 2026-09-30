@@ -19,8 +19,13 @@ wrote it.
 | `density` | string | `"airy"` | Message-list row height: `airy`, `comfortable` or `compact`. |
 | `theme` | string | `"system"` | Light/dark preference: `system` (follows the desktop), `light` or `dark`. |
 | `show_hover_actions` | boolean | `true` | Show per-row actions when the pointer rests over a row. |
-| `show_key_hints` | boolean | `true` | Show the focused row's key hints (`e reply`, `a archive`). Off leaves every binding in force -- this only stops the row from naming them. |
 | `sender_avatars` | boolean | `true` | Show each row's sender-initials chip. |
+
+## `[reader]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `zoom` | integer | `100` | How large messages are drawn, in percent: one of 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 or 300. Another value loads as the nearest step. |
 
 ## `[sync]`
 
@@ -50,6 +55,14 @@ wrote it.
 | `signature_on_reply` | string | `"above_quote"` | Where the signature goes on a reply: `above_quote` or `below_quote`. |
 | `signature_on_forward` | string | `"above_quote"` | Where the signature goes on a forward. |
 | `editor` | string | `""` | Which editor the compose window's hand-off opens the draft in: an application by name (`"BBEdit"`), a bundle identifier (`"com.apple.TextEdit"`), or a path. Empty means whatever the desktop already opens a text file with. A program that needs a terminal -- `vim`, `nano` -- cannot be opened by either frontend, and Postio says so rather than appearing to do nothing. |
+
+## `[tui]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `preview` | string | `"toggle"` | How the terminal composer shows the message it would send: `toggle` (one key swaps editor and preview) or `split` (side by side). |
+| `mouse` | boolean | `true` | Whether the terminal frontend takes the mouse. `false` leaves the terminal's own text selection; every key still works. |
+| `colors` | table | `{}` | Colour overrides for the terminal frontend, by role: `text`, `dim`, `accent`, `selection`, `focus`, `unread`, `flagged`, `link`, `quote`, `code`, `error`, `warning`, `success`. A value is a colour name, a palette number or `#rrggbb`. `NO_COLOR` overrides every one. |
 
 ## `[logging]`
 

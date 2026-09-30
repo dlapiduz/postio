@@ -1,0 +1,10 @@
+# Every statement in this crate is prepared through `sql::statement`, which
+# takes it from the connection's cache of compiled programs. These three
+# compile their SQL from scratch on every call -- more than half of a first
+# sync's busy time, sampled -- so they are refused here. `sql::execute` and
+# `sql::statement` are the replacements; see `sql::statement` for why.
+disallowed-methods = [
+    { path = "turso::Connection::execute", reason = "compiles every call; use sql::execute" },
+    { path = "turso::Connection::query", reason = "compiles every call; use sql::statement(..).query(..)" },
+    { path = "turso::Connection::prepare", reason = "compiles every call; use sql::statement" },
+]

@@ -161,6 +161,9 @@ struct GateInner {
     /// own task next runs is a deadlock with no error message -- there is
     /// nobody left to run the task that releases it.
     free: tokio::sync::Notify,
+    /// Told whenever an interactive write finishes. See
+    /// [`WriteGate::interactive_writes`].
+    interactive_done: tokio::sync::Notify,
 }
 
 #[derive(Debug, Default)]
@@ -180,6 +183,7 @@ impl WriteGate {
             inner: Arc::new(GateInner {
                 state: Mutex::new(GateState::default()),
                 free: tokio::sync::Notify::new(),
+                interactive_done: tokio::sync::Notify::new(),
             }),
         }
     }
@@ -207,8 +211,7 @@ impl WriteGate {
             // The future is created and *enabled* before the state is read,
             // which is what closes the lost-wake-up window: a permit released
             // between the read and the await still counts.
-            let waiting = self.inner.free.notified();
-            tokio::pin!(waiting);
+            let mut waiting = std::pin::pin!(self.inner.free.notified());
             waiting.as_mut().enable();
 
             {
@@ -227,12 +230,25 @@ impl WriteGate {
                     crate::test_support::gate_log::granted(priority);
                     return WritePermit {
                         inner: Arc::clone(&self.inner),
+                        priority,
                     };
                 }
             }
 
             waiting.await;
         }
+    }
+
+    /// What an interactive write finishing wakes.
+    ///
+    /// Every action a person takes that the server must hear about -- a flag,
+    /// a move, a draft -- is written local-first through an interactive
+    /// permit, and its queue row with it. So this is what the sync engine
+    /// waits on for queued work, where it used to ask the store every half
+    /// second, all day. Enable the `Notified` before checking the queue, or a
+    /// write that lands in between is missed.
+    pub fn interactive_writes(&self) -> &tokio::sync::Notify {
+        &self.inner.interactive_done
     }
 
     /// Whether an interactive writer is waiting for the lock right now.
@@ -262,6 +278,7 @@ impl WriteGate {
 #[derive(Debug)]
 pub struct WritePermit {
     inner: Arc<GateInner>,
+    priority: WritePriority,
 }
 
 impl Drop for WritePermit {
@@ -279,6 +296,9 @@ impl Drop for WritePermit {
         // can wake the only task that still has to go back to sleep, and leave
         // the lock idle with a queue on it.
         self.inner.free.notify_waiters();
+        if self.priority == WritePriority::Interactive {
+            self.inner.interactive_done.notify_waiters();
+        }
     }
 }
 
@@ -436,9 +456,15 @@ impl Store {
         }
 
         let fresh = !path.exists();
-        let database = Self::build(path, key)
-            .await
-            .map_err(|error| if fresh { error } else { as_key_failure(error) })?;
+        let database = Self::build(path, key).await.map_err(|error| {
+            if held_elsewhere(&error) {
+                Error::InUse
+            } else if fresh {
+                error
+            } else {
+                as_key_failure(error)
+            }
+        })?;
         let store = Self {
             database,
             path: Some(path.to_path_buf()),
@@ -494,6 +520,8 @@ impl Store {
     /// (#404).
     async fn prove_the_key_fits(&self) -> Result<()> {
         let connection = self.connect_bare()?;
+        // Once per open, and on a bare connection: nothing to cache.
+        #[allow(clippy::disallowed_methods)]
         match connection
             .query("SELECT count(*) FROM sqlite_schema", ())
             .await
@@ -505,16 +533,16 @@ impl Store {
 
     async fn apply_schema(&self) -> Result<()> {
         let connection = self.connect_bare()?;
-        connection.execute("PRAGMA foreign_keys = OFF", ()).await?;
+        crate::sql::execute(&connection, "PRAGMA foreign_keys = OFF", ()).await?;
         connection.execute_batch(schema::HEAD).await?;
         // Stamped in the same breath as the schema it describes, so the two
         // cannot be written apart. See `prove_the_schema_matches`.
-        connection
-            .execute(
-                &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
-                (),
-            )
-            .await?;
+        crate::sql::execute(
+            &connection,
+            &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
+            (),
+        )
+        .await?;
         Ok(())
     }
 
@@ -624,7 +652,7 @@ impl Store {
         let before = self.file_bytes();
         let connection = self.connect().await?;
         let _permit = self.gate.acquire(WritePriority::Background).await;
-        connection.execute("VACUUM", ()).await?;
+        crate::sql::execute(&connection, "VACUUM", ()).await?;
         drop(_permit);
         drop(connection);
         // The rewrite lands in the log; the file on disk only shrinks once
@@ -785,7 +813,9 @@ impl Store {
 
         let connection = self.connect().await?;
         // A query, not an `execute`: it answers with (busy, log, checkpointed)
-        // and the engine refuses a statement whose rows nobody reads.
+        // and the engine refuses a statement whose rows nobody reads. Rare
+        // enough that compiling it each time is nothing.
+        #[allow(clippy::disallowed_methods)]
         let mut rows = connection
             .query("PRAGMA wal_checkpoint(TRUNCATE)", ())
             .await?;
@@ -928,6 +958,22 @@ impl std::ops::DerefMut for Checkout {
 ///
 /// Anything else passes through untouched: an unreadable file, a full disk
 /// and a directory that is not writable are all still themselves.
+/// Whether `error` is the engine refusing a file another process has open.
+///
+/// The engine takes a POSIX lock on the file as it opens it, and when that
+/// lock is held it says, measured on this engine, `Locking error: Failed
+/// locking file '…'. File is locked by another process` -- as a plain string,
+/// which the SDK's error has no variant of its own for. Any other locking
+/// failure -- a filesystem that refuses locks at all -- is not somebody else
+/// having the store, and keeps its own words.
+fn held_elsewhere(error: &Error) -> bool {
+    let Error::Engine(engine) = error else {
+        return false;
+    };
+    let said = engine.to_string();
+    said.contains("locked by another process") || said.contains("already open")
+}
+
 fn as_key_failure(error: Error) -> Error {
     let said = error.to_string().to_lowercase();
     // Four spellings of the same thing, and the fourth is why this list grew.

@@ -233,39 +233,6 @@ async fn the_threads_subject_is_the_normalized_subject_of_its_root() {
 }
 
 #[tokio::test]
-async fn removing_a_message_updates_the_aggregates_too() {
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let threads = ThreadRepository::new(&connection);
-
-    let thread = a_thread(&connection, account.id).await;
-    let root = message(&connection, account.id, inbox, "ada", 100).await;
-    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
-    threads.add_message(thread.id, root.id).await.expect("add");
-    threads.add_message(thread.id, reply.id).await.expect("add");
-
-    threads.remove_message(reply.id).await.expect("remove");
-
-    let stored = threads
-        .get(thread.id)
-        .await
-        .expect("get")
-        .expect("the thread");
-    assert_eq!(stored.message_count, 1);
-    assert_eq!(stored.last_at, at(100));
-    assert_eq!(
-        MessageRepository::new(&connection)
-            .get(reply.id)
-            .await
-            .expect("get")
-            .expect("the message")
-            .thread_id,
-        None
-    );
-}
-
-#[tokio::test]
 async fn a_locally_deleted_message_leaves_the_threads_counts() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -1277,4 +1244,75 @@ async fn two_unthreaded_messages_are_two_rows_rather_than_one() {
     let query = ThreadListQuery::in_mailbox(account.id, inbox);
     assert_eq!(repository.page(&query).await.expect("a page").len(), 3);
     assert_eq!(repository.count_of(&query).await.expect("a count"), 3);
+}
+
+#[tokio::test]
+async fn a_folder_is_counted_from_an_index_alone() {
+    // #1607, #1610: the folder count was a correlated probe per message --
+    // 786 ms on a real 60,907-message folder, 260 ms on a seeded one of
+    // 60,000 -- and a first sync of the folder on screen pays it on every
+    // tick, because every tick moves the count's witness. Counted from a
+    // covering index it is 13 ms on the same seeded folder. The plan is the
+    // gate: every step reads an index it is covered by, and nothing reads a
+    // row or runs a subquery per message.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_, inbox) = test_support::account_with_inbox(&connection).await;
+    let sql = ThreadRepository::new(&connection).explain_count_of();
+    let plan: Vec<String> = postio_storage::sql::all(
+        &connection,
+        &format!("EXPLAIN QUERY PLAN {sql}"),
+        [inbox.get()],
+        |row| postio_storage::sql::RowExt::col(row, 3),
+    )
+    .await
+    .expect("a plan");
+    let uncovered: Vec<&String> = plan
+        .iter()
+        .filter(|step| !(step.contains("COVERING INDEX") || step.starts_with("USE ")))
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "a folder count that reads more than an index: {uncovered:?}\n{plan:#?}"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_s_page_boundaries_are_where_its_pages_begin() {
+    // #1610: a scrollbar jump deep into a folder was an OFFSET walk over the
+    // window's correlated predicate -- 572 ms to the bottom of a seeded
+    // folder of 17,804 conversations, linear in the depth. The boundaries
+    // are what lets it seek instead, and they are only worth anything if
+    // resuming after one reads exactly the page OFFSET would have.
+    let database = test_support::memory().await;
+    let seed = postio_storage::seed::seed_large(&database, 7, 2_000).await;
+    let connection = database.connect().await.expect("checkout");
+    let inbox = seed
+        .mailbox(postio_model::MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
+    let mut query = ThreadListQuery::in_mailbox(seed.account.id, inbox);
+    query.limit = 50;
+    let threads = ThreadRepository::new(&connection);
+    let total = threads.count_of(&query).await.expect("a count");
+    let boundaries = threads.boundaries(&query, 50).await.expect("boundaries");
+    assert_eq!(
+        boundaries.len() as u32,
+        (total.saturating_sub(1)) / 50,
+        "one boundary per page after the first, in a folder of {total} rows"
+    );
+    for (offset, cursor) in boundaries.iter().copied().step_by(3) {
+        let skipped = threads.page_at(&query, offset).await.expect("by offset");
+        let sought = threads
+            .page(&ThreadListQuery {
+                after: Some(cursor),
+                ..query
+            })
+            .await
+            .expect("by cursor");
+        let ids = |rows: &[postio_storage::repository::ThreadListRow]| {
+            rows.iter().map(|row| row.cursor().id).collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&sought), ids(&skipped), "the page at {offset}");
+    }
 }

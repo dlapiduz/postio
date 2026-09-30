@@ -37,72 +37,11 @@ use std::cell::{Cell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
-use postio_model::TransportSecurity;
-
-/// Which of the three steps a status is in — `1 / 3`, the way the drawing
-/// writes it.
-///
-/// Three rather than the two this screen used to count, and the split is
-/// real rather than cosmetic: naming the account, proving you own it, and
-/// saying how much of it to fetch are three different questions, and the
-/// second one can fail and be retried without touching the other two.
-/// Pure, so the mapping is tested without a display.
-fn step_of(status: &Status) -> &'static str {
-    match status {
-        Status::Idle | Status::Probing | Status::Found(_) | Status::Manual { .. } => "1 / 3",
-        Status::Connecting
-        | Status::WaitingForBrowser
-        | Status::Failed(_)
-        | Status::Reauthenticate(_) => "2 / 3",
-        Status::SyncWindow | Status::Saved => "3 / 3",
-    }
-}
-
-/// What a browser sign-in is asking for, so the screen can say so.
-///
-/// **Postio never draws a provider's login form.** Consent happens in the
-/// real browser, against the real domain, where the address bar is the thing
-/// a person checks — an in-app web view is how credential phishing is
-/// normally taught, and there is no way for a user to tell one from the
-/// genuine article. So what this screen can offer instead is an honest
-/// account of what is happening while the browser is open, which is what
-/// this carries (ADR 0006 Q3, `Design/screens/23`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BrowserSignIn {
-    /// Whose consent screen the browser was sent to — `Microsoft`, `Google`.
-    pub provider: String,
-    /// The scopes the request asks for, in the provider's own spelling.
-    /// Rendered through [`plain_scope`], never raw, because a URL is not an
-    /// answer to "what is this about to be allowed to do".
-    pub scopes: Vec<String>,
-    /// Where the browser will be sent back to — `http://127.0.0.1:41337/`.
-    pub redirect_uri: String,
-    /// The consent URL itself, for `Copy URL` and for opening it again when
-    /// the browser swallowed the first one.
-    pub authorize_url: String,
-}
-
-/// What a scope lets Postio do, in words rather than in a URL.
-///
-/// A person deciding whether to consent is owed a sentence, not
-/// `https://outlook.office.com/IMAP.AccessAsUser.All`. Anything unrecognised
-/// falls through verbatim rather than being dropped: an unfamiliar scope is
-/// exactly the one worth showing, and silently hiding it would make this
-/// list a worse lie than no list at all.
-fn plain_scope(scope: &str) -> String {
-    let folded = scope.to_ascii_lowercase();
-    if folded.contains("imap") || folded == "https://mail.google.com/" {
-        return "Read and change your mail".to_owned();
-    }
-    if folded.contains("smtp") || folded.contains("gmail.send") {
-        return "Send mail as you".to_owned();
-    }
-    match folded.as_str() {
-        "offline_access" => "Stay signed in without asking again".to_owned(),
-        "openid" | "email" | "profile" => "Know which address you signed in as".to_owned(),
-        _ => scope.to_owned(),
-    }
-}
+pub use postio_ui::onboarding::{
+    BrowserSignIn, OAuthClientSubmission, Server, Settings, Status, Submission, SyncWindow,
+    domain_of, looks_like_an_address,
+};
+use postio_ui::onboarding::{plain_scope, step_of};
 
 /// One line of the scope list: a mark, and what it means in words.
 fn scope_line(icon: &str, text: &str) -> gtk::Box {
@@ -116,234 +55,6 @@ fn scope_line(icon: &str, text: &str) -> gtk::Box {
     row.append(&mark);
     row.append(&label);
     row
-}
-
-/// One server, as the screen shows it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Server {
-    /// Hostname.
-    pub host: String,
-    /// Port.
-    pub port: u16,
-    /// Connection security. Carried losslessly from discovery (#534):
-    /// flattening this to a bool once turned a provider's own
-    /// plaintext-on-loopback answer into a TLS dial.
-    pub security: TransportSecurity,
-}
-
-impl Server {
-    /// `imap.fastmail.com:993 · TLS`, the way the canvas writes it.
-    pub fn line(&self) -> String {
-        let security = match self.security {
-            TransportSecurity::Tls => "TLS",
-            TransportSecurity::StartTls => "STARTTLS",
-            TransportSecurity::None => "unencrypted",
-        };
-        format!("{}:{} · {security}", self.host, self.port)
-    }
-}
-
-/// What Postio found, or what the user typed in instead.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Settings {
-    /// Where mail is read from.
-    pub imap: Server,
-    /// Where mail is sent through.
-    pub smtp: Server,
-    /// The login name, which is not always the address — an iCloud custom
-    /// domain logs in as the Apple ID.
-    pub login: String,
-    /// Whether this provider refuses ordinary account passwords.
-    pub requires_app_password: bool,
-    /// A sentence to show the user, from the provider table.
-    pub note: Option<String>,
-    /// Where to go and make an app-specific password.
-    pub help_url: Option<String>,
-    /// Where the settings came from, for the card's heading.
-    pub source: String,
-    /// Whether the provider prefers a browser sign-in (#534): the wizard
-    /// shows the OAuth client fields and `Sign in with your browser`
-    /// instead of the password entry. The app side holds the endpoints;
-    /// this widget only needs to know which door to draw.
-    pub oauth_sign_in: bool,
-}
-
-/// Everything the composition root needs to create the account.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Submission {
-    /// The address mail arrives at.
-    pub address: String,
-    /// What to show instead of the bare address — in the `From` header and
-    /// the sidebar. Empty means unset, and the composition root falls back
-    /// to the address exactly as it did before this field existed.
-    pub name: String,
-    /// The password, on its way to the keyring and nowhere else. Empty on
-    /// an OAuth submission.
-    pub password: String,
-    /// The servers to use.
-    pub settings: Settings,
-    /// The OAuth client the user supplied, when the provider's door is the
-    /// browser sign-in (#534). `Some` routes the submission through the
-    /// authorization flow instead of a password test.
-    pub oauth_client: Option<OAuthClientSubmission>,
-}
-
-/// The user's own OAuth client (ADR 0006 Q1, `own-client`): what the
-/// sign-in flow presents to the provider. Postio ships no client of its
-/// own until #195 clears review, so these come from the user's provider
-/// console.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OAuthClientSubmission {
-    /// The client id, public by definition on a native app.
-    pub client_id: String,
-    /// The client secret, when the provider issued one — on its way to the
-    /// keyring and nowhere else.
-    pub client_secret: Option<String>,
-}
-
-/// Where the screen is in the one step it has.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum Status {
-    /// Nothing typed yet.
-    #[default]
-    Idle,
-    /// The probe is out.
-    Probing,
-    /// The probe answered with something authoritative.
-    Found(Settings),
-    /// The probe found nothing. The server fields open, because an empty form
-    /// the user can fill in is the way forward and a shrug is not.
-    Manual {
-        /// An unverified guess to prefill with, if there was one.
-        suggestion: Option<Settings>,
-    },
-    /// Testing the credentials against the real server.
-    Connecting,
-    /// The consent screen is open in the user's browser; Postio is waiting
-    /// for the redirect. Cancellable — the screen shows its own Cancel and
-    /// `Esc` means the same thing.
-    WaitingForBrowser,
-    /// It did not work, and this says why in words the user can act on.
-    Failed(String),
-    /// The account is configured; its password is not.
-    ///
-    /// Not a first run. The composition root reaches this when the store
-    /// holds an account the keyring will not give up a password for — a
-    /// credential write that failed, a keyring that was reset, an item
-    /// somebody deleted. The address and the servers are already known, so
-    /// the screen arrives filled in and asks for the one thing missing.
-    ///
-    /// It carries the servers rather than reading them back off the form
-    /// because the form is empty until something fills it, and the thing
-    /// that knows them is the account row.
-    Reauthenticate(Settings),
-    /// The account is saved; the last question before Postio starts talking
-    /// to the server on its own is how far back the first sync reaches.
-    SyncWindow,
-    /// The account exists and the password is in the keyring.
-    Saved,
-}
-
-impl Status {
-    /// Whether the screen is waiting on something and should not be touched.
-    pub fn is_busy(&self) -> bool {
-        matches!(
-            self,
-            Status::Probing | Status::Connecting | Status::WaitingForBrowser
-        )
-    }
-
-    /// The sentence under the form, when this state owes the user one.
-    ///
-    /// Pure, and public, so what the screen *says* can be checked without a
-    /// display — the rendering needs one, the wording does not.
-    pub fn message(&self) -> Option<&str> {
-        match self {
-            Status::Failed(reason) => Some(reason),
-            Status::Reauthenticate(_) => Some(
-                "Postio has no password for this account. Sign in again and it \
-                 will go back into the keyring.",
-            ),
-            Status::WaitingForBrowser => Some(
-                "Finish signing in in your browser. Postio is waiting for the \
-                 redirect — cancel any time.",
-            ),
-            _ => None,
-        }
-    }
-}
-
-/// How far back the first sync reaches, chosen once per account on the
-/// [`Status::SyncWindow`] step (#876).
-///
-/// Coarser than [`postio_config::sync::SyncConfig::initial_sync_messages`]
-/// itself — a person thinks in a window of time, not a message count — so
-/// each variant maps to a fixed count rather than to anything measured: no
-/// per-account mailbox statistics exist at this point in onboarding
-/// (discovery does not report message counts). `LastYear`'s count matches
-/// that field's own default, so picking it changes nothing a fresh install
-/// would not already do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SyncWindow {
-    /// Roughly a month of ordinary mail.
-    LastMonth,
-    /// A year — [`SyncConfig`](postio_config::sync::SyncConfig)'s own
-    /// default depth.
-    #[default]
-    LastYear,
-    /// No cap: the highest count the field can hold.
-    Everything,
-}
-
-impl SyncWindow {
-    /// Every choice, in the order the picker offers them.
-    pub const ALL: [SyncWindow; 3] = [
-        SyncWindow::LastMonth,
-        SyncWindow::LastYear,
-        SyncWindow::Everything,
-    ];
-
-    /// What this writes to `SyncConfig::initial_sync_messages`.
-    pub fn message_count(self) -> u32 {
-        match self {
-            SyncWindow::LastMonth => 500,
-            SyncWindow::LastYear => 5_000,
-            SyncWindow::Everything => u32::MAX,
-        }
-    }
-
-    /// The picker's own label for this choice.
-    pub fn label(self) -> &'static str {
-        match self {
-            SyncWindow::LastMonth => "Last 30 days",
-            SyncWindow::LastYear => "Last year",
-            SyncWindow::Everything => "Everything",
-        }
-    }
-
-    /// A rough size/time readout under the picker.
-    ///
-    /// Built from a flat per-message estimate (75 KiB — ADR 0017 puts most
-    /// of a message's bytes on the lazy attachment axis, so a synced-but-
-    /// unopened message is mostly headers and text) and a flat fetch rate,
-    /// for the same reason [`message_count`](Self::message_count) is a flat
-    /// map rather than a measurement: nothing has synced yet to measure.
-    pub fn estimate(self) -> String {
-        const AVERAGE_MESSAGE_BYTES: u64 = 75 * 1024;
-        const MESSAGES_PER_MINUTE: u64 = 120;
-        if self == SyncWindow::Everything {
-            return "Downloads everything the server has — size and time depend \
-                     on the mailbox."
-                .to_owned();
-        }
-        let count = u64::from(self.message_count());
-        let megabytes = (count * AVERAGE_MESSAGE_BYTES) / (1024 * 1024);
-        let minutes = count.div_ceil(MESSAGES_PER_MINUTE).max(1);
-        format!(
-            "About {megabytes} MB, {minutes} minute{} to sync",
-            if minutes == 1 { "" } else { "s" }
-        )
-    }
 }
 
 /// How tall the form gets before it scrolls instead of growing.
@@ -1154,23 +865,17 @@ impl Onboarding {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("postio-onboarding");
-        self.set_halign(gtk::Align::Center);
-        self.set_valign(gtk::Align::Center);
-        self.set_accessible_role(gtk::AccessibleRole::Group);
-
-        let kicker = crate::widgets::kicker("Add account");
-        kicker.set_hexpand(true);
-        kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
+        crate::widgets::plate::dress(self, "postio-onboarding", "Add account");
 
         imp.step.set_text(step_of(&Status::Idle));
         imp.step.add_css_class("postio-onboarding-step");
         imp.step
             .set_accessible_role(gtk::AccessibleRole::Presentation);
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        header.add_css_class("postio-onboarding-header");
-        header.append(&kicker);
+        let header = crate::widgets::plate::header("postio-onboarding", "Add account");
+        header
+            .first_child()
+            .inspect(|title| title.set_hexpand(true));
         header.append(&imp.step);
 
         imp.name.set_placeholder_text(Some("Ada Lovelace"));
@@ -1251,26 +956,21 @@ impl Onboarding {
         ));
 
         // `Esc` while the browser wait is up means what the button means.
-        // A widget-local controller rather than a registry command: this
-        // screen exists before any account does, outside the keymap's
-        // contexts, and the binding is not rebindable on purpose.
-        let escape = gtk::EventControllerKey::new();
-        escape.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = screen)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, _| {
-                if key == gtk::gdk::Key::Escape
-                    && matches!(screen.status(), Status::WaitingForBrowser)
-                {
-                    screen.cancel_sign_in();
-                    return glib::Propagation::Stop;
-                }
-                glib::Propagation::Proceed
+        // The plate's own Escape rather than a registry command: this screen
+        // exists before any account does, outside the keymap's contexts, and
+        // the binding is not rebindable on purpose. Any other time the key
+        // goes on to the window.
+        let screen = self.downgrade();
+        crate::widgets::plate::connect_escape(self, move || {
+            let Some(screen) = screen.upgrade() else {
+                return false;
+            };
+            let waiting = matches!(screen.status(), Status::WaitingForBrowser);
+            if waiting {
+                screen.cancel_sign_in();
             }
-        ));
-        self.add_controller(escape);
+            waiting
+        });
 
         // -- the found-settings card ---------------------------------------
 
@@ -1348,14 +1048,24 @@ impl Onboarding {
         // -- the buttons ----------------------------------------------------
 
         imp.connect_label.set_text("Connect");
-        let connect_hint = gtk::Label::new(Some("Ret"));
-        connect_hint.add_css_class("postio-keyhint");
-        connect_hint.set_accessible_role(gtk::AccessibleRole::Presentation);
+        let connect_hint = crate::widgets::keyhint::cap(
+            &postio_ui::hints::fixed(
+                "Return",
+                "connect",
+                "Return in any field submits the form; it is the entry's own \
+                 activation, not a command in the registry",
+            )
+            .key,
+        );
         let connect_child = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         connect_child.append(&imp.connect_label);
         connect_child.append(&connect_hint);
         imp.connect.set_child(Some(&connect_child));
-        imp.connect.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &imp.connect,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         imp.connect.set_sensitive(false);
         imp.connect
             .update_property(&[gtk::accessible::Property::Label(
@@ -1368,8 +1078,11 @@ impl Onboarding {
         ));
 
         imp.edit.set_label("Edit manually");
-        imp.edit.add_css_class("flat");
-        imp.edit.add_css_class("postio-ghost");
+        crate::widgets::button::style(
+            &imp.edit,
+            crate::widgets::button::Kind::Ghost,
+            crate::widgets::button::Size::Regular,
+        );
         imp.edit.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,
@@ -1379,11 +1092,15 @@ impl Onboarding {
             }
         ));
 
-        let hint = gtk::Label::new(Some("Tab between fields"));
-        hint.add_css_class("postio-onboarding-hint");
+        let tab = crate::widgets::KeyLine::new("postio-onboarding-hint");
+        tab.set([&postio_ui::hints::fixed(
+            "Tab",
+            "between fields",
+            "moving between a form's fields is the toolkit's focus order",
+        )]);
+        let hint = tab.widget().clone();
         hint.set_hexpand(true);
         hint.set_xalign(1.0);
-        hint.set_accessible_role(gtk::AccessibleRole::Presentation);
 
         imp.buttons.set_orientation(gtk::Orientation::Horizontal);
         imp.buttons.set_spacing(12);
@@ -1421,16 +1138,22 @@ impl Onboarding {
         keyring.add_css_class("postio-onboarding-browser-flow");
 
         imp.browser_reopen.set_label("Open link again");
-        imp.browser_reopen
-            .add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &imp.browser_reopen,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         imp.browser_reopen.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,
             move |_| screen.reopen_sign_in_link()
         ));
         imp.browser_copy.set_label("Copy URL");
-        imp.browser_copy
-            .add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &imp.browser_copy,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         imp.browser_copy.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,
@@ -1446,7 +1169,7 @@ impl Onboarding {
         imp.browser_box.append(&explanation);
         imp.browser_box.append(&imp.browser_flow);
         imp.browser_box
-            .append(&crate::widgets::kicker("SCOPES REQUESTED"));
+            .append(&crate::widgets::kicker("Scopes requested"));
         imp.browser_box.append(&imp.browser_scopes);
         imp.browser_box.append(&keyring);
         imp.browser_box.append(&browser_actions);
@@ -1483,7 +1206,11 @@ impl Onboarding {
         imp.sync_estimate.set_wrap(true);
 
         imp.start_sync.set_label("Start sync");
-        imp.start_sync.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &imp.start_sync,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         imp.start_sync.connect_clicked(glib::clone!(
             #[weak(rename_to = screen)]
             self,
@@ -1499,9 +1226,7 @@ impl Onboarding {
         imp.sync_window_box.append(&imp.sync_estimate);
         imp.sync_window_box.append(&imp.start_sync);
 
-        imp.status_line.add_css_class("postio-onboarding-failed");
-        imp.status_line.set_xalign(0.0);
-        imp.status_line.set_wrap(true);
+        crate::widgets::callout(&imp.status_line, "postio-onboarding-failed");
         imp.status_line.set_visible(false);
         // A live region, so a screen reader hears the failure rather than
         // only a sighted user seeing it appear.
@@ -1566,53 +1291,13 @@ impl Onboarding {
 
 /// A labelled field, the way the canvas draws one.
 fn field(label: &str, entry: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let caption = gtk::Label::new(Some(label));
-    caption.add_css_class("postio-onboarding-label");
-    caption.set_xalign(0.0);
-
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 5);
-    column.append(&caption);
-    column.append(entry);
-    // The label names the field for a screen reader, rather than being read
-    // as a stray line of text above it.
-    entry
-        .as_ref()
-        .update_relation(&[gtk::accessible::Relation::LabelledBy(&[
-            caption.upcast_ref()
-        ])]);
-    caption.set_accessible_role(gtk::AccessibleRole::Presentation);
-    column
-}
-
-/// The domain of an address, for the card's heading.
-pub fn domain_of(address: &str) -> String {
-    address
-        .rsplit_once('@')
-        .map(|(_, domain)| domain.trim().to_ascii_lowercase())
-        .unwrap_or_default()
-}
-
-/// Whether there is enough of an address to be worth probing.
-///
-/// Deliberately loose: this decides whether to *ask*, and the probe itself
-/// decides whether the address is real. Refusing to look up something a
-/// server would have accepted is the worse mistake.
-pub fn looks_like_an_address(address: &str) -> bool {
-    let address = address.trim();
-    match address.split_once('@') {
-        Some((local, domain)) => {
-            !local.is_empty()
-                && domain.contains('.')
-                && !domain.starts_with('.')
-                && !domain.ends_with('.')
-        }
-        None => false,
-    }
+    crate::widgets::field(label, entry, "postio-onboarding-field")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postio_model::TransportSecurity;
 
     #[test]
     fn the_three_steps_are_the_three_questions_and_a_retry_stays_on_its_own() {

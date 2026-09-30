@@ -57,18 +57,17 @@ const ENTRIES: &[Entry] = &[
         description: "Show per-row actions when the pointer rests over a row.",
     },
     Entry {
-        path: "ui.show_key_hints",
-        kind: "boolean",
-        default: "true",
-        description: "Show the focused row's key hints (`e reply`, `a archive`). \
-                       Off leaves every binding in force -- this only stops the row from \
-                       naming them.",
-    },
-    Entry {
         path: "ui.sender_avatars",
         kind: "boolean",
         default: "true",
         description: "Show each row's sender-initials chip.",
+    },
+    // ── [reader] ──────────────────────────────────────────────────────
+    Entry {
+        path: "reader.zoom",
+        kind: "integer",
+        default: "100",
+        description: "How large messages are drawn, in percent: one of 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 or 300. Another value loads as the nearest step.",
     },
     // ── [sync] ────────────────────────────────────────────────────────
     Entry {
@@ -163,6 +162,30 @@ const ENTRIES: &[Entry] = &[
                       desktop already opens a text file with. A program that needs a \
                       terminal -- `vim`, `nano` -- cannot be opened by either frontend, \
                       and Postio says so rather than appearing to do nothing.",
+    },
+    // ── [tui] ─────────────────────────────────────────────────────────
+    Entry {
+        path: "tui.preview",
+        kind: "string",
+        default: "\"toggle\"",
+        description: "How the terminal composer shows the message it would send: `toggle` \
+                       (one key swaps editor and preview) or `split` (side by side).",
+    },
+    Entry {
+        path: "tui.mouse",
+        kind: "boolean",
+        default: "true",
+        description: "Whether the terminal frontend takes the mouse. `false` leaves the \
+                       terminal's own text selection; every key still works.",
+    },
+    Entry {
+        path: "tui.colors",
+        kind: "table",
+        default: "{}",
+        description: "Colour overrides for the terminal frontend, by role: `text`, `dim`, \
+                       `accent`, `selection`, `focus`, `unread`, `flagged`, `link`, `quote`, \
+                       `code`, `error`, `warning`, `success`. A value is a colour name, a \
+                       palette number or `#rrggbb`. `NO_COLOR` overrides every one.",
     },
     // ── [logging] ─────────────────────────────────────────────────────
     Entry {

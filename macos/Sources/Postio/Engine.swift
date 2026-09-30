@@ -105,8 +105,6 @@ final class Engine {
             // user would pick Compact and watch the list not change (#1215).
             let appearance = session.appearance()
             controller.ui = appearance
-            // From this session's keymap, so a rebinding reaches the row.
-            controller.hints = session.rowHints()
             accounts = session.accounts()
             vouch()
             reloadSavedSearches()

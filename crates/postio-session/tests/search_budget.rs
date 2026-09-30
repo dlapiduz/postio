@@ -184,3 +184,54 @@ async fn excerpts_are_cut_for_a_bounded_number_of_hits() {
          cut, so anything else is a body read that should not be happening."
     );
 }
+
+#[tokio::test]
+async fn the_finder_s_search_cuts_one_excerpt_before_it_answers() {
+    // #1613: every search cut an excerpt for its first fifty hits -- a body
+    // read, a decode and an HTML-to-text pass each -- before the readout
+    // could answer. The GTK finder draws one excerpt at a time, the focused
+    // hit's, in its preview; it asks for the first up front and cuts the rest
+    // as the cursor reaches them, from the body the preview reads anyway.
+    let store = indexed(120).await;
+    let (database, account) = &store;
+    let connection = database.connect().await.expect("a connection");
+    let query = postio_search::parse(COMMON, Utc::now().date_naive());
+    let run = async |snippets: usize| {
+        postio_session::search::execute_with_snippets(
+            &connection,
+            postio_model::AccountScope::Account(*account),
+            &query,
+            Scope::AllMail,
+            postio_search::ResultOrder::Relevance,
+            snippets,
+        )
+        .await
+        .expect("the search runs")
+    };
+    let _warm = run(50).await;
+    install(&connection);
+    let every = counted_async(async || {
+        let _ = run(50).await;
+    })
+    .await;
+    let mut results = None;
+    let one = counted_async(async || {
+        results = Some(run(1).await);
+    })
+    .await;
+    let results = results.expect("ran");
+    assert!(
+        !results.hits[0].snippet.is_empty(),
+        "the best match has its excerpt"
+    );
+    assert!(
+        results.hits[1..].iter().all(|hit| hit.snippet.is_empty()),
+        "no other hit was cut before the answer"
+    );
+    assert!(
+        one.statements + 49 <= every.statements,
+        "one excerpt cost {} statements against {} for fifty",
+        one.statements,
+        every.statements
+    );
+}

@@ -546,3 +546,67 @@ async fn a_uid_listing_short_of_exists_is_not_believed() {
         "every message the mailbox holds is stored, not just the listed one"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reply_with_no_references_joins_its_conversation_by_the_end_of_a_first_sync() {
+    // A first sync files the newest mail first, so a reply arrives before
+    // the message it answers. One that names its parent is claimed and
+    // waits for it; one with no In-Reply-To and no References -- some
+    // clients send them -- can only be threaded by its subject, and when it
+    // is filed there is no "Budget" yet to join. It started a conversation
+    // of one and nothing ever looked at it again.
+    let mailbox = MockMailbox::new(INBOX)
+        .message(MockMessage::new(
+            b"From: Ada Lovelace <ada@example.com>\r\n\
+              Message-ID: <budget@example.com>\r\n\
+              Date: Mon, 1 Jun 2026 09:00:00 +0000\r\n\
+              Subject: Budget\r\n\r\nThe figures.\r\n"
+                .to_vec(),
+        ))
+        .message(MockMessage::new(
+            b"From: Tove Jansson <tove@example.com>\r\n\
+              Message-ID: <reply@example.com>\r\n\
+              Date: Mon, 1 Jun 2026 10:00:00 +0000\r\n\
+              Subject: Re: Budget\r\n\r\nLooks right.\r\n"
+                .to_vec(),
+        ));
+    let backend = MockBackend::builder().mailbox(mailbox).build();
+    backend.connect().await.expect("connect");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (_account, inbox) = local(&connection).await;
+
+    // One message a batch, newest first: the reply is filed alone.
+    sync_mailbox_with_batch_size(
+        &connection,
+        &backend,
+        &inbox,
+        1,
+        &CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("the first sync");
+
+    let messages = MessageRepository::new(&connection);
+    let generation = SyncStateRepository::new(&connection)
+        .get(inbox.id)
+        .await
+        .expect("state")
+        .and_then(|state| state.generation)
+        .expect("a generation");
+    let thread_of = async |uid: u32| {
+        messages
+            .by_uid(inbox.id, generation, Uid::new(uid))
+            .await
+            .expect("look up")
+            .expect("stored")
+            .thread_id
+    };
+    let (original, reply) = (thread_of(1).await, thread_of(2).await);
+    assert!(original.is_some() && reply.is_some(), "both are threaded");
+    assert_eq!(
+        original, reply,
+        "`Re: Budget` is still a conversation of its own after the first sync"
+    );
+}

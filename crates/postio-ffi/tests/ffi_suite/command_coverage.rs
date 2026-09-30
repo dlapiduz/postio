@@ -41,20 +41,41 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// a place orphans go to be forgotten — which is exactly what happened
 /// without a sweep at all.
 ///
-/// **Empty since 2026-09-23**, as `app_suite/command_wiring.rs`'s is: every
-/// command reaches a handler, a window or this boundary, or is scoped away
-/// from the Mac by `postio_core::registry::offered_on`. A new entry here is a
-/// regression with an issue number, not a place to park one.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
+/// Empty from 2026-09-23 until main's spec 006 reader verbs and the
+/// terminal frontend's chrome arrived in the 2026-09-30 merge: what is listed
+/// here is new to the registry, not a regression of what was answered.
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
+    (CommandId::ToggleReaderView, "#1705"),
+    (CommandId::DarkenMessage, "#1705"),
+    (CommandId::FindInMessage, "#1705"),
+    (CommandId::FindNext, "#1705"),
+    (CommandId::FindPrevious, "#1705"),
+    (CommandId::ZoomIn, "#1705"),
+    (CommandId::ZoomOut, "#1705"),
+    (CommandId::ZoomReset, "#1705"),
+    (CommandId::Quit, "#1706"),
+    (CommandId::ShowImages, "#1706"),
+    (CommandId::AlwaysShowImages, "#1706"),
+    (CommandId::Unsubscribe, "#1706"),
+];
 
 /// The bus the FFI session builds, asked what it answers.
 ///
-/// Composed exactly as `DeferredBus::arm` composes it, so this is the same
-/// list a running Postio would check a command against rather than a second
-/// opinion about one.
+/// Composed exactly as `postio_host`'s verbs compose it -- the session is the
+/// host's client, and `Host::wired` is what it filters a command by -- so this
+/// is the same list a running Postio would check a command against rather
+/// than a second opinion about one.
 /// Whether the Mac offers `id` at all. See the module note.
+///
+/// Two ways not to: scoped away from the platform, or asking for something a
+/// graphical frontend never is -- the terminal composer's own verbs
+/// (`Requirement::Terminal`) are in no Mac menu, key or palette, so they owe
+/// it nothing.
 fn offered_on_the_mac(id: CommandId) -> bool {
     postio_core::registry::offered_on(id.into(), postio_config::paths::Platform::Apple)
+        && !postio_core::registry::get(id)
+            .requires
+            .contains(postio_core::registry::Requirement::Terminal)
 }
 
 async fn wired() -> Vec<CommandId> {

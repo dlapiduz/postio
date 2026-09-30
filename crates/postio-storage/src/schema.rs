@@ -255,6 +255,9 @@ CREATE TABLE "drafts" (
     -- `repository/drafts.rs`.
     body_text               TEXT,
     body_html               TEXT,
+    -- The Markdown typed in the terminal composer, exactly; NULL when a
+    -- frontend that does not write Markdown saved the draft last.
+    body_markdown           TEXT,
 
     state                   TEXT    NOT NULL DEFAULT 'editing'
                                     CHECK (state IN ('editing', 'queued', 'sending',
@@ -276,7 +279,12 @@ CREATE TABLE "drafts" (
     -- off: the switch is on the *document*, so turning it off changes what
     -- will be built and must not throw the marks away in case it is turned
     -- back on. A derived flag cannot express "has marks, sending plain".
-    rich                    INTEGER NOT NULL DEFAULT 0
+    rich                    INTEGER NOT NULL DEFAULT 0,
+    -- The message a forward was made from (#1686): where a carried
+    -- attachment whose bytes were never downloaded is fetched from at send
+    -- time. Not `in_reply_to_message_id`, which decides threading headers a
+    -- forward must not carry.
+    forwarded_message_id    INTEGER REFERENCES messages(id) ON DELETE SET NULL
 );
 
 CREATE TABLE egress_log (
@@ -713,6 +721,10 @@ CREATE INDEX idx_messages_mailbox_remote_id ON messages (mailbox_id, remote_id);
 
 CREATE INDEX idx_messages_mod_seq ON messages (mailbox_id, mod_seq);
 
+-- A folder's thread count, read from the index alone (#1607, #1610).
+CREATE INDEX idx_messages_mailbox_threads
+    ON messages (mailbox_id, deleted_locally, snoozed_until, thread_id);
+
 CREATE INDEX idx_messages_recency
     ON messages (received_at DESC, id DESC, deleted_locally, snoozed_until);
 
@@ -720,7 +732,7 @@ CREATE INDEX idx_messages_rfc_message_id
     ON messages (account_id, rfc_message_id);
 
 CREATE INDEX idx_messages_send_state
-    ON messages (account_id, send_state);
+    ON messages (account_id, send_state, deleted_locally);
 
 CREATE INDEX idx_messages_snoozed_due
     ON messages (account_id, snoozed_until, mailbox_id);

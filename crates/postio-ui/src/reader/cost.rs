@@ -57,12 +57,40 @@ use std::thread::LocalKey;
 thread_local! {
     pub(crate) static DOCUMENTS: Cell<u64> = const { Cell::new(0) };
     pub(crate) static BODIES_SANITISED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static BULK_JUDGED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static DOCUMENT_BYTES: Cell<u64> = const { Cell::new(0) };
     pub(crate) static LARGEST_DOCUMENT: Cell<u64> = const { Cell::new(0) };
     pub(crate) static RENDERS: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SURFACES_CREATED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SURFACES_RELEASED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static PAGES_REQUESTED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static WAITED_OUT: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static SNAPSHOTS: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static STYLE_PASSES: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static SNAPSHOT_NODES: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static REPAIRED_RUNS: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static RESOURCES_UNRESOLVED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static IMAGES_PLACEHOLDERED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static DISPLAY_LIST_COMMANDS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// What one snapshot from the reading renderer cost, counted (spec 006
+/// Principle V): the renderer's own `RenderCounts`, in this crate's terms
+/// because this crate does not link the renderer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SnapshotCounts {
+    /// Style passes: 1, or 2 when colours were repaired.
+    pub style_passes: u64,
+    /// DOM nodes laid out.
+    pub nodes: u64,
+    /// Text runs whose colour was repaired to the floor.
+    pub repaired_runs: u64,
+    /// Lookups the resource table could not answer.
+    pub resources_unresolved: u64,
+    /// Images drawn as placeholders.
+    pub images_placeholdered: u64,
+    /// Commands in the recorded display list.
+    pub display_list_commands: u64,
 }
 
 /// Add to a counter.
@@ -100,6 +128,18 @@ pub fn note_render() {
     bump(&RENDERS, 1);
 }
 
+/// A snapshot from the reading renderer reached the screen, costing
+/// `counts`. Called by the reading surface as it shows each one.
+pub fn note_snapshot(counts: SnapshotCounts) {
+    bump(&SNAPSHOTS, 1);
+    bump(&STYLE_PASSES, counts.style_passes);
+    bump(&SNAPSHOT_NODES, counts.nodes);
+    bump(&REPAIRED_RUNS, counts.repaired_runs);
+    bump(&RESOURCES_UNRESOLVED, counts.resources_unresolved);
+    bump(&IMAGES_PLACEHOLDERED, counts.images_placeholdered);
+    bump(&DISPLAY_LIST_COMMANDS, counts.display_list_commands);
+}
+
 /// A rendering surface was created.
 pub fn note_surface_created() {
     bump(&SURFACES_CREATED, 1);
@@ -111,6 +151,17 @@ pub fn note_surface_created() {
 /// process behind it can go, not whether a Rust value went out of scope.
 pub fn note_surface_released() {
     bump(&SURFACES_RELEASED, 1);
+}
+
+/// A conversation stopped waiting for the rest of itself and drew what it
+/// had, because its deadline passed.
+///
+/// Every one is a pane that showed nothing new for the whole deadline. It is
+/// the right answer when a body really is on its way and slow; it is a
+/// stall when the pane was waiting for something that was never coming --
+/// a body this machine does not have yet.
+pub fn note_waited_out() {
+    bump(&WAITED_OUT, 1);
 }
 
 /// A page of the message list was asked for.
@@ -223,5 +274,55 @@ mod tests {
             "held is created minus released: a conversation that never lets go \
              shows up here even while every individual render looks cheap"
         );
+    }
+}
+
+/// The reading renderer's counters (spec 006) add up what each snapshot
+/// cost, and the two stall counters count what they say.
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use crate::test_support;
+
+    #[test]
+    fn each_snapshot_adds_its_costs_to_the_totals() {
+        let (shown, before) = test_support::snapshot_counts();
+        let one = SnapshotCounts {
+            style_passes: 2,
+            nodes: 40,
+            repaired_runs: 3,
+            resources_unresolved: 1,
+            images_placeholdered: 1,
+            display_list_commands: 90,
+        };
+        note_snapshot(one);
+        note_snapshot(SnapshotCounts {
+            style_passes: 1,
+            ..one
+        });
+        let (shown_after, after) = test_support::snapshot_counts();
+        assert_eq!(shown_after - shown, 2);
+        assert_eq!(after.style_passes - before.style_passes, 3);
+        assert_eq!(after.nodes - before.nodes, 80);
+        assert_eq!(after.repaired_runs - before.repaired_runs, 6);
+        assert_eq!(after.resources_unresolved - before.resources_unresolved, 2);
+        assert_eq!(after.images_placeholdered - before.images_placeholdered, 2);
+        assert_eq!(
+            after.display_list_commands - before.display_list_commands,
+            180
+        );
+    }
+
+    #[test]
+    fn waiting_out_and_page_requests_are_counted_one_each() {
+        let (waited, pages) = (
+            test_support::redraws_waited_out(),
+            test_support::pages_requested(),
+        );
+        note_waited_out();
+        note_page_requested();
+        note_page_requested();
+        assert_eq!(test_support::redraws_waited_out() - waited, 1);
+        assert_eq!(test_support::pages_requested() - pages, 2);
     }
 }

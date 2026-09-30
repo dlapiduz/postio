@@ -19,13 +19,17 @@
 //! already put in the blob store as `messages.raw_blob_id`. So an export is a
 //! copy, not a serialisation — there is no round trip through the parser and
 //! nothing that could make the file disagree with what the server sent.
+//!
+//! The copy is the store's owner's (`Req::ExportMessages`,
+//! `postio_host::export`); what each file is called is decided here, the way
+//! a saved part's path is.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use postio_client::Client;
 use postio_model::MessageId;
-use postio_runtime::Engine;
-use postio_storage::{BlobStore, Store};
+use postio_model::listing::MailStore;
 
 /// How long an exported filename may get before the extension.
 ///
@@ -110,145 +114,104 @@ pub fn unique_names<'a>(subjects: impl IntoIterator<Item = Option<&'a str>>) -> 
     names
 }
 
+/// Where each of `messages` goes under `into`, named by its subject and
+/// never colliding with another in the same drag. `subjects` are the
+/// messages', in the same order.
+pub(crate) fn message_targets(
+    into: &Path,
+    messages: &[MessageId],
+    subjects: &[Option<String>],
+) -> Vec<(MessageId, PathBuf)> {
+    // Every subject first, so the names can be made unique across the whole
+    // drag before any of them is written. Doing it per message would need the
+    // set anyway, one file at a time, and would rename as it went.
+    let names = unique_names(subjects.iter().map(Option::as_deref));
+    messages
+        .iter()
+        .zip(names)
+        .map(|(message, name)| (*message, into.join(name)))
+        .collect()
+}
+
 /// Write every message in `messages` into `into` as an `.eml` file.
 ///
 /// Returns the files in the order they were asked for, so the caller can hand
 /// a receiving application a `text/uri-list` in the order the person selected
 /// them rather than in whatever order the reads finished.
 ///
+/// Two calls, where it was a read per message and then the writes: the rows
+/// for the names, then the whole batch for the host to write.
+///
 /// # It may reach the network, and only because the user asked
 ///
 /// A message whose raw source has not been backfilled yet has nothing to
-/// export, so this asks the engine for it and waits — the same path, and the
-/// same justification, as saving an attachment that was never downloaded. The
-/// user dragged these messages by name; fetching them is the thing they asked
-/// for. With no engine, that message is an error rather than an empty file.
+/// export, so the host asks the engine for it and waits — the same path, and
+/// the same justification, as saving an attachment that was never downloaded.
+/// The user dragged these messages by name; fetching them is the thing they
+/// asked for. With no engine, that message is an error rather than an empty
+/// file.
 pub async fn export_messages(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
+    client: &Client,
     into: &Path,
     messages: &[MessageId],
 ) -> Result<Vec<PathBuf>, String> {
-    // Every subject first, so the names can be made unique across the whole
-    // drag before any of them is written. Doing it per message would need the
-    // set anyway, one file at a time, and would rename as it went.
+    // A row that cannot be read is named from no subject, as before: the
+    // write below is what says whether the message can be exported at all.
+    let rows = client
+        .message_rows(messages.to_vec())
+        .await
+        .unwrap_or_default();
     let subjects: Vec<Option<String>> = messages
         .iter()
         .map(|message| {
-            postio_session::blocking::now(async {
-                crate::reading::read_message(database, *message)
-                    .await
-                    .map(|row| row.subject)
-                    .unwrap_or_default()
-            })
+            rows.iter()
+                .find(|row| row.id == *message)
+                .and_then(|row| row.subject.clone())
         })
         .collect();
-    let names = unique_names(subjects.iter().map(Option::as_deref));
+    let targets = message_targets(into, messages, &subjects);
 
     std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
+    client
+        .export_messages(targets)
+        .await
+        .map_err(|error| error.to_string())
+}
 
-    let mut written = Vec::new();
-    for (message, name) in messages.iter().zip(names) {
-        let raw = match crate::reading::raw_blob(database, *message).await? {
-            Some(raw) => raw,
-            None => {
-                let engine = engine.clone().ok_or(
-                    "This account is not syncing, so that message cannot be fetched to export",
-                )?;
-                // Every byte, not the text axis: what is being written here
-                // is the original RFC 5322 message, and under ADR 0017 the
-                // background lane stores no raw source at all. `request_body`
-                // would fetch the words, leave `raw_blob_id` empty, and this
-                // would wait out its deadline for bytes nothing was fetching.
-                if !engine
-                    .request_whole_message(*message)
-                    .await
-                    .map_err(|error| error.message().to_string())?
-                {
-                    return Err("There is nothing to fetch for that message".into());
-                }
-                crate::reading::wait_for_body(database, *message).await?
-            }
-        };
-
-        let bytes = blobs.get(&raw).map_err(|error| error.to_string())?;
-        let path = into.join(&name);
-        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
-        written.push(path);
-    }
-    Ok(written)
+/// Where one part goes under `into`, and which part it is: the panel's own
+/// [`postio_gtk::parts::save_name`], the same one the save dialog offers, so
+/// a part saved and a part dragged land under the same name. It already
+/// refuses to let a part called `../../.bashrc` steer where the file goes.
+///
+/// A container is refused: `multipart/mixed` is a wrapper, and writing it
+/// would make an empty file named after something that was never a file.
+pub(crate) fn part_target(
+    into: &Path,
+    node: &postio_gtk::parts::Node,
+) -> Result<(postio_model::ids::AttachmentId, PathBuf), String> {
+    let attachment = node
+        .attachment
+        .ok_or("That part is not something with bytes of its own")?;
+    Ok((attachment, into.join(postio_gtk::parts::save_name(node))))
 }
 
 /// Write one message part into `into`, under the name the sender gave it.
 ///
-/// The bytes come from [`postio_session::reading::part_bytes_at`], so a part
-/// that was never downloaded is fetched exactly as `s` fetches it — the user
-/// named this part by dragging it.
-///
-/// The filename is the panel's own [`postio_gtk::parts::save_name`], the same
-/// one the save dialog offers, so a part saved and a part dragged land under
-/// the same name. It already refuses to let a part called `../../.bashrc`
-/// steer where the file goes.
+/// The store's owner writes the bytes (`Req::SavePart`), so a part that was
+/// never downloaded is fetched exactly as `s` fetches it — the user named
+/// this part by dragging it.
 pub async fn export_part(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
+    client: &postio_client::Client,
     into: &Path,
     message: MessageId,
     node: &postio_gtk::parts::Node,
 ) -> Result<PathBuf, String> {
-    let name = postio_gtk::parts::save_name(node);
-    export_part_as(database, blobs, engine, into, message, node, &name).await
-}
-
-/// [`export_part`], for a caller that has already worked out the name.
-///
-/// One part in isolation can be named from itself; a *batch* cannot.
-/// [`postio_gtk::parts::save_name`] answers about one node and knows nothing
-/// of the others, so a message carrying two parts that both call themselves
-/// `invoice.pdf` writes one file and leaves no sign the second ever existed
-/// — a silent loss of the user's mail, from the command whose whole promise
-/// is that it got everything.
-///
-/// [`postio_gtk::parts::save_names`] is what resolves that, over the whole
-/// set at once, and it is shared with the macOS boundary so both frontends
-/// resolve a collision the same way. This is the seam that lets the caller
-/// hand its answer down: `save_all_parts` passes the deduplicated name, the
-/// drag-out and the single save pass nothing and get `save_name` as before.
-///
-/// `name` is expected to have come from one of those two — it is joined onto
-/// `into` and written, with no further laundering, exactly as the name this
-/// used to derive was.
-pub async fn export_part_as(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
-    into: &Path,
-    message: MessageId,
-    node: &postio_gtk::parts::Node,
-    name: &str,
-) -> Result<PathBuf, String> {
-    // The row id is the *leaf* test and nothing else — a container has none,
-    // and there is no file in it to write.
-    if node.attachment.is_none() {
-        return Err("That part is not something with bytes of its own".to_owned());
-    }
-    // Addressed by MIME path, never by `AttachmentId`. A whole-message fetch
-    // replaces a message's attachment rows, so the first part of a batch that
-    // had to be fetched invalidates every id held beside it — and `save_all`
-    // holds one per row. `2` is `2` in every parse of the same bytes.
-    // `postio_session::reading::part_bytes`' own doc is this paragraph from
-    // the other side, and it is why the FFI boundary never names a part by a
-    // row id either.
-    let bytes =
-        postio_session::reading::part_bytes_at(database, blobs, engine, message, &node.part_id)
-            .await?;
-
+    let (attachment, path) = part_target(into, node)?;
     std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
-    let path = into.join(name);
-    std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
-    Ok(path)
+    client
+        .save_part(message, attachment, path)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Let the list hand messages to another application as files.
@@ -263,27 +226,33 @@ pub async fn export_part_as(
 /// the bytes have to exist somewhere both processes can see. They are copies
 /// of mail that is already stored, so [`crate::paths::export_dir`] puts them
 /// under the cache directory, where the system is allowed to reclaim them.
-pub async fn install(window: &postio_gtk::window::Window, wiring: &crate::Wiring) {
-    let database = wiring.database.clone();
-    let blobs = wiring.blobs.clone();
-    let engine = wiring.engine.clone();
-    let runtime = wiring.runtime.clone();
+///
+/// `client` is the window's: the rows and the writes are its calls.
+pub async fn install(window: &postio_gtk::window::Window, wiring: &crate::Wiring, client: Client) {
+    install_for(window, wiring.runtime.clone(), client);
+}
 
+/// [`install`], for a window whose store's owner may be another process:
+/// `runtime` is where the writes are awaited, off the main loop.
+pub fn install_for(
+    window: &postio_gtk::window::Window,
+    runtime: tokio::runtime::Handle,
+    client: Client,
+) {
     window
         .list()
         .connect_export(std::rc::Rc::new(move |messages: Vec<MessageId>| {
-            let (database, blobs) = (database.clone(), blobs.clone());
-            let (engine, runtime) = (engine.get().cloned(), runtime.clone());
+            let (client, runtime) = (client.clone(), runtime.clone());
             Box::pin(async move {
                 let into = crate::paths::export_dir();
-                // On the runtime, not the UI thread: this reads SQLite, writes
-                // files, and may wait on a backfill. The drop is already
-                // asynchronous from GTK's point of view, so the one thing that
-                // must not happen is doing it here.
+                // On the runtime, not the UI thread: this creates the
+                // directory, and the host's half writes files and may wait
+                // on a backfill. The drop is already asynchronous from GTK's
+                // point of view, so the one thing that must not happen is
+                // doing it here.
                 let (send, receive) = async_channel::bounded(1);
                 runtime.spawn(async move {
-                    let outcome =
-                        export_messages(&database, &blobs, engine, &into, &messages).await;
+                    let outcome = export_messages(&client, &into, &messages).await;
                     let _ = send.send(outcome).await;
                 });
                 let paths = receive
@@ -301,8 +270,10 @@ mod tests {
 
     use chrono::Utc;
     use postio_model::Message;
+    use postio_runtime::Engine;
     use postio_storage::repository::MessageRepository;
     use postio_storage::test_support;
+    use postio_storage::{BlobStore, Store};
 
     /// A store with an account and an inbox, and a blob directory beside it.
     struct World {
@@ -343,6 +314,47 @@ mod tests {
                 .await
                 .expect("a message")
         }
+    }
+
+    /// [`super::export_messages`] over a store rather than a client: the same
+    /// subjects to names, and the files as the host writes them for
+    /// `Req::ExportMessages`.
+    async fn export_messages(
+        database: &Store,
+        blobs: &BlobStore,
+        engine: Option<Engine>,
+        into: &Path,
+        messages: &[MessageId],
+    ) -> Result<Vec<PathBuf>, String> {
+        let mut subjects = Vec::with_capacity(messages.len());
+        for message in messages {
+            subjects.push(
+                postio_host::parts::read_message(database, *message)
+                    .await
+                    .map(|row| row.subject)
+                    .unwrap_or_default(),
+            );
+        }
+        let targets = message_targets(into, messages, &subjects);
+        std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
+        postio_host::export::write_messages(database, blobs, engine, &targets).await
+    }
+
+    /// [`super::export_part`] over a store rather than a client: the same
+    /// node to path, and the bytes as the host writes them for
+    /// `Req::SavePart`.
+    async fn export_part(
+        database: &Store,
+        blobs: &BlobStore,
+        engine: Option<Engine>,
+        into: &Path,
+        message: MessageId,
+        node: &postio_gtk::parts::Node,
+    ) -> Result<PathBuf, String> {
+        let (attachment, path) = part_target(into, node)?;
+        std::fs::create_dir_all(into).map_err(|error| error.to_string())?;
+        postio_host::parts::save_part(database, blobs, engine, message, attachment, &path).await?;
+        Ok(path)
     }
 
     /// The corpus spells mail this way; so does every fixture in this repo.

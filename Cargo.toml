@@ -10,8 +10,10 @@ members = [
     "crates/postio-account",
     "crates/postio-jmap",
     "crates/postio-gmail",
+    "crates/postio-render",
     "crates/postio-ui",
     "crates/postio-smtp",
+    "crates/postio-transport",
     "crates/postio-sync",
     "crates/postio-core",
     "crates/postio-runtime",
@@ -21,7 +23,13 @@ members = [
     "crates/postio-ffi",
     "crates/postio-bench",
     "crates/postio-test-support",
+    "crates/postio-client",
+    "crates/postio-host",
+    "crates/postio-tui",
 ]
+# Upstream crates carried with Postio's patches applied: sources, not
+# members, so the workspace's lints and gates do not reach them.
+exclude = ["vendor"]
 
 # What a bare `cargo build` or `cargo check` compiles: everything above
 # except the FFI layer.
@@ -49,8 +57,10 @@ default-members = [
     "crates/postio-account",
     "crates/postio-jmap",
     "crates/postio-gmail",
+    "crates/postio-render",
     "crates/postio-ui",
     "crates/postio-smtp",
+    "crates/postio-transport",
     "crates/postio-sync",
     "crates/postio-core",
     "crates/postio-runtime",
@@ -59,6 +69,9 @@ default-members = [
     "crates/postio-app",
     "crates/postio-bench",
     "crates/postio-test-support",
+    "crates/postio-client",
+    "crates/postio-host",
+    "crates/postio-tui",
 ]
 
 [workspace.package]
@@ -130,12 +143,16 @@ postio-account = { path = "crates/postio-account" }
 postio-jmap    = { path = "crates/postio-jmap" }
 postio-gmail   = { path = "crates/postio-gmail" }
 postio-ui      = { path = "crates/postio-ui" }
+postio-render  = { path = "crates/postio-render" }
 postio-smtp    = { path = "crates/postio-smtp" }
+postio-transport = { path = "crates/postio-transport" }
 postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
 postio-runtime = { path = "crates/postio-runtime" }
 postio-gtk     = { path = "crates/postio-gtk" }
 postio-test-support = { path = "crates/postio-test-support" }
+postio-client = { path = "crates/postio-client" }
+postio-host    = { path = "crates/postio-host" }
 
 # Third-party crates two or more members share, so a version, a feature
 # list and a default-features decision are made once (#1498). A member
@@ -170,6 +187,20 @@ zeroize = "1.9.0"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The terminal frontend's release build: `cargo build --profile release-tui
+# -p postio-tui`. Its size is a requirement, not a nicety -- each terminal
+# package must be under half its desktop counterpart
+# (specs/005-tui-frontend SC-004) -- so it trades build time for bytes:
+# whole-program LTO, `s` rather than speed, no unwinding tables, no symbols.
+# `panic = "abort"` is safe here because the terminal is restored by a panic
+# hook, which runs before the abort (postio-tui's `term.rs`).
+[profile.release-tui]
+inherits = "release"
+lto = "fat"
+opt-level = "s"
+panic = "abort"
+strip = true
 
 # Debug info is the heaviest part of compiling and linking the GTK/WebKit
 # stack, and diagnosis here happens through tests and POSTIO_LOG, not a
@@ -234,3 +265,27 @@ debug = 0
 # in any gate's pass or fail.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Turso from Postio's fork: v0.8.0-pre.11 plus fuzzy and prefix word
+# expansion in the full-text index (turso#8359, closed upstream unmerged,
+# ported) and a per-word `~N` opt-in. Search uses it only for the words it
+# offers when a query finds nothing; every query it runs is quoted, and a
+# quoted query is parsed exactly as upstream parses it. Every turso crate
+# comes from the one commit, so no two copies of a type meet.
+[patch.crates-io]
+turso = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_core = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+
+# Blitz 0.3.0-beta.2 with Postio's patch queue applied (`patches/blitz/`,
+# checked by `scripts/blitz-patches.sh verify`): the reading renderer's
+# engine, carried in-tree so a patch is reviewed as a diff in the same pull
+# request that needs it, and dropped when upstream takes it.
+blitz-dom = { path = "vendor/blitz-dom" }
+blitz-paint = { path = "vendor/blitz-paint" }

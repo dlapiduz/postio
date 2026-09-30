@@ -160,6 +160,16 @@ pub enum Error {
          has"
     )]
     WrongStoreKey,
+    /// Another process has the store open.
+    ///
+    /// Only one Postio may have the store at a time -- the desktop app or the
+    /// terminal, not both -- and the engine enforces it with a lock on the
+    /// file. Its own variant so the sentence says what to do about it rather
+    /// than passing on the engine's "Failed locking file", which reads like
+    /// a fault. The lock records no owner, so the sentence cannot say which
+    /// of the two has it.
+    #[error("Postio is already open in another window. Close it to open Postio here.")]
+    InUse,
     /// The store opened, but its schema is not the one this build expects.
     ///
     /// Its own variant because it is the case [`Error::WrongStoreKey`] cannot
@@ -237,6 +247,17 @@ impl Error {
             self,
             Error::Engine(turso::Error::Busy(_) | turso::Error::BusySnapshot(_))
         )
+    }
+}
+
+/// A storage failure, phrased for whoever asked for the read.
+///
+/// Lives here rather than beside the read trait because both types belong
+/// to other crates from `postio-runtime`'s side (`StoreError` moved to
+/// `postio-model` so a frontend in another process can name it, ADR 0041).
+impl From<Error> for postio_model::listing::StoreError {
+    fn from(error: Error) -> Self {
+        postio_model::listing::StoreError::new(error.to_string())
     }
 }
 

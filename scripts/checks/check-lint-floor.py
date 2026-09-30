@@ -24,7 +24,7 @@ Every workspace member must either
 
 `EXCEPTIONS` is deliberately a literal in this file rather than a
 convention: adding a crate to it is a diff somebody reviews, which is the
-point. Two crates are on it today and both have a reason.
+point. Every crate on it has a reason beside it.
 
 # Exit status
 
@@ -68,6 +68,12 @@ EXCEPTIONS: dict[str, str] = {
     # routinely has three sessions compiling on it. No library code in this
     # crate uses `unsafe`.
     "postio-config": "deny",
+    # One site in `fonts.rs`: installed font files are memory-mapped through
+    # fontdb's `make_shared_face_data`, an `unsafe fn`, because reading them
+    # all cost 198 MiB resident (spec 006 research R3). The hazard is the one
+    # every font stack accepts -- a file truncated underneath a map. Nothing
+    # else in the crate is unsafe, and its parsers are Rust's own (FR-023a).
+    "postio-render": "deny",
 }
 
 # Ordered weakest to strongest, so "at least as strong as" is an index test.

@@ -195,7 +195,7 @@ pub(crate) fn open_stream(
             let stream = Stream::connect_tls(&host, port, options).map_err(io_error)?;
             Ok(Box::new(Cancellable::new(stream, cancel.clone())))
         }
-        "http" if is_loopback(&host) => {
+        "http" if postio_model::net::is_loopback(&host) => {
             let port = url.port_or_known_default().unwrap_or(80);
             let stream =
                 Stream::connect_tcp(&host, port, TcpConnectOptions::default()).map_err(io_error)?;
@@ -212,13 +212,6 @@ fn io_error(error: impl std::fmt::Display) -> BackendError {
         context: "opening the JMAP stream".to_owned(),
         reason: error.to_string(),
     }
-}
-
-fn is_loopback(host: &str) -> bool {
-    host == "localhost"
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// What [`JmapClientStd::new`] wants of a stream.

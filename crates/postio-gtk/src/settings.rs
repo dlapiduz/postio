@@ -82,7 +82,9 @@ use postio_model::ids::SignatureId;
 use postio_model::{Account, AccountId, MailboxRole, UnsubscribeActivation};
 
 use crate::keymap::{Chord, ChordFromGdk};
-use crate::widgets::{CheckRow, SegmentedControl, kicker, stat_line};
+use crate::widgets::{
+    CheckRow, ListOrEmpty, SegmentedControl, SettingsGroup, kicker, space, stat_line,
+};
 
 /// How long to let typing settle before writing the buffer back to disk.
 ///
@@ -201,19 +203,9 @@ pub enum AccountEdit {
     MailboxRole(MailboxRole, Option<String>),
 }
 
-/// The roles a folder can be mapped to, in the order the group lists them.
-///
-/// `Inbox` is not among them: RFC 3501 names that folder itself, and pointing
-/// it elsewhere would make Postio disagree with every other client on the
-/// same account about where mail arrives. `Flagged` is a view over folders
-/// rather than one of them.
-const MAPPABLE_ROLES: [(MailboxRole, &str); 5] = [
-    (MailboxRole::Sent, "Sent"),
-    (MailboxRole::Archive, "Archive"),
-    (MailboxRole::Drafts, "Drafts"),
-    (MailboxRole::Trash, "Trash"),
-    (MailboxRole::Junk, "Junk"),
-];
+/// The roles a folder can be mapped to, in the order the group lists them:
+/// the shared table, which the terminal's picker reads too.
+use postio_ui::settings::MAPPABLE_ROLES;
 
 /// One account's folders and role map, as the Mailboxes group needs them.
 ///
@@ -461,15 +453,7 @@ pub use postio_ui::account::badge as account_badge;
 /// the control. Unlike the settings rows that carry a second description
 /// line, there is none here: a host or a port names itself.
 fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let title = gtk::Label::new(Some(label));
-    title.set_xalign(0.0);
-    title.add_css_class("postio-settings-account-detail-label");
-
-    let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    row.add_css_class("postio-settings-account-detail-row");
-    row.append(&title);
-    row.append(control);
-    row
+    crate::widgets::field(label, control, "postio-settings-account-detail-row")
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +475,6 @@ pub struct AppearanceControls {
     /// costs, in the units a person is choosing between.
     pub density_stat: gtk::Label,
     pub hover_actions: CheckRow,
-    pub key_hints: CheckRow,
     pub sender_avatars: CheckRow,
 }
 
@@ -881,14 +864,12 @@ mod imp {
                 ui_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 privacy_list: gtk::ListBox::new(),
                 privacy_scroller: gtk::ScrolledWindow::new(),
-                privacy_empty: gtk::Label::new(Some(
-                    "No senders are always allowed to load remote images.",
-                )),
+                privacy_empty: gtk::Label::new(Some(postio_ui::privacy::NO_ALLOWED)),
                 remote_image_allowlist: RefCell::new(None),
                 unsubscribe_list: gtk::ListBox::new(),
                 unsubscribe_scroller: gtk::ScrolledWindow::new(),
-                egress_empty: gtk::Label::new(Some("Nothing has connected out yet this session.")),
-                unsubscribe_empty: gtk::Label::new(Some("No mailing lists have been left yet.")),
+                egress_empty: gtk::Label::new(Some(postio_ui::privacy::NO_CONNECTIONS)),
+                unsubscribe_empty: gtk::Label::new(Some(postio_ui::privacy::NO_LISTS_LEFT)),
                 unsubscribe_activations: RefCell::new(Vec::new()),
                 read_receipt_count: gtk::Label::new(None),
                 keys_list: gtk::ListBox::new(),
@@ -1234,8 +1215,11 @@ impl SettingsPanel {
         for sender in &senders {
             imp.privacy_list.append(&self.privacy_row(sender));
         }
-        imp.privacy_scroller.set_visible(!senders.is_empty());
-        imp.privacy_empty.set_visible(senders.is_empty());
+        ListOrEmpty::show(
+            &imp.privacy_scroller,
+            &imp.privacy_empty,
+            !senders.is_empty(),
+        );
     }
 
     /// Revokes `sender`'s remote-image exception and writes the allow-list
@@ -1268,13 +1252,13 @@ impl SettingsPanel {
         label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
-        let revoke = gtk::Button::from_icon_name("user-trash-symbolic");
+        let revoke = crate::widgets::icon_button(
+            "user-trash-symbolic",
+            &format!("Stop always allowing remote images from {sender}"),
+        );
         revoke.add_css_class("postio-settings-privacy-revoke");
-        revoke.add_css_class("flat");
+        // Shorter than the name: the row beside it already says whose.
         revoke.set_tooltip_text(Some("Always ask again"));
-        revoke.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Stop always allowing remote images from {sender}"
-        ))]);
         revoke.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -1319,17 +1303,9 @@ impl SettingsPanel {
     /// "configurable" default here would already have lost the argument a
     /// toggle exists to make.
     pub fn set_read_receipt_count(&self, count: u64) {
-        let text = match count {
-            0 => "No messages have requested a read receipt.".to_owned(),
-            1 => "1 message has requested a read receipt; none have been sent \
-                  automatically."
-                .to_owned(),
-            n => format!(
-                "{n} messages have requested a read receipt; none have been \
-                 sent automatically."
-            ),
-        };
-        self.imp().read_receipt_count.set_label(&text);
+        self.imp()
+            .read_receipt_count
+            .set_label(&postio_ui::privacy::read_receipts(count));
     }
 
     /// The read-receipt count line's current text. For tests.
@@ -1349,9 +1325,11 @@ impl SettingsPanel {
             imp.unsubscribe_list
                 .append(&self.unsubscribe_activation_row(activation));
         }
-        imp.unsubscribe_scroller
-            .set_visible(!activations.is_empty());
-        imp.unsubscribe_empty.set_visible(activations.is_empty());
+        ListOrEmpty::show(
+            &imp.unsubscribe_scroller,
+            &imp.unsubscribe_empty,
+            !activations.is_empty(),
+        );
     }
 
     /// One past activation: the list it left, and when.
@@ -1485,16 +1463,11 @@ impl SettingsPanel {
                 &entry
                     .at
                     .with_timezone(&chrono::Local)
-                    .format("%d %b %H:%M")
+                    .format(postio_ui::privacy::CONNECTION_WHEN)
                     .to_string(),
             ));
             when.add_css_class("postio-settings-egress-when");
-            let what = gtk::Label::new(Some(&format!(
-                "{} · {}:{}",
-                entry.subsystem.as_str(),
-                entry.host,
-                entry.port
-            )));
+            let what = gtk::Label::new(Some(&postio_ui::privacy::connection(entry)));
             what.set_hexpand(true);
             what.set_xalign(0.0);
             what.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -1513,8 +1486,7 @@ impl SettingsPanel {
             ))]);
             imp.egress_list.append(&row);
         }
-        imp.egress_scroller.set_visible(!entries.is_empty());
-        imp.egress_empty.set_visible(entries.is_empty());
+        ListOrEmpty::show(&imp.egress_scroller, &imp.egress_empty, !entries.is_empty());
     }
 
     /// One account's row: name and address, what its mail weighs, and an
@@ -1609,7 +1581,11 @@ impl SettingsPanel {
         // stated rather than three keystrokes away.
         if expired {
             let reconnect = gtk::Button::with_label("Reconnect");
-            reconnect.add_css_class("postio-settings-small-button");
+            crate::widgets::button::style(
+                &reconnect,
+                crate::widgets::button::Kind::Secondary,
+                crate::widgets::button::Size::Small,
+            );
             reconnect.set_valign(gtk::Align::Center);
             let account_id = account.id;
             reconnect.connect_clicked(glib::clone!(
@@ -2113,8 +2089,8 @@ impl SettingsPanel {
         // The same 18px `ui_row` puts either side of a settings row: this
         // group follows five fields, and flush against the last of them it
         // reads as a sixth rather than as a heading over what comes next.
-        heading.set_margin_top(18);
-        heading.set_margin_bottom(4);
+        heading.set_margin_top(space::S6);
+        heading.set_margin_bottom(space::S1);
         group.append(&heading);
 
         let data = imp
@@ -2129,9 +2105,7 @@ impl SettingsPanel {
             // Not a blank frame: an account that has never synced has no
             // folders to offer, and saying which it is beats an empty row.
             let empty = gtk::Label::new(Some("Folders appear after the first sync."));
-            empty.set_xalign(0.0);
-            empty.set_wrap(true);
-            empty.add_css_class("postio-settings-account-detail-mailboxes-empty");
+            crate::widgets::empty_note(&empty, "postio-settings-account-detail-mailboxes-empty");
             group.append(&empty);
             return;
         }
@@ -2248,12 +2222,9 @@ impl SettingsPanel {
             return;
         }
 
-        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        let back = crate::widgets::icon_button("go-previous-symbolic", "Back to the account");
         back.add_css_class("postio-settings-signature-back");
-        back.add_css_class("flat");
         back.set_halign(gtk::Align::Start);
-        back.set_tooltip_text(Some("Back to the account"));
-        back.update_property(&[gtk::accessible::Property::Label("Back to the account")]);
         back.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -2282,9 +2253,7 @@ impl SettingsPanel {
         // until there is something to say, and never a raw store error:
         // "UNIQUE constraint failed" is not an answer anybody can act on.
         let error = gtk::Label::new(None);
-        error.add_css_class("postio-settings-signature-error");
-        error.set_xalign(0.0);
-        error.set_wrap(true);
+        crate::widgets::callout(&error, "postio-settings-signature-error");
         error.set_visible(false);
         imp.signature_editor.append(&error);
         let _ = imp.signature_editor_error.set(error);
@@ -2293,7 +2262,11 @@ impl SettingsPanel {
         verbs.set_halign(gtk::Align::Start);
         let save = gtk::Button::with_label("Save");
         save.add_css_class("postio-settings-signature-save");
-        save.add_css_class("suggested-action");
+        crate::widgets::button::style(
+            &save,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         save.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -2730,8 +2703,7 @@ impl SettingsPanel {
             imp.filters_list
                 .append(&self.filter_row(key, &config.filters[key], &pinned));
         }
-        imp.filters_scroller.set_visible(!order.is_empty());
-        imp.filters_empty.set_visible(order.is_empty());
+        ListOrEmpty::show(&imp.filters_scroller, &imp.filters_empty, !order.is_empty());
     }
 
     /// Applies `mutate` to the buffer's current `[filters]` state and writes
@@ -2949,37 +2921,26 @@ impl SettingsPanel {
         ));
 
         let interval = stat_line("");
-        let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        left.append(&kicker("CHECK FOR MAIL"));
-        check_for_mail.widget().set_margin_top(8);
-        left.append(check_for_mail.widget());
-        interval.set_margin_top(10);
-        left.append(&interval);
-        let attachments_kicker = kicker("DOWNLOAD ATTACHMENTS");
-        attachments_kicker.set_margin_top(20);
-        left.append(&attachments_kicker);
-        attachments.widget().set_margin_top(8);
-        left.append(attachments.widget());
+        let left = SettingsGroup::new();
+        left.section("Check for mail");
+        left.control(check_for_mail.widget()).note(&interval);
+        left.section("Download attachments");
+        left.control(attachments.widget());
 
-        let checks = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        checks.set_margin_top(20);
+        let checks = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         checks.append(sync_on_startup.widget());
         checks.append(notify.widget());
-        left.append(&checks);
-        let roles_kicker = kicker("NOTIFY FOR");
-        roles_kicker.set_margin_top(18);
-        left.append(&roles_kicker);
-        notify_roles.set_margin_top(8);
+        left.block(&checks);
+        left.section("Notify for");
         notify_roles.set_halign(gtk::Align::Start);
         notify_roles.set_width_chars(24);
-        left.append(&notify_roles);
+        left.control(&notify_roles);
         let elsewhere = stat_line("remote images are allowed per sender, under Privacy");
         // Wraps rather than ellipsising: it is a sentence, not a column of
         // numbers, and half of it is worse than two lines of it.
         elsewhere.set_ellipsize(pango::EllipsizeMode::None);
         elsewhere.set_wrap(true);
-        elsewhere.set_margin_top(18);
-        left.append(&elsewhere);
+        left.block(&elsewhere);
 
         // The stat block: bordered, mono, with the one action that has a
         // command behind it. `Compact index` is in the drawing and is *not*
@@ -2995,7 +2956,11 @@ impl SettingsPanel {
         stats.append(&stats_accounts);
 
         let sync_now = gtk::Button::with_label("Sync now");
-        sync_now.add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &sync_now,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         sync_now.set_halign(gtk::Align::Start);
         sync_now.set_margin_top(6);
         sync_now.connect_clicked(glib::clone!(
@@ -3005,12 +2970,12 @@ impl SettingsPanel {
         ));
         stats.append(&sync_now);
 
-        let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        right.append(&kicker("LOCAL STORE"));
-        stats.set_margin_top(8);
-        right.append(&stats);
+        let right = SettingsGroup::new();
+        right.section("Local store");
+        right.control(&stats);
 
-        imp.sync_pane.append(&two_columns(&left, &right));
+        imp.sync_pane
+            .append(&two_columns(left.widget(), right.widget()));
 
         let _ = imp.sync_controls.set(SyncControls {
             check_for_mail,
@@ -3323,7 +3288,6 @@ impl SettingsPanel {
         controls
             .hover_actions
             .set_active(config.ui.show_hover_actions);
-        controls.key_hints.set_active(config.ui.show_key_hints);
         controls.sender_avatars.set_active(config.ui.sender_avatars);
     }
 
@@ -3436,12 +3400,6 @@ impl SettingsPanel {
             self,
             move |active| panel.apply_ui_mutation(move |ui| ui.show_hover_actions = active)
         ));
-        let key_hints = CheckRow::new("Key hints on the focused row");
-        key_hints.connect_toggled(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |active| panel.apply_ui_mutation(move |ui| ui.show_key_hints = active)
-        ));
         let sender_avatars = CheckRow::new("Sender avatars");
         sender_avatars.connect_toggled(glib::clone!(
             #[weak(rename_to = panel)]
@@ -3449,35 +3407,27 @@ impl SettingsPanel {
             move |active| panel.apply_ui_mutation(move |ui| ui.sender_avatars = active)
         ));
 
-        let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        left.append(&kicker("THEME"));
-        theme.widget().set_margin_top(8);
-        left.append(theme.widget());
-        let density_kicker = kicker("ROW DENSITY");
-        density_kicker.set_margin_top(22);
-        left.append(&density_kicker);
-        density.widget().set_margin_top(8);
-        left.append(density.widget());
-        density_stat.set_margin_top(10);
-        left.append(&density_stat);
+        let left = SettingsGroup::new();
+        left.section("Theme");
+        left.control(theme.widget());
+        left.section("Row density");
+        left.control(density.widget()).note(&density_stat);
 
-        let right = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        right.append(&kicker("MESSAGE LIST"));
-        let checks = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        checks.set_margin_top(4);
+        let right = SettingsGroup::new();
+        right.section("Message list");
+        let checks = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         checks.append(hover_actions.widget());
-        checks.append(key_hints.widget());
         checks.append(sender_avatars.widget());
-        right.append(&checks);
+        right.control(&checks);
 
-        imp.appearance_pane.append(&two_columns(&left, &right));
+        imp.appearance_pane
+            .append(&two_columns(left.widget(), right.widget()));
 
         let _ = imp.appearance.set(AppearanceControls {
             theme,
             density,
             density_stat,
             hover_actions,
-            key_hints,
             sender_avatars,
         });
         imp.appearance.get().expect("just set")
@@ -3553,22 +3503,19 @@ impl SettingsPanel {
             }
         ));
 
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&kicker("SIGNATURE ON A REPLY"));
-        on_reply.widget().set_margin_top(8);
-        column.append(on_reply.widget());
-        let forward_kicker = kicker("SIGNATURE ON A FORWARD");
-        forward_kicker.set_margin_top(22);
-        column.append(&forward_kicker);
-        on_forward.widget().set_margin_top(8);
-        column.append(on_forward.widget());
-        let note = stat_line("a reply answers a fragment · a forward hands the whole message on");
-        note.set_margin_top(14);
-        column.append(&note);
+        let group = SettingsGroup::new();
+        group.section("Signature on a reply");
+        group.control(on_reply.widget());
+        group.section("Signature on a forward");
+        group.control(on_forward.widget());
+        group.block(&stat_line(
+            "a reply answers a fragment · a forward hands the whole message on",
+        ));
+        let column = group.widget();
         column.set_margin_start(PANE_INSET);
         column.set_margin_end(PANE_INSET);
         column.set_margin_top(PANE_INSET);
-        imp.composing_pane.append(&column);
+        imp.composing_pane.append(column);
 
         let _ = imp.composing_controls.set(ComposingControls {
             on_reply,
@@ -3648,19 +3595,22 @@ impl SettingsPanel {
         lines.append(&name_entry);
         lines.append(&query_label);
 
-        let pinned = gtk::Switch::new();
+        // A checkbox, not a switch: pinned is a value written to the file,
+        // and ADR 0029 Q2 keeps switches for acts.
+        let pinned = CheckRow::new("In sidebar");
         pinned.set_active(filter.pinned);
-        pinned.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Show {title} in the sidebar"
-        ))]);
-        pinned.connect_active_notify(glib::clone!(
+        pinned
+            .widget()
+            .update_property(&[gtk::accessible::Property::Label(&format!(
+                "Show {title} in the sidebar"
+            ))]);
+        pinned.connect_toggled(glib::clone!(
             #[weak(rename_to = panel)]
             self,
             #[strong]
             key,
-            move |switch| {
+            move |active| {
                 let key = key.clone();
-                let active = switch.is_active();
                 panel.apply_filters_mutation(move |config| {
                     config.set_filter_pinned(&key, active);
                 });
@@ -3668,9 +3618,8 @@ impl SettingsPanel {
         ));
 
         let position = pinned_keys.iter().position(|candidate| *candidate == key);
-        let up = gtk::Button::from_icon_name("go-up-symbolic");
+        let up = crate::widgets::icon_button("go-up-symbolic", &format!("Move {title} up"));
         up.add_css_class("postio-settings-filter-up");
-        up.add_css_class("flat");
         up.set_tooltip_text(Some("Move up"));
         up.set_sensitive(position.is_some_and(|index| index > 0));
         up.connect_clicked(glib::clone!(
@@ -3686,9 +3635,8 @@ impl SettingsPanel {
             }
         ));
 
-        let down = gtk::Button::from_icon_name("go-down-symbolic");
+        let down = crate::widgets::icon_button("go-down-symbolic", &format!("Move {title} down"));
         down.add_css_class("postio-settings-filter-down");
-        down.add_css_class("flat");
         down.set_tooltip_text(Some("Move down"));
         down.set_sensitive(position.is_some_and(|index| index + 1 < pinned_keys.len()));
         down.connect_clicked(glib::clone!(
@@ -3704,13 +3652,12 @@ impl SettingsPanel {
             }
         ));
 
-        let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+        let delete = crate::widgets::icon_button(
+            "user-trash-symbolic",
+            &format!("Delete the saved search {title}"),
+        );
         delete.add_css_class("postio-settings-filter-delete");
-        delete.add_css_class("flat");
         delete.set_tooltip_text(Some("Delete"));
-        delete.update_property(&[gtk::accessible::Property::Label(&format!(
-            "Delete the saved search {title}"
-        ))]);
         delete.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -3730,7 +3677,8 @@ impl SettingsPanel {
         box_.set_margin_start(12);
         box_.set_margin_end(12);
         box_.append(&lines);
-        box_.append(&pinned);
+        pinned.widget().set_valign(gtk::Align::Center);
+        box_.append(pinned.widget());
         box_.append(&up);
         box_.append(&down);
         box_.append(&delete);
@@ -4097,7 +4045,11 @@ impl SettingsPanel {
         // header where the drawing puts it — not in the sidebar, which
         // names places rather than verbs.
         let add_account = gtk::Button::with_label("Add account");
-        add_account.add_css_class("postio-settings-primary");
+        crate::widgets::button::style(
+            &add_account,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
         add_account.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
@@ -4120,88 +4072,48 @@ impl SettingsPanel {
         imp.accounts_pane.append(&accounts_scroll);
 
         // ── filters: one row each, name/query, pinned, reorder, delete ───
-        imp.filters_list
-            .add_css_class("postio-settings-filters-list");
-        imp.filters_list
-            .set_selection_mode(gtk::SelectionMode::None);
-        imp.filters_list
-            .update_property(&[gtk::accessible::Property::Label("Saved searches")]);
-
-        imp.filters_scroller.set_child(Some(&imp.filters_list));
-        imp.filters_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.filters_scroller.set_vexpand(true);
-        imp.filters_scroller
-            .add_css_class("postio-settings-filters");
+        ListOrEmpty::dress(
+            &imp.filters_list,
+            &imp.filters_scroller,
+            &imp.filters_empty,
+            "postio-settings-filters",
+            "Saved searches",
+            None,
+        );
         imp.filters_scroller.set_visible(false);
-
-        imp.filters_empty
-            .add_css_class("postio-settings-filters-empty");
-        imp.filters_empty.set_xalign(0.0);
-        imp.filters_empty.set_wrap(true);
         imp.filters_empty.set_visible(false);
 
         imp.filters_pane.append(&imp.filters_scroller);
         imp.filters_pane.append(&imp.filters_empty);
 
         // ── privacy: one row per allow-listed sender (#871) ───────────────
-        imp.privacy_list
-            .add_css_class("postio-settings-privacy-list");
-        imp.privacy_list
-            .set_selection_mode(gtk::SelectionMode::None);
-        imp.privacy_list
-            .update_property(&[gtk::accessible::Property::Label(
-                "Senders always allowed to load remote images",
-            )]);
-
-        imp.privacy_scroller.set_child(Some(&imp.privacy_list));
-        imp.privacy_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.privacy_scroller
-            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
-        imp.privacy_scroller.set_propagate_natural_height(true);
-        imp.privacy_scroller
-            .add_css_class("postio-settings-privacy");
-        imp.privacy_scroller.set_visible(false);
-
-        imp.privacy_empty
-            .add_css_class("postio-settings-privacy-empty");
-        imp.privacy_empty.set_xalign(0.0);
-        imp.privacy_empty.set_wrap(true);
-        // Visible from the start. `set_remote_image_allowlist` may not have
+        ListOrEmpty::dress(
+            &imp.privacy_list,
+            &imp.privacy_scroller,
+            &imp.privacy_empty,
+            "postio-settings-privacy",
+            "Senders always allowed to load remote images",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
+        // Empty from the start. `set_remote_image_allowlist` may not have
         // been called yet, and "no senders are always allowed" is equally
         // true before the list is handed over and after it arrives empty —
         // whereas a heading with nothing under it is true of neither.
-        imp.privacy_empty.set_visible(true);
+        ListOrEmpty::show(&imp.privacy_scroller, &imp.privacy_empty, false);
 
         // ── privacy: one row per past unsubscribe activation (#971) ──────
         // A second list under the same pane as `privacy_list`, so it gets
         // its own heading to tell the two apart — the only pane here that
         // holds two lists.
-        imp.unsubscribe_list
-            .add_css_class("postio-settings-unsubscribe-list");
-        imp.unsubscribe_list
-            .set_selection_mode(gtk::SelectionMode::None);
-        imp.unsubscribe_list
-            .update_property(&[gtk::accessible::Property::Label(
-                "Mailing lists left through one-click unsubscribe",
-            )]);
-
-        imp.unsubscribe_scroller
-            .set_child(Some(&imp.unsubscribe_list));
-        imp.unsubscribe_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.unsubscribe_scroller
-            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
-        imp.unsubscribe_scroller.set_propagate_natural_height(true);
-        imp.unsubscribe_scroller
-            .add_css_class("postio-settings-unsubscribe");
+        ListOrEmpty::dress(
+            &imp.unsubscribe_list,
+            &imp.unsubscribe_scroller,
+            &imp.unsubscribe_empty,
+            "postio-settings-unsubscribe",
+            "Mailing lists left through one-click unsubscribe",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
         imp.unsubscribe_scroller.set_visible(false);
-
-        imp.unsubscribe_empty
-            .add_css_class("postio-settings-unsubscribe-empty");
-        imp.unsubscribe_empty.set_xalign(0.0);
-        imp.unsubscribe_empty.set_wrap(true);
         imp.unsubscribe_empty.set_visible(false);
 
         // ── privacy: the read-receipt count, a fact rather than a toggle
@@ -4213,41 +4125,31 @@ impl SettingsPanel {
         self.set_read_receipt_count(0);
 
         // ── egress: the connections Postio opened, auditable (#151) ──────
-        imp.egress_list.add_css_class("postio-settings-egress-list");
-        imp.egress_list.set_selection_mode(gtk::SelectionMode::None);
-        imp.egress_list
-            .update_property(&[gtk::accessible::Property::Label("Recent connections")]);
-        imp.egress_scroller.set_child(Some(&imp.egress_list));
-        imp.egress_scroller
-            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        imp.egress_scroller
-            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
-        imp.egress_scroller.set_propagate_natural_height(true);
-        imp.egress_scroller.add_css_class("postio-settings-egress");
+        ListOrEmpty::dress(
+            &imp.egress_list,
+            &imp.egress_scroller,
+            &imp.egress_empty,
+            "postio-settings-egress",
+            "Recent connections",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
         imp.egress_scroller.set_visible(false);
 
-        imp.egress_empty
-            .add_css_class("postio-settings-egress-empty");
-        imp.egress_empty.set_xalign(0.0);
-        imp.egress_empty.set_wrap(true);
-
-        imp.privacy_pane.append(&kicker("REMOTE IMAGES ALLOWED"));
-        imp.privacy_pane.append(&imp.privacy_scroller);
-        imp.privacy_pane.append(&imp.privacy_empty);
-        let unsubscribe_title = kicker("MAILING LISTS LEFT");
-        unsubscribe_title.set_margin_top(18);
-        imp.privacy_pane.append(&unsubscribe_title);
-        imp.privacy_pane.append(&imp.unsubscribe_scroller);
-        imp.privacy_pane.append(&imp.unsubscribe_empty);
-        let receipts_title = kicker("READ RECEIPTS");
-        receipts_title.set_margin_top(18);
-        imp.privacy_pane.append(&receipts_title);
-        imp.privacy_pane.append(&imp.read_receipt_count);
-        let egress_title = kicker("RECENT CONNECTIONS");
-        egress_title.set_margin_top(18);
-        imp.privacy_pane.append(&egress_title);
-        imp.privacy_pane.append(&imp.egress_scroller);
-        imp.privacy_pane.append(&imp.egress_empty);
+        let privacy = SettingsGroup::on(&imp.privacy_pane);
+        privacy.section(postio_ui::privacy::ALLOWED);
+        privacy
+            .append(&imp.privacy_scroller)
+            .append(&imp.privacy_empty);
+        privacy.section(postio_ui::privacy::LISTS_LEFT);
+        privacy
+            .append(&imp.unsubscribe_scroller)
+            .append(&imp.unsubscribe_empty);
+        privacy.section(postio_ui::privacy::READ_RECEIPTS);
+        privacy.append(&imp.read_receipt_count);
+        privacy.section(postio_ui::privacy::CONNECTIONS);
+        privacy
+            .append(&imp.egress_scroller)
+            .append(&imp.egress_empty);
 
         // ── keys: one row per command, a rebind capture button (#881) ────
         imp.keys_list.add_css_class("postio-settings-keys-list");
@@ -4271,7 +4173,11 @@ impl SettingsPanel {
         // build has one set of defaults and no importer, and a control
         // wired to nothing is worse than a control that is missing.
         let reset_keys = gtk::Button::with_label("Reset to defaults");
-        reset_keys.add_css_class("postio-settings-small-button");
+        crate::widgets::button::style(
+            &reset_keys,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         reset_keys.set_halign(gtk::Align::Start);
         reset_keys.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
@@ -4305,6 +4211,11 @@ impl SettingsPanel {
         view_scroller.update_property(&[gtk::accessible::Property::Label(FILE_NAME)]);
 
         imp.revert.add_css_class("postio-settings-revert");
+        crate::widgets::button::style(
+            &imp.revert,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
         imp.revert.set_halign(gtk::Align::Start);
         imp.revert.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]

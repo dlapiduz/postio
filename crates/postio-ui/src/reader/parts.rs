@@ -1058,3 +1058,26 @@ mod tests {
         );
     }
 }
+
+/// A closure is a blob source, and one that holds a single message's parts
+/// answers the same whatever scope is asked for.
+#[cfg(test)]
+mod blob_source_tests {
+    use super::BlobSource;
+
+    #[test]
+    fn a_closure_resolves_and_ignores_the_scope_by_default() {
+        let source =
+            |id: &str| (id == "logo@example.com").then(|| (vec![1, 2], "image/png".to_owned()));
+        assert_eq!(
+            source.resolve("logo@example.com"),
+            Some((vec![1, 2], "image/png".to_owned()))
+        );
+        assert_eq!(source.resolve("other@example.com"), None);
+        assert_eq!(
+            source.resolve_in(Some("7"), "logo@example.com"),
+            source.resolve("logo@example.com")
+        );
+        assert_eq!(source.resolve_in(None, "other@example.com"), None);
+    }
+}

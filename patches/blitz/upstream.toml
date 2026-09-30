@@ -1,0 +1,10 @@
+# The crates.io releases `vendor/blitz-*` start from. The checksums are the
+# registry's, so `scripts/blitz-patches.sh verify` knows it patched the
+# release and not something that merely shares its version number.
+version = "0.3.0-beta.2"
+
+[crates.blitz-dom]
+sha256 = "71df97b78e3dbfd863358644e55b7b694902c187048fa0952e5e14788fdc1add"
+
+[crates.blitz-paint]
+sha256 = "0563058329a06eb1f6d08e6ccd9ec139bac23ff9fd6598a19269e1faacda5f16"

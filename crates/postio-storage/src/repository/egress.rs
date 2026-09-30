@@ -23,20 +23,20 @@ impl<'a> EgressLogRepository<'a> {
 
     /// Append one connection attempt.
     pub async fn record(&self, event: &EgressEvent) -> Result<()> {
-        self.connection
-            .execute(
-                "INSERT INTO egress_log (at, subsystem, account_id, host, port, outcome)
+        sql::execute(
+            self.connection,
+            "INSERT INTO egress_log (at, subsystem, account_id, host, port, outcome)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                bind![
-                    event.at.timestamp_millis(),
-                    event.subsystem.as_str(),
-                    event.account.map(AccountId::get),
-                    event.host,
-                    event.port,
-                    event.outcome.as_str(),
-                ],
-            )
-            .await?;
+            bind![
+                event.at.timestamp_millis(),
+                event.subsystem.as_str(),
+                event.account.map(AccountId::get),
+                event.host,
+                event.port,
+                event.outcome.as_str(),
+            ],
+        )
+        .await?;
         Ok(())
     }
 

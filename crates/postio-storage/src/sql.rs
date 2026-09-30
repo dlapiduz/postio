@@ -253,6 +253,75 @@ fn count(rows: usize) {
     let _ = rows;
 }
 
+/// Count one statement compiled, for `test_support::counting`.
+#[inline]
+fn count_compile() {
+    #[cfg(feature = "test-support")]
+    crate::test_support::counting::compile();
+}
+
+/// Placeholders above which a statement is compiled every time rather than
+/// cached.
+///
+/// The engine's cache is a map from SQL text that never evicts, so what may
+/// enter it has to be a finite set. Every statement in this crate is a literal
+/// or a `format!` over one, and the only thing that varies without bound is a
+/// placeholder list sized to its caller's ids -- `IN (?, ?, ?)`. Below this
+/// bound a list has at most this many spellings, which is finite and small;
+/// above it, a list is a bulk operation whose compile is noise beside its
+/// work. The widest fixed statement, the message insert, has 38.
+const CACHED_PLACEHOLDERS: usize = 64;
+
+/// A statement for `sql`, compiled once per connection where it can be.
+///
+/// **Every statement in this crate is prepared here**, and the crate's
+/// `clippy.toml` refuses `Connection::execute`, `query` and `prepare` to keep
+/// it so. Those three compile `sql` from scratch on every call, and compiling
+/// is most of what a small statement costs this engine: a first sync, sampled,
+/// spent more than half its busy time in `Connection::prepare` recompiling
+/// `set_body` and `update` for each message. `prepare_cached` keeps the
+/// compiled program on the connection and hands out a fresh statement over
+/// it, so two callers never share one.
+///
+/// One difference from `Connection::execute`: that call first finishes a
+/// `turso::Transaction` that was dropped unfinished on the same handle, and a
+/// cached statement does not. Nothing in this crate opens one -- it uses
+/// [`in_scope`] -- and a caller that does finishes it itself.
+pub async fn statement(connection: &Connection, sql: &str) -> Result<turso::Statement> {
+    if placeholders_in(sql) > CACHED_PLACEHOLDERS {
+        count_compile();
+        #[allow(clippy::disallowed_methods)]
+        return Ok(connection.prepare(sql).await?);
+    }
+    #[cfg(feature = "test-support")]
+    crate::test_support::counting::cached(sql);
+    Ok(connection.prepare_cached(sql).await?)
+}
+
+/// Execute `sql`, returning how many rows it changed.
+///
+/// [`statement`], then `execute`: the replacement for
+/// `Connection::execute`, which compiles every time.
+pub async fn execute(connection: &Connection, sql: &str, params: impl IntoParams) -> Result<u64> {
+    Ok(statement(connection, sql).await?.execute(params).await?)
+}
+
+/// How many `?` placeholders `sql` has, outside string literals.
+fn placeholders_in(sql: &str) -> usize {
+    let mut count = 0;
+    let mut quote = None;
+    for byte in sql.bytes() {
+        match (quote, byte) {
+            (Some(open), _) if byte == open => quote = None,
+            (Some(_), _) => {}
+            (None, b'\'' | b'"') => quote = Some(byte),
+            (None, b'?') => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
 /// Run a batch of `;`-separated statements, counted.
 ///
 /// `Connection::execute_batch` directly is the same call and is *not* counted,
@@ -353,7 +422,7 @@ pub async fn all<T, F>(
 where
     F: FnMut(&Row) -> Result<T>,
 {
-    let mut rows = connection.query(sql, params).await?;
+    let mut rows = statement(connection, sql).await?.query(params).await?;
     let mut mapped = Vec::new();
     while let Some(row) = rows.next().await? {
         mapped.push(map(&row)?);
@@ -415,7 +484,7 @@ pub async fn all_unbounded<T, F>(
 where
     F: FnMut(&Row) -> Result<T>,
 {
-    let mut rows = connection.query(sql, params).await?;
+    let mut rows = statement(connection, sql).await?.query(params).await?;
     let mut mapped = Vec::new();
     while let Some(row) = rows.next().await? {
         mapped.push(map(&row)?);
@@ -438,7 +507,7 @@ pub async fn first<T, F>(
 where
     F: FnOnce(&Row) -> Result<T>,
 {
-    let mut rows = connection.query(sql, params).await?;
+    let mut rows = statement(connection, sql).await?.query(params).await?;
     let mapped = match rows.next().await? {
         Some(row) => Some(map(&row)?),
         None => None,
@@ -588,45 +657,39 @@ where
     // makes no difference to what this one has to do.
     let outermost = connection.is_autocommit().map_err(Error::from)?;
 
-    connection
-        .execute(
-            if outermost {
-                "BEGIN IMMEDIATE"
-            } else {
-                "SAVEPOINT postio_scope"
-            },
-            (),
-        )
-        .await
-        .map_err(Error::from)?;
+    execute(
+        connection,
+        if outermost {
+            "BEGIN IMMEDIATE"
+        } else {
+            "SAVEPOINT postio_scope"
+        },
+        (),
+    )
+    .await?;
 
     match work(connection.clone()).await {
         Ok(value) => {
-            connection
-                .execute(
-                    if outermost {
-                        "COMMIT"
-                    } else {
-                        "RELEASE postio_scope"
-                    },
-                    (),
-                )
-                .await
-                .map_err(Error::from)?;
+            execute(
+                connection,
+                if outermost {
+                    "COMMIT"
+                } else {
+                    "RELEASE postio_scope"
+                },
+                (),
+            )
+            .await?;
             Ok(value)
         }
         Err(error) => {
             // Best effort: the caller is already carrying an error, and a
             // failure to roll back surfaces on the next statement.
             if outermost {
-                let _ = connection.execute("ROLLBACK", ()).await;
+                let _ = execute(connection, "ROLLBACK", ()).await;
             } else {
-                let _ = connection
-                    .execute(&format!("ROLLBACK TO {SAVEPOINT}"), ())
-                    .await;
-                let _ = connection
-                    .execute(&format!("RELEASE {SAVEPOINT}"), ())
-                    .await;
+                let _ = execute(connection, &format!("ROLLBACK TO {SAVEPOINT}"), ()).await;
+                let _ = execute(connection, &format!("RELEASE {SAVEPOINT}"), ()).await;
             }
             Err(error)
         }

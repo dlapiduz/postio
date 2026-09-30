@@ -1276,7 +1276,7 @@ pub async fn fetch_body(
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
-    let Some(mut message) = messages.get(request.message).await? else {
+    let Some(message) = messages.get(request.message).await? else {
         // Deleted, or wiped by a UIDVALIDITY reset, while this sat in the
         // queue. Checked before the fetch so a stale queue costs no bandwidth.
         return Ok(Outcome::Gone);
@@ -1388,11 +1388,6 @@ pub async fn fetch_body(
         encoding_problems: parsed.encoding_problems,
     };
 
-    message.raw_blob_id = Some(blob);
-    if message.preview.is_none() {
-        message.preview = parsed.preview;
-    }
-
     // Everything below this line writes, and nothing below it touches the
     // wire, so this is where the gate belongs: taken after the fetch and held
     // to the end. See `writing` for why a backfill takes one at all.
@@ -1401,7 +1396,10 @@ pub async fn fetch_body(
         .acquire(WritePriority::Background)
         .await;
 
-    messages.update(&mut message).await?;
+    // Two columns, not the row: see `set_fetched`.
+    messages
+        .set_fetched(request.message, parsed.preview.as_deref(), Some(&blob))
+        .await?;
 
     // Every payload arrived with the message, so record where each one landed
     // — the same content-addressed blob the payload axis would have written,
@@ -1650,9 +1648,6 @@ async fn fetch_text_parts(
         encoding_problems,
     };
 
-    if message.preview.is_none() {
-        message.preview = preview;
-    }
     // The text axis's write phase. The sections are fetched above; from
     // here down it is all store, so the gate is taken once and held to the
     // end rather than per statement.
@@ -1661,7 +1656,10 @@ async fn fetch_text_parts(
         .acquire(WritePriority::Background)
         .await;
 
-    messages.update(&mut message).await?;
+    // Two columns, not the row: see `set_fetched`.
+    messages
+        .set_fetched(request.message, preview.as_deref(), None)
+        .await?;
 
     // `partial` means text local, payloads not — the variant the schema
     // declared and nothing had ever written until ADR 0017 gave it a meaning.
@@ -1739,7 +1737,7 @@ async fn fetch_header_block(
     postio_model::headers::block_of(&sink.into_inner())
 }
 
-async fn fetch_section(
+pub(crate) async fn fetch_section(
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
@@ -1921,7 +1919,7 @@ fn inline_with_the_text(message: &postio_model::Message, cap: Option<u64>) -> Ve
 /// hanging off them is not. That distinction is what #352 needs in order to
 /// tell the user when search is answering for an incomplete corpus, and what
 /// the attachment chip needs in order to say "download" rather than "open".
-fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
+pub(crate) fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
     if attachments.iter().all(|part| part.blob_id.is_some()) {
         BodyState::Full
     } else {

@@ -12,8 +12,9 @@
 //! implementation of a *privacy* rule is the one place ADR 0019 Q6's risk is
 //! least acceptable: two allow lists means two answers to "may this sender
 //! see me", and the wrong answer is silent and remote. So the rule and the
-//! file format live here, and each frontend supplies a path. `postio-gtk`
-//! still has its own; adopting this one, with a migration, is #1273.
+//! file format live here, and each frontend supplies a path.
+//! [`RemoteImageAllowList`] is the same list under the name the desktop and
+//! terminal frontends speak, at the path they have always used (#1273).
 //!
 //! # Addresses and domains
 //!
@@ -25,7 +26,7 @@
 //! `example.com` can be different senders and guessing costs privacy.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Senders and domains whose remote images load without asking.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -169,6 +170,151 @@ fn domain_of(address: &str) -> Option<String> {
         .filter(|domain| !domain.is_empty())
 }
 
+/// The key-file group the desktop app's old allow list kept its senders in.
+const LEGACY_GROUP: &str = "AlwaysAllow";
+
+/// Senders whose remote images load without asking, across restarts, at the
+/// path the desktop and terminal frontends share.
+///
+/// A thin shell over [`AllowList`], which is the one implementation every
+/// frontend reads and writes (#1273). Two allow lists meant two answers to
+/// "may this sender see me", and that is the least acceptable place for the
+/// two to drift: the wrong answer is silent and remote. The shell stays
+/// because the call sites in `postio-gtk` and `postio-tui` speak this
+/// vocabulary -- `senders`, `save`, `path` -- and rewriting them to say the
+/// same things differently would be churn without a reader.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemoteImageAllowList {
+    inner: AllowList,
+}
+
+impl RemoteImageAllowList {
+    /// Read the saved list, falling back to empty for anything missing or
+    /// unreadable.
+    pub fn load() -> Self {
+        Self::load_from(&Self::path())
+    }
+
+    /// As [`load`](Self::load), from a path you name.
+    ///
+    /// The shared format first, and the old `[AlwaysAllow]` key file only if
+    /// that read nothing -- which is what a key file parses to, since
+    /// [`AllowList::parse`] ignores every line before a section header it
+    /// knows. A file in the old shape is migrated in place, once: there are
+    /// no deployed installs to protect, but there
+    /// is a maintainer with grants in a running build, and silently
+    /// forgetting who they trusted would be the wrong kind of clean break.
+    pub fn load_from(path: &Path) -> Self {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let inner = AllowList::parse(&text);
+        if !inner.is_empty() || text.trim().is_empty() {
+            return Self { inner };
+        }
+        let Some(inner) = from_key_file(&text) else {
+            return Self { inner };
+        };
+        let migrated = Self { inner };
+        // Best-effort: the grants are in memory and correct either way, and
+        // a write that fails only means the migration happens again next
+        // launch.
+        let _ = migrated.save_to(path);
+        migrated
+    }
+
+    /// Whether `sender` has a standing "always allow" exception, by its own
+    /// grant or by one covering its domain.
+    ///
+    /// `sender` is a bare address (`ada@example.com`), not a "Display Name
+    /// `<addr>`" mailbox -- normalization here is only trimming and
+    /// lowercasing, not address parsing.
+    pub fn is_allowed(&self, sender: &str) -> bool {
+        self.inner.is_allowed(sender)
+    }
+
+    /// Grant `sender` a standing exception, in memory only.
+    ///
+    /// Deliberately not persisted here: the frontend is what knows whether
+    /// it is running against the real state directory or, in a test, a
+    /// scratch path -- see [`save_to`](Self::save_to).
+    pub fn allow(&mut self, sender: &str) {
+        self.inner.allow(sender);
+    }
+
+    /// Whether any sender has a standing exception.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Every sender allowed by name, in address order -- what a settings
+    /// pane lists to manage (#871).
+    pub fn senders(&self) -> impl Iterator<Item = &str> {
+        self.inner.addresses()
+    }
+
+    /// Revoke `sender`'s standing exception, in memory only -- the same
+    /// split as [`allow`](Self::allow).
+    pub fn revoke(&mut self, sender: &str) {
+        self.inner.revoke(sender);
+    }
+
+    /// Persist to [`path`](Self::path).
+    pub fn save(&self) -> std::io::Result<()> {
+        self.save_to(&Self::path())
+    }
+
+    /// As [`save`](Self::save), to a path you name.
+    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.save_to(path)
+    }
+
+    /// `$XDG_STATE_HOME/postio/remote-images.ini`.
+    ///
+    /// `$XDG_STATE_HOME`, else `~/.local/state`: where GLib's
+    /// `user_state_dir` puts it, so the desktop app finds the file it wrote.
+    pub fn path() -> PathBuf {
+        let state = std::env::var_os("XDG_STATE_HOME")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join(".local").join("state"))
+            })
+            .unwrap_or_else(|| PathBuf::from(".local/state"));
+        state.join("postio").join("remote-images.ini")
+    }
+}
+
+/// The desktop app's old `[AlwaysAllow]` key file, if that is what `text` is.
+///
+/// Read without GLib: for one group of boolean keys the format is a few
+/// lines of text, and reading it here is what lets a frontend with no GLib
+/// keep the grants the desktop app made.
+fn from_key_file(text: &str) -> Option<AllowList> {
+    let mut in_group = false;
+    let mut list = AllowList::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(group) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            in_group = group == LEGACY_GROUP;
+            continue;
+        }
+        if !in_group {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=')
+            && value.trim() == "true"
+        {
+            list.allow(key.trim());
+        }
+    }
+    (!list.is_empty()).then_some(list)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +408,74 @@ mod tests {
     fn a_missing_file_is_an_empty_list_rather_than_an_error() {
         let list = AllowList::load_from(Path::new("/nowhere/at/all/allowed-senders.toml"));
         assert!(list.is_empty());
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("postio-allowlist-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("remote-images.ini")
+    }
+
+    #[test]
+    fn the_key_file_the_desktop_app_wrote_is_read_and_migrated() {
+        // What GLib's key file wrote before the list was shared: nobody
+        // allowed then is forgotten now, and a sender explicitly *not*
+        // allowed does not arrive allowed.
+        let path = scratch("glib-written");
+        std::fs::write(
+            &path,
+            "[AlwaysAllow]\nada@example.com=true\nbea@example.com=false\n",
+        )
+        .unwrap();
+
+        let list = RemoteImageAllowList::load_from(&path);
+
+        assert!(list.is_allowed("ada@example.com"));
+        assert!(!list.is_allowed("bea@example.com"));
+        // Written back in the shared shape, so it happens once rather than
+        // every launch.
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[addresses]"), "not rewritten: {text:?}");
+        assert!(RemoteImageAllowList::load_from(&path).is_allowed("ada@example.com"));
+    }
+
+    #[test]
+    fn a_list_already_in_the_shared_format_is_left_alone() {
+        let path = scratch("already-shared");
+        let mut list = RemoteImageAllowList::default();
+        list.allow("ada@example.com");
+        list.save_to(&path).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        assert!(RemoteImageAllowList::load_from(&path).is_allowed("ada@example.com"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn an_allowed_sender_survives_a_round_trip_through_the_shell() {
+        let path = scratch("round-trip");
+        let mut list = RemoteImageAllowList::default();
+        list.allow("ADA@example.com");
+        list.save_to(&path).expect("the allow list should write");
+
+        let reloaded = RemoteImageAllowList::load_from(&path);
+        assert!(reloaded.is_allowed("  Ada@Example.com  "));
+        assert!(!reloaded.is_allowed("tracker@shop.example.org"));
+        assert_eq!(
+            reloaded.senders().collect::<Vec<_>>(),
+            vec!["ada@example.com"]
+        );
+    }
+
+    #[test]
+    fn the_list_lives_beside_the_other_state_not_in_the_config() {
+        let path = RemoteImageAllowList::path();
+        assert!(
+            path.ends_with("postio/remote-images.ini"),
+            "{}",
+            path.display()
+        );
+        assert!(!path.to_string_lossy().contains("/.config/"));
     }
 }

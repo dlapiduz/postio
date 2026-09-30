@@ -53,7 +53,7 @@
 # that never answers, a compositor that went away mid-test.
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-app) & test(/^navigation_cost::/)))'
+default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + binary(first_sync_memory) + binary(body_index_memory) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-app) & test(/^navigation_cost::/)) + binary(startup_budget))'
 
 # Retries are OFF by default, deliberately. A retry turns a real failure into
 # a slow pass, and this project's characteristic bug is something that works
@@ -101,8 +101,19 @@ retries = 0
 webkit = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(gtk_suite) + binary(gtk_reader) + binary(gtk_composer) + binary(gtk_accessibility) + binary(drag_out) + binary(webkit_probe) + binary(app_suite)'
+filter = 'binary(gtk_suite) + binary(gtk_reader) + binary(gtk_composer) + binary(gtk_accessibility) + binary(drag_out) + binary(app_suite)'
 test-group = 'webkit'
+
+# The sync-wave cases, each a whole wave over an archive-sized fixture: ~31 s
+# alone, measured, and 183-190 s -- past their deadline -- in a full-workspace
+# run, where they share the machine with every other test process. Three
+# landings on 2026-09-24 failed on one of them this way, at a load average
+# near 1, so this is the suite starving them rather than the machine being
+# busy. Four cores each is what they need to finish inside the deadline; the
+# rest of the suite keeps running around them.
+[[profile.default.overrides]]
+filter = 'binary(runtime_suite) & test(/^sync_wave::/)'
+threads-required = 4
 
 # `app_suite` alone, for #1497, and nothing else.
 #
@@ -265,3 +276,17 @@ default-filter = 'not binary(cache_pressure)'
 # report nobody is watching live, and for a release gate it is worse: it would
 # name one failure when the next line might be the reason.
 fail-fast = false
+
+# The accessibility audit stalls on a shared runner: twice in four release
+# gates (2026-09-25/26) it froze while opening the composer's editor WebView
+# (#1677's shape -- an editor load that never finishes under load) and sat out
+# the full twelve minutes, while every pull request's run of the same binary
+# finishes in about four seconds. Its own watchdog could not fire, so the
+# process was stopped as a whole, not spinning. A stall is not an answer: it
+# is killed at two minutes and tried again, which a timeout otherwise never
+# is -- `test-with-flake-retry.sh` can only retry a failure nextest reported
+# per test. Coverage is unchanged; #1677 is the fix.
+[[profile.ci-full.overrides]]
+filter = 'binary(gtk_accessibility)'
+slow-timeout = { period = "60s", terminate-after = 2 }
+retries = 2

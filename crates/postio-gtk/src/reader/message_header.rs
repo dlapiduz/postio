@@ -27,6 +27,16 @@ fn field_label(text: &str) -> gtk::Label {
     label
 }
 
+/// Draw the `Cc` disclosure or not, keeping its place either way.
+///
+/// Not drawn is also not reachable: a toggle nobody can see must not take a
+/// `Tab` or a click, so it goes insensitive with it.
+fn show_cc_toggle(toggle: &gtk::ToggleButton, shown: bool) {
+    toggle.set_child_visible(shown);
+    toggle.set_sensitive(shown);
+    toggle.set_can_focus(shown);
+}
+
 /// Above the remote-image banner and the body: who this is from, who it was
 /// addressed to, what it is about, and when it arrived.
 ///
@@ -45,6 +55,10 @@ pub struct MessageHeader {
     to_label: gtk::Label,
     /// Where the reader mounts its action bar (#1435).
     verbs: gtk::Box,
+    /// The `From` row, and its field name -- what a surface lays its own
+    /// leading marks after (the conversation's participant chips, #1671).
+    from_row: gtk::Box,
+    from_label: gtk::Label,
     account_row: gtk::Box,
     account_swatch: gtk::Box,
     account_name: gtk::Label,
@@ -100,6 +114,7 @@ impl MessageHeader {
         subject.set_hexpand(true);
         subject_row.append(&subject);
         let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        verbs.add_css_class("postio-message-header-verbs");
         verbs.set_valign(gtk::Align::Start);
         subject_row.append(&verbs);
         identity.append(&subject_row);
@@ -126,12 +141,16 @@ impl MessageHeader {
         top_row.append(&date);
         identity.append(&top_row);
 
-        // `to` and the `Cc` disclosure share a row: the common one-recipient
-        // case costs exactly the one line, and `Cc` costs nothing at all
-        // when the message has none — no toggle, no reserved space.
+        // `to` and the `Cc` disclosure share a row, and the row is always
+        // there at the same height whoever the message went to. It used to
+        // go when there was no `To` and grow by the toggle's padding when
+        // there was a `Cc`, so the body under the header moved by 18px or
+        // 16px between two messages -- the reading pane jumping for a fact
+        // about the envelope. What is absent is now not drawn
+        // (`set_child_visible`), rather than taken out of the layout.
         let recipients_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let to_label = field_label("To");
-        to_label.set_visible(false);
+        to_label.set_child_visible(false);
         recipients_row.append(&to_label);
 
         let to = gtk::Label::new(None);
@@ -139,12 +158,13 @@ impl MessageHeader {
         to.set_hexpand(true);
         to.set_ellipsize(pango::EllipsizeMode::End);
         to.add_css_class("postio-message-header-recipients");
-        to.set_visible(false);
+        to.set_child_visible(false);
         recipients_row.append(&to);
 
         let cc_toggle = gtk::ToggleButton::with_label("Cc");
         cc_toggle.add_css_class("flat");
-        cc_toggle.set_visible(false);
+        cc_toggle.add_css_class("postio-message-header-cc");
+        show_cc_toggle(&cc_toggle, false);
         cc_toggle.set_tooltip_text(Some("Show Cc recipients"));
         recipients_row.append(&cc_toggle);
         root.append(&recipients_row);
@@ -177,6 +197,8 @@ impl MessageHeader {
             identity,
             to_label,
             verbs,
+            from_row: top_row,
+            from_label,
             account_row,
             account_swatch,
             account_name,
@@ -212,6 +234,28 @@ impl MessageHeader {
     /// container.
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
+    }
+
+    /// Place `widget` on the `From` row, between the field name and the
+    /// sender.
+    ///
+    /// For the conversation pane's participant chips (#1671): the pane
+    /// draws this same header, filled with the thread, so that the body
+    /// below it starts where the single reader's does -- and the chips are
+    /// the one thing the thread has on that line that a message does not.
+    /// A slot on an existing row rather than a row of its own, because a
+    /// row of its own is the height difference this exists to remove.
+    pub fn add_before_sender(&self, widget: &impl IsA<gtk::Widget>) {
+        self.from_row
+            .insert_child_after(widget, Some(&self.from_label));
+    }
+
+    /// Place `widget` on the `From` row, between the sender and the date.
+    ///
+    /// For the conversation pane's scoping note (#1671), which qualifies the
+    /// count the date column carries there.
+    pub fn add_before_date(&self, widget: &impl IsA<gtk::Widget>) {
+        self.from_row.insert_child_after(widget, Some(&self.sender));
     }
 
     /// Shows or hides subject, sender and date, leaving recipients alone.
@@ -250,13 +294,41 @@ impl MessageHeader {
         let lines = HeaderLines::of(from, to, cc, subject, date, Local::now());
 
         self.subject.set_label(&lines.subject);
-        self.sender.set_label(&lines.from);
-        self.date.set_label(&lines.date);
+        self.set_sender_line(&lines.from, &lines.date);
+        self.draw_recipients(&lines);
+    }
 
+    /// Put `subject` on the subject line, as it is -- the caller has already
+    /// decided what an absent one reads as.
+    pub fn set_subject(&self, subject: &str) {
+        self.subject.set_label(subject);
+    }
+
+    /// Fill the `From` row: who, and when.
+    ///
+    /// The conversation pane's thread says who took part and over what span
+    /// (#1671); a message says who sent it and when. Same row, same two
+    /// labels, so the same height.
+    pub fn set_sender_line(&self, from: &str, date: &str) {
+        self.sender.set_label(from);
+        self.date.set_label(date);
+    }
+
+    /// Fill the `To`/`Cc` row from these addresses, leaving the rest of the
+    /// header as it is.
+    ///
+    /// The conversation pane's is its newest message's (#1671): the one its
+    /// verbs answer.
+    pub fn set_recipients(&self, to: &[EmailAddress], cc: &[EmailAddress]) {
+        let lines = HeaderLines::of(&[], to, cc, None, DateTime::<Utc>::UNIX_EPOCH, Local::now());
+        self.draw_recipients(&lines);
+    }
+
+    fn draw_recipients(&self, lines: &HeaderLines) {
         match lines.to_line() {
             Some(line) => {
-                self.to_label.set_visible(true);
-                self.to.set_visible(true);
+                self.to_label.set_child_visible(true);
+                self.to.set_child_visible(true);
                 self.to.set_label(&line);
                 // What is drawn shortens and says how many it hid; the full
                 // list stays reachable here, because "who exactly is on this"
@@ -271,19 +343,21 @@ impl MessageHeader {
                 );
             }
             None => {
-                self.to_label.set_visible(false);
-                self.to.set_visible(false);
+                self.to_label.set_child_visible(false);
+                self.to.set_child_visible(false);
+                self.to.set_label("");
+                self.to.set_tooltip_text(None);
             }
         }
 
         match (lines.cc_toggle_label(), lines.cc.as_deref()) {
             (Some(label), Some(addresses)) => {
-                self.cc_toggle.set_visible(true);
+                show_cc_toggle(&self.cc_toggle, true);
                 self.cc_toggle.set_label(&label);
                 self.cc_label.set_label(addresses);
             }
             _ => {
-                self.cc_toggle.set_visible(false);
+                show_cc_toggle(&self.cc_toggle, false);
                 self.cc_toggle.set_active(false);
                 self.cc_revealer.set_reveal_child(false);
             }
@@ -347,8 +421,9 @@ impl MessageHeader {
         self.subject.set_label("");
         self.sender.set_label("");
         self.date.set_label("");
-        self.to.set_visible(false);
-        self.cc_toggle.set_visible(false);
+        self.to_label.set_child_visible(false);
+        self.to.set_child_visible(false);
+        show_cc_toggle(&self.cc_toggle, false);
         self.cc_toggle.set_active(false);
         self.cc_revealer.set_reveal_child(false);
     }
@@ -370,7 +445,7 @@ impl MessageHeader {
 
     /// Whether the `To` line is on screen, for tests.
     pub fn to_visible(&self) -> bool {
-        self.to.is_visible()
+        self.to.is_visible() && self.to.is_child_visible()
     }
 
     /// The `To` line as currently shown, for tests.
@@ -380,7 +455,7 @@ impl MessageHeader {
 
     /// Whether the `Cc` disclosure is offered at all, for tests.
     pub fn cc_toggle_visible(&self) -> bool {
-        self.cc_toggle.is_visible()
+        self.cc_toggle.is_visible() && self.cc_toggle.is_child_visible()
     }
 
     /// Whether the `Cc` line is currently revealed, for tests.

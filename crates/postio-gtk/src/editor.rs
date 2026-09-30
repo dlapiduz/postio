@@ -28,7 +28,8 @@ use std::time::{Duration, Instant};
 use postio_body::{Document, EditHistory, parse};
 use webkit6::prelude::*;
 
-use crate::reader::scheme::{self, BlobSource};
+use crate::reader::BlobSource;
+use crate::scheme;
 use postio_ui::editor::document as editor_document;
 
 /// A fixed, non-`http(s)` base for the editing shell, so edited content is

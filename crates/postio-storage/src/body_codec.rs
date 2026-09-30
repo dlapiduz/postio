@@ -23,7 +23,7 @@
 //! does, and this runs on the backfill's write path.
 
 /// The compression level; see the module docs.
-const LEVEL: i32 = 3;
+use crate::blob::format_level as LEVEL;
 
 /// The first four bytes of every zstd frame (RFC 8878 §3.1.1).
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];

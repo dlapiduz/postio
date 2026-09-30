@@ -10,13 +10,16 @@
 mod account_connection_wiring;
 mod add_account_wiring;
 mod aiming;
+mod archive_in_place;
 mod attach_account;
+mod autosave_off_the_main_thread;
 mod body_arrives;
 mod bulk_keystroke;
 mod click_preview;
 mod command_wiring;
 mod compose_default_account;
 mod compose_detach;
+mod compose_recipients;
 mod compose_typing;
 mod composer_warm;
 mod conversation_body_arrives;
@@ -36,6 +39,7 @@ mod focus_on_launch;
 mod folder_header_count;
 mod glib_main_context;
 mod go_to_keystroke;
+mod hostile_mail;
 mod keystroke;
 mod label_wiring;
 mod large_folder_open;
@@ -43,6 +47,7 @@ mod list_contract;
 mod mailto_uri;
 mod manual_sync;
 mod navigation_cost;
+mod next_conversation_prepared;
 mod notify_off_the_main_thread;
 mod onboarding_probe;
 mod one_document_conversation;
@@ -51,11 +56,15 @@ mod orientation;
 mod parts_open_wiring;
 mod read_receipt_wiring;
 mod reader_loads;
+mod reader_spawns_no_web_process;
+mod reader_stability;
 mod reading;
 mod reading_offline;
 mod reclaim_pages;
 mod reclaim_wiring;
 mod recover_empty_draft;
+mod remote_images_allowed;
+mod remove_walks_down;
 mod render_dedup;
 mod reply_identity;
 mod reply_source;
@@ -63,6 +72,7 @@ mod resume_draft;
 mod resume_queued_draft;
 mod search_close_without_escape;
 mod search_index;
+mod search_instead;
 mod search_live;
 mod search_no_matches;
 mod search_open;
@@ -84,6 +94,7 @@ mod startup_behind_the_window;
 mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
+mod store_in_use_window;
 mod sync_window;
 mod thread_bodies_in_one_crossing;
 mod thread_bulk_keystroke;
@@ -98,6 +109,7 @@ mod unsubscribe_wiring;
 mod window_drain;
 mod window_teardown;
 mod wiring;
+mod zoom_persists;
 
 /// Cases held out of a default run, by name.
 ///
@@ -107,6 +119,28 @@ mod wiring;
 const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop"];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "reader_stability::moving_through_mail_sanitises_nothing_on_the_main_thread",
+        reader_stability::moving_through_mail_sanitises_nothing_on_the_main_thread as fn(),
+    ),
+    (
+        "reader_stability::a_body_that_lands_quickly_never_shows_the_waiting_plate",
+        reader_stability::a_body_that_lands_quickly_never_shows_the_waiting_plate as fn(),
+    ),
+    (
+        "reader_stability::a_thread_missing_a_body_is_drawn_without_waiting_for_it",
+        reader_stability::a_thread_missing_a_body_is_drawn_without_waiting_for_it as fn(),
+    ),
+    (
+        "reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header",
+        reader_stability::moving_onto_a_thread_draws_it_once_whole_and_under_its_own_header
+            as fn(),
+    ),
+    (
+        "store_in_use_window::a_store_another_postio_has_open_says_so_and_try_again_opens_it",
+        store_in_use_window::a_store_another_postio_has_open_says_so_and_try_again_opens_it
+            as fn(),
+    ),
     (
         "escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed",
         escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed as fn(),
@@ -180,6 +214,16 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "autosave_off_the_main_thread::opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread",
+        autosave_off_the_main_thread::opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread
+            as fn(),
+    ),
+    (
+        "autosave_off_the_main_thread::autosave_writes_off_the_main_thread_and_keeps_one_row",
+        autosave_off_the_main_thread::autosave_writes_off_the_main_thread_and_keeps_one_row
+            as fn(),
+    ),
+    (
         "startup_reads::opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is",
         startup_reads::opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is as fn(),
     ),
@@ -222,6 +266,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application",
         compose_detach::the_detach_key_reaches_the_composer_in_a_wired_application as fn(),
+    ),
+    (
+        "compose_recipients::typing_a_recipient_opens_no_connections_and_still_completes",
+        compose_recipients::typing_a_recipient_opens_no_connections_and_still_completes as fn(),
     ),
     (
         "compose_typing::every_letter_can_be_typed_into_the_composer_body",
@@ -335,6 +383,23 @@ const CASES: &[(&str, fn())] = &[
         reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it as fn(),
     ),
     (
+        "hostile_mail::each_hostile_message_opens_and_the_app_keeps_answering",
+        hostile_mail::each_hostile_message_opens_and_the_app_keeps_answering as fn(),
+    ),
+    (
+        "reader_spawns_no_web_process::ten_conversations_start_no_web_process_and_hold_what_one_holds",
+        reader_spawns_no_web_process::ten_conversations_start_no_web_process_and_hold_what_one_holds
+            as fn(),
+    ),
+    (
+        "remote_images_allowed::an_allowed_senders_images_arrive_and_nothing_else_does",
+        remote_images_allowed::an_allowed_senders_images_arrive_and_nothing_else_does as fn(),
+    ),
+    (
+        "zoom_persists::a_zoom_is_saved_and_a_live_edit_applies",
+        zoom_persists::a_zoom_is_saved_and_a_live_edit_applies as fn(),
+    ),
+    (
         "storage_ceiling_wiring::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs",
         storage_ceiling_wiring::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs
             as fn(),
@@ -368,6 +433,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "search_index::a_store_that_predates_body_indexing_catches_up",
         search_index::a_store_that_predates_body_indexing_catches_up as fn(),
+    ),
+    (
+        "search_index::the_idle_passes_wait_for_the_first_frame",
+        search_index::the_idle_passes_wait_for_the_first_frame as fn(),
     ),
     (
         "search_index::opening_the_window_indexes_local_bodies_without_being_asked",
@@ -406,6 +475,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "search_no_matches::a_search_with_no_hits_says_so_rather_than_naming_the_inbox",
         search_no_matches::a_search_with_no_hits_says_so_rather_than_naming_the_inbox as fn(),
+    ),
+    (
+        "search_instead::a_misspelled_word_lists_the_mail_it_meant_and_says_so",
+        search_instead::a_misspelled_word_lists_the_mail_it_meant_and_says_so as fn(),
     ),
     (
         "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",
@@ -478,6 +551,32 @@ const CASES: &[(&str, fn())] = &[
     (
         "startup_repair::an_account_with_no_credential_lands_on_the_repair_screen",
         startup_repair::an_account_with_no_credential_lands_on_the_repair_screen as fn(),
+    ),
+    (
+        "next_conversation_prepared::the_next_conversation_is_drawn_without_parsing_on_the_main_thread",
+        next_conversation_prepared::the_next_conversation_is_drawn_without_parsing_on_the_main_thread
+            as fn(),
+    ),
+    (
+        "archive_in_place::archiving_a_conversation_on_screen_takes_out_only_its_row",
+        archive_in_place::archiving_a_conversation_on_screen_takes_out_only_its_row as fn(),
+    ),
+    (
+        "remove_walks_down::archiving_and_deleting_walk_down_a_folder",
+        remove_walks_down::archiving_and_deleting_walk_down_a_folder as fn(),
+    ),
+    (
+        "remove_walks_down::a_row_taken_from_under_the_keyboard_leaves_the_list_where_it_was",
+        remove_walks_down::a_row_taken_from_under_the_keyboard_leaves_the_list_where_it_was
+            as fn(),
+    ),
+    (
+        "remove_walks_down::archiving_walks_down_the_unified_view",
+        remove_walks_down::archiving_walks_down_the_unified_view as fn(),
+    ),
+    (
+        "remove_walks_down::two_presses_back_to_back_take_two_messages",
+        remove_walks_down::two_presses_back_to_back_take_two_messages as fn(),
     ),
     (
         "thread_bodies_in_one_crossing::a_conversation_is_read_in_one_crossing",
@@ -641,6 +740,17 @@ pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
 /// store. It runs on this thread, between iterations of the main context, so
 /// what it observes is what the application has actually committed — which is
 /// the whole reason these are `settle_until` and not a sleep.
+/// The words `reader`'s view has drawn: its snapshot's text, what a person
+/// sees, rather than the document it was handed. Empty before the first
+/// snapshot.
+pub fn drawn(reader: &postio_gtk::reader::Reader) -> String {
+    reader
+        .view()
+        .document()
+        .map(|document| document.text.text.clone())
+        .unwrap_or_default()
+}
+
 pub async fn settle_until<F, Fut>(done: F) -> bool
 where
     F: Fn() -> Fut,

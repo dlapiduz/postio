@@ -1,0 +1,40 @@
+[package]
+name = "postio-host"
+description = "What owns Postio's store in the app that opened it, and serves that app's frontend (ADR 0041)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-channel = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
+postio-client.workspace = true
+postio-core.workspace = true
+postio-config.workspace = true
+postio-account.workspace = true
+postio-index.workspace = true
+postio-model.workspace = true
+postio-runtime.workspace = true
+postio-search.workspace = true
+postio-session.workspace = true
+postio-storage.workspace = true
+postio-ui.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+postio-body.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+postio-smtp.workspace = true
+postio-storage = { workspace = true, features = ["test-support"] }
+serde-xml-rs = { workspace = true }
+postio-test-support.workspace = true
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

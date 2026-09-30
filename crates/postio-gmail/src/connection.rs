@@ -135,7 +135,7 @@ fn open_stream(
             Box::new(Stream::connect_tls("gmail.googleapis.com", 443, options).map_err(io_error)?)
         }
         Endpoint::Loopback { host, port } => {
-            if !is_loopback(host) {
+            if !postio_model::net::is_loopback(host) {
                 return Err(BackendError::Protocol {
                     reason: format!("refusing a plaintext Gmail endpoint off loopback: {host}"),
                 });
@@ -156,13 +156,6 @@ fn io_error(error: impl std::fmt::Display) -> BackendError {
         context: "opening the Gmail stream".to_owned(),
         reason: error.to_string(),
     }
-}
-
-fn is_loopback(host: &str) -> bool {
-    host == "localhost"
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
 }
 
 pub(crate) trait ReadWriteSend: Read + Write + Send {}

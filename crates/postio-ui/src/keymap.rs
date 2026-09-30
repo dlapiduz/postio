@@ -171,6 +171,10 @@ const NAMED_KEYS: &[(&str, &str)] = &[
     ("left", "Left"),
     ("right", "Right"),
     ("menu", "Menu"),
+    // The keypad's own keys, for zoom (spec 006).
+    ("kp_add", "KP_Add"),
+    ("kp_subtract", "KP_Subtract"),
+    ("kp_0", "KP_0"),
     ("f1", "F1"),
     ("f2", "F2"),
     ("f3", "F3"),
@@ -1509,5 +1513,21 @@ mod unexpanded_mod_tests {
     #[test]
     fn ctrl_still_parses() {
         assert!("ctrl+k".parse::<Binding>().is_ok());
+    }
+}
+
+/// A key's keysym name is what GTK's accelerator parser reads back.
+#[cfg(test)]
+mod keysym_tests {
+    use super::Key;
+
+    #[test]
+    fn punctuation_letters_and_named_keys_spell_as_keysyms() {
+        assert_eq!(Key::Char('?').keysym_name(), "question");
+        assert_eq!(Key::Char('+').keysym_name(), "plus");
+        assert_eq!(Key::Char('a').keysym_name(), "a");
+        assert_eq!(Key::Char('7').keysym_name(), "7");
+        assert_eq!(Key::Named("Space").keysym_name(), "space");
+        assert_eq!(Key::Named("Return").keysym_name(), "Return");
     }
 }

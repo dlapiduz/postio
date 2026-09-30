@@ -44,10 +44,12 @@ pub mod actions;
 pub mod attaching;
 pub mod blocking;
 pub mod checkup;
+pub mod diag;
 pub mod egress;
 pub mod engine;
 pub mod handoff;
 pub mod logging;
+pub mod onboarding;
 pub mod paths;
 pub mod provision;
 pub mod reachability;
@@ -74,9 +76,8 @@ use postio_storage::{BlobStore, Store};
 /// and the settings panel shows them where they can be fixed. This is the
 /// same shape as `notifications::config_at`, and for the same reason.
 pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
-    std::fs::read_to_string(path)
+    postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.role_overrides())
         .unwrap_or_default()
 }
@@ -89,9 +90,8 @@ pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
 /// not in a position to make. Read once at startup, like `[mailboxes]` and
 /// `[sync]` beside it.
 pub fn storage_ceiling_at(path: &std::path::Path) -> Option<u64> {
-    std::fs::read_to_string(path)
+    postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .and_then(|config| config.storage.max_bytes)
 }
 
@@ -112,9 +112,8 @@ pub fn storage_ceiling_at(path: &std::path::Path) -> Option<u64> {
 /// the defaults standing — the settings panel is where a broken file is
 /// reported, and syncing differently because of one would be a worse answer.
 pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPolicy {
-    let sync = std::fs::read_to_string(path)
+    let sync = postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.sync)
         .unwrap_or_default();
     backfill_policy(&sync)
@@ -134,9 +133,8 @@ pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPol
 /// change applies at the next start. A file that will not parse leaves the
 /// defaults standing.
 pub fn watch_policy_at(path: &std::path::Path) -> postio_sync::WatchPolicy {
-    let sync = std::fs::read_to_string(path)
+    let sync = postio_config::Config::load_from_path(path)
         .ok()
-        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.sync)
         .unwrap_or_default();
     watch_policy(&sync)
@@ -353,6 +351,27 @@ pub struct Wiring {
     /// [`enforce_storage_ceiling`], which is the one place that decision is
     /// made.
     pub storage_ceiling: Option<u64>,
+    /// The mail transport every account's engine uses instead of the one its
+    /// settings name, when one is given: `None` in the application.
+    ///
+    /// A part, like `secrets`, and for the same reason: a test drives the
+    /// engine end to end through a mock server and a scripted SMTP server
+    /// rather than the network, and it can only do that if the transport is
+    /// handed in rather than built inside `engine::start`.
+    pub mail: Option<MailOverride>,
+    /// Where a new account's servers are looked up: the network, in the
+    /// application. A part, like `mail`, so a test can answer from the
+    /// provider table without dialing.
+    pub discovery: Arc<dyn postio_account::discovery::DiscoveryTransport>,
+}
+
+/// A mail transport handed to the engine instead of the account's own.
+#[derive(Clone, Debug)]
+pub struct MailOverride {
+    /// Where mail is read and filed.
+    pub backend: Arc<dyn postio_account::backend::MailBackend>,
+    /// Where mail is submitted.
+    pub smtp: Arc<dyn postio_smtp::transport::SmtpConnector>,
 }
 
 impl Wiring {
@@ -384,6 +403,8 @@ impl Wiring {
             backfill: postio_runtime::BackfillPolicy::default(),
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
+            mail: None,
+            discovery: Arc::new(postio_account::discovery::PimalayaTransport::new()),
         }
     }
 
@@ -397,19 +418,6 @@ impl Wiring {
     /// worth on its own.
     pub fn with_mailbox_roles(mut self, roles: postio_model::RoleOverrides) -> Self {
         self.mailbox_roles = roles;
-        self
-    }
-
-    /// Use `engine` as the slot `Refresh` reads, rather than a fresh one.
-    ///
-    /// For a frontend that has to build its command bus **before** it builds
-    /// the wiring — `postio-ffi` does, because the bridge needs a handler at
-    /// construction and the store is opened after it. `refresh::wire` and
-    /// this have to be given the same slot or the handler reads one nothing
-    /// ever fills, and `Refresh` rejects with "This account is not syncing"
-    /// forever.
-    pub fn with_engine_slot(mut self, engine: refresh::EngineSlot) -> Self {
-        self.engine = engine;
         self
     }
 
@@ -443,6 +451,22 @@ impl Wiring {
     /// for one nobody has unlocked.
     pub fn with_secrets(mut self, secrets: Arc<dyn postio_account::secret::SecretStore>) -> Self {
         self.secrets = secrets;
+        self
+    }
+
+    /// The same wiring, reading, filing and submitting mail through `mail`
+    /// for every account rather than the servers their settings name.
+    pub fn with_mail(mut self, mail: MailOverride) -> Self {
+        self.mail = Some(mail);
+        self
+    }
+
+    /// The same wiring, looking up new accounts' servers through `discovery`.
+    pub fn with_discovery(
+        mut self,
+        discovery: Arc<dyn postio_account::discovery::DiscoveryTransport>,
+    ) -> Self {
+        self.discovery = discovery;
         self
     }
 }
@@ -552,6 +576,13 @@ pub async fn open_store_at_reporting(
         // screen reading "…its local store. the local store will not open".
         Err(error @ postio_storage::Error::WrongStoreKey) => {
             tracing::error!(path = %path.display(), "the store will not decrypt with this key");
+            return Err(error.to_string());
+        }
+        // Another Postio -- the desktop app or the terminal -- has it open.
+        // Its own sentence says what to do, so nothing goes in front of it
+        // either.
+        Err(error @ postio_storage::Error::InUse) => {
+            tracing::warn!(path = %path.display(), "the store is open in another process");
             return Err(error.to_string());
         }
         Err(error) => {
@@ -1757,24 +1788,18 @@ pub async fn reindex_account(
 /// `postio_model::reply` already decides; the sidebar opens on
 /// [`first_account`] whatever is marked, because which account is shown
 /// first is not what the marker means. A marked account that has been
-/// disabled is not marked for this purpose either -- `list_enabled` does
-/// not return it -- so the fallback is the same as no marker at all.
-pub async fn composing_account(database: &Store) -> Option<postio_model::Account> {
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
-        .ok()?;
-    let enabled = AccountRepository::new(&connection)
-        .list_enabled()
-        .await
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
-        .ok()?;
+/// disabled is not marked for this purpose either -- `enabled` holds only
+/// the accounts that sync, in creation order -- so the fallback is the same
+/// as no marker at all.
+///
+/// Over a list the caller already holds rather than a read of its own: the
+/// window reads its accounts once, from the host, and answers every question
+/// about them from that one read.
+pub fn composing_account(enabled: &[postio_model::Account]) -> Option<&postio_model::Account> {
     enabled
         .iter()
-        .position(|account| account.is_default)
-        .map(|index| enabled[index].clone())
-        .or_else(|| enabled.into_iter().next())
+        .find(|account| account.is_default)
+        .or_else(|| enabled.first())
 }
 
 /// The account to open, if the store holds one.
@@ -1785,7 +1810,7 @@ pub async fn composing_account(database: &Store) -> Option<postio_model::Account
 /// indexed read before the window is presented.
 pub async fn first_account(database: &Store) -> Option<postio_model::Account> {
     let connection = database
-        .connect()
+        .read()
         .await
         .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
         .ok()?;

@@ -1,0 +1,33 @@
+Message-ID: <20260923T060000.darkaware@updates.example.org>
+Date: Wed, 23 Sep 2026 06:00:00 +0000
+From: Tidewater Transit <updates@tidewater.example.org>
+To: Sam Qureshi <sam.qureshi@example.com>
+Subject: Service changes this weekend
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<style>
+  .page { background: #ffffff; color: #1b1b1b; font-family: Arial, sans-serif; padding: 20px; }
+  .banner { background: #004f7c; color: #ffffff; padding: 14px 18px; font-size: 18px; font-weight: bold; }
+  .card { background: #f2f6f9; color: #1b1b1b; padding: 12px 16px; margin: 12px 0; }
+  .muted { color: #5b6770; font-size: 13px; }
+  @media (prefers-color-scheme: dark) {
+    .page { background: #121417 !important; color: #e8eaed !important; }
+    .banner { background: #0a3651 !important; color: #e6f3fb !important; }
+    .card { background: #1d2227 !important; color: #e8eaed !important; }
+    .muted { color: #a9b4bd !important; }
+  }
+</style></head>
+<body style="margin:0;">
+<div class="page">
+ <div class="banner">Weekend service changes</div>
+ <div class="card">Line 3 is replaced by buses between Pier Street and Ashgrove on Saturday.</div>
+ <div class="card">Line 7 runs every 20 minutes on Sunday morning.</div>
+ <p class="muted">Plan ahead at tidewater.example.org/changes</p>
+</div>
+</body></html>

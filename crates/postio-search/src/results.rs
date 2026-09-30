@@ -116,6 +116,23 @@ pub struct SearchResults {
     /// second-guess. See ADR 0037 for why the tolerance is here, in what is
     /// *offered*, rather than in what the index matches.
     pub suggestion: Option<crate::suggest::Suggestion>,
+    /// Set when these are the results for a different word than the one
+    /// typed, because the typed one found nothing.
+    ///
+    /// Only the search box does this (`postio_session::search::execute`),
+    /// never a saved search or a rule: those match what they say, which is
+    /// ADR 0037. And the surface must say so, since the list no longer
+    /// answers the letters in the box.
+    pub instead: Option<Instead>,
+}
+
+/// The word a result set is for, in place of the one typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instead {
+    /// What was in the box, and found nothing.
+    pub typed: String,
+    /// What the results are for.
+    pub term: String,
 }
 
 /// The most `total_hits` will ever count exactly. See

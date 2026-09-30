@@ -16,7 +16,7 @@
 //! Where focus opens and how much expands are the two decisions with real
 //! consequences — one for whether the pane lands where you stopped reading,
 //! the other for whether a thirty-message conversation instantiates thirty
-//! `WebKitWebView`s. Both are worth testing without a display, so both are
+//! readers. Both are worth testing without a display, so both are
 //! functions over rows rather than behaviour buried in a widget.
 //!
 //! # These rules are written twice, and only half of them have crossed
@@ -44,19 +44,23 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_model::ids::MessageId;
-use postio_ui::reader::rail::{Effect, NARROW_BELOW, Presentation, Rail, presentation, rows};
+use postio_ui::reader::rail::{
+    Effect, NARROW_BELOW, Presentation, Rail, column, presentation, rows,
+};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::list::Row;
 
 /// How many messages open expanded at most.
 ///
-/// Every expanded message is a `WebKitWebView`, and "expand everything
+/// Every expanded message is a reader of its own, and "expand everything
 /// unread" over a conversation nobody has read is one per message — which
 /// holds neither the interaction budget nor the memory. Three is what a
 /// person reads before they scroll, and scrolling expands more.
 pub const EAGER_EXPANSION_CAP: usize = 3;
 
-/// How many message bodies keep a live `WebKitWebView` at once.
+/// How many message bodies keep a live reader at once.
 ///
 /// `EAGER_EXPANSION_CAP` bounds how many open *when a conversation opens*.
 /// Nothing bounded how many accumulate as it is **scrolled**: `expand` builds
@@ -181,7 +185,7 @@ const REDRAW_DEADLINE: std::time::Duration = std::time::Duration::from_millis(40
 /// Which messages the **one-document** pane draws open.
 ///
 /// Separate from [`expanded_on_open`], which bounds the stacked pane, and it
-/// has to be: there every open message is a `WebKitWebView`, and the cap is
+/// has to be: there every open message is a reader of its own, and the cap is
 /// what stops a thirty-message thread from opening thirty processes. Here the
 /// whole thread is one view (ADR 0032), so a collapsed message saves no
 /// process and almost no memory — #1348 measured one document flat at
@@ -607,14 +611,25 @@ pub const DOCUMENT_ACTIONS: [crate::widgets::Action; 4] = [
 
 /// The pane's own header: what conversation this is, and how much of it.
 ///
-/// Subject at the largest size in the pane — this is the one place the
-/// conversation is named, and before the drill-in column went there were two
-/// places and they could disagree. Under it one metadata line, ellipsised
-/// rather than wrapped, and the way to open everything at once.
+/// **The single reader's header, filled with the thread** (#1671). Query
+/// views open message rows in the reader and folders open thread rows here,
+/// and the two had headers of their own -- 95px against 68px at 900x700 --
+/// so the body a person was reading jumped on every change of surface. The
+/// maintainer's call (2026-09-25) is one header, the reader's expanded one,
+/// on both. Built from [`crate::reader::MessageHeader`] itself rather than
+/// from widgets made to match it, so the two cannot drift apart again by a
+/// padding or a font size: the same rows, the same classes, the same
+/// height.
+///
+/// Filled the way a thread reads: the subject and the conversation's verbs
+/// on row one; on `From`, who took part and `6 messages · 22–25 Aug`; on
+/// `To`, who the newest message went to -- the message the verbs answer.
+/// What only a thread has goes *on* those rows, never on a row of its own:
+/// the participant chips after `From` and the scoping note before the
+/// count, and the position counter ahead of the verbs, on the row the verb
+/// bar's buttons already make the tallest.
 pub struct Header {
-    root: gtk::Box,
-    subject: gtk::Label,
-    meta: gtk::Label,
+    header: crate::reader::MessageHeader,
     expand_all: std::rc::Rc<crate::widgets::KeycapButton>,
     /// The conversation's verbs, at row one's trailing edge (canvas screen 30).
     actions: std::rc::Rc<crate::widgets::ActionBar>,
@@ -626,16 +641,17 @@ pub struct Header {
     /// is a bar whose keycaps, accessible names and handlers all have to be
     /// rebuilt correctly every time, to save one hidden widget.
     draft_actions: std::rc::Rc<crate::widgets::ActionBar>,
-    /// Up to three participant chips, at row two's leading edge.
+    /// Up to three participant chips, after the `From` field name.
     avatars: gtk::Box,
-    /// Row two's trailing note: `latest · all 6`.
+    /// `latest · all 6`, on the `From` row beside the count.
     ///
     /// Required rather than decorative. The bar's verbs are scoped two
     /// different ways — reply to the latest message, archive to the whole
     /// conversation — and the brief is explicit that this "is not obvious, so
-    /// the scoping note in row 2 is required".
+    /// the scoping note in row 2 is required". Beside the count it
+    /// qualifies, as it was beside the old meta line.
     scoping: gtk::Label,
-    /// `3/6 ⌄` at row two's trailing edge, below the ladder's floor.
+    /// `3/6 ⌄` ahead of the verbs, below the ladder's floor.
     ///
     /// A `MenuButton` rather than a button and a popover wired together: it
     /// brings the open-on-click, close-on-`Esc` and close-on-click-outside
@@ -645,13 +661,6 @@ pub struct Header {
     /// What the counter opens. Holds the rail itself while the window is too
     /// narrow to draw a column.
     index: gtk::Popover,
-    /// The metadata line in both its lengths: with the participants, and
-    /// without them.
-    ///
-    /// Two strings rather than a recomposition, because the second is only
-    /// ever the first minus one part and rebuilding it would mean keeping the
-    /// senders and the dates around to rebuild it *from*.
-    meta_text: std::cell::RefCell<(String, String)>,
     /// Whether this header belongs to a pane drawing the thread as one
     /// document, where nothing is collapsed and so nothing can be expanded.
     one_document: std::cell::Cell<bool>,
@@ -659,56 +668,23 @@ pub struct Header {
     has_scoping: std::cell::Cell<bool>,
     /// Whether there are participant chips to show when there is room.
     has_participants: std::cell::Cell<bool>,
-    /// Whether the metadata line is currently the short one.
+    /// Whether the header is at its narrow step.
     ///
-    /// Remembered rather than applied once, because `set_conversation` writes
-    /// the label too: with only a setter, opening a conversation put the long
-    /// line back and the ladder never ran again to correct it. Every test
-    /// passed -- they set the width *after* opening, which the application
-    /// does in the other order.
+    /// Remembered rather than applied once, because `set_conversation`
+    /// decides the chips and the note too: with only a setter, opening a
+    /// conversation put them back and the ladder never ran again to correct
+    /// it. Every test passed -- they set the width *after* opening, which the
+    /// application does in the other order.
     compact: std::cell::Cell<bool>,
 }
 
 impl Header {
     /// Build the header, empty.
     pub fn new() -> Self {
-        // Two rows, each with its own trailing element, rather than one row
-        // of [titles | button]: canvas screen 30 puts the action cluster
-        // beside the *subject* and the scoping note beside the *meta line*,
-        // which a single trailing column spanning both rows cannot express.
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        root.add_css_class("conversation-header");
-        root.set_accessible_role(gtk::AccessibleRole::Group);
+        let header = crate::reader::MessageHeader::new();
+        header.widget().add_css_class("conversation-header");
 
-        let first = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let second = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-
-        let subject = gtk::Label::new(None);
-        subject.set_xalign(0.0);
-        subject.set_wrap(false);
-        subject.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        subject.add_css_class("conversation-subject");
-        subject.set_hexpand(true);
-        first.append(&subject);
-
-        // Canvas screens 28 and 30: overlapping initials before the names.
-        // Ahead of the meta line rather than beside it, because the chips
-        // identify the same people the line then names.
-        let avatars = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        avatars.add_css_class("conversation-participants");
-        avatars.set_visible(false);
-        second.append(&avatars);
-
-        let meta = gtk::Label::new(None);
-        meta.set_xalign(0.0);
-        // One line, ellipsised. The participants are the unbounded part —
-        // a twelve-person thread must not grow the header.
-        meta.set_wrap(false);
-        meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        meta.add_css_class("conversation-meta");
-        meta.set_hexpand(true);
-        second.append(&meta);
-
+        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let expand_all = std::rc::Rc::new(crate::widgets::KeycapButton::new(
             Some(postio_core::CommandId::ExpandAll),
             "Expand all",
@@ -716,41 +692,54 @@ impl Header {
             false,
         ));
         crate::widgets::KeycapButton::arm(&expand_all);
-        first.append(&expand_all.widget());
+        verbs.append(&expand_all.widget());
 
         let actions =
             crate::widgets::ActionBar::new(&DOCUMENT_ACTIONS, "conversation-header-actions");
         actions.set_visible(false);
-        first.append(&actions.widget());
+        verbs.append(&actions.widget());
 
         let draft_actions = crate::widgets::ActionBar::new(
             &DOCUMENT_DRAFT_ACTIONS,
             "conversation-header-draft-actions",
         );
         draft_actions.set_visible(false);
-        first.append(&draft_actions.widget());
+        verbs.append(&draft_actions.widget());
+        header.set_verbs(verbs.upcast_ref::<gtk::Widget>());
+
+        // Canvas screens 28 and 30: overlapping initials before the names.
+        // Ahead of the names rather than beside them, because the chips
+        // identify the same people the line then names.
+        let avatars = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        avatars.add_css_class("conversation-participants");
+        avatars.set_valign(gtk::Align::Center);
+        avatars.set_visible(false);
+        header.add_before_sender(&avatars);
 
         let scoping = gtk::Label::new(None);
         scoping.set_wrap(false);
         scoping.add_css_class("conversation-scoping");
         scoping.set_visible(false);
-        second.append(&scoping);
+        header.add_before_date(&scoping);
 
         let index = gtk::Popover::new();
         index.add_css_class("conversation-index");
         let counter = gtk::MenuButton::new();
         counter.add_css_class("conversation-counter");
+        counter.set_valign(gtk::Align::Center);
         counter.set_popover(Some(&index));
         counter.set_visible(false);
-        second.append(&counter);
-
-        root.append(&first);
-        root.append(&second);
+        // Ahead of the verbs, on the subject row, and nowhere shorter. On
+        // the `To` row it was a button in an 18px row of text, and whether
+        // it fitted came down to font metrics: it grew that row by 3px on
+        // the workstation and, once baseline alignment was ruled out, by 2px
+        // more on CI (#1671). The subject row is as tall as the verb bar,
+        // a row of whole buttons with padding, so a counter cannot be what
+        // sets its height on any machine.
+        verbs.prepend(&counter);
 
         Header {
-            root,
-            subject,
-            meta,
+            header,
             expand_all,
             actions,
             draft_actions,
@@ -758,7 +747,6 @@ impl Header {
             avatars,
             counter,
             index,
-            meta_text: std::cell::RefCell::new((String::new(), String::new())),
             compact: std::cell::Cell::new(false),
             one_document: std::cell::Cell::new(false),
             has_scoping: std::cell::Cell::new(false),
@@ -787,29 +775,20 @@ impl Header {
         }
     }
 
-    /// Drop the participants from the metadata line, or put them back.
+    /// Stand the participant chips and the scoping note down, or bring
+    /// them back.
     ///
-    /// Their names are the unbounded part of the line and the first thing to
-    /// go when the header is short of room. The avatar chips stay: three
-    /// initials say who is here in a width a name cannot.
+    /// Screen 29's narrow header carries the count, the dates and the
+    /// counter. The names stay since #1671 -- the counter shares the `To`
+    /// row now, not theirs, and the names ellipsise rather than pushing the
+    /// dates out -- but the chips and the note still ask for room the
+    /// narrow step does not have, and stand down together, which is the
+    /// drawing.
     pub fn set_compact(&self, compact: bool) {
         self.compact.set(compact);
-        self.draw_meta();
-        // Screen 29's narrow header carries the count, the dates and the
-        // counter, and nothing else. The names went first and the *dates*
-        // then ellipsised to a single character -- there is only so much room
-        // and four things were asking for it. The avatars and the scoping
-        // note stand down together, which is the drawing.
         self.avatars
             .set_visible(!compact && self.has_participants.get());
         self.scoping.set_visible(!compact && self.has_scoping.get());
-    }
-
-    /// Put whichever metadata line is current on screen.
-    fn draw_meta(&self) {
-        let text = self.meta_text.borrow();
-        self.meta
-            .set_label(if self.compact.get() { &text.1 } else { &text.0 });
     }
 
     /// Say whether the pane draws the thread as one document.
@@ -928,7 +907,37 @@ impl Header {
 
     /// The widget to pin above the stack.
     pub fn widget(&self) -> gtk::Widget {
-        self.root.clone().upcast()
+        self.header.widget()
+    }
+
+    /// Fill the `To`/`Cc` row from the newest message's envelope.
+    pub fn set_recipients(
+        &self,
+        to: &[postio_model::address::EmailAddress],
+        cc: &[postio_model::address::EmailAddress],
+    ) {
+        self.header.set_recipients(to, cc);
+    }
+
+    /// Name the account the conversation is in, under the single reader's
+    /// rule: `None` hides the line, which is the one-account case.
+    pub fn set_account(&self, name: Option<&str>, hue: usize) {
+        self.header.set_account(name, hue);
+    }
+
+    /// The account line's text, or `None` when it is hidden. Test-facing.
+    pub fn account_label(&self) -> Option<String> {
+        self.header.account_label()
+    }
+
+    /// Whether the `To` line is drawn. Test-facing.
+    pub fn to_visible(&self) -> bool {
+        self.header.to_visible()
+    }
+
+    /// Whether the `Cc` disclosure is offered. Test-facing.
+    pub fn cc_toggle_visible(&self) -> bool {
+        self.header.cc_toggle_visible()
     }
 
     /// Name the conversation on screen.
@@ -937,11 +946,12 @@ impl Header {
     /// spans it rather than being told, so it cannot disagree with the stack
     /// below it about how many messages there are.
     pub fn set_conversation(&self, rows: &[Row], now: chrono::DateTime<chrono::Local>) {
+        let root = self.header.widget();
         if rows.is_empty() {
-            self.root.set_visible(false);
+            root.set_visible(false);
             return;
         }
-        self.root.set_visible(true);
+        root.set_visible(true);
         // Nothing to expand in a thread of one: it opens expanded, so the
         // button would be offered with nothing left to do (#1173). The same
         // n=1 surface as the footer standing down.
@@ -960,7 +970,7 @@ impl Header {
             .widget()
             .set_visible(rows.len() > 1 && !self.one_document.get());
         self.describe_actions(rows.len());
-        self.subject.set_label(
+        self.header.set_subject(
             rows.iter()
                 .find_map(|row| row.subject.as_deref())
                 .filter(|subject| !subject.trim().is_empty())
@@ -994,33 +1004,33 @@ impl Header {
                 .collect::<Vec<_>>()
                 .join(" · ")
         };
-        let meta = join(&[
-            count.clone(),
-            postio_ui::conversation::participants(&senders),
-            span.clone(),
-        ]);
-        // Screen 29's narrow header is `6 messages · 22–25 Aug` and nothing
-        // else: below the ladder's floor the counter takes the trailing edge,
-        // and with the names still there the line ellipsised to a single
-        // letter -- which says less than leaving it out.
-        let compact = join(&[count, span]);
-        self.meta_text.replace((meta.clone(), compact));
+        let names = postio_ui::conversation::participants(&senders);
+        let meta = join(&[count.clone(), names.clone(), span.clone()]);
+        // The `From` row as a thread reads it: who took part, and then how
+        // much and over what span where a message would put its date. Screen
+        // 29's narrow line is `6 messages · 22–25 Aug`, which is what the
+        // date column now always says -- it does not ellipsise, so the names
+        // beside it are what gives way to a narrow pane.
+        self.header.set_sender_line(&names, &join(&[count, span]));
         self.set_participants(&senders);
-        self.draw_meta();
-        // The line ellipsises, so the whole of it has to reach a screen
+        // The names ellipsise, so the whole of it has to reach a screen
         // reader some other way.
-        self.root
-            .update_property(&[gtk::accessible::Property::Description(&meta)]);
+        root.update_property(&[gtk::accessible::Property::Description(&meta)]);
     }
 
-    /// What the metadata line currently says. Test-facing.
+    /// What the `From` row currently says, names then count and span.
+    /// Test-facing.
     pub fn meta(&self) -> String {
-        self.meta.label().to_string()
+        format!(
+            "{} · {}",
+            self.header.sender_label(),
+            self.header.date_label()
+        )
     }
 
     /// What the subject line currently says. Test-facing.
     pub fn subject(&self) -> String {
-        self.subject.label().to_string()
+        self.header.subject_label()
     }
 
     /// Whether `Expand all` is on offer. Test-facing.
@@ -1049,6 +1059,13 @@ impl Default for Header {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// What the header draws from one message's envelope (#1671).
+struct Envelope {
+    to: Vec<postio_model::address::EmailAddress>,
+    cc: Vec<postio_model::address::EmailAddress>,
+    account: Option<(String, usize)>,
 }
 
 type MessageHandler = Box<dyn Fn(MessageId)>;
@@ -1123,11 +1140,11 @@ mod imp {
         pub(super) dwell: RefCell<Option<glib::SourceId>>,
         pub(super) dwell_delay: Cell<std::time::Duration>,
         /// Whether this pane renders the thread as one document in one
-        /// `WebView` (ADR 0032, #1316) rather than as a stack of readers.
+        /// reader (ADR 0032, #1316) rather than as a stack of readers.
         ///
         /// The stacked pane builds a `Reader` per expanded message, and
-        /// WebKitGTK runs a process per *view*, so a thirty-message thread
-        /// ends with thirty of them. That is what ADR 0032 replaced, and
+        /// under WebKit each was a web process, so a thirty-message thread
+        /// ended with thirty of them. That is what ADR 0032 replaced, and
         /// since it was accepted (#1316) `postio-app` sets this on every
         /// pane it builds -- the `false` below is what a pane constructed by
         /// a test starts as, not what the application ships.
@@ -1140,6 +1157,12 @@ mod imp {
         /// The bodies that have arrived so far, by message.
         pub(super) thread_bodies:
             RefCell<std::collections::HashMap<MessageId, postio_model::MessageBody>>,
+        /// Messages of the open thread whose body this machine does not have
+        /// yet. The thread counts as whole without them: they draw collapsed
+        /// with their preview, and waiting on a body the backfill has not
+        /// reached held the previous document on screen for the whole
+        /// deadline.
+        pub(super) thread_absent: RefCell<std::collections::HashSet<MessageId>>,
         /// Who each message went to, already drawn, beside its body.
         ///
         /// Separate from `thread_bodies` because it arrives from the
@@ -1149,10 +1172,13 @@ mod imp {
         pub(super) thread_recipients: RefCell<std::collections::HashMap<MessageId, String>>,
         /// The `Cc` line, beside `thread_recipients` and for the same reason.
         pub(super) thread_cc: RefCell<std::collections::HashMap<MessageId, String>>,
+        /// Each message's envelope as the header wants it: its recipients
+        /// and the account it is in. Only the newest one's is drawn (#1671).
+        pub(super) thread_envelopes: RefCell<std::collections::HashMap<MessageId, Envelope>>,
         /// Whether a redraw is already queued for the next idle turn.
         ///
         /// Bodies arrive one at a time and every one of them changes the
-        /// document, so without this a ten-message thread would hand WebKit
+        /// document, so without this a ten-message thread would hand the reader
         /// ten documents on the way to the one it wants.
         pub(super) redraw_queued: Cell<bool>,
         /// When the pane stops waiting for bodies that have not arrived and
@@ -1173,6 +1199,17 @@ mod imp {
         /// Which thread the pane is holding, so reopening the same one keeps
         /// what it has instead of refetching and re-deciding it.
         pub(super) thread_id: Cell<Option<postio_model::ids::ThreadId>>,
+        /// Which thread the header, the rail and the document on screen are
+        /// about -- set when a document is drawn, not when a thread opens.
+        ///
+        /// Apart from `thread_id` because the two differ exactly while a new
+        /// thread is waiting for its document: the header used to change the
+        /// moment the cursor did and sit over the previous thread's document
+        /// until the new one was drawn.
+        pub(super) shown_thread: Cell<Option<postio_model::ids::ThreadId>>,
+        /// A new thread's header and rail, held until its document is drawn
+        /// so the three change together. See `ConversationView::open`.
+        pub(super) pending_chrome: RefCell<Option<Vec<Row>>>,
         /// Whether each message is drawn open.
         ///
         /// Decided once per message and then kept, because expansion is the
@@ -1216,13 +1253,17 @@ mod imp {
                 document_reader: RefCell::new(None),
                 thread_rows: RefCell::new(Vec::new()),
                 thread_bodies: RefCell::new(std::collections::HashMap::new()),
+                thread_absent: RefCell::new(std::collections::HashSet::new()),
                 thread_recipients: RefCell::new(std::collections::HashMap::new()),
                 thread_cc: RefCell::new(std::collections::HashMap::new()),
+                thread_envelopes: RefCell::new(std::collections::HashMap::new()),
                 redraw_queued: Cell::new(false),
                 redraw_deadline: Cell::new(None),
                 redraw_generation: Cell::new(0),
                 thread_renders: Cell::new(0),
                 thread_id: Cell::new(None),
+                shown_thread: Cell::new(None),
+                pending_chrome: RefCell::new(None),
                 expanded_in_document: RefCell::new(std::collections::HashMap::new()),
                 on_thread_opened: RefCell::new(Vec::new()),
             }
@@ -1410,7 +1451,7 @@ impl ConversationView {
     ///
     /// Focus lands on the most recent message — see [`opening_focus`] — and
     /// [`expanded_on_open`] decides how much opens with it.
-    /// Render this thread as one document in one `WebView` (ADR 0032, #1316).
+    /// Render this thread as one document in one reader (ADR 0032, #1316).
     ///
     /// `postio-app` always turns this on: ADR 0032 was accepted on
     /// 2026-09-09 and one document is the shape a conversation has. It stays
@@ -1447,29 +1488,66 @@ impl ConversationView {
     ///
     /// Redrawn on the next idle turn rather than here: bodies arrive one at a
     /// time and each changes the document, so drawing on arrival would hand
-    /// WebKit one document per message on the way to the one it wants.
+    /// the reader one document per message on the way to the one it wants.
     pub fn set_thread_body(&self, message: MessageId, body: postio_model::MessageBody) {
         let imp = self.imp();
+        imp.thread_absent.borrow_mut().remove(&message);
         imp.thread_bodies.borrow_mut().insert(message, body);
         self.queue_document_redraw();
     }
 
-    /// Who `message` went to, as the document should draw it.
+    /// `message`, of the open thread, has no body on this machine yet.
     ///
-    /// Drawn by the caller through
+    /// The thread is drawn without waiting for it -- the message shows
+    /// collapsed with its preview -- and redrawn if the body arrives through
+    /// [`set_thread_body`](Self::set_thread_body).
+    pub fn set_thread_body_absent(&self, message: MessageId) {
+        let imp = self.imp();
+        if imp.thread_bodies.borrow().contains_key(&message) {
+            return;
+        }
+        imp.thread_absent.borrow_mut().insert(message);
+        self.queue_document_redraw();
+    }
+
+    /// Who `message` went to, and which account it arrived in.
+    ///
+    /// The recipients are drawn for the document through
     /// `postio_ui::reader::header::recipient_line`, which is the same
-    /// function the stacked pane's per-entry header uses -- so the two panes
-    /// cannot start counting recipients differently, and "and 197 others"
-    /// means the same thing in both (#1427).
+    /// function the single reader's header uses -- so the two panes cannot
+    /// start counting recipients differently, and "and 197 others" means the
+    /// same thing in both (#1427). Empty is a real answer: a message with no
+    /// recipients draws no line rather than an empty one.
     ///
-    /// Empty is a real answer: a message with no recipients draws no line
-    /// rather than an empty one.
-    pub fn set_thread_recipients(&self, message: MessageId, recipients: String, cc: String) {
+    /// The newest message's envelope also fills the pane's header -- its
+    /// `To`/`Cc` line and its account line -- which is the single reader's
+    /// header, filled with the thread (#1671). `account` is `None` with one
+    /// account configured, exactly as `Reader::set_account` takes it.
+    pub fn set_thread_envelope(
+        &self,
+        message: MessageId,
+        to: &[postio_model::address::EmailAddress],
+        cc: &[postio_model::address::EmailAddress],
+        account: Option<(&str, usize)>,
+    ) {
         let imp = self.imp();
         imp.thread_recipients
             .borrow_mut()
-            .insert(message, recipients);
-        imp.thread_cc.borrow_mut().insert(message, cc);
+            .insert(message, postio_ui::reader::header::recipient_line(to));
+        imp.thread_cc
+            .borrow_mut()
+            .insert(message, postio_ui::reader::header::recipient_line(cc));
+        imp.thread_envelopes.borrow_mut().insert(
+            message,
+            Envelope {
+                to: to.to_vec(),
+                cc: cc.to_vec(),
+                account: account.map(|(name, hue)| (name.to_owned(), hue)),
+            },
+        );
+        if imp.thread_rows.borrow().last().map(|row| row.id) == Some(message) {
+            self.fill_header_envelope();
+        }
         // **Deliberately no redraw.** The envelope and the body come out of
         // the same `loaded` in `ReadingPane::fill_thread`, and this is called
         // first: `set_thread_body` draws immediately after, with the
@@ -1483,12 +1561,32 @@ impl ConversationView {
         // does.
     }
 
-    /// Whether every message the pane is showing now has a body.
+    /// Whether every message the pane is showing now has a body, and the
+    /// pane is showing every message the thread has.
+    ///
+    /// The second half is what stops the list's one row being drawn as a
+    /// document of its own. A thread opens first from the row the list held
+    /// and again once the whole conversation is read, a few milliseconds
+    /// later; drawing both was two full loads for one keystroke, and the
+    /// second always differed -- the newest message only carries its
+    /// `latest` badge in a thread of more than one. So a thread the row says
+    /// is longer than what the pane holds waits, like a thread whose bodies
+    /// have not all arrived, until it is whole or [`REDRAW_DEADLINE`] passes.
     fn thread_is_whole(&self) -> bool {
         let imp = self.imp();
         let rows = imp.thread_rows.borrow();
         let bodies = imp.thread_bodies.borrow();
-        !rows.is_empty() && rows.iter().all(|row| bodies.contains_key(&row.id))
+        let absent = imp.thread_absent.borrow();
+        let expected = rows
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        !rows.is_empty()
+            && rows.len() >= expected
+            && rows
+                .iter()
+                .all(|row| bodies.contains_key(&row.id) || absent.contains(&row.id))
     }
 
     fn queue_document_redraw(&self) {
@@ -1524,7 +1622,7 @@ impl ConversationView {
                 let imp = pane.imp();
                 // The pane stopped being what the reader shows while this was
                 // waiting, so the document it would draw is not the one in
-                // front of anybody. Drawing it anyway is #1497: a full WebKit
+                // front of anybody. Drawing it anyway is #1497: a full
                 // load that replaces whatever the reader moved on to.
                 if imp.redraw_generation.get() != generation {
                     return;
@@ -1535,6 +1633,9 @@ impl ConversationView {
                     .get()
                     .is_none_or(|deadline| std::time::Instant::now() >= deadline);
                 if pane.thread_is_whole() || overdue {
+                    if !pane.thread_is_whole() {
+                        postio_ui::reader::cost::note_waited_out();
+                    }
                     imp.redraw_deadline.set(None);
                     pane.redraw_document();
                 } else {
@@ -1649,10 +1750,100 @@ impl ConversationView {
         // cache re-sanitises only a body that changed (#1605).
         if reader.render_thread_if_changed(&messages) {
             imp.thread_renders.set(imp.thread_renders.get() + 1);
+            // Lifted once the new snapshot is on screen, not now: until it
+            // arrives the view still paints the previous one.
+            if reader.widget().opacity() < 1.0 {
+                let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+                let id = reader.view().connect_rendered({
+                    let handler = Rc::clone(&handler);
+                    let pane = self.downgrade();
+                    move |view| {
+                        if let Some(pane) = pane.upgrade() {
+                            pane.veil_document(false);
+                        }
+                        if let Some(id) = handler.borrow_mut().take() {
+                            view.disconnect(id);
+                        }
+                    }
+                });
+                handler.replace(Some(id));
+            }
+        } else {
+            self.veil_document(false);
+        }
+        // The document on screen is this thread's now, so its header and
+        // rail go up with it, in the same turn.
+        imp.shown_thread.set(imp.thread_id.get());
+        self.apply_pending_chrome();
+    }
+
+    /// Hide the document without taking it out of the layout, or show it.
+    ///
+    /// Opacity rather than visibility, so the pane's geometry does not move:
+    /// what is veiled is only *which* thread's messages are showing. Lifted
+    /// when a document is drawn; the view keeps painting its ground colour
+    /// under it (`paint_ground`), so the gap is the pane's own background.
+    fn veil_document(&self, veiled: bool) {
+        if let Some(reader) = self.imp().document_reader.borrow().as_ref() {
+            reader.widget().set_opacity(if veiled { 0.0 } else { 1.0 });
         }
     }
 
-    /// How many conversation documents this pane has handed to WebKit.
+    /// Put up the header and rail held back for the thread just drawn.
+    fn apply_pending_chrome(&self) {
+        let pending = self.imp().pending_chrome.borrow_mut().take();
+        if let Some(rows) = pending {
+            self.apply_chrome(&rows);
+        }
+    }
+
+    /// The conversation's header and rail, for `messages`.
+    fn apply_chrome(&self, messages: &[Row]) {
+        let imp = self.imp();
+        self.fill_rail(messages);
+        imp.header.set_conversation(messages, chrono::Local::now());
+        self.fill_header_envelope();
+        // Which bar, decided from the message the bar is scoped to: its
+        // verbs aim at the conversation's latest message, and a thread you
+        // are part-way through answering ends in your own draft (#1212).
+        let ends_in_a_draft = messages.last().is_some_and(|row| row.send_state.is_some());
+        imp.header.set_verbs_visible(true, ends_in_a_draft);
+        // The rail was just refilled, so it marks the focus afresh -- the
+        // focus may have been decided while the previous thread's rows
+        // were still in it.
+        imp.rail.set_marked(self.focused_index());
+        // What the rows say the thread holds, not only what arrived: a thread
+        // first shown from the list's one row is still a thread.
+        let said = messages
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        self.apply_rail_ladder(self.window_width(), messages.len().max(said));
+    }
+
+    /// Put the newest message's recipients and account in the header, if
+    /// its envelope has arrived.
+    ///
+    /// The newest, because that is the message the header's verbs answer
+    /// (FR-008): the `To` row says who a reply from this bar would reach.
+    fn fill_header_envelope(&self) {
+        let imp = self.imp();
+        let Some(newest) = imp.thread_rows.borrow().last().map(|row| row.id) else {
+            return;
+        };
+        let envelopes = imp.thread_envelopes.borrow();
+        let Some(envelope) = envelopes.get(&newest) else {
+            return;
+        };
+        imp.header.set_recipients(&envelope.to, &envelope.cc);
+        imp.header.set_account(
+            envelope.account.as_ref().map(|(name, _)| name.as_str()),
+            envelope.account.as_ref().map_or(0, |(_, hue)| *hue),
+        );
+    }
+
+    /// How many conversation documents this pane has handed to its reader.
     ///
     /// Every one is a full teardown and reload — JavaScript is off, so there
     /// is no incremental path, and the scroll position goes with it. A thread
@@ -1666,7 +1857,7 @@ impl ConversationView {
         self.imp().thread_renders.get()
     }
 
-    /// The document the one-document pane last handed to WebKit.
+    /// The document the one-document pane last handed to its reader.
     ///
     /// The last artifact before the engine, which is where a wiring mistake
     /// shows: a pane that opened but never composed, or composed without the
@@ -1691,8 +1882,16 @@ impl ConversationView {
         if imp.thread_id.get() != opening {
             imp.thread_id.set(opening);
             imp.thread_bodies.borrow_mut().clear();
+            imp.thread_absent.borrow_mut().clear();
             imp.thread_recipients.borrow_mut().clear();
             imp.thread_cc.borrow_mut().clear();
+            imp.thread_envelopes.borrow_mut().clear();
+            // The previous thread's recipients are not this one's. Emptied
+            // rather than left until the newest envelope lands, and the row
+            // keeps its height empty, so this moves nothing. The account
+            // line is left: whether there is one is the installation's
+            // fact, and blinking it off between threads would move the body.
+            imp.header.set_recipients(&[], &[]);
             imp.expanded_in_document.borrow_mut().clear();
             // A different conversation, so "show this one whole" is answered
             // afresh. Cleared here rather than on every redraw: a body
@@ -1718,6 +1917,13 @@ impl ConversationView {
                 // thread would be the stack's furniture with none of its use.
                 reader.header().widget().set_visible(false);
                 reader.set_actions_visible(false);
+                // The notice slot stays, though the document says what the
+                // notices would -- each message carries its own
+                // blocked-images verb, and a thread's render clears the
+                // slot. Kept for its *height*: header and slot are the stack
+                // the single reader puts above its body, and the body starts
+                // at the same place on both surfaces only if both keep it
+                // (#1671).
                 // A message's own verbs, from inside the document (#1365).
                 // The scope is the message id in decimal, which is what
                 // `ThreadMessage` puts in the URI; the mapping back lives
@@ -1802,23 +2008,52 @@ impl ConversationView {
         let lengths: Vec<Option<u32>> = vec![None; messages.len()];
         imp.rail
             .show_thread(&rows(&senders, &initials, &whens, &lengths));
-        self.apply_rail_ladder(self.window_width(), messages.len());
+        // What the rows say the thread holds, not only what arrived: a thread
+        // first shown from the list's one row is still a thread.
+        let said = messages
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        self.apply_rail_ladder(self.window_width(), messages.len().max(said));
     }
 
     pub fn open(&self, messages: Vec<Row>) {
         let imp = self.imp();
-        self.fill_rail(&messages);
         // FR-015: the most recent, through the same rule the stacked
         // pane uses. This said `messages.first()` -- the *oldest* -- so
         // the two panes gave opposite answers to one requirement.
         let opening = opening_focus(&messages).map(|index| messages[index].id);
         imp.thread_rows.replace(messages.clone());
-        imp.header.set_conversation(&messages, chrono::Local::now());
-        // Which bar, decided from the message the bar is scoped to: its
-        // verbs aim at the conversation's latest message, and a thread you
-        // are part-way through answering ends in your own draft (#1212).
-        let ends_in_a_draft = messages.last().is_some_and(|row| row.send_state.is_some());
-        imp.header.set_verbs_visible(true, ends_in_a_draft);
+        // The header and rail change with the document, not before it.
+        //
+        // A different thread's document is drawn a little later -- its
+        // bodies are read, and the list's one row waits for the rest of the
+        // thread (`thread_is_whole`) -- and the previous thread's document
+        // stays on screen until then. Changing the header here put the new
+        // thread's name over the old thread's messages for that long. So
+        // while a document is on screen and this is another thread, the new
+        // header waits for `redraw_document`; with nothing drawn yet, or the
+        // same thread again, it goes up at once.
+        let thread = messages.first().and_then(|row| row.thread);
+        let replacing = imp.one_document.get()
+            && imp.document_reader.borrow().is_some()
+            && imp.shown_thread.get().is_some()
+            && imp.shown_thread.get() != thread;
+        if replacing && !self.is_visible() {
+            // Hidden -- the single reader or the composer has the pane -- so
+            // the previous thread is not on screen now, and showing the pane
+            // again must not put it back. The new header goes up at once and
+            // the document is veiled until this thread's is drawn.
+            imp.pending_chrome.replace(None);
+            self.apply_chrome(&messages);
+            self.veil_document(true);
+        } else if replacing {
+            imp.pending_chrome.replace(Some(messages.clone()));
+        } else {
+            imp.pending_chrome.replace(None);
+            self.apply_chrome(&messages);
+        }
         // Always, whatever the length -- unlike the stacked pane below.
         //
         // There, a single message stands its footer down because the
@@ -1853,6 +2088,16 @@ impl ConversationView {
             // conversation), so a scroll on the first arrival lands on a
             // document that is about to be replaced anyway.
             self.focus_in_document_without_scrolling(message);
+        }
+    }
+
+    /// Messages rendered ahead of being shown, for the document reader.
+    ///
+    /// Dropped when the pane has not built its reader yet: the first
+    /// conversation of a session is drawn as before.
+    pub fn offer_prepared(&self, prepared: Vec<postio_ui::reader::document::Prepared>) {
+        if let Some(reader) = self.document_reader() {
+            reader.offer_prepared(prepared);
         }
     }
 
@@ -1977,7 +2222,7 @@ impl ConversationView {
 
     pub fn is_expanded(&self, message: MessageId) -> bool {
         // The one-document pane has no `entries` -- the whole thread is one
-        // `WebView` (ADR 0032) -- and every body in it is visible by FR-013
+        // reader (ADR 0032) -- and every body in it is visible by FR-013
         // (#1389). Reading `entries` there answered `false` for a message
         // that is on screen, which is the same shape as #1386, #1398 and
         // #1402: a method that reads `entries` and quietly means "the stacked
@@ -1998,7 +2243,7 @@ impl ConversationView {
     /// jumping expands.
     pub fn focus_message(&self, message: MessageId) {
         // The one-document pane has no entries -- the whole thread is one
-        // `WebView` (ADR 0032) -- so everything below this, which is about
+        // reader (ADR 0032) -- so everything below this, which is about
         // expanding an entry and scrolling to its widget, has nothing to work
         // on. It used to fall out of the guard beneath and return, which made
         // the rail's rows, `J` and `K` all inert in the pane the rail exists
@@ -2048,34 +2293,42 @@ impl ConversationView {
     pub fn set_window_width(&self, width: i32) {
         let imp = self.imp();
         imp.rail_width.set(Some(width));
-        let messages = self.message_count();
+        let messages = self.expected_messages(self.message_count());
         self.apply_rail_ladder(width, messages);
     }
 
     fn apply_rail_ladder(&self, width: i32, messages: usize) {
         let imp = self.imp();
-        let step = presentation(width, messages, imp.rail_hidden.get());
+        let hidden = imp.rail_hidden.get();
+        let step = presentation(width, messages, hidden);
         // Where the one rail lives. Moved rather than duplicated: a second
         // `RailColumn` for the popover would be a second marked row, and it
         // would be wrong exactly when someone scrolled with the index open.
         self.house_the_rail(matches!(step, Some(Presentation::Popover)));
-        match step {
-            Some(Presentation::Full) => {
-                imp.rail.widget().set_visible(true);
-                imp.rail.set_narrow(false);
-            }
-            Some(Presentation::Narrow) => {
-                imp.rail.widget().set_visible(true);
-                imp.rail.set_narrow(true);
-            }
-            Some(Presentation::Popover) => {
+        // What is drawn follows the thread. The column follows the window,
+        // so the body keeps its width between threads -- but only for a
+        // thread: a single message has no rail and keeps no column, because
+        // an empty bordered column beside every message that is not a
+        // thread reads as a rail with nothing in it (maintainer, 2026-09-25).
+        // A thread is known by what its row says it holds, not by how much of
+        // it has been read, so one first shown from the list's single row
+        // keeps its column from the start.
+        imp.rail.set_drawn(step.is_some());
+        let thread = messages > 1;
+        let kept = if thread { column(width, hidden) } else { None };
+        match (step, kept) {
+            (Some(Presentation::Popover), _) => {
                 // Visible *within the popover*, which shows nothing until the
                 // counter is pressed. The column beside the body is gone
                 // because the rail is no longer in it.
                 imp.rail.widget().set_visible(true);
                 imp.rail.set_narrow(false);
             }
-            None => imp.rail.widget().set_visible(false),
+            (_, Some(kept)) => {
+                imp.rail.widget().set_visible(true);
+                imp.rail.set_narrow(kept == Presentation::Narrow);
+            }
+            (_, None) => imp.rail.widget().set_visible(false),
         }
         let position = match step {
             Some(Presentation::Popover) => {
@@ -2086,6 +2339,20 @@ impl ConversationView {
         imp.header.set_counter(position);
         imp.header
             .set_compact(matches!(step, Some(Presentation::Popover)));
+    }
+
+    /// How many messages the open thread holds: what has been read, or what
+    /// its rows say the thread holds, whichever is more.
+    fn expected_messages(&self, loaded: usize) -> usize {
+        let said = self
+            .imp()
+            .thread_rows
+            .borrow()
+            .iter()
+            .map(|row| row.thread_count as usize)
+            .max()
+            .unwrap_or(0);
+        loaded.max(said)
     }
 
     /// Put the rail in the popover, or back beside the body.
@@ -2146,6 +2413,22 @@ impl ConversationView {
         true
     }
 
+    /// Reader view on the focused message, or back to what its sender built
+    /// — the one-document pane's half of `toggle_reader_view` (spec 006
+    /// FR-031). Answers whether it did anything, like
+    /// [`show_focused_message_whole`](Self::show_focused_message_whole).
+    pub fn toggle_focused_reader_view(&self) -> bool {
+        let imp = self.imp();
+        let Some(focused) = imp.focused.get() else {
+            return false;
+        };
+        let Some(reader) = imp.document_reader.borrow().clone() else {
+            return false;
+        };
+        reader.toggle_reader_view_for(&focused.get().to_string());
+        true
+    }
+
     /// `⇧I`: put the rail away, or bring it back.
     ///
     /// The key is `⇧I` and not the `⇧R` screen 28 draws, because `R` is
@@ -2157,7 +2440,7 @@ impl ConversationView {
         let imp = self.imp();
         imp.rail_hidden.set(!imp.rail_hidden.get());
         let width = self.window_width();
-        let messages = self.message_count();
+        let messages = self.expected_messages(self.message_count());
         self.apply_rail_ladder(width, messages);
     }
 
@@ -2350,7 +2633,7 @@ impl ConversationView {
         true
     }
 
-    /// How many message bodies are holding a live `WebKitWebView`.
+    /// How many message bodies are holding a live reader.
     ///
     /// One document is one view however long the thread is (ADR 0032), so
     /// this is 0 or 1 — which is the whole reason the cap the stacked pane

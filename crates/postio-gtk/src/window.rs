@@ -26,6 +26,10 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
+use crate::reader::view::RemoteFetch;
+
+/// Told a zoom a person chose; see [`Window::connect_zoom_changed`].
+type ZoomHandler = Box<dyn Fn(u16)>;
 use postio_core::{ActionId, CommandId, Context};
 
 use crate::cheatsheet::CheatSheet;
@@ -191,6 +195,18 @@ mod imp {
         /// `set_blob_source` runs after the reader is built.
         pub blobs:
             std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn crate::reader::BlobSource>>>>,
+        /// What every reader this window builds fetches remote images with,
+        /// once the application supplies it (spec 006 T137). A cell for the
+        /// reason `blobs` is one: readers hold the cell, not the window.
+        pub remote_fetch: std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<RemoteFetch>>>>,
+        /// `[reader] zoom`, in percent; 0 until configuration says (actual
+        /// size).
+        pub zoom: std::cell::Cell<u16>,
+        /// Set while configuration is applying a zoom, so that is not written
+        /// back to the file it came from.
+        pub applying_zoom: std::rc::Rc<std::cell::Cell<bool>>,
+        /// Told the zoom a person chose, to persist it.
+        pub on_zoom_changed: std::rc::Rc<std::cell::RefCell<Vec<ZoomHandler>>>,
         /// Where the reader's remote-image allow list is read from and saved
         /// back to, when it should not be the real one.
         ///
@@ -548,21 +564,16 @@ impl Window {
     /// so this is what the list has paged in — the header says as much when
     /// that is fewer than the row's own thread count.
     fn thread_rows(&self, thread: postio_model::ids::ThreadId) -> Vec<crate::list::Row> {
-        let model = self.list().model();
-        let mut rows = Vec::new();
-        for index in 0..model.n_items() {
-            let Some(row) = model
-                .item(index)
-                .and_then(|item| item.downcast::<crate::list::MessageRow>().ok())
-                .and_then(|item| item.row())
-            else {
-                continue;
-            };
-            if row.thread == Some(thread) {
-                rows.push(row);
-            }
-        }
-        rows
+        // What the list already holds, not every position it has: a position
+        // it does not hold is a page request, so walking `0..n_items` asked
+        // for the whole folder on every conversation open -- 138 pages for
+        // five `j` presses in a 3,700-row folder.
+        self.list()
+            .model()
+            .held_rows()
+            .into_iter()
+            .filter(|row| row.thread == Some(thread))
+            .collect()
     }
 
     /// Show `row`'s whole conversation in the reading pane (ADR 0015 Q4).
@@ -922,6 +933,151 @@ impl Window {
     /// responsible for calling it as few times as the design allows — see
     /// `conversation::EAGER_EXPANSION_CAP`.
     pub fn new_reader(&self) -> crate::reader::Reader {
+        let reader = self.build_reader();
+        self.wire_reader(&reader);
+        reader
+    }
+
+    /// What every reader this window builds shares: the zoom in force, the
+    /// remote-image fetcher, the zoom persisted when a person changes it,
+    /// and the reading pane's context menu.
+    fn wire_reader(&self, reader: &crate::reader::Reader) {
+        let imp = self.imp();
+        let zoom = imp.zoom.get();
+        if zoom != 0 {
+            imp.applying_zoom.set(true);
+            reader.set_zoom(zoom);
+            imp.applying_zoom.set(false);
+        }
+        let fetch = std::rc::Rc::clone(&imp.remote_fetch);
+        reader.set_remote_fetch(move |urls, done| {
+            if let Some(fetch) = fetch.borrow().as_ref() {
+                fetch(urls, done);
+            }
+        });
+        let applying = std::rc::Rc::clone(&imp.applying_zoom);
+        let handlers = std::rc::Rc::clone(&imp.on_zoom_changed);
+        reader.connect_zoom_changed(move |percent| {
+            if applying.get() {
+                return;
+            }
+            for handler in handlers.borrow().iter() {
+                handler(percent);
+            }
+        });
+        self.install_reader_menu(reader);
+    }
+
+    /// The reading pane's context menu (spec 006 contracts/registry-commands):
+    /// darken and reader view, from the registry, each run as its key runs.
+    fn install_reader_menu(&self, reader: &crate::reader::Reader) {
+        use gtk::gio;
+        let view = reader.view().clone();
+        let click = gtk::GestureClick::builder().button(3).build();
+        let window = self.downgrade();
+        click.connect_pressed(move |gesture, _, x, y| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let Some(view) = gesture.widget() else {
+                return;
+            };
+            let keymap = window
+                .imp()
+                .keymap
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| postio_core::Keymap::resolve(&Default::default()));
+            let reader = window.reader_showing();
+            let menu = gio::Menu::new();
+            let item = |title: &str, id: CommandId| {
+                let label = match keymap.binding(id) {
+                    Some(binding) => format!("{title}\t{binding}"),
+                    None => title.to_owned(),
+                };
+                let entry = gio::MenuItem::new(Some(&label), None);
+                entry.set_action_and_target_value(
+                    Some("readermenu.command"),
+                    Some(&id.as_str().to_variant()),
+                );
+                menu.append_item(&entry);
+            };
+            if let Some(title) = reader.darken_title() {
+                item(title, CommandId::DarkenMessage);
+            }
+            if let Some(spec) =
+                postio_core::registry::all().find(|spec| spec.id == CommandId::ToggleReaderView)
+            {
+                item(spec.title, CommandId::ToggleReaderView);
+            }
+            let popover = gtk::PopoverMenu::from_model(Some(&menu));
+            popover.set_parent(&view);
+            popover.set_has_arrow(false);
+            popover.set_halign(gtk::Align::Start);
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            let actions = gio::SimpleActionGroup::new();
+            let command = gio::SimpleAction::new("command", Some(glib::VariantTy::STRING));
+            let weak = window.downgrade();
+            command.connect_activate(move |_, parameter| {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                let Some(name) = parameter.and_then(|value| value.str().map(str::to_owned)) else {
+                    return;
+                };
+                if let Some(spec) =
+                    postio_core::registry::all().find(|spec| spec.id.as_str() == name)
+                {
+                    window.act(postio_core::Command::default_for(spec.id));
+                }
+            });
+            actions.add_action(&command);
+            popover.insert_action_group("readermenu", Some(&actions));
+            popover.connect_closed(|popover| popover.unparent());
+            popover.popup();
+        });
+        view.add_controller(click);
+    }
+
+    /// Fetch remote images with `fetch`, for every reader this window has
+    /// built or will build: the application's fetcher (spec 006 T137).
+    pub fn set_remote_fetch(
+        &self,
+        fetch: impl Fn(Vec<String>, crate::reader::view::RemoteArrived) + 'static,
+    ) {
+        self.imp()
+            .remote_fetch
+            .replace(Some(std::rc::Rc::new(fetch)));
+    }
+
+    /// Apply `[reader]` from `config.toml`: the zoom, to every reader open
+    /// now and every one built later (spec 006 FR-021).
+    pub fn apply_reader(&self, config: &postio_config::ReaderConfig) {
+        let imp = self.imp();
+        imp.zoom.set(config.zoom);
+        imp.applying_zoom.set(true);
+        if let Some(reader) = imp.reader.get() {
+            reader.set_zoom(config.zoom);
+        }
+        if let Some(reader) = imp
+            .conversation
+            .get()
+            .and_then(|pane| pane.document_reader())
+        {
+            reader.set_zoom(config.zoom);
+        }
+        imp.applying_zoom.set(false);
+    }
+
+    /// Call `f` with the zoom a person chose -- a key, Ctrl+scroll, a pinch,
+    /// the indicator's reset -- so it can be persisted. Not called for a
+    /// zoom configuration applied.
+    pub fn connect_zoom_changed(&self, f: impl Fn(u16) + 'static) {
+        self.imp().on_zoom_changed.borrow_mut().push(Box::new(f));
+    }
+
+    /// A reader, unwired: see [`new_reader`](Self::new_reader).
+    fn build_reader(&self) -> crate::reader::Reader {
         // Read through the slot on every request rather than captured, so a
         // source wired after the reader was built still resolves parts.
         // Weak, and this one is load-bearing (#794). The closure becomes the
@@ -1132,8 +1288,20 @@ impl Window {
     /// sender is allowed, which is [`crate::reader::Reader`]'s own rule and
     /// is not something this can bypass.
     pub fn show_message(&self, body: &postio_model::MessageBody, sender: Option<&str>) {
+        self.show_prepared_message(body, sender, None);
+    }
+
+    /// [`show_message`](Self::show_message), with the body already judged
+    /// and sanitised off the main thread -- see
+    /// [`Reader::render_prepared`](crate::reader::Reader::render_prepared).
+    pub fn show_prepared_message(
+        &self,
+        body: &postio_model::MessageBody,
+        sender: Option<&str>,
+        prepared: Option<postio_ui::reader::document::Prepared>,
+    ) {
         let reader = self.reader();
-        reader.render(body, sender);
+        reader.render_prepared(body, sender, prepared);
         // A single message takes the pane back from a conversation (#755):
         // the cursor moved to a row that is not one, so the stack would be
         // showing mail the user has left.
@@ -1430,11 +1598,22 @@ impl Window {
         // One way to show a folder, whether the user picked it or the window
         // is opening on the one they were last in.
         let show: OpenMailbox = {
-            let feed = feed.clone();
-            let folders = folders.clone();
-            let list = list.clone();
-            let list_state = self.list_state();
+            // The window and sidebar retain this callback. It must not retain
+            // either feed: Folders owns the sidebar, and both feeds retain
+            // callbacks of their own below.
+            let feed = feed.downgrade();
+            let folders = folders.downgrade();
+            let list = list.downgrade();
+            let list_state = self.list_state().downgrade();
             std::rc::Rc::new(move |choice| {
+                let (Some(feed), Some(folders), Some(list), Some(list_state)) = (
+                    feed.upgrade(),
+                    folders.upgrade(),
+                    list.upgrade(),
+                    list_state.upgrade(),
+                ) else {
+                    return;
+                };
                 // A view row is in `mailboxes()` like any other — it just has
                 // no id — so the header above the rows is named the same way
                 // whichever kind was picked.
@@ -1533,10 +1712,10 @@ impl Window {
 
         folders.connect_loaded({
             let show = show.clone();
-            let feed = feed.clone();
-            let folders = folders.clone();
-            let sidebar = self.sidebar();
-            let list = list.clone();
+            let feed = feed.downgrade();
+            let folders = folders.downgrade();
+            let sidebar = self.sidebar().downgrade();
+            let list = list.downgrade();
             // Which folder tree this handler has already opened something
             // for. `None` is "not yet": generations start at zero, so zero
             // is a real value rather than a spare one.
@@ -1546,6 +1725,14 @@ impl Window {
             // emitted `MailboxesChanged` (#813).
             let picked_for = std::cell::Cell::new(None::<u64>);
             move |loaded| {
+                let (Some(feed), Some(folders), Some(sidebar), Some(list)) = (
+                    feed.upgrade(),
+                    folders.upgrade(),
+                    sidebar.upgrade(),
+                    list.upgrade(),
+                ) else {
+                    return;
+                };
                 // Refresh the header's "N unread" for the folder already on
                 // screen, on every load. `set_mailbox` is called elsewhere
                 // only when a folder is *opened*, so without this the count
@@ -1606,40 +1793,52 @@ impl Window {
         // line does, so there is one connection and one answer about it —
         // and they also depend on whether there are rows, which arrive a
         // beat after the status does.
-        folders.connect_status(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            #[strong]
-            folders,
-            #[strong]
-            feed,
-            move |_| window.refresh_list_state(&folders, &feed)
-        ));
+        let refresh = {
+            let window = self.downgrade();
+            let folders = folders.downgrade();
+            let feed = feed.downgrade();
+            std::rc::Rc::new(move || {
+                if let (Some(window), Some(folders), Some(feed)) =
+                    (window.upgrade(), folders.upgrade(), feed.upgrade())
+                {
+                    window.refresh_list_state(&folders, &feed);
+                }
+            })
+        };
+        folders.connect_status({
+            let refresh = refresh.clone();
+            move |_| refresh()
+        });
         // And when the list is aimed somewhere else entirely. What the pane
         // says depends on *which* scope the rows came from -- an aggregate
         // answers ADR 0005 Q10's rule and a folder does not -- so a scope
         // change re-derives it. Neither of the other two triggers fires for
         // one: the connection has not moved, and switching to a view with
         // the same number of rows changes nothing about the model.
-        feed.connect_opened(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            #[strong]
-            folders,
-            #[strong(rename_to = opened_feed)]
-            feed,
-            move || window.refresh_list_state(&folders, &opened_feed)
-        ));
-        list.model().connect_items_changed(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            #[strong]
-            folders,
-            #[strong]
-            feed,
-            move |_, _, _, _| window.refresh_list_state(&folders, &feed)
-        ));
+        feed.connect_opened({
+            let refresh = refresh.clone();
+            move || refresh()
+        });
+        list.model().connect_items_changed({
+            let refresh = refresh.clone();
+            move |_, _, _, _| refresh()
+        });
+        // The first answer for a folder ends its wait even when it brings no
+        // rows, and so changes nothing about the model's length: an empty
+        // folder is only empty once it has said so.
+        list.model().connect_filled(move |_| refresh());
 
+        // Which folders are inboxes, for the list's own reactions: Unified is
+        // the inboxes (#1692), and an arrival in any other folder leaves it
+        // alone only if the list knows that folder is not one.
+        folders.connect_loaded({
+            let feed = feed.downgrade();
+            move |mailboxes| {
+                if let Some(feed) = feed.upgrade() {
+                    feed.set_folders(mailboxes);
+                }
+            }
+        });
         folders.open(account, address);
         *self.imp().messages.borrow_mut() = Some(messages);
         Feeds::new(feed, folders)
@@ -1654,6 +1853,8 @@ impl Window {
     /// `postio-qhz` will widen them when the counts exist.
     fn refresh_list_state(&self, folders: &Folders, feed: &Feed) {
         let rows = self.list().model().n_items() as u64;
+        self.list_state()
+            .set_loading(self.list().model().is_loading());
 
         // An aggregate view answers by ADR 0005 Q10's rule instead of by the
         // single-account states: a whole-pane "Offline" would be a claim
@@ -1900,6 +2101,25 @@ impl Window {
         let _ = self.imp().sidebar.set(sidebar);
         let _ = self.imp().list_state.set(list_state);
         let _ = self.imp().list.set(list_view);
+        // `darken_message` reads "Show as sent" on a darkened message: the
+        // title is the undo (spec 006 contracts/registry-commands).
+        finder.set_live_titles({
+            let window = self.downgrade();
+            move |id| {
+                if id != postio_core::ActionId::Builtin(CommandId::DarkenMessage) {
+                    return None;
+                }
+                // Only a reader that exists: asking for a title must not
+                // build one, in the middle of the palette's own refresh.
+                let window = window.upgrade()?;
+                let imp = window.imp();
+                imp.conversation
+                    .get()
+                    .and_then(|pane| pane.document_reader())
+                    .or_else(|| imp.reader.get().cloned())?
+                    .darken_title()
+            }
+        });
         let _ = self.imp().finder.set(finder);
         let _ = self.imp().cheatsheet.set(cheatsheet);
         let _ = self.imp().orientation.set(orientation);
@@ -1936,6 +2156,25 @@ impl Window {
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
         let _ = self.imp().compose_button.set(header.compose.clone());
+        // The header's caps follow a rebind like every other surface's.
+        // After the composer's own `set_keymap` in `apply_keymap`, and asking
+        // it the same question, so the two never disagree about whether the
+        // button says `Compose` or `Composing`.
+        let (keys, compose) = (header.keys.clone(), header.compose.clone());
+        self.connect_keymap(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |keymap| {
+                header::sync_keys(&keys, keymap);
+                let composing = window
+                    .imp()
+                    .composer
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|composer| composer.is_open());
+                header::sync_compose(&compose, composing, keymap);
+            }
+        ));
         let _ = self.imp().toast.set(toast);
         self.imp().context.set(Some(Context::List));
 
@@ -1944,7 +2183,7 @@ impl Window {
 
     /// Builds the resolver from the registry defaults and starts listening.
     fn install_keyboard(&self) {
-        let keymap = postio_core::Keymap::resolve(&Default::default());
+        let keymap = postio_core::Keymap::defaults().clone();
         let (resolver, problems) = Resolver::from_commands(&keymap);
         report(&problems);
         self.settings().set_keymap_problems(&problems);
@@ -2175,6 +2414,7 @@ impl Window {
     /// compiler while being equal to the user, which is the whole shape of
     /// ADR 0002.
     fn run_action(&self, id: ActionId) {
+        crate::jank::note_action(id);
         // **Refuse out loud rather than be swallowed** (#1114). A window is
         // on screen before its store is, and a key bound to something that
         // reads mail cannot run there -- but a key that silently does
@@ -2374,6 +2614,24 @@ impl Window {
                     self.reader_showing().view_original();
                 }
             }
+            // Every message opens as sent (spec 006 FR-031), so this is the
+            // way into reader view, per message, and back out of it.
+            CommandId::ToggleReaderView => {
+                if !self.conversation().toggle_focused_reader_view() {
+                    self.reader_showing().toggle_reader_view();
+                }
+            }
+            // The reading renderer's own verbs (spec 006): each acts on the
+            // reader on screen, which has the snapshot they need.
+            CommandId::DarkenMessage => {
+                self.reader_showing().darken_message();
+            }
+            CommandId::FindInMessage => self.reader_showing().find_in_message(),
+            CommandId::FindNext => self.reader_showing().find_step(true),
+            CommandId::FindPrevious => self.reader_showing().find_step(false),
+            CommandId::ZoomIn => self.reader_showing().zoom_in(),
+            CommandId::ZoomOut => self.reader_showing().zoom_out(),
+            CommandId::ZoomReset => self.reader_showing().zoom_reset(),
 
             // The conversation's own, so it goes to the pane rather than out
             // on the bus: nothing outside this window has anything to do with
@@ -2390,6 +2648,22 @@ impl Window {
                 self.conversation().toggle_rail();
             }
             CommandId::Settings => self.toggle_settings(),
+            // The close button, from the keyboard: closing the last window
+            // ends the application exactly as the button always did.
+            CommandId::Quit => self.close(),
+            // The terminal's composer hands its Markdown to `$EDITOR`. This
+            // one edits a rich document in place and has no text an editor
+            // could open and give back. The palette and the cheat sheet do
+            // not offer it here (`Requirement::Terminal`); the key still
+            // reaches this arm, so it says why rather than doing nothing.
+            CommandId::EditExternally => self.composer().set_status(
+                "this composer edits in place — the terminal one hands its text to $EDITOR",
+            ),
+            // The terminal's composer writes Markdown and can show what it
+            // will look like. This one shows formatting as it is written.
+            CommandId::TogglePreview => self
+                .composer()
+                .set_status("this composer already shows the message as it will look"),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
             // (`window.rs`, `sidebar_toggle.connect_toggled`); this is the
@@ -2521,6 +2795,13 @@ impl Window {
             // reason the folders are — see `postio-14b`. Set and cleared by
             // `open_parts`/`close_parts`, the one door in and out of it.
             CommandId::OpenParts => self.reader().request_parts(),
+            // The remote-image banner's two buttons and the unsubscribe
+            // banner's one, from the keyboard and the palette -- and only when
+            // the banner is there to offer them, so a key on a message with
+            // nothing to show or no list to leave does nothing at all.
+            CommandId::ShowImages | CommandId::AlwaysShowImages | CommandId::Unsubscribe => {
+                self.reader().run_banner_command(id);
+            }
             CommandId::NextPart => self.parts().next_part(),
             CommandId::PrevPart => self.parts().prev_part(),
             CommandId::OpenPart => self.parts().open_part(),
@@ -2845,6 +3126,7 @@ impl Window {
         postio_core::Availability {
             scope: self.imp().scope.get(),
             store_open: self.imp().store_open.get(),
+            terminal: false,
         }
     }
 
@@ -2857,6 +3139,16 @@ impl Window {
     /// Called with every command a key press resolves to.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.imp().commands.borrow_mut().push(Box::new(handler));
+    }
+
+    /// The keymap in force: the last one applied, or the registry's own
+    /// bindings before `config.toml` has been read.
+    pub fn keymap_in_force(&self) -> postio_core::Keymap {
+        self.imp()
+            .keymap
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| postio_core::Keymap::defaults().clone())
     }
 
     /// Called with the keymap whenever one is applied, and once immediately
@@ -3369,6 +3661,7 @@ impl Window {
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap.clone());
         self.orientation().set_keymap(&keymap);
+        self.list_state().set_keymap(&keymap);
         self.parts().set_keymap(&keymap);
         self.reader().set_keymap(&keymap);
         // Every message in the stack carries its own Reply/Reply all/Forward
@@ -3400,7 +3693,6 @@ impl Window {
     /// the rows already on screen rather than at the next start.
     pub fn apply_ui(&self, ui: &postio_config::UiConfig) {
         self.list().set_show_actions(ui.show_hover_actions);
-        self.list().set_show_hints(ui.show_key_hints);
     }
 
     /// Reopen where the last session left off.

@@ -1,7 +1,7 @@
 //! `group:` — ADR 0007 Q3: "from or to any member", composing with every
 //! other operator the way `list:` and `in:` do.
 
-use chrono::{TimeZone, Utc};
+use super::executor::at;
 
 use postio_index::{SearchRequest, search};
 use postio_model::{AccountScope, EmailAddress, Message};
@@ -10,10 +10,6 @@ use postio_search::parse;
 use postio_storage::Connection;
 use postio_storage::repository::{ContactGroupRepository, ContactRepository, MessageRepository};
 use postio_storage::test_support;
-
-fn at(hour: u32) -> chrono::DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
-}
 
 struct World {
     _database: postio_storage::Store,

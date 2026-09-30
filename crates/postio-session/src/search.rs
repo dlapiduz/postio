@@ -49,7 +49,71 @@ pub async fn execute(
     scope: Scope,
     order: ResultOrder,
 ) -> Option<SearchResults> {
-    let mut results = search(
+    execute_with_snippets(connection, account, query, scope, order, SNIPPET_HITS).await
+}
+
+/// [`execute`], cutting an excerpt for only the first `snippets` hits.
+///
+/// For a surface that draws one excerpt at a time: the GTK finder shows the
+/// focused hit's in its preview, and only while that hit's body is still on
+/// its way -- the body replaces it -- so it asks for the best match's alone.
+/// Each excerpt is a body read, a decode and an HTML-to-text pass, and fifty
+/// of them stood between a keystroke and the readout's answer (#1613).
+pub async fn execute_with_snippets(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    scope: Scope,
+    order: ResultOrder,
+    snippets: usize,
+) -> Option<SearchResults> {
+    let mut results = run(connection, account, query, scope, order).await?;
+
+    // A word that found nothing is answered with the word that was meant,
+    // when the index offered one and it finds something here (ADR 0037,
+    // amended). The box keeps what was typed; `instead` is what lets the
+    // surface say the list is for a different word. The executor only ever
+    // offers for a single bare, unquoted word, so the offer *is* the query.
+    //
+    // Here and not in the executor, because the executor also answers saved
+    // searches and rules, which must match exactly what they say.
+    let mut shown = std::borrow::Cow::Borrowed(query);
+    if results.total_hits == 0
+        && let Some(offer) = results.suggestion.clone()
+    {
+        let offered = postio_search::parse(&offer.term, Utc::now().date_naive());
+        if let Some(mut found) = run(connection, account, &offered, scope, order).await
+            && found.total_hits > 0
+        {
+            let typed = query
+                .text_terms()
+                .next()
+                .map(|term| term.value.clone())
+                .unwrap_or_default();
+            found.instead = Some(postio_search::Instead {
+                typed,
+                term: offer.term,
+            });
+            results = found;
+            shown = std::borrow::Cow::Owned(offered);
+        }
+    }
+
+    // Excerpts point at the word that matched, which after a rewrite is not
+    // the one typed.
+    snippet_hits(connection, &shown, &mut results, snippets).await;
+    Some(results)
+}
+
+/// One run of the executor for the box: the caller's scope, the hit limit.
+async fn run(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    scope: Scope,
+    order: ResultOrder,
+) -> Option<SearchResults> {
+    search(
         connection,
         &SearchRequest {
             // The caller's own scope, passed through. It was hardcoded to
@@ -69,9 +133,7 @@ pub async fn execute(
     )
     .await
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
-    .ok()?;
-    snippet_hits(connection, query, &mut results).await;
-    Some(results)
+    .ok()
 }
 
 /// What the result set on screen is made of — the refine chips and the scope
@@ -130,7 +192,12 @@ pub async fn facets(
 /// the string highlighted is the string that was indexed, rather than a second
 /// guess at it, and `postio_search::highlight`'s token rule is FTS5's own. A
 /// message with no local body gets no excerpt rather than a wrong one.
-async fn snippet_hits(connection: &Checkout, query: &ParsedQuery, results: &mut SearchResults) {
+async fn snippet_hits(
+    connection: &Checkout,
+    query: &ParsedQuery,
+    results: &mut SearchResults,
+    snippets: usize,
+) {
     let terms = postio_search::highlight::terms(query);
     if terms.is_empty() {
         // A structured-only query — `is:unread`, `in:archive` — has nothing to
@@ -138,7 +205,7 @@ async fn snippet_hits(connection: &Checkout, query: &ParsedQuery, results: &mut 
         // SQLite was cutting them.
         return;
     }
-    for hit in results.hits.iter_mut().take(SNIPPET_HITS) {
+    for hit in results.hits.iter_mut().take(snippets) {
         let body = crate::reading::load_body(connection, hit.message_id).await;
         if let Some(text) = postio_index::index::indexable_text(&body) {
             hit.snippet = postio_search::highlight::snippet(&text, &terms);

@@ -13,7 +13,11 @@ use std::sync::OnceLock;
 
 use postio_body::quote;
 use postio_body::reader_view;
-use postio_body::sanitize::{self, RemoteImages};
+use postio_body::sanitize;
+/// Whether a message may load remote images -- what [`prepare`] and the
+/// renderers are asked under, re-exported so a caller preparing ahead needs
+/// no second path to it.
+pub use postio_body::sanitize::RemoteImages;
 use postio_model::message::MessageBody;
 
 /// The security origin every rendered message loads under.
@@ -285,15 +289,18 @@ fn senders_sheet_css() -> String {
     )
 }
 
+/// The generated reader palette: the light scheme, then its dark block.
+pub(crate) const PALETTE: &str = include_str!("../../data/reader-tokens.css");
+
+/// Where [`PALETTE`]'s dark scheme begins.
+pub(crate) const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
+
 /// The light half of the generated palette, as declarations.
 ///
 /// A sibling of [`reader_ground`], split out of the same file the same way:
 /// everything before the dark block is the light scheme, and the `:root`
 /// body of it is the set of values a sender's page should be drawn with.
 fn light_tokens() -> &'static str {
-    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
-    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
-
     let (light, _) = PALETTE
         .split_once(DARK_BLOCK)
         .expect("the generated palette always emits a dark block");
@@ -331,9 +338,6 @@ fn reader_css() -> String {
 /// and a second copy would be one that could silently drift from the design
 /// system the first is regenerated from.
 pub fn reader_ground(dark: bool) -> &'static str {
-    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
-    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
-
     let (light, dark_block) = PALETTE
         .split_once(DARK_BLOCK)
         .expect("the generated palette always emits a dark block");
@@ -656,6 +660,23 @@ pub fn sheet_for(rendering: Rendering, suits_reader_view: bool) -> Sheet {
     }
 }
 
+/// How every message opens (spec 006 FR-031): as its sender built it.
+///
+/// Reader view is a command away, never the default. Whether a message reads
+/// as bulk ([`suits_reader_view`]) is still asked -- it picks the sheet the
+/// original is drawn on ([`sheet_for`]) and offers unsubscribe -- but it no
+/// longer decides the rendering. It did, and newsletters opened flattened:
+/// the maintainer's summary was that Postio "over indexed in privacy and
+/// removing layout".
+///
+/// The GTK reading pane's rule, and [`prepare`]'s. The terminal frontend
+/// draws markup as text, where reader view *is* the readable presentation of
+/// bulk mail, and keeps its own rule (spec 005); the macOS frontend is out of
+/// spec 006's scope and keeps its own too.
+pub fn opening_rendering() -> Rendering {
+    Rendering::Original
+}
+
 /// A body, drawn, and everything a surface needs to say about how.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rendered {
@@ -680,6 +701,9 @@ pub struct Rendered {
     /// Links reduction collapsed. The canvas draws the pair as
     /// `1 link kept of 23`.
     pub links_dropped: usize,
+    /// The input cap the HTML body exceeded, if any: then `html` is the
+    /// plain-text alternative, and the reader says why (spec 006 R6).
+    pub over_cap: Option<postio_body::Cap>,
 }
 
 impl Rendered {
@@ -704,7 +728,10 @@ pub fn suits_reader_view(body: &MessageBody) -> bool {
     body.html
         .as_deref()
         .filter(|html| !html.trim().is_empty())
-        .is_some_and(reader_view::reads_as_bulk)
+        .is_some_and(|html| {
+            crate::reader::cost::bump(&crate::reader::cost::BULK_JUDGED, 1);
+            reader_view::reads_as_bulk(html)
+        })
 }
 
 /// The class the facts block is drawn with.
@@ -818,6 +845,9 @@ pub fn body_html_in(
             // sender HTML would be relying on it for a promise it does not
             // make.
             let sanitized = sanitize::sanitize_body_in(html, remote, scope);
+            if let Some(cap) = sanitized.over_cap {
+                return over_cap(body, cap);
+            }
             let reduced = reader_view::reduce(&sanitized.html);
             return Rendered {
                 html: reduced.html,
@@ -836,14 +866,24 @@ pub fn body_html_in(
                 rendering: Rendering::Reader,
                 links_kept: reduced.links_kept,
                 links_dropped: reduced.links_dropped,
+                over_cap: None,
             };
         }
     }
 
     if let Some(html) = html {
         let sanitized = sanitize::sanitize_body_in(html, remote, scope);
+        if let Some(cap) = sanitized.over_cap {
+            return over_cap(body, cap);
+        }
         return Rendered {
-            html: quote::fold_html_quotes(&sanitized.html),
+            html: on_canvas(
+                &format!(
+                    r#"<div class="{ORIGINAL_CLASS}">{}</div>"#,
+                    quote::fold_html_quotes(&sanitized.html)
+                ),
+                &sanitized,
+            ),
             styles: sanitized.styles,
             held_back: HeldBack {
                 remote_images: sanitized.remote_blocked,
@@ -860,6 +900,58 @@ pub fn body_html_in(
         };
     }
     Rendered::default()
+}
+
+/// A message whose HTML is over an input cap: its plain-text alternative,
+/// or a line saying there is nothing else to show. Never blank.
+fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
+    let html = match body.text.as_deref().filter(|text| !text.trim().is_empty()) {
+        Some(text) => quote::text_to_html(text),
+        None => "<p>This message is too large to display.</p>".to_owned(),
+    };
+    Rendered {
+        html,
+        over_cap: Some(cap),
+        ..Rendered::default()
+    }
+}
+
+/// The class original HTML is wrapped in, so the reader's own typography
+/// can be reverted under it (spec 006 FR-019, `reader.css`).
+///
+/// Postio-owned and in the reserved namespace: a sender cannot wear it
+/// (`postio_body::sanitize`), and plain text and reader view are never
+/// wrapped in it, because Postio's type is what they are.
+pub const ORIGINAL_CLASS: &str = "postio-original";
+
+/// The sender's content on the page they styled (spec 006 FR-006).
+///
+/// The sanitizer's output is a fragment, so what `<html>` and `<body>` said
+/// about the page arrives beside it as a [`sanitize::Canvas`], and this puts
+/// it back: a Postio-owned `.postio-canvas` that fills the message's
+/// container (`reader.css`), carrying the page's colours and style and the
+/// `color-scheme` the sender declared, for the engine and the theme rule to
+/// read. A sender who styled no page gets no wrapper at all.
+pub fn on_canvas(content: &str, sanitized: &sanitize::Sanitized) -> String {
+    let canvas = &sanitized.canvas;
+    if canvas.style.is_empty() && sanitized.color_scheme.is_none() {
+        return content.to_owned();
+    }
+    let mut out = String::from(r#"<div class="postio-canvas""#);
+    if !canvas.style.is_empty() {
+        out.push_str(r#" style=""#);
+        escape_into(&mut out, &canvas.style);
+        out.push('"');
+    }
+    if let Some(scheme) = sanitized.color_scheme {
+        out.push_str(r#" data-postio-color-scheme=""#);
+        out.push_str(scheme.as_str());
+        out.push('"');
+    }
+    out.push('>');
+    out.push_str(content);
+    out.push_str("</div>");
+    out
 }
 
 /// Give a sender's content a bounded surface of its own (#323): a visible
@@ -967,6 +1059,79 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
     )
 }
 
+/// One message rendered ahead of being shown, off the main thread.
+///
+/// What [`prepare`] makes and [`RenderCache::offer`] takes: the reader-view
+/// verdict and the sanitised document for a message the reader is likely to
+/// open next, so opening it asks the main thread for neither parse.
+#[derive(Clone, Debug)]
+pub struct Prepared {
+    scope: String,
+    body: MessageBody,
+    remote: RemoteImages,
+    verdict: bool,
+    rendering: Rendering,
+    rendered: Rendered,
+}
+
+impl Prepared {
+    /// Whether this was prepared from exactly `body`, under exactly these
+    /// two decisions -- the only case in which it may stand in for
+    /// sanitising `body` now.
+    pub fn serves(&self, body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> bool {
+        self.remote == remote && self.rendering == rendering && self.body == *body
+    }
+
+    /// The reader-view verdict for `body`, if this was prepared from it.
+    pub fn verdict_for(&self, body: &MessageBody) -> Option<bool> {
+        (self.body == *body).then_some(self.verdict)
+    }
+
+    /// What the sanitiser made of it.
+    pub fn rendered(&self) -> &Rendered {
+        &self.rendered
+    }
+}
+
+/// Render `body` for the single-message reader ahead of time: the same as
+/// [`prepare`], with no scope stamped on its references, which is what
+/// [`body_html`] draws for one message on its own.
+///
+/// For a worker: the reader-view verdict and the sanitising are the two
+/// html5ever parses a message costs, and the main thread is where neither
+/// belongs -- each is paid on every message the cursor settles on.
+pub fn prepare_message(body: &MessageBody, remote: RemoteImages) -> Prepared {
+    let verdict = suits_reader_view(body);
+    let rendering = opening_rendering();
+    Prepared {
+        scope: String::new(),
+        body: body.clone(),
+        remote,
+        verdict,
+        rendering,
+        rendered: body_html(body, remote, rendering),
+    }
+}
+
+/// Render `body` for the message `scope` ahead of time, as a conversation
+/// would draw it by default ([`opening_rendering`]), under `remote`.
+///
+/// Pure, and for a worker thread -- the parses it saves the main thread are
+/// the point. A message drawn any other way when it is shown (its sender
+/// allowed since, `⌃O` on it) is simply rendered then, as before.
+pub fn prepare(scope: &str, body: &MessageBody, remote: RemoteImages) -> Prepared {
+    let verdict = suits_reader_view(body);
+    let rendering = opening_rendering();
+    Prepared {
+        scope: scope.to_owned(),
+        body: body.clone(),
+        remote,
+        verdict,
+        rendering,
+        rendered: body_html_in(body, remote, rendering, Some(scope)),
+    }
+}
+
 /// What the sanitiser made of each message of a thread, kept while the
 /// thread is on screen, so a redraw re-sanitises only what changed (#1605).
 ///
@@ -980,7 +1145,17 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 #[derive(Debug, Default)]
 pub struct RenderCache {
     held: std::collections::HashMap<String, Held>,
+    /// Each message's reader-view verdict, and the body it was reached for.
+    judged: std::collections::HashMap<String, (MessageBody, bool)>,
+    /// Messages rendered ahead of being shown -- see [`RenderCache::offer`].
+    /// Apart from `held` so that trimming to the thread on screen does not
+    /// throw away the thread about to be.
+    offered: std::collections::HashMap<String, Prepared>,
 }
+
+/// How many messages rendered ahead [`RenderCache::offer`] holds before it
+/// forgets the ones nobody drew: a long thread's worth, several times over.
+const OFFERED_LIMIT: usize = 512;
 
 #[derive(Debug)]
 struct Held {
@@ -1007,7 +1182,13 @@ impl RenderCache {
         {
             return held.rendered.clone();
         }
-        let rendered = body_html_in(body, remote, rendering, Some(scope));
+        let offered = self.offered.remove(scope).filter(|prepared| {
+            prepared.remote == remote && prepared.rendering == rendering && prepared.body == *body
+        });
+        let rendered = match offered {
+            Some(prepared) => prepared.rendered,
+            None => body_html_in(body, remote, rendering, Some(scope)),
+        };
         self.held.insert(
             scope.to_owned(),
             Held {
@@ -1020,11 +1201,51 @@ impl RenderCache {
         rendered
     }
 
+    /// Take messages rendered ahead of being shown, beside whatever was
+    /// offered before.
+    ///
+    /// Added to rather than replacing: a thread's bodies are prepared as
+    /// they are read, one at a time, and each offer must not throw away the
+    /// ones before it that have not been drawn yet. A drawn one is taken out
+    /// as it is used; what is never drawn -- the cursor moved on first -- is
+    /// dropped wholesale once more than [`OFFERED_LIMIT`] have gathered.
+    pub fn offer(&mut self, prepared: Vec<Prepared>) {
+        if self.offered.len() + prepared.len() > OFFERED_LIMIT {
+            self.offered.clear();
+        }
+        self.offered.extend(
+            prepared
+                .into_iter()
+                .map(|prepared| (prepared.scope.clone(), prepared)),
+        );
+    }
+
+    /// [`suits_reader_view`] for the message `scope`.
+    ///
+    /// The same parse the sanitiser's cache spares, asked before it: whether
+    /// a message is bulk decides how it renders, so a redraw asked it of
+    /// every message in the thread before the cache could answer anything.
+    pub fn suits_reader_view(&mut self, scope: &str, body: &MessageBody) -> bool {
+        if let Some((judged, verdict)) = self.judged.get(scope)
+            && judged == body
+        {
+            return *verdict;
+        }
+        let verdict = match self.offered.get(scope) {
+            Some(prepared) if prepared.body == *body => prepared.verdict,
+            _ => suits_reader_view(body),
+        };
+        self.judged
+            .insert(scope.to_owned(), (body.clone(), verdict));
+        verdict
+    }
+
     /// Forget every message but these: the thread on screen is what the
     /// cache is for, and a message that left it is not drawn again.
     pub fn keep_only<'a>(&mut self, scopes: impl IntoIterator<Item = &'a str>) {
         let keep: std::collections::HashSet<&str> = scopes.into_iter().collect();
         self.held.retain(|scope, _| keep.contains(scope.as_str()));
+        self.judged.retain(|scope, _| keep.contains(scope.as_str()));
     }
 
     /// How many messages the cache holds.
@@ -1047,6 +1268,120 @@ mod render_cache_tests {
             text: None,
             html: Some(html.to_owned()),
         }
+    }
+
+    #[test]
+    fn a_message_prepared_ahead_is_shown_without_parsing_it_again() {
+        // `j` into the next conversation parsed every body in it twice on the
+        // main thread -- once to judge it, once to sanitise it -- in front of
+        // the first frame of it. Prepared on a worker, it costs neither.
+        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
+        let prepared = prepare("9", &newsletter, RemoteImages::Blocked);
+        let expected = prepared.rendered.clone();
+        let rendering = prepared.rendering;
+
+        let mut cache = RenderCache::default();
+        // The thread on screen trims the cache; what was offered survives it.
+        cache.offer(vec![prepared]);
+        cache.keep_only(["1"]);
+
+        let (judged, sanitised) = (
+            crate::test_support::bulk_judged(),
+            crate::test_support::bodies_sanitised(),
+        );
+        let verdict = cache.suits_reader_view("9", &newsletter);
+        let drawn = cache.render("9", &newsletter, RemoteImages::Blocked, rendering);
+        assert_eq!(drawn, expected);
+        assert_eq!(verdict, rendering == Rendering::Reader);
+        assert_eq!(
+            crate::test_support::bulk_judged() - judged,
+            0,
+            "judged again"
+        );
+        assert_eq!(
+            crate::test_support::bodies_sanitised() - sanitised,
+            0,
+            "sanitised again"
+        );
+
+        // A different body under the same scope is not the prepared one.
+        cache.offer(vec![prepare("9", &newsletter, RemoteImages::Blocked)]);
+        let reply = body("<p>A reply.</p>");
+        let sanitised = crate::test_support::bodies_sanitised();
+        cache.render("9", &reply, RemoteImages::Blocked, Rendering::Original);
+        assert_eq!(crate::test_support::bodies_sanitised() - sanitised, 1);
+    }
+
+    #[test]
+    fn bodies_offered_one_at_a_time_are_all_kept_until_drawn() {
+        // A thread's bodies are prepared as they are read and offered one
+        // by one; replacing on each offer kept only the last, and the rest
+        // were sanitised again on the main thread when the thread was drawn.
+        let first = body("<p>One.</p>");
+        let second = body("<p>Two.</p>");
+        let mut cache = RenderCache::default();
+        cache.offer(vec![prepare("1", &first, RemoteImages::Blocked)]);
+        cache.offer(vec![prepare("2", &second, RemoteImages::Blocked)]);
+
+        let sanitised = crate::test_support::bodies_sanitised();
+        cache.render("1", &first, RemoteImages::Blocked, Rendering::Original);
+        cache.render("2", &second, RemoteImages::Blocked, Rendering::Original);
+        assert_eq!(
+            crate::test_support::bodies_sanitised() - sanitised,
+            0,
+            "an earlier offer was thrown away by a later one"
+        );
+    }
+
+    #[test]
+    fn a_message_prepared_for_the_single_reader_is_what_it_would_draw() {
+        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
+        let prepared = prepare_message(&newsletter, RemoteImages::Blocked);
+        let rendering = if suits_reader_view(&newsletter) {
+            Rendering::Reader
+        } else {
+            Rendering::Original
+        };
+        assert_eq!(
+            prepared.verdict_for(&newsletter),
+            Some(rendering == Rendering::Reader)
+        );
+        assert!(prepared.serves(&newsletter, RemoteImages::Blocked, rendering));
+        assert_eq!(
+            *prepared.rendered(),
+            body_html(&newsletter, RemoteImages::Blocked, rendering),
+            "the single reader's references carry no scope, and nor may this"
+        );
+        // Anything else is not what it was prepared for.
+        assert!(!prepared.serves(&newsletter, RemoteImages::Allowed, rendering));
+        assert_eq!(prepared.verdict_for(&body("<p>Other.</p>")), None);
+    }
+
+    #[test]
+    fn a_message_is_judged_for_reader_view_once_until_its_body_changes() {
+        // A conversation redraw asked of every message whether it is bulk
+        // mail -- an html5ever parse of the whole body -- on the main thread,
+        // each time anything queued a redraw, outside the cache that already
+        // spared the sanitiser the same repeat.
+        let mut cache = RenderCache::default();
+        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
+        let before = crate::test_support::bulk_judged();
+        let first = cache.suits_reader_view("7", &newsletter);
+        let again = cache.suits_reader_view("7", &newsletter);
+        assert_eq!(first, again);
+        assert_eq!(
+            crate::test_support::bulk_judged() - before,
+            1,
+            "judged twice"
+        );
+
+        let changed = body("<p>A reply, in full.</p>");
+        cache.suits_reader_view("7", &changed);
+        assert_eq!(
+            crate::test_support::bulk_judged() - before,
+            2,
+            "a new body is a new question"
+        );
     }
 
     #[test]
@@ -1543,7 +1878,10 @@ mod tests {
             text: Some("plain fallback".to_owned()),
             html: Some("<p>rich</p>".to_owned()),
         };
-        assert_eq!(drawn(&body).html, "<p>rich</p>");
+        assert_eq!(
+            drawn(&body).html,
+            r#"<div class="postio-original"><p>rich</p></div>"#
+        );
     }
 
     #[test]
@@ -2155,5 +2493,188 @@ mod reader_view_prefers_markup_over_its_own_flattening {
         let markers = scroll_markers();
         assert!(markers.contains(&format!("id=\"{}\"", page_fragment(0))));
         assert!(markers.contains(&format!("id=\"{}\"", page_fragment(SCROLL_MARKERS - 1))));
+    }
+}
+
+#[cfg(test)]
+mod warming_tests {
+    use super::*;
+
+    /// Spec 006 FR-006: the sender's page reaches the reader as the
+    /// message's canvas, filling its container, with any declared colour
+    /// scheme beside it for the engine to read.
+    #[test]
+    fn the_senders_canvas_is_emitted_around_their_content() {
+        let body = MessageBody {
+            html: Some(
+                r##"<head><meta name="color-scheme" content="light dark"></head><body bgcolor="#ffffff" text="#222"><p>Hi</p></body>"##
+                    .to_owned(),
+            ),
+            ..MessageBody::default()
+        };
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(
+            rendered.html.starts_with(r#"<div class="postio-canvas""#),
+            "{}",
+            rendered.html
+        );
+        assert!(
+            rendered.html.contains("background-color: #ffffff"),
+            "{}",
+            rendered.html
+        );
+        assert!(rendered.html.contains("color: #222"), "{}", rendered.html);
+        assert!(
+            rendered
+                .html
+                .contains(r#"data-postio-color-scheme="light dark""#),
+            "{}",
+            rendered.html
+        );
+        let plain = MessageBody {
+            html: Some("<p>Hi</p>".to_owned()),
+            ..MessageBody::default()
+        };
+        let plain = body_html_in(
+            &plain,
+            RemoteImages::Blocked,
+            Rendering::Original,
+            Some("7"),
+        );
+        assert!(
+            !plain.html.contains("postio-canvas"),
+            "no canvas, no wrapper: {}",
+            plain.html
+        );
+    }
+
+    /// Spec 006 FR-031: every message opens as its sender built it. A
+    /// newsletter is still recognised as bulk -- that picks the sheet it is
+    /// drawn on and offers unsubscribe -- but it no longer decides the
+    /// rendering. Reader view is a command away, not the default.
+    #[test]
+    fn bulk_mail_opens_in_its_original_layout() {
+        let newsletter = postio_model::test_corpus::load("html-newsletter")
+            .parse()
+            .body;
+        assert!(
+            suits_reader_view(&newsletter),
+            "the fixture must read as bulk for this to mean anything"
+        );
+        assert_eq!(
+            prepare_message(&newsletter, RemoteImages::Blocked).rendering,
+            Rendering::Original
+        );
+        assert_eq!(
+            prepare("7", &newsletter, RemoteImages::Blocked).rendering,
+            Rendering::Original
+        );
+        assert_eq!(opening_rendering(), Rendering::Original);
+    }
+
+    /// Spec 006 FR-019 / 001 FR-019: the sender's layout is the sender's.
+    /// The reader's own typography -- the body's size and line height, the
+    /// paragraph margins, `border-box` everywhere, link and blockquote
+    /// styling -- was reaching into sender markup and overriding the browser
+    /// defaults every sender designs against. Original HTML is wrapped in a
+    /// Postio-owned element the stylesheet reverts those under; plain text
+    /// and reader view keep Postio's type, which is what they are.
+    #[test]
+    fn original_markup_is_set_apart_from_postios_typography() {
+        let html = MessageBody {
+            html: Some("<p>Hi</p>".to_owned()),
+            ..MessageBody::default()
+        };
+        let original = body_html_in(&html, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(
+            original.html.contains(r#"<div class="postio-original">"#),
+            "{}",
+            original.html
+        );
+        let reduced = body_html_in(&html, RemoteImages::Blocked, Rendering::Reader, Some("7"));
+        assert!(
+            !reduced.html.contains("postio-original"),
+            "{}",
+            reduced.html
+        );
+        let text = MessageBody {
+            text: Some("Hi".to_owned()),
+            ..MessageBody::default()
+        };
+        let plain = body_html_in(&text, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(!plain.html.contains("postio-original"), "{}", plain.html);
+        let css = include_str!("../../data/reader.css");
+        for reverted in [
+            ".postio-original *",
+            ".postio-original p",
+            ".postio-original a",
+            ".postio-original blockquote",
+        ] {
+            assert!(
+                css.contains(reverted),
+                "reader.css must revert Postio's type under {reverted}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod over_cap_tests {
+    use super::*;
+
+    fn deep() -> String {
+        format!("{}x{}", "<div>".repeat(2_000), "</div>".repeat(2_000))
+    }
+
+    /// A body over an input cap is never handed on, so the reader shows
+    /// the plain-text alternative, and says why (spec 006 R6, FR-023).
+    #[test]
+    fn an_over_cap_body_shows_its_plain_text_alternative() {
+        let body = MessageBody {
+            text: Some("the plain alternative".to_owned()),
+            html: Some(deep()),
+        };
+        for rendering in [Rendering::Original, Rendering::Reader] {
+            let rendered = body_html_in(&body, RemoteImages::Blocked, rendering, None);
+            assert!(
+                rendered.html.contains("the plain alternative"),
+                "{rendering:?} showed {:?}",
+                rendered.html
+            );
+            // Reader view prefers the plain part and never sanitizes the
+            // HTML beside it, so only Original meets the cap.
+            if rendering == Rendering::Original {
+                assert_eq!(rendered.over_cap, Some(postio_body::Cap::Depth));
+            }
+        }
+    }
+
+    #[test]
+    fn an_over_cap_body_with_no_alternative_is_not_blank() {
+        let body = MessageBody {
+            text: None,
+            html: Some(deep()),
+        };
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, None);
+        assert!(!rendered.html.trim().is_empty(), "the message opened blank");
+        assert_eq!(rendered.over_cap, Some(postio_body::Cap::Depth));
+    }
+}
+
+#[cfg(test)]
+mod no_webkit_tests {
+    /// The reader no longer runs in WebKit (spec 006): a `-webkit-` rule in
+    /// its stylesheets is dead weight that reads as though it mattered.
+    #[test]
+    fn the_reader_stylesheets_name_no_webkit_extension() {
+        for (name, css) in [
+            ("reader.css", include_str!("../../data/reader.css")),
+            ("thread.css", include_str!("../../data/thread.css")),
+        ] {
+            assert!(
+                !css.contains("-webkit-"),
+                "{name} still has a -webkit- rule"
+            );
+        }
     }
 }

@@ -341,6 +341,54 @@ pub fn decode_header_text(raw: &[u8]) -> String {
     }
 }
 
+/// One MIME parameter's value out of a list of undecoded `(name, value)`
+/// pairs — an IMAP `BODYSTRUCTURE`'s parameter or disposition list, which a
+/// server hands over exactly as the sender wrote them.
+///
+/// A non-ASCII filename rarely travels as a plain `filename=`: RFC 2231 puts
+/// it in `filename*=UTF-8''…`, split across `filename*0*`, `filename*1*`…
+/// when long, and many clients put an RFC 2047 encoded word inside a plain
+/// `name=` instead. Looking only for the literal `key` found none of those,
+/// and the part went nameless (#1686). `mail_parser` already decodes every
+/// one of these spellings inside a `Content-Type` header, so the pairs are
+/// put back into one and parsed — the same decoder [`parse`] uses, on the
+/// same hostile-input terms, contained the same way.
+///
+/// `None` when no spelling of `key` is present.
+pub fn parameter_value(pairs: &[(String, String)], key: &str) -> Option<String> {
+    let is_token = |name: &str| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"*-_.".contains(&byte))
+    };
+    let mut header = String::from("application/octet-stream");
+    for (name, value) in pairs {
+        if !is_token(name) {
+            continue;
+        }
+        let mut quoted = String::with_capacity(value.len() + 2);
+        for c in value.chars().filter(|c| *c != '\r' && *c != '\n') {
+            if c == '"' || c == '\\' {
+                quoted.push('\\');
+            }
+            quoted.push(c);
+        }
+        header.push_str(&format!("; {name}=\"{quoted}\""));
+    }
+    header.push('\n');
+
+    let parsed = std::panic::catch_unwind(|| {
+        match mail_parser::parsers::MessageStream::new(header.as_bytes()).parse_content_type() {
+            HeaderValue::ContentType(content_type) => content_type
+                .attribute(key)
+                .map(|value| value.trim().to_owned()),
+            _ => None,
+        }
+    });
+    parsed.ok().flatten().filter(|value| !value.is_empty())
+}
+
 /// The bracketed identifier out of a `List-Id` header value — RFC 2919's
 /// `"Display Name" <list-id>` — so a mailing list is recognized by its
 /// stable id and not by the display name a moderator can rename at will.
@@ -1328,5 +1376,66 @@ mod a_snippet_is_words_not_syntax {
         ] {
             assert_eq!(without_markdown_links(prose), prose, "{prose:?}");
         }
+    }
+}
+
+/// `parameter_value` reads every spelling a server hands over of a
+/// `BODYSTRUCTURE` parameter (#1686).
+#[cfg(test)]
+mod parameter_value_tests {
+    use super::parameter_value;
+
+    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_plain_parameter_is_read_as_written() {
+        let found = parameter_value(&pairs(&[("name", "report.pdf")]), "name");
+        assert_eq!(found.as_deref(), Some("report.pdf"));
+    }
+
+    #[test]
+    fn rfc_2231_continuations_are_joined_and_decoded() {
+        let found = parameter_value(
+            &pairs(&[
+                ("filename*0*", "UTF-8''Qu%C3%A9"),
+                ("filename*1*", "bec%20notes.txt"),
+            ]),
+            "filename",
+        );
+        assert_eq!(found.as_deref(), Some("Québec notes.txt"));
+    }
+
+    #[test]
+    fn an_encoded_word_in_a_plain_name_is_decoded() {
+        let found = parameter_value(&pairs(&[("name", "=?UTF-8?B?w6l0w6kucGRm?=")]), "name");
+        assert_eq!(found.as_deref(), Some("été.pdf"));
+    }
+
+    #[test]
+    fn quotes_and_backslashes_in_a_value_survive_the_round_trip() {
+        let found = parameter_value(&pairs(&[("name", "a \"quoted\" \\ name")]), "name");
+        assert_eq!(found.as_deref(), Some("a \"quoted\" \\ name"));
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_token_cannot_inject_another_parameter() {
+        let found = parameter_value(
+            &pairs(&[("x; name", "evil.exe"), ("charset", "utf-8")]),
+            "name",
+        );
+        assert_eq!(found, None, "a hostile parameter name was read as `name`");
+    }
+
+    #[test]
+    fn an_absent_or_empty_key_is_none() {
+        assert_eq!(
+            parameter_value(&pairs(&[("charset", "utf-8")]), "name"),
+            None
+        );
+        assert_eq!(parameter_value(&pairs(&[("name", "  ")]), "name"), None);
     }
 }

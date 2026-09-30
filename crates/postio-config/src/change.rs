@@ -57,6 +57,8 @@ pub struct ConfigChanged {
     /// a restart. Raising it is what a user does when eviction has started
     /// costing them refetches, and they should not have to restart to stop it.
     pub storage: bool,
+    /// `[reader]` — the reading pane's zoom, applied to the open reader.
+    pub reader: bool,
 }
 
 impl ConfigChanged {
@@ -73,6 +75,7 @@ impl ConfigChanged {
             || self.logging
             || self.compose
             || self.storage
+            || self.reader
     }
 
     /// Compare two configurations section by section.
@@ -92,6 +95,7 @@ impl ConfigChanged {
             logging: old.logging != new.logging,
             compose: old.compose != new.compose,
             storage: old.storage != new.storage,
+            reader: old.reader != new.reader,
         }
     }
 }

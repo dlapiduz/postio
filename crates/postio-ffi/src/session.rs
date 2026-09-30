@@ -2,7 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel};
+use postio_core::bridge::{CommandSender, EventStream};
+use postio_host::Host;
 use postio_session::Wiring;
 
 use crate::event::UiEvent;
@@ -89,16 +90,6 @@ pub struct SessionOptions {
     config: ConfigSource,
 }
 
-/// The command bus, handed over once the store behind it is open.
-///
-/// `Bridge::new` is called before the database exists — `open` asks the
-/// keyring first and only then the store, deliberately, so that a refused key
-/// leaves no half-made store behind — and the real bus needs a `Database`.
-/// Rather than reorder that, the bridge is given this: a handler that holds
-/// the real one once there is one to hold.
-///
-/// The alternative it replaces was `handler_fn(|_, _| async {})`, which
-/// received every command and dropped it.
 /// The commands the boundary answers itself, rather than sending down the bus.
 ///
 /// `handle_locally` is the implementation; this is the same list as data, so
@@ -145,60 +136,6 @@ fn no_store() -> crate::PartsError {
 fn next_serial() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-}
-
-#[derive(Clone, Default)]
-struct DeferredBus(Arc<Mutex<Option<Arc<postio_core::dispatch::Dispatcher>>>>);
-
-impl DeferredBus {
-    /// Build the real bus over `database` and hand it over.
-    ///
-    /// `state` is the same handle the session mirrors its view into before
-    /// each send — the actions resolve `MessageTarget::Selection` against it,
-    /// so a second `SharedState` here would resolve every such verb against
-    /// an empty one (#1300).
-    fn arm(
-        &self,
-        database: &postio_storage::Store,
-        state: postio_core::state::SharedState,
-        engine: postio_session::refresh::EngineSlot,
-    ) {
-        let actions = postio_session::actions::Actions::new(database.clone(), state.clone());
-        let builder =
-            postio_session::actions::wire(postio_core::dispatch::Dispatcher::builder(), actions);
-        // **Both halves, the way `postio-app` composes them.** Only `actions`
-        // was wired here, so `Refresh` reached no handler at all -- while it
-        // sat in the File menu, on `F5` and `R`, and in the palette. Three
-        // surfaces offering a key that did nothing, on the one platform where
-        // "check for new mail" is the gesture people reach for first because
-        // there is no push notification to beat them to it.
-        // `command_coverage.rs` is what now notices.
-        let bus = postio_session::refresh::wire(builder, engine, state).build();
-        *self.0.lock().expect("deferred bus lock") = Some(Arc::new(bus));
-    }
-}
-
-impl postio_core::bridge::CommandHandler for DeferredBus {
-    fn handle(
-        &self,
-        command: postio_core::Command,
-        events: postio_core::bridge::EventSink,
-    ) -> postio_core::bridge::HandlerFuture {
-        let bus = self.0.lock().expect("deferred bus lock").clone();
-        Box::pin(async move {
-            match bus {
-                Some(bus) => bus.handle(command, events).await,
-                // Only possible between `Bridge::new` and the store opening,
-                // which is microseconds and has no frontend attached yet. Said
-                // out loud rather than dropped, because dropping commands
-                // silently is the bug this type exists to end.
-                None => tracing::error!(
-                    ?command,
-                    "a command arrived before the store was open and was not run: {command:?}"
-                ),
-            }
-        })
-    }
 }
 
 impl SessionOptions {
@@ -324,15 +261,17 @@ impl SessionOptions {
         Self::in_memory().on_bridge(runtime, commands)
     }
 
-    /// Run on a runtime and command bus the caller owns, keeping whatever
-    /// store these options already name.
+    /// Run on a runtime the caller owns, keeping whatever store these
+    /// options already name.
     ///
-    /// The production shape: Swift owns the bridge, and the store is
-    /// whichever one the session was opened over. The two used to be
-    /// expressible only separately — `in_memory_with` gave a seeded store
-    /// with no bus, `in_memory_on` a bus over an empty one — so a test that
-    /// wanted a verb to reach real handlers over real rows could have
-    /// neither (#721).
+    /// The store's owner (`postio_host::Host`) is adopted onto `runtime`
+    /// rather than starting one of its own, and the session is its client
+    /// there as it is anywhere. Its verbs are the host's: `commands` is kept
+    /// in the host's wiring, but what the session sends goes through its
+    /// client, so a verb reaches real handlers whether or not the caller's
+    /// bus has any. Before the host, the default bus dropped every command,
+    /// and this was the only way a test could make a verb reach real
+    /// handlers over real rows (#721).
     pub fn on_bridge(mut self, runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
         self.bridge = Some((runtime, commands));
         self
@@ -425,6 +364,119 @@ fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap:
     resolver
 }
 
+/// Start the store's owner over an open store, as ADR 0041 allows here:
+/// nothing else on macOS can share the store, so the host runs in this
+/// process and this frontend is its one client.
+///
+/// Over the caller's runtime when it supplied one ([`SessionOptions::on_bridge`]):
+/// the host is adopted onto it rather than starting a second, and serves
+/// its verbs there. The caller's `CommandSender` stays in the host's wiring,
+/// but what this session sends goes through its client to the host's verbs,
+/// exactly as when the host owns its runtime -- one path for a command,
+/// whoever built the threads.
+fn serve(
+    database: postio_storage::Store,
+    blobs: postio_storage::BlobStore,
+    caller: Option<(tokio::runtime::Handle, CommandSender)>,
+    configure: impl FnOnce(Wiring) -> Wiring,
+) -> Result<Host, SessionError> {
+    match caller {
+        None => Host::start(database, blobs, configure)
+            .map_err(|message| SessionError::RuntimeUnavailable { message }),
+        Some((runtime, commands)) => {
+            // A hub, so the host can subscribe each client and the body
+            // indexer to it; a direct sink would give them nothing to hear.
+            let hub = postio_core::bridge::EventHub::new();
+            Ok(Host::over(configure(Wiring::new(
+                database,
+                blobs,
+                runtime,
+                hub.sink(),
+                commands,
+            ))))
+        }
+    }
+}
+
+/// A command on its way to the host, with the aim it was issued under.
+type Aimed = (postio_core::Command, postio_core::state::SharedState);
+
+/// This session's line to the host: where its commands go, and what keeps
+/// its drain fed. Dropped by [`Session::shutdown`], which is what ends both.
+struct Link {
+    /// Commands, in the order they were issued, each with its own aim.
+    outbox: async_channel::Sender<Aimed>,
+    /// Held only to be dropped: the task feeding the session's event stream
+    /// stops when this goes, and the stream ends with it. The client's own
+    /// stream closes only once the client has left, and a clone of it may
+    /// still be finishing a page read.
+    _hearing: async_channel::Sender<()>,
+}
+
+/// Connect this frontend to `host` as its client, the way `postio-app`'s
+/// window is connected to its own.
+///
+/// Answers the session's wiring, the stream it drains, and its [`Link`].
+/// The wiring is the host's with its `store` -- what the list counts and
+/// pages through -- replaced by the client. Everything else (the database
+/// for the reads that have no request of their own yet, the blobs, the
+/// engines' slot, the hub the engines report to) is the host's own, in this
+/// process. Its `commands` are not this session's way to the verbs; the
+/// link's outbox is.
+///
+/// Each command crosses with the aim it was issued under rather than
+/// whatever the selection is when the forwarding task gets to it: two
+/// verbs pressed in quick succession, the cursor moved between them, must
+/// each act on the row it was pressed on.
+fn connect(host: &Host) -> (Wiring, EventStream, Link) {
+    let client = host.connect(postio_client::protocol::ClientKind::Ffi);
+    let runtime = host.wiring().runtime.clone();
+
+    let (outbox, queued) = async_channel::unbounded::<Aimed>();
+    runtime.spawn({
+        let client = client.clone();
+        async move {
+            while let Ok((command, aim)) = queued.recv().await {
+                if client.clone().with_state(aim).send(command).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+
+    // Everybody's news, and what this session's own commands said about
+    // themselves, which only this client is told.
+    let (sink, stream) = postio_core::bridge::event_channel();
+    let arriving = client.events();
+    let (hearing, stopped) = async_channel::bounded::<()>(1);
+    runtime.spawn(async move {
+        loop {
+            tokio::select! {
+                envelope = arriving.recv() => {
+                    let Ok(envelope) = envelope else { return };
+                    if !sink.emit(envelope.event) {
+                        return;
+                    }
+                }
+                _ = stopped.recv() => return,
+            }
+        }
+    });
+
+    let wiring = Wiring {
+        store: Arc::new(client),
+        ..host.wiring().clone()
+    };
+    (
+        wiring,
+        stream,
+        Link {
+            outbox,
+            _hearing: hearing,
+        },
+    )
+}
+
 /// The frontend's handle on the engine.
 ///
 /// Commands go down and events come up; nothing else crosses. The `Wiring`
@@ -435,14 +487,6 @@ fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap:
 #[derive(uniffi::Object)]
 pub struct Session {
     wiring: Mutex<Option<Wiring>>,
-    /// What the actions resolve `MessageTarget::Selection` against (#1300).
-    ///
-    /// Brought into step with the view by `aim::mirror` immediately before
-    /// each send, rather than kept in step by a signal — see that function.
-    state: postio_core::state::SharedState,
-    /// Where mirroring's events go, which is nowhere: the view is where they
-    /// came from and telling it back would be a round trip to nothing.
-    quiet: postio_core::bridge::EventSink,
     /// The list, windowed. Behind its own lock rather than inside `wiring`'s
     /// so that a row lookup -- which happens on every table redraw -- does not
     /// contend with whatever else is holding the session.
@@ -648,10 +692,20 @@ pub struct Session {
         async_channel::Receiver<UiEvent>,
     ),
     events: EventStream,
-    /// Kept alive for as long as the session is: dropping the `Bridge` stops
-    /// the runtime the engine is polling on. `None` when the caller supplied
-    /// their own, because then it is not ours to stop.
-    _bridge: Option<Bridge>,
+    /// Where commands go, and what keeps [`events`](Self::events) fed from
+    /// the host. Taken by [`shutdown`](Self::shutdown), which is what ends
+    /// the drain.
+    link: Mutex<Option<Link>>,
+    /// The verbs the host answers. A command outside them is not sent: the
+    /// host would only answer that it is not wired up, and this boundary
+    /// has always let such a gesture pass in silence.
+    wired: Vec<postio_core::CommandId>,
+    /// The store's owner, in this process (ADR 0041): its verbs are what a
+    /// command reaches, and its runtime is what every read is polled on.
+    /// Kept alive for as long as the session is, since dropping it stops that
+    /// runtime -- unless the caller supplied its own, which is not ours to
+    /// stop.
+    _host: Host,
     /// The in-memory blob directory, removed when the session is dropped.
     #[cfg(feature = "testing")]
     _scratch: Option<tempfile::TempDir>,
@@ -1651,38 +1705,20 @@ impl Session {
             density: self.ui.density.into(),
             theme: self.ui.theme.into(),
             show_hover_actions: self.ui.show_hover_actions,
-            show_key_hints: self.ui.show_key_hints,
             sender_avatars: self.ui.sender_avatars,
         }
     }
-    /// The key hints the focused row announces, in canvas order.
-    ///
-    /// From this session's keymap, so a rebinding reaches the hint: a row
-    /// that taught the wrong key would be worse than one that taught none.
-    /// `postio_ui::row::hints` decides which verbs get one, and both
-    /// frontends show the same two.
-    pub fn row_hints(&self) -> Vec<crate::RowHintFfi> {
-        postio_ui::row::hints(&self.keymap())
-            .into_iter()
-            .map(|(key, label)| crate::RowHintFfi {
-                key,
-                label: label.to_string(),
-            })
-            .collect()
-    }
-
     /// The key hints the search bar announces — `Ret open · Tab refine ·
     /// C-s save as folder` (canvas 05).
     ///
-    /// The same shape as [`row_hints`](Self::row_hints) one pane over, and
-    /// for the same reason: read from this session's keymap, so a rebinding
+    /// Read from this session's keymap, so a rebinding
     /// reaches the footer. It is the only place most people will ever read
     /// these keys, which is what makes teaching the wrong one worse than
     /// teaching none.
-    pub fn search_hints(&self) -> Vec<crate::RowHintFfi> {
+    pub fn search_hints(&self) -> Vec<crate::KeyHintFfi> {
         postio_ui::search::hints(&self.keymap())
             .into_iter()
-            .map(|(key, label)| crate::RowHintFfi {
+            .map(|(key, label)| crate::KeyHintFfi {
                 key,
                 label: label.to_string(),
             })
@@ -1904,55 +1940,10 @@ impl Session {
     /// it on the main actor**: it belongs in a launch task, with the unlock
     /// surface shown if it comes back [`SessionError::KeyringLocked`].
     pub fn open(options: SessionOptions) -> Result<Arc<Self>, SessionError> {
-        // A hub rather than a channel: the frontend drains one subscription
-        // and the body indexer another, the way `postio-app`'s window and
-        // indexer share its hub. This boundary had no body indexer before
-        // and relied on the fetch to write the search row -- which it no
-        // longer does anywhere.
-        let hub = postio_core::bridge::EventHub::new();
-        let sink = hub.sink();
-        let events = hub.subscribe("frontend");
-
         // Read before anything moves out of `options`, and once: both paths
         // below build the same configuration from it.
         let source = config_source(&options);
-
-        // The bus a session builds when it was given none — which is every
-        // shipped Postio, because `openAt` supplies none.
-        //
-        // It used to be `handler_fn(|_, _| async {})`: every command received
-        // and dropped. Only the verbs `handle_locally` intercepts — the
-        // cursor and the selection — did anything at all, so moving through
-        // the list worked and *archive, flag, delete, mark read and undo did
-        // nothing*, silently. It survived because every test that invokes a
-        // real verb hands the session a bus of its own, so the one the
-        // application actually runs on was never exercised.
-        //
-        // The real bus needs `Actions`, which needs the database, which is
-        // opened further down — so the handler is deferred rather than the
-        // store hoisted: `open` is delicate about its order (the keyring
-        // before the store, deliberately) and this changes none of it.
-        let deferred = DeferredBus::default();
-        // What the actions resolve `MessageTarget::Selection` against, and
-        // what `invoke` mirrors the view into immediately before sending.
-        // `aim::mirror`'s own doc argues the pull: a push would have to fire
-        // on every `j`, and a pull cannot be a gesture out of date.
-        let state = postio_core::state::SharedState::default();
-        // The events mirroring produces have nowhere to go — the view is
-        // where they came from — so this reader is dropped on purpose.
-        let (quiet, quiet_reader) = event_channel();
-        drop(quiet_reader);
-        let (runtime, commands, owned_bridge) = match options.bridge {
-            Some((runtime, commands)) => (runtime, commands, None),
-            None => {
-                let (bridge, _replies) = Bridge::new(deferred.clone()).map_err(|error| {
-                    SessionError::RuntimeUnavailable {
-                        message: error.to_string(),
-                    }
-                })?;
-                (bridge.handle(), bridge.commands(), Some(bridge))
-            }
-        };
+        let caller = options.bridge;
 
         #[cfg(feature = "testing")]
         if options.in_memory {
@@ -2017,24 +2008,23 @@ impl Session {
             // where a `MemorySecretStore` goes.
             let config = load_config(&source);
             let sync_config = config.sync;
-            // One slot, shared: `refresh::wire` reads it and `Wiring` fills
-            // it, and two of them is a handler watching a slot nothing ever
-            // puts an engine into.
-            let engine_slot = postio_session::refresh::EngineSlot::default();
-            deferred.arm(&database, state.clone(), engine_slot.clone());
-            let mut wiring = Wiring::new(database, blobs, runtime, sink, commands)
-                .with_engine_slot(engine_slot)
-                .with_backfill(postio_session::backfill_policy(&sync_config))
-                .with_watch(postio_session::watch_policy(&sync_config));
             // Honour `with_secrets` here too. It was read only on the real
             // path, so an in-memory session that had been handed a test
             // keyring quietly used the **login keychain** instead — which is
             // how a test suite came to hang on a macOS permission prompt
             // nobody could see, after writing a password into a developer's
             // own keychain.
-            if let Some(secrets) = options.secrets.clone() {
-                wiring = wiring.with_secrets(secrets);
-            }
+            let secrets = options.secrets.clone();
+            let host = serve(database, blobs, caller, |wiring| {
+                let wiring = wiring
+                    .with_backfill(postio_session::backfill_policy(&sync_config))
+                    .with_watch(postio_session::watch_policy(&sync_config));
+                match secrets {
+                    Some(secrets) => wiring.with_secrets(secrets),
+                    None => wiring,
+                }
+            })?;
+            let (wiring, events, link) = connect(&host);
             let keys = config.keys;
             postio_session::spawn_body_indexer(
                 wiring.database.clone(),
@@ -2043,8 +2033,6 @@ impl Session {
             );
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
-                state,
-                quiet,
                 resolver: Mutex::new(build_resolver(&keys)),
                 ui: config.ui,
                 keys,
@@ -2086,7 +2074,9 @@ impl Session {
                 reads: Arc::default(),
                 local: async_channel::unbounded(),
                 events,
-                _bridge: owned_bridge,
+                link: Mutex::new(Some(link)),
+                wired: host.wired(),
+                _host: host,
                 _scratch: Some(scratch),
             }));
         }
@@ -2112,7 +2102,7 @@ impl Session {
         // draft lives, and the remote-image grants are written beside the
         // store rather than into `config.toml`.
         let store_at = path.clone();
-        // Blocked on `runtime`, which exists by now: opening the store is
+        // Blocked on here, before the host exists: opening the store is
         // async, and this constructor's documented contract is that it
         // blocks. That is what the sentence above about the keyring is
         // already telling a Swift caller -- do not invoke this on the main
@@ -2125,13 +2115,13 @@ impl Session {
         let sync_config = config.sync;
         let ui_config = config.ui;
 
-        let engine_slot = postio_session::refresh::EngineSlot::default();
-        deferred.arm(&database, state.clone(), engine_slot.clone());
-        let wiring = Wiring::new(database, blobs, runtime, sink, commands)
-            .with_engine_slot(engine_slot)
-            .with_secrets(secrets)
-            .with_backfill(postio_session::backfill_policy(&sync_config))
-            .with_watch(postio_session::watch_policy(&sync_config));
+        let host = serve(database, blobs, caller, |wiring| {
+            wiring
+                .with_secrets(secrets)
+                .with_backfill(postio_session::backfill_policy(&sync_config))
+                .with_watch(postio_session::watch_policy(&sync_config))
+        })?;
+        let (wiring, events, link) = connect(&host);
         postio_session::spawn_body_indexer(
             wiring.database.clone(),
             wiring.events.subscribe("indexer"),
@@ -2139,8 +2129,6 @@ impl Session {
         );
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
-            state,
-            quiet,
             resolver: Mutex::new(build_resolver(&keys)),
             ui: ui_config,
             keys,
@@ -2176,7 +2164,9 @@ impl Session {
             offline: Arc::default(),
             local: async_channel::unbounded(),
             events,
-            _bridge: owned_bridge,
+            link: Mutex::new(Some(link)),
+            wired: host.wired(),
+            _host: host,
             #[cfg(feature = "testing")]
             _scratch: None,
         }))
@@ -2349,8 +2339,16 @@ impl Session {
             });
         }
 
-        let originals: std::collections::HashSet<String> =
-            originals.iter().map(|id| id.to_string()).collect();
+        let originals: std::collections::HashMap<String, postio_ui::reader::document::Rendering> =
+            originals
+                .iter()
+                .map(|id| {
+                    (
+                        id.to_string(),
+                        postio_ui::reader::document::Rendering::Original,
+                    )
+                })
+                .collect();
         let allow = self.allow_list();
         let html = postio_ui::reader::thread::compose(
             &messages,
@@ -3884,13 +3882,7 @@ impl Session {
             tracing::debug!(id, "not a command this build knows; ignored");
             return;
         };
-        let Some(commands) = self
-            .wiring
-            .lock()
-            .expect("wiring lock")
-            .as_ref()
-            .map(|wiring| wiring.commands.clone())
-        else {
+        let Some(outbox) = self.outbox() else {
             return;
         };
 
@@ -3928,22 +3920,35 @@ impl Session {
             cursor,
             rows: &*list,
         };
-        // Before the send and after the aim is whole: the actions resolve
-        // `MessageTarget::Selection` against app state, and app state is not
-        // the frontend's list — so without this every verb that `refine`
-        // leaves aimed at the selection resolved against an empty state and
-        // acted on nothing (#1300). `postio-app` has pulled the same way
-        // since it had a bus; this is the same function, not a second copy.
-        postio_core::aim::mirror(&self.state, &self.quiet, &aim);
         let command = postio_core::aim::command_for(id, &aim);
+        // What a verb left aimed at the selection resolves against on the
+        // host: this view's selection, cursor and scope, as they are now.
+        // `refine` names the rows only for a conversation; a message row, or
+        // a whole-view `Ctrl+A`, is resolved there from this.
+        let aimed = postio_core::state::SharedState::default();
+        let (quiet, _) = postio_core::bridge::event_channel();
+        postio_core::aim::mirror(&aimed, &quiet, &aim);
         drop(selection);
         drop(list);
 
-        if commands.send(command).is_err() {
-            // Only during teardown: the bridge has stopped and there is
-            // nothing left to run the verb on.
+        if !postio_core::aim::is_wired(&self.wired, &command) {
+            tracing::debug!(?id, "not a verb the host answers; ignored");
+            return;
+        }
+        if outbox.try_send((command, aimed)).is_err() {
+            // Only during teardown: the host has stopped taking commands and
+            // there is nothing left to run the verb on.
             tracing::debug!("the runtime has stopped and did not run that");
         }
+    }
+
+    /// Where this session's commands go, while it is open.
+    fn outbox(&self) -> Option<async_channel::Sender<Aimed>> {
+        self.link
+            .lock()
+            .expect("link lock")
+            .as_ref()
+            .map(|link| link.outbox.clone())
     }
 
     /// Resolve one key press against the bindings in force.
@@ -4382,19 +4387,15 @@ impl Session {
     /// between the frontend's timer firing and this running, and the message
     /// that was read is the one the clock was started for.
     pub fn mark_read_on_dwell(&self, message: i64) {
-        let Some(commands) = self
-            .wiring
-            .lock()
-            .expect("wiring lock")
-            .as_ref()
-            .map(|wiring| wiring.commands.clone())
-        else {
+        let Some(outbox) = self.outbox() else {
             return;
         };
         let command = postio_core::Command::MarkReadOnDwell {
             message: postio_model::ids::MessageId::new(message),
         };
-        if commands.send(command).is_err() {
+        // Named, so there is nothing to aim: the default state is enough.
+        let aimed = postio_core::state::SharedState::default();
+        if outbox.try_send((command, aimed)).is_err() {
             tracing::debug!("the runtime has stopped and did not mark that read");
         }
     }
@@ -5765,6 +5766,9 @@ impl Session {
     pub fn shutdown(&self) {
         if let Ok(mut guard) = self.wiring.lock() {
             guard.take();
+        }
+        if let Ok(mut link) = self.link.lock() {
+            link.take();
         }
     }
 

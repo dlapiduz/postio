@@ -1,0 +1,17 @@
+# Spacing literals per file in crates/postio-gtk/src, outside widgets/.
+# A ratchet: check-spacing-literals-ratchet.py fails if a file's count grows.
+# Lower a line (or run the check with --write) when a file's count drops.
+cheatsheet.rs 5
+composer.rs 11
+finder.rs 2
+header.rs 3
+list_state.rs 10
+list_view.rs 2
+onboarding.rs 13
+orientation.rs 8
+parts.rs 5
+reader/message_header.rs 7
+reader/rail.rs 1
+search.rs 6
+settings.rs 34
+unavailable.rs 1

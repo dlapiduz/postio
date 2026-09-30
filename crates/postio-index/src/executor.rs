@@ -310,6 +310,7 @@ pub async fn search(
         total_hits_capped,
         elapsed,
         corpus_complete: corpus_complete(connection, request).await?,
+        instead: None,
     })
 }
 
@@ -322,27 +323,27 @@ pub async fn search(
 /// filter in the query — `from:ada hanah` — the filter is the likelier reason
 /// nothing matched. Both cases are left alone rather than answered badly.
 ///
-/// # Where the vocabulary comes from on this engine
+/// # Where the candidates come from
 ///
-/// SQLite's `fts5vocab` — a virtual table over the index's own term
-/// dictionary — has no equivalent here: the engine's full-text index keeps
-/// its terms to itself. But `search_documents` is an ordinary table holding
-/// the already-folded text the index was built from, so the vocabulary is
-/// rebuilt from its newest [`VOCABULARY_DOCUMENTS`] rows instead. A sample,
-/// deliberately: the intended word is overwhelmingly a name that recurs, and
-/// a term that appears nowhere in the last few thousand messages is a weak
-/// offer anyway. Term counts count documents, not occurrences, which is what
-/// `fts5vocab('row')` reported and what the ranking expects.
+/// From the index's own term dictionary, through the fork of the engine this
+/// workspace builds on (the `[patch]` in the root `Cargo.toml`): an unquoted
+/// `word~N` is expanded to every term that begins within `N` edits of the
+/// word, and `word*` to every term that begins with it —
+/// [`postio_search::suggest::widened`] builds the string. So what is read is
+/// the handful of messages holding a word *like* the one typed, from every
+/// message in the store, bodies included; and the word the offer names is
+/// recovered from their text, because the index answers with rows, not with
+/// the terms it expanded to.
 ///
-/// This runs only on a search that found nothing, so the scan never sits on
-/// the typing path.
+/// This replaced a vocabulary rebuilt from the newest 5,000 senders and
+/// subjects: a sample, so a list whose mail was older than that was never
+/// offered, and a word only a body held never was either. The widened query
+/// is only ever run here, on a search that found nothing — the query itself
+/// stays exact, which is ADR 0037's whole point.
 ///
-/// # What it does not read
-///
-/// Body terms. `search_documents` holds senders, recipients, subjects,
-/// filenames and list ids, which is where the names people mistype live; the
-/// body index is a separate table and a much larger vocabulary. Consulting
-/// it too is a later question, and one for measurement rather than taste.
+/// Documents are counted within what was read, which is at most
+/// [`SUGGESTION_DOCUMENTS`] of each half: enough to rank candidates against
+/// each other, and the count the offer shows is then "at least".
 async fn suggestion_for(
     connection: &Connection,
     query: &postio_search::ParsedQuery,
@@ -353,19 +354,26 @@ async fn suggestion_for(
     let Some(term) = terms.next() else {
         return Ok(None);
     };
-    if terms.next().is_some() || term.negated || query.filters().next().is_some() {
+    // A quoted word asked for itself, exactly -- see `TextTerm::quoted`.
+    if terms.next().is_some() || term.negated || term.quoted || query.filters().next().is_some() {
         return Ok(None);
     }
+    let Some(metadata_query) = postio_search::suggest::widened(&term.value) else {
+        return Ok(None);
+    };
+    // The body column is folded on the way in, so its query is folded the
+    // same way — the rule every body query here keeps (ADR 0038).
+    let body_query = postio_search::suggest::widened(&postio_model::fold::fold(&term.value));
 
-    let documents = sql::all(
+    let mut texts: Vec<Vec<Option<String>>> = sql::all(
         connection,
         "SELECT sender, recipients, subject, filenames, list_id
            FROM search_documents
-          ORDER BY message_id DESC
-          LIMIT ?1",
-        [VOCABULARY_DOCUMENTS],
+          WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
+          LIMIT ?2",
+        (metadata_query, SUGGESTION_DOCUMENTS),
         |row| {
-            Ok([
+            Ok(vec![
                 row.opt_text(0)?,
                 row.opt_text(1)?,
                 row.opt_text(2)?,
@@ -375,37 +383,42 @@ async fn suggestion_for(
         },
     )
     .await?;
+    if let Some(body_query) = body_query {
+        texts.extend(
+            sql::all(
+                connection,
+                "SELECT body_search FROM message_search_bodies
+                  WHERE fts_match(body_search, ?1)
+                  LIMIT ?2",
+                (body_query, SUGGESTION_DOCUMENTS),
+                |row| Ok(vec![row.opt_text(0)?]),
+            )
+            .await?,
+        );
+    }
 
-    // A wider net than the rule needs: `postio-search` owns how far a word
-    // may be mistyped, and this only has to avoid carrying every term across
-    // the boundary to find out.
-    let typed = term.value.chars().count() as i64;
-    let band = (typed - MOST_EDITS_CONSIDERED)..=(typed + MOST_EDITS_CONSIDERED);
+    // Each document counts a word once, however often it repeats it. Split
+    // the way the index's tokenizer splits, and lowercased the way it folds.
     let mut counts: HashMap<String, u64> = HashMap::new();
-    for document in &documents {
-        // Each document counts a term once, however often it repeats it.
-        let mut seen: HashSet<&str> = HashSet::new();
+    for document in &texts {
+        let mut seen: HashSet<String> = HashSet::new();
         for text in document.iter().flatten() {
             for word in text
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|word| !word.is_empty())
             {
-                if band.contains(&(word.chars().count() as i64)) && seen.insert(word) {
-                    *counts.entry(word.to_owned()).or_default() += 1;
+                let word = word.to_lowercase();
+                if !seen.contains(&word) {
+                    *counts.entry(word.clone()).or_default() += 1;
+                    seen.insert(word);
                 }
             }
         }
     }
 
-    // Commonest first, so the cap keeps the terms most likely to be the
-    // intended word.
-    let mut vocabulary: Vec<(String, u64)> = counts.into_iter().collect();
-    vocabulary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    vocabulary.truncate(VOCABULARY_CAP as usize);
-
     Ok(postio_search::suggest::suggest(
         &term.value,
-        vocabulary
+        counts
             .iter()
             .map(|(text, documents)| postio_search::suggest::Term {
                 text,
@@ -511,29 +524,13 @@ const LARGE_TOKEN: &str = "larger:1M";
 /// spend the whole shortlist on them and crowd out `is:unread`.
 const REFINE_FOLDERS: usize = 2;
 
-/// The widest a suggestion's length may differ from what was typed.
+/// How many documents of each half a suggestion reads.
 ///
-/// A pre-filter, not the rule: `postio_search::suggest` decides how far a word
-/// of a given length may be mistyped, and this only spares the boundary the
-/// whole vocabulary. It must stay at or above that rule's widest tolerance or
-/// it would quietly overrule it.
-const MOST_EDITS_CONSIDERED: i64 = 2;
-
-/// How many terms a suggestion considers, commonest first.
-///
-/// A mailbox holds far more distinct terms than any of them is worth
-/// comparing, and the intended word is overwhelmingly a common one — a name
-/// in hundreds of messages rather than a token that appeared once. This runs
-/// only on a search that found nothing, so it never sits on the typing path.
-const VOCABULARY_CAP: i64 = 4_096;
-
-/// How many of the newest documents the vocabulary is rebuilt from.
-///
-/// The bound on the scan [`suggestion_for`] pays, since this engine keeps no
-/// term dictionary to read instead. Five thousand rows of short metadata
-/// columns read and tokenize in a few milliseconds, and only on a search
-/// that already found nothing.
-const VOCABULARY_DOCUMENTS: i64 = 5_000;
+/// The index has already narrowed to messages holding a word like the one
+/// typed, so this bounds only how common a candidate can be *shown* to be —
+/// ranking needs relative counts, not totals. And it runs only on a search
+/// that found nothing.
+const SUGGESTION_DOCUMENTS: i64 = 50;
 
 /// Measures what the query's result set is made of: how it splits across the
 /// scopes, and which narrowings are worth offering.
@@ -1396,7 +1393,7 @@ impl Plan {
                         thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
                         mailbox_id: MailboxId::new(row.col(2)?),
                         subject: row.col(3)?,
-                        received_at: from_millis(row.col(4)?),
+                        received_at: postio_storage::repository::from_millis(row.col(4)?),
                         from_name: row.col(5)?,
                         from_address: row.col(6)?,
                         sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
@@ -1681,10 +1678,6 @@ fn day_start_millis(date: NaiveDate) -> i64 {
         .expect("midnight always exists")
         .and_utc()
         .timestamp_millis()
-}
-
-fn from_millis(millis: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(millis).unwrap_or_default()
 }
 
 #[cfg(test)]

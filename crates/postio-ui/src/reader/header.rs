@@ -348,9 +348,8 @@ pub enum ActionScope {
 
 /// The four verbs with the key each currently carries, in canvas order.
 ///
-/// From the keymap rather than the registry's defaults, the same rule
-/// [`crate::row::hints`] follows: a button teaching the wrong key is worse
-/// than one teaching none, so a verb whose key has been taken shows no hint
+/// From the keymap rather than the registry's defaults: a button teaching
+/// the wrong key is worse than one teaching none, so a verb whose key has been taken shows no hint
 /// at all.
 pub fn actions(keymap: &Keymap) -> Vec<(ReaderAction, Option<String>)> {
     ReaderAction::ALL

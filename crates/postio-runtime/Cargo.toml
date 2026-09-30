@@ -17,6 +17,11 @@ chrono = { workspace = true, features = ["std"] }
 # only thing missing from it is a way to poll a variable number of futures at
 # once. Already in the lock file via `zbus`, so it costs no extra compile.
 futures-util = { workspace = true }
+# Remote images for consenting senders (spec 006 US5): io-http over
+# pimalaya-stream, as the OAuth exchange does -- no other HTTP stack.
+io-http = { version = "0.5", default-features = false }
+pimalaya-stream = { workspace = true }
+url = { workspace = true }
 postio-core.workspace = true
 postio-account.workspace = true
 postio-index.workspace = true
@@ -30,11 +35,14 @@ tracing = { workspace = true }
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
+# The application's allocator, for `first_sync_memory`, which measures the
+# heap the application would hold (#1606). A test binary may set its own.
+mimalloc = "0.1"
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
 # `POSTIO_TEST_PATIENCE` (#842, #957).
-postio-test-support.workspace = true
+postio-test-support = { workspace = true, features = ["logs"] }
 # `smtp_wait_cpu.rs` implements `SmtpConnector`, which is `#[async_trait]`.
 # Already in the lock via postio-smtp, so it costs no extra compile.
 async-trait = { workspace = true }

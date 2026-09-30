@@ -37,6 +37,7 @@
 
 pub mod engine;
 pub mod network;
+pub mod remote_images;
 pub mod store;
 
 pub use engine::{

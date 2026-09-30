@@ -809,8 +809,10 @@ while IFS=$'\t' read -r NUM TITLE; do
         CLAIM_FREE_GB=$(( $(df -Pk "$WORKTREES" 2>/dev/null | awk 'NR==2 { print $4 }' || echo 0) / 1024 / 1024 ))
         if [ "${CLAIM_FREE_GB:-0}" -lt "${POSTIO_CLAIM_DISK_FLOOR_GB:-16}" ]; then
             echo "warning: ${CLAIM_FREE_GB} GB free under $WORKTREES, and a seeded tree is about 5 GB of it." >&2
+            # Reclaimed rather than reported: what the reaper frees is
+            # build output of finished work (maintainer, 2026-09-24).
             if [ -x "$REPO_ROOT/scripts/worktree-reap.sh" ]; then
-                "$REPO_ROOT/scripts/worktree-reap.sh" >&2 || true
+                "$REPO_ROOT/scripts/worktree-reap.sh" --reap >&2 || true
             fi
         fi
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"

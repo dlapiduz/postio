@@ -10,13 +10,13 @@
 //! realise, and GTK may be initialised once per process (#41).
 
 use crate::pump;
+use crate::row;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use chrono::{TimeZone, Utc};
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::list::{PageSource, Row};
+use postio_gtk::list::PageSource;
 use postio_gtk::list_view::MessageListView;
 use postio_gtk::{fonts, style};
 use postio_model::ids::MessageId;
@@ -42,28 +42,6 @@ impl PageSource for Pages {
     }
     fn request(&self, page: u32) {
         self.requested.borrow_mut().push(page);
-    }
-}
-
-fn row(position: u32) -> Row {
-    Row {
-        id: MessageId::new(position as i64 + 1),
-        thread: None,
-        from: Some(postio_model::address::EmailAddress::new(
-            Some("Ada Lovelace"),
-            "ada@example.com",
-        )),
-        subject: Some(format!("Note {position}")),
-        preview: Some("…".into()),
-        received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
-        seen: true,
-        flagged: false,
-        answered: false,
-        send_state: None,
-        send_at: None,
-        has_attachments: false,
-        thread_count: 1,
-        participants: Vec::new(),
     }
 }
 

@@ -58,6 +58,14 @@ command from inside a text field.
 | `K` or `alt+Up` | Previous message in conversation | Conversation |  | `prev_in_conversation` |
 | `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
+| `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
+| `D` | Darken this message | List, conversation, reader |  | `darken_message` |
+| `ctrl+f` | Find in message | List, conversation, reader |  | `find_in_message` |
+| `ctrl+g` or `F3` | Next match | List, conversation, reader |  | `find_next` |
+| `ctrl+shift+g` or `shift+F3` | Previous match | List, conversation, reader |  | `find_previous` |
+| `ctrl+plus` or `ctrl+equal` or `ctrl+KP_Add` | Zoom in | List, conversation, reader |  | `zoom_in` |
+| `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader |  | `zoom_out` |
+| `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader |  | `zoom_reset` |
 | `O` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
 | `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
 | `e` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
@@ -75,30 +83,36 @@ command from inside a text field.
 | `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+shift+d` or `ctrl+Return` | Send | Composer | Undo briefly | `send` |
-| `ctrl+shift+Return` | Schedule send… | Composer |  | `schedule_send` |
+| `ctrl+shift+d` or `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
+| `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
-| `ctrl+shift+m` | Mark as sent | List, composer |  | `mark_sent` |
-| `ctrl+shift+y` | Retry send | List, composer |  | `retry_send` |
-| `ctrl+shift+x` | Cancel send | List, composer |  | `cancel_send` |
-| `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
-| `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
-| `ctrl+shift+c` | Cc and Bcc | Composer |  | `copy_fields` |
-| `ctrl+shift+g` | Insert image… | Composer |  | `insert_image` |
+| `ctrl+shift+m` or `alt+m` | Mark as sent | List, composer |  | `mark_sent` |
+| `ctrl+shift+y` or `alt+r` | Retry send | List, composer |  | `retry_send` |
+| `ctrl+shift+x` or `alt+x` | Cancel send | List, composer |  | `cancel_send` |
+| `ctrl+shift+a` or `alt+a` | Attach file… | Composer |  | `attach_file` |
+| `ctrl+shift+o` or `alt+o` | Detach composer | Composer |  | `detach_composer` |
+| `ctrl+shift+c` or `alt+c` | Cc and Bcc | Composer |  | `copy_fields` |
+| `ctrl+shift+g` or `alt+g` | Insert image… | Composer |  | `insert_image` |
+| `ctrl+shift+e` or `alt+e` | Edit in external editor | Composer |  | `edit_externally` |
+| `ctrl+shift+p` or `alt+p` | Toggle preview | Composer |  | `toggle_preview` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
-| `ctrl+i` | Italic | Composer |  | `italic` |
-| `ctrl+shift+8` | Bulleted list | Composer |  | `bullet_list` |
-| `ctrl+shift+7` | Numbered list | Composer |  | `numbered_list` |
-| `ctrl+shift+k` | Insert link… | Composer |  | `insert_link` |
-| `ctrl+shift+9` | Quote block | Composer |  | `quote_block` |
+| `ctrl+i` or `alt+i` | Italic | Composer |  | `italic` |
+| `ctrl+shift+8` or `alt+8` | Bulleted list | Composer |  | `bullet_list` |
+| `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
+| `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
+| `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
 | `u` or `ctrl+z` | Undo | List, conversation, reader, account list |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, conversation, reader |  | `cheat_sheet` |
-| `ctrl+comma` | Settings | Everywhere |  | `settings` |
-| `ctrl+shift+n` | Add account | Everywhere |  | `add_account` |
+| `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |
+| `ctrl+shift+n` or `alt+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
-| `ctrl+b` | Toggle sidebar | List, conversation, reader |  | `toggle_sidebar` |
+| `ctrl+q` | Quit Postio | Everywhere |  | `quit` |
+| `i i` | Show remote images | List, conversation, reader |  | `show_images` |
+| `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
+| `X` | Unsubscribe from this list | List, conversation, reader |  | `unsubscribe` |
+| `ctrl+b` | Toggle sidebar | List, conversation, reader, folder list |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, conversation, reader, search |  | `focus_sidebar` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list |  | `go_to_inbox` |
 | `g d` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |

@@ -3043,12 +3043,17 @@ exercising a configuration that never ships.
 
 ## Dated entries, one file each
 
+- [Allocator A/B: small-store savings do not persist after a large search](notes/2026-09-24-allocator-ab-memory.md) — system allocation saved about 36 MiB after a small-store search, but neither allocator had a repeatable memory advantage after searching an older-schema 918 MiB mailbox; the 1 GiB peak remains unattributed (2026-09-24).
+
 Everything below this line used to be appended here, and two sessions
 appending in one day conflicted on every rebase (#1130). Each entry is now
 its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [The reader renders without a display](notes/2026-09-27-the-reader-renders-without-a-display.md) — since spec 006 the reader is `postio-render`, laid out and rasterised headlessly in-process, so reader layout, colour and containment are asserted on its snapshot in `postio-render`'s tests; the 2026-09-09 "no layout on the test display" wall no longer applies to the reader, only to what is still WebKit (2026-09-27).
+- [Blitz or WebKit: the reading engine, evaluated](notes/2026-09-26-blitz-or-webkit.md) — spec 006's engine evaluation: two arms on the same sanitized input, three gates (legibility on sampled pixels, zero egress, survives hostile mail), eight scored criteria, and a decision rule, committed before either arm ran; results and the maintainer's decision follow in the same note (2026-09-26).
+- [Two costs measured and left alone](notes/2026-09-23-two-costs-measured-and-left-alone.md) — a sync commit empties the readers' page caches, costing the next list page ~1.8 ms (0.88 → 2.68 ms), not worth a larger write unit; the Vulkan loader maps every installed driver and radeon's LLVM with it, under 4 MB private, and Vulkan is already the cheapest GPU renderer (2026-09-23).
 - [The engine keeps no pool, so a connection is a cold cache](notes/2026-09-23-the-engine-keeps-no-pool-a-connection-is-a-cold-cache.md) — `turso_core::Database::connect` builds a new pager and page cache per connection and the store had deleted its own pool on the belief that it did not; every read was a cold cache, a list page opened two, and a sync wave held five at 64 MiB; `Store::read` keeps three warm, `connect_background` gives lanes 4 MiB, and `counting::checkouts()` counts them (2026-09-23).
 - [The Flatpak build is not this workstation](notes/2026-09-19-the-flatpak-build-is-not-this-workstation.md) — `"type": "dir"` copies `.cargo/config.toml` into the sandbox, where `postio-linker`, `postio-cc`, the sccache wrapper and `-Wl,--threads` all name things that are not there; neutralised in the manifest's `build-options.env`, and `gh workflow run Release --ref main` exercises the bundle without cutting a tag (2026-09-19).
 - [io-imap discards all but the last untagged SEARCH line](notes/2026-09-17-io-imap-drops-search-results.md) — `ids = search_ids` where it means `extend`, so a SEARCH result split across lines keeps only its last one and a trailing empty line keeps nothing; iCloud listed 0 UIDs for a 60,934-message Archive, which then recorded itself as fully synced (2026-09-17).

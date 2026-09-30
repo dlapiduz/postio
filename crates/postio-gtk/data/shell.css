@@ -63,7 +63,7 @@ headerbar.postio-header button.toggle:checked {
   min-height: 32px;
   padding: 0 8px;
   border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
+  border-radius: var(--postio-radius-sm);
   background-color: var(--postio-surface);
 }
 
@@ -72,7 +72,7 @@ headerbar.postio-header button.toggle:checked {
 }
 
 .postio-search text {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   color: var(--postio-ink);
   background: none;
 }
@@ -94,7 +94,7 @@ headerbar.postio-header button.toggle:checked {
    because it is a character the user typed, not a picture. */
 .postio-search-marker {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-accent);
 }
 
@@ -104,7 +104,7 @@ headerbar.postio-header button.toggle:checked {
    empty box never carries a stale number. */
 .postio-readout {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
   margin-left: 4px;
 }
@@ -118,28 +118,124 @@ headerbar.postio-header button.toggle:checked {
    which is the standalone cap the focused row draws. */
 .postio-keyhint {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   opacity: 0.75;
 }
 
-/* Industry sets buttons in the heading face — Barlow Condensed, semibold.
-   The canvas keeps that and only changes the size. */
-button.postio-ghost,
-button.postio-compose {
+/* A hint that is not a control: what it does, then its cap
+   (`widgets::keyhint::chip`). The words are secondary ink, the cap mono. */
+.postio-keyhint-label {
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* A footer of hints in one mono line: `j/k walk · Return open · s save`
+   (`widgets::KeyLine`). Canvas 3g's and 2b's foot, at the canvas' 10.5px;
+   each surface adds only its own inset. */
+.postio-keyline {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  line-height: 1.7;
+  color: var(--postio-faint);
+}
+
+/* ── Buttons (`widgets::button`) ─────────────────────────────────────
+   Four kinds and two sizes, from the design system's `.btn-*`: square
+   (`radius-sm`, as every control is), the heading face, a hairline border
+   that a primary fills and a ghost drops. One primary look everywhere --
+   it had been libadwaita's pill in the header, a pale tint in the action
+   bars and a solid square in settings. */
+button.postio-button {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  border-radius: var(--postio-radius-md);
+  border: 1px solid transparent;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-ink);
 }
 
-button.postio-ghost {
-  font-size: 0.8182rem;
-  padding: 6px 10px;
-  color: var(--postio-color-neutral-600);
+button.postio-button:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
 }
 
-button.postio-compose {
-  padding: 6px 13px;
-  font-size: 0.8523rem;
+button.postio-button-regular {
+  min-height: 30px;
+  padding: 0 13px;
+  font-size: var(--postio-text-ui);
+}
+
+button.postio-button-small {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: var(--postio-text-small);
+}
+
+button.postio-button-primary {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-accent);
+  color: var(--postio-accent-fg);
+}
+
+button.postio-button-primary:hover {
+  border-color: var(--postio-accent-hover);
+  background-color: var(--postio-accent-hover);
+}
+
+button.postio-button-secondary {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-surface);
+}
+
+button.postio-button-secondary:hover {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-hover-bg);
+}
+
+/* Chrome, in the canvas' neutral rather than the design system's accent:
+   Postio's ghosts are the header and the bars, not links. */
+button.postio-button-ghost {
+  color: var(--postio-dim);
+}
+
+button.postio-button-ghost:hover {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* Findable, not inviting: bordered in the destructive colour, never
+   filled. */
+button.postio-button-destructive {
+  border-color: var(--destructive-color);
+  color: var(--destructive-color);
+}
+
+button.postio-button-destructive:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+button.postio-button:disabled {
+  opacity: 0.45;
+}
+
+/* An icon alone (`widgets::icon_button`): the design system's `.btn-icon`,
+   ghost-quiet. */
+button.postio-icon-button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-dim);
+}
+
+button.postio-icon-button:hover {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
 }
 
 /* ── The three panes ─────────────────────────────────────────────────
@@ -275,7 +371,7 @@ button.postio-compose {
 
 .postio-folder-count {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }
 
@@ -366,17 +462,11 @@ button.postio-compose {
 /* Why there is nothing on offer. Never a blank column. */
 .postio-refine-empty {
   padding: 0 18px;
-  font-size: 0.8523rem;
-  color: var(--postio-faint);
 }
 
 /* The keys this column offers, at its foot, the way the canvas draws them. */
 .postio-panel-keys {
   padding: 0 18px;
-  font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
-  line-height: 1.7;
-  color: var(--postio-faint);
 }
 
 /* `idle · imap` / `last sync 12s`, pinned to the foot. */
@@ -438,64 +528,6 @@ button.postio-compose {
   background-color: var(--postio-surface);
 }
 
-.postio-thread-header {
-  padding: 14px 18px 12px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
-/* The subject, in the heading face. Condensed, because a thread subject is
-   long and this column is 404px wide. */
-.postio-thread-subject {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 1.0227rem;
-  color: var(--postio-ink);
-}
-
-/* `6 messages · 4 people · Esc back to Inbox`. Mono, because it is counts
-   and a key. */
-.postio-thread-meta {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  color: var(--postio-dim);
-}
-
-.postio-thread-back {
-  min-width: 26px;
-  min-height: 26px;
-  padding: 0;
-}
-
-/* Unread-only and the order toggle. Quiet until they are doing something —
-   an option that looks like a button you must press is one people press. */
-.postio-thread-toggle {
-  min-height: 22px;
-  padding: 2px 8px;
-  font-family: var(--postio-font-mono);
-  font-size: 0.6818rem;
-  color: var(--postio-dim);
-}
-
-.postio-thread-toggle:checked {
-  background-color: var(--postio-selected-bg);
-  color: var(--postio-selected-accent-text);
-}
-
-.postio-thread-rows {
-  background: none;
-}
-
-/* The row widget a `GtkListView` wraps each item in. `crate::thread_row`
-   paints the row's own ground and its steel edge, because it draws its own
-   pixels — so the item widget itself stays out of the way entirely. */
-.postio-thread-rows > row {
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-}
-
 /* ── What the thread row's probe reads ───────────────────────────────
    `crate::thread_row` draws in one `snapshot()`, which gives up the cascade
    for the row's internals. These classes hand it back: an invisible label
@@ -508,14 +540,14 @@ button.postio-compose {
 .postio-thread-index,
 .postio-thread-when {
   font-family: var(--postio-font-mono);
-  font-size: 0.6818rem;
+  font-size: var(--postio-text-micro);
   color: var(--postio-faint);
 }
 
 .postio-thread-sender,
 .postio-thread-line {
   font-family: var(--postio-font-body);
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -557,27 +589,6 @@ button.postio-compose {
   color: var(--postio-hover-bg);
 }
 
-/* Why the column is empty, when a filter has emptied it. */
-.postio-thread-empty {
-  padding: 16px 18px;
-  font-size: 0.8523rem;
-  color: var(--postio-faint);
-}
-
-/* `j/k in thread · A archive thread · Esc back`, pinned to the foot the way
-   the artboard draws it. */
-.postio-thread-footer {
-  min-height: 28px;
-  padding: 3px 18px;
-  box-shadow: inset 0 1px var(--postio-hairline);
-}
-
-.postio-thread-keys {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  color: var(--postio-dim);
-}
-
 /* ── The message list's rows (canvas 1b) ─────────────────────────────
    `crate::row` draws a row in one `snapshot()` rather than out of nested
    boxes, because it is the most-rendered widget in the application and the
@@ -599,7 +610,7 @@ button.postio-compose {
 }
 
 .postio-row-sender {
-  font-size: 0.9204rem;
+  font-size: var(--postio-text-reading);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -614,7 +625,7 @@ button.postio-compose {
 }
 
 .postio-row-subject {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -630,10 +641,10 @@ button.postio-compose {
 
 /* #829: content, not affordance — a person reads the preview line to
    triage mail, so it wears `--postio-dim` (the 4.5:1 floor) rather than
-   `--postio-faint` (3:1, the key hint's floor below) in every state, read
+   `--postio-faint` (3:1, the hover glyphs' floor below) in every state, read
    or unread. */
 .postio-row-snippet {
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   color: var(--postio-dim);
 }
 
@@ -650,7 +661,7 @@ button.postio-compose {
 }
 
 .postio-row-badge {
-  font-size: 0.6818rem;
+  font-size: var(--postio-text-micro);
   color: var(--postio-dim);
 }
 
@@ -658,7 +669,7 @@ button.postio-compose {
    is what makes an unread run visible down the left edge at a glance. */
 .postio-row-avatar {
   font-family: var(--postio-font-heading);
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   font-weight: 500;
   color: var(--postio-dim);
 }
@@ -667,8 +678,9 @@ button.postio-compose {
   color: var(--postio-selected-accent-text);
 }
 
+/* The hover actions' glyph ink. */
 .postio-row-hint {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -687,10 +699,6 @@ button.postio-compose {
 
 .postio-row-edge.selected {
   color: var(--postio-selected-border);
-}
-
-.postio-row-edge.key {
-  color: var(--postio-key-border);
 }
 
 .postio-row-ground.selected {
@@ -737,13 +745,13 @@ button.postio-compose {
 .postio-list-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 1.3636rem;
+  font-size: var(--postio-text-title);
   color: var(--postio-ink);
 }
 
 .postio-list-meta {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }
 
@@ -875,6 +883,23 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
+/* The `Cc` disclosure shares the `To` line and is no taller than it, so
+   the header is one height whoever a message went to; a button's own
+   padding made the line 16px taller for every message with a Cc. */
+.postio-message-header-cc {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Whatever bar a surface mounts at the end of the subject line (#1435), the
+   same line: the reader's bar carried a footer's hairline from when it sat
+   under the chips (#498), which made its header a pixel taller than the
+   conversation's -- and the two are one header now (#1671). */
+.postio-message-header-verbs .postio-action-bar {
+  border-top: none;
+}
+
 /* ── The reading pane's action bar (#498) ────────────────────────────
    Reply, Reply all, Forward and Archive, under the body and the
    attachment chips — the pointer's way to the same four verbs the
@@ -925,18 +950,13 @@ button.postio-compose {
 }
 
 .postio-liststate-detail {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
   color: var(--postio-ink-secondary);
 }
 
 .postio-liststate-hint {
   margin-top: 4px;
-}
-
-.postio-liststate-hint-label {
-  font-size: 0.8182rem;
-  color: var(--postio-ink-secondary);
 }
 
 /* ── The first-run keyboard orientation (ADR 0012 Q4) ────────────────
@@ -958,12 +978,39 @@ button.postio-compose {
 .postio-orientation-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   color: var(--postio-ink);
 }
 
-.postio-orientation-hint-label {
-  font-size: 0.8182rem;
+/* ── The plate (`widgets::plate`) ────────────────────────────────────
+   The surface an overlay is drawn on: the cheat sheet, the parts panel, the
+   unavailable screen, onboarding, and the box's results. A hairline, the
+   control radius, the surface ground, and the token's large lift -- which,
+   unlike the literal it replaced, deepens in the dark scheme. */
+.postio-plate {
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: var(--postio-shadow-lg);
+}
+
+/* The canvas' title bar: 44px over a hairline, one height for every plate
+   (they were 42 and 44). */
+.postio-plate-header {
+  min-height: 44px;
+  padding: 0 18px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* A plate's name, as the canvas sets it over Parts, Add account and Sync
+   window: 12px Barlow Condensed, 0.16em, capitals. A size up from the
+   section kicker, because it names the whole surface. */
+.postio-plate-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: var(--postio-text-label);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   color: var(--postio-ink-secondary);
 }
 
@@ -982,10 +1029,6 @@ button.postio-compose {
   margin-left: 62px;
   min-width: 420px;
   padding: 8px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
 .postio-finder-list {
@@ -1007,7 +1050,7 @@ button.postio-compose {
 }
 
 .postio-finder-title {
-  font-size: 0.8863rem;
+  font-size: var(--postio-text-body);
   color: var(--postio-ink);
 }
 
@@ -1016,10 +1059,10 @@ button.postio-compose {
 }
 
 /* The key that runs it, or the folder's unread count — mono either way,
-   the same face the focused row's key hints use. */
+   the same face the row's timestamp uses. */
 .postio-finder-cap {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
@@ -1029,43 +1072,19 @@ button.postio-compose {
 
 .postio-finder-empty {
   padding: 16px 8px;
-  font-size: 0.8523rem;
-  color: var(--postio-faint);
 }
 
 /* ── The ? cheat sheet ───────────────────────────────────────────────
    The same plate as the palette, centred rather than dropped from the top:
    this one is read, not typed into. No transition — the canvas' motion
    budget applies to an overlay as much as to a pane. */
-.postio-cheatsheet {
-  padding: 20px 24px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-cheatsheet-heading {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 1.0227rem;
-  color: var(--postio-ink);
-  margin-bottom: 4px;
+.postio-cheatsheet-body {
+  padding: 16px 24px 20px;
 }
 
 .postio-cheatsheet-title {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink);
-}
-
-/* ── The / query bar ─────────────────────────────────────────────────
-   Over the list, not a dialog: search is primary navigation (canvas 2b).
-   No transition at all — the bar has to be typeable the instant it is
-   asked for. */
-.postio-searchbar {
-  padding: 8px 12px;
-  background-color: var(--postio-surface);
-  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 .postio-chips {
@@ -1104,7 +1123,7 @@ button.postio-compose {
    part of what is being read. */
 .postio-preview-kicker {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
   margin-bottom: 10px;
 }
@@ -1128,7 +1147,7 @@ button.postio-compose {
 
 /* Why there is no body yet, or no result focused. Never a blank pane. */
 .postio-preview-note {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-faint);
 }
 
@@ -1142,29 +1161,19 @@ button.postio-compose {
    No transition — a panel that fades in is one you read before it is there. */
 .postio-parts {
   min-width: 640px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-parts-header {
-  min-height: 42px;
-  padding: 0 16px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 /* `multipart/mixed · 4 parts · 1.2 MB`. Mono: it is a type and two counts. */
 .postio-parts-summary {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
 /* The canvas' outline tag. Steel rather than red — nothing has gone wrong,
    the reader did exactly what it promises to do. */
 .postio-parts-blocked {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   border-color: var(--postio-selected-border);
   color: var(--postio-accent-text);
 }
@@ -1202,7 +1211,7 @@ button.postio-compose {
    and a MIME type is an identifier rather than prose. */
 .postio-parts-name {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-ink-secondary);
 }
 
@@ -1212,7 +1221,7 @@ button.postio-compose {
 }
 
 .postio-parts-size {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -1223,10 +1232,6 @@ button.postio-compose {
 /* The keys this column offers, at its foot, where the artboard draws them. */
 .postio-parts-keys {
   padding: 12px 14px 4px;
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  line-height: 1.7;
-  color: var(--postio-faint);
 }
 
 .postio-parts-detail {
@@ -1235,7 +1240,7 @@ button.postio-compose {
 
 .postio-parts-meta {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
@@ -1244,15 +1249,9 @@ button.postio-compose {
    12.5px for the reason `.postio-thread-line` gives: at 12.5px and weight 400
    the cap-height strokes wash out and `HTML` renders as `HIML`. */
 .postio-parts-note {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.6;
   color: var(--postio-ink-secondary);
-}
-
-.postio-parts-action {
-  min-height: 26px;
-  padding: 4px 11px;
-  font-size: 0.7841rem;
 }
 
 /* Attachment chips under a message body (canvas 1b). Outline rather than
@@ -1277,13 +1276,13 @@ button.postio-compose {
 }
 
 .postio-attachment-name {
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-ink-secondary);
 }
 
 .postio-attachment-size {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -1295,16 +1294,6 @@ button.postio-compose {
    application, not like an error. */
 .postio-unavailable {
   min-width: 560px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-unavailable-header {
-  min-height: 44px;
-  padding: 0 18px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 .postio-unavailable-body {
@@ -1322,13 +1311,13 @@ button.postio-compose {
 /* `SecretError`'s own sentence, which carries the unlock hint. Prose, and
    the one thing on this screen the user has to actually read. */
 .postio-unavailable-reason {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
   color: var(--postio-ink);
 }
 
 .postio-unavailable-note {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   line-height: 1.5;
   color: var(--postio-ink-secondary);
 }
@@ -1339,23 +1328,13 @@ button.postio-compose {
    a surface the application puts in front of you, not a dialog. */
 .postio-onboarding {
   min-width: 640px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.postio-onboarding-header {
-  min-height: 44px;
-  padding: 0 18px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 /* `step 1 of 1`. Mono, and it is the whole promise of this screen: there is
    no second page and nothing is being held back for later. */
 .postio-onboarding-step {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-dim);
 }
 
@@ -1363,8 +1342,10 @@ button.postio-compose {
   padding: 22px 26px 26px;
 }
 
-.postio-onboarding-label {
-  font-size: 0.8864rem;
+/* A field's caption (`widgets::field`): onboarding's, the account
+   detail's -- one look, and the control's accessible name. */
+.postio-field-label {
+  font-size: var(--postio-text-body);
   color: var(--postio-ink-secondary);
 }
 
@@ -1381,7 +1362,7 @@ button.postio-compose {
 }
 
 .postio-onboarding-card-heading {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   font-weight: 500;
   color: var(--postio-ink);
 }
@@ -1398,7 +1379,7 @@ button.postio-compose {
    screen the user has to actually read, and iCloud's is the difference
    between the password working and not. */
 .postio-onboarding-note {
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
   color: var(--postio-ink-secondary);
   margin-top: 4px;
@@ -1406,25 +1387,7 @@ button.postio-compose {
 
 .postio-onboarding-help {
   padding: 0;
-  font-size: 0.8523rem;
-}
-
-.postio-onboarding-hint {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  color: var(--postio-dim);
-}
-
-/* Why it did not work. The accent's warning cousin rather than a red banner:
-   nothing has gone wrong with Postio, the server said no. */
-.postio-onboarding-failed {
-  padding: 10px 12px;
-  border-radius: var(--postio-radius-sm);
-  border: 1px solid var(--postio-selected-border);
-  background-color: var(--postio-selected-bg);
-  font-size: 0.8864rem;
-  line-height: 1.5;
-  color: var(--postio-ink);
+  font-size: var(--postio-text-ui);
 }
 
 /* The browser sign-in step (#1179, Design/screens/23). Never a login form:
@@ -1433,7 +1396,7 @@ button.postio-compose {
    actually asks for. */
 .postio-onboarding-browser-flow {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   padding: 10px 12px;
   border: 1px solid var(--postio-hairline);
   background-color: var(--postio-ground);
@@ -1441,7 +1404,7 @@ button.postio-compose {
 }
 
 .postio-onboarding-scope {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink);
 }
 
@@ -1471,7 +1434,7 @@ button.postio-compose {
 .postio-settings-window-title {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   letter-spacing: 0.12em;
   color: var(--postio-ink);
 }
@@ -1481,22 +1444,10 @@ button.postio-compose {
   border-radius: var(--postio-radius-sm);
 }
 
-.postio-settings-header {
-  min-height: 42px;
-  padding: 0 16px;
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
-.postio-settings-path {
-  font-family: var(--postio-font-mono);
-  font-size: 0.75rem;
-  color: var(--postio-ink-secondary);
-}
-
 /* The same chip vocabulary the query bar uses for an operator: a small
    labelled tag, not a bespoke pill. */
 .postio-settings-tag {
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   background-color: var(--postio-selected-bg);
   color: var(--postio-selected-accent-text);
 }
@@ -1551,7 +1502,7 @@ button.postio-compose {
 }
 
 .postio-settings-nav-row label {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink-secondary);
 }
 
@@ -1591,7 +1542,7 @@ button.postio-compose {
 }
 
 .postio-settings-pane-description {
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   color: var(--postio-ink-secondary);
 }
 
@@ -1622,57 +1573,6 @@ button.postio-compose {
   background-color: var(--postio-ground);
 }
 
-/* The pane's one primary action: `Add account`, and nothing else so far. */
-button.postio-settings-primary {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 0.8523rem;
-  min-height: 32px;
-  padding: 0 16px;
-  border: 1px solid var(--postio-accent);
-  border-radius: var(--postio-radius-sm);
-  background-image: none;
-  background-color: var(--postio-accent);
-  box-shadow: none;
-  color: var(--postio-accent-fg);
-}
-
-button.postio-settings-primary:hover {
-  background-color: var(--postio-accent-hover);
-  border-color: var(--postio-accent-hover);
-}
-
-button.postio-settings-primary:focus-visible {
-  outline: 2px solid var(--postio-accent);
-  outline-offset: 2px;
-}
-
-/* The quiet, squared button the drawing uses for a pane's secondary
-   verbs: Sync now, Reset to defaults, Test connection. */
-button.postio-settings-small-button {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 0.7841rem;
-  min-height: 28px;
-  padding: 0 12px;
-  border: 1px solid var(--postio-hairline-strong);
-  border-radius: var(--postio-radius-sm);
-  background-image: none;
-  background-color: var(--postio-surface);
-  box-shadow: none;
-  color: var(--postio-ink);
-}
-
-button.postio-settings-small-button:hover {
-  background-color: var(--postio-hover-bg);
-  border-color: var(--postio-accent);
-}
-
-button.postio-settings-small-button:focus-visible {
-  outline: 2px solid var(--postio-accent);
-  outline-offset: 2px;
-}
-
 .postio-settings-view {
   padding: 14px 18px;
   background-color: var(--postio-ground);
@@ -1680,7 +1580,7 @@ button.postio-settings-small-button:focus-visible {
 
 .postio-settings-view text {
   font-family: var(--postio-font-mono);
-  font-size: 0.8182rem;
+  font-size: var(--postio-text-label);
   color: var(--postio-ink);
   background: none;
 }
@@ -1707,13 +1607,13 @@ button.postio-settings-small-button:focus-visible {
 /* `[ui] in config.toml` — which table this pane writes. */
 .postio-settings-footer-target {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-ink-secondary);
 }
 
 .postio-settings-footer {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -1728,7 +1628,7 @@ button.postio-settings-small-button:focus-visible {
 
 button.postio-settings-keys-binding {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   min-height: 24px;
   min-width: 26px;
   padding: 0 8px;
@@ -1793,7 +1693,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   min-width: 34px;
   min-height: 34px;
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   border: 1px solid var(--postio-hairline);
   background-color: var(--postio-ground);
   color: var(--postio-ink-secondary);
@@ -1805,13 +1705,13 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 }
 
 .postio-settings-account-metadata {
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
 }
 
 /* `default`, beside the address. A word, never a colour alone. */
 .postio-settings-account-default {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   padding: 1px 6px;
   background-color: var(--postio-selected-bg);
   color: var(--postio-selected-accent-text);
@@ -1823,37 +1723,6 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 .postio-settings-account-warning {
   color: var(--postio-accent-text);
 }
-
-/* What an account's mail weighs, under its name (#411).
-
-   Secondary to the name in the ordinary way -- the identity is what the row
-   is for and the size is a fact about it -- and dimmed through the token
-   rather than libadwaita's `dim-label`, so high contrast can bring it back
-   up with everything else that fades. Proportional, not the mono face the
-   status line uses: that line is almost entirely number and sits in a
-   column of them; this one is a sentence with two numbers in it. */
-.postio-settings-account-weight {
-  font-size: 0.7841rem;
-  color: var(--postio-dim);
-}
-
-/* The canvas' "Revert file": a quiet, bordered button, not the ghost style
-   the header's own controls use — Revert is a recovery action and reads as
-   one rather than blending into the row. */
-button.postio-settings-revert {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 0.7841rem;
-  padding: 5px 11px;
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
-  color: var(--postio-ink-secondary);
-}
-
-button.postio-settings-revert:hover {
-  background-color: var(--postio-hover-bg);
-}
-
 
 /* The account's signatures (#1086). Rows rather than bare text: each one
    opens an editor, so it has to look like something you can press. */
@@ -1886,16 +1755,25 @@ button.postio-settings-revert:hover {
   background-color: transparent;
 }
 
-/* Why a signature would not save -- a name already taken, so far. The
-   accent's warning cousin, like every other refusal in this app: nothing has
-   gone wrong, the store said no. */
-.postio-settings-signature-error {
-  padding: var(--postio-space-2) var(--postio-space-3);
+/* Why something was refused (`widgets::callout`): a sign-in the server
+   declined, a signature name already taken. The accent's warning cousin
+   rather than a red banner -- nothing has gone wrong with Postio, the
+   other side said no. */
+.postio-callout {
+  padding: 10px 12px;
   border-radius: var(--postio-radius-sm);
   border: 1px solid var(--postio-selected-border);
   background-color: var(--postio-selected-bg);
+  font-size: var(--postio-text-body);
+  line-height: 1.5;
   color: var(--postio-ink);
-  font-size: 0.8864rem;
+}
+
+/* Why a list has nothing in it (`widgets::empty_note`). One quiet line,
+   the look the box's and the refine column's empties already had. */
+.postio-empty-note {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-faint);
 }
 
 /* What the last connection test found (#980). Under the servers it is about,
@@ -1906,7 +1784,7 @@ button.postio-settings-revert:hover {
   border-radius: var(--postio-radius-sm);
   background-color: var(--postio-hover-bg);
   color: var(--postio-ink-secondary);
-  font-size: 0.8864rem;
+  font-size: var(--postio-text-body);
   line-height: 1.5;
 }
 
@@ -1949,7 +1827,7 @@ button.postio-settings-revert:hover {
 .postio-compose-heading {
   font-family: var(--postio-font-heading);
   font-weight: var(--postio-font-heading-weight);
-  font-size: 1.3636rem;
+  font-size: var(--postio-text-title);
   color: var(--postio-ink);
 }
 
@@ -1984,7 +1862,7 @@ button.postio-settings-revert:hover {
   outline: none;
   min-height: 26px;
   padding: 0;
-  font-size: 0.9204rem;
+  font-size: var(--postio-text-reading);
   color: var(--postio-ink);
 }
 
@@ -1997,13 +1875,13 @@ button.postio-settings-revert:hover {
 }
 
 .postio-compose-identity {
-  font-size: 0.9204rem;
+  font-size: var(--postio-text-reading);
   color: var(--postio-ink-secondary);
 }
 
 button.postio-compose-more {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   padding: 2px 6px;
   min-height: 0;
   color: var(--postio-dim);
@@ -2100,38 +1978,6 @@ button.postio-compose-more {
   min-height: 24px;
 }
 
-/* The conversation pane (ADR 0015 Q4): a stack of messages, read ones
-   collapsed to the one-line header the drill-in column already draws.
-
-   Entries are separated by the same hairline the list uses between rows,
-   because they are the same kind of boundary — one message ending and the
-   next beginning. Focus is drawn by the header itself (it wears the row's
-   own selected treatment), so nothing here dims anything: this is the one
-   surface where prose is actually read. */
-.conversation-entry {
-  box-shadow: inset 0 -1px var(--postio-hairline);
-}
-
-/* Reply, reply-all and forward, under the header of an expanded message.
-   Mono, because they sit with the key hints and the timestamps rather than
-   with the prose, and quiet until the message they belong to is the one
-   being read. */
-.conversation-actions {
-  padding: 0 var(--postio-space-3) var(--postio-space-2);
-}
-
-.conversation-actions button {
-  color: var(--postio-ink-secondary);
-  font-family: var(--postio-font-mono);
-  font-size: 0.85em;
-  min-height: 24px;
-  padding: 2px var(--postio-space-2);
-}
-
-.conversation-actions button:hover {
-  color: var(--postio-accent-text);
-}
-
 /* ── The shared controls (#1002) ─────────────────────────────────────
    A button with its key beside it, a row of them, and a one-line notice.
    Postio had three or four hand-rolled copies of each; these are the
@@ -2143,30 +1989,6 @@ button.postio-compose-more {
    their own class beside this for the padding and the rule above it. */
 .postio-action-bar {
   padding: var(--postio-space-2) var(--postio-space-4);
-}
-
-/* #1174: outlined rectangles, not libadwaita's default pill. One rule
-   because `ActionBar::new` puts this class on every bar it builds — the
-   conversation footer's own verbs and the per-message reply/reply-all/
-   forward row alike, both drawn the same shape in
-   `Design/screens/17-conversation-view.png` ("both bars" in that mockup).
-   A `.conversation-footer` or `.conversation-actions` rule of its own would
-   only ever repeat this one. */
-.postio-action-bar button {
-  border-radius: var(--postio-radius-sm);
-  border: 1px solid var(--postio-hairline);
-  background-color: var(--postio-surface);
-  background-image: none;
-  box-shadow: none;
-}
-
-/* The one verb a bar exists for: a subtle accent tint, not libadwaita's
-   saturated `.suggested-action` capsule. Still outlined, like its
-   neighbours — only the fill and the label colour say "this is the one". */
-.postio-action-bar button.suggested-action {
-  background-color: var(--postio-selected-bg);
-  border-color: var(--postio-hairline);
-  color: var(--postio-accent-text);
 }
 
 /* A closed set of choices with all of them on screen (#1179). Joined,
@@ -2189,7 +2011,7 @@ button.postio-compose-more {
   background-color: var(--postio-surface);
   box-shadow: none;
   font-family: var(--postio-font-body);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
   font-weight: 400;
   color: var(--postio-ink-secondary);
 }
@@ -2228,7 +2050,7 @@ button.postio-compose-more {
 .postio-check {
   min-height: 26px;
   color: var(--postio-ink);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
 }
 
 .postio-check check {
@@ -2264,24 +2086,11 @@ button.postio-compose-more {
   outline-offset: 2px;
 }
 
-/* A section heading in letterspaced small caps: THEME, MESSAGE LIST,
-   SCOPES REQUESTED. The text arrives already uppercase — Pango's own
-   case transform is not reliably applied to every face here, and a kicker
-   that is uppercase in one pane and not the next is exactly the drift
-   these shared classes exist to stop. */
-.postio-kicker {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 0.7159rem;
-  letter-spacing: 0.09em;
-  color: var(--postio-dim);
-}
-
 /* A line of mono facts under a group. Almost entirely number, and numbers
    that do not line up read as a mistake. */
 .postio-stat-line {
   font-family: var(--postio-font-mono);
-  font-size: 0.7841rem;
+  font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }
 
@@ -2298,43 +2107,34 @@ button.postio-compose-more {
   background-color: var(--postio-surface);
 }
 
+/* The overflow is a whole button, 34px on its own -- taller than the notice
+   it sits in, and only there when the notice has a menu. So the slot, sized
+   to its tallest page, was 2px taller for a message whose sender could be
+   always-allowed than for one that could not, and the body moved with it
+   (#1671). */
+.postio-notice > menubutton > button {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .postio-notice-icon {
   color: var(--postio-ink-secondary);
 }
 
 .postio-notice-label {
   color: var(--postio-ink-secondary);
-  font-size: 0.8523rem;
+  font-size: var(--postio-text-ui);
 }
 
 /* ── The conversation pane's own chrome (canvas turn 8a, #1004/#1005/#1006)
    The header names the conversation and the footer carries its verbs; both
    sit outside the scroller, so a long thread never loses either. Between
    them the stack, and the dividers that stand in for folded runs. */
-.conversation-header {
-  padding: var(--postio-space-3) var(--postio-space-4);
-  border-bottom: 1px solid var(--postio-hairline);
-  background-color: var(--postio-ground);
-}
+/* The header itself is the reader's (`.postio-message-header`, #1671): one
+   header on both surfaces, so the body starts at the same height on both. */
 
-/* The largest type in the pane. This is the one place the conversation is
-   named -- before #1003 there were two and they could disagree. */
-.conversation-subject {
-  font-family: var(--postio-font-heading);
-  font-weight: var(--postio-font-heading-weight);
-  font-size: 1.4318rem;
-  color: var(--postio-ink);
-}
-
-/* `8 messages · Ada, Bo, Site Office · 10-25 Aug`. One line, ellipsised --
-   the participants are the unbounded part and must not grow the header. */
-.conversation-meta {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7955rem;
-  color: var(--postio-dim);
-}
-
-/* The participant chips on row two (canvas screens 28 and 30): two letters
+/* The participant chips after `From` (canvas screens 28 and 30): two letters
    each, overlapping slightly so three of them read as a group rather than as
    three separate controls.
 
@@ -2359,9 +2159,9 @@ button.postio-compose-more {
   margin-left: -3px;
 }
 
-/* `latest · all 6`, at row two's trailing edge (canvas screen 30).
+/* `latest · all 6`, on the `From` row before the count (canvas screen 30).
 
-   Mono like the meta line beside it, because it is metadata about what the
+   Mono like the count beside it, because it is metadata about what the
    verbs above will act on rather than prose. Dimmer than that line: it
    qualifies the bar, and a note competing with the count it sits beside would
    read as a second fact rather than a footnote to one. The brief calls it
@@ -2370,17 +2170,6 @@ button.postio-compose-more {
   font-family: var(--postio-font-mono);
   font-size: 0.7955rem;
   color: var(--postio-faint);
-}
-
-/* `--------  5 earlier messages · Ada, Bo  [Show]  --------` */
-.conversation-divider {
-  padding: var(--postio-space-2) var(--postio-space-4);
-}
-
-.conversation-divider-label {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7955rem;
-  color: var(--postio-dim);
 }
 
 /* The conversation's verbs, against the per-message ones inside an entry. */
@@ -2406,7 +2195,7 @@ button.postio-compose-more {
    than a row. */
 .postio-rail-heading {
   font-family: var(--postio-font-heading);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--postio-faint);
@@ -2426,7 +2215,7 @@ button.postio-compose-more {
    agree with. */
 .postio-rail-number {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -2440,7 +2229,7 @@ button.postio-compose-more {
    single name. */
 .postio-rail-length {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -2474,7 +2263,7 @@ button.postio-compose-more {
 
 .postio-rail-hint {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
 }
 
@@ -2501,7 +2290,7 @@ button.postio-compose-more {
    rail is already the least important thing in the pane. */
 .postio-rail-hide {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-faint);
   background: none;
   border: none;
@@ -2520,17 +2309,17 @@ button.postio-compose-more {
    different faces would make it read as a name that had been cut off. */
 .postio-rail-initials {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-ink-secondary);
 }
 
-/* `3/6 ⌄` at row two's trailing edge, below the ladder's floor (screen 29).
+/* `3/6 ⌄` ahead of the verbs, below the ladder's floor (screen 29).
    Mono, because it is a position you count with, and outlined rather than
    filled: it opens something, which is a quieter act than the header's verbs
    and must not compete with them. */
 .conversation-counter {
   font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
+  font-size: var(--postio-text-meta);
   color: var(--postio-ink-secondary);
   background: none;
   border: 1px solid var(--postio-hairline-strong);
@@ -2538,6 +2327,14 @@ button.postio-compose-more {
   padding: 0 var(--postio-space-2);
   min-height: 0;
   margin-left: var(--postio-space-2);
+}
+
+/* The toggle inside is a whole button, 34px on its own; the counter is an
+   outlined chip beside the verbs, not a fifth verb. */
+.conversation-counter > button {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .conversation-counter:hover {

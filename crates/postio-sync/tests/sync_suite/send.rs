@@ -1727,3 +1727,277 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
         "the lists read the mirror row, and it still says the send is on its way"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A forward whose attachment was never downloaded (#1686)
+// ---------------------------------------------------------------------------
+
+/// The forwarded file, decoded, and the encoded form the server holds.
+const STATEMENT: &[u8] = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
+const STATEMENT_BASE64: &str = "JVBERi0xLjQKJeLjz9MK\r\n";
+
+/// A message in INBOX whose text is section 1 and whose PDF is section 2,
+/// with both seeded on the server — so a `BODY[2]` for the payload succeeds
+/// and nothing else about the part is local until somebody asks.
+fn a_statement() -> postio_account::backend::MockMessage {
+    use postio_account::backend::{BodyStructure, MockMessage, PartNode};
+    let structure = BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            PartNode::new("1", "text/plain", 26)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            PartNode::new("2", "application/pdf", STATEMENT.len() as u64)
+                .with_encoding("base64")
+                .with_filename("statement.pdf"),
+        ],
+    );
+    MockMessage::new(
+        b"From: Grace Hopper <grace@example.net>\r\n\
+          To: Ada Lovelace <ada@example.com>\r\n\
+          Subject: Statement\r\n\
+          Message-ID: <statement@example.net>\r\n\
+          Content-Type: multipart/mixed; boundary=b\r\n\
+          \r\n\
+          --b\r\n\
+          Content-Type: text/plain; charset=utf-8\r\n\
+          \r\n\
+          Your statement is attached.\r\n\
+          --b--\r\n"
+            .to_vec(),
+    )
+    .with_internal_date(at(8))
+    .with_structure(structure)
+    .with_part("1", &b"Your statement is attached."[..])
+    .with_part("2", STATEMENT_BASE64.as_bytes())
+}
+
+/// Header-syncs INBOX so the statement has a local row with its attachment's
+/// metadata and none of its bytes, and returns that row.
+async fn the_statement_synced(
+    connection: &postio_storage::Checkout,
+    account: &Account,
+    backend: &MockBackend,
+) -> postio_model::Message {
+    let inbox = test_support::mailbox(connection, account, "INBOX").await;
+    postio_sync::sync_mailbox(
+        connection,
+        backend,
+        &inbox,
+        &postio_account::cancel::CancelToken::new(),
+        |_| {},
+    )
+    .await
+    .expect("header sync");
+    let messages = MessageRepository::new(connection);
+    let uid = *messages
+        .uids_in(
+            inbox.id,
+            backend.status("INBOX").await.expect("status").generation,
+        )
+        .await
+        .expect("uids")
+        .first()
+        .expect("the statement was synced");
+    let source = messages
+        .by_uid(
+            inbox.id,
+            backend.status("INBOX").await.expect("status").generation,
+            uid,
+        )
+        .await
+        .expect("look up")
+        .expect("the row");
+    let pdf = source
+        .attachments
+        .iter()
+        .find(|part| part.part_id.as_deref() == Some("2"))
+        .expect("the PDF's metadata came down with the headers");
+    assert!(
+        pdf.blob_id.is_none(),
+        "the fixture is only about a part that was never downloaded"
+    );
+    source
+}
+
+/// The message the client handed to SMTP: what followed `DATA`, up to the
+/// terminating dot.
+fn submitted(connector: &ScriptedConnector) -> Vec<u8> {
+    let written = connector.log().written;
+    let text = String::from_utf8_lossy(&written).into_owned();
+    let start = text.find("DATA\r\n").expect("a DATA command") + "DATA\r\n".len();
+    let end = text[start..]
+        .find("\r\n.\r\n")
+        .expect("a terminated payload")
+        + start;
+    text.as_bytes()[start..end].to_vec()
+}
+
+/// A forward of `source` addressed to one recipient, saved and queued.
+async fn queue_a_forward(
+    connection: &Connection,
+    account: &Account,
+    source: &postio_model::Message,
+) -> DraftId {
+    let mut draft =
+        postio_model::reply::forward(source, account, postio_model::reply::plain_forward(source));
+    draft.to = vec![EmailAddress::new(None::<String>, "quinn@example.org")];
+    let draft_id = DraftRepository::new(connection)
+        .save(&mut draft)
+        .await
+        .expect("save the forward");
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .await
+        .expect("enqueue");
+    draft_id
+}
+
+#[tokio::test]
+async fn forwarding_an_attachment_that_was_never_downloaded_sends_its_bytes() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX").message(a_statement()))
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let source = the_statement_synced(&connection, &account, &backend).await;
+    let draft_id = queue_a_forward(&connection, &account, &source).await;
+
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    assert!(
+        report.failed.is_empty(),
+        "the forward was refused rather than sent: {:?}",
+        report.failed
+    );
+    assert_eq!(report.applied, 1, "{report:?}");
+    assert!(
+        DraftRepository::new(&connection)
+            .get(draft_id)
+            .await
+            .expect("get")
+            .is_none(),
+        "the forward was sent, so its draft is gone"
+    );
+
+    // What reached the recipient's server, not what some layer was told.
+    let parsed = postio_model::mime::parse(&submitted(&connector));
+    let carried = parsed
+        .parts
+        .iter()
+        .find(|part| part.attachment.filename.as_deref() == Some("statement.pdf"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the forward went out without the attachment it carried: {:?}",
+                parsed
+                    .parts
+                    .iter()
+                    .map(|part| part.attachment.filename.clone())
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(
+        carried.content, STATEMENT,
+        "and it carries the file's bytes, fetched from the original"
+    );
+
+    // Fetched once, for both: the original's row has its bytes now too, so
+    // opening it later is not a second download.
+    let original = MessageRepository::new(&connection)
+        .get(source.id)
+        .await
+        .expect("get")
+        .expect("the original");
+    assert!(
+        original
+            .attachments
+            .iter()
+            .find(|part| part.part_id.as_deref() == Some("2"))
+            .is_some_and(|part| part.blob_id.is_some()),
+        "the fetched section was not recorded on the message it came from"
+    );
+}
+
+#[tokio::test]
+async fn a_forward_whose_original_is_gone_names_the_file_it_could_not_carry() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX").message(a_statement()))
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let source = the_statement_synced(&connection, &account, &backend).await;
+    let draft_id = queue_a_forward(&connection, &account, &source).await;
+    MessageRepository::new(&connection)
+        .delete(&[source.id])
+        .await
+        .expect("expunge the original");
+
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    let reason = &report.failed[0].reason;
+    assert!(
+        reason.contains("statement.pdf"),
+        "the refusal must name the file the person will look for: {reason:?}"
+    );
+    assert!(
+        !reason.contains("uploading"),
+        "nothing was being uploaded: {reason:?}"
+    );
+    assert!(
+        !connector
+            .log()
+            .commands()
+            .iter()
+            .any(|line| line.starts_with("MAIL FROM")),
+        "a forward missing its attachment is not submitted without it"
+    );
+    assert_eq!(
+        DraftRepository::new(&connection)
+            .get(draft_id)
+            .await
+            .expect("get")
+            .expect("the draft stays for the person to fix")
+            .state,
+        postio_model::DraftState::Failed
+    );
+}

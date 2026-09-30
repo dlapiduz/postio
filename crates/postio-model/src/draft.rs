@@ -128,8 +128,20 @@ pub struct Draft {
     pub identity_id: Option<IdentityId>,
     /// What kind of composition this is.
     pub kind: DraftKind,
-    /// The local message being replied to or forwarded, when there is one.
+    /// The local message being replied to, when there is one.
     pub in_reply_to: Option<MessageId>,
+    /// The local message a forward was made from, when this is one.
+    ///
+    /// Not [`Self::in_reply_to`], which a forward leaves empty on purpose: it
+    /// decides the threading headers, and a forward starts a new
+    /// conversation. This exists for the attachments a forward carries.
+    /// Their bytes may never have been downloaded — the payload axis leaves
+    /// them on the server until somebody asks (ADR 0017) — and the carry
+    /// resets the ids that would have said where they came from, so this and
+    /// each attachment's `part_id` are what lets the sender fetch a missing
+    /// part from the original rather than refusing to send (#1686).
+    #[serde(default)]
+    pub forwarded_from: Option<MessageId>,
     /// The thread this draft belongs to, so it can be shown inline.
     pub thread_id: Option<ThreadId>,
     /// `To` recipients.
@@ -154,6 +166,17 @@ pub struct Draft {
     /// It decides what leaves: `text/html` plus a `text/plain` alternative
     /// **always**, against `text/plain` alone, wrapped and flowed.
     pub rich: bool,
+    /// The Markdown the user typed, when the draft was written in the
+    /// terminal composer; `None` when a frontend that does not author
+    /// Markdown saved it last.
+    ///
+    /// `body` still carries what is sent -- this Markdown as the text part and
+    /// its rendering as the HTML part. This is kept beside it so the terminal
+    /// reopens exactly what was typed rather than a translation back from the
+    /// HTML, and so the text part is sent `format=fixed` (see
+    /// [`outgoing::build`](crate::outgoing::build)).
+    #[serde(default)]
+    pub body_markdown: Option<String>,
     /// Attachments added so far. These carry
     /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
     /// until the draft becomes a sent message.
@@ -196,6 +219,7 @@ impl Draft {
             identity_id: None,
             kind: DraftKind::New,
             in_reply_to: None,
+            forwarded_from: None,
             thread_id: None,
             to: Vec::new(),
             cc: Vec::new(),
@@ -205,6 +229,7 @@ impl Draft {
             // Plain by default, on both frontends. A composer that opened
             // rich would decide for the person what shape their mail takes.
             rich: false,
+            body_markdown: None,
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,
@@ -274,6 +299,38 @@ impl Draft {
     /// Every recipient across `To`, `Cc` and `Bcc`.
     pub fn all_recipients(&self) -> impl Iterator<Item = &EmailAddress> {
         self.to.iter().chain(&self.cc).chain(&self.bcc)
+    }
+}
+
+/// What closing the composer does with the draft in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Closing {
+    /// Keep it: reopening compose comes back to it.
+    Keep,
+    /// Nothing was written, so there is nothing to keep.
+    Drop,
+}
+
+/// Whether closing the composer has anything to keep.
+///
+/// The acceptance criterion "`Esc` never silently discards content" is this
+/// function: anything the user typed — a recipient, a subject, a word of body —
+/// makes the draft worth keeping. Only a composition that is still exactly as
+/// it opened is dropped, and dropping *that* discards nothing.
+///
+/// Neither whitespace nor the signature counts as content. A body holding
+/// only what the composer put there would make every abandoned composer
+/// permanent, which is how a "we kept your draft" message stops meaning
+/// anything.
+pub fn closing(draft: &Draft) -> Closing {
+    let body = draft.body.text.as_deref().unwrap_or_default();
+    // The signature is the composer's own doing, not something the user
+    // wrote, so a body holding nothing else is still an untouched composer.
+    let written = crate::signature::split(body).0;
+    if draft.has_recipients() || !draft.subject.trim().is_empty() || !written.trim().is_empty() {
+        Closing::Keep
+    } else {
+        Closing::Drop
     }
 }
 

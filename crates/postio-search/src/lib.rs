@@ -73,4 +73,4 @@ pub use facets::{Facets, Refinement, Scope};
 pub use highlight::Highlighted;
 pub use parser::parse;
 pub use query::ParsedQuery;
-pub use results::{ResultOrder, SearchHit, SearchResults, TOTAL_HITS_CAP};
+pub use results::{Instead, ResultOrder, SearchHit, SearchResults, TOTAL_HITS_CAP};

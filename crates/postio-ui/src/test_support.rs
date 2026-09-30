@@ -35,6 +35,12 @@ pub fn bodies_sanitised() -> u64 {
     cost::read(&cost::BODIES_SANITISED)
 }
 
+/// How many message bodies this thread has parsed to decide whether they
+/// open in reader view -- a whole html5ever parse each.
+pub fn bulk_judged() -> u64 {
+    cost::read(&cost::BULK_JUDGED)
+}
+
 /// How many documents this process has handed to a rendering surface.
 pub fn renders_issued() -> u64 {
     cost::read(&cost::RENDERS)
@@ -53,6 +59,12 @@ pub fn surfaces_held() -> i64 {
     cost::read(&cost::SURFACES_CREATED) as i64 - cost::read(&cost::SURFACES_RELEASED) as i64
 }
 
+/// How many times a conversation drew at its deadline rather than whole.
+/// See [`crate::reader::cost::note_waited_out`].
+pub fn redraws_waited_out() -> u64 {
+    cost::read(&cost::WAITED_OUT)
+}
+
 /// How many list pages this process has asked the store for.
 ///
 /// The bound on opening a folder: a screen's worth, whatever the folder
@@ -60,4 +72,22 @@ pub fn surfaces_held() -> i64 {
 /// is what a number that grows with the mailbox looks like from the outside.
 pub fn pages_requested() -> u64 {
     cost::read(&cost::PAGES_REQUESTED)
+}
+
+/// Snapshots the reading renderer put on screen, and what they cost in
+/// total (spec 006): read a `before`, act, assert on the delta.
+pub fn snapshot_counts() -> (u64, crate::reader::cost::SnapshotCounts) {
+    use crate::reader::cost::*;
+    let get = cost::read;
+    (
+        get(&SNAPSHOTS),
+        SnapshotCounts {
+            style_passes: get(&STYLE_PASSES),
+            nodes: get(&SNAPSHOT_NODES),
+            repaired_runs: get(&REPAIRED_RUNS),
+            resources_unresolved: get(&RESOURCES_UNRESOLVED),
+            images_placeholdered: get(&IMAGES_PLACEHOLDERED),
+            display_list_commands: get(&DISPLAY_LIST_COMMANDS),
+        },
+    )
 }

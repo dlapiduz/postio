@@ -18,7 +18,8 @@ const EXPORT_PATH_ENV: &str = "POSTIO_EXPORT_DIR";
 /// The database file.
 ///
 /// `$XDG_DATA_HOME/postio/postio.db`, falling back to
-/// `$HOME/.local/share/postio/postio.db`. Data rather than config or cache:
+/// `$HOME/.local/share/postio/postio.db` -- the host's, inside a Flatpak
+/// ([`postio_config::paths::shared_xdg`]). Data rather than config or cache:
 /// this is the user's mail, so it is neither a preference they can retype nor
 /// something safe to delete.
 pub fn store_path() -> PathBuf {
@@ -43,7 +44,7 @@ where
     if let Some(explicit) = env(STORE_PATH_ENV).filter(|value| !value.is_empty()) {
         return PathBuf::from(explicit);
     }
-    if let Some(xdg) = env("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
+    if let Some(xdg) = postio_config::paths::shared_xdg(&env, "XDG_DATA_HOME") {
         return PathBuf::from(xdg).join("postio").join("postio.db");
     }
     let Some(home) = env("HOME").filter(|value| !value.is_empty()) else {
@@ -274,6 +275,27 @@ mod tests {
                 Platform::Freedesktop
             ),
             PathBuf::from("/tmp/drag")
+        );
+    }
+
+    #[test]
+    fn inside_a_flatpak_the_store_is_the_hosts() {
+        // FR-040: the desktop and terminal packages share one store, which
+        // both manifests grant at the host's data directory.
+        let sandboxed = [
+            ("FLATPAK_ID", "dev.postio.Postio"),
+            ("XDG_DATA_HOME", "/home/ada/.var/app/dev.postio.Postio/data"),
+            ("HOME", "/home/ada"),
+        ];
+        assert_eq!(
+            store_path_from(env(&sandboxed), Platform::Freedesktop),
+            PathBuf::from("/home/ada/.local/share/postio/postio.db")
+        );
+        let mut with_host = sandboxed.to_vec();
+        with_host.push(("HOST_XDG_DATA_HOME", "/data"));
+        assert_eq!(
+            store_path_from(env(&with_host), Platform::Freedesktop),
+            PathBuf::from("/data/postio/postio.db")
         );
     }
 

@@ -47,9 +47,16 @@ impl std::error::Error for FontError {}
 /// Unpack the embedded faces and register them with the default font map.
 ///
 /// Returns the paths that were handed to Pango, in bundle order.
+///
+/// After `gtk::init`: the map is the one GTK's own widgets draw with, read
+/// through a throwaway label rather than through `pangocairo`, which this
+/// crate depended on for this one call.
 pub fn install() -> Result<Vec<PathBuf>, FontError> {
-    let font_map = pangocairo::FontMap::default();
-    install_into(font_map.upcast_ref::<pango::FontMap>())
+    let font_map = gtk::prelude::WidgetExt::pango_context(&gtk::Label::new(None)).font_map();
+    match font_map {
+        Some(font_map) => install_into(&font_map),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// As [`install`], for a font map you own — used by the tests.
@@ -108,8 +115,14 @@ fn write_if_missing(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-/// FNV-1a, 64 bit. Enough to name a cache directory, and it keeps this crate
-/// free of a hashing dependency.
+/// FNV-1a's step, 64 bit, taken a word at a time. Enough to name a cache
+/// directory, and it keeps this crate free of a hashing dependency.
+///
+/// A word rather than a byte per step because this runs on every launch,
+/// over every embedded face -- 910 KB -- on the way to the first frame
+/// (#1604), and a byte-wise FNV is a dependent multiply per byte. Not the
+/// published FNV-1a any more, which nothing needs: the digest only has to
+/// change when the fonts do.
 struct Fnv(u64);
 
 impl Fnv {
@@ -118,7 +131,12 @@ impl Fnv {
     }
 
     fn write(&mut self, bytes: &[u8]) {
-        for b in bytes {
+        let (words, tail) = bytes.as_chunks::<8>();
+        for word in words {
+            self.0 ^= u64::from_le_bytes(*word);
+            self.0 = self.0.wrapping_mul(0x1000_0000_01b3);
+        }
+        for b in tail {
             self.0 ^= *b as u64;
             self.0 = self.0.wrapping_mul(0x1000_0000_01b3);
         }
@@ -126,5 +144,30 @@ impl Fnv {
 
     fn finish(&self) -> u64 {
         self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Fnv;
+
+    fn digest(bytes: &[u8]) -> u64 {
+        let mut digest = Fnv::new();
+        digest.write(bytes);
+        digest.finish()
+    }
+
+    #[test]
+    fn a_changed_byte_anywhere_changes_the_directory() {
+        // The cache directory is named for the fonts, so an upgraded face
+        // must never land on a stale copy: every byte counts, including the
+        // ones past the last whole word.
+        let face: Vec<u8> = (0..=250u8).collect();
+        let original = digest(&face);
+        for position in [0, 7, 8, 100, 247, 248, 250] {
+            let mut changed = face.clone();
+            changed[position] ^= 1;
+            assert_ne!(digest(&changed), original, "byte {position} was not hashed");
+        }
     }
 }

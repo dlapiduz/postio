@@ -229,6 +229,32 @@ impl Tokens {
     }
 }
 
+/// The sizes Postio sets type at, as roles: `--postio-text-<role>`.
+///
+/// In `rem` against GTK's 11pt default, so text scaling moves them all. The
+/// canvas uses these eight; anything else in `shell.css` is either a
+/// one-off with a reason beside it or drift. Named here, beside the other
+/// tokens, so a stylesheet says `var(--postio-text-body)` rather than
+/// retyping 0.8864rem -- which it had done as 0.8863rem five times.
+pub const TYPE_ROLES: &[(&str, &str)] = &[
+    // 10px: the section kicker's capitals.
+    ("micro", "0.6818rem"),
+    // 10.5px: mono metadata, key hints, footers.
+    ("meta", "0.7159rem"),
+    // 11.5px: a small button, a secondary line.
+    ("small", "0.7841rem"),
+    // 12px: a chip's label, a plate's title.
+    ("label", "0.8182rem"),
+    // 12.5px: controls and interface text.
+    ("ui", "0.8523rem"),
+    // 13px: body text, a row's primary line.
+    ("body", "0.8864rem"),
+    // 13.5px: the composer's fields, text meant to be read at length.
+    ("reading", "0.9204rem"),
+    // 20px: a pane's title.
+    ("title", "1.3636rem"),
+];
+
 /// Generate `data/tokens.css` from the parsed design system.
 pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     let mut out = String::with_capacity(8 * 1024);
@@ -276,7 +302,12 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     writeln!(out, ":root {{").unwrap();
     for name in tokens.names() {
         let value = tokens.get(name).unwrap_or_default();
-        writeln!(out, "  --postio-{name}: {value};").unwrap();
+        // The spacing ramp in whole pixels: GTK lays out in them, and the
+        // Rust constants in `space.rs` (generated beside this) are `i32`.
+        match whole_pixels(name, value) {
+            Some(px) => writeln!(out, "  --postio-{name}: {px}px;").unwrap(),
+            None => writeln!(out, "  --postio-{name}: {value};").unwrap(),
+        }
     }
     writeln!(
         out,
@@ -341,11 +372,13 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     .unwrap();
     writeln!(out, ":root {{").unwrap();
     writeln!(out, "  font-family: var(--postio-font-body);").unwrap();
+    for (role, size) in TYPE_ROLES {
+        writeln!(out, "  --postio-text-{role}: {size};").unwrap();
+    }
     writeln!(out, "}}\n").unwrap();
     writeln!(
         out,
         ".postio-heading,\n\
-         .postio-title,\n\
          .postio-kicker {{\n\
          \x20 font-family: var(--postio-font-heading);\n\
          \x20 font-weight: var(--postio-font-heading-weight);\n\
@@ -365,17 +398,8 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     writeln!(
         out,
         ".postio-mono,\n\
-         .postio-count,\n\
-         .postio-meta,\n\
          .postio-key {{\n\
          \x20 font-family: var(--postio-font-mono);\n\
-         }}\n"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        ".postio-meta {{\n\
-         \x20 color: var(--postio-dim);\n\
          }}\n"
     )
     .unwrap();
@@ -387,16 +411,6 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
          \x20 border: 1px solid var(--postio-key-border);\n\
          \x20 border-radius: var(--postio-radius-sm);\n\
          \x20 padding: 1px 4px;\n\
-         }}\n"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "/* A hairline divider — the Industry rule, one device-pixel of ink. */\n\
-         .postio-hairline {{\n\
-         \x20 background-color: var(--postio-hairline);\n\
-         \x20 min-width: 1px;\n\
-         \x20 min-height: 1px;\n\
          }}"
     )
     .unwrap();
@@ -596,6 +610,67 @@ fn length(value: &str) -> Option<f32> {
     value.trim().strip_suffix("px")?.trim().parse().ok()
 }
 
+/// A spacing token's length rounded to the nearest whole pixel, or `None`
+/// for anything that is not a `space-*` pixel length.
+///
+/// The design system's ramp is `3.4px` steps, which the web renders
+/// sub-pixel and GTK cannot: a margin is an `i32`, and a CSS padding of
+/// 10.2px lands wherever the renderer rounds it. Rounding once, here, is
+/// what lets a margin in Rust and a padding in the stylesheet be the same
+/// number (the reader's WebKit tokens keep the fractional ramp).
+fn whole_pixels(name: &str, value: &str) -> Option<i32> {
+    if !name.starts_with("space-") {
+        return None;
+    }
+    Some(length(value)?.round() as i32)
+}
+
+/// The spacing ramp, as `(step, whole pixels)`: `(3, 10)` for `space-3`.
+pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
+    tokens
+        .names()
+        .filter_map(|name| {
+            let step = name.strip_prefix("space-")?.parse().ok()?;
+            Some((step, whole_pixels(name, tokens.get(name)?)?))
+        })
+        .collect()
+}
+
+/// Generate `postio-gtk/data/space.rs`: the spacing ramp as Rust constants,
+/// `S1` .. `S8`, so a widget's margin and the stylesheet's padding are one
+/// number by construction.
+pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
+    let scale = space_scale(tokens);
+    if scale.is_empty() {
+        return Err(TokenError(
+            "the design system has no `space-*` tokens to generate".to_owned(),
+        ));
+    }
+    let mut out = String::new();
+    writeln!(out, "// GENERATED FILE — do not edit by hand.").unwrap();
+    writeln!(out, "//").unwrap();
+    writeln!(out, "// Source     : {source}").unwrap();
+    writeln!(
+        out,
+        "// Emitted by : crates/postio-gtk/build.rs via postio_ui::tokens"
+    )
+    .unwrap();
+    writeln!(out, "// Regenerate : cargo build -p postio-gtk").unwrap();
+    writeln!(out, "//").unwrap();
+    writeln!(
+        out,
+        "// The design system's spacing ramp in whole pixels, the same numbers"
+    )
+    .unwrap();
+    writeln!(out, "// `--postio-space-N` carries in tokens.css.").unwrap();
+    writeln!(out).unwrap();
+    for (step, px) in scale {
+        writeln!(out, "/// `--postio-space-{step}`: {px}px.").unwrap();
+        writeln!(out, "pub const S{step}: i32 = {px};").unwrap();
+    }
+    Ok(out)
+}
+
 /// Generate `data/reader-tokens.css` from the parsed design system: the
 /// `--r-*` custom properties `data/reader.css`'s structural rules reference.
 ///
@@ -663,23 +738,35 @@ fn reader_light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenEr
     ])
 }
 
+/// The reader in dark: the design system's named reader roles (spec 006
+/// FR-016, #1588), designed rather than derived from the chrome's ramp --
+/// the reading surface sits three steps above the dark chrome.
 fn reader_dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
     Ok(vec![
-        ("--r-ground", t.need("color-neutral-900")?.to_string()),
-        ("--r-ink", t.need("color-neutral-100")?.to_string()),
+        (
+            "--r-ground",
+            t.need("color-reader-dark-ground")?.to_string(),
+        ),
+        ("--r-ink", t.need("color-reader-dark-ink")?.to_string()),
         (
             "--r-ink-secondary",
-            t.need("color-neutral-200")?.to_string(),
+            t.need("color-reader-dark-ink-secondary")?.to_string(),
         ),
-        ("--r-dim", t.need("color-neutral-400")?.to_string()),
-        ("--r-hairline", t.need("color-neutral-700")?.to_string()),
+        ("--r-dim", t.need("color-reader-dark-dim")?.to_string()),
+        (
+            "--r-hairline",
+            t.need("color-reader-dark-hairline")?.to_string(),
+        ),
         (
             "--r-hairline-strong",
-            t.need("color-neutral-600")?.to_string(),
+            t.need("color-reader-dark-hairline-strong")?.to_string(),
         ),
-        ("--r-accent", t.need("color-accent-400")?.to_string()),
-        ("--r-quote-bg", t.tint("color-accent-400", 8.0)?),
-        ("--r-match-bg", t.tint("color-accent-400", 32.0)?),
+        (
+            "--r-accent",
+            t.need("color-reader-dark-accent")?.to_string(),
+        ),
+        ("--r-quote-bg", t.tint("color-reader-dark-accent", 8.0)?),
+        ("--r-match-bg", t.tint("color-reader-dark-accent", 32.0)?),
     ])
 }
 
@@ -1253,6 +1340,29 @@ fn rgba((r, g, b): (u8, u8, u8), alpha: f32) -> String {
     format!("rgba({r}, {g}, {b}, {alpha})")
 }
 
+/// The accent, light and dark, as `(red, green, blue)`: read from the
+/// generated reader palette rather than typed anywhere.
+///
+/// For a frontend that draws with colours rather than CSS -- the terminal,
+/// which uses the accent for the selected row and the focus on a true-colour
+/// terminal (`specs/005-tui-frontend` FR-054). Parsing the generated file
+/// rather than restating `#5980a6` keeps the rule this module exists for:
+/// retuning the design system moves every frontend, or fails the build.
+pub fn accent_rgb() -> ((u8, u8, u8), (u8, u8, u8)) {
+    const PALETTE: &str = include_str!("../data/reader-tokens.css");
+    let mut accents = PALETTE.lines().filter_map(|line| {
+        let value = line.trim().strip_prefix("--r-accent:")?.trim();
+        let hex = value.strip_prefix('#')?.strip_suffix(';')?;
+        let channel = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
+        Some((channel(0)?, channel(2)?, channel(4)?))
+    });
+    // The generated file always has both, light first; a palette without them
+    // fails the test beside this rather than drawing black.
+    let light = accents.next().unwrap_or_default();
+    let dark = accents.next().unwrap_or(light);
+    (light, dark)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1353,5 +1463,36 @@ mod tests {
             let (r2, g2, b2) = hsl_to_rgb(h, s, l);
             assert_eq!((r, g, b), (r2, g2, b2), "{hex} did not survive HSL");
         }
+    }
+
+    #[test]
+    fn the_accent_is_read_from_the_generated_palette_for_both_schemes() {
+        let (light, dark) = super::accent_rgb();
+        let hex = |(r, g, b): (u8, u8, u8)| format!("#{r:02x}{g:02x}{b:02x}");
+        let palette = include_str!("../data/reader-tokens.css");
+        assert!(
+            palette.contains(&format!("--r-accent: {};", hex(light))),
+            "{light:?}"
+        );
+        assert!(
+            palette.contains(&format!("--r-accent: {};", hex(dark))),
+            "{dark:?}"
+        );
+        assert_ne!(light, dark, "dark mode has an accent of its own");
+    }
+}
+
+/// A token error says what went wrong, as an error.
+#[cfg(test)]
+mod token_error_tests {
+    use super::{TokenError, err};
+
+    #[test]
+    fn a_token_error_displays_its_message() {
+        let failed: Result<(), TokenError> = err("no --color-accent in :root");
+        let error = failed.expect_err("err builds an error");
+        assert_eq!(error.to_string(), "no --color-accent in :root");
+        let boxed: Box<dyn std::error::Error> = Box::new(error);
+        assert_eq!(boxed.to_string(), "no --color-accent in :root");
     }
 }

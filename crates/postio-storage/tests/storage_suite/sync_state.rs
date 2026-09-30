@@ -317,7 +317,10 @@ async fn a_crash_mid_sync_leaves_resumable_state_rather_than_a_lie() {
         .complete_full_sync(inbox, at(9))
         .await
         .expect("complete");
-    drop(transaction); // the crash
+    // The crash: the process goes, and its connection with it.
+    drop(transaction);
+    drop(connection);
+    let connection = database.connect().await.expect("checkout");
 
     assert_eq!(message_count(&connection, inbox).await, 0);
     let states = SyncStateRepository::new(&connection);
@@ -362,7 +365,10 @@ async fn state_never_advances_past_a_half_written_batch() {
         .observe(inbox, &moved_on, at(10))
         .await
         .expect("observe");
+    // Dying partway takes the connection with it.
     drop(second);
+    drop(connection);
+    let connection = database.connect().await.expect("checkout");
 
     let states = SyncStateRepository::new(&connection);
     let state = states.get(inbox).await.expect("get").expect("a row");

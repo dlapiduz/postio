@@ -14,6 +14,8 @@
         "--socket=wayland",
         "--device=dri",
         "--talk-name=org.freedesktop.secrets",
+        "--filesystem=xdg-data/postio:create",
+        "--filesystem=xdg-config/postio:create",
         "--filesystem=xdg-download"
     ],
     "build-options": {

@@ -26,14 +26,19 @@ mimalloc = "0.1"
 postio-config.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
+# The store's owner: logic this app used to do itself, moved there so every
+# frontend shares it (specs/005-tui-frontend, ADR 0041).
+postio-client.workspace = true
+postio-host.workspace = true
 postio-account.workspace = true
-postio-jmap.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
 # The database half. Nothing else depends on it but this crate, so nothing is
 # guarded against the `rusqlite` it pulls in — which is the whole reason this
 # crate exists. See its `main.rs`.
 postio-runtime.workspace = true
+# Remote image URLs, parsed before the fetcher is asked (spec 006 T137).
+url = { workspace = true }
 postio-search.workspace = true
 postio-session.workspace = true
 # The render counters (#1328). Named here rather than reached through
@@ -48,6 +53,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 postio-test-support.workspace = true
+# The reader's snapshot, rasterised, so a remote image is asserted painted
+# rather than merely fetched (spec 006 T136).
+postio-render.workspace = true
 # Only the `e2e` test builds a subscriber; the application configures its
 # logging through postio-session. A [dependencies] entry is visible to
 # integration tests too, which is what hid this being test-only.

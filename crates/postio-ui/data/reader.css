@@ -21,9 +21,10 @@
  * They used to carry those bytes inline as base64, which put ~1.21 MB into
  * every document the reader composed (#768).
  *
- * Postio owns the type: `ammonia` strips every sender `style` attribute and
- * `<style>` tag before a body ever reaches this document (see
- * `reader/sanitize.rs`), so nothing here competes with a sender's CSS.
+ * Postio's own words take this type. A sender's markup keeps its own
+ * styles -- inline `style`, contained, and `<style>` rules, scoped to its
+ * message by `postio_body::styles` -- and `.postio-original` below reverts
+ * these rules inside it, so the two never compete (spec 006 FR-019).
  */
 
 * {
@@ -68,6 +69,53 @@ body:empty::before {
   border-radius: var(--r-radius);
   min-height: 3em;
   overflow-x: auto;
+}
+
+/* A sender's own markup (spec 006 FR-019): what the sender designed
+   against is the browser's defaults, not the reader's type. Everything the
+   rules above set for Postio's own words reverts here -- box sizing, size
+   and line height, paragraph margins, link and quote styling -- so a
+   message's paragraphs, tables and links sit where its sender put them.
+   `overflow-wrap` and the image and table `max-width` stay: they keep an
+   unbreakable token or an over-wide picture inside the message's box rather
+   than widening the pane (FR-026). */
+.postio-original {
+  font-size: 16px;
+  line-height: normal;
+}
+
+.postio-original * {
+  box-sizing: revert;
+}
+
+.postio-original p {
+  margin: revert;
+}
+
+.postio-original a {
+  color: revert;
+  text-decoration: revert;
+  text-decoration-thickness: revert;
+  text-underline-offset: revert;
+}
+
+.postio-original blockquote {
+  margin: revert;
+  padding-left: revert;
+  border-left: revert;
+  color: revert;
+}
+
+/* The page the sender styled (spec 006 FR-006), lifted off their <body> by
+   the sanitizer. It fills the container edge to edge -- the negative margin
+   undoes .postio-body's padding and the padding restores it inside -- so a
+   sender's white page is one surface, not a white box in a ring of reader
+   ground. `flow-root` keeps the sender's own margins and floats inside it. */
+.postio-canvas {
+  display: flow-root;
+  margin: -20px -24px;
+  padding: 20px 24px;
+  border-radius: inherit;
 }
 
 /* High contrast: the edge gains weight rather than changing colour scheme,
@@ -116,9 +164,9 @@ table {
   max-width: 100%;
 }
 
-/* A sender's own <table> layout keeps its structure — ammonia allows the
-   generic layout attributes (width, align, valign, cellpadding) — but never
-   its colours or fonts, which are stripped with the `style` attribute. */
+/* A sender's own <table> layout keeps its structure and its styling: the
+   layout attributes become the style they mean (`postio_body::hints`), and
+   its colours and fonts arrive with its contained `style` (spec 006). */
 
 pre.postio-body-text {
   font-family: "Barlow", sans-serif;
@@ -143,8 +191,8 @@ details.postio-quote > summary {
   list-style: none;
 }
 
-details.postio-quote > summary::-webkit-details-marker {
-  display: none;
+details.postio-quote > summary {
+  list-style: none;
 }
 
 details.postio-quote > summary::before {

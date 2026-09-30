@@ -149,7 +149,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // ── Edit ─────────────────────────────────────────────────────────
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),
         C::Search | C::SaveSearch => Some(M::Edit),
-        C::Settings | C::EditConfig | C::AddAccount => Some(M::App),
+        C::Settings | C::EditConfig | C::AddAccount | C::Quit => Some(M::App),
+        C::ShowImages | C::AlwaysShowImages | C::Unsubscribe => Some(M::Message),
         // Settings surfaces act on the row the settings list has focus on.
         // They are commands so `[keys]` can reach them and so the palette
         // can offer them where they apply; a menu bar item for "rename the
@@ -174,7 +175,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // does not do anything to the draft.
         C::CopyFields => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
-        C::OpenParts | C::ViewOriginal => Some(M::View),
+        C::OpenParts | C::ViewOriginal | C::ToggleReaderView => Some(M::View),
+        // Spec 006: how the message on screen is drawn.
+        C::DarkenMessage | C::ZoomIn | C::ZoomOut | C::ZoomReset => Some(M::View),
+        C::FindInMessage | C::FindNext | C::FindPrevious => Some(M::Edit),
         C::CommandPalette => Some(M::View),
 
         // ── Help ─────────────────────────────────────────────────────────
@@ -209,6 +213,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // the attachment it is deliberately not.
         C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
+        // The terminal composer's own (`Requirement::Terminal`), and the
+        // terminal has no menu bar: no menu anywhere offers them.
+        C::EditExternally | C::TogglePreview => None,
     }
 }
 

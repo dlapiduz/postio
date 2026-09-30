@@ -13,7 +13,9 @@
 //!    drifted from the source. The reader's palette, `reader-tokens.css`,
 //!    is generated the same way but written into `postio-ui`'s own data
 //!    directory (#799) rather than this crate's — the reader's data lives
-//!    with the reader, this crate only builds it.
+//!    with the reader, this crate only builds it. The spacing ramp is also
+//!    written as Rust, `data/space.rs`, which `crate::widgets::space`
+//!    includes: the same whole-pixel numbers the stylesheet uses.
 //! 2. Compile `data/postio.gresource.xml` into the GResource bundle that
 //!    carries the stylesheet and the app icons, so the app resolves both
 //!    without a system font installation and without touching the network.
@@ -44,6 +46,7 @@ fn main() {
         Some(source) => {
             println!("cargo:rerun-if-changed={}", source.display());
             generate_tokens(&source, &data_dir.join("tokens.css"));
+            generate_space(&source, &data_dir.join("space.rs"));
             generate_reader_tokens(&source, &ui_data_dir.join("reader-tokens.css"));
         }
         None => {
@@ -94,6 +97,16 @@ fn generate_tokens(source: &Path, out: &Path) {
     let label = relative_label(source);
     let generated = tokens::generate(&parsed, &label)
         .unwrap_or_else(|e| panic!("cannot generate tokens.css: {e}"));
+    write_if_changed(out, &generated);
+}
+
+/// The spacing ramp as Rust constants, beside the stylesheet that carries
+/// the same numbers. Checked in for the reason `tokens.css` is.
+fn generate_space(source: &Path, out: &Path) {
+    let parsed = parse_source(source);
+    let label = relative_label(source);
+    let generated = tokens::generate_space_rs(&parsed, &label)
+        .unwrap_or_else(|e| panic!("cannot generate space.rs: {e}"));
     write_if_changed(out, &generated);
 }
 

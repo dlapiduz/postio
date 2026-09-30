@@ -227,11 +227,13 @@ fn query_text(row: &gtk::ListBoxRow) -> String {
     .expect("every filter row has a query label")
 }
 
-fn pinned_switch_in(row: &gtk::ListBoxRow) -> gtk::Switch {
+/// The pinned checkbox. A checkbox and not a switch: pinned is a value
+/// written to `config.toml`, and ADR 0029 Q2 keeps switches for acts.
+fn pinned_switch_in(row: &gtk::ListBoxRow) -> gtk::CheckButton {
     collect(row.upcast_ref::<gtk::Widget>(), "")
         .into_iter()
-        .find_map(|w| w.downcast::<gtk::Switch>().ok())
-        .expect("every filter row has a pinned switch")
+        .find_map(|w| w.downcast::<gtk::CheckButton>().ok())
+        .expect("every filter row has a pinned checkbox")
 }
 
 fn up_button_in(row: &gtk::ListBoxRow) -> gtk::Button {

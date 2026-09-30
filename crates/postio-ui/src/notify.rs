@@ -52,7 +52,7 @@ pub struct Arrival {
 /// another application is not one the user is watching, and treating "this
 /// is the open mailbox" as sufficient is the version of this check that
 /// silently swallows the notification somebody actually needed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Attention {
     /// The mailbox the list has open, if any.
     pub showing: Option<MailboxId>,
@@ -105,7 +105,10 @@ pub enum Decision {
 }
 
 /// One notification, ready for the toolkit to post.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Serialisable because the store's owner decides it and the frontend that
+/// delivers it is another process (ADR 0041).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Notification {
     /// Stable per folder — see the module docs on coalescing.
     pub identifier: String,

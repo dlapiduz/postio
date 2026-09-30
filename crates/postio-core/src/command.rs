@@ -89,6 +89,22 @@ command_ids! {
     ToggleFold => "toggle_fold",
     /// Draw the message on screen as its sender wrote it, not reduced.
     ViewOriginal => "view_original",
+    /// Draw the message on screen reduced, or as sent again (spec 006 FR-031).
+    ToggleReaderView => "toggle_reader_view",
+    /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a).
+    DarkenMessage => "darken_message",
+    /// Find text in the message on screen (spec 006 FR-018).
+    FindInMessage => "find_in_message",
+    /// Go to the next match of the open find (spec 006 FR-018).
+    FindNext => "find_next",
+    /// Go to the previous match of the open find (spec 006 FR-018).
+    FindPrevious => "find_previous",
+    /// Draw messages one step larger (spec 006 FR-021).
+    ZoomIn => "zoom_in",
+    /// Draw messages one step smaller (spec 006 FR-021).
+    ZoomOut => "zoom_out",
+    /// Draw messages at their actual size (spec 006 FR-021).
+    ZoomReset => "zoom_reset",
     /// Open every collapsed message in the conversation.
     ExpandAll => "expand_all",
     /// Put the conversation rail away, or bring it back.
@@ -145,6 +161,10 @@ command_ids! {
     CopyFields => "copy_fields",
     /// Put a picture in the body, where it is written rather than beside it.
     InsertImage => "insert_image",
+    /// Hand the body to the person's own editor, and take it back.
+    EditExternally => "edit_externally",
+    /// Show the message as it will be received, or go back to writing it.
+    TogglePreview => "toggle_preview",
     /// Make the selection bold, or un-bold it.
     Bold => "bold",
     /// Make the selection italic, or straighten it.
@@ -169,6 +189,14 @@ command_ids! {
     AddAccount => "add_account",
     /// Open `config.toml` in the user's editor.
     EditConfig => "edit_config",
+    /// Quit Postio.
+    Quit => "quit",
+    /// Load this message's remote images, this once.
+    ShowImages => "show_images",
+    /// Always load remote images from this message's sender.
+    AlwaysShowImages => "always_show_images",
+    /// Leave the mailing list this message came from.
+    Unsubscribe => "unsubscribe",
     /// Show or hide the sidebar.
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
@@ -410,6 +438,27 @@ pub enum Command {
     /// No payload: it always means the message on screen. Reader view is a
     /// per-message state, so there is nothing else it could mean.
     ViewOriginal,
+    /// Draw the message on screen in reader view, or back as its sender
+    /// built it (spec 006 FR-031).
+    ///
+    /// No payload, like [`Command::ViewOriginal`]: it always means the
+    /// message on screen. Every message opens as sent, so this is the only
+    /// way into reader view.
+    ToggleReaderView,
+    /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a). No payload: it means the message on screen.
+    DarkenMessage,
+    /// Find text in the message on screen (spec 006 FR-018). No payload: it means the message on screen.
+    FindInMessage,
+    /// Go to the next match of the open find (spec 006 FR-018). No payload: it means the message on screen.
+    FindNext,
+    /// Go to the previous match of the open find (spec 006 FR-018). No payload: it means the message on screen.
+    FindPrevious,
+    /// Draw messages one step larger (spec 006 FR-021). No payload: it means the message on screen.
+    ZoomIn,
+    /// Draw messages one step smaller (spec 006 FR-021). No payload: it means the message on screen.
+    ZoomOut,
+    /// Draw messages at their actual size (spec 006 FR-021). No payload: it means the message on screen.
+    ZoomReset,
     /// Expand every collapsed message in the open conversation (#1004).
     ///
     /// No payload: it means the conversation on screen, which is the only
@@ -632,6 +681,15 @@ pub enum Command {
     /// reached it, which meant it was absent from the palette and the `?`
     /// sheet and unreachable by anyone who does neither.
     InsertImage,
+    /// Hand the body to the person's own editor (`$EDITOR`) and take back
+    /// what it saved (specs/005-tui-frontend FR-022). Where the body is not
+    /// text an editor can open -- the desktop's rich editor -- the frontend
+    /// says so.
+    EditExternally,
+    /// Show the draft as it will arrive, beside or instead of the text being
+    /// written (specs/005-tui-frontend FR-021). The desktop's composer shows
+    /// formatting as it is written, so it has nothing to preview.
+    TogglePreview,
     /// Make the selection bold, or un-bold it.
     Bold,
     /// Make the selection italic, or straighten it.
@@ -662,6 +720,24 @@ pub enum Command {
     AddAccount,
     /// Open `config.toml` in the user's editor.
     EditConfig,
+    /// Quit Postio.
+    ///
+    /// The desktop app always had its window's close button for this and
+    /// never needed a command; a terminal has no close button, and a command
+    /// that is not in the registry does not exist (Principle II), so it is
+    /// one here and the desktop gains a key for it too.
+    Quit,
+    /// Load this message's remote images, this once.
+    ///
+    /// The reading pane's banner had this as a button and nothing else; a
+    /// command that is not in the registry does not exist (Principle II), and
+    /// a terminal has no banner to click.
+    ShowImages,
+    /// Always load remote images from this message's sender.
+    AlwaysShowImages,
+    /// Leave the mailing list this message came from, by its one-click
+    /// `List-Unsubscribe` -- only ever on this deliberate act.
+    Unsubscribe,
     /// Show or hide the sidebar.
     ToggleSidebar,
     /// Put the keyboard in the folder list.
@@ -846,6 +922,14 @@ impl Command {
             Command::PrevInConversation => CommandId::PrevInConversation,
             Command::ToggleFold => CommandId::ToggleFold,
             Command::ViewOriginal => CommandId::ViewOriginal,
+            Command::ToggleReaderView => CommandId::ToggleReaderView,
+            Command::DarkenMessage => CommandId::DarkenMessage,
+            Command::FindInMessage => CommandId::FindInMessage,
+            Command::FindNext => CommandId::FindNext,
+            Command::FindPrevious => CommandId::FindPrevious,
+            Command::ZoomIn => CommandId::ZoomIn,
+            Command::ZoomOut => CommandId::ZoomOut,
+            Command::ZoomReset => CommandId::ZoomReset,
             Command::ExpandAll => CommandId::ExpandAll,
             Command::ToggleRail => CommandId::ToggleRail,
             Command::Reply { .. } => CommandId::Reply,
@@ -876,6 +960,8 @@ impl Command {
             Command::DetachComposer => CommandId::DetachComposer,
             Command::CopyFields => CommandId::CopyFields,
             Command::InsertImage => CommandId::InsertImage,
+            Command::EditExternally => CommandId::EditExternally,
+            Command::TogglePreview => CommandId::TogglePreview,
             Command::Bold => CommandId::Bold,
             Command::Italic => CommandId::Italic,
             Command::BulletList => CommandId::BulletList,
@@ -888,6 +974,10 @@ impl Command {
             Command::Settings => CommandId::Settings,
             Command::AddAccount => CommandId::AddAccount,
             Command::EditConfig => CommandId::EditConfig,
+            Command::Quit => CommandId::Quit,
+            Command::ShowImages => CommandId::ShowImages,
+            Command::AlwaysShowImages => CommandId::AlwaysShowImages,
+            Command::Unsubscribe => CommandId::Unsubscribe,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
             Command::GoToInbox => CommandId::GoToInbox,
@@ -947,6 +1037,14 @@ impl Command {
             CommandId::PrevInConversation => Command::PrevInConversation,
             CommandId::ToggleFold => Command::ToggleFold,
             CommandId::ViewOriginal => Command::ViewOriginal,
+            CommandId::ToggleReaderView => Command::ToggleReaderView,
+            CommandId::DarkenMessage => Command::DarkenMessage,
+            CommandId::FindInMessage => Command::FindInMessage,
+            CommandId::FindNext => Command::FindNext,
+            CommandId::FindPrevious => Command::FindPrevious,
+            CommandId::ZoomIn => Command::ZoomIn,
+            CommandId::ZoomOut => Command::ZoomOut,
+            CommandId::ZoomReset => Command::ZoomReset,
             CommandId::ExpandAll => Command::ExpandAll,
             CommandId::ToggleRail => Command::ToggleRail,
             CommandId::Reply => Command::Reply { message: None },
@@ -996,6 +1094,8 @@ impl Command {
             CommandId::DetachComposer => Command::DetachComposer,
             CommandId::CopyFields => Command::CopyFields,
             CommandId::InsertImage => Command::InsertImage,
+            CommandId::EditExternally => Command::EditExternally,
+            CommandId::TogglePreview => Command::TogglePreview,
             CommandId::Bold => Command::Bold,
             CommandId::Italic => Command::Italic,
             CommandId::BulletList => Command::BulletList,
@@ -1008,6 +1108,10 @@ impl Command {
             CommandId::Settings => Command::Settings,
             CommandId::AddAccount => Command::AddAccount,
             CommandId::EditConfig => Command::EditConfig,
+            CommandId::Quit => Command::Quit,
+            CommandId::ShowImages => Command::ShowImages,
+            CommandId::AlwaysShowImages => Command::AlwaysShowImages,
+            CommandId::Unsubscribe => Command::Unsubscribe,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
             CommandId::GoToInbox => Command::GoToInbox,

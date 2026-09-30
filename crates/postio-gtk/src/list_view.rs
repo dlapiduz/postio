@@ -77,10 +77,13 @@ pub use postio_ui::dwell::DWELL_TO_READ;
 /// triage is made of. Everything else a selection can do stays one `Ctrl+K`
 /// away — a bar that grew a button per command would be a toolbar, which is
 /// the thing this app is not.
-const BULK_ACTIONS: [(CommandId, &str, &str); 3] = [
-    (CommandId::Archive, "Archive", "a"),
-    (CommandId::Delete, "Delete", "d"),
-    (CommandId::Move, "Move", "m"),
+///
+/// Each button's key is the keymap's, redrawn by
+/// [`MessageListView::set_keymap`], so a rebound archive says its new key.
+const BULK_ACTIONS: [(CommandId, &str); 3] = [
+    (CommandId::Archive, "Archive"),
+    (CommandId::Delete, "Delete"),
+    (CommandId::Move, "Move"),
 ];
 
 mod imp {
@@ -161,6 +164,10 @@ mod imp {
         /// Since #601 made the autoselect report at all, this is what keeps
         /// that from being visible.
         pub(super) pending_select: Cell<bool>,
+        /// The message the cursor was on when a refresh began telling the
+        /// view what moved, and what `pending_select` was then. See
+        /// `MessageList::connect_splicing`.
+        pub(super) splice_hold: Cell<Option<(Option<MessageId>, bool)>>,
         /// The `items_changed` handler that seek is waiting on, so it can be
         /// given up.
         ///
@@ -184,10 +191,8 @@ mod imp {
         pub(super) commands: RefCell<Vec<CommandHandler>>,
         /// `[ui].show_hover_actions`, handed to every row as it binds.
         pub(super) show_actions: Rc<Cell<bool>>,
-        /// `[ui].show_key_hints`, handed to every row as it binds.
-        pub(super) show_hints: Rc<Cell<bool>>,
-        /// The live keymap, handed to every row as it binds so the focused
-        /// row's key hints read the bindings actually in force.
+        /// The live keymap, so the row context menu's accelerators name the
+        /// bindings actually in force.
         pub(super) keymap: Rc<RefCell<Keymap>>,
         /// The mailbox in view, so opening another one drops a selection that
         /// was about the last.
@@ -230,14 +235,14 @@ mod imp {
                 reported_at: Cell::new(0),
                 landed: Cell::new(false),
                 pending_select: Cell::new(false),
+                splice_hold: Cell::new(None),
                 pending_seek: RefCell::new(Vec::new()),
                 dwelled: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(DWELL_TO_READ),
                 commands: RefCell::new(Vec::new()),
                 show_actions: Rc::new(Cell::new(true)),
-                show_hints: Rc::new(Cell::new(true)),
-                keymap: Rc::new(RefCell::new(Keymap::resolve(&Default::default()))),
+                keymap: Rc::new(RefCell::new(Keymap::defaults().clone())),
                 mailbox: RefCell::new(String::new()),
                 unread: std::cell::Cell::new(0),
                 export: RefCell::new(None),
@@ -263,8 +268,8 @@ mod imp {
         /// Focusing the pane means focusing a row.
         ///
         /// Without this the keyboard would stop at the scroller, which
-        /// looks like focus and acts like nothing: no selected row, no key
-        /// hints, and `j`/`k` with nowhere to go.
+        /// looks like focus and acts like nothing: no selected row, and
+        /// `j`/`k` with nowhere to go.
         fn grab_focus(&self) -> bool {
             self.view.grab_focus()
         }
@@ -283,12 +288,26 @@ mod imp {
         /// is state the container already tracks and the default algorithm
         /// cannot see (#437).
         ///
-        /// Only for a *fresh* arrival, checked by `focus_child()` being
-        /// `None`: once focus is already inside (tabbing from one row to
-        /// another), the default algorithm's ordinary child-to-child
-        /// traversal is exactly what should run, so it is left alone.
+        /// Only for a *fresh* arrival: once focus is already inside (tabbing
+        /// from one row to another), the default algorithm's ordinary
+        /// child-to-child traversal is exactly what should run, so it is
+        /// left alone.
+        ///
+        /// "Inside" is asked of where the keyboard *is*, not of
+        /// `focus_child()`, which is only the chain GTK remembers. Archiving
+        /// the row that had the keyboard takes its widget away and leaves
+        /// the chain pointing into the list with nothing focused at its end;
+        /// the window then walks focus back in from the top, and a
+        /// `focus_child()` test called that walk "already inside" and let
+        /// the default put the keyboard on the first realized row --
+        /// scrolling the list to the top under the person archiving (#1687).
         fn focus(&self, direction_type: gtk::DirectionType) -> bool {
-            if self.obj().focus_child().is_some() {
+            let pane = self.obj();
+            let inside = pane
+                .root()
+                .and_then(|root| root.focus())
+                .is_some_and(|focus| focus.is_ancestor(&*pane));
+            if inside {
                 return self.parent_focus(direction_type);
             }
             self.view.grab_focus()
@@ -361,29 +380,33 @@ impl MessageListView {
         self.each_row(|row| row.set_show_actions(show));
     }
 
-    /// Whether the focused row may reveal its key hints at all.
+    /// The bindings the row context menu's accelerators read.
     ///
-    /// `[ui].show_key_hints`. Applied to the rows on screen now and to
-    /// every row that binds after.
-    pub fn set_show_hints(&self, show: bool) {
-        if self.imp().show_hints.replace(show) == show {
-            return;
-        }
-        self.each_row(|row| row.set_show_key_hints(show));
-    }
-
-    /// The bindings the focused row's key hints read.
-    ///
-    /// Applied to the rows on screen now and to every row that binds after,
-    /// so a rebind in `config.toml` reaches the hints with no restart —
-    /// the same promise already kept for the resolver, the palette and the
-    /// cheat sheet.
+    /// A rebind in `config.toml` reaches the menu and the bulk bar with no restart — the same
+    /// promise already kept for the resolver, the palette and the cheat
+    /// sheet. Rows themselves carry no keymap: they draw no key hints.
     pub fn set_keymap(&self, keymap: Keymap) {
-        self.imp().keymap.replace(keymap.clone());
-        self.each_row(|row| row.set_keymap(&keymap));
+        self.relabel_bulk(&keymap);
+        self.imp().keymap.replace(keymap);
     }
 
-    /// The keymap in force, for the rows that bind after this and for a test
+    /// Redraw the bulk bar's key caps from `keymap`, in [`BULK_ACTIONS`]'
+    /// order -- the order the buttons were appended in.
+    fn relabel_bulk(&self, keymap: &Keymap) {
+        let mut child = self.imp().bulk.first_child();
+        for (id, title) in BULK_ACTIONS {
+            let Some(button) = child.and_downcast_ref::<gtk::Button>().cloned() else {
+                break;
+            };
+            button.set_child(Some(&crate::widgets::keyhint::labelled(
+                title,
+                postio_ui::hints::key(keymap, id).as_deref(),
+            )));
+            child = button.next_sibling();
+        }
+    }
+
+    /// The keymap in force, for the context menu and for a test
     /// to check against with nothing materialised on screen yet.
     pub fn keymap(&self) -> Keymap {
         self.imp().keymap.borrow().clone()
@@ -846,6 +869,48 @@ impl MessageListView {
             .and_then(|item| item.row())
     }
 
+    /// The row after the cursor's, when the list holds it -- where `j` goes
+    /// next. Asks for nothing: a row not resident is not worth a page read
+    /// to guess at.
+    pub fn row_after_cursor(&self) -> Option<crate::list::Row> {
+        let next = self.cursor().selected().checked_add(1)?;
+        let model = self.model();
+        if next >= model.n_items() {
+            return None;
+        }
+        // Resident or nothing: `item` on a position the window does not hold
+        // is a page request.
+        model.peek(next)?;
+        model
+            .item(next)
+            .and_then(|item| item.downcast::<crate::list::MessageRow>().ok())
+            .and_then(|item| item.row())
+    }
+
+    /// Move the cursor off its row, which a verb is taking out of the view:
+    /// onto the row below it, or the one above when it was the last.
+    ///
+    /// What the row's leaving would do anyway, done when the verb is sent
+    /// rather than when the store answers, so the next key is about the next
+    /// message (#1687) -- see `postio_core::aim::takes_the_cursor_row_out`.
+    /// A person's landing: the reading pane follows it, and the row it lands
+    /// on is one they are working through.
+    pub fn step_off_cursor(&self) {
+        let imp = self.imp();
+        let at = imp.cursor.selected();
+        if at == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let to = if at + 1 < imp.model.n_items() {
+            at + 1
+        } else if let Some(above) = at.checked_sub(1) {
+            above
+        } else {
+            return;
+        };
+        self.place_cursor(to, Landing::Chosen);
+    }
+
     pub fn cursor_id(&self) -> Option<MessageId> {
         let imp = self.imp();
         imp.model.peek(imp.cursor.selected())
@@ -1137,13 +1202,15 @@ impl MessageListView {
 
         imp.bulk.set_visible(false);
         imp.bulk.set_valign(gtk::Align::Center);
-        for (id, title, key) in BULK_ACTIONS {
+        for (id, title) in BULK_ACTIONS {
             let button = gtk::Button::builder()
                 .tooltip_text(format!("{title} the selection"))
                 .build();
-            button.add_css_class("flat");
-            button.add_css_class("postio-ghost");
-            button.set_child(Some(&crate::header::labelled(title, key)));
+            crate::widgets::button::style(
+                &button,
+                crate::widgets::button::Kind::Ghost,
+                crate::widgets::button::Size::Small,
+            );
             button.update_property(&[gtk::accessible::Property::Label(&format!(
                 "{title} the selection"
             ))]);
@@ -1154,6 +1221,7 @@ impl MessageListView {
             ));
             imp.bulk.append(&button);
         }
+        self.relabel_bulk(&imp.keymap.borrow());
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         header.add_css_class("postio-list-header");
@@ -1200,8 +1268,6 @@ impl MessageListView {
         // outlives any borrow of it, and a bind should cost a `Cell` read
         // rather than an upgrade through a weak reference.
         let offers = imp.show_actions.clone();
-        let hints = imp.show_hints.clone();
-        let keymap = imp.keymap.clone();
         // The `changed` connection each binding holds, keyed by the
         // `GtkListItem` that holds it. Shared between bind and unbind because
         // that is the pair that owns it; a `GtkListItem` outlives any one row.
@@ -1217,8 +1283,6 @@ impl MessageListView {
             };
             view.set_density(bound.get());
             view.set_show_actions(offers.get());
-            view.set_show_key_hints(hints.get());
-            view.set_keymap(&keymap.borrow());
             view.set_first(item.position() == 0);
             view.set_index(item.position());
             view.set_cursor(item.is_selected());
@@ -1440,6 +1504,37 @@ impl MessageListView {
             move |_| {
                 pane.adopt_cursor_focus();
                 pane.report_cursor()
+            }
+        ));
+        // A refresh tells the view what moved one step at a time, and a
+        // conversation that moved to the top is taken out and put back: the
+        // `SingleSelection` follows the *position*, onto whatever took the
+        // row's place. The cursor is on a message (#1177), so it is held
+        // still across the steps -- the reading pane told nothing -- and put
+        // back on its message when they are done. Not a choice anybody made,
+        // so it lands as `Kept`: no scroll, no dwell.
+        imp.model.connect_splicing(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |model, begun| {
+                let imp = pane.imp();
+                if begun {
+                    let held = pane.cursor_id();
+                    let was = imp.pending_select.replace(true);
+                    imp.splice_hold.set(Some((held, was)));
+                    return;
+                }
+                let Some((held, was)) = imp.splice_hold.take() else {
+                    return;
+                };
+                imp.pending_select.set(was);
+                if let Some(message) = held
+                    && let Some(position) = model.position_of(message)
+                    && position != imp.cursor.selected()
+                {
+                    imp.cursor.set_selected(position);
+                }
+                pane.report_cursor();
             }
         ));
 

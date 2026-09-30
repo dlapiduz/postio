@@ -23,12 +23,6 @@ use crate::store::{
     StoreError, ThreadPage, ThreadSummary,
 };
 
-impl From<postio_storage::Error> for StoreError {
-    fn from(error: postio_storage::Error) -> Self {
-        StoreError::new(error.to_string())
-    }
-}
-
 /// Removals told to the store and not yet settled by a read: which folder,
 /// which messages. See [`MailStore::note_removed`].
 type Removals = Mutex<Vec<(MailboxId, Vec<MessageId>)>>;
@@ -51,6 +45,9 @@ pub struct LocalStore {
     /// any one account's, and two windows sharing marks would each clear the
     /// other's -- or, where their totals happened to match, seek with one.
     unified_marks: Arc<Mutex<Marks<ThreadCursor>>>,
+    /// The unified list's length, and what the store looked like when it
+    /// was counted -- see [`unified_total`].
+    unified_count: Arc<Mutex<Option<(UnifiedWitness, u32)>>>,
     /// The last threaded count of a folder, and the cheap number it was taken
     /// against. See [`CountedFolder`].
     folder_counts: Arc<Mutex<HashMap<MailboxId, CountedFolder>>>,
@@ -134,6 +131,75 @@ static FOLDERS_COUNTED: AtomicU64 = AtomicU64::new(0);
 pub fn folders_counted() -> u64 {
     FOLDERS_COUNTED.load(Ordering::Relaxed)
 }
+
+/// How many times this process has counted the unified list. For tests.
+///
+/// The sibling of [`folders_counted`], for the count #1610 found paid on
+/// every page of the unified view.
+#[doc(hidden)]
+pub fn unified_counted() -> u64 {
+    UNIFIED_COUNTED.load(Ordering::Relaxed)
+}
+
+static UNIFIED_COUNTED: AtomicU64 = AtomicU64::new(0);
+
+/// The cheap facts the unified count is allowed to outlive: each inbox in
+/// view, its message total and how far it has synced. The unified list's
+/// `Witness`, for the same trade and the same reasons (#1610).
+///
+/// Per inbox, because the list is the inboxes (#1692): an archive moves a
+/// message from an inbox to the Archive, which leaves every folder's totals
+/// *summed* where they were -- a witness over the sum held a count that
+/// still included the row it had just lost. The inboxes themselves are part
+/// of it too: turning an account off takes its inbox out of the list and
+/// moves no folder at all.
+type UnifiedWitness = Vec<(i64, i64, i64)>;
+
+/// The unified list's length, from the cache while nothing it is made of has
+/// moved.
+///
+/// The count reads every inbox's conversations and, with more than one
+/// account, looks for the ones folded across accounts, and the unified view
+/// paid it in front of every page.
+async fn unified_total(
+    connection: &Checkout,
+    cache: &Mutex<Option<(UnifiedWitness, u32)>>,
+    threads: &ThreadRepository<'_>,
+) -> Result<u32, postio_storage::Error> {
+    let witness: UnifiedWitness = postio_storage::sql::all(
+        connection,
+        "SELECT m.id, m.total_count, coalesce(s.highest_mod_seq, 0)
+           FROM accounts a JOIN mailboxes m
+             ON m.account_id = a.id AND m.role = 'inbox'
+           LEFT JOIN sync_state s ON s.mailbox_id = m.id
+          WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
+          ORDER BY m.id",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+        },
+    )
+    .await?;
+    if let Some((held, total)) = &*cache.lock().expect("not poisoned")
+        && *held == witness
+    {
+        return Ok(*total);
+    }
+    UNIFIED_COUNTED.fetch_add(1, Ordering::Relaxed);
+    let total = threads.unified_count().await?;
+    *cache.lock().expect("not poisoned") = Some((witness, total));
+    Ok(total)
+}
+
+/// How many rows the last threaded page read skipped with `OFFSET` after
+/// its seek. For tests: a scrollbar jump should skip under a page (#1610).
+#[doc(hidden)]
+pub fn last_thread_skip() -> u64 {
+    LAST_THREAD_SKIP.load(Ordering::Relaxed)
+}
+
+static LAST_THREAD_SKIP: AtomicU64 = AtomicU64::new(0);
 
 /// A folder's thread count, from the cache when the folder has not moved.
 ///
@@ -295,6 +361,7 @@ impl LocalStore {
             marks: Arc::new(Mutex::new(Marks::default())),
             thread_marks: Arc::new(Mutex::new(Marks::default())),
             unified_marks: Arc::new(Mutex::new(Marks::default())),
+            unified_count: Arc::new(Mutex::new(None)),
             folder_counts: Arc::new(Mutex::new(HashMap::new())),
             removals: Arc::new(Mutex::new(Vec::new())),
         }
@@ -338,14 +405,7 @@ impl LocalStore {
                     .remember(request.offset + rows.len() as u32, last.cursor());
             }
 
-            // A loop rather than `map().collect()`: `summarise` reads the
-            // thread's participants, so it awaits, and a closure cannot.
-            let threads = ThreadRepository::new(&connection);
-            let mut summaries = Vec::with_capacity(rows.len());
-            for row in rows {
-                summaries.push(summarise(row, &threads).await?);
-            }
-            let rows = summaries;
+            let rows = rows.into_iter().map(summarise).collect();
             Ok(MessagePage { total, rows })
         })
         .await
@@ -421,10 +481,30 @@ impl LocalStore {
                 marks.check(total);
                 marks.nearest(request.offset)
             };
-            let (seek, skip) = match start {
+            let (mut seek, mut skip) = match start {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
+            // A jump further than a page from any mark -- a scrollbar dragged
+            // deep into a folder -- would be an `OFFSET` walk over the
+            // window's correlated predicate, linear in the depth: 638 ms to
+            // the bottom of 17,804 conversations. One pass over the folder's
+            // index finds where every page begins for a tenth of that, and
+            // then this and every later jump seeks (#1610).
+            let stride = request.limit.max(1);
+            if skip > stride && matches!(request.scope, ListScope::Mailbox(_)) {
+                let boundaries = threads.boundaries(&query, stride).await?;
+                let mut marks = marks.lock().expect("not poisoned");
+                marks.check(total);
+                for (offset, cursor) in boundaries {
+                    marks.remember(offset, cursor);
+                }
+                if let Some((at, cursor)) = marks.nearest(request.offset) {
+                    seek = Some(cursor);
+                    skip = request.offset - at;
+                }
+            }
+            LAST_THREAD_SKIP.store(u64::from(skip), Ordering::Relaxed);
             let mut rows = threads
                 .page_at(
                     &ThreadListQuery {
@@ -469,8 +549,8 @@ impl LocalStore {
         .await
     }
 
-    /// One page of the unified list: every account at once, conversations
-    /// grouped across them.
+    /// One page of the unified list: every enabled account's inbox at once,
+    /// conversations grouped across them (#1692).
     ///
     /// The same seek-mark bargain the account-scoped page makes, and for the
     /// same reason -- the frontend asks for a row offset and the walk can
@@ -481,9 +561,10 @@ impl LocalStore {
     /// short.
     async fn read_unified_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
         let marks = self.unified_marks.clone();
+        let cache = self.unified_count.clone();
         self.read(move |connection| async move {
             let threads = ThreadRepository::new(&connection);
-            let total = threads.unified_count().await?;
+            let total = unified_total(&connection, &cache, &threads).await?;
 
             let start = {
                 let mut marks = marks.lock().expect("not poisoned");
@@ -494,7 +575,7 @@ impl LocalStore {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
-            let groups = threads
+            let mut groups = threads
                 .unified_page_at(
                     &UnifiedThreadListQuery {
                         limit: request.limit,
@@ -503,6 +584,21 @@ impl LocalStore {
                     skip,
                 )
                 .await?;
+            // A mark the rows moved under -- the folder page's #1534, which
+            // an inbox that is triaged from here is the likeliest list to
+            // meet: stop trusting the marks and read from the top once.
+            if groups.is_empty() && seek.is_some() && request.offset < total {
+                marks.lock().expect("not poisoned").forget();
+                groups = threads
+                    .unified_page_at(
+                        &UnifiedThreadListQuery {
+                            limit: request.limit,
+                            after: None,
+                        },
+                        request.offset,
+                    )
+                    .await?;
+            }
             if let Some(last) = groups.last() {
                 marks
                     .lock()
@@ -521,9 +617,11 @@ impl LocalStore {
 
     async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
         if matches!(scope, ListScope::Unified) {
+            let cache = self.unified_count.clone();
             return self
                 .read(move |connection| async move {
-                    Ok(ThreadRepository::new(&connection).unified_count().await?)
+                    let threads = ThreadRepository::new(&connection);
+                    Ok(unified_total(&connection, &cache, &threads).await?)
                 })
                 .await;
         }
@@ -571,12 +669,7 @@ impl LocalStore {
     async fn read_rows(&self, ids: Vec<MessageId>) -> Result<Vec<MessageSummary>, StoreError> {
         self.read(move |connection| async move {
             let rows = MessageRepository::new(&connection).rows_for(&ids).await?;
-            let threads = ThreadRepository::new(&connection);
-            let mut summaries = Vec::with_capacity(rows.len());
-            for row in rows {
-                summaries.push(summarise(row, &threads).await?);
-            }
-            Ok(summaries)
+            Ok(rows.into_iter().map(summarise).collect())
         })
         .await
     }
@@ -641,8 +734,11 @@ impl LocalStore {
 /// `deleted_locally = 0`, which is exactly the list query's own predicate, so
 /// the two cannot mean different things.
 ///
-/// The account-wide and flagged views still count: there is no column for
-/// them, and neither is on the scrolling hot path.
+/// Flagged and Snoozed are the same numbers summed over folders: each
+/// folder's `flagged_count` and `snoozed_count` keep the list query's own
+/// predicates. They counted, once, on the belief they were off the
+/// hot path; every page read paid it, and `flagged` is in no index, so
+/// Flagged read the row of every message in the account (#1614).
 ///
 /// # Why zero is not taken at its word
 ///
@@ -663,11 +759,21 @@ async fn count(
     scope: ListScope,
     query: &ListQuery,
 ) -> Result<u32, StoreError> {
-    if let ListScope::Mailbox(mailbox) = scope
-        && let Some(counts) = MailboxRepository::new(connection).counts(mailbox).await?
-        && counts.total > 0
-    {
-        return Ok(counts.total);
+    let folders = MailboxRepository::new(connection);
+    let cached = match scope {
+        ListScope::Mailbox(mailbox) => folders.counts(mailbox).await?.map(|counts| counts.total),
+        ListScope::Flagged(account) => Some(folders.account_counts(account).await?.flagged),
+        ListScope::Snoozed(account) => Some(folders.account_counts(account).await?.snoozed),
+        // The account and unified views list conversations, and their count
+        // is a thread count, not this one. The Outbox is a predicate over
+        // Drafts, and a thread drill-in is one conversation: no column.
+        ListScope::Account(_)
+        | ListScope::Unified
+        | ListScope::Outbox(_)
+        | ListScope::Thread(_) => None,
+    };
+    if let Some(total) = cached.filter(|total| *total > 0) {
+        return Ok(total);
     }
     Ok(MessageRepository::new(connection).count(query).await?)
 }
@@ -759,19 +865,9 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
     })
 }
 
-async fn summarise(
-    row: MessageListRow,
-    threads: &ThreadRepository<'_>,
-) -> Result<MessageSummary, StoreError> {
-    let thread_count = match row.thread_id {
-        Some(id) => threads
-            .get(id)
-            .await?
-            .map(|thread| thread.message_count)
-            .unwrap_or(1),
-        None => 1,
-    };
-    Ok(MessageSummary {
+fn summarise(row: MessageListRow) -> MessageSummary {
+    let thread_count = row.thread_count.unwrap_or(1);
+    MessageSummary {
         id: row.id,
         thread: row.thread_id,
         from: row.from,
@@ -785,7 +881,7 @@ async fn summarise(
         send_at: row.send_at,
         has_attachments: row.has_attachments,
         thread_count: thread_count.max(1),
-    })
+    }
 }
 
 /// The two windows underneath [`MailStore::list_page`], for callers that

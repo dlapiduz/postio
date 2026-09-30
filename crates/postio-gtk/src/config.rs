@@ -126,6 +126,7 @@ pub fn install_at(window: &Window, path: &Path) {
     // like every other keycap in the application (#1179).
     window.settings().set_keymap(service.keymap());
     apply_compose(window, service.config());
+    window.apply_reader(&service.config().reader);
     window.settings().load(path);
     window
         .sidebar()
@@ -154,6 +155,13 @@ pub fn install_at(window: &Window, path: &Path) {
                 SavedSearchAction::Delete => request_delete(&window, &path, &key),
             }
         }
+    });
+
+    // A zoom a person chose is the one the next reader starts at (spec 006
+    // FR-021): written to `[reader]` alone, so nothing else in the file moves.
+    window.connect_zoom_changed({
+        let path = path.to_path_buf();
+        move |percent| save_zoom(&path, percent)
     });
 
     window.connect_command({
@@ -240,6 +248,9 @@ pub fn install_at(window: &Window, path: &Path) {
             if update.changed.compose {
                 apply_compose(&window, service.config());
             }
+            if update.changed.reader {
+                window.apply_reader(&service.config().reader);
+            }
             if update.changed.filters {
                 window
                     .sidebar()
@@ -312,6 +323,21 @@ fn save_current_search(window: &Window, path: &Path) {
         Verb::Save { query: &query },
         "save the search",
     );
+}
+
+/// Write `[reader] zoom = percent` to `path`, touching only `[reader]`.
+fn save_zoom(path: &Path, percent: u16) {
+    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let mut config = Config::from_toml_str(&original).unwrap_or_default();
+    if config.reader.zoom == percent {
+        return;
+    }
+    config.reader.zoom = percent;
+    let written = postio_config::patch_reader(&original, &config.reader)
+        .and_then(|patched| Config::write_text_to_path(&patched, path));
+    if let Err(error) = written {
+        tracing::warn!(%error, "could not save the zoom");
+    }
 }
 
 /// Run one saved-search verb against `path` and repaint the sidebar with

@@ -183,8 +183,11 @@ account chosen").
 **The unified inbox is a scope, not a mailbox, and the distinction is the one
 `ARCHITECTURE.md` §6 already draws.** A real mailbox has a `UIDVALIDITY`, a
 message set that physically lives there and a `MailboxRole`; mail *moves into*
-it. Unified is a view over the `Inbox`-role mailbox of every enabled account.
-Concretely:
+it. Unified is a view over the `Inbox`-role mailbox of every enabled account
+— the inboxes, not all mail (the maintainer confirmed it on 2026-09-26, #1692,
+after the list had for a while answered every message of every account). So a
+message archived, deleted, snoozed or moved from Unified leaves it the way it
+leaves a folder, and `a a a` walks down the list. Concretely:
 
 - **Move has no meaning in Unified.** The move command is unavailable in that
   scope — not silently a no-op, *unavailable*, so it is absent from the palette

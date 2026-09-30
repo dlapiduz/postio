@@ -60,7 +60,7 @@ pub fn a_resolved_signature_wins_over_the_identity_s_own() {
     composer.set_identities(account.identities.clone());
     composer.set_signatures(account.signatures.clone());
 
-    composer.connect_signature_default(|| Some(SignatureId::new(2)));
+    composer.connect_signature_default(|answer| answer(Some(SignatureId::new(2))));
     assert!(
         gtk::prelude::WidgetExt::activate_action(&window, "win.compose", None).is_ok(),
         "win.compose should be reachable"
@@ -87,7 +87,7 @@ pub fn a_resolved_signature_the_account_does_not_have_falls_back_to_the_identity
     // A stale or foreign id -- e.g. a deleted signature the mailbox row
     // still names -- must not panic or leave the picker on whatever it last
     // held; it falls all the way back to the identity's own.
-    composer.connect_signature_default(|| Some(SignatureId::new(999)));
+    composer.connect_signature_default(|answer| answer(Some(SignatureId::new(999))));
     assert!(gtk::prelude::WidgetExt::activate_action(&window, "win.compose", None).is_ok());
 
     assert_eq!(body(&composer), "\n\n-- \nMo");
@@ -105,7 +105,7 @@ pub fn no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere()
     composer.set_signatures(account.signatures.clone());
 
     // First compose: a mailbox override picks "Support".
-    composer.connect_signature_default(|| Some(SignatureId::new(1)));
+    composer.connect_signature_default(|answer| answer(Some(SignatureId::new(1))));
     assert!(gtk::prelude::WidgetExt::activate_action(&window, "win.compose", None).is_ok());
     assert_eq!(body(&composer), "\n\n-- \nMo — Support");
     composer.discard();
@@ -113,7 +113,7 @@ pub fn no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere()
     // Second compose, a different mailbox with no opinion of its own and no
     // account default: resolves to nothing, and must not inherit "Support"
     // from the picker's last position.
-    composer.connect_signature_default(|| None);
+    composer.connect_signature_default(|answer| answer(None));
     assert!(gtk::prelude::WidgetExt::activate_action(&window, "win.compose", None).is_ok());
     assert_eq!(
         body(&composer),

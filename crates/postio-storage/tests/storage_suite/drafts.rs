@@ -73,6 +73,33 @@ async fn a_draft_round_trips_with_its_recipients_and_attachments() {
 }
 
 #[tokio::test]
+async fn the_markdown_a_draft_was_written_in_survives_saving_and_can_be_dropped() {
+    // specs/005-tui-frontend data-model: the terminal reopens what was typed,
+    // and a save from a frontend that does not write Markdown clears it, so
+    // the terminal then reopens from the HTML rather than stale Markdown.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    draft.body_markdown = Some("Half a **sentence**".to_owned());
+    let id = drafts.save(&mut draft).await.expect("insert");
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.body_markdown.as_deref(), Some("Half a **sentence**"));
+
+    draft.body_markdown = Some("A whole sentence.".to_owned());
+    drafts.save(&mut draft).await.expect("update");
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.body_markdown.as_deref(), Some("A whole sentence."));
+
+    draft.body_markdown = None;
+    drafts.save(&mut draft).await.expect("update");
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.body_markdown, None);
+}
+
+#[tokio::test]
 async fn the_body_of_a_draft_is_stored_inline_and_not_in_the_blob_store() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -300,15 +327,6 @@ async fn a_reply_draft_remembers_the_message_and_thread_it_belongs_to() {
     let stored = drafts.get(id).await.expect("get").expect("the draft");
     assert_eq!(stored.in_reply_to, Some(parent.id));
     assert_eq!(stored.thread_id, Some(ThreadId::new(1)));
-    assert_eq!(
-        drafts
-            .in_thread(ThreadId::new(1))
-            .await
-            .expect("in thread")
-            .len(),
-        1,
-        "the composer takes over the reading pane inside the thread"
-    );
 }
 
 #[tokio::test]
@@ -340,6 +358,75 @@ async fn a_draft_survives_the_message_it_replies_to_being_expunged() {
     assert_eq!(
         stored.in_reply_to, None,
         "losing the parent must never lose what the user typed"
+    );
+}
+
+#[tokio::test]
+async fn a_forward_keeps_the_message_it_was_made_from_until_that_is_expunged() {
+    // #1686: a forward's carried attachment may have no bytes yet, and the
+    // original is where they are fetched from at send time.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut source = Message::new(account.id, inbox, at(0));
+    MessageRepository::new(&connection)
+        .create(&mut source)
+        .await
+        .expect("create");
+    let mut draft = a_draft(account.id);
+    draft.kind = DraftKind::Forward;
+    draft.forwarded_from = Some(source.id);
+    let id = drafts.save(&mut draft).await.expect("save");
+
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.forwarded_from, Some(source.id));
+    assert_eq!(stored.in_reply_to, None, "a forward threads nowhere");
+
+    MessageRepository::new(&connection)
+        .delete(&[source.id])
+        .await
+        .expect("expunge");
+    let stored = drafts.get(id).await.expect("get").expect("still there");
+    assert_eq!(stored.forwarded_from, None);
+}
+
+#[tokio::test]
+async fn a_carried_attachment_takes_its_bytes_once_they_are_fetched() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _inbox) = test_support::account_with_inbox(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    let mut carried = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 12);
+    carried.filename = Some("statement.pdf".to_owned());
+    carried.part_id = Some("2".to_owned());
+    draft.attachments = vec![carried];
+    let id = drafts.save(&mut draft).await.expect("save");
+    let attachment = draft.attachments[0].id;
+    let blob = postio_model::BlobId::new("d".repeat(64));
+
+    assert!(
+        drafts
+            .set_attachment_blob(id, attachment, &blob)
+            .await
+            .expect("set")
+    );
+
+    let stored = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(stored.attachments[0].blob_id.as_ref(), Some(&blob));
+    assert_eq!(
+        stored.attachments[0].id, attachment,
+        "the composer's id for the row still names it"
+    );
+    assert!(
+        !drafts
+            .set_attachment_blob(DraftId::new(id.get() + 1), attachment, &blob)
+            .await
+            .expect("set"),
+        "another draft's attachment is not this one's to fill"
     );
 }
 

@@ -318,6 +318,10 @@ pub struct TextTerm {
     /// The term with any surrounding quotes removed. A quoted term keeps its
     /// spaces and is matched as an FTS5 phrase.
     pub value: String,
+    /// Whether it was typed in quotes: this word, exactly. Every term is
+    /// matched exactly either way; what the quotes add is that the search
+    /// box never answers one that found nothing with a different word.
+    pub quoted: bool,
 }
 
 /// What a [`Token`] turned out to be.
@@ -585,6 +589,7 @@ mod tests {
         let text_token = token(TokenKind::Text(TextTerm {
             negated: true,
             value: "docker".into(),
+            quoted: false,
         }));
 
         assert!(filter_token.negated());
@@ -601,6 +606,7 @@ mod tests {
         let text_token = token(TokenKind::Text(TextTerm {
             negated: false,
             value: "docker".into(),
+            quoted: false,
         }));
 
         assert!(filter_token.is_operator());

@@ -58,7 +58,10 @@ use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 /// Named once so that the registration and the match in [`Actions::act`]
 /// cannot drift apart — a wired command with no arm reports "not wired up
 /// yet" from inside the thing that is supposed to be wiring it up.
-const WIRED: &[CommandId] = &[
+///
+/// Public so a frontend can prove every command it passes on is one of these
+/// (`postio-tui`'s parity test).
+pub const WIRED: &[CommandId] = &[
     CommandId::Archive,
     CommandId::ArchiveThread,
     CommandId::Delete,
@@ -232,12 +235,46 @@ impl Actions {
             // and deserves the same silence. A `Failed` still gets through,
             // because a store that will not write is worth hearing about.
             dwell @ Command::MarkReadOnDwell { .. } => {
-                match self.act(dwell, events, Recording::Incidental).await {
+                match self
+                    .act_again_if_busy(dwell, events, Recording::Incidental)
+                    .await
+                {
                     Err(CommandError::Rejected(_)) => Ok(()),
                     other => other,
                 }
             }
-            other => self.act(other, events, Recording::Record).await,
+            other => {
+                self.act_again_if_busy(other, events, Recording::Record)
+                    .await
+            }
+        }
+    }
+
+    /// [`act`](Self::act), run again while the store says it was busy.
+    ///
+    /// A busy store is not a refusal: another writer committed between this
+    /// verb's read and its write, and the store asks for the transaction to
+    /// be tried again (#1594). With two frontends on one store that is an
+    /// ordinary moment, not a fault, and the verb that met it failed and
+    /// rolled back whole, so running it again from the top is safe. Bounded,
+    /// so a store that stays busy is still reported.
+    async fn act_again_if_busy(
+        &self,
+        command: &Command,
+        events: &EventSink,
+        recording: Recording,
+    ) -> Result<(), CommandError> {
+        let mut tries = 0u64;
+        loop {
+            match self.act(command, events, recording).await {
+                Err(CommandError::Failed(message))
+                    if message == STORE_BUSY && tries < BUSY_RETRIES =>
+                {
+                    tries += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(10 * tries)).await;
+                }
+                other => return other,
+            }
         }
     }
 
@@ -405,20 +442,33 @@ impl Actions {
     ) -> Result<Option<String>, CommandError> {
         use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
 
-        let (mut connection, _permit) = self.connect().await?;
         // `done` included: a move that *finished* is exactly the one
         // somebody is most likely to take back, and the forward path never
         // had a reason to look at one (#531).
+        const OPEN: [MovePhase; 4] = [
+            MovePhase::Copying,
+            MovePhase::Unconfirmed,
+            MovePhase::Confirmed,
+            MovePhase::Done,
+        ];
+        // Asked on a read turn first. Nearly every undo is a flag, a snooze
+        // or a same-account move with no saga at all, and taking the writer
+        // to find that out made each of them wait for it twice -- once here,
+        // once for the inverse (#1607).
+        {
+            let reader = self.database.read().await.map_err(store_failure)?;
+            let open = CrossAccountMoveRepository::new(&reader.checkout())
+                .for_sources(messages, &OPEN)
+                .await
+                .map_err(store_failure)?;
+            if open.is_empty() {
+                return Ok(None);
+            }
+        }
+
+        let (mut connection, _permit) = self.connect().await?;
         let sagas = CrossAccountMoveRepository::new(&connection)
-            .for_sources(
-                messages,
-                &[
-                    MovePhase::Copying,
-                    MovePhase::Unconfirmed,
-                    MovePhase::Confirmed,
-                    MovePhase::Done,
-                ],
-            )
+            .for_sources(messages, &OPEN)
             .await
             .map_err(store_failure)?;
         if sagas.is_empty() {
@@ -489,7 +539,7 @@ impl Actions {
         // whole answer. Rolled back rather than committed, so a partial undo
         // and a refused one cannot be told apart by what is in the store.
         if undone == 0 {
-            drop(transaction);
+            transaction.rollback().await.map_err(store_failure)?;
             return Err(CommandError::rejected(
                 "That move reached the other account but Postio could not confirm it,                  so taking it back would be a guess. Nothing was changed.",
             ));
@@ -1607,17 +1657,33 @@ impl Actions {
                 // looked up again: they are what the view could show when the
                 // gesture was made, and an account that has reconnected since
                 // was not part of the selection the user was shown (#811).
-                ViewScope::Unified { accounts } => accounts
-                    .into_iter()
-                    .map(|account| BulkUnit {
-                        set: MessageSet::InAccounts {
-                            accounts: vec![account],
-                            except: except.clone(),
-                        },
-                        account,
-                        from: None,
-                    })
-                    .collect(),
+                //
+                // Each account's predicate is its inbox, because that is what
+                // Unified shows (#1692): a set over the account's whole mail
+                // would reach the Archive the view never drew. An account
+                // with no inbox yet has nothing in the view to select.
+                ViewScope::Unified { accounts } => {
+                    let folders = MailboxRepository::new(connection);
+                    let mut units = Vec::with_capacity(accounts.len());
+                    for account in accounts {
+                        let Some(inbox) = folders
+                            .by_role(account, MailboxRole::Inbox)
+                            .await
+                            .map_err(store_failure)?
+                        else {
+                            continue;
+                        };
+                        units.push(BulkUnit {
+                            set: MessageSet::InMailbox {
+                                mailbox: inbox.id,
+                                except: except.clone(),
+                            },
+                            account,
+                            from: Some(inbox.id),
+                        });
+                    }
+                    units
+                }
             },
             Resolved::Batch {
                 range,
@@ -2066,10 +2132,23 @@ async fn kind_for(flag: &Flag, wanted: bool) -> UndoKind {
 ///
 /// The sentence on screen says what happened without saying what to; the
 /// detail goes to stderr, where it carries SQL rather than anyone's mail.
-fn store_failure(error: impl std::fmt::Display) -> CommandError {
+fn store_failure(error: impl Into<postio_storage::Error>) -> CommandError {
+    let error: postio_storage::Error = error.into();
+    if error.is_busy() {
+        // Not a refusal: another writer committed first, and the store asks
+        // for the transaction to be tried again (#1594). `Actions::run` does.
+        tracing::debug!(%error, "the local store was busy; the verb will run again");
+        return CommandError::failed(STORE_BUSY);
+    }
     tracing::error!(%error, "the local store refused a write: {error}");
     CommandError::failed("Could not save that change")
 }
+
+/// How many times a verb is run again when the store was busy.
+const BUSY_RETRIES: u64 = 5;
+
+/// What a verb says when the store was busy every time it was tried.
+const STORE_BUSY: &str = "Postio was busy saving something else — try that again";
 
 /// Which account a folder belongs to.
 ///
@@ -2916,7 +2995,15 @@ mod tests {
             .expect("flag");
         let _ = world.drained().await;
 
+        let before = postio_storage::test_support::gate_log::interactive_requested_here();
         world.run(Command::Undo).await.expect("undo");
+        // #1607: the saga probe took a permit of its own before the inverse
+        // took another, so a flag undo waited for the writer twice.
+        assert_eq!(
+            postio_storage::test_support::gate_log::interactive_requested_here() - before,
+            1,
+            "a flag undo asked for the writer more than once"
+        );
 
         assert!(!world.flags_of(message).await.is_flagged());
         assert!(matches!(
@@ -3699,6 +3786,40 @@ mod tests {
             !world.flags_of(theirs).await.contains(&Flag::Flagged),
             "an account the selection was never scoped to must not be flagged"
         );
+    }
+
+    #[tokio::test]
+    async fn a_unified_select_all_is_the_inboxes_and_nothing_filed_away() {
+        // #1692: Unified is the inboxes, so `Ctrl+A` there is every inbox
+        // message and nothing else. A predicate over each account's whole
+        // mail would reach what the view never showed -- `Ctrl+A`, `#` would
+        // have deleted the Archive along with the inbox.
+        let world = world().await;
+        let away = world.second_account().await;
+        let mine = world.message(world.inbox, &[]).await;
+        let theirs = world.message_for(&away.account, away.inbox, &[]).await;
+        let filed = world.message(world.archive, &[]).await;
+        let filed_away = world.message_for(&away.account, away.archive, &[]).await;
+        world
+            .everything_unified(&[world.account.id, away.account.id])
+            .await;
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            })
+            .await
+            .expect("a bulk flag over both inboxes");
+
+        assert!(world.flags_of(mine).await.contains(&Flag::Flagged));
+        assert!(world.flags_of(theirs).await.contains(&Flag::Flagged));
+        for message in [filed, filed_away] {
+            assert!(
+                !world.flags_of(message).await.contains(&Flag::Flagged),
+                "a message filed away is not in Unified, so not in its select-all"
+            );
+        }
     }
 
     #[tokio::test]

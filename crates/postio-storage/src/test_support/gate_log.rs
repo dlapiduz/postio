@@ -33,6 +33,23 @@ static LOG: Mutex<Vec<Event>> = Mutex::new(Vec::new());
 /// Called by the gate when a caller asks for the writer.
 pub fn requested(priority: WritePriority) {
     record(Event::Requested(priority));
+    if priority == WritePriority::Interactive {
+        INTERACTIVE_HERE.with(|count| count.set(count.get() + 1));
+    }
+}
+
+thread_local! {
+    static INTERACTIVE_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many interactive permits this thread has asked for.
+///
+/// The log above is one list for the whole process, and unit tests share a
+/// process: a test counting its own requests from it counts its neighbours'.
+/// A current-thread test's requests are made on its own thread, so this is
+/// exact for it.
+pub fn interactive_requested_here() -> usize {
+    INTERACTIVE_HERE.with(std::cell::Cell::get)
 }
 
 /// Called by the gate when a caller is handed the writer.

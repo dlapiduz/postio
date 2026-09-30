@@ -446,3 +446,78 @@ pub fn opening_the_window_indexes_local_headers_without_being_asked() {
         bridge.shutdown();
     });
 }
+
+/// The idle passes wait for the window to be on screen (#1604).
+///
+/// Four of them -- the body indexer's catch-up, the header repair, the header
+/// index catch-up and the disk reclaim -- started at the same instant as the
+/// first page read, on a runtime of two workers, and the journal showed the
+/// WAL truncation landing 20 ms after the first page was asked for. They are
+/// catch-up work nobody is waiting on; the first frame is.
+pub fn the_idle_passes_wait_for_the_first_frame() {
+    crate::gtk_case(async {
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 31).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let target = all_messages(&database).await[0];
+        give_body(
+            &database,
+            target,
+            Some("A word no header in the corpus carries: photogrammetry."),
+            None,
+        )
+        .await;
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
+
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
+
+        // Fed, and not yet on screen.
+        let window = Window::default();
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
+        for _ in 0..100 {
+            while glib::MainContext::default().iteration(false) {}
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            hits(&database, report.account.id, "photogrammetry")
+                .await
+                .is_empty(),
+            "the body index caught up before the window had drawn a frame"
+        );
+
+        window.present();
+        let deadline = std::time::Instant::now()
+            + postio_test_support::scaled(std::time::Duration::from_secs(10));
+        let mut found = false;
+        while std::time::Instant::now() < deadline && !found {
+            while glib::MainContext::default().iteration(false) {}
+            found = hits(&database, report.account.id, "photogrammetry")
+                .await
+                .contains(&target);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(found, "the idle passes never ran once the window was up");
+        bridge.shutdown();
+    });
+}

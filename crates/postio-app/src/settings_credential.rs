@@ -35,22 +35,32 @@ use postio_account::discovery::{DiscoveryTransport, PimalayaTransport};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
-use postio_storage::repository::AccountRepository;
 
 use crate::Wiring;
+use crate::frontend::Frontend;
 use crate::onboarding::{ProbeCancellation, configured, probe, submit};
 
 /// Opens a dialog over `window` letting the user re-enter `id`'s credential
 /// (and, since the same form carries them, its server settings). Does
 /// nothing if the account is gone by the time this runs.
 pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
-    let Ok(connection) = wiring.database.connect().await else {
+    // The row and the writes are the store owner's (ADR 0041), asked through
+    // a client of this dialog's own, over the same wiring.
+    install_for(window, &Frontend::in_process(wiring), id).await;
+}
+
+/// [`install`], for a window whose store's owner may be another process:
+/// the row and the writes go through `frontend`'s client.
+pub async fn install_for(window: &Window, frontend: &Frontend, id: AccountId) {
+    let client = frontend.client.clone();
+    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
+    // on its own runtime.
+    let Ok(accounts) = client.accounts().await else {
         return;
     };
-    let Ok(Some(account)) = AccountRepository::new(&connection).get(id).await else {
+    let Some(account) = accounts.into_iter().find(|account| account.id == id) else {
         return;
     };
-    drop(connection);
 
     let screen = Onboarding::new();
     screen.set_address(&account.address.address);
@@ -75,12 +85,12 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
         move |_| cancellation.stop()
     });
     let transport: Arc<dyn DiscoveryTransport> =
-        Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone()));
+        Arc::new(PimalayaTransport::new().with_egress(frontend.egress.clone()));
 
     let jmap = crate::onboarding::JmapOfferSlot::default();
     screen.connect_probe({
         let screen = screen.clone();
-        let runtime = wiring.runtime.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let jmap = jmap.clone();
         move |address| {
@@ -97,16 +107,17 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
 
     screen.connect_submit({
         let screen = screen.clone();
-        let wiring = wiring.clone();
+        let runtime = frontend.runtime.clone();
         let cancellation = cancellation.clone();
         let on_saved = {
             let window = window.clone();
-            let wiring = wiring.clone();
+            let frontend = frontend.clone();
+            let client = client.clone();
             let dialog = dialog.clone();
             move || {
                 postio_session::blocking::now(async {
                     dialog.close();
-                    crate::settings_accounts::refresh(&window, &wiring).await;
+                    crate::settings_accounts::refresh(&window, &frontend, &client).await;
                 })
             }
         };
@@ -114,7 +125,8 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
             cancellation.stop();
             submit(
                 &screen,
-                &wiring,
+                &runtime,
+                &client,
                 submission.clone(),
                 jmap.borrow().clone(),
                 on_saved.clone(),

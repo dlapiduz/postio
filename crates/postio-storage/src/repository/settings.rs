@@ -45,19 +45,19 @@ impl<'a> SettingsRepository<'a> {
         // Delete-then-insert rather than an upsert: the table has no unique
         // index for `ON CONFLICT` to target — 0001 left it unconstrained —
         // and two rows under one key would make `get` answer arbitrarily.
-        self.connection
-            .execute(
-                "DELETE FROM settings WHERE key = ?1 AND account_id IS NULL",
-                [key],
-            )
-            .await?;
-        self.connection
-            .execute(
-                "INSERT INTO settings (key, account_id, value, updated_at)
+        sql::execute(
+            self.connection,
+            "DELETE FROM settings WHERE key = ?1 AND account_id IS NULL",
+            [key],
+        )
+        .await?;
+        sql::execute(
+            self.connection,
+            "INSERT INTO settings (key, account_id, value, updated_at)
                  VALUES (?1, NULL, ?2, ?3)",
-                params![key, value, Utc::now().timestamp_millis()],
-            )
-            .await?;
+            params![key, value, Utc::now().timestamp_millis()],
+        )
+        .await?;
         Ok(())
     }
 }

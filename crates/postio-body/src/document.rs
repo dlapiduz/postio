@@ -243,7 +243,7 @@ pub enum Block {
 /// A `data-` attribute so it is valid HTML and so the editor's own DOM keeps
 /// it across a round trip. It carries no content: it says only "the parser
 /// should hand this back to `quote_of` rather than narrowing it".
-pub(crate) const QUOTED_MARKER: &str = "data-postio-quoted";
+pub const QUOTED_MARKER: &str = "data-postio-quoted";
 
 /// A message body, as it is edited.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -370,7 +370,7 @@ impl Document {
     /// (issue #116's composer banner is the first) wants just the host, and
     /// parsing one out of a raw href belongs with the type that already
     /// knows what a valid href looks like. A `mailto:` link names no host at
-    /// all and is silently skipped, the same as any href [`url`] cannot find
+    /// all and is silently skipped, the same as any href [`url`](ammonia::Url) cannot find
     /// one in.
     pub fn link_hosts(&self) -> Vec<String> {
         let mut hosts = Vec::new();
@@ -533,7 +533,7 @@ fn collect_link_hosts_in_inlines(inlines: &[Inline], hosts: &mut Vec<String>) {
 /// The host of an `http`/`https` href, lowercased. `None` for `mailto:` and
 /// anything else with no authority component to name one.
 fn host_of(href: &str) -> Option<String> {
-    url::Url::parse(href)
+    ammonia::Url::parse(href)
         .ok()?
         .host_str()
         .map(str::to_ascii_lowercase)

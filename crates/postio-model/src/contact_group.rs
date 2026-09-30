@@ -8,6 +8,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::address::EmailAddress;
 use crate::ids::{AccountId, ContactGroupId};
 
 /// A named set of contacts.
@@ -49,6 +50,28 @@ impl ContactGroup {
             created_at,
         }
     }
+}
+
+/// One row of recipient completion: a single address, or a named group that
+/// expands to every one of its members the moment it is accepted.
+///
+/// ADR 0007 Q3: there is no group address to insert instead — a draft's
+/// recipients have to be what the user can see, which is what keeps `Bcc`
+/// honest and stops a draft's recipients from silently changing if someone
+/// edits the group's membership after it was picked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecipientCandidate {
+    /// One address, exactly as accepting it always worked.
+    Contact(EmailAddress),
+    /// A named group. `members` is the membership at the moment this
+    /// candidate was offered — accepting it inserts all of them as
+    /// individual addresses, never a group reference.
+    Group {
+        /// Display name, for the completion row.
+        name: String,
+        /// Every member's address, in the order they are inserted.
+        members: Vec<EmailAddress>,
+    },
 }
 
 #[cfg(test)]

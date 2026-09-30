@@ -103,6 +103,17 @@ on 2026-08-27, thirteen of what were then fifteen crates built and tested on
 macOS with no changes at all (the workspace is twenty crates now). Windows
 remains unscheduled.
 
+**A terminal frontend uses the same store as the desktop app** —
+`postio-tui`, [`specs/005-tui-frontend`](../specs/005-tui-frontend/spec.md):
+the desktop app's commands, keys and verbs in a terminal, local or over SSH,
+with the mouse as well as the keyboard, and mail read and written as
+Markdown. Either can be the one open, not both at once: whichever starts
+first has the mailbox, and the other says so and asks for it to be closed
+([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)). It ships
+as its own package, smaller than the desktop one. Images are labelled
+placeholders that open in the system viewer; drawing them in the terminal is
+the next iteration.
+
 ---
 
 ## 3. Accounts and providers
@@ -114,8 +125,8 @@ the authorization flow itself — the consent screen in the system browser, a
 loopback redirect, PKCE — is `crates/postio-account/src/oauth/`, and
 [ADR 0006](decisions/0006-oauth-and-provider-presets.md) is the design.
 **Multiple accounts are built**: one engine per enabled account, one
-database, and a unified inbox that is a scope rather than a mailbox
-(`g a` walks the scopes, `account:` names one in a query) —
+database, and a unified inbox — every enabled account's inbox, not all its
+mail — that is a scope rather than a mailbox (`g a` walks the scopes, `account:` names one in a query) —
 [ADR 0005](decisions/0005-multiple-accounts.md). JMAP and Gmail are the two
 further `MailBackend` implementations of
 [ADR 0018](decisions/0018-jmap-and-gmail-backends.md), `crates/postio-jmap`
@@ -348,7 +359,11 @@ Conflating them is the classic bug, because it only surfaces once a selection
 is more than one row (`ARCHITECTURE.md` §4).
 
 The chosen visual direction is **PLATE (canvas option 1b)**: airy desktop,
-40px rows, key hints revealed on the focused row only. §19.
+40px rows, one height per density whatever state a row is in — focus,
+hover and selection change what a row draws, never how tall it is, so the
+list never moves under the cursor. The focused row carries no key hints
+(maintainer, 2026-09-25): the action bars, the palette and the `?` cheat
+sheet teach the keyboard instead. §19.
 
 ---
 
@@ -592,11 +607,11 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
 - `List-Unsubscribe` One-Click fires only on deliberate activation — sending it
   confirms to a spammer that the address is live.
 - No link prefetch, no favicon fetch, no speculative connections. The reader's
-  WebView refuses script that arrived in a message — a `<script>` element, an
-  event-handler attribute, a `javascript:` href — and has network off. Postio's
-  own script runs there, which is how the conversation rail knows which message
-  is on screen (ADR 0003, #1367); `cid:` images resolve from the
-  local blob store.
+  renderer cannot run script or reach the network (ADR 0042): it has no script
+  engine, and it draws only what it is handed — the message's own parts, from
+  the local blob store, and a remote image the user allowed, fetched by the
+  application. The conversation rail reads which message is on screen from
+  the renderer's geometry, not from script.
 - Replies and forwards carry nothing outward, and since
   [ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md) they rest
   on different mechanisms for it. A **forward** is still generated from
@@ -654,13 +669,15 @@ contact groups, filled from the mail and completing recipients; local
 full-text search with operators, an instant search box, and saved searches
 pinned in the sidebar; vim-style navigation, a command palette and
 configurable shortcuts; an encrypted local store, background sync, offline
-reading, undo, desktop notifications.
+reading, undo, desktop notifications. All of it in a terminal too, on the
+same store as the desktop app (§2).
 
 **Out, deliberately:** Rules — the language is shared and the design is
 [ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
 contacts management surface, and vCard import and export — the tables are
 there, the screen is not. Microsoft Graph. PGP and S/MIME, phishing and link
-warnings. Windows. **And AI** — a founding principle, deferred so that core
+warnings. Windows. Images drawn inside the terminal (placeholders there
+for now). **And AI** — a founding principle, deferred so that core
 mail, search and the keyboard land excellently first. Shipping AI over a
 mediocre mail client would produce a mediocre mail client with AI in it.
 

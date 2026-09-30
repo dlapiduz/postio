@@ -92,6 +92,13 @@ pub struct MessageListRow {
     pub has_attachments: bool,
     /// Size in bytes.
     pub size: u64,
+    /// How many messages its conversation holds, when it has one.
+    ///
+    /// A column of the list query rather than a lookup per row: reading it
+    /// through `ThreadRepository::get` cost each row five statements --
+    /// the conversation's members, participants, folders and labels -- for
+    /// one number (#1613).
+    pub thread_count: Option<u32>,
 }
 
 impl MessageListRow {
@@ -227,26 +234,6 @@ pub enum MessageSet {
         /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
-    /// Every message in each of these accounts, less the rows taken back out
-    /// of the selection.
-    ///
-    /// The unified view's half of the predicate story (#811). The accounts
-    /// are named rather than implied by "all of them" because the aggregate
-    /// list can be showing fewer than it has: an account Postio cannot
-    /// currently reach is drawn — its synced mail is real mail — and is
-    /// deliberately *not* part of a whole-view selection made while it was
-    /// away (ADR 0005 Q10).
-    ///
-    /// The list is the one the view was scoped to **when the gesture was
-    /// made**, carried here rather than looked up on the way past. Resolving
-    /// it late would let an account that reconnected between the `Ctrl+A` and
-    /// the `a` join a selection the user was never shown.
-    InAccounts {
-        /// The accounts the predicate is about, in the sidebar's order.
-        accounts: Vec<AccountId>,
-        /// Rows the user deselected. Built by clicking, so it is short.
-        except: Vec<MessageId>,
-    },
     /// Every message a run of queue rows named.
     ///
     /// This is how undo takes back a bulk action without naming its rows: the
@@ -300,9 +287,7 @@ impl MessageSet {
             MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
             // A smart folder is not a folder, here as everywhere else --
             // and an aggregate over accounts is further from one still.
-            MessageSet::Flagged { .. } | MessageSet::Queued(_) | MessageSet::InAccounts { .. } => {
-                None
-            }
+            MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
             MessageSet::InSourceMailbox { mailbox, .. } => Some(*mailbox),
             MessageSet::WithFlag { set, .. } => set.mailbox(),
         }
@@ -351,18 +336,6 @@ impl MessageSet {
                     format!("messages.mailbox_id = ?{first} AND messages.deleted_locally = 0");
                 sql.push_str(&without_conversations(except, first + 1));
                 let mut arguments = vec![mailbox.get()];
-                arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
-                (sql, arguments)
-            }
-            // The unified view's rows are conversations too, so the
-            // exceptions are excepted the same way -- by conversation, not by
-            // the one message a row is drawn from.
-            MessageSet::InAccounts { accounts, except } => {
-                let ids = placeholders(accounts.len(), first);
-                let mut sql =
-                    format!("messages.account_id IN ({ids}) AND messages.deleted_locally = 0");
-                sql.push_str(&without_conversations(except, first + accounts.len()));
-                let mut arguments: Vec<i64> = accounts.iter().map(|id| id.get()).collect();
                 arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
                 (sql, arguments)
             }
@@ -679,7 +652,8 @@ messages.size, messages.send_state, messages.send_at,
 (SELECT addresses.address FROM recipients
     JOIN addresses ON addresses.id = recipients.address_id
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
-  ORDER BY recipients.position LIMIT 1)";
+  ORDER BY recipients.position LIMIT 1),
+(SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id)";
 
 impl<'a> MessageRepository<'a> {
     /// Borrows a connection.
@@ -917,12 +891,11 @@ impl<'a> MessageRepository<'a> {
     /// The body and headers are empty: those bytes are in the blob store. See
     /// [`MessageRepository::body`].
     pub async fn get(&self, id: MessageId) -> Result<Option<Message>> {
-        let mut statement = self
-            .connection
-            .prepare(&format!(
-                "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"
-            ))
-            .await?;
+        let mut statement = sql::statement(
+            self.connection,
+            &format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"),
+        )
+        .await?;
         let found = crate::sql::first_of(&mut statement, [id.get()], read_message).await?;
         let Some(mut message) = found else {
             return Ok(None);
@@ -979,7 +952,7 @@ impl<'a> MessageRepository<'a> {
             let sql = format!(
                 "SELECT {LIST_COLUMNS} FROM messages WHERE messages.id IN ({placeholders})"
             );
-            let mut statement = self.connection.prepare(&sql).await?;
+            let mut statement = sql::statement(self.connection, &sql).await?;
             let rows = sql::mapped(
                 &mut statement,
                 chunk.iter().map(|id| id.get()).collect::<Vec<_>>(),
@@ -1027,25 +1000,24 @@ impl<'a> MessageRepository<'a> {
         source: FlagSource,
     ) -> Result<()> {
         let flags = flags.persistable();
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE messages
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE messages
                 SET flags = ?2, seen = ?3, flagged = ?4, answered = ?5, draft = ?6,
                     deleted = ?7, flags_dirty = ?8
               WHERE id = ?1",
-                bind![
-                    id.get(),
-                    flag_text(&flags),
-                    flags.is_seen(),
-                    flags.is_flagged(),
-                    flags.is_answered(),
-                    flags.is_draft(),
-                    flags.is_deleted(),
-                    source == FlagSource::Local,
-                ],
-            )
-            .await?;
+            bind![
+                id.get(),
+                flag_text(&flags),
+                flags.is_seen(),
+                flags.is_flagged(),
+                flags.is_answered(),
+                flags.is_draft(),
+                flags.is_deleted(),
+                source == FlagSource::Local,
+            ],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1074,7 +1046,7 @@ impl<'a> MessageRepository<'a> {
         );
         let mut arguments = vec![mailbox_id.get()];
         arguments.extend(ids.iter().map(|id| id.get()).collect::<Vec<_>>());
-        Ok(self.connection.execute(&sql, arguments).await? as usize)
+        Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
     /// The distinct folders the rows a [`MessageSet`] names are in right now.
@@ -1092,7 +1064,7 @@ impl<'a> MessageRepository<'a> {
     pub async fn mailboxes_of_set(&self, set: &MessageSet) -> Result<Vec<MailboxId>> {
         let (predicate, arguments) = set.predicate(1);
         let sql = format!("SELECT DISTINCT messages.mailbox_id FROM messages WHERE {predicate}");
-        let mut statement = self.connection.prepare(&sql).await?;
+        let mut statement = sql::statement(self.connection, &sql).await?;
         let rows = sql::mapped(&mut statement, arguments, |row| {
             row.col::<i64>(0).map(MailboxId::new)
         })
@@ -1122,7 +1094,7 @@ impl<'a> MessageRepository<'a> {
         );
         let mut parameters = vec![mailbox_id.get()];
         parameters.extend(arguments);
-        Ok(self.connection.execute(&sql, parameters).await? as usize)
+        Ok(sql::execute(self.connection, &sql, parameters).await? as usize)
     }
 
     /// How many messages a [`MessageSet`] names.
@@ -1185,7 +1157,7 @@ impl<'a> MessageRepository<'a> {
         );
         let mut parameters = vec![i64::from(present)];
         parameters.extend(arguments);
-        Ok(self.connection.execute(&sql, parameters).await? as usize)
+        Ok(sql::execute(self.connection, &sql, parameters).await? as usize)
     }
 
     /// Hides messages pending a remote delete or move, or brings them back.
@@ -1203,7 +1175,7 @@ impl<'a> MessageRepository<'a> {
         );
         let mut arguments = vec![i64::from(deleted)];
         arguments.extend(ids.iter().map(|id| id.get()).collect::<Vec<_>>());
-        Ok(self.connection.execute(&sql, arguments).await? as usize)
+        Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
     /// Hides messages from every ordinary list until `until`, then they
@@ -1223,7 +1195,7 @@ impl<'a> MessageRepository<'a> {
         );
         let mut arguments = vec![to_millis(until)];
         arguments.extend(ids.iter().map(|id| id.get()).collect::<Vec<_>>());
-        Ok(self.connection.execute(&sql, arguments).await? as usize)
+        Ok(sql::execute(self.connection, &sql, arguments).await? as usize)
     }
 
     /// Cancels a snooze immediately, without waiting for its time to arrive.
@@ -1235,10 +1207,12 @@ impl<'a> MessageRepository<'a> {
             "UPDATE messages SET snoozed_until = NULL WHERE id IN ({})",
             placeholders(ids.len(), 1)
         );
-        Ok(self
-            .connection
-            .execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>())
-            .await? as usize)
+        Ok(sql::execute(
+            self.connection,
+            &sql,
+            ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
+        )
+        .await? as usize)
     }
 
     /// Clears every snooze whose time has passed as of `now` in `account`,
@@ -1274,13 +1248,12 @@ impl<'a> MessageRepository<'a> {
         // five seconds for the life of the process. The order still matters
         // (a caller repainting in a stable order), so it is done in Rust over
         // a list that cannot be longer than the account's mailbox count.
-        let mut statement = self
-            .connection
-            .prepare_cached(
-                "SELECT DISTINCT mailbox_id FROM messages
+        let mut statement = sql::statement(
+            self.connection,
+            "SELECT DISTINCT mailbox_id FROM messages
               WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
-            )
-            .await?;
+        )
+        .await?;
         let mut woken: Vec<MailboxId> =
             sql::mapped(&mut statement, bind![account.get(), now_millis], |row| {
                 Ok(MailboxId::new(row.col(0)?))
@@ -1289,13 +1262,13 @@ impl<'a> MessageRepository<'a> {
         woken.sort_unstable();
 
         if !woken.is_empty() {
-            self.connection
-                .execute(
-                    "UPDATE messages SET snoozed_until = NULL
+            sql::execute(
+                self.connection,
+                "UPDATE messages SET snoozed_until = NULL
                   WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
-                    bind![account.get(), now_millis],
-                )
-                .await?;
+                bind![account.get(), now_millis],
+            )
+            .await?;
         }
         Ok(woken)
     }
@@ -1312,21 +1285,22 @@ impl<'a> MessageRepository<'a> {
             "DELETE FROM messages WHERE id IN ({})",
             placeholders(ids.len(), 1)
         );
-        Ok(self
-            .connection
-            .execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>())
-            .await? as usize)
+        Ok(sql::execute(
+            self.connection,
+            &sql,
+            ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
+        )
+        .await? as usize)
     }
 
     /// Puts a message in a thread, or takes it out of one.
     pub async fn set_thread(&self, id: MessageId, thread_id: Option<ThreadId>) -> Result<()> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
-                bind![id.get(), thread_id.map(ThreadId::get)],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
+            bind![id.get(), thread_id.map(ThreadId::get)],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1620,19 +1594,18 @@ impl<'a> MessageRepository<'a> {
         block: Option<&postio_model::headers::Block>,
     ) -> Result<()> {
         let encoded = block.map(|block| block.text.clone());
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE messages
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE messages
                 SET body_headers = ?2, body_headers_truncated = ?3
               WHERE id = ?1",
-                bind![
-                    id.get(),
-                    encoded,
-                    block.is_some_and(|block| block.truncated),
-                ],
-            )
-            .await?;
+            bind![
+                id.get(),
+                encoded,
+                block.is_some_and(|block| block.truncated),
+            ],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1672,32 +1645,31 @@ impl<'a> MessageRepository<'a> {
         body: &StoredBody,
         body_state: BodyState,
     ) -> Result<()> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE messages
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE messages
                     SET body_text = ?2, body_html = ?3, body_headers = ?4,
                         body_state = ?5,
                         body_headers_truncated = ?6, body_encoding_problems = ?7,
                         body_line_count = ?8, body_parsed_with = ?9
                   WHERE id = ?1",
-                bind![
-                    id.get(),
-                    // Packed per row: zstd when that is smaller, the text
-                    // when it is not -- see `body_codec`.
-                    body.text.as_deref().map(crate::body_codec::pack),
-                    body.html.as_deref().map(crate::body_codec::pack),
-                    body.headers,
-                    body_state.as_str(),
-                    body.headers_truncated,
-                    body.encoding_problems,
-                    body.text.as_deref().map(line_count),
-                    // Stamped with the parser that produced it, so a later
-                    // parser can tell which rows it may want back.
-                    postio_model::mime::PARSER_VERSION,
-                ],
-            )
-            .await?;
+            bind![
+                id.get(),
+                // Packed per row: zstd when that is smaller, the text
+                // when it is not -- see `body_codec`.
+                body.text.as_deref().map(crate::body_codec::pack),
+                body.html.as_deref().map(crate::body_codec::pack),
+                body.headers,
+                body_state.as_str(),
+                body.headers_truncated,
+                body.encoding_problems,
+                body.text.as_deref().map(line_count),
+                // Stamped with the parser that produced it, so a later
+                // parser can tell which rows it may want back.
+                postio_model::mime::PARSER_VERSION,
+            ],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1715,13 +1687,12 @@ impl<'a> MessageRepository<'a> {
     /// because reading the blob keys back only to write them again is how a
     /// concurrent text fetch gets clobbered by a payload fetch.
     pub async fn set_body_state(&self, id: MessageId, body_state: BodyState) -> Result<()> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE messages SET body_state = ?2 WHERE id = ?1",
-                bind![id.get(), body_state.as_str()],
-            )
-            .await?;
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE messages SET body_state = ?2 WHERE id = ?1",
+            bind![id.get(), body_state.as_str()],
+        )
+        .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1750,15 +1721,41 @@ impl<'a> MessageRepository<'a> {
         part_id: &str,
         blob_id: &BlobId,
     ) -> Result<bool> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE attachments SET blob_id = ?3
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE attachments SET blob_id = ?3
               WHERE message_id = ?1 AND part_id = ?2",
-                bind![message_id.get(), part_id, blob_id.as_str()],
-            )
-            .await?;
+            bind![message_id.get(), part_id, blob_id.as_str()],
+        )
+        .await?;
         Ok(changed > 0)
+    }
+
+    /// What fetching a body learned about the row that is not the body: a
+    /// preview, if the row had none, and where the raw bytes went, if they
+    /// were kept.
+    ///
+    /// The body fetch's write, in place of [`update`](Self::update). `update`
+    /// rewrites the whole row and deletes and re-inserts every recipient,
+    /// attachment and label -- a statement per name on the message, on every
+    /// body of a first sync, to store two columns. A `preview` already on the
+    /// row is kept; a `None` raw blob leaves the column as it was.
+    pub async fn set_fetched(
+        &self,
+        id: MessageId,
+        preview: Option<&str>,
+        raw_blob: Option<&BlobId>,
+    ) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE messages
+                SET preview = coalesce(preview, ?2),
+                    raw_blob_id = coalesce(?3, raw_blob_id)
+              WHERE id = ?1",
+            bind![id.get(), preview, raw_blob.map(BlobId::as_str)],
+        )
+        .await?;
+        Ok(())
     }
 
     /// Messages in `mailbox_id` whose text is local and whose payloads are
@@ -1973,10 +1970,9 @@ impl<'a> MessageRepository<'a> {
         &self,
         message_id: MessageId,
     ) -> Result<Option<BackfillCandidate>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+        let mut statement = sql::statement(
+            self.connection,
+            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id, messages.mailbox_id,
                     mailboxes.role
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
@@ -1985,8 +1981,8 @@ impl<'a> MessageRepository<'a> {
                 AND messages.uid IS NOT NULL
                 AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0",
-            )
-            .await?;
+        )
+        .await?;
         crate::sql::first_of(&mut statement, [message_id.get()], |row| {
             let mailbox_id = MailboxId::new(row.col(6)?);
             read_backfill_candidate(row, mailbox_id, role_at(row, 7)?)
@@ -2001,22 +1997,36 @@ impl<'a> MessageRepository<'a> {
     /// can ever have a better answer for later than it did at insertion: one
     /// that names an ancestor either already found it or is waiting to, so
     /// only silence at insertion time is worth asking about again.
+    ///
+    /// And only those whose subject reads as a reply. A message with no
+    /// references is most of a folder -- every newsletter, every first
+    /// message of a conversation -- and only a reply can be placed by its
+    /// subject, so everything else is dropped here, from two columns,
+    /// rather than loaded whole to be turned away one at a time.
     pub async fn subject_only_orphans(&self, mailbox_id: MailboxId) -> Result<Vec<MessageId>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT id FROM messages
+        let mut statement = sql::statement(
+            self.connection,
+            "SELECT id, subject FROM messages
               WHERE mailbox_id = ?1
                 AND thread_id IS NOT NULL
                 AND in_reply_to IS NULL
                 AND reference_ids = ''",
-            )
-            .await?;
-        let rows = sql::mapped(&mut statement, [mailbox_id.get()], |row| {
-            Ok(MessageId::new(row.col(0)?))
-        })
+        )
         .await?;
-        Ok(rows)
+        let rows: Vec<(i64, Option<String>)> =
+            sql::mapped(&mut statement, [mailbox_id.get()], |row| {
+                Ok((row.col(0)?, row.col(1)?))
+            })
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter(|(_, subject)| {
+                subject
+                    .as_deref()
+                    .is_some_and(postio_model::subject::is_reply)
+            })
+            .map(|(id, _)| MessageId::new(id))
+            .collect())
     }
 }
 
@@ -2060,11 +2070,19 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
             NOT_YET_DUE,
         ),
         ListScope::Account(_) => ("messages.account_id = ?1", NOT_YET_DUE),
-        // Every account, so there is no account to name and no argument to
-        // bind. `idx_messages_recency` is the index this leans on -- added
-        // for exactly this shape in ADR 0005 Q5a, because a composite index
-        // led by `account_id` cannot supply the order once nothing pins it.
-        ListScope::Unified => ("1 = 1", NOT_YET_DUE),
+        // Every enabled account's inbox (#1692), so there is no one account
+        // to name and no argument to bind. The list itself never pages this
+        // way -- Unified lists conversations, and
+        // `ThreadRepository::unified_page` merges each inbox's own seek -- so
+        // this is the predicate's meaning kept in step with that, for a count
+        // or a flat read of the same view.
+        ListScope::Unified => (
+            "messages.mailbox_id IN (
+                 SELECT m.id FROM accounts a JOIN mailboxes m
+                     ON m.account_id = a.id AND m.role = 'inbox'
+                  WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1)",
+            NOT_YET_DUE,
+        ),
         ListScope::Flagged(_) => (
             "messages.account_id = ?1 AND messages.flagged = 1",
             NOT_YET_DUE,
@@ -2114,7 +2132,7 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
 
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
     match scope {
-        // Nothing to bind: the scope is every account.
+        // Nothing to bind: the scope is every enabled account's inbox.
         ListScope::Unified => Vec::new(),
         ListScope::Mailbox(id) => vec![id.get()],
         ListScope::Account(id)
@@ -2183,9 +2201,9 @@ pub(crate) fn placeholders(count: usize, first: usize) -> String {
 async fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
     let id = require_persisted(message.id.get(), "message")?;
 
-    let changed = connection
-        .execute(
-            "UPDATE messages
+    let changed = sql::execute(
+        connection,
+        "UPDATE messages
             SET account_id = ?2, mailbox_id = ?3, thread_id = ?4, rfc_message_id = ?5,
                 in_reply_to = ?6, reference_ids = ?7, subject = ?8,
                 normalized_subject = ?9, date = ?10, received_at = ?11, preview = ?12,
@@ -2198,9 +2216,9 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
                 html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37,
                 read_receipt_requested = ?38
           WHERE id = ?1",
-            row_values(id, message),
-        )
-        .await?;
+        row_values(id, message),
+    )
+    .await?;
     if changed == 0 {
         return Err(Error::NotFound {
             entity: "message",
@@ -2208,15 +2226,24 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
         });
     }
 
-    connection
-        .execute("DELETE FROM recipients WHERE message_id = ?1", [id])
-        .await?;
-    connection
-        .execute("DELETE FROM attachments WHERE message_id = ?1", [id])
-        .await?;
-    connection
-        .execute("DELETE FROM message_labels WHERE message_id = ?1", [id])
-        .await?;
+    sql::execute(
+        connection,
+        "DELETE FROM recipients WHERE message_id = ?1",
+        [id],
+    )
+    .await?;
+    sql::execute(
+        connection,
+        "DELETE FROM attachments WHERE message_id = ?1",
+        [id],
+    )
+    .await?;
+    sql::execute(
+        connection,
+        "DELETE FROM message_labels WHERE message_id = ?1",
+        [id],
+    )
+    .await?;
     write_children(connection, message).await?;
     Ok(())
 }
@@ -2224,9 +2251,9 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
 async fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
     // Cached: the widest statement in the write path and the one a first sync
     // runs most -- once per new message (#728).
-    connection
-        .prepare_cached(
-            "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
+    sql::statement(
+        connection,
+        "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
                                in_reply_to, reference_ids, subject, normalized_subject, date,
                                received_at, preview, size, flags, seen, flagged, answered,
                                draft, deleted, has_attachments, uid, uid_validity, mod_seq,
@@ -2238,10 +2265,10 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
                  ?32, ?33, ?34, ?35, ?36, ?37, ?38)",
-        )
-        .await?
-        .execute(row_values(0, message))
-        .await?;
+    )
+    .await?
+    .execute(row_values(0, message))
+    .await?;
     Ok(MessageId::new(connection.last_insert_rowid()))
 }
 
@@ -2360,55 +2387,55 @@ async fn write_children(connection: &Connection, message: &mut Message) -> Resul
         ("bcc", message.bcc.clone()),
     ] {
         for (position, address) in addresses.iter().enumerate() {
-            connection
-                .execute(
-                    "INSERT INTO recipients (message_id, kind, position, name, address_id)
+            sql::execute(
+                connection,
+                "INSERT INTO recipients (message_id, kind, position, name, address_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                    bind![
-                        id,
-                        kind,
-                        position as i64,
-                        address.name,
-                        address_id(connection, address).await?,
-                    ],
-                )
-                .await?;
+                bind![
+                    id,
+                    kind,
+                    position as i64,
+                    address.name,
+                    address_id(connection, address).await?,
+                ],
+            )
+            .await?;
         }
     }
 
     for (position, attachment) in message.attachments.iter_mut().enumerate() {
-        connection
-            .execute(
-                "INSERT INTO attachments (message_id, position, filename, mime_type, size,
+        sql::execute(
+            connection,
+            "INSERT INTO attachments (message_id, position, filename, mime_type, size,
                                       content_id, disposition, disposition_raw, part_id,
                                       part_headers, blob_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                bind![
-                    id,
-                    position as i64,
-                    attachment.filename,
-                    attachment.mime_type,
-                    attachment.size as i64,
-                    attachment.content_id,
-                    attachment.disposition.as_str(),
-                    attachment.disposition.raw(),
-                    attachment.part_id,
-                    attachment.part_headers,
-                    attachment.blob_id.as_ref().map(BlobId::as_str),
-                ],
-            )
-            .await?;
+            bind![
+                id,
+                position as i64,
+                attachment.filename,
+                attachment.mime_type,
+                attachment.size as i64,
+                attachment.content_id,
+                attachment.disposition.as_str(),
+                attachment.disposition.raw(),
+                attachment.part_id,
+                attachment.part_headers,
+                attachment.blob_id.as_ref().map(BlobId::as_str),
+            ],
+        )
+        .await?;
         attachment.id = postio_model::AttachmentId::new(connection.last_insert_rowid());
         attachment.message_id = message.id;
     }
 
     for label in &message.labels {
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
-                bind![id, label.get()],
-            )
-            .await?;
+        sql::execute(
+            connection,
+            "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
+            bind![id, label.get()],
+        )
+        .await?;
     }
 
     Ok(())
@@ -2421,9 +2448,11 @@ async fn find_by_remote_id(
     remote_id: &RemoteId,
 ) -> Result<Option<MessageId>> {
     // Cached: once per message on every batch a sync pass writes (#728).
-    let mut statement = connection
-        .prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")
-        .await?;
+    let mut statement = sql::statement(
+        connection,
+        "SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2",
+    )
+    .await?;
     crate::sql::first_of(
         &mut statement,
         bind![mailbox_id.get(), remote_id.as_str()],
@@ -2442,12 +2471,12 @@ async fn find_by_generation_uid(
 ) -> Result<Option<MessageId>> {
     // Cached, for the same reason as `find_by_remote_id`: the fallback
     // lookup runs per message for any row synced before `remote_id` existed.
-    let mut statement = connection
-        .prepare_cached(
-            "SELECT id FROM messages
+    let mut statement = sql::statement(
+        connection,
+        "SELECT id FROM messages
           WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid = ?3",
-        )
-        .await?;
+    )
+    .await?;
     crate::sql::first_of(
         &mut statement,
         bind![
@@ -2578,6 +2607,7 @@ pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
         send_at: row.col::<Option<i64>>(12)?.map(from_millis),
         has_attachments: row.col(9)?,
         size: row.col::<i64>(10)? as u64,
+        thread_count: row.col::<Option<i64>>(15)?.map(|count| count.max(0) as u32),
     })
 }
 
@@ -2592,13 +2622,13 @@ pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
 /// would churn an id they all point at to rewrite a column with the same value.
 pub(crate) async fn address_id(connection: &Connection, address: &EmailAddress) -> Result<i64> {
     let normalized = address.normalized();
-    connection
-        .execute(
-            "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
+    sql::execute(
+        connection,
+        "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
          ON CONFLICT (address_normalized) DO NOTHING",
-            bind![address.address, normalized],
-        )
-        .await?;
+        bind![address.address, normalized],
+    )
+    .await?;
     sql::one(
         connection,
         "SELECT id FROM addresses WHERE address_normalized = ?1",
@@ -2609,13 +2639,13 @@ pub(crate) async fn address_id(connection: &Connection, address: &EmailAddress) 
 }
 
 async fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()> {
-    let mut statement = connection
-        .prepare(
-            "SELECT r.kind, r.name, a.address FROM recipients r
+    let mut statement = sql::statement(
+        connection,
+        "SELECT r.kind, r.name, a.address FROM recipients r
            JOIN addresses a ON a.id = r.address_id
           WHERE r.message_id = ?1 ORDER BY r.kind, r.position, r.id",
-        )
-        .await?;
+    )
+    .await?;
     let rows = sql::mapped(&mut statement, [message.id.get()], |row| {
         Ok((
             row.col::<String>(0)?,
@@ -2717,15 +2747,15 @@ fn flags_expression(seen: &str, flagged: &str) -> String {
 /// the folder for a resync instead of guessing which message is the one it
 /// just wrote.
 async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
-    let mut statement = connection
-        .prepare(
-            "SELECT mailboxes.id, drafts.remote_id
+    let mut statement = sql::statement(
+        connection,
+        "SELECT mailboxes.id, drafts.remote_id
            FROM drafts
            JOIN mailboxes ON mailboxes.account_id = drafts.account_id
                          AND mailboxes.role = 'drafts'
           WHERE drafts.remote_id IS NOT NULL",
-        )
-        .await?;
+    )
+    .await?;
     let rows = sql::mapped(&mut statement, (), |row| {
         Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
     })
@@ -2796,16 +2826,16 @@ async fn local_copies_awaiting_identity(
 async fn shadowed_by_pending_operation(
     connection: &Connection,
 ) -> Result<BTreeSet<(MailboxId, String)>> {
-    let mut statement = connection
-        .prepare(
-            "SELECT mailbox_id, source_remote_id
+    let mut statement = sql::statement(
+        connection,
+        "SELECT mailbox_id, source_remote_id
            FROM operation_queue
           WHERE state IN ('pending', 'in_flight')
             AND op_type IN ('move', 'delete')
             AND mailbox_id IS NOT NULL
             AND source_remote_id IS NOT NULL",
-        )
-        .await?;
+    )
+    .await?;
     let rows = sql::mapped(&mut statement, (), |row| {
         Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
     })
@@ -2830,16 +2860,16 @@ async fn shadowed_by_pending_operation(
 async fn unacknowledged_flag_changes(
     connection: &Connection,
 ) -> Result<BTreeMap<MessageId, Vec<(bool, FlagSet)>>> {
-    let mut statement = connection
-        .prepare(
-            "SELECT target_id, op_type, payload
+    let mut statement = sql::statement(
+        connection,
+        "SELECT target_id, op_type, payload
            FROM operation_queue
           WHERE state IN ('pending', 'in_flight')
             AND op_type IN ('set_flags', 'clear_flags')
             AND target_kind = 'message'
           ORDER BY id",
-        )
-        .await?;
+    )
+    .await?;
     let rows = sql::mapped(&mut statement, (), |row| {
         Ok((
             row.col::<i64>(0)?,

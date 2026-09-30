@@ -465,3 +465,240 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
         after.total
     );
 }
+
+#[tokio::test]
+async fn a_message_list_s_rows_cost_the_same_however_many() {
+    // #1613: each message row read one `threads.get` for its conversation's
+    // size -- fifty-one statements for a page of fifty, in search results
+    // and every query view. The size is a column of the row's own query.
+    use postio_storage::test_support::counting::counted_async;
+    let (store, account, _inbox, database) = store(200, 4).await;
+    let ids: Vec<postio_model::MessageId> = {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE messages SET flagged = 1 WHERE account_id = ?1",
+            [account.get()],
+        )
+        .await
+        .expect("flag them");
+        postio_storage::sql::all(
+            &connection,
+            "SELECT id FROM messages WHERE thread_id IS NOT NULL ORDER BY id LIMIT 50",
+            (),
+            |row| {
+                Ok(postio_model::MessageId::new(
+                    postio_storage::sql::RowExt::col(row, 0)?,
+                ))
+            },
+        )
+        .await
+        .expect("ids")
+    };
+    let scope = ListScope::Flagged(account);
+    let one = counted_async(|| async {
+        store
+            .rows_in(scope, ids[..1].to_vec())
+            .await
+            .expect("one row");
+    })
+    .await;
+    let fifty = counted_async(|| async {
+        let rows = store.rows_in(scope, ids.clone()).await.expect("fifty rows");
+        let postio_runtime::store::ListRows::Messages(rows) = rows else {
+            panic!("Flagged lists messages");
+        };
+        assert!(
+            rows.iter().all(|row| row.thread_count >= 1),
+            "every row says how big its conversation is"
+        );
+        assert!(
+            rows.iter().any(|row| row.thread_count > 1),
+            "the seeded conversations hold more than one message"
+        );
+    })
+    .await;
+    assert_eq!(
+        one.statements, fifty.statements,
+        "the rows of fifty messages took {} statements where one took {}",
+        fifty.statements, one.statements
+    );
+}
+
+#[tokio::test]
+async fn the_unified_list_is_counted_once_while_nothing_moves() {
+    // #1610: the unified view counted every conversation of every account on
+    // every page -- the folder count's correlated shape, over all of them --
+    // where a folder is counted once and kept while its witness holds.
+    let (store, account, inbox, database) = store(300, 3).await;
+    let before = postio_runtime::store::unified_counted();
+    let mut total = 0;
+    for page in 0..3 {
+        total = store
+            .thread_page(request(ListScope::Unified, page * 20, 20))
+            .await
+            .expect("a unified page")
+            .total;
+    }
+    assert_eq!(
+        postio_runtime::store::unified_counted() - before,
+        1,
+        "three pages of an unchanged unified list counted it more than once"
+    );
+
+    // And mail arriving is counted, not served from what was true before.
+    {
+        let connection = database.connect().await.expect("a connection");
+        let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
+        message.subject = Some("a new conversation".to_owned());
+        let id = postio_storage::repository::MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        // In a conversation of its own, as threading files every delivery.
+        let mut thread = postio_model::Thread::new(account);
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        threads.create(&mut thread).await.expect("a thread");
+        threads.add_message(thread.id, id).await.expect("joined");
+    }
+    let after = store
+        .thread_page(request(ListScope::Unified, 0, 20))
+        .await
+        .expect("a unified page")
+        .total;
+    assert_eq!(after, total + 1, "a new conversation went uncounted");
+}
+
+#[tokio::test]
+async fn a_jump_to_the_bottom_of_a_folder_seeks_rather_than_skips() {
+    // #1610: a scrollbar drag into a large folder read its page with an
+    // OFFSET over the window's correlated predicate, linear in the depth.
+    let (store, account, inbox, database) = store(3_000, 3).await;
+    let total = store
+        .thread_count(ListScope::Mailbox(inbox))
+        .await
+        .expect("a count");
+    assert!(total > 400, "a folder long enough to jump in: {total}");
+    let offset = total - 20;
+    let page = store
+        .thread_page(request(ListScope::Mailbox(inbox), offset, 50))
+        .await
+        .expect("the bottom page");
+    assert!(
+        postio_runtime::store::last_thread_skip() <= 50,
+        "the jump skipped {} rows after its seek",
+        postio_runtime::store::last_thread_skip()
+    );
+
+    // And it is the page OFFSET would have read.
+    let connection = database.connect().await.expect("a connection");
+    let mut query = postio_storage::repository::ThreadListQuery::in_mailbox(account, inbox);
+    query.limit = 50;
+    let expected = postio_storage::repository::ThreadRepository::new(&connection)
+        .page_at(&query, offset)
+        .await
+        .expect("by offset");
+    assert_eq!(
+        page.rows
+            .iter()
+            .map(|row| row.representative.id)
+            .collect::<Vec<_>>(),
+        expected
+            .iter()
+            .map(|row| row.latest.as_ref().expect("a representative").id)
+            .collect::<Vec<_>>(),
+    );
+}
+
+#[tokio::test]
+async fn a_query_view_is_counted_from_the_folders_cached_counts() {
+    // #1614: the Flagged and Snoozed pages ran a count(*) over messages on
+    // every page read -- `flagged` is in no index, so the
+    // Flagged count read the table row of every message in the account. The
+    // sidebar already sums the folders' cached columns for the same numbers.
+    // A sentinel in the column is what proves the page read it rather than
+    // counting the messages again.
+    let (store, account, _inbox, database) = store(200, 4).await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE mailboxes SET flagged_count = 0, snoozed_count = 0 WHERE account_id = ?1",
+            [account.get()],
+        )
+        .await
+        .expect("clear");
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE mailboxes SET flagged_count = 777, snoozed_count = 4321
+              WHERE id = (SELECT min(id) FROM mailboxes WHERE account_id = ?1)",
+            [account.get()],
+        )
+        .await
+        .expect("a sentinel");
+    }
+    for (scope, expected) in [
+        (ListScope::Flagged(account), 777),
+        (ListScope::Snoozed(account), 4321),
+    ] {
+        let total = match store
+            .list_page(request(scope, 0, 10))
+            .await
+            .expect("a page")
+        {
+            postio_runtime::store::ListPage::Messages(page) => page.total,
+            postio_runtime::store::ListPage::Threads(page) => page.total,
+        };
+        assert_eq!(total, expected, "{scope:?} was counted rather than read");
+    }
+}
+
+#[tokio::test]
+async fn archiving_from_an_inbox_takes_the_row_out_of_unified_and_its_count() {
+    // #1692: Unified is the inboxes. An archive moves a message between two
+    // folders and leaves every folder's total summed together where it was,
+    // so a count held against that sum would still include the row -- and a
+    // list told there are more rows than its pages hold draws placeholders
+    // that never resolve.
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 300).await;
+    let archive = report.mailbox(MailboxRole::Archive).expect("an archive").id;
+    thread_seeded_messages(&database, report.account.id, 1).await;
+    let store = LocalStore::new(&database);
+
+    let first = store
+        .thread_page(request(ListScope::Unified, 0, 20))
+        .await
+        .expect("a unified page");
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    assert_eq!(
+        first.total,
+        store
+            .thread_count(ListScope::Mailbox(inbox))
+            .await
+            .expect("the inbox's count"),
+        "one account: Unified is its inbox, row for row"
+    );
+    let top = first.rows[0].representative.id;
+
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MessageRepository::new(&connection)
+            .move_to(&[top], archive)
+            .await
+            .expect("archive the top row");
+    }
+    let after = store
+        .thread_page(request(ListScope::Unified, 0, 20))
+        .await
+        .expect("a unified page");
+    assert_eq!(
+        after.total,
+        first.total - 1,
+        "the archived row is still counted"
+    );
+    assert!(
+        after.rows.iter().all(|row| row.representative.id != top),
+        "the archived row is still listed"
+    );
+}
