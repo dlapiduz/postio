@@ -423,12 +423,8 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
         assert_eq!(close.icon_name().as_deref(), Some("window-close-symbolic"));
         assert_eq!(close.tooltip_text().as_deref(), Some("Close"));
         let dialog_widget: gtk::Widget = dialog.clone().upcast();
-        let x_of = |widget: &gtk::Widget| {
-            widget
-                .compute_bounds(&dialog_widget)
-                .expect("laid out")
-                .x()
-        };
+        let x_of =
+            |widget: &gtk::Widget| widget.compute_bounds(&dialog_widget).expect("laid out").x();
         let steps: Vec<gtk::Widget> = support::descendants(&dialog)
             .into_iter()
             .filter(|w| {
@@ -448,7 +444,10 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
             );
         }
         let title = support::only(&dialog, "focus-open-title");
-        assert!(x_of(&steps[0]) < x_of(&title), "the steps are left of the title");
+        assert!(
+            x_of(&steps[0]) < x_of(&title),
+            "the steps are left of the title"
+        );
         assert!(x_of(&title) < x_of(close.upcast_ref()));
     });
 }
