@@ -398,3 +398,57 @@ pub fn close_is_as_compact_as_the_toolbar_s_buttons() {
         );
     });
 }
+
+/// T189: Close is an X icon button at the right of the header, the k/j
+/// steps (with their keys) are at the left.
+pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
+            .await;
+        fixture.write_body(message, "A body.").await;
+        let window = opened(&fixture, 1).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        assert!(
+            crate::settle_until(async || support::only(&dialog, "focus-open-close").width() > 0)
+                .await
+        );
+        let close = support::only(&dialog, "focus-open-close");
+        let close = close.downcast_ref::<gtk::Button>().expect("a button");
+        assert_eq!(close.icon_name().as_deref(), Some("window-close-symbolic"));
+        assert_eq!(close.tooltip_text().as_deref(), Some("Close"));
+        let dialog_widget: gtk::Widget = dialog.clone().upcast();
+        let x_of = |widget: &gtk::Widget| {
+            widget
+                .compute_bounds(&dialog_widget)
+                .expect("laid out")
+                .x()
+        };
+        let steps: Vec<gtk::Widget> = support::descendants(&dialog)
+            .into_iter()
+            .filter(|w| {
+                w.downcast_ref::<gtk::Button>().is_some_and(|b| {
+                    matches!(
+                        b.icon_name().as_deref(),
+                        Some("go-up-symbolic" | "go-down-symbolic")
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(steps.len(), 2, "the two step buttons");
+        for step in &steps {
+            assert!(
+                x_of(step) < x_of(close.upcast_ref()),
+                "a step button is left of Close"
+            );
+        }
+        let title = support::only(&dialog, "focus-open-title");
+        assert!(x_of(&steps[0]) < x_of(&title), "the steps are left of the title");
+        assert!(x_of(&title) < x_of(close.upcast_ref()));
+    });
+}

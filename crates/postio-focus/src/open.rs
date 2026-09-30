@@ -65,7 +65,6 @@ pub struct OpenMessage {
     dialog: adw::Dialog,
     title: gtk::Label,
     subtitle: gtk::Label,
-    close_key: gtk::Box,
     up_key: gtk::Box,
     down_key: gtk::Box,
     toolbar: Rc<ActionBar>,
@@ -157,17 +156,10 @@ impl OpenMessage {
         }
 
         // The header: Close, the title and position, and the steps.
-        let close = gtk::Button::new();
-        // The toolbar's compact pill (T187), keeping the frame that sets
-        // Close apart from the verbs.
-        postio_widgets::widgets::button::style(&close, Kind::Secondary, Size::Small);
+        // An X icon at the right (T189), apart from the verbs; Escape
+        // still closes, so it carries no keycap.
+        let close = postio_widgets::widgets::icon_button("window-close-symbolic", "Close");
         close.add_css_class("focus-open-close");
-        let close_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
-        close_row.append(&gtk::Label::new(Some("Close")));
-        let close_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        close_key.set_valign(gtk::Align::Center);
-        close_row.append(&close_key);
-        close.set_child(Some(&close_row));
         close.set_valign(gtk::Align::Center);
 
         let title = gtk::Label::new(None);
@@ -195,9 +187,9 @@ impl OpenMessage {
 
         let header = gtk::CenterBox::new();
         header.add_css_class("focus-open-header");
-        header.set_start_widget(Some(&close));
+        header.set_start_widget(Some(&steps));
         header.set_center_widget(Some(&titles));
-        header.set_end_widget(Some(&steps));
+        header.set_end_widget(Some(&close));
 
         let toolbar = ActionBar::new(TOOLBAR, "focus-open-toolbar");
 
@@ -270,7 +262,6 @@ impl OpenMessage {
             dialog,
             title,
             subtitle,
-            close_key,
             up_key,
             down_key,
             toolbar,
@@ -370,7 +361,6 @@ impl OpenMessage {
         self.keymap.replace(keymap.clone());
         self.toolbar.set_keymap(keymap);
         for (holder, command) in [
-            (&self.close_key, CommandId::Back),
             (&self.up_key, CommandId::PrevMessage),
             (&self.down_key, CommandId::NextMessage),
         ] {

@@ -372,6 +372,10 @@ const CASES: &[(&str, fn())] = &[
         open_reading::close_is_as_compact_as_the_toolbar_s_buttons as fn(),
     ),
     (
+        "open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left",
+        open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left as fn(),
+    ),
+    (
         "open_message::a_hundredth_open_builds_no_second_message_view",
         open_message::a_hundredth_open_builds_no_second_message_view as fn(),
     ),
