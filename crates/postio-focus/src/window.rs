@@ -752,16 +752,67 @@ impl FocusWindow {
                 | CommandId::ReplyAll
                 | CommandId::Forward
                 | CommandId::Compose
-                | CommandId::Archive
-                | CommandId::Delete
                 | CommandId::AcceptInvite
                 | CommandId::DeclineInvite),
             ) => self.act(id),
+            // The message on screen goes away, and the dialog goes on to
+            // the next one (T190).
+            Ok(id @ (CommandId::Archive | CommandId::Delete)) => {
+                let gone = self
+                    .pane()
+                    .zip(self.cursor_row())
+                    .map(|(pane, row)| (pane.cursor().selected(), row.id()));
+                self.act(id);
+                if let Some((index, message)) = gone {
+                    self.step_past(index, message);
+                }
+            }
             Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
             Ok(CommandId::NextInConversation) => reading.step_thread(1),
             _ => return glib::Propagation::Proceed,
         }
         glib::Propagation::Stop
+    }
+
+    /// The row at `index` was `message`, and is being archived or deleted
+    /// under the open dialog: once the list has let it go, show what took
+    /// its place -- the next message, or the previous one when it was the
+    /// last -- and close the dialog when the list is empty (T190).
+    fn step_past(&self, index: u32, message: MessageId) {
+        let window = self.downgrade();
+        let mut waited = 0;
+        glib::timeout_add_local(std::time::Duration::from_millis(20), move || {
+            let Some(window) = window.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let Some(pane) = window.pane() else {
+                return glib::ControlFlow::Break;
+            };
+            let list = pane.feed().list();
+            let len = list.n_items();
+            let still_there = list
+                .item(index)
+                .and_downcast::<RowObject>()
+                .and_then(|row| row.item())
+                .is_some_and(|row| row.id() == message);
+            if still_there && waited < 250 {
+                waited += 1;
+                return glib::ControlFlow::Continue;
+            }
+            if still_there {
+                // The action never landed: leave the dialog as it was.
+                return glib::ControlFlow::Break;
+            }
+            if let Some(reading) = window.reading().filter(|reading| reading.is_open()) {
+                if len == 0 {
+                    reading.close();
+                } else {
+                    window.cursor_to(Some(index.min(len - 1)));
+                    window.open_message();
+                }
+            }
+            glib::ControlFlow::Break
+        });
     }
 
     /// Whether the composer's body has the keyboard: a `WebView`, which no
