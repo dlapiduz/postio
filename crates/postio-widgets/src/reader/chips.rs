@@ -116,7 +116,7 @@ impl Chips {
             let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
             icon.add_css_class("postio-attachment-icon");
             icon.set_accessible_role(gtk::AccessibleRole::Presentation);
-            let card = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            let card = gtk::Box::new(gtk::Orientation::Horizontal, crate::widgets::space::S3);
             card.append(&icon);
             card.append(&text);
             button.set_child(Some(&card));
