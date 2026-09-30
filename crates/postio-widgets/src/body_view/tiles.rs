@@ -99,6 +99,21 @@ pub(super) struct Tiles {
     visible: (u32, u32),
 }
 
+/// What one draw is of: where the view is scrolled, how much of it shows,
+/// and where it sits in the surface.
+#[derive(Clone, Copy)]
+pub(super) struct Frame {
+    /// The horizontal scroll.
+    pub left: f64,
+    /// The top of the window on the document, and its height.
+    pub top: f64,
+    pub height: f64,
+    /// The drawing space's top in the surface, in logical pixels.
+    pub origin: f64,
+    /// The surface's scale.
+    pub scale: f64,
+}
+
 /// Where tiles `first..=last` go, as `(index, y, height)` in logical
 /// pixels, relative to a space whose own top is `origin` logical pixels
 /// from the surface's: tile `n` starts `n * TILE - top` down.
@@ -158,13 +173,16 @@ impl Tiles {
         &mut self,
         snapshot: &gtk::Snapshot,
         document: &Arc<RenderedDocument>,
-        left: f64,
-        top: f64,
-        height: f64,
-        origin: f64,
-        scale: f64,
+        frame: Frame,
         redraw: impl Fn() + 'static,
     ) {
+        let Frame {
+            left,
+            top,
+            height,
+            origin,
+            scale,
+        } = frame;
         self.draws += 1;
         let first = (top / TILE).floor().max(0.0) as u32;
         let last = ((top + height) / TILE).floor().max(0.0) as u32;

@@ -1151,11 +1151,13 @@ impl BodyView {
         imp.tiles.borrow_mut().draw(
             snapshot,
             &document,
-            left,
-            top,
-            height,
-            origin,
-            scale,
+            tiles::Frame {
+                left,
+                top,
+                height,
+                origin,
+                scale,
+            },
             move || {
                 if let Some(view) = view.upgrade() {
                     view.queue_draw();
