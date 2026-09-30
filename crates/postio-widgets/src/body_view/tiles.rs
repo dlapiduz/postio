@@ -114,9 +114,12 @@ pub(super) fn placements(
     origin: f64,
     scale: f64,
 ) -> Vec<(u32, f64, f64)> {
-    let edge = |index: u32| f64::from(index) * TILE - top;
+    let edge = |index: u32| {
+        let logical = f64::from(index) * TILE - top;
+        ((origin + logical) * scale).round() / scale - origin
+    };
     (first..=last)
-        .map(|index| (index, edge(index), TILE))
+        .map(|index| (index, edge(index), edge(index + 1) - edge(index)))
         .collect()
 }
 
@@ -158,6 +161,8 @@ impl Tiles {
         left: f64,
         top: f64,
         height: f64,
+        origin: f64,
+        scale: f64,
         redraw: impl Fn() + 'static,
     ) {
         self.draws += 1;
@@ -168,8 +173,8 @@ impl Tiles {
         self.visible = (first, last);
         self.collect();
         let mut missing = false;
-        for index in first..=last {
-            let y = f64::from(index) * TILE - top;
+        let places = placements(first, last, top, origin, scale);
+        for (index, y, height) in places {
             self.used.insert(index, self.draws);
             match self.textures.get(&index) {
                 Some(texture) => {
@@ -177,7 +182,7 @@ impl Tiles {
                         -left as f32,
                         y as f32,
                         document.size.width as f32,
-                        (f64::from(texture.height()) / document.scale) as f32,
+                        height as f32,
                     );
                     snapshot.append_texture(texture, &bounds);
                 }
@@ -186,12 +191,14 @@ impl Tiles {
                     self.ask(document, index);
                     if let Some(low_res) = &self.low_res {
                         // The copy stretched over the whole document, seen
-                        // through this tile's band.
+                        // through this tile's band. The band's edges are
+                        // device pixels, like the tiles', so bands that
+                        // meet leave no row between them (T188).
                         let band = gtk::graphene::Rect::new(
                             -left as f32,
                             y as f32,
                             document.size.width as f32,
-                            TILE as f32,
+                            height as f32,
                         );
                         snapshot.push_clip(&band);
                         snapshot.append_texture(
@@ -317,7 +324,7 @@ mod tests {
                              edges {near} and {far} are between device pixels"
                         );
                         assert!(
-                            (far - near - TILE * scale).abs() < 1.0,
+                            (far - near - TILE * scale).abs() <= 1.0 + 1e-6,
                             "tile {index} is {} device px tall, not {}",
                             far - near,
                             TILE * scale

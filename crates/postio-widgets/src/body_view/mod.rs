@@ -1139,14 +1139,29 @@ impl BodyView {
             snapshot.save();
             snapshot.scale(scale as f32, scale as f32);
         }
+        // Where the space tiles are placed in sits in the surface, so their
+        // edges can be put on its device pixels.
+        let scale = self.surface_scale();
+        let origin = self
+            .native()
+            .and_then(|native| self.compute_point(&native, &gtk::graphene::Point::zero()))
+            .map_or(0.0, |point| f64::from(point.y()))
+            + if self.flows() { top } else { 0.0 };
         let view = self.downgrade();
-        imp.tiles
-            .borrow_mut()
-            .draw(snapshot, &document, left, top, height, move || {
+        imp.tiles.borrow_mut().draw(
+            snapshot,
+            &document,
+            left,
+            top,
+            height,
+            origin,
+            scale,
+            move || {
                 if let Some(view) = view.upgrade() {
                     view.queue_draw();
                 }
-            });
+            },
+        );
         self.draw_highlight(snapshot, left, top);
         self.draw_find(snapshot, left, top);
         self.draw_selection(snapshot, left, top);
