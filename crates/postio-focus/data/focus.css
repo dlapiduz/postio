@@ -142,6 +142,9 @@ button.focus-has-action:checked {
   padding: 0;
   border-bottom: 1px solid var(--postio-hairline);
   background-color: transparent;
+  /* The cursor moves instantly: libadwaita animates a row's background and
+     focus ring, which trails every j and k. */
+  transition: none;
 }
 
 /* GTK's own `:selected` on a list row is the cursor here -- where the keyboard
