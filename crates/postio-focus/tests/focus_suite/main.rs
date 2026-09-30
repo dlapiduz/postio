@@ -97,6 +97,10 @@ const CASES: &[(&str, fn())] = &[
         open_message::delete_in_the_dialog_deletes_the_message_on_screen as fn(),
     ),
     (
+        "open_message::deleting_from_the_dialog_moves_to_the_next_message",
+        open_message::deleting_from_the_dialog_moves_to_the_next_message as fn(),
+    ),
+    (
         "selection::the_bulk_bar_has_a_delete_button_that_deletes_the_selection",
         selection::the_bulk_bar_has_a_delete_button_that_deletes_the_selection as fn(),
     ),

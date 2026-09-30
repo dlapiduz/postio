@@ -471,3 +471,52 @@ pub fn delete_in_the_dialog_deletes_the_message_on_screen() {
         );
     });
 }
+
+/// T190: deleting or archiving the message on screen moves the dialog to
+/// the next message in the folder, the previous one at the end, and closes
+/// it when none is left -- the message that went is not left on screen.
+pub fn deleting_from_the_dialog_moves_to_the_next_message() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = three_with_bodies().await;
+        enter(&window);
+        let reading = window.reading().expect("open");
+        assert_eq!(reading.title(), "Budget");
+
+        // Delete: the next message, and the deleted one is gone.
+        support::press(&window, "Delete", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || reading.title() == "Harbor draft").await,
+            "the deleted message is still on screen: {:?}",
+            reading.title()
+        );
+        assert_eq!(support::subjects(&window), ["Harbor draft", "Staffing"]);
+        assert!(reading.is_open());
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("pagination")).await,
+            "the next message's body never arrived: {:?}",
+            reading.body_text()
+        );
+
+        // Archive the last one: the previous message.
+        support::keys(&window, &["j"]);
+        assert!(crate::settle_until(async || reading.title() == "Staffing").await);
+        support::keys(&window, &["a"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Harbor draft").await,
+            "at the end the dialog should show the previous: {:?}",
+            reading.title()
+        );
+        assert_eq!(support::subjects(&window), ["Harbor draft"]);
+
+        // Nothing left: the dialog closes.
+        support::press(&window, "Delete", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || !reading.is_open()).await,
+            "with nothing left the dialog should close"
+        );
+        assert!(support::subjects(&window).is_empty());
+    });
+}
