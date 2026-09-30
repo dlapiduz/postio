@@ -7208,8 +7208,8 @@ dependencies = [
 
 [[package]]
 name = "turso"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "thiserror",
  "tracing",
@@ -7221,8 +7221,8 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "aegis",
  "aes",
@@ -7297,8 +7297,8 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -7307,8 +7307,8 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7317,8 +7317,8 @@ dependencies = [
 
 [[package]]
 name = "turso_parser"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "bitflags 2.13.2",
  "memchr",
@@ -7331,8 +7331,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sdk_kit"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "bindgen",
  "env_logger",
@@ -7347,8 +7347,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sdk_kit_macros"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7357,8 +7357,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_engine"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -7379,8 +7379,8 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_sdk_kit"
-version = "0.8.0-pre.11"
-source = "git+https://github.com/dlapiduz/turso?rev=c2ac9f25db74613eed163b99105de69e206f688b#c2ac9f25db74613eed163b99105de69e206f688b"
+version = "0.8.1"
+source = "git+https://github.com/dlapiduz/turso?rev=3d7dac16368534d6691113da368a1d3f24b9e929#3d7dac16368534d6691113da368a1d3f24b9e929"
 dependencies = [
  "bindgen",
  "env_logger",

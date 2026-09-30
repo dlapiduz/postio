@@ -197,7 +197,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 toml = "1.1.4"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
-turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
+turso = { version = "=0.8.1", default-features = false, features = ["fts"] }
 url = "2.5.8"
 zeroize = "1.9.0"
 
@@ -283,22 +283,22 @@ debug = 0
 [profile.dev.package."*"]
 opt-level = 2
 
-# Turso from Postio's fork: v0.8.0-pre.11 plus fuzzy and prefix word
+# Turso from Postio's fork: v0.8.1 plus fuzzy and prefix word
 # expansion in the full-text index (turso#8359, closed upstream unmerged,
 # ported) and a per-word `~N` opt-in. Search uses it only for the words it
 # offers when a query finds nothing; every query it runs is quoted, and a
 # quoted query is parsed exactly as upstream parses it. Every turso crate
 # comes from the one commit, so no two copies of a type meet.
 [patch.crates-io]
-turso = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_core = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_core = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
 
 # Blitz 0.3.0-beta.2 with Postio's patch queue applied (`patches/blitz/`,
 # checked by `scripts/blitz-patches.sh verify`): the reading renderer's
