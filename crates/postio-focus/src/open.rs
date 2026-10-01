@@ -307,6 +307,20 @@ impl OpenMessage {
         // above it (T210-T213); `reader.treatment()` is what the column's
         // width follows.
         reader.use_treatments();
+        // Over an HTML body the line takes the card's 24 above it and keeps
+        // 12 of its own to the body (T208); with no line, the body has the 24.
+        if let Some(line) = reader.render_mode_line() {
+            let line = line.widget();
+            line.set_margin_top(rhythm::CARD_TO_BODY);
+            let view = reader.view().clone();
+            line.connect_visible_notify(move |line| {
+                view.set_margin_top(if line.is_visible() {
+                    rhythm::MODE_LINE_TO_BODY
+                } else {
+                    rhythm::CARD_TO_BODY
+                });
+            });
+        }
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.add_css_class("focus-open");
@@ -542,7 +556,7 @@ impl OpenMessage {
             words.set_hexpand(true);
             row.append(&words);
             if let Some(key) = hints::key(&keymap, command) {
-                row.append(&keyhint::cap(&key));
+                row.append(&keyhint::cap(&hints::short(&key)));
             }
             item.set_child(Some(&row));
             item.update_property(&[gtk::accessible::Property::Label(action.label)]);
@@ -635,6 +649,13 @@ impl OpenMessage {
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.toolbar.set_keymap(keymap);
+        // The action row's caps are tight: `Del`, not `Delete` (SPEC 2).
+        for action in TOOLBAR {
+            if let Some(button) = self.toolbar.button(action.command) {
+                let key = hints::key(keymap, action.command).map(|key| hints::short(&key));
+                button.set_key(key.as_deref());
+            }
+        }
         // The render-mode line's cap among them (T213).
         self.reader.set_keymap(keymap);
         // Its keys are part of its width.
@@ -1117,11 +1138,11 @@ impl OpenMessage {
         if let Some(quote) = &line.quote {
             let quote = gtk::Label::new(Some(&format!("\u{201c}{quote}\u{201d}")));
             quote.add_css_class("focus-marker-quote");
-            // Two lines at most, then an ellipsis: the card stays a card.
+            // The whole sentence, wrapping onto a second line when it needs
+            // one (SPEC section 5): it is what the card is about, and cut
+            // short it no longer says what was asked.
             quote.set_wrap(true);
             quote.set_wrap_mode(pango::WrapMode::WordChar);
-            quote.set_lines(2);
-            quote.set_ellipsize(pango::EllipsizeMode::End);
             quote.set_width_chars(1);
             quote.set_xalign(0.0);
             quote.set_hexpand(true);

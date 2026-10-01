@@ -361,10 +361,10 @@ floating-sheet > dimming {
 
 /* The render-mode line over an HTML body (T213): quiet, one line, 20 tall,
    the treatment named in ink-secondary and the rest muted. Its gaps -- 24
-   above, 12 to the body -- are the column's spacing table's (T208). */
+   above, 12 to the body -- are `focus_dialog::rhythm`'s, set in code
+   (T208). */
 .focus-open .postio-render-mode {
   min-height: 20px;
-  margin-bottom: 12px;
   font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }

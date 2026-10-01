@@ -332,6 +332,18 @@ const CASES: &[(&str, fn())] = &[
         treatments::switching_a_marked_message_keeps_the_reading_position as fn(),
     ),
     (
+        "open_layout::the_render_mode_line_sits_24_under_the_card_and_12_over_the_body",
+        open_layout::the_render_mode_line_sits_24_under_the_card_and_12_over_the_body as fn(),
+    ),
+    (
+        "open_layout::the_action_cards_sentence_wraps_and_is_never_cut",
+        open_layout::the_action_cards_sentence_wraps_and_is_never_cut as fn(),
+    ),
+    (
+        "open_layout::delete_s_cap_reads_del_in_the_action_row",
+        open_layout::delete_s_cap_reads_del_in_the_action_row as fn(),
+    ),
+    (
         "open_layout::a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor",
         open_layout::a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor as fn(),
     ),

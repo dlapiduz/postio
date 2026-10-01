@@ -93,6 +93,8 @@ pub fn shortcut(key: &str) -> String {
         }
         let name = match piece {
             "Return" => "Enter".to_owned(),
+            // A tight cap's spelling ([`short`]), named in full.
+            "Del" => "Delete".to_owned(),
             letter
                 if letter.chars().count() == 1
                     && letter.chars().all(char::is_uppercase)
@@ -106,6 +108,18 @@ pub fn shortcut(key: &str) -> String {
         parts.push(name);
     }
     parts.join("+")
+}
+
+/// `key`, as a cap in a tight row spells it: `Delete` is `Del`, as the
+/// message dialog's action row draws it (the handoff's SPEC section 2).
+/// What is pressed, and what a screen reader hears ([`shortcut`]), keeps the
+/// binding's own name; only the cap is shorter.
+pub fn short(key: &str) -> String {
+    match key.rsplit_once('+') {
+        Some((modifiers, "Delete")) => format!("{modifiers}+Del"),
+        _ if key == "Delete" => "Del".to_owned(),
+        _ => key.to_owned(),
+    }
 }
 
 /// Just the key for `command`, for a control that draws its own label.
@@ -176,6 +190,21 @@ mod tests {
         assert_eq!(shortcut("super+k"), "Meta+k");
     }
     use super::*;
+
+    #[test]
+    fn a_tight_cap_spells_delete_del_and_nothing_else_differently() {
+        assert_eq!(short("Delete"), "Del");
+        assert_eq!(short("shift+Delete"), "shift+Del");
+        for key in ["e", "E", "Escape", "ctrl+Return", "g i", "."] {
+            assert_eq!(short(key), key);
+        }
+        assert_eq!(shortcut("Delete"), "Delete", "a screen reader hears the name");
+        assert_eq!(
+            shortcut(&short("Delete")),
+            "Delete",
+            "a cap read back for its shortcut is named in full"
+        );
+    }
 
     fn rebound(command: CommandId, key: &str) -> Keymap {
         let mut overrides = postio_config::KeyBindings::default();

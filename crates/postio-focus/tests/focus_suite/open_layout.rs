@@ -703,7 +703,7 @@ pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
         let said: Vec<Vec<String>> = items.iter().map(support::texts).collect();
         assert_eq!(
             said,
-            [["Label", "l"], ["Move", "m"], ["Delete", "Delete"]]
+            [["Label", "l"], ["Move", "m"], ["Delete", "Del"]]
                 .map(|item| item.map(str::to_owned).to_vec()),
             "More's menu"
         );
@@ -719,9 +719,130 @@ pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
     });
 }
 
+/// An office mail's HTML, from the corpus.
+fn office_html() -> String {
+    postio_model::mime::parse(
+        postio_model::test_corpus::load("html-work-black-text").bytes(),
+    )
+    .body
+    .html
+    .expect("an HTML part")
+}
 
+/// T208: over an HTML body the render-mode line sits 24px under the action
+/// card and 12px over the body -- the card's 24 goes to the line, and the
+/// line keeps 12 of its own -- and with no card, 24 under the sender block.
+pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        for card in [true, false] {
+            let fixture = Fixture::empty().await;
+            let (message, _) = fixture
+                .file(("Dana Whitfield", "dana@example.com"), "Building access", "x", 10)
+                .await;
+            fixture.write_html_body(message, &office_html()).await;
+            if card {
+                fixture.ask(message, "Building access").await;
+            }
+            let window = opened_at(&fixture, 1, WIDE).await;
+            let reading = window.reading().expect("open");
+            let dialog = reading.dialog();
+            let line = reading
+                .reader()
+                .render_mode_line()
+                .expect("Focus draws the line");
+            assert!(
+                crate::settle_until(async || line.is_shown()).await,
+                "no line over the HTML body"
+            );
+            crate::settle();
+            let above = if card {
+                edges(&shown(&dialog, "focus-marker-card"), &dialog)
+            } else {
+                edges(&shown(&dialog, "focus-open-header-card"), &dialog)
+            };
+            let line = edges(&line.widget(), &dialog);
+            let body = edges(reading.reader().view(), &dialog);
+            assert!(
+                near(line.1 - above.3, rhythm::CARD_TO_BODY as f32),
+                "card {card}: the line is {}px under the block above it, not 24",
+                line.1 - above.3
+            );
+            assert!(
+                near(body.1 - line.3, rhythm::MODE_LINE_TO_BODY as f32),
+                "card {card}: the body is {}px under the line, not 12",
+                body.1 - line.3
+            );
+            window.close();
+            crate::settle();
+        }
+    });
+}
 
+/// SPEC section 5: the action card's sentence wraps -- in italics, onto a
+/// second line when it needs one -- and is never cut short with an
+/// ellipsis.
+pub fn the_action_cards_sentence_wraps_and_is_never_cut() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        const LONG: &str = "Could you please leave your comments on the pagination \
+            section and the rate-limit headers by Wednesday afternoon";
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Lena Park", "lena@example.com"), "Harbor", "x", 10)
+            .await;
+        fixture
+            .write_body(message, &format!("Hi all,\n\n{LONG}, so I can freeze it.\n"))
+            .await;
+        fixture.ask(message, LONG).await;
+        let window = opened_at(&fixture, 1, NARROW).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        let quote = shown(&dialog, "focus-marker-quote")
+            .downcast::<gtk::Label>()
+            .expect("a label");
+        assert!(
+            quote.text().contains(LONG),
+            "the card quotes {:?}",
+            quote.text()
+        );
+        let layout = quote.layout();
+        assert!(!layout.is_ellipsized(), "the sentence is cut short");
+        assert!(
+            layout.line_count() >= 2,
+            "a sentence this long wraps in a 480px card: {} line(s)",
+            layout.line_count()
+        );
+    });
+}
 
+/// SPEC section 2: Delete's cap reads `Del` in the action row, as the
+/// handoff draws it; the binding keeps its name.
+pub fn delete_s_cap_reads_del_in_the_action_row() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Wide", "x", 10)
+            .await;
+        fixture.write_body(message, "A body.").await;
+        let window = opened_at(&fixture, 1, WIDE).await;
+        let reading = window.reading().expect("open");
+        let delete = shown(&reading.dialog(), "focus-open-delete");
+        assert_eq!(support::texts(&delete), ["Delete", "Del"]);
+        assert_eq!(
+            postio_core::Keymap::defaults().binding(postio_core::CommandId::Delete),
+            Some("Delete"),
+            "the binding keeps its name"
+        );
+    });
+}
 
 /// T207: a page on paper takes the paper column, `min(640, dialog - 48)`,
 /// and a layout wider than that is zoomed to fit it -- a 640px newsletter
