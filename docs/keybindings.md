@@ -63,6 +63,7 @@ command from inside a text field.
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
 | `alt+d` | Darken this message | List, conversation, reader (not the terminal) |  | `darken_message` |
+| `O` | Show original or app colours | Reader (Postio Focus) |  | `switch_treatment` |
 | `ctrl+f` | Find in message | List, conversation, reader |  | `find_in_message` |
 | `ctrl+g` or `F3` | Next match | List, conversation, reader |  | `find_next` |
 | `ctrl+shift+g` or `shift+F3` | Previous match | List, conversation, reader |  | `find_previous` |

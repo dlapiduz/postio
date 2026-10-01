@@ -709,6 +709,26 @@ static SPECS: &[CommandSpec] = &[
         requires: GRAPHICAL_MAIL,
     },
     CommandSpec {
+        id: CommandId::SwitchTreatment,
+        title: "Show original or app colours",
+        // `⇧O` (the design handoff, SPEC.md section 7): `o` opens an
+        // attachment or a link, and the shifted letter does the larger thing
+        // to the same message -- shows the whole of it as sent. Free in the
+        // reader: `O` expands a conversation and orders search results, and
+        // neither is a reader surface.
+        default_binding: "O",
+        alternate_bindings: &[],
+        // The open message only: the list has no body to draw either way.
+        contexts: ctx(&[Context::Reader]),
+        destructive: false,
+        // How a message is drawn is view state; "Always for this sender"
+        // is a setting the line beside the body offers to undo.
+        recovery: Recovery::None,
+        // Focus's open message is the surface the two treatments are drawn
+        // on (T211, T212); the three-pane readers draw reader view instead.
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
         id: CommandId::FindInMessage,
         title: "Find in message",
         // The platform's convention, unbound until now.

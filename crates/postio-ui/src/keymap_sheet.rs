@@ -121,6 +121,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ViewOriginal
         | C::ToggleReaderView
         | C::DarkenMessage
+        | C::SwitchTreatment
         | C::FindInMessage
         | C::FindNext
         | C::FindPrevious

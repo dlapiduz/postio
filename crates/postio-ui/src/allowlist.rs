@@ -17,8 +17,10 @@
 //! group of boolean keys is a few lines of text -- so nothing already allowed
 //! is forgotten.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+use postio_body::treatment::Treatment;
 
 /// The key-file group every allowed sender's key lives under.
 ///
@@ -27,10 +29,22 @@ use std::path::{Path, PathBuf};
 /// needing a list-valued key `glib::KeyFile` has no setter for.
 const GROUP: &str = "AlwaysAllow";
 
-/// Senders whose remote images load without asking, across restarts.
+/// The key-file group a sender's chosen treatment lives under: the address
+/// is the key, the treatment's attribute value (`app` or `paper`) the value.
+const TREATMENT_GROUP: &str = "Treatment";
+
+/// Senders whose remote images load without asking, across restarts -- and,
+/// beside them, the treatment a person chose to always see a sender's mail
+/// in (specs/007-postio-focus T213).
+///
+/// One file for the two because they are the same kind of thing: a standing
+/// answer about one sender's mail, view preference rather than mail data,
+/// which every reader of the app consults ([`crate::allowlist`]'s shared
+/// list) and the settings panel can list.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteImageAllowList {
     senders: BTreeSet<String>,
+    treatments: BTreeMap<String, Treatment>,
 }
 
 impl RemoteImageAllowList {
@@ -45,29 +59,35 @@ impl RemoteImageAllowList {
         let Ok(text) = std::fs::read_to_string(path) else {
             return Self::default();
         };
-        let mut in_group = false;
+        let mut group = String::new();
         let mut senders = BTreeSet::new();
+        let mut treatments = BTreeMap::new();
         for line in text.lines().map(str::trim) {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            if let Some(group) = line
+            if let Some(name) = line
                 .strip_prefix('[')
                 .and_then(|rest| rest.strip_suffix(']'))
             {
-                in_group = group == GROUP;
+                name.clone_into(&mut group);
                 continue;
             }
-            if !in_group {
+            let Some((key, value)) = line.split_once('=') else {
                 continue;
-            }
-            if let Some((key, value)) = line.split_once('=')
-                && value.trim() == "true"
-            {
+            };
+            if group == GROUP && value.trim() == "true" {
                 senders.insert(key.trim().to_owned());
+            } else if group == TREATMENT_GROUP
+                && let Some(treatment) = Treatment::from_attribute(value.trim())
+            {
+                treatments.insert(normalize(key), treatment);
             }
         }
-        RemoteImageAllowList { senders }
+        RemoteImageAllowList {
+            senders,
+            treatments,
+        }
     }
 
     /// Whether `sender` has a standing "always allow" exception.
@@ -110,6 +130,26 @@ impl RemoteImageAllowList {
         self.senders.remove(&normalize(sender));
     }
 
+    /// The treatment `sender`'s mail is always drawn in, if the person chose
+    /// one ("Always for this sender", specs/007-postio-focus T213).
+    pub fn treatment_for(&self, sender: &str) -> Option<Treatment> {
+        self.treatments.get(&normalize(sender)).copied()
+    }
+
+    /// Remember `treatment` for `sender`, or forget their choice with
+    /// `None`, in memory only -- [`save_to`](Self::save_to) persists it, as
+    /// for [`allow`](Self::allow).
+    pub fn set_treatment(&mut self, sender: &str, treatment: Option<Treatment>) {
+        match treatment {
+            Some(treatment) => {
+                self.treatments.insert(normalize(sender), treatment);
+            }
+            None => {
+                self.treatments.remove(&normalize(sender));
+            }
+        }
+    }
+
     /// Persist to `$XDG_STATE_HOME/postio/remote-images.ini`.
     pub fn save(&self) -> std::io::Result<()> {
         self.save_to(&Self::path())
@@ -125,6 +165,12 @@ impl RemoteImageAllowList {
         let mut text = format!("[{GROUP}]\n");
         for sender in &self.senders {
             text.push_str(&format!("{sender}=true\n"));
+        }
+        if !self.treatments.is_empty() {
+            text.push_str(&format!("\n[{TREATMENT_GROUP}]\n"));
+            for (sender, treatment) in &self.treatments {
+                text.push_str(&format!("{sender}={}\n", treatment.attribute_value()));
+            }
         }
         std::fs::write(path, text)
     }
@@ -275,5 +321,59 @@ mod tests {
         list.allow("ada@example.com");
         list.revoke("nobody@example.com");
         assert!(list.is_allowed("ada@example.com"));
+    }
+
+    #[test]
+    fn a_senders_treatment_survives_a_round_trip_beside_their_images() {
+        use postio_body::treatment::Treatment;
+        let path = scratch("treatment-round-trip");
+        let mut list = RemoteImageAllowList::default();
+        list.allow("ada@example.com");
+        list.set_treatment(" News@Example.com ", Some(Treatment::Paper));
+        list.set_treatment("bea@example.org", Some(Treatment::AppColours));
+        list.save_to(&path).unwrap();
+
+        let reloaded = RemoteImageAllowList::load_from(&path);
+        assert!(
+            reloaded.is_allowed("ada@example.com"),
+            "the images were lost"
+        );
+        assert_eq!(
+            reloaded.treatment_for("news@example.com"),
+            Some(Treatment::Paper)
+        );
+        assert_eq!(
+            reloaded.treatment_for("BEA@example.org"),
+            Some(Treatment::AppColours)
+        );
+        assert_eq!(reloaded.treatment_for("ada@example.com"), None);
+        assert!(
+            !reloaded.is_allowed("news@example.com"),
+            "choosing paper allowed the sender's images"
+        );
+    }
+
+    #[test]
+    fn forgetting_a_senders_treatment_leaves_the_rule_to_decide() {
+        use postio_body::treatment::Treatment;
+        let path = scratch("treatment-forget");
+        let mut list = RemoteImageAllowList::default();
+        list.set_treatment("news@example.com", Some(Treatment::Paper));
+        list.set_treatment("news@example.com", None);
+        list.save_to(&path).unwrap();
+        assert_eq!(
+            RemoteImageAllowList::load_from(&path).treatment_for("news@example.com"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unknown_treatment_in_the_file_is_no_choice() {
+        let path = scratch("treatment-unknown");
+        std::fs::write(&path, "[Treatment]\nnews@example.com=sepia\n").unwrap();
+        assert_eq!(
+            RemoteImageAllowList::load_from(&path).treatment_for("news@example.com"),
+            None
+        );
     }
 }

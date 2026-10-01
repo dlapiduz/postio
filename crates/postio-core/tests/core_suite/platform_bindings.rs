@@ -17,7 +17,8 @@
 //! contracts/keymap.md) is the one deliberate move of existing rows: each
 //! line it changed is a key the contract names, `mark_unread` and
 //! `focus_sidebar` became `toggle_read` and `go_to_folders`, and Focus's
-//! own commands were added as rows of their own.
+//! own commands were added as rows of their own -- `switch_treatment O`,
+//! the open message's app colours or original (T213), among them.
 
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;

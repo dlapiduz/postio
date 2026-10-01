@@ -94,6 +94,9 @@ command_ids! {
     ToggleReaderView => "toggle_reader_view",
     /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a).
     DarkenMessage => "darken_message",
+    /// Draw the message on screen in the app's colours, or as sent on paper
+    /// (specs/007-postio-focus T213).
+    SwitchTreatment => "switch_treatment",
     /// Find text in the message on screen (spec 006 FR-018).
     FindInMessage => "find_in_message",
     /// Go to the next match of the open find (spec 006 FR-018).
@@ -548,6 +551,11 @@ pub enum Command {
     ToggleReaderView,
     /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a). No payload: it means the message on screen.
     DarkenMessage,
+    /// Switch the message on screen between app colours and the original on
+    /// paper (specs/007-postio-focus T213). No payload: it means the message
+    /// on screen, and is the message's alone -- "Always for this sender" is
+    /// the reader's to store, beside the other per-sender settings.
+    SwitchTreatment,
     /// Find text in the message on screen (spec 006 FR-018). No payload: it means the message on screen.
     FindInMessage,
     /// Go to the next match of the open find (spec 006 FR-018). No payload: it means the message on screen.
@@ -1239,6 +1247,7 @@ impl Command {
             Command::ViewOriginal => CommandId::ViewOriginal,
             Command::ToggleReaderView => CommandId::ToggleReaderView,
             Command::DarkenMessage => CommandId::DarkenMessage,
+            Command::SwitchTreatment => CommandId::SwitchTreatment,
             Command::FindInMessage => CommandId::FindInMessage,
             Command::FindNext => CommandId::FindNext,
             Command::FindPrevious => CommandId::FindPrevious,
@@ -1399,6 +1408,7 @@ impl Command {
             CommandId::ViewOriginal => Command::ViewOriginal,
             CommandId::ToggleReaderView => Command::ToggleReaderView,
             CommandId::DarkenMessage => Command::DarkenMessage,
+            CommandId::SwitchTreatment => Command::SwitchTreatment,
             CommandId::FindInMessage => Command::FindInMessage,
             CommandId::FindNext => Command::FindNext,
             CommandId::FindPrevious => Command::FindPrevious,

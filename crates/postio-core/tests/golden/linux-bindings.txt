@@ -16,6 +16,7 @@ toggle_fold	z
 view_original	ctrl+o
 toggle_reader_view	ctrl+shift+o | alt+o
 darken_message	alt+d
+switch_treatment	O
 find_in_message	ctrl+f
 find_next	ctrl+g | F3
 find_previous	ctrl+shift+g | shift+F3

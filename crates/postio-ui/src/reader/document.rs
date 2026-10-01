@@ -696,6 +696,71 @@ impl Treated {
     };
 }
 
+/// What the render-mode line above an HTML body says (T213; the handoff's
+/// screens 03, 11-13): the treatment, why, and the way to the other one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderModeWords {
+    /// The treatment, named: "App colours", "Original layout, on paper".
+    pub title: &'static str,
+    /// Why, quietly: "sender colours and fonts removed".
+    pub detail: &'static str,
+    /// The switch to the other treatment, beside its key.
+    pub action: &'static str,
+    /// Whether to offer "Always for this sender": the person chose something
+    /// other than what is remembered for this sender.
+    pub offer_always: bool,
+}
+
+/// What the line says about a body drawn as `treated`, for a sender whose
+/// remembered choice is `remembered`; `None` for plain text, which has no
+/// other treatment and gets no line.
+///
+/// Words only, so the wording is proven without a display; the reader's
+/// line draws them.
+pub fn render_mode_words(
+    treated: Treated,
+    remembered: Option<Treatment>,
+) -> Option<RenderModeWords> {
+    if !treated.html {
+        return None;
+    }
+    let (title, detail, action) = match (treated.shown, treated.classified) {
+        (Treatment::AppColours, _) => (
+            "App colours",
+            "sender colours and fonts removed",
+            "Show original",
+        ),
+        (Treatment::Paper, Treatment::Paper) => (
+            "Original layout, on paper",
+            if treated
+                .trigger
+                .is_some_and(|trigger| !trigger.is_background())
+            {
+                "this message lays out its own page"
+            } else {
+                "this message sets its own background"
+            },
+            "Use app colours",
+        ),
+        (Treatment::Paper, Treatment::AppColours) => (
+            "Original colours, on paper",
+            "as the sender styled it",
+            "Use app colours",
+        ),
+    };
+    let kept = remembered == Some(treated.shown);
+    Some(RenderModeWords {
+        title,
+        detail: if kept {
+            "always for this sender"
+        } else {
+            detail
+        },
+        action,
+        offer_always: !kept && (treated.shown != treated.classified || remembered.is_some()),
+    })
+}
+
 impl Rendered {
     /// Every link the message had. Zero unless it was reduced.
     pub fn links_total(&self) -> usize {
@@ -2836,6 +2901,80 @@ mod treatment_tests {
         <body bgcolor=\"#f6f1e7\"><table width=\"640\"><tr><td><p>Issue 48</p></td></tr></table></body></html>";
 
     const LETTER: &str = "<p style=\"color:black;font-family:Calibri\">Hi everyone,</p>";
+
+    fn treated(shown: Treatment, classified: Treatment, trigger: Option<Trigger>) -> Treated {
+        Treated {
+            shown,
+            classified,
+            trigger,
+            html: true,
+        }
+    }
+
+    #[test]
+    fn the_line_names_app_colours_and_offers_the_original() {
+        let words = render_mode_words(
+            treated(Treatment::AppColours, Treatment::AppColours, None),
+            None,
+        )
+        .expect("an HTML body gets a line");
+        assert_eq!(words.title, "App colours");
+        assert_eq!(words.detail, "sender colours and fonts removed");
+        assert_eq!(words.action, "Show original");
+        assert!(!words.offer_always, "nothing was chosen to remember");
+    }
+
+    #[test]
+    fn the_line_says_why_the_rule_chose_paper() {
+        let background = render_mode_words(
+            treated(
+                Treatment::Paper,
+                Treatment::Paper,
+                Some(Trigger::PageBackground),
+            ),
+            None,
+        )
+        .expect("a line");
+        assert_eq!(background.title, "Original layout, on paper");
+        assert_eq!(background.detail, "this message sets its own background");
+        assert_eq!(background.action, "Use app colours");
+        let layout = render_mode_words(
+            treated(Treatment::Paper, Treatment::Paper, Some(Trigger::WideTable)),
+            None,
+        )
+        .expect("a line");
+        assert_eq!(layout.detail, "this message lays out its own page");
+    }
+
+    #[test]
+    fn a_choice_against_the_rule_is_named_and_can_be_remembered() {
+        let chosen =
+            render_mode_words(treated(Treatment::Paper, Treatment::AppColours, None), None)
+                .expect("a line");
+        assert_eq!(chosen.title, "Original colours, on paper");
+        assert_eq!(chosen.detail, "as the sender styled it");
+        assert!(chosen.offer_always);
+        let remembered = render_mode_words(
+            treated(Treatment::Paper, Treatment::AppColours, None),
+            Some(Treatment::Paper),
+        )
+        .expect("a line");
+        assert_eq!(remembered.detail, "always for this sender");
+        assert!(!remembered.offer_always, "already remembered");
+        // Back to the rule's choice, against a remembered one: offered again,
+        // so the sender's mail can be put back.
+        let back = render_mode_words(
+            treated(Treatment::AppColours, Treatment::AppColours, None),
+            Some(Treatment::Paper),
+        )
+        .expect("a line");
+        assert!(back.offer_always);
+    }
+
+    #[test]
+    fn plain_text_has_no_line() {
+        assert_eq!(render_mode_words(Treated::TEXT, None), None);
+    }
 
     #[test]
     fn plain_text_is_app_colours_with_nothing_to_switch_to() {

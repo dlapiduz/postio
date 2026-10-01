@@ -27,6 +27,9 @@ const NOT_YET: &[&str] = &[
     "view_original",
     "toggle_reader_view",
     "darken_message",
+    // The open message's own (T213): its control is the render-mode line
+    // over an HTML body, which no list-context surface shows.
+    "switch_treatment",
     "find_in_message",
     "find_next",
     "find_previous",
