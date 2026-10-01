@@ -33,7 +33,7 @@ pub fn o_offers_the_links_and_parts_and_opens_only_what_is_chosen() {
             move |uri| launched.borrow_mut().push(uri.to_owned())
         });
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
         assert!(
             crate::settle_until(async || reading.body_text().contains("your invoice")).await,

@@ -38,7 +38,7 @@ pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
             "the inbox never reached the screen"
         );
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
 
         assert!(
@@ -96,7 +96,7 @@ pub fn the_card_dismisses_its_marker() {
             "the inbox never reached the screen"
         );
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
         assert!(
             crate::settle_until(async || !reading.marker_card_said().is_empty()).await,

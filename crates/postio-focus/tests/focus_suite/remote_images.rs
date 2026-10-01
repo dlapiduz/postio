@@ -47,7 +47,7 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
             "the inbox never reached the screen"
         );
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
         let asked: Rc<RefCell<Vec<String>>> = Rc::default();
         reading.reader().set_remote_fetch({

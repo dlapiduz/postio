@@ -53,7 +53,7 @@ pub fn v_shows_the_raw_message_from_the_list_and_from_the_open_message() {
             "Escape did not close the source"
         );
 
-        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         assert!(window.reading().is_some_and(|reading| reading.is_open()));
         support::keys(&window, &["v"]);
         assert!(

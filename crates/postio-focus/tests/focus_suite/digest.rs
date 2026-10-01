@@ -67,7 +67,7 @@ pub async fn open_digest(
         support::subjects(window)
     );
     support::keys(window, &["j", "j"]);
-    let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+    support::press(&window, "Return", gtk::gdk::ModifierType::empty());
     let digest = window.digest().expect("Enter opened the digest");
     assert!(
         crate::settle_until(async || digest.subjects().len() == 2).await,
@@ -190,8 +190,8 @@ pub fn d_stops_digesting_the_sender_once_confirmed() {
             said.contains("news@ledger.test"),
             "it names the sender: {said}"
         );
-        gtk::prelude::ObjectExt::emit_by_name::<()>(&dialog, "response", &[&"stop"]);
-        adw::prelude::AdwDialogExt::close(&dialog);
+        let stop = support::button_labelled(&dialog, "Stop digesting");
+        support::click(&window, &stop, 1);
         assert!(
             crate::settle_until(async || {
                 !std::fs::read_to_string(&path)
@@ -396,8 +396,8 @@ pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
             "Delete asked nothing"
         );
         let dialog = window.remove_rule_confirmation().expect("the confirmation");
-        gtk::prelude::ObjectExt::emit_by_name::<()>(&dialog, "response", &[&"remove"]);
-        adw::prelude::AdwDialogExt::close(&dialog);
+        let remove = support::button_labelled(&dialog, "Remove rule");
+        support::click(&window, &remove, 1);
         assert!(
             crate::settle_until(async || {
                 !std::fs::read_to_string(&path)

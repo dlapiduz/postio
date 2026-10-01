@@ -23,7 +23,8 @@ pub fn a_double_click_on_a_row_opens_its_message_as_enter_does() {
             "a single click must only move the cursor"
         );
         assert!(window.reading().is_none(), "nothing is open yet");
-        pane.view().emit_by_name::<()>("activate", &[&2u32]);
+        let rows = pane.rows_on_screen();
+        support::click(&window, &rows[2], 2);
         let reading = window.reading().expect("a double-click opened a message");
         assert!(
             crate::settle_until(async || !reading.body_text().is_empty()
@@ -61,7 +62,7 @@ pub fn a_press_in_a_rows_gutter_toggles_its_selection() {
         let row = rows.first().expect("a row on screen");
         let bar = support::only(&window, "focus-bulk-bar");
         assert!(!bar.is_mapped());
-        assert!(row.press_at(30.0, 20.0), "the gutter took the press");
+        support::click_in(&window, row, 30.0, 20.0, 1);
         assert!(
             crate::settle_until(async || bar.is_mapped()).await,
             "a gutter press selects the row"
@@ -71,7 +72,7 @@ pub fn a_press_in_a_rows_gutter_toggles_its_selection() {
             "{:?}",
             support::texts(&bar)
         );
-        assert!(row.press_at(30.0, 20.0));
+        support::click_in(&window, row, 30.0, 20.0, 1);
         assert!(
             crate::settle_until(async || !bar.is_mapped()).await,
             "a second press unselects it"
@@ -88,7 +89,7 @@ pub fn escape_closes_the_message_and_the_key_map() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         assert!(window.reading().is_some());
         support::press(&window, "Escape", gdk::ModifierType::empty());
         assert!(

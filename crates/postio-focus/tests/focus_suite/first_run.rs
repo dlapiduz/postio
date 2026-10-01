@@ -167,7 +167,8 @@ pub fn compose_with_no_account_says_so_and_offers_to_add_one() {
 
         // The action the toast's button names: the same command reopens the
         // form.
-        window.act(CommandId::AddAccount);
+        let add = support::button_labelled(&window, "Add account");
+        support::click(&window, &add, 1);
         assert!(
             crate::settle_until(async || window.add_account_dialog().is_some()).await,
             "CommandId::AddAccount opened no form"
@@ -280,7 +281,7 @@ pub fn the_window_close_button_closes_the_app_with_the_form_open() {
             f64::from(bounds.x() + bounds.width() / 2.0),
             f64::from(bounds.y() + bounds.height() / 2.0),
         );
-        assert!(window.click_through_dialog(x, y), "the click was not taken");
+        support::click_at(&window, x, y, 1);
         assert!(
             crate::settle_until(async || !window.is_visible()).await,
             "the window's close button did nothing with the form open"

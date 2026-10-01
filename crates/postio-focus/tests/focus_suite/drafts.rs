@@ -224,7 +224,7 @@ pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
         assert_eq!(window.place_name(), "Drafts");
 
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
             "Enter on a draft did not open it to edit"

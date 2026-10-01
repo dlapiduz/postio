@@ -9,7 +9,7 @@ use gtk::gdk;
 use crate::support::{self, Fixture};
 
 fn enter(window: &postio_focus::window::FocusWindow) {
-    let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+    support::press(&window, "Return", gtk::gdk::ModifierType::empty());
 }
 
 /// A window over the fixture's mail, the cursor on the first row, its

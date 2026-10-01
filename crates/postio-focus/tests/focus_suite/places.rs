@@ -43,7 +43,8 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
         assert!(places.is_open(), "g o opened it again");
         places.set_filter("trav");
         assert_eq!(places.names(), ["Travel"], "typing filters the places");
-        places.activate();
+        let travel = support::row_saying(&window, "Travel");
+        support::click(&window, &travel, 1);
         assert!(!places.is_open(), "Enter closed the popover");
 
         assert!(

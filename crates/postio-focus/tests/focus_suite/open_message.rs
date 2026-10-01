@@ -39,7 +39,7 @@ async fn three_with_bodies() -> (Fixture, postio_focus::window::FocusWindow) {
 }
 
 fn enter(window: &postio_focus::window::FocusWindow) {
-    let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+    support::press(&window, "Return", gtk::gdk::ModifierType::empty());
 }
 
 pub fn enter_opens_the_conversation_over_the_list_at_once() {
@@ -449,7 +449,7 @@ pub fn delete_in_the_dialog_deletes_the_message_on_screen() {
         let delete = support::only(&reading.dialog(), "focus-open-delete")
             .downcast::<gtk::Button>()
             .expect("a button");
-        delete.emit_clicked();
+        support::click(&window, &delete, 1);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Harbor draft", "Staffing"])
                 .await,

@@ -273,13 +273,18 @@ pub fn the_strip_counts_what_was_filtered_today() {
             places.names()
         );
         places.set_filter("filt");
-        places.activate();
+        let filtered = support::row_saying(&window, "Filtered");
+        support::click(&window, &filtered, 1);
         assert!(
             crate::settle_until(async || window.filtered().is_some()).await,
             "the popover's Filtered row did not open Filtered"
         );
         support::press(&window, "Escape", gdk::ModifierType::empty());
-        chrome.press_filtered_today();
+        support::click(
+            &window,
+            &support::only(&window, "focus-filtered-today-button"),
+            1,
+        );
         assert!(
             crate::settle_until(async || window.filtered().is_some()).await,
             "pressing the strip's count did not open Filtered"
@@ -433,8 +438,8 @@ pub fn f_says_what_a_sweep_would_move_then_moves_it_as_one_undo() {
 
         // What a click on the button does: the response, and the dialog
         // closes.
-        gtk::prelude::ObjectExt::emit_by_name::<()>(&dialog, "response", &[&"sweep"]);
-        adw::prelude::AdwDialogExt::close(&dialog);
+        let sweep = support::button_labelled(&dialog, &postio_ui::filtered::sweep_action(2));
+        support::click(&window, &sweep, 1);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Atlas budget"]).await,
             "the sweep did not move the two: {:?}",

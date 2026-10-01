@@ -163,10 +163,12 @@ pub fn update_password_on_the_sign_in_banner_opens_the_credential_dialog() {
         );
 
         // The banner's button, pressed.
-        support::only(&window, "focus-banner")
-            .downcast::<adw::Banner>()
-            .expect("the banner")
-            .emit_by_name::<()>("button-clicked", &[]);
+        let banner = support::only(&window, "focus-banner");
+        let button = support::descendants(&banner)
+            .into_iter()
+            .find(|widget| widget.is::<gtk::Button>() && widget.is_mapped())
+            .expect("the banner's button is on screen");
+        support::click(&window, &button, 1);
 
         let form = || form_in(window.upcast_ref());
         assert!(

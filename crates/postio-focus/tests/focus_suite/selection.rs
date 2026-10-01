@@ -163,7 +163,7 @@ pub fn the_bulk_bar_has_a_delete_button_that_deletes_the_selection() {
             "the button says what it does: {:?}",
             texts(&delete)
         );
-        delete.emit_clicked();
+        support::click(&window, &delete, 1);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Third", "Fourth", "Fifth"])
                 .await,

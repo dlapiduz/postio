@@ -239,7 +239,7 @@ pub fn a_click_on_the_row_s_decline_declines() {
             .drawn()
             .action("Decline")
             .expect("the row draws a Decline button");
-        target.press_at(x, y);
+        support::click_in(&window, &target, x, y, 1);
         assert!(
             crate::settle_until(async || window.toast_showing().as_deref() == Some("Declined"))
                 .await,
@@ -303,7 +303,7 @@ pub fn the_open_invitation_s_card_answers_with_its_keys() {
         let invitation = open_invitation();
         let (_fixture, window) = open_over(&[(&invitation, "Portfolio review")]).await;
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the invitation");
         assert!(
             crate::settle_until(async || !reading.marker_card_said().is_empty()).await,

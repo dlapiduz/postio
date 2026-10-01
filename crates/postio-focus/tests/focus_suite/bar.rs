@@ -182,7 +182,7 @@ pub fn alt_2_runs_the_second_saved_search() {
             .first()
             .and_then(|pill| pill.downcast_ref::<gtk::Button>())
             .expect("a pill that can be pressed");
-        first.emit_clicked();
+        support::click(&window, first, 1);
         assert!(
             crate::settle_until(async || bar.result_subjects() == ["Train ticket"]).await,
             "pressing the first pill did not run it: {:?}",
@@ -430,7 +430,11 @@ pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
             bar.chips()
         );
 
-        assert!(bar.press(gtk::gdk::Key::Tab, gtk::gdk::ModifierType::empty()));
+        assert!(
+            support::deliver(&window, "Tab"),
+            "Tab reached the bar: {}",
+            support::focus_path(&window)
+        );
         assert_eq!(
             bar.typed(),
             "invoices from:ada",
@@ -443,7 +447,11 @@ pub fn tab_steps_into_the_chips_and_ctrl_s_saves_the_query() {
             "the echo names the chip: {:?}",
             bar.texts()
         );
-        assert!(bar.press(gtk::gdk::Key::Tab, gtk::gdk::ModifierType::empty()));
+        assert!(
+            support::deliver(&window, "Tab"),
+            "Tab reached the bar: {}",
+            support::focus_path(&window)
+        );
         assert!(
             bar.texts()
                 .iter()

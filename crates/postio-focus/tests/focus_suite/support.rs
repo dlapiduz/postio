@@ -719,9 +719,7 @@ pub fn press(
     name: &str,
     state: gtk::gdk::ModifierType,
 ) {
-    let key = gtk::gdk::Key::from_name(name).unwrap_or_else(|| panic!("{name} is a key"));
-    let _ = window.handle_key(key, state);
-    crate::settle();
+    deliver_with(window, name, state);
 }
 
 /// Press each of `keys`, unmodified but for shift on a capital.
@@ -874,13 +872,22 @@ impl Fixture {
 /// scroller's, a window's focus moves): GTK offers no way to run them but a
 /// real event.
 pub fn deliver(window: &postio_focus::window::FocusWindow, name: &str) -> bool {
-    use gtk::prelude::*;
-    let key = gtk::gdk::Key::from_name(name).unwrap_or_else(|| panic!("{name} is a key"));
     let state = if name.chars().count() == 1 && name.chars().all(char::is_uppercase) {
         gtk::gdk::ModifierType::SHIFT_MASK
     } else {
         gtk::gdk::ModifierType::empty()
     };
+    deliver_with(window, name, state)
+}
+
+/// [`deliver`] with the modifiers held, for `Ctrl+Return` and the like.
+pub fn deliver_with(
+    window: &postio_focus::window::FocusWindow,
+    name: &str,
+    state: gtk::gdk::ModifierType,
+) -> bool {
+    use gtk::prelude::*;
+    let key = gtk::gdk::Key::from_name(name).unwrap_or_else(|| panic!("{name} is a key"));
     let keyval = gtk::glib::translate::IntoGlib::into_glib(key);
     let target: gtk::Widget =
         gtk::prelude::GtkWindowExt::focus(window).unwrap_or_else(|| window.clone().upcast());
@@ -897,6 +904,16 @@ pub fn deliver(window: &postio_focus::window::FocusWindow, name: &str) -> bool {
         && let Some(parent) = chain.last().and_then(|widget| widget.parent())
     {
         chain.push(parent);
+    }
+    if std::env::var_os("CLICK_DEBUG").is_some() {
+        for widget in &chain {
+            let controllers = widget.observe_controllers();
+            let names: Vec<String> = (0..controllers.n_items())
+                .filter_map(|at| controllers.item(at))
+                .map(|c| format!("{}", c.type_().name()))
+                .collect();
+            eprintln!("deliver {name}: {} {:?}", widget.type_().name(), names);
+        }
     }
     let fire = |widget: &gtk::Widget, phase: gtk::PropagationPhase| -> bool {
         let controllers = widget.observe_controllers();
@@ -921,6 +938,187 @@ pub fn deliver(window: &postio_focus::window::FocusWindow, name: &str) -> bool {
             .any(|widget| fire(widget, gtk::PropagationPhase::Bubble));
     crate::settle();
     claimed
+}
+
+/// The button under `root` that says `label`: the one a person clicks.
+pub fn button_labelled(root: &impl gtk::prelude::IsA<gtk::Widget>, label: &str) -> gtk::Widget {
+    use gtk::prelude::*;
+    descendants(root)
+        .into_iter()
+        .find(|widget| {
+            widget.is::<gtk::Button>()
+                && widget.is_mapped()
+                && texts(widget).iter().any(|text| text == label)
+        })
+        .unwrap_or_else(|| panic!("no button says {label:?}: {:?}", texts(root)))
+}
+
+/// The list row under `root` that says `text`: the one a person clicks.
+pub fn row_saying(root: &impl gtk::prelude::IsA<gtk::Widget>, text: &str) -> gtk::Widget {
+    use gtk::prelude::*;
+    descendants(root)
+        .into_iter()
+        .find(|widget| {
+            widget.is::<gtk::ListBoxRow>()
+                && widget.is_mapped()
+                && texts(widget).iter().any(|said| said == text)
+        })
+        .unwrap_or_else(|| panic!("no row says {text:?}: {:?}", texts(root)))
+}
+
+/// [`click_at`] at (`x`, `y`) in `widget`'s own space, once a click there
+/// reaches `widget` (see [`wait_to_be_pickable`]).
+pub fn click_in(
+    window: &postio_focus::window::FocusWindow,
+    widget: &impl gtk::prelude::IsA<gtk::Widget>,
+    x: f32,
+    y: f32,
+    n_press: i32,
+) {
+    let (x, y) = wait_to_be_pickable(window, widget.as_ref(), x, y);
+    click_at(window, x, y, n_press);
+}
+
+/// Click the middle of `widget` as a person would, `n_press` times (2 is a
+/// double-click): see [`click_at`].
+pub fn click(
+    window: &postio_focus::window::FocusWindow,
+    widget: &impl gtk::prelude::IsA<gtk::Widget>,
+    n_press: i32,
+) {
+    use gtk::prelude::*;
+    let widget = widget.as_ref();
+    let (width, height) = (widget.width() as f32, widget.height() as f32);
+    let (x, y) = wait_to_be_pickable(window, widget, width / 2.0, height / 2.0);
+    click_at(window, x, y, n_press);
+}
+
+/// The window coordinates of (`x`, `y`) in `widget`, once that is a place a
+/// click reaches `widget`: what a person waits for. A dialog slides in, and
+/// until it has stopped the point is over the scrim, not the button; a
+/// person clicks when the button is where they see it. Panics, naming what
+/// covers it, when it never is: a button under something is a bug.
+fn wait_to_be_pickable(
+    window: &postio_focus::window::FocusWindow,
+    widget: &gtk::Widget,
+    x: f32,
+    y: f32,
+) -> (f64, f64) {
+    use gtk::prelude::*;
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    loop {
+        crate::settle();
+        let point = widget
+            .compute_point(window, &gtk::graphene::Point::new(x, y))
+            .unwrap_or_else(|| panic!("{} has no place in the window", widget.type_().name()));
+        let (x, y) = (f64::from(point.x()), f64::from(point.y()));
+        let picked = window.pick(x, y, gtk::PickFlags::DEFAULT);
+        if picked
+            .as_ref()
+            .is_some_and(|picked| picked == widget || picked.is_ancestor(widget))
+        {
+            return (x, y);
+        }
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "a click at ({x}, {y}) never reached the {}: it lands on {}",
+                widget.type_().name(),
+                picked.map_or("nothing".to_owned(), |picked| picked.type_().name().to_string())
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Press and release the primary button at (`x`, `y`) in the window,
+/// `n_press` times over, as GTK delivers a click: to whatever is *picked*
+/// there (so a widget covered by a dialog's scrim is not the one that gets
+/// it, and one that is not mapped, clipped away or insensitive cannot be
+/// clicked), through each `GestureClick` from the window down to it in the
+/// capture phase, then the picked widget's own, then back up in the bubble
+/// phase; and, as for keys ([`deliver`]), no further than the innermost
+/// dialog on the way.
+///
+/// GTK offers no way to build a button event in-process (`GdkEvent`s are
+/// made by a backend), so this drives the gestures' `pressed` and `released`
+/// signals itself, in the order and along the path GTK would, with the
+/// press count of the click it is. What it cannot see is a gesture claiming
+/// the sequence (no sequence exists to claim), so it approximates that:
+/// a `GtkButton` claims what reaches it, and nothing above one is run.
+pub fn click_at(window: &postio_focus::window::FocusWindow, x: f64, y: f64, n_press: i32) {
+    use gtk::prelude::*;
+    let picked = window
+        .pick(x, y, gtk::PickFlags::DEFAULT)
+        .unwrap_or_else(|| window.clone().upcast());
+    let mut chain = vec![picked.clone()];
+    while !chain
+        .last()
+        .is_some_and(|widget| widget.is::<adw::Dialog>())
+        && let Some(parent) = chain.last().and_then(|widget| widget.parent())
+    {
+        chain.push(parent);
+    }
+    let window_widget: gtk::Widget = window.clone().upcast();
+    let gestures = |widget: &gtk::Widget, phase: gtk::PropagationPhase| -> Vec<gtk::GestureClick> {
+        let controllers = widget.observe_controllers();
+        (0..controllers.n_items())
+            .filter_map(|at| controllers.item(at).and_downcast::<gtk::GestureClick>())
+            .filter(|gesture| gesture.propagation_phase() == phase)
+            .collect()
+    };
+    // The path, in the order GTK runs it: widget and gesture.
+    let mut path: Vec<(gtk::Widget, gtk::GestureClick)> = Vec::new();
+    for widget in chain.iter().rev() {
+        path.extend(
+            gestures(widget, gtk::PropagationPhase::Capture)
+                .into_iter()
+                .map(|gesture| (widget.clone(), gesture)),
+        );
+    }
+    path.extend(
+        gestures(&picked, gtk::PropagationPhase::Target)
+            .into_iter()
+            .map(|gesture| (picked.clone(), gesture)),
+    );
+    for widget in &chain {
+        path.extend(
+            gestures(widget, gtk::PropagationPhase::Bubble)
+                .into_iter()
+                .map(|gesture| (widget.clone(), gesture)),
+        );
+    }
+    let to = |widget: &gtk::Widget| {
+        let point = window_widget
+            .compute_point(widget, &gtk::graphene::Point::new(x as f32, y as f32))
+            .unwrap_or_else(|| gtk::graphene::Point::new(x as f32, y as f32));
+        (f64::from(point.x()), f64::from(point.y()))
+    };
+    if std::env::var_os("CLICK_DEBUG").is_some() {
+        eprintln!(
+            "click_at {x},{y}: picked {} chain {:?} gestures {:?}",
+            picked.type_().name(),
+            chain.iter().map(|w| w.type_().name()).collect::<Vec<_>>(),
+            path.iter().map(|(w, g)| (w.type_().name(), g.propagation_phase())).collect::<Vec<_>>()
+        );
+    }
+    for press in 1..=n_press {
+        let mut reached = Vec::new();
+        for (widget, gesture) in &path {
+            let (x, y) = to(widget);
+            gesture.emit_by_name::<()>("pressed", &[&press, &x, &y]);
+            reached.push((widget, gesture));
+            if widget.is::<gtk::Button>() {
+                break;
+            }
+        }
+        crate::settle();
+        for (widget, gesture) in reached {
+            let (x, y) = to(widget);
+            gesture.emit_by_name::<()>("released", &[&press, &x, &y]);
+        }
+        crate::settle();
+    }
 }
 
 /// Where the window's keyboard is, as the widget types and CSS classes

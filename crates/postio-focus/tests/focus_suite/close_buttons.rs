@@ -100,7 +100,7 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
 
         // The open message.
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the message");
         let dialog = reading.dialog();
         assert!(

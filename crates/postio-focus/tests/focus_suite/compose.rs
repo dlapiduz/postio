@@ -232,7 +232,7 @@ pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
         // The cursor on Budget, then the Harbor thread opened: what is on
         // screen is what a reply answers.
         support::keys(&window, &["j", "j"]);
-        let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the message");
         assert_eq!(reading.title(), "Harbor API draft v3");
 

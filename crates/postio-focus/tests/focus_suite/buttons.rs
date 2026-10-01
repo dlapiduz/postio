@@ -58,7 +58,7 @@ pub fn the_open_message_toolbar_is_compact_with_its_keycaps_inside() {
         let (window, _client) = fixture.open().await;
         assert!(crate::settle_until(async || support::subjects(&window).len() == 1).await);
         support::keys(&window, &["j"]);
-        let _ = window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the message");
         assert!(
             crate::settle_until(async || reading.body_text().contains("The body")).await,

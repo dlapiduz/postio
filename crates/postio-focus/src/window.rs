@@ -430,8 +430,10 @@ impl FocusWindow {
     /// and `k` did nothing in the open message, and the arrows fell through
     /// to GTK's focus moves, which scrolled the column to whichever control
     /// took the focus (T196). Each dialog gets a controller of its own that
-    /// asks the window, as the window's would have. The composer's is the
-    /// exception: it takes its keys through its own host.
+    /// asks the window, as the window's would have. The composer's too: its
+    /// host's `handle_key` takes nothing, so before T200 Esc, Ctrl+Return and
+    /// the composer's other keys reached nothing while it was open; the
+    /// window's `handle_key` has a composer branch for exactly them.
     fn keys_under_dialogs(&self) {
         let dialogs = self.dialogs();
         dialogs.connect_items_changed(glib::clone!(
@@ -453,9 +455,6 @@ impl FocusWindow {
     /// adds.
     fn give_keys(&self, dialog: &adw::Dialog) {
         const KEYS: &str = "focus-window-keys";
-        if dialog.widget_name() == crate::compose::NAME {
-            return;
-        }
         let controllers = dialog.observe_controllers();
         let has = (0..controllers.n_items()).any(|index| {
             controllers
