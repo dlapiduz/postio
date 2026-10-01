@@ -296,10 +296,18 @@ jobs:
       # The exclusion is `profile.ci-full` rather than an `-E` here, because
       # `release.yml`'s gate is the same run and has to hold out the same
       # thing. Written twice it had already drifted once.
+      #
+      # Through the flake-retry script, as the release gate runs the same
+      # suite (#1710). A red nightly is not a private matter: it makes every
+      # pull request re-run this workflow until it goes green, and the
+      # nightly was red 8 days of 20 -- one of them a GTK editor case that
+      # failed at 361 s under the suite's load and passes alone. A test that
+      # fails again in isolation still fails the run; one that does not is a
+      # `::warning::` on it, so a forgiven flake is still seen.
       - name: cargo nextest run --profile ci-full
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run --workspace --profile ci-full
+        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-full
 
       # nextest does not run doctests and does not say so, so switching this
       # job to it would have silently dropped them -- `cargo test --workspace`
