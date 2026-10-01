@@ -88,6 +88,27 @@ fn payload(written: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------------
+// §4.1.1.1 / §4.1.3 — the name the client greets with
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_greeting_names_the_client_by_an_address_literal() {
+    // §4.1.1.1 wants the client's own FQDN, and §4.1.3 reserves the address
+    // literal for a client that has none -- which is every desktop behind a
+    // NAT. The account's mail domain is the *provider's* name, not ours, and
+    // a bare `localhost` is not a domain either: Stalwart answers it with
+    // `550 5.5.0 Invalid EHLO domain` before `MAIL FROM`, so nothing sends.
+    let (_session, connector) = open(happy_script()).await;
+
+    let written = wire(&connector);
+    assert!(
+        written.starts_with("EHLO [127.0.0.1]\r\n"),
+        "the session greeted with {:?}",
+        written.lines().next()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // §4.1.1.4 — the DATA terminator, and the CRLF the generator does not write
 // ---------------------------------------------------------------------------
 
