@@ -37,7 +37,7 @@ async fn main() {
     // The store is encrypted under the key in the keyring (ADR 0014), and a
     // store seeded under any other key is one `postio-app` cannot open — which
     // would make this tool useless for the thing it exists for.
-    let store_key = match read_store_key() {
+    let store_key = match read_store_key().await {
         Some(key) => key,
         None => {
             eprintln!(
@@ -80,15 +80,14 @@ async fn main() {
 /// something the existing store knows nothing about. A development tool has no
 /// business making that judgement, so this only ever reads — a store that has
 /// no key yet is one the application has not opened, and the fix is to open it.
-fn read_store_key() -> Option<postio_storage::key::StoreKey> {
+///
+/// Awaited on `main`'s runtime: building a second one here panics, since
+/// `main` is already on one.
+async fn read_store_key() -> Option<postio_storage::key::StoreKey> {
     use postio_account::secret::{AccountKey, SecretStore};
 
     let secrets = postio_account::secret::KeyringSecretStore::default();
     let entry = AccountKey::new(postio_storage::key::STORE_KEY_ENTRY);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
-    let stored = runtime.block_on(secrets.retrieve(&entry)).ok()?;
+    let stored = secrets.retrieve(&entry).await.ok()?;
     postio_storage::key::StoreKey::from_hex(stored.expose()).ok()
 }
