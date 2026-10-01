@@ -44,9 +44,7 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// Empty from 2026-09-23 until main's spec 006 reader verbs and the
 /// terminal frontend's chrome arrived in the 2026-09-30 merge: what is listed
 /// here is new to the registry, not a regression of what was answered.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    (CommandId::DarkenMessage, "#1705"),
-];
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[(CommandId::DarkenMessage, "#1705")];
 
 /// Whether the Mac offers `id` at all. See the module note.
 ///
