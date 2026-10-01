@@ -489,6 +489,20 @@ public final class PostioSession {
     /// landing on its first row. Only a chosen row is read by dwell (#601).
     public var cursorChosen: Bool { inner.cursorChosen() }
 
+    /// `#` in the search box: folders matching `query`, best first, and
+    /// what to say when none do.
+    public func finderFolders(_ query: String) -> FinderAnswerFfi { inner.finderFolders(query: query) }
+
+    /// `@` in the search box: correspondents matching `query`.
+    public func finderContacts(_ query: String) -> FinderAnswerFfi { inner.finderContacts(query: query) }
+
+    /// `+` in the search box: labels matching `query`.
+    public func finderLabels(_ query: String) -> FinderAnswerFfi { inner.finderLabels(query: query) }
+
+    /// Put `label` on the selection, or on the message under the cursor when
+    /// nothing is marked.
+    public func applyLabel(_ label: Int64) { inner.applyLabel(label: label) }
+
     /// The cursor rested on `message` long enough for it to count as read.
     ///
     /// Not `invoke`: `MarkReadOnDwell` is deliberately outside the registry,

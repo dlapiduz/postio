@@ -41,6 +41,7 @@ mod conversation;
 mod cost;
 mod dwell;
 mod event;
+mod finder;
 mod focus;
 mod keys;
 mod list;
@@ -76,6 +77,7 @@ pub use cost::{
 };
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};
+pub use finder::{FinderAnswerFfi, FinderHitFfi};
 pub use focus::next_pane;
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};

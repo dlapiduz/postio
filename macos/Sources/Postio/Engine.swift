@@ -423,19 +423,20 @@ final class Engine {
         }
     }
 
-    /// The command name typed after `>` in the search box, or `nil` while
-    /// the box is a search (`CommandBox`). The field reports it as it changes.
+    /// The question the search box is asking -- `>`, `#`, `@` or `+` and
+    /// what follows it -- or `nil` while it is a search (`FinderBox`). The
+    /// field reports it as it changes.
     ///
     /// `command_palette` is still handled here and not by the boundary: it
     /// opens a surface, and a session cannot. `postio-gtk`'s `run_action`
     /// makes the same call for the same reason.
-    private(set) var commandQuery: String?
-    /// Which command row the keyboard is on.
-    private(set) var commandBox = CommandBox()
+    private(set) var finding: FinderBox.Asking?
+    /// Which row the keyboard is on.
+    private(set) var finderBox = FinderBox()
 
     /// What the search box was last asked to hold -- `>` from ⌘K, nothing
-    /// after a command runs or Escape -- with a serial, so the same text
-    /// asked twice still arrives.
+    /// after a pick or Escape -- with a serial, so the same text asked twice
+    /// still arrives.
     struct FieldRequest: Equatable {
         let serial: Int
         let text: String
@@ -446,47 +447,90 @@ final class Engine {
         fieldRequest = FieldRequest(serial: fieldRequest.serial + 1, text: text)
     }
 
-    /// The field's report: what follows `>`, or `nil` when it is a search.
-    func commandQueryChanged(_ query: String?) {
-        guard query != commandQuery else { return }
-        commandQuery = query
-        commandBox.queryChanged()
+    /// The field's report: what it is asking, or `nil` when it is a search.
+    func findingChanged(_ asking: FinderBox.Asking?) {
+        guard asking != finding else { return }
+        finding = asking
+        finderBox.queryChanged()
+        finderAnswer = answer(for: asking)
     }
 
-    /// The commands the box offers for what has been typed, best first, for
-    /// the surface the box was opened over.
-    var commandRows: [PaletteEntryFfi] {
-        guard let commandQuery, let session else { return [] }
-        return session.paletteEntries(commandQuery, in: .list)
+    /// The rows for what the box is asking, and what to say when there are
+    /// none. Read once per change of the text, not per draw: `@` and `+`
+    /// reach the store.
+    private(set) var finderAnswer = (rows: [FinderRow](), empty: "")
+
+    private func answer(for asking: FinderBox.Asking?) -> (rows: [FinderRow], empty: String) {
+        guard let asking, let session else { return ([], "") }
+        switch asking.mode {
+        case .command:
+            // For the surface the box was opened over, which is the list.
+            let rows = session.paletteEntries(asking.text, in: .list).map {
+                FinderRow(id: $0.id, title: $0.title, detail: nil, positions: $0.positions, binding: $0.binding)
+            }
+            return (rows, "No command matches “\(asking.text)”")
+        case .folder:
+            return rows(of: session.finderFolders(asking.text))
+        case .contact:
+            return rows(of: session.finderContacts(asking.text))
+        case .label:
+            return rows(of: session.finderLabels(asking.text))
+        }
+    }
+
+    private func rows(of answer: FinderAnswerFfi) -> (rows: [FinderRow], empty: String) {
+        let rows = answer.hits.map {
+            // A correspondent is picked through its query; the others by id.
+            FinderRow(
+                id: $0.query ?? String($0.id), title: $0.title, detail: $0.detail,
+                positions: $0.positions, binding: nil)
+        }
+        return (rows, answer.empty)
     }
 
     /// ↑ or ↓ in the box.
-    func moveCommand(by delta: Int) {
-        commandBox.move(by: delta, among: commandRows.count)
+    func moveFinder(by delta: Int) {
+        finderBox.move(by: delta, among: finderAnswer.rows.count)
     }
 
-    /// Return in the box: the highlighted command, or nothing when none
-    /// matched.
-    func runHighlightedCommand() {
-        let rows = commandRows
-        guard commandBox.highlighted < rows.count else { return }
-        runCommand(rows[commandBox.highlighted].id)
+    /// Return in the box: the highlighted row, or nothing when none matched.
+    func pickHighlighted() {
+        pick(finderBox.highlighted)
     }
 
-    /// A command chosen from the box. The box empties and gives the keyboard
-    /// back first, so the command acts on the list rather than on a search
-    /// box still claiming focus.
-    func runCommand(_ id: String) {
-        leaveCommandMode()
+    /// A row chosen, by Return or by a click. What that means is the mode's,
+    /// as GTK's box has it: run the command, open the folder, search the
+    /// correspondent's mail, label the selection.
+    func pick(_ index: Int) {
+        guard let asking = finding, index < finderAnswer.rows.count, let session else { return }
+        let row = finderAnswer.rows[index]
+        // The box empties and gives the keyboard back first, so what follows
+        // acts on the list rather than on a box still claiming focus.
+        leaveFinder()
         dismissOverlays()
-        run(id)
+        switch asking.mode {
+        case .command:
+            run(row.id)
+        case .folder:
+            if let id = Int64(row.id) { open(mailbox: id) }
+        case .contact:
+            // Back into search with `from:` written in, so what follows is an
+            // ordinary query the user can go on building.
+            session.search(row.id)
+            listChanged()
+            searchChanged()
+        case .label:
+            if let id = Int64(row.id) { session.applyLabel(id) }
+        }
     }
 
-    private func leaveCommandMode() {
-        guard commandQuery != nil else { return }
-        commandQuery = nil
+    private func leaveFinder() {
+        guard finding != nil else { return }
+        finding = nil
+        finderAnswer = ([], "")
         askField("")
     }
+
     /// Whether the cheat sheet is open.
     var showingCheatSheet = false
 
@@ -1114,21 +1158,21 @@ final class Engine {
         case Intercepted.palette:
             // The search box, asked for a command: what `Ctrl+K` does in
             // GTK's finder. The box keeps the keyboard and the commands
-            // appear under it as the name is typed (`CommandBox`).
+            // appear under it as the name is typed (`FinderBox`).
             showingCheatSheet = false
-            askField(CommandBox.opening)
+            askField(FinderBox.commands)
             showingSearch = true
             searchFocusAsks += 1
         case Intercepted.cheatSheet:
-            leaveCommandMode()
+            leaveFinder()
             showingCheatSheet = true
         case Intercepted.search:
             showingSearch = true
             searchFocusAsks += 1
-        case Intercepted.back where commandQuery != nil:
+        case Intercepted.back where finding != nil:
             // Out of command mode and out of the box: the `>` was a question,
             // and Escape is "never mind".
-            leaveCommandMode()
+            leaveFinder()
             dismissOverlays()
         case Intercepted.back where showingSearch || session?.isSearching == true:
             // **Escape leaves search, scope and all.** It used to close the

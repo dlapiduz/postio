@@ -198,9 +198,9 @@ struct Shell: View {
                         focusAsks: engine.searchFocusAsks,
                         searchStamp: engine.searchStamp,
                         fieldRequest: engine.fieldRequest,
-                        onCommandQuery: { engine.commandQueryChanged($0) },
-                        onCommandMove: { engine.moveCommand(by: $0) },
-                        onCommandRun: { engine.runHighlightedCommand() },
+                        onFinding: { engine.findingChanged($0) },
+                        onFinderMove: { engine.moveFinder(by: $0) },
+                        onFinderPick: { engine.pickHighlighted() },
                         wantsFocus: Binding(
                             get: { engine.showingSearch },
                             set: { engine.showingSearch = $0 }
@@ -219,11 +219,12 @@ struct Shell: View {
         // in the toolbar, which cannot grow downward; the keyboard stays in
         // the field, and typing there is what filters this.
         .overlay(alignment: .topTrailing) {
-            if engine.commandQuery != nil {
-                CommandResults(
-                    rows: engine.commandRows,
-                    highlighted: engine.commandBox.highlighted,
-                    run: { engine.runCommand($0) }
+            if engine.finding != nil {
+                FinderResults(
+                    rows: engine.finderAnswer.rows,
+                    empty: engine.finderAnswer.empty,
+                    highlighted: engine.finderBox.highlighted,
+                    pick: { engine.pick($0) }
                 )
                 .padding(.top, PostioTokens.space2)
                 .padding(.trailing, PostioTokens.space4)
@@ -247,7 +248,7 @@ struct Shell: View {
         // preference can change while Postio is running and a cached copy
         // would keep animating for somebody who had just asked it to stop.
         .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
-        .animation(.easeOut(duration: Motion.current), value: engine.commandQuery != nil)
+        .animation(.easeOut(duration: Motion.current), value: engine.finding != nil)
         .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
         // What Postio said back. Bottom-*leading*, so it never lands under
         // the pending-chord hint at the other corner: both are transient and

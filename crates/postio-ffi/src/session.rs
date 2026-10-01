@@ -431,6 +431,20 @@ fn serve(
     }
 }
 
+/// What `@` and `+` match against, read through the host.
+#[derive(Clone, Default)]
+struct FinderSources {
+    contacts: Vec<postio_model::Contact>,
+    labels: Vec<postio_model::Label>,
+}
+
+/// How long the box keeps `FinderSources` before reading them again.
+///
+/// GTK reads them once, when the box is built. A first sync is when the
+/// correspondents arrive, and a box that read them before it would offer
+/// none for the whole session; a minute is how stale they may be instead.
+const FINDER_SOURCES_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// What a new account is looked up and signed in through, when a test says.
 type Seams = (
     Option<Arc<dyn postio_account::discovery::DiscoveryTransport>>,
@@ -600,6 +614,9 @@ pub struct Session {
     /// the list landing on its first row (`settle_cursor`). GTK's `landed`,
     /// and it gates the same thing: the read clock, not the pane (#601).
     chosen: std::sync::atomic::AtomicBool,
+    /// The correspondents and labels the search box's `@` and `+` match
+    /// against, with when they were read (`finder_contacts`).
+    finder_sources: Mutex<Option<(std::time::Instant, FinderSources)>>,
     /// The current result set, ranked, when a search is what the list shows.
     ///
     /// `None` means the list is showing a folder. Ranked rather than sorted,
@@ -1493,6 +1510,30 @@ impl Session {
         self.settle_cursor();
     }
 
+    /// `#` in the search box: the folders matching `query`, best first.
+    #[uniffi::method(name = "finderFolders")]
+    pub fn finder_folders_ffi(&self, query: String) -> crate::FinderAnswerFfi {
+        blocking(self.finder_folders(query))
+    }
+
+    /// `@` in the search box: the correspondents matching `query`.
+    #[uniffi::method(name = "finderContacts")]
+    pub fn finder_contacts_ffi(&self, query: String) -> crate::FinderAnswerFfi {
+        blocking(self.finder_contacts(query))
+    }
+
+    /// `+` in the search box: the labels matching `query`.
+    #[uniffi::method(name = "finderLabels")]
+    pub fn finder_labels_ffi(&self, query: String) -> crate::FinderAnswerFfi {
+        blocking(self.finder_labels(query))
+    }
+
+    /// Put `label` on the selection. See [`apply_label`](Self::apply_label).
+    #[uniffi::method(name = "applyLabel")]
+    pub fn apply_label_ffi(&self, label: i64) {
+        self.apply_label(label);
+    }
+
     /// Whether a person put the cursor where it is. See
     /// [`settle_cursor`](Self::settle_cursor).
     #[uniffi::method(name = "cursorChosen")]
@@ -2151,6 +2192,7 @@ impl Session {
                 cursor: Mutex::new(None),
                 cursor_row: Mutex::new(None),
                 chosen: Default::default(),
+                finder_sources: Mutex::new(None),
                 account_scope: Mutex::new(postio_core::Scope::default()),
                 conversation: Arc::default(),
                 sign_in: Mutex::new(None),
@@ -2250,6 +2292,7 @@ impl Session {
             cursor: Mutex::new(None),
             cursor_row: Mutex::new(None),
             chosen: Default::default(),
+            finder_sources: Mutex::new(None),
             account_scope: Mutex::new(postio_core::Scope::default()),
             conversation: Arc::default(),
             sign_in: Mutex::new(None),
@@ -4464,6 +4507,108 @@ impl Session {
     /// See [`cursor_chosen_ffi`](Self::cursor_chosen_ffi).
     pub fn cursor_chosen(&self) -> bool {
         self.chosen.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `#` in the search box: folders matching `query`. See
+    /// [`crate::finder::folders`].
+    pub async fn finder_folders(&self, query: String) -> crate::FinderAnswerFfi {
+        crate::finder::folders(&self.mailboxes().await, &query)
+    }
+
+    /// `@` in the search box: correspondents matching `query`.
+    pub async fn finder_contacts(&self, query: String) -> crate::FinderAnswerFfi {
+        crate::finder::contacts(&self.finder_sources().await.contacts, &query)
+    }
+
+    /// `+` in the search box: labels matching `query`.
+    pub async fn finder_labels(&self, query: String) -> crate::FinderAnswerFfi {
+        crate::finder::labels(&self.finder_sources().await.labels, &query)
+    }
+
+    /// The correspondents and labels of every enabled account, read through
+    /// the host as GTK's box reads them, and kept for
+    /// [`FINDER_SOURCES_FOR`].
+    async fn finder_sources(&self) -> FinderSources {
+        if let Some((read, sources)) = &*self.finder_sources.lock().expect("finder lock")
+            && read.elapsed() < FINDER_SOURCES_FOR
+        {
+            return sources.clone();
+        }
+        let client = self
+            .link
+            .lock()
+            .expect("link lock")
+            .as_ref()
+            .map(|link| link.client.clone());
+        let Some(client) = client else {
+            return FinderSources::default();
+        };
+        let accounts = match self.store_and_blobs() {
+            Some((database, _)) => match database.connect().await {
+                Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
+                    .list_enabled()
+                    .await
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let mut sources = FinderSources::default();
+        for account in accounts {
+            match client.correspondents(account.id).await {
+                Ok(found) => sources.contacts.extend(found),
+                Err(error) => tracing::warn!(%error, "could not read the correspondents"),
+            }
+            match client.labels(account.id).await {
+                Ok(found) => sources.labels.extend(found),
+                Err(error) => tracing::warn!(%error, "could not read the labels"),
+            }
+        }
+        *self.finder_sources.lock().expect("finder lock") =
+            Some((std::time::Instant::now(), sources.clone()));
+        sources
+    }
+
+    /// `+`'s Return: put `label` on the selection -- the marked messages, or
+    /// the one under the cursor when nothing is marked -- as GTK's box does
+    /// (`Command::AddLabel`, toggled, so `u` takes it back).
+    pub fn apply_label(&self, label: i64) {
+        let Some(outbox) = self.outbox() else {
+            return;
+        };
+        let command = postio_core::Command::AddLabel {
+            target: postio_core::MessageTarget::Selection,
+            label: Some(postio_model::ids::LabelId::new(label)),
+            on: None,
+        };
+        if !postio_core::aim::is_wired(&self.wired, &command) {
+            tracing::debug!("labelling is not a verb the host answers; ignored");
+            return;
+        }
+        if outbox.try_send((command, self.aimed())).is_err() {
+            tracing::debug!("the runtime has stopped and did not label that");
+        }
+    }
+
+    /// This view's selection, cursor and scope as they are now, mirrored into
+    /// the state a command is aimed with -- what `invoke` sends beside every
+    /// verb, for a command that is built here rather than from an id.
+    fn aimed(&self) -> postio_core::state::SharedState {
+        let cursor = self.resolve_cursor();
+        let list = self.list.lock().expect("list lock");
+        let selection = self.selection.lock().expect("selection lock");
+        let aim = postio_core::aim::Aim {
+            scope: self.scope_in_view().and_then(|scope| {
+                postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
+            }),
+            selection: &selection,
+            cursor,
+            rows: &*list,
+        };
+        let aimed = postio_core::state::SharedState::default();
+        let (quiet, _) = postio_core::bridge::event_channel();
+        postio_core::aim::mirror(&aimed, &quiet, &aim);
+        aimed
     }
 
     /// Extend the selection by one row in `delta`'s direction.

@@ -25,6 +25,7 @@ mod config;
 mod conversation;
 mod dwell;
 mod facts;
+mod finder;
 mod first_run;
 mod host;
 mod keys;

@@ -1,34 +1,37 @@
 import PostioFFI
 import SwiftUI
 
-/// The commands the search box offers while it holds `>` -- the panel under
-/// the field, which keeps the keyboard.
+/// What the search box offers while it asks one of its modes' questions --
+/// the panel under the field, which keeps the keyboard (`FinderBox`).
 ///
-/// Every row is `session.paletteEntries`, already ranked and filtered to what
-/// can run here by `postio_ui::palette`, the matcher GTK's box uses: the same
-/// query offers the same commands on both platforms. Nothing here sorts.
-public struct CommandResults: View {
+/// Every row comes from the boundary already ranked by the shared matcher --
+/// `paletteEntries` for `>`, `finderFolders`/`Contacts`/`Labels` for the
+/// rest -- so the same text offers the same rows on both platforms. Nothing
+/// here sorts.
+public struct FinderResults: View {
     /// One row's height -- its text and its padding -- and the tallest the
     /// panel grows before it scrolls.
     static let rowHeight: CGFloat = 30
     static let maxHeight: CGFloat = 360
 
-    private let rows: [PaletteEntryFfi]
+    private let rows: [FinderRow]
+    private let empty: String
     private let highlighted: Int
-    private let run: (String) -> Void
+    private let pick: (Int) -> Void
 
-    public init(rows: [PaletteEntryFfi], highlighted: Int, run: @escaping (String) -> Void) {
+    public init(rows: [FinderRow], empty: String, highlighted: Int, pick: @escaping (Int) -> Void) {
         self.rows = rows
+        self.empty = empty
         self.highlighted = highlighted
-        self.run = run
+        self.pick = pick
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
-                // A panel that draws nothing looks broken; this one says the
-                // box was understood and nothing matched.
-                Text("No command matches")
+                // Never a shrug: the boundary's sentence names what was
+                // looked in.
+                Text(empty)
                     .foregroundStyle(.secondary)
                     .padding(PostioTokens.space4)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -36,11 +39,11 @@ public struct CommandResults: View {
                 ScrollViewReader { scroller in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, entry in
+                            ForEach(Array(rows.enumerated()), id: \.offset) { index, entry in
                                 row(entry, isHighlighted: index == highlighted)
                                     .id(index)
                                     .contentShape(.rect)
-                                    .onTapGesture { run(entry.id) }
+                                    .onTapGesture { pick(index) }
                             }
                         }
                     }
@@ -57,17 +60,27 @@ public struct CommandResults: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
         .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Commands")
+        .accessibilityLabel("Matches")
     }
 
-    private func row(_ entry: PaletteEntryFfi, isHighlighted: Bool) -> some View {
+    private func row(_ entry: FinderRow, isHighlighted: Bool) -> some View {
         HStack(spacing: PostioTokens.space3) {
             // The matched characters, emphasised from the offsets the shared
             // matcher returned -- the numbers GTK turns into Pango bold.
-            Text(PaletteRow.highlighted(entry))
+            Text(PaletteRow.highlighted(title: entry.title, positions: entry.positions))
                 .lineLimit(1)
             Spacer(minLength: PostioTokens.space3)
-            KeyCaps(binding: entry.binding)
+            if let detail = entry.detail {
+                Text(detail)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            // Only a command has a key; a folder or a person has nothing to
+            // press, and a dash on every row would say otherwise.
+            if entry.binding != nil {
+                KeyCaps(binding: entry.binding)
+            }
         }
         .padding(.horizontal, PostioTokens.space4)
         .frame(height: Self.rowHeight)

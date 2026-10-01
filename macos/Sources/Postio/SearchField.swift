@@ -28,12 +28,12 @@ struct SearchField: View {
     /// What the engine asked the box to hold: `>` from ⌘K, or nothing once
     /// a command has run.
     let fieldRequest: Engine.FieldRequest
-    /// The box's command mode (`CommandBox`): what follows `>` as it is
-    /// typed, ↑ and ↓ over the commands, and Return running the highlighted
-    /// one. The commands themselves are drawn under the toolbar.
-    let onCommandQuery: (String?) -> Void
-    let onCommandMove: (Int) -> Void
-    let onCommandRun: () -> Void
+    /// The box's modes (`FinderBox`): which question it is asking as it is
+    /// typed, ↑ and ↓ over the matches, and Return picking the highlighted
+    /// one. The matches themselves are drawn under the toolbar.
+    let onFinding: (FinderBox.Asking?) -> Void
+    let onFinderMove: (Int) -> Void
+    let onFinderPick: () -> Void
     /// Whether the field should take the keyboard.
     ///
     /// Driven from the engine so that `/` and `⌥⌘F` land here: the field is
@@ -55,10 +55,10 @@ struct SearchField: View {
             // Not a second parser: the chips are how somebody learns Postio's
             // query language, so two readings would be two languages
             // (canvas 2b, #1157).
-            // No chips for a command name: it is not a query, and drawing
-            // `>arch` as a half-typed operator would be teaching a language
-            // that is not being spoken.
-            ForEach(isCommand ? [] : queryChips(query: query), id: \.index) { chip in
+            // No chips while the box asks one of its modes' questions: the
+            // text is a name, not a query, and drawing `>arch` as a half-typed
+            // operator would be teaching a language that is not being spoken.
+            ForEach(isFinding ? [] : queryChips(query: query), id: \.index) { chip in
                 Text(chip.label)
                     .font(.system(.callout, design: .monospaced))
                     .padding(.horizontal, 6)
@@ -89,19 +89,19 @@ struct SearchField: View {
                 // do with the field otherwise: a search box has no rows of
                 // its own to move through.
                 .onKeyPress(.upArrow) {
-                    guard isCommand else { return .ignored }
-                    onCommandMove(-1)
+                    guard isFinding else { return .ignored }
+                    onFinderMove(-1)
                     return .handled
                 }
                 .onKeyPress(.downArrow) {
-                    guard isCommand else { return .ignored }
-                    onCommandMove(1)
+                    guard isFinding else { return .ignored }
+                    onFinderMove(1)
                     return .handled
                 }
             // "14 hits · 11 ms" — the 100ms budget made visible, which is a
             // claim the application should be willing to make on screen.
             // Its wording, and its caveats, are the core's.
-            if !isCommand, let outcome = session.searchOutcome {
+            if !isFinding, let outcome = session.searchOutcome {
                 Text(outcome.readout)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -159,7 +159,7 @@ struct SearchField: View {
         // field — so the field has to adopt the query that actually ran, or
         // editing it and pressing Return would re-run the unrefined one and
         // silently drop the narrowing.
-        .onChange(of: query) { _, now in onCommandQuery(CommandBox.query(in: now)) }
+        .onChange(of: query) { _, now in onFinding(FinderBox.asking(in: now)) }
         .onChange(of: fieldRequest) { _, asked in query = asked.text }
         .onChange(of: searchStamp) { _, _ in
             query = session.searchQuery ?? ""
@@ -199,8 +199,8 @@ struct SearchField: View {
     /// `from:ada` is `from:a` for three keystrokes, and running each of those
     /// spends the budget answering questions nobody asked.
     private func run() {
-        if isCommand {
-            onCommandRun()
+        if isFinding {
+            onFinderPick()
             return
         }
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -212,8 +212,9 @@ struct SearchField: View {
         reload()
     }
 
-    /// Whether the box is asking for a command rather than searching.
-    private var isCommand: Bool { CommandBox.query(in: query) != nil }
+    /// Whether the box is asking one of its modes' questions rather than
+    /// searching.
+    private var isFinding: Bool { FinderBox.asking(in: query) != nil }
 
     /// Leave search, restoring the scope that was open.
     private func leave() {
