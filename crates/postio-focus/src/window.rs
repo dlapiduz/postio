@@ -1364,6 +1364,50 @@ impl FocusWindow {
         }
     }
 
+    /// A Ctrl-click (`Toggle`: `x` on that row) or Shift-click (`Range`: the
+    /// `Shift`+`j`/`k` walk from the anchor to that row), through the same
+    /// commands the keys run.
+    fn pick(&self, row: &FocusRow, pick: crate::list::row::Pick) {
+        use crate::list::row::Pick;
+        let Some(target) = self
+            .pane()
+            .and_then(|pane| pane.feed().list().position_of(row.id()))
+        else {
+            return;
+        };
+        match pick {
+            Pick::Toggle => {
+                self.cursor_to(Some(target));
+                self.act(CommandId::ToggleSelection);
+            }
+            Pick::Range => {
+                // From the anchor (the cursor, with none yet) to the row.
+                let from = self
+                    .imp()
+                    .picked
+                    .anchor()
+                    .and_then(|anchor| {
+                        self.pane()
+                            .and_then(|pane| pane.feed().list().position_of(anchor))
+                    })
+                    .or_else(|| self.pane().map(|pane| pane.cursor().selected()))
+                    .filter(|from| *from != gtk::INVALID_LIST_POSITION)
+                    .unwrap_or(target);
+                self.cursor_to(Some(from));
+                let (step, command) = if target >= from {
+                    (1, CommandId::ExtendSelectionDown)
+                } else {
+                    (-1, CommandId::ExtendSelectionUp)
+                };
+                let mut at = from;
+                while at != target {
+                    self.act(command);
+                    at = (i64::from(at) + step) as u32;
+                }
+            }
+        }
+    }
+
     /// Drop the selection; the cursor stays where it is.
     pub fn clear_selection(&self) {
         self.imp().picked.clear();
@@ -1619,6 +1663,13 @@ impl FocusWindow {
                     window.act(command);
                 }
             }
+        ));
+        // Ctrl-click and Shift-click are `x` and `Shift`+`j`/`k` for the
+        // row clicked: the cursor goes to it and the same commands run.
+        pane.connect_row_pick(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |row, pick| window.pick(row, pick)
         ));
         // Double-click (GTK's `activate` on the list) opens the row, as Enter
         // does: the cursor goes to it and the one `OpenMessage` command runs.

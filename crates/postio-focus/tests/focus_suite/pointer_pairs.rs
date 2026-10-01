@@ -108,3 +108,88 @@ pub fn escape_closes_the_message_and_the_key_map() {
         );
     });
 }
+
+/// Press a row's body the way the pointer does: through its own
+/// `GestureClick`, with `modifiers` held. (A local helper, named so it can
+/// merge into `support.rs` beside the real-input ones.)
+fn click_row_with(row: &postio_focus::list::row::RowWidget, modifiers: gdk::ModifierType) {
+    row.hold_modifiers(modifiers);
+    let controllers = row.observe_controllers();
+    let click = (0..controllers.n_items())
+        .filter_map(|at| controllers.item(at).and_downcast::<gtk::GestureClick>())
+        .next()
+        .expect("the row has a click gesture");
+    click.emit_by_name::<()>("pressed", &[&1i32, &300.0f64, &10.0f64]);
+    row.hold_modifiers(gdk::ModifierType::empty());
+    crate::settle();
+}
+
+fn selected_label(window: &postio_focus::window::FocusWindow) -> Vec<String> {
+    support::texts(&support::only(window, "focus-bulk-bar"))
+}
+
+/// Ctrl-click toggles the row it lands on, as `x` does; a plain click only
+/// moves the cursor and selects nothing.
+pub fn ctrl_click_toggles_a_rows_selection() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        let pane = window.pane().expect("the inbox");
+        let rows = pane.rows_on_screen();
+        let bar = support::only(&window, "focus-bulk-bar");
+        click_row_with(&rows[1], gdk::ModifierType::empty());
+        assert!(!bar.is_mapped(), "a plain click selects nothing");
+        click_row_with(&rows[1], gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || bar.is_mapped()).await,
+            "Ctrl-click selects the row"
+        );
+        click_row_with(&rows[3], gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || selected_label(&window).iter().any(|t| t == "2 selected"))
+                .await,
+            "{:?}",
+            selected_label(&window)
+        );
+        click_row_with(&rows[1], gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || selected_label(&window).iter().any(|t| t == "1 selected"))
+                .await,
+            "a second Ctrl-click unselects: {:?}",
+            selected_label(&window)
+        );
+    });
+}
+
+/// Shift-click extends the selection from the anchor to the row, the mouse
+/// pair of `Shift`+`j`/`k`.
+pub fn shift_click_extends_the_selection_to_a_range() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        let pane = window.pane().expect("the inbox");
+        let rows = pane.rows_on_screen();
+        click_row_with(&rows[1], gdk::ModifierType::CONTROL_MASK);
+        click_row_with(&rows[3], gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            crate::settle_until(async || selected_label(&window).iter().any(|t| t == "3 selected"))
+                .await,
+            "rows 1 to 3 are selected: {:?}",
+            selected_label(&window)
+        );
+        assert_eq!(pane.cursor().selected(), 3, "the cursor is on the clicked row");
+        click_row_with(&rows[0], gdk::ModifierType::SHIFT_MASK);
+        assert!(
+            crate::settle_until(async || selected_label(&window).iter().any(|t| t == "4 selected"))
+                .await,
+            "the range grows up to row 0 from the same anchor: {:?}",
+            selected_label(&window)
+        );
+    });
+}

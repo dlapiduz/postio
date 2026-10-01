@@ -10,7 +10,7 @@ use gtk::{glib, graphene};
 use super::feed::Feed;
 use super::heading::DayHeading;
 use super::model::RowObject;
-use super::row::{ActionHandler, RowWidget, SharedKeymap};
+use super::row::{ActionHandler, Pick, PickHandler, RowWidget, SharedKeymap};
 
 /// The list pane: what scrolls, what draws, and where its rows come from.
 #[derive(Clone)]
@@ -24,6 +24,8 @@ pub struct ListPane {
     pinned: Rc<Cell<bool>>,
     /// What a press on a row's drawn action runs, once the window says.
     on_action: Rc<std::cell::RefCell<Option<ActionHandler>>>,
+    /// What a Ctrl- or Shift-click on a row runs, once the window says.
+    on_pick: Rc<std::cell::RefCell<Option<PickHandler>>>,
     /// Whether a to-do's row offers Task: once a vault is configured.
     capture: Rc<Cell<bool>>,
 }
@@ -37,6 +39,7 @@ impl ListPane {
     pub fn new(feed: Feed, keymap: postio_core::Keymap, picked: SharedSelection) -> Self {
         let keymap: SharedKeymap = std::rc::Rc::new(std::cell::RefCell::new(keymap));
         let on_action: Rc<std::cell::RefCell<Option<ActionHandler>>> = Rc::default();
+        let on_pick: Rc<std::cell::RefCell<Option<PickHandler>>> = Rc::default();
         let capture: Rc<Cell<bool>> = Rc::default();
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup({
@@ -44,6 +47,7 @@ impl ListPane {
             let capture = Rc::clone(&capture);
             let picked = picked.clone();
             let on_action = Rc::clone(&on_action);
+            let on_pick = Rc::clone(&on_pick);
             move |_, item| {
                 let item = item
                     .downcast_ref::<gtk::ListItem>()
@@ -57,6 +61,13 @@ impl ListPane {
                     let handler = on_action.borrow().clone();
                     if let Some(handler) = handler {
                         handler(item, command);
+                    }
+                }));
+                let on_pick = Rc::clone(&on_pick);
+                row.set_on_pick(Rc::new(move |item, pick| {
+                    let handler = on_pick.borrow().clone();
+                    if let Some(handler) = handler {
+                        handler(item, pick);
                     }
                 }));
                 item.set_child(Some(&row));
@@ -116,6 +127,7 @@ impl ListPane {
             keymap,
             pinned,
             on_action,
+            on_pick,
             capture,
         }
     }
@@ -135,6 +147,11 @@ impl ListPane {
         handler: impl Fn(&super::FocusRow, postio_core::CommandId) + 'static,
     ) {
         self.on_action.replace(Some(Rc::new(handler)));
+    }
+
+    /// Run `handler` when a Ctrl- or Shift-click picks a row (T198).
+    pub fn connect_row_pick(&self, handler: impl Fn(&super::FocusRow, Pick) + 'static) {
+        self.on_pick.replace(Some(Rc::new(handler)));
     }
 
     /// Scroll to the very top, first heading showing, and hold it there

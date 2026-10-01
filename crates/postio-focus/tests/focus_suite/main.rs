@@ -400,6 +400,14 @@ const CASES: &[(&str, fn())] = &[
         pointer_pairs::a_double_click_on_a_row_opens_its_message_as_enter_does as fn(),
     ),
     (
+        "pointer_pairs::ctrl_click_toggles_a_rows_selection",
+        pointer_pairs::ctrl_click_toggles_a_rows_selection as fn(),
+    ),
+    (
+        "pointer_pairs::shift_click_extends_the_selection_to_a_range",
+        pointer_pairs::shift_click_extends_the_selection_to_a_range as fn(),
+    ),
+    (
         "pointer_pairs::a_press_in_a_rows_gutter_toggles_its_selection",
         pointer_pairs::a_press_in_a_rows_gutter_toggles_its_selection as fn(),
     ),

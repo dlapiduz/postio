@@ -59,7 +59,7 @@ from either device; "n/a" means the surface has no such thing.
 | List row | `j`/`k` move the cursor | click moves the cursor | present (GTK's single selection) |
 | List row | Enter opens | double-click opens, through the same `OpenMessage` command | fixed (T194) |
 | List row | `x` toggles selection | press in the row's gutter toggles it | fixed (T194) |
-| List row | `Shift`+`j`/`k` extends | Ctrl-click toggles, Shift-click ranges | gap: new task T198 |
+| List row | `Shift`+`j`/`k` extends | Ctrl-click toggles, Shift-click ranges, each through the commands the keys run (`ToggleSelection`; `ExtendSelectionDown`/`Up` from the anchor) | fixed (T198) |
 | List row | (none) | right-click menu of the row's verbs | gap: new task T199 |
 | List | `g g`, `G`, PageUp/PageDown | scroll wheel and scrollbar scroll | present (GTK's scrolled window) |
 | Open message | Escape closes | the X closes | present |

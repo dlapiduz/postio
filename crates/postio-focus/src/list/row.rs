@@ -139,6 +139,18 @@ pub type SharedKeymap = Rc<RefCell<Keymap>>;
 /// item.
 pub type ActionHandler = Rc<dyn Fn(&FocusRow, postio_core::CommandId)>;
 
+/// How a modified click on a row's body picks it (T198).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// Ctrl-click: toggle this row, as `x` does.
+    Toggle,
+    /// Shift-click: extend from the anchor to this row, as `Shift`+`j`/`k` do.
+    Range,
+}
+
+/// Run when a modified click picks a row.
+pub type PickHandler = Rc<dyn Fn(&FocusRow, Pick)>;
+
 mod imp {
     use super::*;
 
@@ -150,6 +162,10 @@ mod imp {
         pub keymap: RefCell<Option<SharedKeymap>>,
         pub picked: RefCell<Option<postio_ui::selection::SelectionState>>,
         pub on_action: RefCell<Option<ActionHandler>>,
+        pub on_pick: RefCell<Option<PickHandler>>,
+        /// Modifiers counted as held on top of the click's own event: the
+        /// seam a headless test drives a Ctrl- or Shift-click through.
+        pub held: std::cell::Cell<Option<gdk::ModifierType>>,
         pub capture: RefCell<Option<Rc<std::cell::Cell<bool>>>>,
     }
 
@@ -178,6 +194,25 @@ mod imp {
                 self.obj(),
                 move |gesture, _, x, y| {
                     if row.press_at(x as f32, y as f32) {
+                        gesture.set_state(gtk::EventSequenceState::Claimed);
+                        return;
+                    }
+                    // Ctrl-click and Shift-click pick; a plain click is the
+                    // list's, and moves the cursor.
+                    let held = gesture.current_event_state() | row.imp().held.get().unwrap_or_else(gdk::ModifierType::empty);
+                    let pick = if held.contains(gdk::ModifierType::CONTROL_MASK) {
+                        Some(Pick::Toggle)
+                    } else if held.contains(gdk::ModifierType::SHIFT_MASK) {
+                        Some(Pick::Range)
+                    } else {
+                        None
+                    };
+                    if let (Some(pick), Some(item), Some(handler)) = (
+                        pick,
+                        row.item().filter(|item| item.as_conversation().is_some()),
+                        row.imp().on_pick.borrow().clone(),
+                    ) {
+                        handler(&item, pick);
                         gesture.set_state(gtk::EventSequenceState::Claimed);
                     }
                 }
@@ -414,6 +449,18 @@ impl RowWidget {
         };
         handler(&item, command);
         true
+    }
+
+    /// Run `handler` when a Ctrl- or Shift-click picks the row.
+    pub fn set_on_pick(&self, handler: PickHandler) {
+        self.imp().on_pick.replace(Some(handler));
+    }
+
+    /// Count `modifiers` as held for the clicks that follow: how a test
+    /// gives the row's real `GestureClick` a Ctrl or Shift it cannot read
+    /// from a synthesized press.
+    pub fn hold_modifiers(&self, modifiers: gdk::ModifierType) {
+        self.imp().held.set(Some(modifiers));
     }
 
     /// Run `handler` when one of the row's drawn actions is pressed.
