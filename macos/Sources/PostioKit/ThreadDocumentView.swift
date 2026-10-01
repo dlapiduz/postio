@@ -181,6 +181,8 @@ public struct ThreadDocumentView: NSViewRepresentable {
         private var showing: String?
         /// Where each message is in the page on screen.
         private var anchors: [ThreadAnchorFfi] = []
+        /// When the page on its way into the web view was handed over.
+        private var loadingSince: ContinuousClock.Instant?
         /// A message to scroll to once the page that holds it has loaded.
         private var landing: String?
 
@@ -208,6 +210,10 @@ public struct ThreadDocumentView: NSViewRepresentable {
             }
             policy.didFinish = { [weak self] view in
                 guard let self else { return }
+                if let since = self.loadingSince {
+                    self.loadingSince = nil
+                    ReaderTiming.note("page drawn", ms: ReaderTiming.ms(since: since))
+                }
                 if let anchor = self.landing {
                     self.landing = nil
                     view.evaluateJavaScript(threadScrollScript(anchor: anchor))
@@ -257,10 +263,12 @@ public struct ThreadDocumentView: NSViewRepresentable {
             let source = self.source
             // `view` weakly, like `self`: a pane SwiftUI has let go of is not
             // the render's to keep (#1586).
+            let askedAt = ContinuousClock.now
             pending = Task { [weak self, weak view] in
                 let document = await Task.detached {
                     source.threadDocument(thread: thread, reduced: reduced)
                 }.value
+                ReaderTiming.note("page composed", ms: ReaderTiming.ms(since: askedAt), count: document.messages.count)
                 guard let self, let view, !Task.isCancelled, self.gate.isCurrent(token) else {
                     return
                 }
@@ -281,6 +289,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
                 // The one load choke point, so the one place a render is
                 // counted -- the counter GTK's reader notes into.
                 noteReaderRender()
+                self.loadingSince = ContinuousClock.now
                 view.loadHTMLString(
                     document.html,
                     baseURL: URL(string: "\(ReaderConfiguration.baseScheme):///")

@@ -855,6 +855,10 @@ final class Engine {
             // reload.
             if conversation.conversation != nil { documentRevision += 1 }
         case let .conversationReady(thread):
+            if let since = openingSince, showingThread == thread {
+                ReaderTiming.note("conversation read", ms: ReaderTiming.ms(since: since))
+                openingSince = nil
+            }
             // The read that `cursorMoved` started has landed. Checked against
             // what the pane is now showing: a cursor that moved on while the
             // store was reading must not have the old conversation drawn
@@ -1536,6 +1540,8 @@ final class Engine {
     /// The conversation the pane has been asked for, so a read that lands
     /// late can be dropped rather than drawn.
     private(set) var showingThread: Int64?
+    /// When the conversation now being read was asked for (`ReaderTiming`).
+    private var openingSince: ContinuousClock.Instant?
 
     /// Show the conversation the row at `row` belongs to.
     ///
@@ -1562,6 +1568,7 @@ final class Engine {
         // A different conversation is a different view, and the grants were
         // about the last one's messages.
         readerView.clear()
+        openingSince = ContinuousClock.now
         session.openConversation(thread)
     }
 
