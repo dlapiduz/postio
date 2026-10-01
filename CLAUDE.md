@@ -42,6 +42,7 @@ is the whole shape:
 
 ```bash
 git worktree add ~/src/postio-worktrees/<name> -b feature/<name> origin/main
+scripts/worktree-seed.sh ~/src/postio-worktrees/<name>   # warm target/ from a sibling, seconds
 cd ~/src/postio-worktrees/<name>
 # a linked worktree's `.git` is a file, so ask git where the directory is —
 # which is what issue-land.sh does to read it back
@@ -414,7 +415,10 @@ things stay shared:
   reflink (#1102): one second for 11 GB on btrfs. Either way Postio's own
   crates are dropped and rebuilt — they carry the tree's absolute path, and
   cargo does not notice a move — so the sanity tier is about a minute, not
-  the 19 of a cold tree. It is a copy, not the sharing #76 forbids. `--fresh` forces a new tree, `--cold` an unseeded one, and
+  the 19 of a cold tree. It is a copy, not the sharing #76 forbids. Any sibling
+  seeds, not only an `issue-*` one, and a tree made with plain `git worktree
+  add` -- a spec branch, a lane -- gets the same seed from
+  `scripts/worktree-seed.sh <tree>`; skip it and that tree builds cold. `--fresh` forces a new tree, `--cold` an unseeded one, and
   `--reuse` is the strict form that refuses instead of falling back. Trees nobody
   will miss -- clean, every commit upstream by patch id, quiet for a day --
   are reclaimed by `scripts/worktree-reap.sh` (a report by default, `--reap`
