@@ -683,6 +683,10 @@ pub struct Session {
     /// Built from the same `[keys]` above, resolved for the running platform,
     /// so `mod+k` is ⌘K here and Ctrl+K on Linux from one table.
     resolver: Mutex<postio_ui::keymap::Resolver>,
+    /// The bindings in force, resolved once and kept: see [`Session::keymap`].
+    /// Keyed by how many commands the registry holds, so an extension that
+    /// registers later is not left out of it.
+    keymap: Mutex<Option<(usize, postio_core::Keymap)>>,
     /// Events this boundary raises itself, merged into the drain alongside
     /// the engine's. `PageReady` lives here rather than in `postio-core`
     /// because paging is how this frontend reads a list, not something the
@@ -2041,6 +2045,7 @@ impl Session {
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 resolver: Mutex::new(build_resolver(&keys)),
+                keymap: Mutex::new(None),
                 ui: config.ui,
                 keys,
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
@@ -2137,6 +2142,7 @@ impl Session {
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             resolver: Mutex::new(build_resolver(&keys)),
+            keymap: Mutex::new(None),
             ui: ui_config,
             keys,
             engines: Mutex::new(Vec::new()),
@@ -2211,6 +2217,7 @@ impl Session {
             // leaving the last one on screen: a pane still drawing the
             // previous conversation under a new selection is worse than an
             // empty one, because it looks like an answer.
+            let asked = std::time::Instant::now();
             let rows = match store.list_page(request).await {
                 Ok(page) => crate::list::page_of(page).rows,
                 Err(error) => {
@@ -2218,6 +2225,12 @@ impl Session {
                     Vec::new()
                 }
             };
+            tracing::debug!(
+                thread,
+                rows = rows.len(),
+                elapsed_ms = asked.elapsed().as_millis() as u64,
+                "conversation read"
+            );
             let folded = crate::conversation::fold(thread, rows, chrono::Local::now());
             *held.lock().expect("conversation lock") = Some(folded);
             let _ = local.try_send(UiEvent::ConversationReady { thread });
@@ -4253,8 +4266,24 @@ impl Session {
     }
 
     /// The bindings in force, resolved for this platform.
+    ///
+    /// Resolved once and kept. Every button's tooltip asks for its key, the
+    /// reader's and the toolbar's re-render on every move between messages,
+    /// and resolving the keymap from the registry for each ask was about 50 ms
+    /// of the main thread per move (sampled in the running app). `[keys]`
+    /// does not change while a session is open; the registry can, when an
+    /// extension registers, and the cache is keyed by its size for that.
     fn keymap(&self) -> postio_core::Keymap {
-        postio_core::Keymap::resolve(&self.keys)
+        let commands = postio_core::registry::every_action().count();
+        let mut cached = self.keymap.lock().expect("keymap lock");
+        match &*cached {
+            Some((size, keymap)) if *size == commands => keymap.clone(),
+            _ => {
+                let keymap = postio_core::Keymap::resolve(&self.keys);
+                *cached = Some((commands, keymap.clone()));
+                keymap
+            }
+        }
     }
 
     /// Whether nothing is marked.

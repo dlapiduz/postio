@@ -210,3 +210,25 @@ fn slash_is_refused_while_a_field_has_the_keyboard() {
         "`/` was swallowed while something was being typed into"
     );
 }
+
+#[test]
+fn asking_for_a_buttons_key_does_not_resolve_the_keymap_again() {
+    // Found by sampling the running app while stepping through mail: every
+    // move re-rendered the reader's buttons and the toolbar, each asked for
+    // its key for a tooltip, and each ask resolved the whole keymap from the
+    // registry -- about 50 ms of the main thread per move, in a 100 ms
+    // budget. The bindings do not change while a session is open.
+    let session = session();
+    let _ = session.bindings_for("reply".to_owned());
+    let before = postio_core::test_support::keymap_resolutions();
+
+    for command in ["reply", "reply_all", "forward", "archive", "expand_all"] {
+        let _ = session.bindings_for(command.to_owned());
+    }
+
+    assert_eq!(
+        postio_core::test_support::keymap_resolutions() - before,
+        0,
+        "the keymap is resolved once per session, not once per question"
+    );
+}
