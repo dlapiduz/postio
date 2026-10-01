@@ -768,6 +768,9 @@ final class Engine {
         session.openScope(SidebarScope.of(row))
         listVersion += 1
         controller.reload(keepingCursorOn: session.cursorRow)
+        // A folder with mail shows its first message, as GTK's list does:
+        // a full list beside a blank pane reads as a broken app (#70).
+        session.settleCursor()
     }
 
     /// Show a folder by id, for a caller that has one and not a row.
@@ -846,6 +849,7 @@ final class Engine {
             // the plate has to give way to the list.
             listVersion += 1
             controller.reload(keepingCursorOn: session?.cursorRow)
+            session?.settleCursor()
             if case let .newMail(account, mailbox, messages) = event {
                 arrived(MailArrival(account: account, mailbox: mailbox, messages: messages))
             }
@@ -855,12 +859,14 @@ final class Engine {
             // that changed is what `reloadData(forRowIndexes:)` is for and
             // belongs with the rest of the list work.
             controller.reload(keepingCursorOn: session?.cursorRow)
+            session?.settleCursor()
         case .messageListChanged, .messagesChanged, .messagesRemoved:
             // Both halves: the table redraws its rows, and `listVersion`
             // tells SwiftUI that the *count* moved — which is what decides
             // between the list and the "No messages" plate around it.
             listVersion += 1
             controller.reload(keepingCursorOn: session?.cursorRow)
+            session?.settleCursor()
             // A body that arrived, or a flag that moved, may change the
             // conversation on screen -- but only if it is one of *its*
             // messages. See `PageRefresh`: every folder's sync used to
@@ -888,11 +894,13 @@ final class Engine {
                 conversation.show(read)
                 if rereading { documentRevision += 1 }
             }
-        case let .cursorMoved(row, message):
+        case let .cursorMoved(row, message, chosen):
             // Every move re-arms, and a move to a row whose page has not
             // arrived cancels: a clock armed against an unknown message would
-            // mark whichever one turned up.
-            dwell?.cursorMoved(to: message)
+            // mark whichever one turned up. The list landing on its first row
+            // by itself cancels too: it shows the message, and counting it
+            // read for having been opened would be #601.
+            dwell?.cursorMoved(to: chosen ? message : nil)
             // The table follows the model, never the other way round. `j` and
             // `k` move the cursor behind the boundary -- where the list
             // window, the selection and `aim` all are -- and this is the
@@ -1556,6 +1564,7 @@ final class Engine {
         guard case let .open(controller) = state else { return }
         listVersion += 1
         controller.reload(keepingCursorOn: session?.cursorRow)
+        session?.settleCursor()
     }
 
     /// The conversation the pane has been asked for, so a read that lands

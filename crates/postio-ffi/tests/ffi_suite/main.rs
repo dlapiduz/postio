@@ -28,6 +28,7 @@ mod facts;
 mod first_run;
 mod host;
 mod keys;
+mod landing;
 mod list;
 mod notice;
 mod palette;

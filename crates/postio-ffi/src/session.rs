@@ -596,6 +596,10 @@ pub struct Session {
     /// position means scanning the window, `j` happens on every keypress, and
     /// a row whose page has not arrived has no id to be found by at all.
     cursor_row: Mutex<Option<u32>>,
+    /// Whether a person has put the cursor anywhere in this list, as against
+    /// the list landing on its first row (`settle_cursor`). GTK's `landed`,
+    /// and it gates the same thing: the read clock, not the pane (#601).
+    chosen: std::sync::atomic::AtomicBool,
     /// The current result set, ranked, when a search is what the list shows.
     ///
     /// `None` means the list is showing a folder. Ranked rather than sorted,
@@ -1469,10 +1473,31 @@ impl Session {
     /// only heard about keyboard moves would have two paths to keep in step.
     #[uniffi::method(name = "setCursorRow")]
     pub fn set_cursor_row_ffi(&self, row: Option<u32>) {
-        if self.cursor_row() == row {
+        // The same row is still a move when it is the list's own landing: a
+        // click on it is the first time anybody chose it.
+        if self.cursor_row() == row && self.cursor_chosen() {
             return;
         }
         self.put_cursor_on(row);
+    }
+
+    /// Land on the first row if the list has mail and nothing is under the
+    /// cursor; name the cursor's message once its page has arrived.
+    ///
+    /// Asked after a folder opens and after every change to the list -- a
+    /// first sync filling an empty inbox is the case that showed nothing.
+    /// GTK's `SingleSelection` does this by itself (#70); `NSTableView`
+    /// does not. A cursor somebody put somewhere is left there.
+    #[uniffi::method(name = "settleCursor")]
+    pub fn settle_cursor_ffi(&self) {
+        self.settle_cursor();
+    }
+
+    /// Whether a person put the cursor where it is. See
+    /// [`settle_cursor`](Self::settle_cursor).
+    #[uniffi::method(name = "cursorChosen")]
+    pub fn cursor_chosen_ffi(&self) -> bool {
+        self.cursor_chosen()
     }
 
     /// Report which row the keyboard is on, or `None` for no row.
@@ -2125,6 +2150,7 @@ impl Session {
                 reachable: Mutex::new(Vec::new()),
                 cursor: Mutex::new(None),
                 cursor_row: Mutex::new(None),
+                chosen: Default::default(),
                 account_scope: Mutex::new(postio_core::Scope::default()),
                 conversation: Arc::default(),
                 sign_in: Mutex::new(None),
@@ -2223,6 +2249,7 @@ impl Session {
             reachable: Mutex::new(Vec::new()),
             cursor: Mutex::new(None),
             cursor_row: Mutex::new(None),
+            chosen: Default::default(),
             account_scope: Mutex::new(postio_core::Scope::default()),
             conversation: Arc::default(),
             sign_in: Mutex::new(None),
@@ -4386,10 +4413,57 @@ impl Session {
     /// position and no id, which is a real state — the cursor is somewhere,
     /// and what is there is still being read.
     fn put_cursor_on(&self, row: Option<u32>) {
+        self.chosen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.place_cursor(row, true);
+    }
+
+    /// Put the cursor on `row` and say so, `chosen` or not.
+    fn place_cursor(&self, row: Option<u32>, chosen: bool) {
         *self.cursor_row.lock().expect("cursor row lock") = row;
         let message = row.and_then(|row| self.row_at(row)).map(|row| row.id);
         *self.cursor.lock().expect("cursor lock") = message.map(postio_model::ids::MessageId::new);
-        self.emit_local(UiEvent::CursorMoved { row, message });
+        self.emit_local(UiEvent::CursorMoved {
+            row,
+            message,
+            chosen,
+        });
+    }
+
+    /// See [`settle_cursor_ffi`](Self::settle_cursor_ffi).
+    ///
+    /// The landing is not a choice: it does not set `chosen`, so the pane
+    /// shows the message and the read clock does not start for it -- or
+    /// every launch would mark the newest message read for having been
+    /// opened (#601).
+    pub fn settle_cursor(&self) {
+        let row = self.cursor_row();
+        match row {
+            None if self.row_count() > 0 => self.place_cursor(Some(0), false),
+            None => {}
+            Some(row) => {
+                // A cursor on a row whose page was in flight: now that it is
+                // here, the pane can be told what to show. `peek`, so this
+                // starts no read of its own.
+                if self.cursor.lock().expect("cursor lock").is_some() {
+                    return;
+                }
+                let Some(found) = self.list.lock().expect("list lock").peek(row) else {
+                    return;
+                };
+                *self.cursor.lock().expect("cursor lock") = Some(found);
+                self.emit_local(UiEvent::CursorMoved {
+                    row: Some(row),
+                    message: Some(found.get()),
+                    chosen: self.cursor_chosen(),
+                });
+            }
+        }
+    }
+
+    /// See [`cursor_chosen_ffi`](Self::cursor_chosen_ffi).
+    pub fn cursor_chosen(&self) -> bool {
+        self.chosen.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Extend the selection by one row in `delta`'s direction.
@@ -5084,6 +5158,9 @@ impl Session {
         *self.cursor.lock().expect("cursor lock") = None;
         *self.cursor_row.lock().expect("cursor row lock") = None;
         *self.anchor.lock().expect("anchor lock") = None;
+        // A new list, and nobody has chosen anything in it yet.
+        self.chosen
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The store and the runtime, while the session is open.

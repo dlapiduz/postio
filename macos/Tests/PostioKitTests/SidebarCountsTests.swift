@@ -31,7 +31,7 @@ import Testing
         // A folder read is a store round trip per account, so the events
         // that cannot have moved a count must not ask for one. `cursorMoved`
         // in particular fires on every `j`.
-        #expect(!SidebarCounts.movedBy(.cursorMoved(row: 3, message: 7)))
+        #expect(!SidebarCounts.movedBy(.cursorMoved(row: 3, message: 7, chosen: true)))
         #expect(!SidebarCounts.movedBy(.pageReady(page: 0)))
         #expect(!SidebarCounts.movedBy(.conversationReady(thread: 9)))
         #expect(!SidebarCounts.movedBy(.reindexProgress(account: 1, done: 1, total: 2)))

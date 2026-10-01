@@ -479,6 +479,16 @@ public final class PostioSession {
     /// The message the cursor is on, if its page has arrived.
     public var cursorMessage: Int64? { inner.cursorMessage() }
 
+    /// Land on the first row when the list has mail and nothing is under the
+    /// cursor, or name the cursor's message once its page arrives. Asked
+    /// after every change to the list; a cursor somebody placed stays put.
+    /// The landing raises `cursorMoved` with `chosen` false.
+    public func settleCursor() { inner.settleCursor() }
+
+    /// Whether a person put the cursor where it is, rather than the list
+    /// landing on its first row. Only a chosen row is read by dwell (#601).
+    public var cursorChosen: Bool { inner.cursorChosen() }
+
     /// The cursor rested on `message` long enough for it to count as read.
     ///
     /// Not `invoke`: `MarkReadOnDwell` is deliberately outside the registry,

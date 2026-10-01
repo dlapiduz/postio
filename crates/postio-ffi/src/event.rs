@@ -158,6 +158,12 @@ pub enum UiEvent {
         row: Option<u32>,
         /// The message on it, if its page has arrived.
         message: Option<i64>,
+        /// Whether a person put it there -- a key, a click, a verb -- rather
+        /// than the list landing on its first row by itself
+        /// ([`Session::settle_cursor`](crate::Session::settle_cursor)). The
+        /// pane shows either; only a chosen row starts the read clock
+        /// (#601, #71).
+        chosen: bool,
     },
     /// An account's connection changed.
     ConnectionChanged {
