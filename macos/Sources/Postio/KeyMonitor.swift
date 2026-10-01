@@ -76,6 +76,9 @@ final class KeyMonitor {
         guard let reduced = KeyEvent.reduce(event) else { return false }
 
         let typing = Self.isTyping()
+        // The field's own editing, before anything resolves it -- see
+        // `KeyDisposition.belongsToText`.
+        if KeyDisposition.belongsToText(reduced, typing: typing) { return false }
         let outcome = resolve(reduced, context(), typing)
         var acted = false
         switch outcome {

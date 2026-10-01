@@ -37,4 +37,21 @@ public enum KeyDisposition {
             return false
         }
     }
+
+    /// Whether `key` is the focused text field's own editing -- select all,
+    /// copy, cut, paste, undo, redo -- and so never a command while somebody
+    /// is typing.
+    ///
+    /// The resolver lets typing win over bare characters only; a modifier
+    /// chord still resolves. So `⌘A` in a text field resolved to the
+    /// registry's "select all messages", was swallowed by the monitor, and
+    /// the field never selected its text. These chords are the platform's,
+    /// in a field, whatever `[keys]` says; every other chord (`⌘K` for the
+    /// palette, say) still reaches its command from a field.
+    public static func belongsToText(_ key: KeyEvent.Reduced, typing: Bool) -> Bool {
+        guard typing, key.modifiers.command, !key.modifiers.control, !key.modifiers.option,
+              let character = key.character?.lowercased()
+        else { return false }
+        return ["a", "c", "v", "x", "z"].contains(character)
+    }
 }

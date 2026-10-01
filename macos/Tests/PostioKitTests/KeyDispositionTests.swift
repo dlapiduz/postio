@@ -38,4 +38,38 @@ import Testing
         #expect(!KeyDisposition.swallows(outcome: .unhandled, acted: false))
         #expect(!KeyDisposition.swallows(outcome: .unhandled, acted: true))
     }
+
+    // -- text editing belongs to the field (found driving the app) --------
+
+    private func chord(_ character: String, shift: Bool = false) -> KeyEvent.Reduced {
+        KeyEvent.Reduced(
+            character: character, name: nil,
+            modifiers: ModifiersFfi(control: false, option: false, shift: shift, command: true)
+        )
+    }
+
+    @Test func selectAllInATextFieldSelectsTheText() {
+        // `⌘A` in the add-account sheet's path field resolved to the
+        // registry's "select all messages", was swallowed, and the field
+        // never selected its text.
+        #expect(KeyDisposition.belongsToText(chord("a"), typing: true))
+    }
+
+    @Test func everyEditingChordStaysWithTheField() {
+        for key in ["a", "c", "v", "x", "z"] {
+            #expect(KeyDisposition.belongsToText(chord(key), typing: true), "⌘\(key)")
+        }
+        #expect(KeyDisposition.belongsToText(chord("Z", shift: true), typing: true), "⇧⌘Z")
+    }
+
+    @Test func outsideAFieldTheChordsAreTheApplications() {
+        // Over the list, `⌘A` *is* select all messages.
+        #expect(!KeyDisposition.belongsToText(chord("a"), typing: false))
+    }
+
+    @Test func otherCommandChordsStillReachTheirCommandsWhileTyping() {
+        // `⌘K` from the search field opens the palette; only editing is the
+        // field's.
+        #expect(!KeyDisposition.belongsToText(chord("k"), typing: true))
+    }
 }
