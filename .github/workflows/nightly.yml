@@ -85,7 +85,7 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: scripts
 
@@ -101,7 +101,7 @@ jobs:
     if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
       # postio-search and postio-config are pure leaves, and postio-storage /
@@ -142,7 +142,7 @@ jobs:
       # the tests that write half-gigabyte stores on a runner that has
       # already run out of disk once.
       - name: Cache cargo-nextest
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-nextest
           key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
@@ -189,7 +189,7 @@ jobs:
     if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
 
       # Denying warnings is what makes rustdoc's link checking mean anything:
@@ -217,7 +217,7 @@ jobs:
     if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
 
       - name: Give the GTK suites a runtime directory
@@ -230,7 +230,7 @@ jobs:
       # `ci.yml`'s Tests job does it: the key then changes when the pin does
       # and cannot go stale against it.
       - name: Cache cargo-nextest
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-nextest
           key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
