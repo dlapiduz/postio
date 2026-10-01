@@ -89,6 +89,22 @@ import Testing
         #expect(model.canContinue, "a local store has no credential to wait for")
     }
 
+    @Test func aLocalStoreHasNoCredentialStepToShow() {
+        // Step 2 on the local route was a page saying "Choose the store on
+        // the next step" and nothing else. A folder on this machine has no
+        // credential, so Continue goes straight to choosing it -- and the
+        // counter counts the steps this route has.
+        let model = AddAccountModel()
+        model.address = unknown
+        model.route = .localStore
+        #expect(model.counter == "1 of 2")
+        model.next()
+        #expect(model.step == .store)
+        #expect(model.counter == "2 of 2")
+        model.back()
+        #expect(model.step == .address, "and Back returns to the address, not to an empty page")
+    }
+
     @Test func typingAnotherAddressSuggestsAgain() {
         // The suggestion still follows the address while it is being typed:
         // only the step forward stopped overriding a choice.

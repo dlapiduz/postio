@@ -76,7 +76,18 @@ public final class AddAccountModel: Identifiable {
     }
 
     /// The counter in the corner: `1 of 3`.
-    public var counter: String { "\(step.rawValue) of \(Step.allCases.count)" }
+    /// "2 of 3" -- counting the steps *this route* has. A local store has no
+    /// credential, so it has two.
+    public var counter: String {
+        let steps = steps
+        let at = (steps.firstIndex(of: step) ?? 0) + 1
+        return "\(at) of \(steps.count)"
+    }
+
+    /// The steps the selected route walks through, in order.
+    private var steps: [Step] {
+        route == .localStore ? [.address, .store] : Step.allCases
+    }
 
     /// What the verdict strip says, before an address has been typed and
     /// after.
@@ -143,7 +154,9 @@ public final class AddAccountModel: Identifiable {
             // set as it was typed, unless somebody picked another. Putting
             // the suggestion back here discarded that choice.
             prefill()
-            step = .credentials
+            // The next step this route has: a local store has no credential,
+            // and the page that said so was a step with nothing on it.
+            step = route == .localStore ? .store : .credentials
         case .credentials: step = .store
         case .store: break
         }
@@ -152,7 +165,12 @@ public final class AddAccountModel: Identifiable {
     /// Back one step. The first step's back is Cancel, which the sheet owns.
     public func back() {
         problem = nil
-        step = Step(rawValue: step.rawValue - 1) ?? .address
+        let steps = steps
+        if let at = steps.firstIndex(of: step), at > 0 {
+            step = steps[at - 1]
+        } else {
+            step = .address
+        }
     }
 
     /// Finish: write the account, and answer whether the sheet may close.

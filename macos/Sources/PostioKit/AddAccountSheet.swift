@@ -1,5 +1,6 @@
 import PostioFFI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Adding an account: a sheet dropping from the Settings window's title bar
 /// (#1279, canvas screen 27).
@@ -18,6 +19,8 @@ public struct AddAccountSheet: View {
     private let done: (Bool) -> Void
 
     @FocusState private var focusedAddress: Bool
+    /// Whether the folder picker for the store path is open.
+    @State private var choosingStore = false
 
     public init(
         session: PostioSession?,
@@ -257,8 +260,21 @@ public struct AddAccountSheet: View {
         VStack(alignment: .leading, spacing: PostioTokens.space4) {
             labelled("Store path") {
                 VStack(alignment: .leading, spacing: PostioTokens.space2) {
-                    TextField("~/mail", text: $model.storePath)
-                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing: PostioTokens.space2) {
+                        TextField("~/mail", text: $model.storePath)
+                            .textFieldStyle(.roundedBorder)
+                        // The platform's own folder picker: a path typed by
+                        // hand is the one thing nobody on a Mac expects to do.
+                        Button("Choose…") { choosingStore = true }
+                            .fileImporter(
+                                isPresented: $choosingStore,
+                                allowedContentTypes: [.folder]
+                            ) { result in
+                                if case let .success(url) = result {
+                                    model.storePath = url.path
+                                }
+                            }
+                    }
                     // Said where the field is, as it is typed: a directory
                     // picked by mistake must not become an account that looks
                     // empty (#1278).
