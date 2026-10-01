@@ -776,7 +776,6 @@ impl<'a> MessageRepository<'a> {
 
             // Read once for the batch, like the two snapshots above.
             let unacknowledged = unacknowledged_flag_changes(&transaction).await?;
-            let awaiting_identity = local_copies_awaiting_identity(&transaction).await?;
 
             for message in batch.iter_mut() {
                 // The identity is what names a message (#543); the wire pair is
@@ -808,12 +807,18 @@ impl<'a> MessageRepository<'a> {
                 // on: the copy this client wrote before the server had named it
                 // (#942). Tried after both server-identity routes so a message
                 // the server *can* place is never resolved by a `Message-ID`.
-                let existing = existing.or_else(|| {
-                    let rfc = message.rfc_message_id.as_ref()?;
-                    awaiting_identity
-                        .get(&(message.mailbox_id, rfc.as_str().to_ascii_lowercase()))
-                        .copied()
-                });
+                let existing = match (existing, &message.rfc_message_id) {
+                    (None, Some(rfc)) => {
+                        find_awaiting_identity(
+                            &transaction,
+                            message.account_id,
+                            message.mailbox_id,
+                            rfc,
+                        )
+                        .await?
+                    }
+                    (existing, _) => existing,
+                };
 
                 match existing {
                     Some(id) => {
@@ -1040,7 +1045,8 @@ impl<'a> MessageRepository<'a> {
         let sql = format!(
             "UPDATE messages
                 SET mailbox_id = ?1, uid = NULL, uid_validity = NULL, mod_seq = NULL,
-                    remote_id = NULL, has_pending_operations = 1
+                    remote_id = NULL, has_pending_operations = 1,
+                    rfc_message_id = lower(rfc_message_id)
               WHERE id IN ({})",
             placeholders(ids.len(), 2)
         );
@@ -2292,12 +2298,16 @@ fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
         integer(message.account_id.get()),
         integer(message.mailbox_id.get()),
         maybe_integer(message.thread_id.map(ThreadId::get)),
-        maybe_text(
-            message
-                .rfc_message_id
-                .as_ref()
-                .map(|id| id.as_str().to_owned()),
-        ),
+        // A row the server has not named yet is stored folded, so that
+        // `find_awaiting_identity` can seek it by binary equality. Every other
+        // row keeps the case it arrived in: a reply quotes it byte-for-byte.
+        maybe_text(message.rfc_message_id.as_ref().map(|id| {
+            if message.server.remote_id.is_none() && message.server.uid.is_none() {
+                id.folded()
+            } else {
+                id.as_str().to_owned()
+            }
+        })),
         maybe_text(
             message
                 .in_reply_to
@@ -2765,11 +2775,14 @@ async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId
 
 /// Rows this client wrote that the server has not named yet, by `Message-ID`.
 ///
-/// `(mailbox, message-id) -> id`, and only for rows with **no server identity
-/// at all** — no `remote_id`, no uid. Postio writes a sent message into Sent
-/// the moment it is on its way (#942), which is well before the `APPEND` that
-/// gives it one, and the same thing happens whenever that append fails and
-/// the folder is flagged for resync instead.
+/// The id of the local copy this client wrote that the server has not named
+/// yet, if `rfc` is its `Message-ID` and it is in `mailbox_id`.
+///
+/// Only a row with **no server identity at all** — no `remote_id`, no uid.
+/// Postio writes a sent message into Sent the moment it is on its way (#942),
+/// which is well before the `APPEND` that gives it one, and the same thing
+/// happens whenever that append fails and the folder is flagged for resync
+/// instead.
 ///
 /// Without this, neither of the two things [`MessageRepository::upsert_batch`]
 /// matches on can find such a row, so a resync that fetched the server's own
@@ -2778,30 +2791,41 @@ async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId
 /// **Narrow on purpose.** A row that already carries an identity is a
 /// different message that happens to share a `Message-ID` — a mailing list's
 /// copy of one's own post is the ordinary case — and collapsing those would
-/// lose one of them. `COLLATE NOCASE` matches
-/// [`MessageRepository::ids_by_rfc_message_id`], since a `Message-ID` is
-/// compared case-insensitively.
-async fn local_copies_awaiting_identity(
+/// lose one of them.
+///
+/// **One indexed seek per message that missed both identity routes**, not one
+/// scan per batch. The scan this replaced read every local copy in the store
+/// before the first message was placed, which a first sync paid on every
+/// batch while the store grew under it: an hour at 100% CPU, decrypting every
+/// page of `messages`, for a map that was empty. And no partial index can make
+/// it cheap — this planner will not read through one (ADR 0017).
+///
+/// A `Message-ID` is compared case-insensitively, but `COLLATE NOCASE` would
+/// make the index unusable, so the comparison is binary against the *folded*
+/// key: [`row_values`] stores a row with no server identity folded
+/// ([`RfcMessageId::folded`]), which is the only kind this looks for.
+async fn find_awaiting_identity(
     connection: &Connection,
-) -> Result<std::collections::HashMap<(MailboxId, String), MessageId>> {
-    sql::all(
+    account_id: AccountId,
+    mailbox_id: MailboxId,
+    rfc: &RfcMessageId,
+) -> Result<Option<MessageId>> {
+    // Cached: once per message that no server coordinate placed.
+    let mut statement = sql::statement(
         connection,
-        "SELECT mailbox_id, lower(rfc_message_id), id
-           FROM messages
-          WHERE remote_id IS NULL
+        "SELECT id FROM messages
+          WHERE account_id = ?1 AND rfc_message_id = ?2 AND mailbox_id = ?3
+            AND remote_id IS NULL
             AND uid IS NULL
-            AND rfc_message_id IS NOT NULL
             AND deleted_locally = 0",
-        (),
-        |row| {
-            Ok((
-                (MailboxId::new(row.col::<i64>(0)?), row.col::<String>(1)?),
-                MessageId::new(row.col(2)?),
-            ))
-        },
+    )
+    .await?;
+    crate::sql::first_of(
+        &mut statement,
+        bind![account_id.get(), rfc.folded(), mailbox_id.get()],
+        |row| Ok(MessageId::new(row.col(0)?)),
     )
     .await
-    .map(|rows| rows.into_iter().collect())
 }
 
 /// `(mailbox, uid_validity, uid)` for every message with an undrained
