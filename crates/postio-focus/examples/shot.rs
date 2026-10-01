@@ -24,6 +24,9 @@
 //! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
 //! | `10` | The folders popover over screen 01 |
 //! | `26` | The row menu (T199), right-clicked on a row below screen 01's selection |
+//! | `27` | A newsletter that paints its own page, opened: on paper (handoff screens 03, 04) |
+//! | `28` | Office mail in black text, opened: in app colours (handoff screens 11, 13) |
+//! | `29` | The same office mail switched to the original with `O`: on paper (handoff screen 12) |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -65,7 +68,6 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use gtk::glib;
 use postio_core::CommandId;
 use postio_focus::window::FocusWindow;
-use postio_widgets::list_model::WindowedModel;
 use postio_model::listing::MarkerKind;
 use postio_model::{
     AccountId, Attachment, EmailAddress, Flag, FlagSet, Label, MailboxId, MailboxRole, Message,
@@ -76,6 +78,7 @@ use postio_storage::repository::{
     ThreadingRepository,
 };
 use postio_storage::{BlobStore, Store};
+use postio_widgets::list_model::WindowedModel;
 
 /// This week's newsletters, held and delivered as screen 01's digest row:
 /// who, about what, and how many minutes before 16:09 each came.
@@ -208,7 +211,16 @@ const SCREENS: &[(&str, &str)] = &[
     ("23", "the email from a summary's reference"),
     ("24", "\"Digest this sender\" over the inbox"),
     ("25", "the capture sheet: a task from a to-do, into a vault"),
-    ("26", "the row menu, right-clicked on a row outside the selection"),
+    (
+        "26",
+        "the row menu, right-clicked on a row outside the selection",
+    ),
+    ("27", "a newsletter opened, on paper"),
+    ("28", "office mail opened, in app colours"),
+    (
+        "29",
+        "office mail opened, switched to the original on paper",
+    ),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -578,6 +590,9 @@ fn render(args: &[String]) -> Result<String, String> {
     if matches!(request.screen.as_str(), "05" | "06") {
         runtime.block_on(compose_demo(&database, account));
     }
+    if matches!(request.screen.as_str(), "27" | "28" | "29") {
+        runtime.block_on(treatment_demo(&database, account, request.screen == "27"));
+    }
     let blobs = BlobStore::open(
         blobs_dir.path().to_path_buf(),
         &postio_storage::test_support::blob_keys(),
@@ -794,6 +809,45 @@ fn stage(
             }) {
                 return Err("the opened message never drew with its sentence lit".into());
             }
+        }
+        "27" | "28" | "29" => {
+            pick_three();
+            pane.cursor().set_selected(OPENED as u32 + 1);
+            window.act(CommandId::OpenMessage);
+            let Some(reading) = window.reading() else {
+                return Err("Enter opened nothing".into());
+            };
+            let drawn = |words: &str| {
+                settle_until(|| {
+                    reading
+                        .dialog()
+                        .child()
+                        .is_some_and(|content| content.is_mapped() && content.width() > 0)
+                        && reading.body_text().contains(words)
+                        && reading.reader().treated().is_some()
+                        && reading.reader().view().tiles_settled()
+                })
+            };
+            let words = if screen == "27" {
+                "dividing perennials"
+            } else {
+                "temporary routes"
+            };
+            if !drawn(words) {
+                return Err("the opened message never drew under a treatment".into());
+            }
+            if screen == "29" {
+                let reader = reading.reader();
+                reader.switch_treatment();
+                if !settle_until(|| {
+                    reader.treatment() == postio_body::treatment::Treatment::Paper
+                        && reader.view().tiles_settled()
+                }) {
+                    return Err("O never put the office mail on paper".into());
+                }
+            }
+            let settled = Instant::now();
+            settle_until(|| settled.elapsed() > Duration::from_millis(300));
         }
         "07" | "08" | "09" => {
             pick_three();
@@ -1248,6 +1302,79 @@ fn opened_parts() -> Vec<Attachment> {
         part
     })
     .collect()
+}
+
+/// Screens 27-29 (the message dialog redesign, T214): the row screen 04
+/// opens, refiled as one of the handoff's two HTML bodies from the corpus --
+/// the newsletter that paints its own page, or the office mail in black
+/// text with the question its card quotes. The row keeps its place, so the
+/// screens open it the way screen 04 does.
+async fn treatment_demo(database: &Store, account: AccountId, newsletter: bool) {
+    let connection = database.connect().await.expect("a connection");
+    let messages = MessageRepository::new(&connection);
+    let newest = RfcMessageId::new(format!(
+        "<demo.{OPENED}.{}@example.test>",
+        TODAY[OPENED].messages - 1
+    ));
+    let Some(id) = messages
+        .ids_by_rfc_message_id(account, &newest)
+        .await
+        .expect("a lookup")
+        .first()
+        .copied()
+    else {
+        return;
+    };
+    let (fixture, from, subject, to) = if newsletter {
+        (
+            "html-newsletter-own-page",
+            EmailAddress::new(Some("Field Notes Weekly"), "news@example.com"),
+            "Issue 48: The quiet season",
+            EmailAddress::new(Some("You"), "you@example.com"),
+        )
+    } else {
+        (
+            "html-work-black-text",
+            EmailAddress::new(Some("Dana Whitfield"), "facilities@example.com"),
+            "Building access changes from Monday",
+            EmailAddress::new(None::<String>, "all-staff@example.com"),
+        )
+    };
+    if let Some(mut message) = messages.get(id).await.expect("a read") {
+        message.from = vec![from];
+        message.subject = Some(subject.to_owned());
+        message.to = vec![to];
+        message.cc = Vec::new();
+        messages.update(&mut message).await.expect("its headers");
+    }
+    let body = postio_model::mime::parse(postio_model::test_corpus::load(fixture).bytes()).body;
+    messages
+        .set_body(
+            id,
+            &postio_storage::repository::StoredBody {
+                text: body.text,
+                html: body.html,
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            postio_model::BodyState::Full,
+        )
+        .await
+        .expect("a body");
+    let markers = MarkerRepository::new(&connection);
+    if newsletter {
+        markers.dismiss(id, None).await.expect("no card");
+    } else {
+        markers
+            .replace(&marker(
+                id,
+                &Ask::Question("Please confirm by Friday that your team has seen this."),
+                today(),
+            ))
+            .await
+            .expect("its card");
+    }
 }
 
 /// The demo store: the storage seed, and today's inbox on top of it.

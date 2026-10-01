@@ -1490,8 +1490,11 @@ impl Reader {
         line.connect_always(move || {
             switcher.remember();
         });
+        // Directly over the body, under any notice: the line is about the
+        // body, and a notice above it is about the message (T208's
+        // "render-mode line -> body 12").
         self.container
-            .insert_child_after(&line.widget(), Some(&self.under_header));
+            .insert_child_after(&line.widget(), Some(&self.notices.widget()));
         self.place.line.replace(Some(line));
     }
 
@@ -2377,11 +2380,10 @@ fn flow_document(document: &str) -> String {
             "class=\"{}\"",
             postio_ui::reader::document::SENDERS_SHEET_CLASS
         ))
-        || document.contains(&format!(
-            "{}=\"{}\"",
-            postio_body::treatment::TREATMENT_ATTRIBUTE,
-            Treatment::Paper.attribute_value()
-        ));
+        || document.contains(
+            &postio_ui::reader::document::contain_body_treated("", Treatment::Paper)
+                .replace("</div>", ""),
+        );
     let mut css = String::from(FLOW_CSS);
     if !own_page {
         css.push_str(FLOW_FLAT_CSS);
@@ -2823,6 +2825,28 @@ fn collect_labels(widget: &gtk::Widget, found: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+    /// A body in app colours is flat in the column; one on paper keeps its
+    /// sheet. The stylesheet names both treatments, so the test is the
+    /// container's own stamp, not the attribute anywhere in the document.
+    #[test]
+    fn the_column_flattens_app_colours_and_keeps_papers_sheet() {
+        use postio_ui::reader::document::document_for_treated;
+        let flat = |treatment| {
+            super::flow_document(&document_for_treated(
+                "<p>x</p>",
+                "",
+                super::RemoteImages::Blocked,
+                treatment,
+            ))
+            .contains(super::FLOW_FLAT_CSS)
+        };
+        assert!(
+            flat(super::Treatment::AppColours),
+            "app colours kept a frame"
+        );
+        assert!(!flat(super::Treatment::Paper), "paper lost its sheet");
+    }
+
     /// The column's ground is a token resolved at render time, never a
     /// colour written into the sheet the column adds (T203).
     #[test]
