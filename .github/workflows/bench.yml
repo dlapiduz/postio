@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: read
+  # The `changed` job reads the previous run's head SHA.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,8 +28,30 @@ env:
   CARGO_BUILD_JOBS: 4
 
 jobs:
+  # A 33-minute release compile over a tree nobody touched proves nothing
+  # new, so a scheduled run is skipped when `main` has not moved (#1710).
+  # Clippy's `--all-targets` already type-checks the benches on every pull
+  # request; what this adds is the release-profile build of them.
+  changed:
+    name: Anything to compile
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: scripts
+
+      - name: Compare against the last run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-anything-new.sh bench.yml >> "$GITHUB_OUTPUT"
+
   bench:
     name: Benches (compile only)
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
