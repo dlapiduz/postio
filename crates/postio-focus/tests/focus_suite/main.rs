@@ -328,6 +328,10 @@ const CASES: &[(&str, fn())] = &[
         treatments::switching_the_treatment_leaves_the_column_where_it_was as fn(),
     ),
     (
+        "open_layout::the_dialogs_chrome_is_set_in_the_system_faces",
+        open_layout::the_dialogs_chrome_is_set_in_the_system_faces as fn(),
+    ),
+    (
         "remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for",
         remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for as fn(),
     ),

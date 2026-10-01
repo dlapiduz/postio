@@ -8,7 +8,8 @@
  * system to dark repaints Focus at once (US1 scenario 6).
  *
  * No hex, no rgba literal: every role is one of libadwaita's colours, or a
- * mix of one with transparency (ARCHITECTURE §10).
+ * mix of one with transparency (ARCHITECTURE §10). The one exception is the
+ * message dialog's surface, ink and rules, at the end of this file.
  *
  * THE ACCENT IS RESERVED (FR-091): action markers, the keyboard focus ring
  * and the has-action toggle. `--postio-accent` is defined because the shared
@@ -75,13 +76,19 @@
 
 /* ── The open-message dialog's palette ─────────────────────────────────
  *
- * The one exception to the rule above, and a deliberate one: the
- * maintainer's message-dialog handoff (2026-10-01, SPEC.md section 6; T209)
- * gives the dialog a palette of its own, light and dark, so the reading
- * surface is the same paper in every theme. Its colours are here, as the
- * dialog's values of the same roles every Focus rule already reads, so no
- * widget names a colour; `.focus-open` is the dialog's content, and every
- * rule inside it picks these up. The window behind keeps libadwaita's.
+ * The maintainer's message-dialog handoff (2026-10-01, SPEC.md section 6;
+ * T209) gives the dialog's surface, ink, hairlines and scrim values of its
+ * own, light and dark, so the reading surface is the same paper in every
+ * theme. They are here, as the dialog's values of the same roles every
+ * Focus rule already reads, so no widget names a colour; `.focus-open` is
+ * the dialog's content, and every rule inside it picks these up. The window
+ * behind keeps libadwaita's.
+ *
+ * The accent is not among them (spec C26): the handoff's teal gave way to
+ * the system's, as everywhere else in Focus. The dialog keeps the roles
+ * above, read from libadwaita's `--accent-color`; the action card's fill is
+ * that accent at 8% (light) and 12% (dark), and the body's links are the
+ * accent itself (the `.postio-flow-accent` probe reads `--postio-accent`).
  *
  * Light and dark are told apart by the media query, which GTK evaluates
  * for an application's provider since 4.20 and libadwaita drives from
@@ -101,10 +108,8 @@
   --postio-dim: #68716d;
   --postio-hairline: rgb(24 34 31 / 9%);
   --postio-hairline-strong: rgb(24 34 31 / 16%);
-  --postio-accent: #0d7068;
-  --postio-accent-text: #0d7068;
-  /* The action card's fill: the accent at 8%. */
-  --postio-accent-soft: rgb(13 112 104 / 8%);
+  /* The action card's fill: the system's accent at 8%. */
+  --postio-accent-soft: color-mix(in srgb, var(--accent-color) 8%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -120,9 +125,7 @@
     --postio-dim: #909a96;
     --postio-hairline: rgb(255 255 255 / 8%);
     --postio-hairline-strong: rgb(255 255 255 / 14%);
-    --postio-accent: #5fc4b5;
-    --postio-accent-text: #5fc4b5;
-    /* The accent at 12%. */
-    --postio-accent-soft: rgb(95 196 181 / 12%);
+    /* The system's accent at 12%. */
+    --postio-accent-soft: color-mix(in srgb, var(--accent-color) 12%, transparent);
   }
 }

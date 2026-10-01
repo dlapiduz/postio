@@ -559,7 +559,9 @@ pub fn an_absent_block_takes_its_gap_with_it() {
 
 /// T209: the dialog wears the handoff's palette, light and dark: its
 /// surface, the sender block on the surface with no box of its own, and
-/// the action card filled with the accent at 8% (light) and 12% (dark).
+/// the action card filled with the system's accent at 8% (light) and 12%
+/// (dark). The accent is libadwaita's, never the handoff's teal (spec C26):
+/// set another and the card follows it.
 pub fn the_dialog_wears_its_palette_in_light_and_dark() {
     crate::gtk_case(async {
         if !support::display() {
@@ -572,53 +574,92 @@ pub fn the_dialog_wears_its_palette_in_light_and_dark() {
         let window = opened_at(&fixture, 1, WIDE).await;
         let reading = window.reading().expect("open");
         let dialog = reading.dialog();
-        // surface, accent: the handoff's SPEC.md section 6.
+        // The handoff's surface (SPEC.md section 6); the accent is the
+        // system's, as libadwaita resolves it for the scheme.
         let palettes = [
-            (
-                adw::ColorScheme::ForceLight,
-                [0xfd, 0xfd, 0xfb],
-                [0x0d, 0x70, 0x68],
-                0.08,
-            ),
-            (
-                adw::ColorScheme::ForceDark,
-                [0x1c, 0x21, 0x20],
-                [0x5f, 0xc4, 0xb5],
-                0.12,
-            ),
+            (adw::ColorScheme::ForceLight, [0xfd, 0xfd, 0xfb], 0.08),
+            (adw::ColorScheme::ForceDark, [0x1c, 0x21, 0x20], 0.12),
         ];
-        for (scheme, surface, accent, share) in palettes {
-            manager.set_color_scheme(scheme);
-            crate::settle_for(std::time::Duration::from_millis(300)).await;
-            let picture = postio_widgets::capture::texture(&dialog).expect("drawn");
-            let sender = edges(&shown(&dialog, "focus-open-header-card"), &dialog);
-            let card = edges(&shown(&dialog, "focus-marker-card"), &dialog);
-            // In the dialog's margin left of the column, and inside the
-            // sender block between its rows' words and the date.
-            let inside = edges(&dialog.child().expect("content"), &dialog).0 as i32;
-            let ground = pixel(&picture.texture, inside + 20, sender.1 as i32 + 30);
-            let in_sender = pixel(
-                &picture.texture,
-                sender.2 as i32 - 140,
-                sender.1 as i32 + 40,
-            );
-            let in_card = pixel(&picture.texture, card.0 as i32 + 4, card.1 as i32 + 4);
-            let filled = std::array::from_fn(|i| {
-                (f64::from(surface[i]) * (1.0 - share) + f64::from(accent[i]) * share).round() as u8
-            });
-            assert!(
-                same(ground, surface),
-                "{scheme:?}: the surface is {ground:?}, not {surface:?}"
-            );
-            assert!(
-                same(in_sender, surface),
-                "{scheme:?}: the sender block is filled {in_sender:?}; it has no box"
-            );
-            assert!(
-                same(in_card, filled),
-                "{scheme:?}: the action card is {in_card:?}, not the accent at {share}: {filled:?}"
-            );
+        // The system's own accent, then another one set the way libadwaita
+        // sets it -- its named colour, which every `--accent-*` derives
+        // from -- so a card that kept any fixed colour cannot pass both.
+        let other = adw::AccentColor::Red;
+        let display = gdk::Display::default().expect("a display");
+        let setting = gtk::CssProvider::new();
+        for accent in [None, Some(other)] {
+            if let Some(accent) = accent {
+                let rgba = accent.to_rgba();
+                setting.load_from_string(&format!(
+                    "@define-color accent_bg_color rgb({}, {}, {});",
+                    (rgba.red() * 255.0).round(),
+                    (rgba.green() * 255.0).round(),
+                    (rgba.blue() * 255.0).round(),
+                ));
+                gtk::style_context_add_provider_for_display(
+                    &display,
+                    &setting,
+                    gtk::STYLE_PROVIDER_PRIORITY_USER,
+                );
+            }
+            for (scheme, surface, share) in palettes {
+                manager.set_color_scheme(scheme);
+                crate::settle_for(std::time::Duration::from_millis(300)).await;
+                let dark = manager.is_dark();
+                let standalone = accent
+                    .unwrap_or_else(|| manager.accent_color())
+                    .to_standalone_rgba(dark);
+                let accent_rgb = [standalone.red(), standalone.green(), standalone.blue()]
+                    .map(|channel| (channel * 255.0).round() as u8);
+                let picture = postio_widgets::capture::texture(&dialog).expect("drawn");
+                let sender = edges(&shown(&dialog, "focus-open-header-card"), &dialog);
+                let card = edges(&shown(&dialog, "focus-marker-card"), &dialog);
+                // In the dialog's margin left of the column, and inside the
+                // sender block between its rows' words and the date.
+                let inside = edges(&dialog.child().expect("content"), &dialog).0 as i32;
+                let ground = pixel(&picture.texture, inside + 20, sender.1 as i32 + 30);
+                let in_sender = pixel(
+                    &picture.texture,
+                    sender.2 as i32 - 140,
+                    sender.1 as i32 + 40,
+                );
+                let in_card = pixel(&picture.texture, card.0 as i32 + 4, card.1 as i32 + 4);
+                let filled = std::array::from_fn(|i| {
+                    (f64::from(surface[i]) * (1.0 - share) + f64::from(accent_rgb[i]) * share)
+                        .round() as u8
+                });
+                // libadwaita's own standalone colour is clamped to sRGB; the
+                // stylesheet mixes the unclamped oklab one, which for a
+                // saturated accent in dark lands a few steps off it. The
+                // handoff's teal is further than this from red, in both the
+                // card and the links, so a fixed teal still fails.
+                let close = |seen: [u8; 3], want: [u8; 3]| {
+                    seen.iter().zip(want).all(|(a, b)| a.abs_diff(b) <= 10)
+                };
+                // The body's links: the accent the column hands the body.
+                let link = support::only(&dialog, "postio-flow-accent").color();
+                let link = [link.red(), link.green(), link.blue()]
+                    .map(|channel| (channel * 255.0).round() as u8);
+                assert!(
+                    close(link, accent_rgb),
+                    "{scheme:?}, accent {accent:?}: the body's links are {link:?}, not the \
+                     system's accent {accent_rgb:?}"
+                );
+                assert!(
+                    same(ground, surface),
+                    "{scheme:?}: the surface is {ground:?}, not {surface:?}"
+                );
+                assert!(
+                    same(in_sender, surface),
+                    "{scheme:?}: the sender block is filled {in_sender:?}; it has no box"
+                );
+                assert!(
+                    close(in_card, filled),
+                    "{scheme:?}, accent {accent:?}: the action card is {in_card:?}, not the \
+                     system's accent {accent_rgb:?} at {share}: {filled:?}"
+                );
+            }
         }
+        gtk::style_context_remove_provider_for_display(&display, &setting);
         manager.set_color_scheme(adw::ColorScheme::Default);
     });
 }
@@ -674,6 +715,56 @@ pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
         assert!(
             crate::settle_until(async || window.open_picker().is_some()).await,
             "choosing Label did not run Label"
+        );
+    });
+}
+
+
+
+
+
+
+/// Spec C25: the dialog's chrome keeps the system's faces -- Adwaita Sans,
+/// and Adwaita Mono for keys, dates and addresses -- at the handoff's sizes,
+/// where the handoff draws Barlow and IBM Plex Mono. Only the body, drawn
+/// by the renderer, is set in Barlow.
+pub fn the_dialogs_chrome_is_set_in_the_system_faces() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        every_block(&fixture).await;
+        let window = opened_at(&fixture, 1, WIDE).await;
+        let reading = window.reading().expect("open");
+        let mut faces = std::collections::BTreeSet::new();
+        let mut stack = vec![reading.dialog().upcast::<gtk::Widget>()];
+        while let Some(widget) = stack.pop() {
+            if let Some(label) = widget.downcast_ref::<gtk::Label>()
+                && label.is_mapped()
+                && !label.text().is_empty()
+            {
+                let family = label
+                    .pango_context()
+                    .font_description()
+                    .and_then(|font| font.family())
+                    .map(|family| family.to_string())
+                    .unwrap_or_default();
+                faces.insert(family);
+            }
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                child = next.next_sibling();
+                stack.push(next);
+            }
+        }
+        assert!(
+            !faces.is_empty()
+                && faces
+                    .iter()
+                    .all(|family| family.starts_with("Adwaita Sans")
+                        || family.starts_with("Adwaita Mono")),
+            "the chrome is set in {faces:?}"
         );
     });
 }
