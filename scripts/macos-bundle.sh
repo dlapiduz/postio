@@ -76,17 +76,33 @@ else
 fi
 rm -rf "$(dirname "$ICONSET")"
 
+# The executable loads `libpostio_ffi.dylib` from the cargo target directory,
+# by absolute path: ld64 prefers the cdylib over the staticlib beside it. A
+# bundle like that launches only on the machine that built it, which the
+# first release dry run found (#1723). This copies the library in and points
+# the executable at the copy, and fails if anything still reaches outside.
+scripts/macos-self-contained.sh "$APP"
+
 # `-s -` is an ad-hoc signature: no identity, no team, no account. The
 # entitlements are the local ones, which disable library validation -- with no
 # team to compare against, validation refuses code a contributor's own build
 # legitimately contains.
+#
+# The nested libraries first, then the bundle: signing the bundle does not
+# sign code inside it, and the step above rewrote load commands, which
+# invalidates whatever signature the linker gave. A failure is fatal for the
+# same reason -- an Apple Silicon Mac kills a binary whose signature does not
+# match it, so "built but not signed" is no longer a bundle that still runs.
 IDENTITY="${POSTIO_CODESIGN_IDENTITY:--}"
+if [ -d "$APP/Contents/Frameworks" ]; then
+    for library in "$APP"/Contents/Frameworks/*; do
+        codesign --force --sign "$IDENTITY" "$library"
+    done
+fi
 codesign --force --sign "$IDENTITY" \
     --entitlements macos/Resources/PostioReleaseLocal.entitlements \
-    "$APP" >/dev/null 2>&1 || {
-        echo "codesign failed; the bundle is built but not signed." >&2
-        echo "It will still run, with more Gatekeeper friction." >&2
-    }
+    "$APP"
+codesign --verify --deep --strict "$APP"
 
 if [ "$IDENTITY" = "-" ]; then
     # Only when there is something to suggest. A contributor with no
