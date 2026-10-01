@@ -237,6 +237,9 @@ impl OpenMessage {
         content.add_css_class("focus-open");
         content.append(&header);
         content.append(&toolbar.widget());
+        // Find sits above the column, not at its top, so opening it keeps
+        // the reading position (T203).
+        content.append(reader.find_bar().widget());
         content.append(&scroller);
 
         let dialog = adw::Dialog::builder()

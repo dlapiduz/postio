@@ -14,7 +14,7 @@ fn enter(window: &postio_focus::window::FocusWindow) {
 
 /// A window over the fixture's mail, the cursor on the first row, its
 /// message open and its body drawn.
-async fn opened(fixture: &Fixture, rows: usize) -> postio_focus::window::FocusWindow {
+pub(crate) async fn opened(fixture: &Fixture, rows: usize) -> postio_focus::window::FocusWindow {
     let (window, _client) = fixture.open().await;
     assert!(
         crate::settle_until(async || support::subjects(&window).len() == rows).await,
@@ -37,7 +37,7 @@ async fn opened(fixture: &Fixture, rows: usize) -> postio_focus::window::FocusWi
 }
 
 /// The scroller nearest above `widget`.
-fn scroller_of(widget: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
+pub(crate) fn scroller_of(widget: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     widget
         .ancestor(gtk::ScrolledWindow::static_type())
         .and_downcast::<gtk::ScrolledWindow>()
@@ -164,12 +164,13 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
         assert_eq!(reading.title(), "Plain");
         let (left, right) = extent();
         assert!(left < 1.0, "the plain body is inset {left}px: a frame");
-        // T197: the measure is the column's, so the body's lines and the
-        // cards above them share their edges.
-        let width = f64::from(reading.reader().view().width());
+        // T197 then T203: the lines start at the column's edge and run to
+        // the capped measure, 32em of the 15px reading size, not across
+        // the whole column.
+        let measure = 32.0 * 15.0;
         assert!(
-            right > 0.9 * width && right <= width + 0.5,
-            "the plain body's lines run to {right}px of the column's {width}px"
+            right > 0.9 * measure && right <= measure + 0.5,
+            "the plain body's lines run to {right}px; the measure is {measure}px"
         );
 
         support::keys(&window, &["j"]);

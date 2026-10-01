@@ -814,7 +814,12 @@ impl FocusWindow {
             return glib::Propagation::Proceed;
         };
         match id.parse::<CommandId>() {
+            // Escape closes find first, the message only after (T203).
+            Ok(CommandId::Back) if reading.reader().finding() => reading.reader().close_find(),
             Ok(CommandId::Back) => reading.close(),
+            Ok(CommandId::FindInMessage) => reading.reader().find_in_message(),
+            Ok(CommandId::FindNext) => reading.reader().find_step(true),
+            Ok(CommandId::FindPrevious) => reading.reader().find_step(false),
             Ok(CommandId::NextMessage) => {
                 self.move_cursor(1);
                 self.open_message();

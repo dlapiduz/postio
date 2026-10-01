@@ -123,7 +123,12 @@ impl FindBar {
 impl BodyView {
     /// Look for `query`; an empty one clears the find.
     pub fn set_find_query(&self, query: &str) {
-        self.imp().find.borrow_mut().query = query.to_owned();
+        {
+            let mut find = self.imp().find.borrow_mut();
+            find.query = query.to_owned();
+            // A new query starts from where the person is reading.
+            find.current = None;
+        }
         self.refresh_find();
         self.scroll_to_current();
     }
@@ -136,10 +141,21 @@ impl BodyView {
             }
             _ => Vec::new(),
         };
+        // The first match from the top of what is in view, not from the
+        // top of the message: finding keeps the reading position (T203).
+        let from_here = self.document().and_then(|doc| {
+            let (top, _) = self.window();
+            matches.iter().position(|range| {
+                doc.text
+                    .rects(range.clone())
+                    .first()
+                    .is_some_and(|rect| rect.y0 >= top)
+            })
+        });
         let mut find = self.imp().find.borrow_mut();
         find.current = match find.current {
             Some(at) if at < matches.len() => Some(at),
-            _ if !matches.is_empty() => Some(0),
+            _ if !matches.is_empty() => Some(from_here.unwrap_or(0)),
             _ => None,
         };
         find.matches = matches;

@@ -54,6 +54,7 @@ mod one_composer;
 mod one_keymap;
 mod open_choice;
 mod open_keys;
+mod open_measure;
 mod open_message;
 mod open_reading;
 mod pickers;
@@ -439,6 +440,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left",
         open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left as fn(),
+    ),
+    (
+        "open_measure::a_plain_paragraph_break_is_a_short_gap_not_a_blank_line",
+        open_measure::a_plain_paragraph_break_is_a_short_gap_not_a_blank_line as fn(),
+    ),
+    (
+        "open_measure::the_measure_is_near_seventy_five_characters_from_the_left_edge",
+        open_measure::the_measure_is_near_seventy_five_characters_from_the_left_edge as fn(),
+    ),
+    (
+        "open_measure::opening_find_keeps_the_reading_position",
+        open_measure::opening_find_keeps_the_reading_position as fn(),
+    ),
+    (
+        "open_measure::the_columns_ground_is_the_dialogs_own_in_light_and_dark",
+        open_measure::the_columns_ground_is_the_dialogs_own_in_light_and_dark as fn(),
     ),
     (
         "open_message::a_hundredth_open_builds_no_second_message_view",

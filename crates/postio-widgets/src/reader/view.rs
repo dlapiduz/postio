@@ -1391,12 +1391,28 @@ impl Reader {
     ///
     /// The attachments are drawn as cards, not pills. Called once, before
     /// anything is shown.
+    ///
+    /// The find bar leaves the column: a bar at the column's top is only on
+    /// screen at the top, so opening it would scroll the message there. The
+    /// owner places [`find_bar`](Self::find_bar) above `scroller` instead.
+    ///
+    /// The body's ground is the column's, read from a probe that wears
+    /// `.postio-flow-ground` -- whose `color` the owner's stylesheet sets to
+    /// the column's ground token -- each time the body is drawn.
     pub fn flow_in(&self, scroller: &gtk::ScrolledWindow) {
         self.scroller.set_child(None::<&gtk::Widget>);
         self.body.set_child(Some(&self.view));
         self.view.flow_in(scroller);
         self.place.flow.set(true);
         self.chips.set_cards(true);
+        if let Some(container) = self.find.widget().parent().and_downcast::<gtk::Box>() {
+            container.remove(self.find.widget());
+            let ground = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            ground.add_css_class("postio-flow-ground");
+            ground.set_accessible_role(gtk::AccessibleRole::Presentation);
+            container.append(&ground);
+            self.view.set_ground(&ground);
+        }
     }
 
     /// How far down the pane is scrolled, in view pixels. Test-facing.
@@ -1642,17 +1658,27 @@ impl Reader {
     }
 
     /// Open find in the message (`find_in_message`, FR-018).
+    ///
+    /// The reading position stays: in a column the bar is above it, not at
+    /// its top ([`flow_in`](Self::flow_in)), and the first match is the
+    /// first one from where the person is reading.
     pub fn find_in_message(&self) {
-        // In a column the bar is at its top: bring it into view.
-        if self.view.flows() {
-            self.view.scroll_to_edge(false);
-        }
         self.find.open();
+    }
+
+    /// Close find, clearing its highlights.
+    pub fn close_find(&self) {
+        self.find.close();
     }
 
     /// The next match (`find_next`), or the previous (`find_previous`).
     pub fn find_step(&self, forward: bool) {
         self.view.find_step(forward);
+    }
+
+    /// The find bar: its entry, and where it is placed.
+    pub fn find_bar(&self) -> &crate::body_view::find::FindBar {
+        &self.find
     }
 
     /// Whether find is open.
@@ -2050,15 +2076,23 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
 /// keeps the frame, hairline and quiet, because its edge is the only thing
 /// telling it apart from the column.
 ///
-/// The ground's two values are libadwaita's `view-bg-color`, the colour the
-/// dialog is drawn on, since the renderer cannot read a GTK named colour.
-const FLOW_CSS: &str = "\n:root { --flow-ground: #ffffff; }\n\
-    @media (prefers-color-scheme: dark) { :root { --flow-ground: #1e1e1e; } }\n\
-    body { background: var(--flow-ground); padding: 0; }\n";
+/// The ground is `--flow-ground`, which the view defines at each render
+/// from the column's own ground token (`BodyView::set_ground`): no colour is
+/// written here, so the body and the dialog around it cannot disagree, in
+/// light or dark (T203; it was two hex values, and dark's was off by a
+/// shade of libadwaita's).
+const FLOW_CSS: &str = "\nbody { background: var(--flow-ground); padding: 0; }\n";
 
 /// What is added for correspondence, which has no page of its own.
+///
+/// The measure is capped at 32em -- about 75 characters of Barlow at the
+/// 15px reading size, measured (T203) -- and sits at the column's left
+/// edge, under the subject and the header card, rather than centred: one
+/// left edge for the eye to come back to. A plain-text paragraph break is a
+/// 0.8em gap, the reference's 12px, not an empty line.
 const FLOW_FLAT_CSS: &str = "body { font-size: 15px; line-height: 1.6; }\n\
-    .postio-body { max-width: none; padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
+    .postio-body { max-width: 32em; padding: 0; border: 0; border-radius: 0; min-height: 0; }\n\
+    pre.postio-body-text { margin: 0 0 0.8em 0; }\n";
 
 /// `document` as the column draws it.
 fn flow_document(document: &str) -> String {
@@ -2471,6 +2505,18 @@ fn collect_labels(widget: &gtk::Widget, found: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+    /// The column's ground is a token resolved at render time, never a
+    /// colour written into the sheet the column adds (T203).
+    #[test]
+    fn the_flow_sheet_names_its_ground_and_writes_no_colour() {
+        let sheet = format!("{}{}", super::FLOW_CSS, super::FLOW_FLAT_CSS);
+        assert!(sheet.contains("var(--flow-ground)"), "{sheet}");
+        assert!(
+            !sheet.contains('#') && !sheet.contains("rgb") && !sheet.contains("--flow-ground:"),
+            "the flow sheet writes a colour of its own: {sheet}"
+        );
+    }
+
     /// Only what a document names as an image is fetched: a link's
     /// target is the user's to follow (spec 006 FR-025).
     #[test]

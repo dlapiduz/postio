@@ -307,6 +307,12 @@ banner.focus-banner button {
   background-color: var(--postio-surface);
 }
 
+/* The body is drawn on the same role: the reader reads its ground from this
+   probe's colour, so the two are one token (T203). */
+.focus-open .postio-flow-ground {
+  color: var(--postio-surface);
+}
+
 .focus-open-header {
   min-height: 50px;
   padding: 0 var(--postio-space-3);

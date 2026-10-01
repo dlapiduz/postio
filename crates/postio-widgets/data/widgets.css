@@ -605,3 +605,12 @@ button.postio-icon-button.postio-recipient-chip-remove {
   min-height: 0;
   padding: 0;
 }
+
+/* ── The flowing reader's ground (`Reader::flow_in`, specs/007 T203) ── */
+/* A probe, not a surface: the body view reads this widget's `color` as the
+   ground of the column the message flows in, since the renderer has no GTK
+   style context. The column is drawn on `--postio-surface`; a surface that
+   draws its column on another role says so beside its own ground. */
+.postio-flow-ground {
+  color: var(--postio-surface);
+}

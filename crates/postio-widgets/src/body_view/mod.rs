@@ -127,6 +127,12 @@ pub(super) mod imp {
         /// place from that instead of scrolling itself: see
         /// [`super::BodyView::flow_in`].
         pub(super) flow: RefCell<Option<glib::WeakRef<gtk::ScrolledWindow>>>,
+        /// What the column's ground is read from, when the view flows: a
+        /// widget whose CSS `color` is the column's ground token
+        /// ([`BodyView::set_ground`]).
+        pub(super) ground: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
+        /// The ground the last render was asked for.
+        pub(super) ground_drawn: RefCell<Option<String>>,
         /// The messages the user darkened (FR-013a): for this session only,
         /// never stored.
         pub(super) darkened: RefCell<Vec<String>>,
@@ -161,6 +167,8 @@ pub(super) mod imp {
                 to_top: Cell::new(false),
                 darkened: RefCell::default(),
                 flow: RefCell::default(),
+                ground: RefCell::default(),
+                ground_drawn: RefCell::default(),
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
                 find: RefCell::default(),
@@ -840,6 +848,31 @@ impl BodyView {
         self.queue_resize();
     }
 
+    /// Read the document's ground from `probe`: a widget styled so its CSS
+    /// `color` is the ground token of the column the view flows in
+    /// (`.postio-flow-ground`). The renderer has no GTK style context, so
+    /// the colour is resolved here, at each render -- a switch to dark
+    /// renders again and reads the dark value -- and handed to the document
+    /// as `--flow-ground`, never written into it as a literal (T203).
+    pub fn set_ground(&self, probe: &impl IsA<gtk::Widget>) {
+        self.imp()
+            .ground
+            .replace(Some(probe.as_ref().downgrade()));
+    }
+
+    /// The ground the document is drawn on, as CSS, when there is one.
+    fn ground_css(&self) -> Option<String> {
+        let probe = self.imp().ground.borrow().as_ref()?.upgrade()?;
+        let colour = probe.color();
+        let channel = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        Some(format!(
+            ":root{{--flow-ground:rgb({},{},{});}}",
+            channel(colour.red()),
+            channel(colour.green()),
+            channel(colour.blue())
+        ))
+    }
+
     /// Whether the view flows inside a scroller.
     pub fn flows(&self) -> bool {
         self.imp().flow.borrow().is_some()
@@ -955,9 +988,19 @@ impl BodyView {
         let generation = imp.generation.get() + 1;
         imp.generation.set(generation);
         let style = adw::StyleManager::default();
+        let ground = self.ground_css();
+        imp.ground_drawn.replace(ground.clone());
+        let document = match ground {
+            Some(ground) if content.document.contains("</style>") => {
+                content
+                    .document
+                    .replacen("</style>", &format!("{ground}</style>"), 1)
+            }
+            _ => content.document,
+        };
         let request = RenderRequest {
             generation,
-            document: content.document,
+            document,
             plain_text: content.plain_text,
             over_cap: content.over_cap,
             resources: content.resources,
@@ -1024,6 +1067,20 @@ impl BodyView {
     fn theme_changed(&self) {
         self.keep_place();
         self.request_render();
+        // The style manager says the scheme changed before the stylesheet
+        // that paints it is in place, so the column's ground read just now
+        // can be the old scheme's: read it again once the main loop has
+        // turned, and draw again if it moved.
+        if self.imp().ground.borrow().is_some() {
+            let view = self.downgrade();
+            glib::idle_add_local_once(move || {
+                let Some(view) = view.upgrade() else { return };
+                if view.ground_css() != *view.imp().ground_drawn.borrow() {
+                    view.keep_place();
+                    view.request_render();
+                }
+            });
+        }
     }
 
     fn show(&self, document: RenderedDocument) {

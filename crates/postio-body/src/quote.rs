@@ -200,7 +200,11 @@ pub fn text_to_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 128);
     for stretch in text_stretches(text) {
         match stretch {
-            Stretch::Own(own) => push_pre(&mut out, &own.lines().collect::<Vec<_>>()),
+            Stretch::Own(own) => {
+                for paragraph in paragraphs(own) {
+                    push_pre(&mut out, &paragraph);
+                }
+            }
             Stretch::Quoted(quoted) => {
                 open_fold(&mut out, text_quote_lines(quoted));
                 push_pre(&mut out, &quoted.lines().collect::<Vec<_>>());
@@ -209,6 +213,28 @@ pub fn text_to_html(text: &str) -> String {
         }
     }
     out
+}
+
+/// `text`'s paragraphs: its lines, parted wherever one or more blank lines
+/// stand between them. A paragraph break is the stylesheet's to draw -- a
+/// gap -- rather than an empty line of the body's whole line-height, which
+/// read as a line and a half (specs/007-postio-focus T203).
+fn paragraphs(text: &str) -> Vec<Vec<&str>> {
+    let mut paragraphs: Vec<Vec<&str>> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            if !current.is_empty() {
+                paragraphs.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(line);
+        }
+    }
+    if !current.is_empty() {
+        paragraphs.push(current);
+    }
+    paragraphs
 }
 
 fn is_quote_line(line: &str) -> bool {
@@ -493,6 +519,23 @@ mod tests {
         let out = text_to_html("just two\nplain lines");
         assert_eq!(out.matches("<pre").count(), 1);
         assert!(!out.contains("<details"));
+    }
+
+    /// A blank line between paragraphs is a paragraph break, drawn by the
+    /// stylesheet as a gap, not a whole empty line of the body's
+    /// line-height (specs/007-postio-focus T203).
+    #[test]
+    fn a_blank_line_parts_paragraphs_rather_than_drawing_an_empty_line() {
+        let out = text_to_html("Hi all,\nline two\n\n\n  \nSecond paragraph.\n");
+        assert_eq!(out.matches("<pre").count(), 2, "{out}");
+        assert!(
+            out.contains("<pre class=\"postio-body-text\">Hi all,\nline two</pre>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<pre class=\"postio-body-text\">Second paragraph.</pre>"),
+            "{out}"
+        );
     }
 
     #[test]
