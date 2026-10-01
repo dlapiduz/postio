@@ -189,6 +189,12 @@
   padding: 0;
 }
 
+/* A page whose sender set no margins gets a browser's: 8px in from the
+   sheet's edge, which is where any browser would have drawn it. */
+.postio-body[data-postio-treatment="paper"] .postio-page-margin {
+  padding: 8px;
+}
+
 /* Correspondence put on paper by choice has none, so the sheet gives it the
    handoff's 20/24. */
 .postio-body[data-postio-treatment="paper"] .postio-letter {

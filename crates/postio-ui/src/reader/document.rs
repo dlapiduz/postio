@@ -982,6 +982,24 @@ pub const APP_COLOURS_CLASS: &str = "postio-app-colours";
 /// put on paper is drawn edge to edge, its own margins its own business.
 pub const LETTER_CLASS: &str = "postio-letter";
 
+/// The class a body the rule put on paper is wrapped in when its sender
+/// said nothing about the page's margins: a browser draws a page 8px in from
+/// its edge by default, so a sheet drawn "as sent" does too
+/// (`treatment.css`). A sender who set their own -- `margin: 0` on a
+/// newsletter's `<body>` -- gets exactly those.
+pub const PAGE_MARGIN_CLASS: &str = "postio-page-margin";
+
+/// Whether the page's own style, as the sanitiser lifted it off `<html>`
+/// and `<body>`, sets a margin or padding.
+fn sets_page_margin(canvas: &sanitize::Canvas) -> bool {
+    canvas.style.split(';').any(|declaration| {
+        declaration.split_once(':').is_some_and(|(property, _)| {
+            let property = property.trim().to_ascii_lowercase();
+            property.starts_with("margin") || property.starts_with("padding")
+        })
+    })
+}
+
 /// The body markup under a treatment (specs/007-postio-focus T210-T212):
 /// sanitised, classified, and drawn in app colours or as sent, on paper.
 ///
@@ -1028,10 +1046,12 @@ pub fn body_html_treated(
             treatment::app_colours_css(&sanitized.styles),
         ),
         Treatment::Paper => {
-            let letter = if classified == Treatment::Paper {
-                String::new()
-            } else {
+            let letter = if classified != Treatment::Paper {
                 format!(" {LETTER_CLASS}")
+            } else if !sets_page_margin(&sanitized.canvas) {
+                format!(" {PAGE_MARGIN_CLASS}")
+            } else {
+                String::new()
             };
             (
                 on_canvas(
@@ -2969,6 +2989,17 @@ mod treatment_tests {
         )
         .expect("a line");
         assert!(back.offer_always);
+    }
+
+    #[test]
+    fn a_page_keeps_the_margins_its_sender_set_or_a_browsers() {
+        let draw =
+            |page: &str| body_html_treated(&html(page), RemoteImages::Blocked, None, None).html;
+        let defaulted = draw("<body style=\"background:#fff4e0\"><p>A sale on now</p></body>");
+        assert!(defaulted.contains(PAGE_MARGIN_CLASS), "{defaulted}");
+        let own = draw("<body style=\"margin:0;background:#fff4e0\"><p>A sale</p></body>");
+        assert!(!own.contains(PAGE_MARGIN_CLASS), "{own}");
+        assert!(!own.contains(LETTER_CLASS), "{own}");
     }
 
     #[test]

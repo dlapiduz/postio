@@ -177,10 +177,13 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
             crate::settle_until(async || reading.body_text().contains("A sale on now")).await,
             "the second message never arrived"
         );
+        // T212: a page of its own is drawn as sent on a sheet, so its text
+        // sits where a browser would put it -- 8px in, the default page
+        // margin its sender did not override -- not against the edge.
         let (left, _) = extent();
         assert!(
-            left >= 16.0,
-            "a message with a page of its own has no frame: text at {left}px"
+            left >= 8.0,
+            "a message with a page of its own is not inset as a page: text at {left}px"
         );
     });
 }
