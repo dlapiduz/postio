@@ -239,6 +239,14 @@ pub fn the_header_card_names_from_to_and_cc_and_dates_today_relatively() {
         );
         let address = support::with_class(&card, "focus-open-address");
         assert!(!address.is_empty(), "the addresses are not marked");
+        // Bare beside the name, as the handoff draws it (T209).
+        assert!(
+            address.iter().any(|label| label
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|label| label.text() == "lena@example.org")),
+            "the sender's address is not drawn bare: {:?}",
+            support::texts(&card)
+        );
         for label in &address {
             let family = label
                 .pango_context()

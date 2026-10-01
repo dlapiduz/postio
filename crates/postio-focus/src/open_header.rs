@@ -43,13 +43,9 @@ fn line() -> gtk::Box {
     line
 }
 
-/// `address` as the card draws one: dim, in mono.
-fn address_label(address: &str, angled: bool) -> gtk::Label {
-    let label = gtk::Label::new(Some(&if angled {
-        format!("<{address}>")
-    } else {
-        address.to_owned()
-    }));
+/// `address` as the card draws one: bare, in mono.
+fn address_label(address: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(address));
     label.add_css_class("focus-open-address");
     label.set_ellipsize(pango::EllipsizeMode::End);
     label
@@ -125,10 +121,12 @@ impl HeaderCard {
                     name.add_css_class("focus-open-sender-name");
                     name.set_ellipsize(pango::EllipsizeMode::End);
                     self.from.append(&name);
-                    self.from.append(&address_label(&sender.address, true));
+                    // Bare, as the handoff draws it (T209): the mono face
+                    // already sets it apart from the name.
+                    self.from.append(&address_label(&sender.address));
                 }
                 None => {
-                    let bare = address_label(&sender.address, false);
+                    let bare = address_label(&sender.address);
                     bare.add_css_class("focus-open-sender-name");
                     self.from.append(&bare);
                 }
@@ -196,7 +194,7 @@ fn recipients(label: &gtk::Label, line: &gtk::Box, addresses: &[EmailAddress]) {
                 name.set_ellipsize(pango::EllipsizeMode::End);
                 line.append(&name);
             }
-            None => line.append(&address_label(&address.address, false)),
+            None => line.append(&address_label(&address.address)),
         }
     }
     if addresses.len() > RECIPIENTS_SHOWN {

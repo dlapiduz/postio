@@ -225,7 +225,16 @@ impl OpenMessage {
         more.add_css_class("focus-row-menu-popover");
         more.add_css_class("focus-open-more-menu");
         if let Some(button) = toolbar.button(CommandId::MoreActions) {
-            more.set_parent(&button.widget());
+            let button = button.widget();
+            more.set_parent(&button);
+            // A popover is its parent's to let go of, or GTK warns as the
+            // button is finalized.
+            let held = more.downgrade();
+            button.connect_destroy(move |_| {
+                if let Some(more) = held.upgrade() {
+                    more.unparent();
+                }
+            });
         }
 
         // The column: the thread marker, the subject, the labels, the
