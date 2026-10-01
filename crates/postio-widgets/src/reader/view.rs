@@ -2350,22 +2350,16 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
 /// shade of libadwaita's).
 const FLOW_CSS: &str = "\nbody { background: var(--flow-ground); padding: 0; }\n";
 
-/// What is added for correspondence, which has no page of its own.
-///
-/// The body fills its owner's column, which is the measure: Focus's message
-/// dialog sizes the column to 32em of the 15px reading size, about 70
-/// characters (T207), and centres it, so the body's lines share both edges
-/// with the blocks above them. The rhythm inside the body is the handoff's
-/// (T208): a 24px line, 12px between paragraphs -- a plain-text paragraph
-/// break is a gap, not an empty line -- and list items 4px apart under a
-/// 20px indent. The last block keeps no gap below it, so what follows the
-/// body measures its own distance from the last line.
-const FLOW_FLAT_CSS: &str = "body { font-size: 15px; line-height: 1.6; }\n\
-    .postio-body { padding: 0; border: 0; border-radius: 0; min-height: 0; }\n\
-    pre.postio-body-text, p { margin: 0 0 0.8em 0; }\n\
-    ul, ol { margin: 0 0 0.8em 0; padding-left: 20px; }\n\
-    li + li { margin-top: 4px; }\n\
-    pre.postio-body-text:last-child, p:last-child { margin-bottom: 0; }\n";
+/// What is added for correspondence, which has no page of its own: the
+/// body loses its frame and the padding inside it, so its lines start at
+/// the column's edge and share both edges with the blocks above them
+/// (T207). That is all the column adds. The rhythm inside the body -- the
+/// 24px line, 12 between paragraphs, list items 4 apart under a 20 indent,
+/// the attribution's 20 and 4, no gap under the last block -- is the app
+/// colours treatment's, and lives in one place, `postio-ui`'s
+/// `treatment.css` (T208, T211).
+const FLOW_FLAT_CSS: &str =
+    ".postio-body { padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
 
 /// The reader palette variables a flowing column supplies from its own
 /// tokens, and the class of the probe each is read from: the owner's

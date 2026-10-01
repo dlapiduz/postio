@@ -332,6 +332,18 @@ const CASES: &[(&str, fn())] = &[
         open_layout::the_dialogs_chrome_is_set_in_the_system_faces as fn(),
     ),
     (
+        "open_measure::a_plain_list_draws_as_a_list_with_the_handoffs_rhythm",
+        open_measure::a_plain_list_draws_as_a_list_with_the_handoffs_rhythm as fn(),
+    ),
+    (
+        "open_measure::the_attribution_sits_between_the_sign_off_and_the_toggle",
+        open_measure::the_attribution_sits_between_the_sign_off_and_the_toggle as fn(),
+    ),
+    (
+        "open_measure::the_body_ends_at_its_last_line",
+        open_measure::the_body_ends_at_its_last_line as fn(),
+    ),
+    (
         "remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for",
         remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for as fn(),
     ),

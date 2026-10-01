@@ -11,10 +11,12 @@
  * white, its default black text, and the 8% that stands in for
  * `brightness(0.92)`.
  *
- * The body's inner rhythm is the handoff's (SPEC.md section 4), and the
- * layout lane's spacing table pins the same numbers: paragraphs 12 apart,
- * list items 4 apart with a 20 indent, the sign-off 20 above the
- * attribution line, the quote toggle 4 below it and 28 tall.
+ * The body's inner rhythm is the handoff's (SPEC.md section 4), and this
+ * is its one home -- the column a body flows in adds only that the body has
+ * no frame (`postio-widgets`' `FLOW_FLAT_CSS`): paragraphs 12 apart, list
+ * items 4 apart with a 20 indent, the sign-off 20 above the attribution
+ * line, the quote toggle 4 below it and 28 tall, and no gap under the last
+ * block, so what follows the body measures from its last line.
  */
 
 /* ── App colours ─────────────────────────────────────────────────────────
@@ -117,9 +119,10 @@
   margin: 0 0 12px 0;
 }
 
-/* The attribution line -- "On Monday, Ana wrote:" -- is whatever sits just
-   before a quote fold: 20 under the sign-off, the toggle 4 under it. */
-.postio-body[data-postio-treatment="app"] :has(+ details.postio-quote) {
+/* The attribution line -- "On Monday, Ana wrote:" -- which the body
+   pipeline marks (`postio_body::quote::ATTRIBUTION_CLASS`): 20 under the
+   sign-off, the toggle 4 under it, smaller and muted. */
+.postio-body[data-postio-treatment="app"] .postio-attribution {
   margin-top: 20px;
   margin-bottom: 0;
   font-size: 13.5px;
@@ -144,6 +147,12 @@
   background: none;
   padding: 0 0 0 12px;
   border-radius: 0;
+}
+
+/* The last block keeps no gap under it, at any depth: the body ends at its
+   last line. */
+.postio-body[data-postio-treatment="app"] :is(p, pre, ul, ol, blockquote, table, details):last-child {
+  margin-bottom: 0;
 }
 
 /* ── Paper ───────────────────────────────────────────────────────────────
