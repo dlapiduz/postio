@@ -218,6 +218,26 @@ public final class MessageTableController: NSObject, NSMenuDelegate {
         following = false
     }
 
+    /// Redraw every row, and keep the cursor's row selected.
+    ///
+    /// `reloadData()` alone dropped the selection the cursor had made --
+    /// observed in the running app, where reading an unread message marked
+    /// it read after a few seconds, the change reloaded the list, and the
+    /// highlight vanished from under the message being read while the
+    /// boundary still had the cursor on it. The table follows the model, so
+    /// the model's row is put back. Not scrolled to, and not reported: the
+    /// cursor did not move, and a reload behind the reader must not move the
+    /// list they are looking at.
+    public func reload(keepingCursorOn row: UInt32?) {
+        guard let tableView else { return }
+        tableView.reloadData()
+        guard let row, Int(row) < tableView.numberOfRows else { return }
+        guard tableView.selectedRow != Int(row) else { return }
+        following = true
+        tableView.selectRowIndexes(IndexSet(integer: Int(row)), byExtendingSelection: false)
+        following = false
+    }
+
     /// Whether the selection change now arriving is one we just made.
     private var following = false
 

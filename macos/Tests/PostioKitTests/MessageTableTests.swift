@@ -271,4 +271,49 @@ struct MessageTableTests {
         #expect(MessageRowCell.preferredHeight() > 40)
         #expect(MessageRowCell.preferredHeight() < 120)
     }
+
+    // -- a reload keeps the cursor's row selected (found using the app) ----
+
+    private func mounted(rows: UInt32) -> MessageTableController {
+        let controller = MessageTableController(source: StubRowSource(rowCount: rows))
+        let scroll = MessageListView.makeTable(controller: controller)
+        controller.tableView = scroll.documentView as? NSTableView
+        controller.tableView?.reloadData()
+        return controller
+    }
+
+    @Test func aReloadPutsTheSelectionBackOnTheCursorsRow() {
+        // Reading an unread message marks it read after a few seconds; the
+        // change reloads the list, and `reloadData()` dropped the selection
+        // the cursor had made -- the highlight vanished from under the
+        // message being read. The boundary still had the cursor there.
+        let controller = mounted(rows: 10)
+        controller.showCursor(on: 3)
+        controller.tableView?.deselectAll(nil)  // what the reload did
+
+        controller.reload(keepingCursorOn: 3)
+
+        #expect(controller.tableView?.selectedRow == 3)
+    }
+
+    @Test func puttingTheSelectionBackIsNotReportedAsAMove() {
+        // The cursor did not move, so nothing is said to the boundary about
+        // it -- a report would re-open the conversation it is already on.
+        let controller = mounted(rows: 10)
+        var reported: [UInt32?] = []
+        controller.onCursorRowChanged = { reported.append($0) }
+        controller.showCursor(on: 3)
+        controller.tableView?.deselectAll(nil)
+        reported = []
+
+        controller.reload(keepingCursorOn: 3)
+
+        #expect(reported.isEmpty)
+    }
+
+    @Test func aReloadWithNoCursorSelectsNothing() {
+        let controller = mounted(rows: 10)
+        controller.reload(keepingCursorOn: nil)
+        #expect(controller.tableView?.selectedRow == -1)
+    }
 }

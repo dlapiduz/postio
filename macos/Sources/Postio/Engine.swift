@@ -755,7 +755,7 @@ final class Engine {
         showingMailbox = row.isView ? nil : row.id
         session.openScope(SidebarScope.of(row))
         listVersion += 1
-        controller.tableView?.reloadData()
+        controller.reload(keepingCursorOn: session.cursorRow)
     }
 
     /// Show a folder by id, for a caller that has one and not a row.
@@ -833,7 +833,7 @@ final class Engine {
             // arriving into the folder on screen is exactly the case where
             // the plate has to give way to the list.
             listVersion += 1
-            controller.tableView?.reloadData()
+            controller.reload(keepingCursorOn: session?.cursorRow)
             if case let .newMail(account, mailbox, messages) = event {
                 arrived(MailArrival(account: account, mailbox: mailbox, messages: messages))
             }
@@ -842,13 +842,13 @@ final class Engine {
             // right at this size and wrong at scale; narrowing it to the rows
             // that changed is what `reloadData(forRowIndexes:)` is for and
             // belongs with the rest of the list work.
-            controller.tableView?.reloadData()
+            controller.reload(keepingCursorOn: session?.cursorRow)
         case .messageListChanged, .messagesChanged, .messagesRemoved:
             // Both halves: the table redraws its rows, and `listVersion`
             // tells SwiftUI that the *count* moved — which is what decides
             // between the list and the "No messages" plate around it.
             listVersion += 1
-            controller.tableView?.reloadData()
+            controller.reload(keepingCursorOn: session?.cursorRow)
             // A body that arrived, or a flag that moved, may change the
             // conversation on screen -- but only if it is one of *its*
             // messages. See `PageRefresh`: every folder's sync used to
@@ -1543,7 +1543,7 @@ final class Engine {
     func listChanged() {
         guard case let .open(controller) = state else { return }
         listVersion += 1
-        controller.tableView?.reloadData()
+        controller.reload(keepingCursorOn: session?.cursorRow)
     }
 
     /// The conversation the pane has been asked for, so a read that lands
