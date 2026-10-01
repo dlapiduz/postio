@@ -281,7 +281,7 @@ pub fn wrap_document(content: &str, remote: RemoteImages, sheet: Sheet) -> Strin
 /// The values are read out of the generated palette rather than restated,
 /// the same rule and the same reason as [`reader_ground`]: #296 says a
 /// colour has one source, and a second copy is one that can drift.
-fn senders_sheet_css() -> String {
+pub(crate) fn senders_sheet_css() -> String {
     format!(
         "\n.{SENDERS_SHEET_CLASS} .postio-body {{{}\n  background: var(--r-ground);\n  \
          color: var(--r-ink);\n}}\n",

@@ -213,6 +213,14 @@ pub struct Entry<'a> {
     pub recipients: &'a str,
     /// Who else was copied, drawn by the same rule. Empty when nobody was.
     pub cc: &'a str,
+    /// Which paper this message's body is drawn on -- [`sheet_for`]'s
+    /// answer for it.
+    ///
+    /// Per message, because a conversation can hold a newsletter and a
+    /// reply to it, and only the first was designed for white paper.
+    ///
+    /// [`sheet_for`]: crate::reader::document::sheet_for
+    pub sheet: Sheet,
     /// This message's own stylesheets, scoped to it
     /// (`postio_body::sanitize::Sanitized::styles`). Empty for most mail.
     ///
@@ -382,6 +390,7 @@ pub fn compose(
     // Rendered first, and held, because `Entry` borrows the markup. Every
     // message opens as its sender built it (spec 006 FR-031), exactly as
     // `render` decides it for one.
+    let mut sheets = Vec::with_capacity(messages.len());
     let rendered: Vec<Rendered> = messages
         .iter()
         .map(|message| {
@@ -400,6 +409,18 @@ pub fn compose(
             } else {
                 RemoteImages::Blocked
             };
+            // The paper, by the single-message page's rule (canvas 20): the
+            // sender's own when this is their design shown as sent, the
+            // theme's otherwise. The verdict is cached with the render, so
+            // this costs a lookup, not a parse.
+            sheets.push(if message.absent {
+                Sheet::Theme
+            } else {
+                super::document::sheet_for(
+                    rendering,
+                    renders.suits_reader_view(&message.scope, &message.body),
+                )
+            });
             if message.absent && message.expanded {
                 // The single-message pane's own words, and its `role="status"`
                 // live region with them, so a screen reader is told once.
@@ -416,7 +437,8 @@ pub fn compose(
     let entries: Vec<Entry<'_>> = messages
         .iter()
         .zip(&rendered)
-        .map(|(message, rendered)| Entry {
+        .zip(&sheets)
+        .map(|((message, rendered), sheet)| Entry {
             scope: &message.scope,
             sender: &message.sender,
             address: &message.address,
@@ -431,6 +453,7 @@ pub fn compose(
             styles: &rendered.styles,
             recipients: &message.recipients,
             cc: &message.cc,
+            sheet: *sheet,
         })
         .collect();
 
@@ -474,6 +497,12 @@ pub fn conversation_document(entries: &[Entry<'_>], remote: RemoteImages, sheet:
     // and not only against the markup.
     content.push_str("<style>");
     content.push_str(THREAD_CSS);
+    // The rule that turns a message's box into its sender's paper, keyed on
+    // a class on that message's `<details>` rather than on the page root, so
+    // one message can have it and the rest of the conversation not.
+    if entries.iter().any(|entry| entry.sheet == Sheet::Senders) {
+        content.push_str(&super::document::senders_sheet_css());
+    }
     content.push_str("</style>");
     let senders: String = entries
         .iter()
@@ -583,8 +612,12 @@ fn entry_html(entry: &Entry<'_>) -> String {
     } else {
         String::new()
     };
+    let paper = match entry.sheet {
+        Sheet::Senders => format!(" {}", super::document::SENDERS_SHEET_CLASS),
+        Sheet::Theme => String::new(),
+    };
     format!(
-        "<details class=\"postio-message{mine}\" id=\"{anchor}\" \
+        "<details class=\"postio-message{mine}{paper}\" id=\"{anchor}\" \
          {FOLD_ATTRIBUTE}=\"{anchor}\"{open}>\
          <summary class=\"postio-message-head\">\
          <span class=\"postio-recipients-label\">From</span>\
@@ -805,6 +838,7 @@ mod tests {
             recipients: "",
             cc: "",
             body,
+            sheet: Sheet::Theme,
         }
     }
 
@@ -1210,6 +1244,77 @@ mod compose_tests {
         }
     }
 
+    /// A campaign: tables inside tables, which correspondence never has.
+    fn newsletter(scope: &str) -> ThreadMessage {
+        ThreadMessage {
+            body: MessageBody {
+                text: None,
+                html: Some(
+                    "<table><tr><td><table><tr><td><p style=\"color:#333\">Good morning.</p>\
+                     </td></tr></table></td></tr></table>"
+                        .to_owned(),
+                ),
+            },
+            ..from(scope, "news@example.com")
+        }
+    }
+
+    /// The `<details>` opening tag drawn for `scope`.
+    fn opening_of(document: &str, scope: &str) -> String {
+        let marker = format!(r#"id="{}""#, message_anchor(scope));
+        let at = document
+            .find(&marker)
+            .expect("the message is in the document");
+        let start = document[..at].rfind('<').expect("an opening tag");
+        let end = at + document[at..].find('>').expect("a closed tag");
+        document[start..=end].to_owned()
+    }
+
+    #[test]
+    fn a_bulk_message_shown_as_sent_is_on_its_senders_paper_in_a_conversation() {
+        // Canvas 20: the original "renders on its own paper-white sheet inset
+        // from the dark chrome -- sender CSS never fights the app theme". The
+        // single-message page did this; the conversation page passed `Theme`
+        // for everything, and since every message opens as sent (FR-031) a
+        // newsletter's dark-grey text was drawn on the dark ground, barely
+        // readable. Per message: the correspondence beside it keeps the
+        // theme, because a reply on white in a dark window is worse.
+        let messages = [newsletter("1"), from("2", "ada@example.com")];
+        let document = compose(
+            &messages,
+            |_| false,
+            &HashMap::new(),
+            &mut RenderCache::default(),
+        );
+
+        assert!(
+            opening_of(&document, "1").contains(crate::reader::document::SENDERS_SHEET_CLASS),
+            "the newsletter is on its own paper: {}",
+            opening_of(&document, "1")
+        );
+        assert!(
+            !opening_of(&document, "2").contains(crate::reader::document::SENDERS_SHEET_CLASS),
+            "the reply keeps the theme"
+        );
+        assert!(
+            document.contains(&format!(
+                ".{} .postio-body",
+                crate::reader::document::SENDERS_SHEET_CLASS
+            )),
+            "and the page carries the rule that paints the paper"
+        );
+    }
+
+    #[test]
+    fn reader_view_of_a_newsletter_is_drawn_in_the_theme() {
+        // Reduced, it is Postio's text, not the sender's design.
+        let messages = [newsletter("1")];
+        let mut chosen = HashMap::new();
+        chosen.insert("1".to_owned(), crate::reader::document::Rendering::Reader);
+        let document = compose(&messages, |_| false, &chosen, &mut RenderCache::default());
+        assert!(!opening_of(&document, "1").contains(crate::reader::document::SENDERS_SHEET_CLASS));
+    }
+
     #[test]
     fn a_sender_the_user_allowed_keeps_their_images_and_nobody_else_does() {
         // Per sender, never per page (#1353, `PRODUCT.md` §21): one allowed
@@ -1348,6 +1453,7 @@ mod verb_tests {
             recipients: "",
             cc: "",
             styles: "",
+            sheet: Sheet::Theme,
         };
         let html = entry_html(&entry);
         for (scheme, verb) in [
