@@ -2157,6 +2157,12 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // "On My Mac" (canvas 25): there is no account strip for `g a` to
             // cycle.
             | (ActionId::Builtin(C::NextScope), Platform::Apple)
+            // Darkening a sender's design is `postio-render`'s, which
+            // recolours a message *and* repairs its text contrast (spec 006
+            // FR-012, FR-013a). The Mac reads mail in a web view with no such
+            // repair, and recolouring there would break the contrast floor;
+            // the maintainer chose to leave it out (2026-10-01, #1705).
+            | (ActionId::Builtin(C::DarkenMessage), Platform::Apple)
     )
 }
 
@@ -2201,7 +2207,11 @@ mod tests {
     // -- what a platform offers ------------------------------------------------
 
     /// The two commands the Mac's design has no surface for (#1571, #1573).
-    const NOT_ON_THE_MAC: [CommandId; 2] = [CommandId::DetachComposer, CommandId::NextScope];
+    const NOT_ON_THE_MAC: [CommandId; 3] = [
+        CommandId::DarkenMessage,
+        CommandId::DetachComposer,
+        CommandId::NextScope,
+    ];
 
     #[test]
     fn every_command_is_offered_on_freedesktop() {
