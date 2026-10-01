@@ -45,27 +45,13 @@ done
 EVENT="${GITHUB_EVENT_NAME:-}"
 SHA="${GITHUB_SHA:-$(git rev-parse HEAD)}"
 
-# The one `version = "x.y.z"` line: [workspace.package]'s, not rust-version.
-VERSION=$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' Cargo.toml | head -n 1)
+source "$(dirname "${BASH_SOURCE[0]}")/lib/release.sh"
+
+VERSION=$(release_workspace_version)
 if [ -z "$VERSION" ]; then
     echo "no workspace version in Cargo.toml" >&2
     exit 1
 fi
-
-# x.y.z as one comparable number; each part well under a million.
-as_number() {
-    echo "$1" | awk -F. '{ printf "%d\n", ($1 * 1000000 + $2) * 1000000 + $3 }'
-}
-
-# Empty when there are no tags at all -- a first release. `|| true` because
-# grep matching nothing is that case, not a failure, and pipefail would
-# otherwise end the script with no answer.
-newest_tag() {
-    { git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' |
-        grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true; } |
-        while read -r v; do echo "$(as_number "$v") $v"; done |
-        sort -n | tail -n 1 | cut -d' ' -f2
-}
 
 emit() { printf '%s=%s\n' "$1" "$2"; }
 
@@ -91,8 +77,8 @@ else
     if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
         nothing "v${VERSION} is already released — nothing to do."
     fi
-    NEWEST=$(newest_tag)
-    if [ -n "$NEWEST" ] && [ "$(as_number "$VERSION")" -le "$(as_number "$NEWEST")" ]; then
+    NEWEST=$(release_newest_tag)
+    if [ -n "$NEWEST" ] && [ "$(release_as_number "$VERSION")" -le "$(release_as_number "$NEWEST")" ]; then
         nothing "::warning::Cargo.toml says ${VERSION}, which is not newer than v${NEWEST} — not releasing. A release PR moves the version forward (scripts/release-prepare.sh)."
     fi
     BUILD_VERSION="$VERSION"
