@@ -49,12 +49,13 @@ env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
 
-  # A cold debug build of this graph -- GTK, WebKit, ICU, and ~25 test
-  # binaries that each statically link the lot -- ran a runner out of disk and
-  # killed lld with SIGBUS mid-link. DWARF is the bulk of it, and none of it
-  # earns its keep here: line tables still give backtraces function names and
-  # line numbers, which is everything CI reads.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # No `CARGO_PROFILE_DEV_DEBUG` here, deliberately (#1710). This workflow
+  # used to set `line-tables-only`, back when the workspace default was full
+  # DWARF and a cold build ran a runner out of disk. The workspace is
+  # `debug = 0` now (Cargo.toml says why), and the override turned debug info
+  # back *on*: a test binary 239 MB instead of 70, every cache bigger, every
+  # link slower. A panic still names its file and line without it; only a
+  # backtrace's frames lose theirs.
 
   # .cargo/config.toml pins `jobs = 2` because four Claude sessions share one
   # eight-core workstation. That reasoning does not travel: a runner is one
