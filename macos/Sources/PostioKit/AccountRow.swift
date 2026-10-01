@@ -28,8 +28,10 @@ public enum AccountRow {
         weight: String? = nil
     ) -> String {
         var facts = account.facts
+        // Folders only: Flagged and Snoozed are views over mail already
+        // counted where it lives, and adding them made 63 messages "72".
         let messages = mailboxes
-            .filter { $0.account == account.id }
+            .filter { $0.account == account.id && !$0.isView }
             .reduce(0) { $0 + Int($1.total) }
         if messages > 0 {
             facts.append("\(formatted(messages)) msg")

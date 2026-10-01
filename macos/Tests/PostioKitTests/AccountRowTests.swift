@@ -112,6 +112,22 @@ import Testing
         #expect(line == "imap")
     }
 
+    @Test func theViewsAreNotCountedAsMoreMail() {
+        // Flagged and Snoozed are views over mail already counted in its
+        // folder. Summed with the folders, a 63-message Maildir with nine
+        // flagged said "72 msg".
+        let flaggedView = MailboxFfi(
+            id: 0, account: 1, parent: nil, name: "Flagged", role: .flagged,
+            unread: 0, total: 9, selectable: true, lastSyncedAt: nil,
+            special: true, flagged: 9, snoozed: 0
+        )
+        let line = AccountRow.line(
+            account(facts: ["imap"]),
+            mailboxes: [mailbox(account: 1, total: 63), flaggedView]
+        )
+        #expect(line == "imap · 63 msg")
+    }
+
     @Test func anAccountWithNoMailSaysNothingAboutIt() {
         // A "0 msg" beside a freshly added account is a fact nobody needed
         // and reads as a failure.

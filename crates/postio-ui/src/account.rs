@@ -15,6 +15,11 @@ use postio_model::account::Account;
 /// unlike the mail weight and the token validity this needs nothing handed
 /// in from the composition root (#878).
 pub fn badge(account: &Account) -> String {
+    // A folder on this machine signs in to nothing, whatever auth method the
+    // row carries -- every account row has one.
+    if matches!(account.backend, postio_model::account::Backend::Maildir { .. }) {
+        return "Local mail".to_owned();
+    }
     let backend = match &account.backend {
         postio_model::account::Backend::Imap => "IMAP",
         postio_model::account::Backend::Jmap { .. } => "JMAP",
@@ -227,7 +232,9 @@ mod tests {
     #[test]
     fn a_local_maildir_reads_as_mail_that_is_already_here() {
         // The word on the row is for somebody looking at their own account,
-        // not for somebody who knows the format's name.
+        // not for somebody who knows the format's name. And nothing about
+        // signing in: a folder on this machine has no password, and the row
+        // said "password" because every account row carries an auth method.
         assert_eq!(
             badge(&account(
                 Backend::Maildir {
@@ -235,7 +242,7 @@ mod tests {
                 },
                 AuthMethod::Password
             )),
-            "Local mail · password"
+            "Local mail"
         );
     }
 
