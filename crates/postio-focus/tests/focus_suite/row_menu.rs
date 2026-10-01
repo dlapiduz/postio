@@ -116,6 +116,18 @@ pub fn a_right_click_on_a_row_offers_its_verbs_with_their_keys() {
             said.iter().any(|text| text == "Mark read" || text == "Mark unread"),
             "no read verb: {said:?}"
         );
+        let rules = support::with_class(&menu, "focus-row-menu-rule");
+        assert_eq!(rules.len(), 4, "a rule between each of the five groups");
+        for rule in &rules {
+            assert!(
+                rule.is_mapped() && rule.height() >= 1,
+                "a group's rule is not drawn: {}x{}, mapped {}, visible {}",
+                rule.width(),
+                rule.height(),
+                rule.is_mapped(),
+                rule.is_visible()
+            );
+        }
         assert!(
             support::keycaps_are_taught(&menu),
             "the menu's keys are not its items' shortcuts"

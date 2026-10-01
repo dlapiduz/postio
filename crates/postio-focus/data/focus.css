@@ -601,6 +601,38 @@ button.focus-open-fold-line {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── The row menu (T199): a 26 px row a verb, as the places list ────── */
+.focus-row-menu {
+  padding: var(--postio-space-1);
+  min-width: 220px;
+}
+
+.focus-row-menu-heading {
+  margin: var(--postio-space-1) var(--postio-space-2);
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* A verb reads at the ink, as a menu's items do, not the ghost's dim. */
+button.focus-row-menu-item {
+  min-height: 26px;
+  padding: 0 var(--postio-space-2);
+  color: var(--postio-ink);
+  font-weight: normal;
+}
+
+button.focus-row-menu-item:hover,
+button.focus-row-menu-item:focus-visible {
+  background-color: var(--postio-hover-bg);
+}
+
+popover.focus-row-menu-popover separator.focus-row-menu-rule {
+  margin: var(--postio-space-1) var(--postio-space-2);
+  min-height: 1px;
+  background-color: var(--postio-hairline);
+}
+
 /* ── The bulk bar (44 px, while anything is selected) ───────────────── */
 .focus-bulk-bar {
   min-height: 44px;

@@ -235,7 +235,7 @@ impl RowMenu {
         }
         // A group's rule shows when something above it and in it does.
         let shown = |items: &[(CommandId, gtk::Button, gtk::Label)]| {
-            items.iter().any(|(_, button, _)| button.is_visible())
+            items.iter().any(|(_, button, _)| offered(button))
         };
         for (group, rule) in &self.rules {
             rule.set_visible(
@@ -245,7 +245,7 @@ impl RowMenu {
         self.popover.set_pointing_to(Some(at));
         self.watch_outside(parent);
         self.popover.popup();
-        if let Some((_, first, _)) = self.items.iter().find(|(_, b, _)| b.is_visible()) {
+        if let Some((_, first, _)) = self.items.iter().find(|(_, b, _)| offered(b)) {
             first.grab_focus();
         }
     }
@@ -279,7 +279,7 @@ impl RowMenu {
                 if self
                     .items
                     .iter()
-                    .any(|(id, button, _)| *id == command && button.is_visible()) =>
+                    .any(|(id, button, _)| *id == command && offered(button)) =>
             {
                 self.run(command);
                 true
@@ -325,6 +325,12 @@ impl RowMenu {
         root.add_controller(gesture.clone());
         self.outside.replace(Some((root.downgrade(), gesture)));
     }
+}
+
+/// Whether the menu offers `item` this time: its own visible flag, not
+/// whether it is on screen, which it is not until the menu pops up.
+fn offered(item: &gtk::Button) -> bool {
+    item.property::<bool>("visible")
 }
 
 impl std::fmt::Debug for RowMenu {
