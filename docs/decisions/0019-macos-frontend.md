@@ -468,6 +468,12 @@ Ghostty's `ReleaseLocal` configuration, which exists precisely so a contributor
 needs no Apple account. Two entitlement files from the start, so adding a
 Developer ID later is a flag rather than a restructure.
 
+**Revised 2026-10-01 (maintainer, #1714):** the ad-hoc-signed `Postio.app`
+now also ships as a release asset, `postio-<version>-macos-arm64.zip`, built
+by `release.yml` on Apple Silicon. It is still not Developer-ID signed or
+notarized, so Gatekeeper asks once (right-click → Open); "from source" is no
+longer the only way to get it. The Developer ID question stays open.
+
 Two build loops, written into `macos/CLAUDE.md`: Rust changed → rebuild the
 library; Swift changed → `swift build`, seconds, no cargo. Ghostty documents
 exactly this and contributors still rebuild the world without it.
