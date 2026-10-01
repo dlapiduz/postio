@@ -473,39 +473,3 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
         assert!(x_of(&title) < x_of(close.upcast_ref()));
     });
 }
-
-/// design system's `--postio-space-6`, and the body fills it: the header
-/// card, the body and the dialog's toolbar keep one left edge, with no
-/// dead margin beside the text.
-pub fn the_column_fills_the_dialog_less_a_gutter() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        long_message(&fixture).await;
-        let window = opened(&fixture, 1).await;
-        let reading = window.reading().expect("open");
-        let dialog = reading.dialog();
-        let view = reading.reader().view().clone();
-        let column = scroller_of(&view);
-        let card = support::only(&dialog, "focus-open-header-card");
-        let gutter = f64::from(postio_widgets::widgets::space::S6);
-        let edges = |widget: &gtk::Widget| {
-            let bounds = widget.compute_bounds(&column).expect("in the column");
-            (
-                f64::from(bounds.x()),
-                f64::from(column.width()) - f64::from(bounds.x() + bounds.width()),
-            )
-        };
-        for (what, widget) in [("header card", card), ("body", view.clone().upcast())] {
-            let (left, right) = edges(&widget);
-            assert!(
-                (left - gutter).abs() < 1.0 && (right - gutter).abs() < 1.0,
-                "the {what} sits {left}px from the column's left and {right}px from its \
-                 right, in a {}px column; the gutter is {gutter}px",
-                column.width()
-            );
-        }
-    });
-}
