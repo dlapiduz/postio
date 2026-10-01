@@ -57,8 +57,8 @@ postio-render = { path = ".", features = ["test-hooks"] }
 # harness can address its overrides as a stylesheet and lay out afresh.
 html5ever = "0.39.0"
 markup5ever_rcdom = "0.39.0"
-postio-model = { version = "0.3.0", path = "../postio-model", features = ["test-corpus"] }
-postio-ui = { version = "0.3.0", path = "../postio-ui" }
+postio-model = { version = "0.4.2", path = "../postio-model", features = ["test-corpus"] }
+postio-ui = { version = "0.4.2", path = "../postio-ui" }
 postio-test-support = { workspace = true, features = ["fidelity"] }
 tempfile = { workspace = true }
 
