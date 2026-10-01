@@ -646,7 +646,7 @@ struct Shell: View {
                 // answered the *list's* cursor replied to the wrong message in
                 // any thread longer than one.
                 run: { engine.run($0, on: $1) },
-                originals: engine.original.messages,
+                reduced: engine.readerView.messages,
                 revision: engine.documentRevision,
                 page: engine.readerPage,
                 pageToken: engine.readerPageToken,
@@ -670,14 +670,14 @@ struct Shell: View {
                     row: row,
                     isLatest: true,
                     showingCc: engine.ccRevealed.contains(showing),
-                    showingOriginal: engine.original.isOn(showing),
+                    readerView: engine.readerView.isReduced(showing),
                     showingImages: engine.rendered.isOn(showing),
                     unsubscribe: engine.unsubscribing.state(of: showing),
                     collapsible: false,
                     heights: engine.bodyHeights,
                     collapse: {},
                     toggleCc: { engine.toggleCc(showing) },
-                    toggleOriginal: { engine.toggleOriginal(showing) },
+                    toggleReaderView: { engine.toggleReaderView(showing) },
                     run: { engine.run($0, on: $1) },
                     openSettings: { engine.run(Intercepted.settings) }
                 )

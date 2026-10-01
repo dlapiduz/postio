@@ -8,7 +8,7 @@ import PostioFFI
 /// looking at", so all seven need somewhere to read that row from. It was an
 /// `@State` inside `SettingsPaneView` — which is why every one of them
 /// resolved to nothing while the buttons beside them worked, the same defect
-/// `OriginalView` and `RenderedOnce` record one window over.
+/// `ReaderViewChoice` and `RenderedOnce` record one window over.
 ///
 /// **A missing cursor is a real answer.** Aiming at nothing does nothing;
 /// falling back to "the first account" would remove somebody's mail on a

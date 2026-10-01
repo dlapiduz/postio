@@ -166,10 +166,10 @@ public final class PostioSession {
     /// font faces, the sanitized body inside its container and the scroll
     /// markers all come from the engine, which is what the GTK reader renders
     /// too. Swift composes no reader HTML.
-    /// `original` is the one gesture that leaves reader view: what the
-    /// sender wrote, on their own paper-white sheet, inset from Postio's
-    /// chrome. Per message and per view — nothing is remembered, so the next
-    /// message opens reduced again.
+    /// Every message opens as its sender built it (spec 006 FR-031);
+    /// `reduced` is reader view, the reader's own choice for this message and
+    /// this view (`⇧⌘O`). Nothing is remembered, so the next message opens as
+    /// sent again.
     ///
     /// The answer carries the notice and the caveat too (#1589): both are
     /// by-products of the render the document pays for anyway, and asking
@@ -177,9 +177,9 @@ public final class PostioSession {
     public func readerDocument(
         message: Int64,
         remote: RemoteImagesFfi,
-        original: Bool = false
+        reduced: Bool = false
     ) -> ReaderDocumentFfi {
-        inner.readerDocument(message: message, remote: remote, original: original)
+        inner.readerDocument(message: message, remote: remote, reduced: reduced)
     }
 
     /// One part's bytes.
@@ -239,8 +239,8 @@ public final class PostioSession {
     /// caveat (#1595, ADR 0032). The page is `postio_ui::reader::thread`'s,
     /// the same one GTK's pane draws. Blocks on the store: off the main
     /// actor.
-    public nonisolated func threadDocument(thread: Int64, originals: [Int64]) -> ThreadDocumentFfi {
-        inner.threadDocument(thread: thread, originals: originals)
+    public nonisolated func threadDocument(thread: Int64, reduced: [Int64]) -> ThreadDocumentFfi {
+        inner.threadDocument(thread: thread, reduced: reduced)
     }
 
     /// The draft behind a draft's message row, for a conversation's

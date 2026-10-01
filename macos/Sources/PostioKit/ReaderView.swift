@@ -17,7 +17,7 @@ public struct ReaderView: NSViewRepresentable {
     private let remoteImages: RemoteImagesFfi
     /// Whether to draw what the sender wrote rather than what reader view
     /// reduces it to.
-    private let original: Bool
+    private let reduced: Bool
     private let onHeight: ((CGFloat) -> Void)?
     /// Called with the two facts the render already paid for — the notice
     /// and the caveat (#1589). They used to be their own boundary calls,
@@ -44,7 +44,7 @@ public struct ReaderView: NSViewRepresentable {
         source: any ReaderSource,
         message: Int64?,
         remoteImages: RemoteImagesFfi = .blocked,
-        original: Bool = false,
+        reduced: Bool = false,
         page: UInt32 = 0,
         pageToken: Int = 0,
         onHeight: ((CGFloat) -> Void)? = nil,
@@ -53,7 +53,7 @@ public struct ReaderView: NSViewRepresentable {
         self.source = source
         self.message = message
         self.remoteImages = remoteImages
-        self.original = original
+        self.reduced = reduced
         self.page = page
         self.pageToken = pageToken
         self.onHeight = onHeight
@@ -89,12 +89,12 @@ public struct ReaderView: NSViewRepresentable {
         view.setAccessibilityRole(.group)
         view.setAccessibilityRoleDescription("article")
         view.setAccessibilityLabel(Pane.reader.label)
-        coordinator.load(into: view, message: message, remote: remoteImages, original: original)
+        coordinator.load(into: view, message: message, remote: remoteImages, reduced: reduced)
         return view
     }
 
     public func updateNSView(_ view: WKWebView, context: Context) {
-        context.coordinator.load(into: view, message: message, remote: remoteImages, original: original)
+        context.coordinator.load(into: view, message: message, remote: remoteImages, reduced: reduced)
         // After the load, so a page turn that arrives with a new message
         // lands in the document that message produced rather than in the one
         // being replaced.
@@ -120,7 +120,7 @@ public struct ReaderView: NSViewRepresentable {
         private var showing: Int64?
         private var showingRemote: RemoteImagesFfi = .blocked
         private let onAnswers: ((ReaderNoticeFfi?, String?) -> Void)?
-        private var showingOriginal = false
+        private var showingReduced = false
         private let gate = RenderGate()
         private var pending: Task<Void, Never>?
         private let onHeight: ((CGFloat) -> Void)?
@@ -184,13 +184,13 @@ public struct ReaderView: NSViewRepresentable {
             into view: WKWebView,
             message: Int64?,
             remote: RemoteImagesFfi,
-            original: Bool
+            reduced: Bool
         ) {
-            guard showing != message || showingRemote != remote || showingOriginal != original
+            guard showing != message || showingRemote != remote || showingReduced != reduced
             else { return }
             showing = message
             showingRemote = remote
-            showingOriginal = original
+            showingReduced = reduced
 
             let token = gate.begin()
             pending?.cancel()
@@ -212,7 +212,7 @@ public struct ReaderView: NSViewRepresentable {
             // busy machine long enough to read as a leak (#1586).
             pending = Task { [weak self, weak view] in
                 let answers = await Task.detached {
-                    source.readerDocument(message: message, remote: remote, original: original)
+                    source.readerDocument(message: message, remote: remote, reduced: reduced)
                 }.value
 
                 guard let self, let view, !Task.isCancelled, self.gate.isCurrent(token) else { return }

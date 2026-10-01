@@ -197,30 +197,44 @@ async fn the_document_still_blocks_until_the_frontend_asks_for_allowed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn view_original_leaves_reader_view_for_this_message_and_no_further() {
-    // The one gesture that may leave reader view (canvas 26). Per message and
-    // per view: nothing is remembered, so the next message opens reduced.
+async fn a_bulk_message_opens_as_its_sender_built_it() {
+    // Spec 006 FR-031, which GTK and the shared thread page follow: reader
+    // view is a command away, never the default. The Mac's single-message
+    // pane opened bulk mail reduced, so one application had two rules.
     // Bulk mail, which is what reader view is *for*: nested tables are what
     // a campaign template does and a person writing mail does not.
     let (session, message) = a_bulk_message("notices@relay.example.net").await;
 
-    let reduced = session
+    let opened = session
         .reader_document(message, RemoteImagesFfi::Blocked, false)
         .await;
-    let original = session
+
+    assert!(
+        opened.contains(postio_ui::reader::document::SENDERS_SHEET_CLASS),
+        "the original of bulk mail is drawn on its sender's sheet"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reader_view_is_asked_for_one_message_at_a_time() {
+    // `toggle_reader_view`: per message and per view. Asking reduces this
+    // message; not asking draws it as sent again.
+    let (session, message) = a_bulk_message("notices@relay.example.net").await;
+
+    let reduced = session
         .reader_document(message, RemoteImagesFfi::Blocked, true)
+        .await;
+    let opened = session
+        .reader_document(message, RemoteImagesFfi::Blocked, false)
         .await;
 
     assert_ne!(
-        reduced, original,
-        "asking for the original has to actually change what is drawn"
+        reduced, opened,
+        "asking for reader view has to change what is drawn"
     );
-    assert_eq!(
-        session
-            .reader_document(message, RemoteImagesFfi::Blocked, false)
-            .await,
-        reduced,
-        "and asking again for the ordinary rendering gets it back"
+    assert!(
+        !reduced.contains(postio_ui::reader::document::SENDERS_SHEET_CLASS),
+        "a reduced message is on Postio's own page, not the sender's"
     );
 }
 

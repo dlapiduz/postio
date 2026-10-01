@@ -557,7 +557,7 @@ final class Engine {
         // user-initiated surface, not the j/k hot path. The notice rides
         // the document's answer now (#1589), and the panel is the one
         // caller with no render of its own to take it from.
-        guard let notice = session?.readerDocument(message: message, remote: .blocked, original: true).notice
+        guard let notice = session?.readerDocument(message: message, remote: .blocked).notice
         else { return (0, 0) }
         return (notice.remoteImages, notice.trackers)
     }
@@ -1230,8 +1230,13 @@ final class Engine {
             // drill-in on either platform, so there is nothing to close.
             focus(.list)
         case Intercepted.viewOriginal:
+            // The way back from reader view, not a toggle: over a message
+            // already drawn as sent there is nothing to do.
             guard let message = target ?? cursorShowing else { return false }
-            toggleOriginal(message)
+            readerView.showOriginal(message)
+        case Intercepted.toggleReaderView:
+            guard let message = target ?? cursorShowing else { return false }
+            toggleReaderView(message)
         case Intercepted.scrollReaderDown, Intercepted.scrollReaderUp:
             // Only the single-message pane pages this way: it is one
             // document, so the shared anchors are in it and a fragment jump
@@ -1268,13 +1273,13 @@ final class Engine {
     /// between the anchors the shared document lays down — see
     /// `ReaderPaging`. Reset when the message changes, or `space` on a new
     /// message would resume somebody else's place in it.
-    /// Which messages are being shown as their sender wrote them.
+    /// Which messages the reader asked to see in reader view.
     ///
-    /// Per message and per view — see `OriginalView`. Here rather than in the
-    /// pane because `⌘O` is a command, and a command cannot reach an
-    /// `@State`: that is exactly why the key did nothing while the `⋯` menu
-    /// item beside it worked.
-    private(set) var original = OriginalView()
+    /// Per message and per view — see `ReaderViewChoice`. Here rather than in
+    /// the pane because `⇧⌘O` and `⌘O` are commands, and a command cannot
+    /// reach an `@State`: that is exactly why `⌘O` once did nothing while the
+    /// `⋯` menu item beside it worked.
+    private(set) var readerView = ReaderViewChoice()
 
     /// A message's parts, when the panel is open.
     ///
@@ -1333,8 +1338,8 @@ final class Engine {
         }
     }
 
-    func toggleOriginal(_ message: Int64) {
-        original.toggle(message)
+    func toggleReaderView(_ message: Int64) {
+        readerView.toggle(message)
     }
 
     /// Leave `message`'s list -- the banner's button and `X` alike.
@@ -1492,14 +1497,14 @@ final class Engine {
             // branch beside it was unreachable from then on. Somebody else's
             // mail, under a row that is not theirs, looking like an answer.
             conversation.clear()
-            original.clear()
+            readerView.clear()
             return
         }
         guard thread != showingThread else { return }
         showingThread = thread
         // A different conversation is a different view, and the grants were
         // about the last one's messages.
-        original.clear()
+        readerView.clear()
         session.openConversation(thread)
     }
 

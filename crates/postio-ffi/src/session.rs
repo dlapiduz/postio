@@ -780,12 +780,8 @@ impl Session {
     /// Blocks on the store -- one body load per message -- so off the main
     /// actor.
     #[uniffi::method(name = "threadDocument")]
-    pub fn thread_document_ffi(
-        &self,
-        thread: i64,
-        originals: Vec<i64>,
-    ) -> crate::ThreadDocumentFfi {
-        blocking(self.thread_document(thread, originals))
+    pub fn thread_document_ffi(&self, thread: i64, reduced: Vec<i64>) -> crate::ThreadDocumentFfi {
+        blocking(self.thread_document(thread, reduced))
     }
 
     /// The conversation the pane is showing, folded — `None` until one has
@@ -1464,9 +1460,9 @@ impl Session {
         &self,
         message: i64,
         remote: crate::RemoteImagesFfi,
-        original: bool,
+        reduced: bool,
     ) -> crate::ReaderDocumentFfi {
-        blocking(self.reader_answers(message, remote, original))
+        blocking(self.reader_answers(message, remote, reduced))
     }
 
     /// One inline part of `message`, by its `Content-ID`.
@@ -2235,8 +2231,9 @@ impl Session {
     /// in the thread in the order the stacked pane used (`fold`'s), each body
     /// loaded or said to be coming, recipients through the shared header, the
     /// per-sender image decision made against the allow list the Privacy
-    /// pane edits, and the user's own messages marked. `originals` are the
-    /// messages the reader asked to see as sent (`⌃O`).
+    /// pane edits, and the user's own messages marked. Every message opens as
+    /// its sender built it (spec 006 FR-031); `reduced` are the ones the
+    /// reader asked to see in reader view (`toggle_reader_view`).
     ///
     /// Every message opens (FR-013) -- except one whose body has not arrived,
     /// which stays its one line unless it is the newest: the newest opens
@@ -2248,7 +2245,7 @@ impl Session {
     pub async fn thread_document(
         &self,
         thread: i64,
-        originals: Vec<i64>,
+        reduced: Vec<i64>,
     ) -> crate::ThreadDocumentFfi {
         let empty = crate::ThreadDocumentFfi::default();
         let Some((store, _runtime)) = self.reader() else {
@@ -2350,13 +2347,13 @@ impl Session {
             });
         }
 
-        let originals: std::collections::HashMap<String, postio_ui::reader::document::Rendering> =
-            originals
+        let chosen: std::collections::HashMap<String, postio_ui::reader::document::Rendering> =
+            reduced
                 .iter()
                 .map(|id| {
                     (
                         id.to_string(),
-                        postio_ui::reader::document::Rendering::Original,
+                        postio_ui::reader::document::Rendering::Reader,
                     )
                 })
                 .collect();
@@ -2364,7 +2361,7 @@ impl Session {
         let html = postio_ui::reader::thread::compose(
             &messages,
             |address| allow.is_allowed(address),
-            &originals,
+            &chosen,
             &mut self.thread_renders.lock().expect("thread renders lock"),
         );
         // The rail's rows, from the thread rather than from anything drawn
@@ -2485,9 +2482,9 @@ impl Session {
     /// view over.
     pub async fn reader_notice(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
         // A view over `reader_answers`, kept for its tests: they are the
-        // behavioural record of what a notice means. Blocked and original,
+        // behavioural record of what a notice means. Blocked and as sent,
         // which were always this question's terms.
-        self.reader_answers(message, crate::RemoteImagesFfi::Blocked, true)
+        self.reader_answers(message, crate::RemoteImagesFfi::Blocked, false)
             .await
             .notice
     }
@@ -2592,7 +2589,7 @@ impl Session {
     /// See [`decode_caveat_ffi`](Self::decode_caveat_ffi).
     pub async fn decode_caveat(&self, message: i64) -> Option<String> {
         // A view over `reader_answers` — see `reader_notice`.
-        self.reader_answers(message, crate::RemoteImagesFfi::Blocked, true)
+        self.reader_answers(message, crate::RemoteImagesFfi::Blocked, false)
             .await
             .caveat
     }
@@ -5065,7 +5062,7 @@ impl Session {
         &self,
         message: i64,
         remote: crate::RemoteImagesFfi,
-        original: bool,
+        reduced: bool,
     ) -> crate::ReaderDocumentFfi {
         let plate = |html: String| crate::ReaderDocumentFfi {
             html,
@@ -5110,14 +5107,13 @@ impl Session {
                 body,
                 encoding_problems,
             } => {
-                // Reader view is decided per message from the message, the
-                // same rule the GTK reader uses (#1009) — unless the reader
-                // asked to see the original, which is the one gesture that
-                // may leave it (#1274). Asking is per message and per view:
-                // nothing here is remembered, so the next message opens
-                // reduced again.
+                // Every message opens as its sender built it (spec 006
+                // FR-031), the rule GTK and the shared thread page follow;
+                // reader view is the reader's own choice for this message
+                // and this view (`toggle_reader_view`), never the default.
+                // Whether it reads as bulk still picks the sheet below.
                 let bulk = suits_reader_view(&body);
-                let rendering = if bulk && !original {
+                let rendering = if reduced {
                     Rendering::Reader
                 } else {
                     Rendering::Original
@@ -5127,10 +5123,7 @@ impl Session {
                 // chrome — for an original that reader view would otherwise
                 // have reduced. `sheet_for` is the rule, from the same
                 // function GTK calls: the app's palette is never injected
-                // into a sender's markup. It was written asking rather than
-                // assuming, against a frontend that could not leave reader
-                // view at all; `original` above is the day it grew one, and
-                // the sheet came with it.
+                // into a sender's markup.
                 // The two facts the render already paid for (#1589). The
                 // notice only from a blocked render — the question it
                 // answers is "what would be loaded" — and its counts come
@@ -5204,9 +5197,9 @@ impl Session {
         &self,
         message: i64,
         remote: crate::RemoteImagesFfi,
-        original: bool,
+        reduced: bool,
     ) -> String {
-        self.reader_answers(message, remote, original).await.html
+        self.reader_answers(message, remote, reduced).await.html
     }
 
     /// Who `message` was addressed to, already rendered.

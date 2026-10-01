@@ -283,6 +283,8 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::OpenMessage,
         C::PrevView,
         C::ViewOriginal,
+        // Reader view for one message, the other half of the same choice.
+        C::ToggleReaderView,
         // The parts panel: a surface, a cursor this side holds, and verbs
         // that each need a dialog or a launcher.
         C::OpenParts,

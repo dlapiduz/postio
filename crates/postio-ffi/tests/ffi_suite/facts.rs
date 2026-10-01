@@ -205,10 +205,10 @@ async fn reader_view_and_original_agree_on_what_was_held_back() {
     let (session, message) = a_message_with_everything().await;
 
     let reduced = session
-        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, false)
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, true)
         .await;
     let original = session
-        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, true)
+        .reader_answers(message, postio_ffi::RemoteImagesFfi::Blocked, false)
         .await;
 
     let (a, b) = (

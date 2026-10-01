@@ -39,7 +39,7 @@ extension ReaderWebViews {
         /// Answers every message with a small document and resolves no parts.
         final class Documents: ReaderSource, @unchecked Sendable {
             func readerDocument(
-                message: Int64, remote: RemoteImagesFfi, original: Bool
+                message: Int64, remote: RemoteImagesFfi, reduced: Bool
             ) -> ReaderDocumentFfi {
                 ReaderDocumentFfi(
                     html: "<!doctype html><p>message \(message)</p>", notice: nil, caveat: nil
@@ -48,7 +48,7 @@ extension ReaderWebViews {
 
             func resolveCid(message: Int64, contentId: String) -> InlinePart? { nil }
 
-            func threadDocument(thread: Int64, originals: [Int64]) -> ThreadDocumentFfi {
+            func threadDocument(thread: Int64, reduced: [Int64]) -> ThreadDocumentFfi {
                 ThreadDocumentFfi(html: "", messages: [], rail: [])
             }
         }
@@ -63,7 +63,7 @@ extension ReaderWebViews {
             var answered: Bool { lock.withLock { built > 0 } }
 
             func readerDocument(
-                message: Int64, remote: RemoteImagesFfi, original: Bool
+                message: Int64, remote: RemoteImagesFfi, reduced: Bool
             ) -> ReaderDocumentFfi {
                 Thread.sleep(forTimeInterval: 2)
                 lock.withLock { built += 1 }
@@ -72,7 +72,7 @@ extension ReaderWebViews {
 
             func resolveCid(message: Int64, contentId: String) -> InlinePart? { nil }
 
-            func threadDocument(thread: Int64, originals: [Int64]) -> ThreadDocumentFfi {
+            func threadDocument(thread: Int64, reduced: [Int64]) -> ThreadDocumentFfi {
                 ThreadDocumentFfi(html: "", messages: [], rail: [])
             }
         }

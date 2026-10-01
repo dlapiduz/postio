@@ -45,7 +45,6 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// terminal frontend's chrome arrived in the 2026-09-30 merge: what is listed
 /// here is new to the registry, not a regression of what was answered.
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    (CommandId::ToggleReaderView, "#1705"),
     (CommandId::DarkenMessage, "#1705"),
     (CommandId::FindInMessage, "#1705"),
     (CommandId::FindNext, "#1705"),

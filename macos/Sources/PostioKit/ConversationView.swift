@@ -31,7 +31,7 @@ public struct ConversationView: View {
     /// with nothing on screen to say so.
     private let run: (String, Int64?) -> Void
     /// The messages the reader asked to see as sent (`⌘O`).
-    private let originals: [Int64]
+    private let reduced: [Int64]
     /// Bumped when what the page is made of may have changed -- see
     /// `ThreadDocumentView`.
     private let revision: Int
@@ -65,7 +65,7 @@ public struct ConversationView: View {
         session: PostioSession,
         model: ConversationModel,
         run: @escaping (String, Int64?) -> Void,
-        originals: [Int64] = [],
+        reduced: [Int64] = [],
         revision: Int = 0,
         page: UInt32 = 0,
         pageToken: Int = 0,
@@ -78,7 +78,7 @@ public struct ConversationView: View {
         self.session = session
         self.model = model
         self.run = run
-        self.originals = originals
+        self.reduced = reduced
         self.revision = revision
         self.page = page
         self.pageToken = pageToken
@@ -115,7 +115,7 @@ public struct ConversationView: View {
                 ThreadDocumentView(
                     source: session,
                     thread: model.conversation?.thread ?? 0,
-                    originals: originals,
+                    reduced: reduced,
                     revision: revision,
                     focus: focusMessage,
                     request: model.documentRequest,
@@ -338,20 +338,20 @@ public struct ExpandedMessage: View {
     ///
     /// Per message and per view: reader view is on by default for bulk mail
     /// and leaving it is one gesture about one message, not a mode.
-    /// Whether this message is drawn as its sender wrote it.
+    /// Whether this message is drawn in reader view.
     ///
-    /// Passed in rather than `@State`, because `⌘O` is a command and a
-    /// command cannot reach view state — which is why the key did nothing
-    /// while the menu item below it worked. `OriginalView` holds it, per
+    /// Passed in rather than `@State`, because `⇧⌘O` and `⌘O` are commands and
+    /// a command cannot reach view state — which is why `⌘O` once did nothing
+    /// while the menu item below it worked. `ReaderViewChoice` holds it, per
     /// message and per view.
-    public let showingOriginal: Bool
+    public let readerView: Bool
     /// Whether this *message's* images are showing.
     ///
     /// Per message and reset with the pane, which is what "show once" means:
     /// the standing grant is the popover's, and it is the only thing that
     /// survives closing the conversation.
     ///
-    /// Held outside this view, like `showingOriginal` beside it and for the
+    /// Held outside this view, like `readerView` beside it and for the
     /// same reason: `H` (*Render part once*) is a command, and a command
     /// cannot reach an `@State`. While this was one, the notice's button
     /// worked and the key did nothing.
@@ -368,21 +368,21 @@ public struct ExpandedMessage: View {
     public var collapsible = true
     /// Where measured heights are remembered across visits.
     let heights: BodyHeights?
-    public let toggleOriginal: () -> Void
+    public let toggleReaderView: () -> Void
 
     public init(
         session: PostioSession,
         row: RowFfi,
         isLatest: Bool,
         showingCc: Bool,
-        showingOriginal: Bool,
+        readerView: Bool,
         showingImages: Bool,
         unsubscribe: Unsubscribing.State = .offered,
         collapsible: Bool = true,
         heights: BodyHeights? = nil,
         collapse: @escaping () -> Void,
         toggleCc: @escaping () -> Void,
-        toggleOriginal: @escaping () -> Void,
+        toggleReaderView: @escaping () -> Void,
         run: @escaping (String, Int64?) -> Void,
         openSettings: @escaping () -> Void
     ) {
@@ -390,7 +390,7 @@ public struct ExpandedMessage: View {
         self.row = row
         self.isLatest = isLatest
         self.showingCc = showingCc
-        self.showingOriginal = showingOriginal
+        self.readerView = readerView
         self.showingImages = showingImages
         self.unsubscribe = unsubscribe
         self.collapsible = collapsible
@@ -402,7 +402,7 @@ public struct ExpandedMessage: View {
         _height = State(initialValue: heights?.height(for: row.id) ?? BodyHeight.minimum)
         self.collapse = collapse
         self.toggleCc = toggleCc
-        self.toggleOriginal = toggleOriginal
+        self.toggleReaderView = toggleReaderView
         self.run = run
         self.openSettings = openSettings
     }
@@ -454,7 +454,7 @@ public struct ExpandedMessage: View {
                     source: session,
                     message: row.id,
                     remoteImages: remoteImages,
-                    original: showingOriginal,
+                    reduced: readerView,
                     onHeight: { measured in
                         height = measured
                         heights?.remember(measured, for: row.id)
@@ -550,8 +550,8 @@ public struct ExpandedMessage: View {
                 Button("Reply") { run("reply", row.id) }
                 Button("Forward") { run("forward", row.id) }
                 Toggle(
-                    "View original",
-                    isOn: Binding(get: { showingOriginal }, set: { _ in toggleOriginal() })
+                    "Reader view",
+                    isOn: Binding(get: { readerView }, set: { _ in toggleReaderView() })
                 )
             } label: {
                 Image(systemName: "ellipsis")

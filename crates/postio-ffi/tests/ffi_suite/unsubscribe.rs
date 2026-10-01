@@ -252,10 +252,10 @@ async fn reading_a_message_never_records_an_activation() {
         let offer = session.unsubscribe_offer(ids[0]).await;
         assert!(offer.is_some(), "the offer is what is being drawn");
         session
-            .reader_document(ids[0], RemoteImagesFfi::Blocked, false)
+            .reader_document(ids[0], RemoteImagesFfi::Blocked, true)
             .await;
         session
-            .reader_document(ids[0], RemoteImagesFfi::Allowed, true)
+            .reader_document(ids[0], RemoteImagesFfi::Allowed, false)
             .await;
         session.decode_caveat(ids[0]).await;
         assert!(session.unsubscribe_activations().await.is_empty());

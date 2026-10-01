@@ -31,7 +31,7 @@ import WebKit
 public struct ThreadDocumentView: NSViewRepresentable {
     private let source: any ReaderSource
     private let thread: Int64
-    private let originals: [Int64]
+    private let reduced: [Int64]
     /// Bumped when what the page is made of may have changed underneath it —
     /// a body arrived, a grant was made. The page is asked for again and
     /// loaded only if it came out different.
@@ -54,7 +54,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
     public init(
         source: any ReaderSource,
         thread: Int64,
-        originals: [Int64] = [],
+        reduced: [Int64] = [],
         revision: Int = 0,
         focus: Int64? = nil,
         request: ConversationModel.DocumentRequest? = nil,
@@ -68,7 +68,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
     ) {
         self.source = source
         self.thread = thread
-        self.originals = originals
+        self.reduced = reduced
         self.revision = revision
         self.focus = focus
         self.request = request
@@ -114,7 +114,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
         // Whatever was asked before this view existed is not a request to it.
         coordinator.performed = request?.serial ?? 0
         coordinator.load(
-            into: view, thread: thread, originals: originals, revision: revision, focus: focus
+            into: view, thread: thread, reduced: reduced, revision: revision, focus: focus
         )
         return view
     }
@@ -127,7 +127,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
         coordinator.onObserved = onObserved
         coordinator.onSettled = onSettled
         coordinator.load(
-            into: view, thread: thread, originals: originals, revision: revision, focus: focus
+            into: view, thread: thread, reduced: reduced, revision: revision, focus: focus
         )
         coordinator.perform(request, in: view)
         coordinator.page(view, to: page, token: pageToken)
@@ -168,7 +168,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
 
         private struct Asked: Equatable {
             let thread: Int64
-            let originals: [Int64]
+            let reduced: [Int64]
             let revision: Int
         }
 
@@ -225,11 +225,11 @@ public struct ThreadDocumentView: NSViewRepresentable {
         func load(
             into view: WKWebView,
             thread: Int64,
-            originals: [Int64],
+            reduced: [Int64],
             revision: Int,
             focus: Int64?
         ) {
-            let now = Asked(thread: thread, originals: originals, revision: revision)
+            let now = Asked(thread: thread, reduced: reduced, revision: revision)
             guard now != asked else { return }
             let opening = asked?.thread != thread
             asked = now
@@ -241,7 +241,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
             // the render's to keep (#1586).
             pending = Task { [weak self, weak view] in
                 let document = await Task.detached {
-                    source.threadDocument(thread: thread, originals: originals)
+                    source.threadDocument(thread: thread, reduced: reduced)
                 }.value
                 guard let self, let view, !Task.isCancelled, self.gate.isCurrent(token) else {
                     return

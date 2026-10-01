@@ -8,7 +8,7 @@
 /// keeping them apart is what stops "just show me this one" from quietly
 /// becoming "trust everything this sender ever sends".
 ///
-/// A type rather than an `@State` in the view, for the reason `OriginalView`
+/// A type rather than an `@State` in the view, for the reason `ReaderViewChoice`
 /// records: `H` is a command, a command cannot reach view state, and a flag
 /// that lives only inside a `View` is a flag no test can look at. The "Show
 /// images" button in the blocked-images notice presses the same thing, so the
@@ -23,7 +23,7 @@ public struct RenderedOnce: Equatable, Sendable {
 
     /// Render `message`'s held-back parts.
     ///
-    /// One-way, unlike [`OriginalView.toggle`]. Un-rendering would be a
+    /// One-way, unlike [`ReaderViewChoice.toggle`]. Un-rendering would be a
     /// promise Postio cannot keep: the pictures have been fetched, the sender
     /// already knows the message was opened, and hiding them again would say
     /// otherwise.

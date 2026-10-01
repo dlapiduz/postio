@@ -175,6 +175,8 @@ public enum Intercepted {
     public static let openMessage = "open_message"
     public static let prevView = "prev_view"
     public static let viewOriginal = "view_original"
+    /// `⇧⌘O`: reader view for one message (spec 006 FR-031).
+    public static let toggleReaderView = "toggle_reader_view"
     /// The parts panel. Opening it is a surface, walking it moves a cursor
     /// this side holds, and every verb on it needs a dialog or a launcher —
     /// so all eight stop here. `PartsPanel` is the surface and `PartsModel`
@@ -231,7 +233,7 @@ public enum Intercepted {
         scrollReaderDown, scrollReaderUp,
         nextFolder, prevFolder, toggleFolder,
         goToInbox, goToDrafts, goToSent, goToFlagged,
-        openMessage, prevView, viewOriginal,
+        openMessage, prevView, viewOriginal, toggleReaderView,
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         toggleResultOrder, saveSearch, renameSavedSearch, deleteSavedSearch,

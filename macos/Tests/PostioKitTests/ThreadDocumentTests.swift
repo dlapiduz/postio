@@ -33,14 +33,14 @@ extension ReaderWebViews {
             init(count: Int) { self.count = count }
 
             func readerDocument(
-                message: Int64, remote: RemoteImagesFfi, original: Bool
+                message: Int64, remote: RemoteImagesFfi, reduced: Bool
             ) -> ReaderDocumentFfi {
                 ReaderDocumentFfi(html: "", notice: nil, caveat: nil)
             }
 
             func resolveCid(message: Int64, contentId: String) -> InlinePart? { nil }
 
-            func threadDocument(thread: Int64, originals: [Int64]) -> ThreadDocumentFfi {
+            func threadDocument(thread: Int64, reduced: [Int64]) -> ThreadDocumentFfi {
                 lock.withLock { asked += 1 }
                 let ids = (1...Int64(count)).map { thread * 100 + $0 }
                 let sections = ids.map { id in
