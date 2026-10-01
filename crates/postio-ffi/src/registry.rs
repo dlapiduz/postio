@@ -290,6 +290,10 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ZoomIn,
         C::ZoomOut,
         C::ZoomReset,
+        // Find in the page: a bar this frontend draws, and WebKit's own find.
+        C::FindInMessage,
+        C::FindNext,
+        C::FindPrevious,
         // The parts panel: a surface, a cursor this side holds, and verbs
         // that each need a dialog or a launcher.
         C::OpenParts,

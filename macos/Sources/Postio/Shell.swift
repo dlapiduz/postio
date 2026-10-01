@@ -89,7 +89,21 @@ struct Shell: View {
                 .background(Color(nsColor: AppSurface.background))
                 .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 560)
         } detail: {
-            reader
+            VStack(spacing: 0) {
+                // Above the page rather than over it, so the match it moves
+                // to is never under the bar (spec 006 FR-018).
+                if engine.find.isOpen {
+                    FindBar(
+                        find: engine.find,
+                        setQuery: { engine.setFindQuery($0) },
+                        next: { _ = engine.run(Intercepted.findNext) },
+                        previous: { _ = engine.run(Intercepted.findPrevious) },
+                        close: { _ = engine.run(Intercepted.back) }
+                    )
+                    Divider()
+                }
+                reader
+            }
                 .background(Color(nsColor: AppSurface.background))
                 .onTapGesture { engine.focus(.reader) }
         }
@@ -648,6 +662,8 @@ struct Shell: View {
                 run: { engine.run($0, on: $1) },
                 reduced: engine.readerView.messages,
                 zoom: engine.zoom.factor,
+                find: engine.find.request,
+                onFound: { engine.findFound($0) },
                 revision: engine.documentRevision,
                 page: engine.readerPage,
                 pageToken: engine.readerPageToken,
@@ -673,6 +689,8 @@ struct Shell: View {
                     showingCc: engine.ccRevealed.contains(showing),
                     readerView: engine.readerView.isReduced(showing),
                     zoom: engine.zoom.factor,
+                    find: engine.find.request,
+                    onFound: { engine.findFound($0) },
                     showingImages: engine.rendered.isOn(showing),
                     unsubscribe: engine.unsubscribing.state(of: showing),
                     collapsible: false,

@@ -34,6 +34,10 @@ public struct ThreadDocumentView: NSViewRepresentable {
     private let reduced: [Int64]
     /// The reader's zoom, as `WKWebView.pageZoom` takes it (`ReaderZoom`).
     private let zoom: Double
+    /// What to find in the page, and where to say whether it was there --
+    /// the whole conversation, since it is one page.
+    private let find: FindInMessage.Request?
+    private let onFound: (Bool) -> Void
     /// Bumped when what the page is made of may have changed underneath it —
     /// a body arrived, a grant was made. The page is asked for again and
     /// loaded only if it came out different.
@@ -58,6 +62,8 @@ public struct ThreadDocumentView: NSViewRepresentable {
         thread: Int64,
         reduced: [Int64] = [],
         zoom: Double = 1,
+        find: FindInMessage.Request? = nil,
+        onFound: @escaping (Bool) -> Void = { _ in },
         revision: Int = 0,
         focus: Int64? = nil,
         request: ConversationModel.DocumentRequest? = nil,
@@ -73,6 +79,8 @@ public struct ThreadDocumentView: NSViewRepresentable {
         self.thread = thread
         self.reduced = reduced
         self.zoom = zoom
+        self.find = find
+        self.onFound = onFound
         self.revision = revision
         self.focus = focus
         self.request = request
@@ -138,6 +146,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
         )
         coordinator.perform(request, in: view)
         coordinator.page(view, to: page, token: pageToken)
+        coordinator.finder.perform(find, in: view, onFound: onFound)
     }
 
     /// Holds the handlers, the page on screen, and where it came from.
@@ -153,6 +162,8 @@ public struct ThreadDocumentView: NSViewRepresentable {
         var onSettled: (UInt64) -> Void = { _ in }
         /// Where the observer's reports arrive.
         let reports = RailReports()
+        /// What `find_in_message` last asked of this view.
+        let finder = ReaderFind()
         /// The channel's name, as the observer script is told it.
         static let railHandler = "postioRail"
         /// The last request carried out, so SwiftUI's repeated updates do not

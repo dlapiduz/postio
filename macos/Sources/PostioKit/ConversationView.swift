@@ -34,6 +34,9 @@ public struct ConversationView: View {
     private let reduced: [Int64]
     /// The reader's zoom (`ReaderZoom.factor`).
     private let zoom: Double
+    /// What to find in the page (`FindInMessage`), and where to report it.
+    private let find: FindInMessage.Request?
+    private let onFound: (Bool) -> Void
     /// Bumped when what the page is made of may have changed -- see
     /// `ThreadDocumentView`.
     private let revision: Int
@@ -69,6 +72,8 @@ public struct ConversationView: View {
         run: @escaping (String, Int64?) -> Void,
         reduced: [Int64] = [],
         zoom: Double = 1,
+        find: FindInMessage.Request? = nil,
+        onFound: @escaping (Bool) -> Void = { _ in },
         revision: Int = 0,
         page: UInt32 = 0,
         pageToken: Int = 0,
@@ -83,6 +88,8 @@ public struct ConversationView: View {
         self.run = run
         self.reduced = reduced
         self.zoom = zoom
+        self.find = find
+        self.onFound = onFound
         self.revision = revision
         self.page = page
         self.pageToken = pageToken
@@ -121,6 +128,8 @@ public struct ConversationView: View {
                     thread: model.conversation?.thread ?? 0,
                     reduced: reduced,
                     zoom: zoom,
+                    find: find,
+                    onFound: onFound,
                     revision: revision,
                     focus: focusMessage,
                     request: model.documentRequest,
@@ -352,6 +361,9 @@ public struct ExpandedMessage: View {
     public let readerView: Bool
     /// The reader's zoom (`ReaderZoom.factor`).
     public let zoom: Double
+    /// What to find in this message's page, and where to report it.
+    public let find: FindInMessage.Request?
+    public let onFound: (Bool) -> Void
     /// Whether this *message's* images are showing.
     ///
     /// Per message and reset with the pane, which is what "show once" means:
@@ -384,6 +396,8 @@ public struct ExpandedMessage: View {
         showingCc: Bool,
         readerView: Bool,
         zoom: Double = 1,
+        find: FindInMessage.Request? = nil,
+        onFound: @escaping (Bool) -> Void = { _ in },
         showingImages: Bool,
         unsubscribe: Unsubscribing.State = .offered,
         collapsible: Bool = true,
@@ -400,6 +414,8 @@ public struct ExpandedMessage: View {
         self.showingCc = showingCc
         self.readerView = readerView
         self.zoom = zoom
+        self.find = find
+        self.onFound = onFound
         self.showingImages = showingImages
         self.unsubscribe = unsubscribe
         self.collapsible = collapsible
@@ -465,6 +481,8 @@ public struct ExpandedMessage: View {
                     remoteImages: remoteImages,
                     reduced: readerView,
                     zoom: zoom,
+                    find: find,
+                    onFound: onFound,
                     onHeight: { measured in
                         height = measured
                         heights?.remember(measured, for: row.id)

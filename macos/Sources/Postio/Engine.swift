@@ -1235,6 +1235,18 @@ final class Engine {
             // already drawn as sent there is nothing to do.
             guard let message = target ?? cursorShowing else { return false }
             readerView.showOriginal(message)
+        case Intercepted.findInMessage:
+            // Only over a message: there is nothing to search in an empty pane.
+            guard cursorShowing != nil || conversation.conversation != nil else { return false }
+            find.open()
+        case Intercepted.findNext:
+            guard cursorShowing != nil || conversation.conversation != nil else { return false }
+            _ = find.next()
+        case Intercepted.findPrevious:
+            guard cursorShowing != nil || conversation.conversation != nil else { return false }
+            _ = find.previous()
+        case Intercepted.back where find.isOpen:
+            find.close()
         case Intercepted.zoomIn:
             changeZoom { $0.zoomIn() }
         case Intercepted.zoomOut:
@@ -1291,6 +1303,15 @@ final class Engine {
     /// How large the reader draws bodies -- one reader-wide preference, the
     /// `[reader] zoom` GTK reads too (spec 006 FR-021d). See `ReaderZoom`.
     private(set) var zoom = ReaderZoom(percent: 100, steps: settingsZoomSteps())
+
+    /// The find bar and what it asks of the reader (spec 006 FR-018).
+    private(set) var find = FindInMessage()
+
+    /// What the find bar's field holds now.
+    func setFindQuery(_ text: String) { find.setQuery(text) }
+
+    /// What the reader's web view found for the last request.
+    func findFound(_ any: Bool) { find.found(any) }
 
     /// Read `[reader] zoom`. A file that will not parse keeps 100%: the
     /// settings window is where that gets said, not the reading pane.

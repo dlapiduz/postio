@@ -181,6 +181,10 @@ public enum Intercepted {
     public static let zoomIn = "zoom_in"
     public static let zoomOut = "zoom_out"
     public static let zoomReset = "zoom_reset"
+    /// Find in the open message or conversation (spec 006 FR-018).
+    public static let findInMessage = "find_in_message"
+    public static let findNext = "find_next"
+    public static let findPrevious = "find_previous"
     /// The parts panel. Opening it is a surface, walking it moves a cursor
     /// this side holds, and every verb on it needs a dialog or a launcher —
     /// so all eight stop here. `PartsPanel` is the surface and `PartsModel`
@@ -238,6 +242,7 @@ public enum Intercepted {
         nextFolder, prevFolder, toggleFolder,
         goToInbox, goToDrafts, goToSent, goToFlagged,
         openMessage, prevView, viewOriginal, toggleReaderView, zoomIn, zoomOut, zoomReset,
+        findInMessage, findNext, findPrevious,
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         toggleResultOrder, saveSearch, renameSavedSearch, deleteSavedSearch,

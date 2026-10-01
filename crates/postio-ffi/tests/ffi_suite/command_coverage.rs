@@ -46,9 +46,6 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// here is new to the registry, not a regression of what was answered.
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::DarkenMessage, "#1705"),
-    (CommandId::FindInMessage, "#1705"),
-    (CommandId::FindNext, "#1705"),
-    (CommandId::FindPrevious, "#1705"),
 ];
 
 /// Whether the Mac offers `id` at all. See the module note.

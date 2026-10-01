@@ -19,6 +19,9 @@ public struct ReaderView: NSViewRepresentable {
     private let reduced: Bool
     /// The reader's zoom, as `WKWebView.pageZoom` takes it (`ReaderZoom`).
     private let zoom: Double
+    /// What to find in the page, and where to say whether it was there.
+    private let find: FindInMessage.Request?
+    private let onFound: (Bool) -> Void
     private let onHeight: ((CGFloat) -> Void)?
     /// Called with the two facts the render already paid for — the notice
     /// and the caveat (#1589). They used to be their own boundary calls,
@@ -47,6 +50,8 @@ public struct ReaderView: NSViewRepresentable {
         remoteImages: RemoteImagesFfi = .blocked,
         reduced: Bool = false,
         zoom: Double = 1,
+        find: FindInMessage.Request? = nil,
+        onFound: @escaping (Bool) -> Void = { _ in },
         page: UInt32 = 0,
         pageToken: Int = 0,
         onHeight: ((CGFloat) -> Void)? = nil,
@@ -57,6 +62,8 @@ public struct ReaderView: NSViewRepresentable {
         self.remoteImages = remoteImages
         self.reduced = reduced
         self.zoom = zoom
+        self.find = find
+        self.onFound = onFound
         self.page = page
         self.pageToken = pageToken
         self.onHeight = onHeight
@@ -101,6 +108,7 @@ public struct ReaderView: NSViewRepresentable {
         // Set only when it moved: assigning re-lays out the page.
         if view.pageZoom != zoom { view.pageZoom = zoom }
         context.coordinator.load(into: view, message: message, remote: remoteImages, reduced: reduced)
+        context.coordinator.finder.perform(find, in: view, onFound: onFound)
         // After the load, so a page turn that arrives with a new message
         // lands in the document that message produced rather than in the one
         // being replaced.
@@ -121,6 +129,8 @@ public struct ReaderView: NSViewRepresentable {
         /// calls do not re-scroll a document somebody has since moved by
         /// hand.
         private var pagedTo: Int?
+        /// What `find_in_message` last asked of this view.
+        let finder = ReaderFind()
         let policy: ReaderNavigationPolicy
         private let source: any ReaderSource
         private var showing: Int64?
