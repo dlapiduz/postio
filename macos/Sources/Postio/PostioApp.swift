@@ -75,18 +75,8 @@ struct PostioApp: App {
         // with an id is opened by `openWindow`, which is a call rather than a
         // hope.
         Window("Settings", id: WindowId.settings) {
-            SettingsPaneView(
-                store: settings,
-                accounts: engine.accounts,
-                mailboxes: engine.mailboxes,
-                actions: engine.settingsActions,
-                accountCursor: engine.settingsAccounts,
-                repair: engine.accountRepair,
-                reloadAccounts: { engine.refreshAccounts() },
-                session: engine.session
-            )
-                .preferredColorScheme(engine.colorScheme)
-                .background(WindowConfigurator(role: .settings))
+            // A view of its own, and the reason matters: see `SettingsWindow`.
+            SettingsWindow(engine: engine, settings: settings)
         }
         .defaultSize(width: 900, height: 560)
         .windowResizability(.contentSize)
@@ -96,16 +86,7 @@ struct PostioApp: App {
         // that reason — a `Window` is a singleton, and writing two messages
         // at once is ordinary.
         WindowGroup(id: WindowId.compose, for: Int64.self) { $draft in
-            if let draft, let model = engine.compose.model(draft), let session = engine.session {
-                ComposeView(
-                    session: session,
-                    model: model,
-                    close: { engine.compose.close(draft) }
-                )
-                .preferredColorScheme(engine.colorScheme)
-                .navigationTitle(model.title)
-                .background(WindowConfigurator(role: .compose, draft: draft))
-            }
+            ComposeWindow(engine: engine, draft: draft)
         }
         .defaultSize(width: 640, height: 520)
     }
@@ -127,6 +108,59 @@ extension SessionPhase {
         // mail. `inactive` is the conservative reading: the application is
         // still running.
         @unknown default: self = .inactive
+        }
+    }
+}
+
+/// The Settings window's content, as a view of its own.
+///
+/// **Not inline in `PostioApp.body`, and this is the whole point of it.**
+/// SwiftUI evaluates every scene to build the menu bar -- a `Window` scene
+/// gets its own item in the Window menu -- so whatever a scene's content
+/// reads off the engine becomes a reason to rebuild the *menus*. Inline,
+/// this read `engine.mailboxes`, which moves with every sync event; SwiftUI
+/// rebuilt the bar every second or two during a backfill, dropping Postio's
+/// menus each time, and `MenuBar` put them back each time: `File` blinking
+/// in and out of the menu bar, logged as a restore every 1.5-3 s. Read here,
+/// in a view's own body, a count changing redraws this window and nothing
+/// else.
+private struct SettingsWindow: View {
+    let engine: Engine
+    let settings: SettingsStore
+
+    var body: some View {
+        SettingsPaneView(
+            store: settings,
+            accounts: engine.accounts,
+            mailboxes: engine.mailboxes,
+            actions: engine.settingsActions,
+            accountCursor: engine.settingsAccounts,
+            repair: engine.accountRepair,
+            reloadAccounts: { engine.refreshAccounts() },
+            session: engine.session
+        )
+        .preferredColorScheme(engine.colorScheme)
+        .background(WindowConfigurator(role: .settings))
+    }
+}
+
+/// One compose window's content, for the same reason as `SettingsWindow`:
+/// its reads -- the open drafts, the session, the theme -- belong to this
+/// window, not to the scene graph the menu bar is built from.
+private struct ComposeWindow: View {
+    let engine: Engine
+    let draft: Int64?
+
+    var body: some View {
+        if let draft, let model = engine.compose.model(draft), let session = engine.session {
+            ComposeView(
+                session: session,
+                model: model,
+                close: { engine.compose.close(draft) }
+            )
+            .preferredColorScheme(engine.colorScheme)
+            .navigationTitle(model.title)
+            .background(WindowConfigurator(role: .compose, draft: draft))
         }
     }
 }

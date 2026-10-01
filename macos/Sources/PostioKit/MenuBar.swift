@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Assembling the menu bar from `MenuPlan`.
 ///
@@ -177,9 +178,21 @@ public enum MenuBar {
         guard recipe != nil, !isMounted, !rebuilding else { return }
         rebuilding = true
         defer { rebuilding = false }
+        // The top-level titles only -- "File", "Edit" -- never an item: the
+        // Window menu lists open windows by title, and a compose window's
+        // title is a message's subject.
+        let found = shape(of: NSApplication.shared.mainMenu)
         mount()
         remounts += 1
+        log.notice(
+            "menu bar put back (\(remounts, privacy: .public)): found \(found.joined(separator: " "), privacy: .public)"
+        )
     }
+
+    /// Where `reassert` says what it found, so a bar that keeps being put
+    /// back can be seen doing it: `log stream --predicate 'subsystem ==
+    /// "dev.postio.Postio" AND category == "menu"'`.
+    private static let log = Logger(subsystem: "dev.postio.Postio", category: "menu")
 
     /// Guards the rebuild against itself: building a menu adds items to it,
     /// and the observer that noticed items arriving is still registered.
