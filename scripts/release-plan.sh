@@ -28,7 +28,7 @@
 # `<version>-dev.<sha>` so an artifact from it cannot pass for the release.
 #
 # Usage: scripts/release-plan.sh [--skip-suite]
-#   Run from the repository root with the tags fetched. Reads
+#   Run from the repository root; asks origin for its tags. Reads
 #   GITHUB_EVENT_NAME, GITHUB_SHA and GITHUB_REPOSITORY. Prints
 #   `key=value` lines for $GITHUB_OUTPUT on stdout -- build, publish,
 #   version, tag, prerelease, suite -- and the reasoning on stderr.
@@ -74,10 +74,17 @@ if [ "$EVENT" = "workflow_dispatch" ]; then
     TAG=""
     echo "Dispatched by hand: building ${BUILD_VERSION}, publishing nothing." >&2
 else
-    if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+    # What origin has released -- see `release_tags` for why not the local
+    # list. Not knowing is a refusal: the answer that publishes is the one
+    # that has to be proven.
+    if ! TAGS=$(release_tags); then
+        echo "::error::Could not list origin's tags, so cannot tell whether v${VERSION} is already out. Not releasing." >&2
+        exit 1
+    fi
+    if printf '%s\n' "$TAGS" | grep -qx "v${VERSION}"; then
         nothing "v${VERSION} is already released — nothing to do."
     fi
-    NEWEST=$(release_newest_tag)
+    NEWEST=$(printf '%s\n' "$TAGS" | release_newest_of)
     if [ -n "$NEWEST" ] && [ "$(release_as_number "$VERSION")" -le "$(release_as_number "$NEWEST")" ]; then
         nothing "::warning::Cargo.toml says ${VERSION}, which is not newer than v${NEWEST} — not releasing. A release PR moves the version forward (scripts/release-prepare.sh)."
     fi

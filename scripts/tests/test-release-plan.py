@@ -79,7 +79,16 @@ def repo(base: Path, *, version: str, tags: list[str]) -> Path:
     (root / "README.md").write_text("x\n", encoding="utf-8")
     git(root, "add", "README.md")
     git(root, "commit", "-q", "-m", "the commit being pushed")
-    return root
+    # What the workflow actually runs in: `actions/checkout` at depth 1,
+    # which has no tags locally whatever `fetch-tags` says. The first
+    # release.yml run on main (2026-10-01) saw "newest tag: none" there and
+    # planned to re-release v0.4.2 over the published one.
+    origin = base / "origin.git"
+    git(base, "clone", "-q", "--bare", str(root), str(origin))
+    checkout = base / "checkout"
+    git(base, "clone", "-q", "--depth", "1", "--no-tags", f"file://{origin}", str(checkout))
+    assert git(checkout, "tag", "--list") == "", "the fixture checkout must have no local tags"
+    return checkout
 
 
 def plan(
@@ -90,8 +99,11 @@ def plan(
     event: str = "push",
     nightly: str | None = "0",
     extra: tuple[str, ...] = (),
+    no_origin: bool = False,
 ) -> tuple[dict[str, str], subprocess.CompletedProcess]:
     root = repo(base, version=version, tags=tags)
+    if no_origin:
+        git(root, "remote", "set-url", "origin", str(base / "nowhere.git"))
     stub = base / "stub"
     (stub / "bin").mkdir(parents=True)
     (stub / "bin" / "gh").write_text(GH_STUB, encoding="utf-8")
@@ -144,6 +156,16 @@ def main() -> int:
             "an untagged version older than the newest tag is refused, not released",
             out.get("build") == "false" and "0.4.2" in proc.stderr,
             f"{out} / {proc.stderr}",
+        )
+
+    # Not knowing what is released must never read as "nothing is": the
+    # answer that publishes is the one that has to be proven.
+    with tempfile.TemporaryDirectory() as d:
+        out, proc = plan(Path(d), version="0.4.2", tags=["v0.4.2"], no_origin=True)
+        case(
+            "when origin's tags cannot be read, it refuses rather than releasing",
+            proc.returncode != 0 and out.get("publish") != "true",
+            f"exit {proc.returncode}: {out} / {proc.stderr}",
         )
 
     # ── the release PR's merge ───────────────────────────────────────

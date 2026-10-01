@@ -12,14 +12,33 @@ release_as_number() {
     echo "$1" | awk -F. '{ printf "%d\n", ($1 * 1000000 + $2) * 1000000 + $3 }'
 }
 
-# The newest vX.Y.Z tag, without the v; empty when there are none -- a first
+# Every vX.Y.Z tag on origin, one per line, as origin has them.
+#
+# Origin, not the local tag list. The workflow's checkout is one commit deep
+# and has no tags whatever `fetch-tags` says, and the first release.yml run
+# on main (2026-10-01) read that empty list as "nothing has been released"
+# and set out to publish v0.4.2 over the published v0.4.2. `ls-remote` asks
+# the one place that knows, works in any clone, and fails -- rather than
+# answering "none" -- when it cannot ask, which the caller must treat as a
+# refusal.
+release_tags() {
+    git ls-remote --tags --refs origin 'refs/tags/v*' | sed 's#^.*refs/tags/##'
+}
+
+# The newest of the tags on stdin, without the v; empty for none -- a first
 # release. `|| true` because grep matching nothing is that case, not a
-# failure, and pipefail would otherwise end the caller with no answer.
-release_newest_tag() {
-    { git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' |
-        grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true; } |
+# failure.
+release_newest_of() {
+    { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sed 's/^v//' |
         while read -r v; do echo "$(release_as_number "$v") $v"; done |
         sort -n | tail -n 1 | cut -d' ' -f2
+}
+
+# The newest released version on origin. Fails if origin cannot be asked.
+release_newest_tag() {
+    local tags
+    tags=$(release_tags) || return 1
+    printf '%s\n' "$tags" | release_newest_of
 }
 
 # The workspace version: [workspace.package]'s one `version = "x.y.z"` line,
