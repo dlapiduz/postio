@@ -144,8 +144,15 @@ mod tests {
     /// focus ring: GTK marks the row the keyboard is on `:selected`, and
     /// Focus draws that as the ring, never as a fill -- in the inbox, and in
     /// the full views drawn in Filtered's frame (Filtered, the rules list).
+    ///
+    /// And one more that paints nothing of Focus's: the open message's
+    /// accent probe, an invisible widget whose colour is read to hand a body
+    /// in app colours its link colour -- links in the accent are the
+    /// handoff's (SPEC section 7) and the system's accent the maintainer's
+    /// (spec C26).
     fn reserved(rule: &str) -> bool {
-        rule.contains(":focus")
+        rule == ".focus-open .postio-flow-accent { color }"
+            || rule.contains(":focus")
             || rule.starts_with(".focus-list > row:selected ")
             || rule.starts_with(".focus-filtered-list > row:selected ")
             || rule.contains(".focus-marker")
