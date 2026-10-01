@@ -58,7 +58,7 @@ chrono = { workspace = true, features = ["serde", "std"] }
 # false`: `io-pim-discovery`'s own `rustls-ring` feature already turns on
 # `io-http/client`, which is all `HttpClientStd` needs.
 io-http = { version = "0.5", default-features = false }
-io-imap = { version = "=0.6.0", default-features = false, features = ["client"], optional = true }
+io-imap = { version = "0.7.1", default-features = false, features = ["client"], optional = true }
 # The OAuth 2.0 wire core (#537): RFC 6749 token request/response types
 # and encodings, RFC 7636 PKCE, the RFC 6749 §10.12 state value — the
 # maintained upstream for what `oauth/exchange.rs` and `oauth/pkce.rs`
@@ -110,7 +110,7 @@ tempfile = { workspace = true }
 # yet — QRESYNC SELECT, ENABLE, STORE, COPY, APPEND — which `tests/imap_loopback.rs`
 # drives against the in-process server directly. Same exact pin as above, so
 # cargo resolves one copy and the types match.
-io-imap = { version = "=0.6.0", default-features = false, features = ["client"] }
+io-imap = { version = "0.7.1", default-features = false, features = ["client"] }
 postio-account = { path = ".", features = ["test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
