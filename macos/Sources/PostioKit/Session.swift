@@ -663,6 +663,22 @@ public final class PostioSession {
         )
     }
 
+    /// What looking `address` up finds, for the first-run card (canvas 09).
+    ///
+    /// The desktop's lookup, with every connection it makes in the egress
+    /// log. Waits on the network: not from the main actor, and never per
+    /// keystroke.
+    public func discoverAccount(_ address: String) -> DiscoveredFfi {
+        inner.discoverAccount(address: address)
+    }
+
+    /// Sign in to the servers `account` names and, only if that works, save
+    /// it. `nil` when it was added; a sentence when it was not. Waits on the
+    /// server: not from the main actor.
+    public func connectAccount(_ account: NewAccountFfi) -> String? {
+        inner.connectAccount(account: account)
+    }
+
     /// Add an account that is a directory on this machine.
     ///
     /// `nil` when it was added; a sentence when it was not. No credential is

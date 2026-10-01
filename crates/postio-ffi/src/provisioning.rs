@@ -454,3 +454,11 @@ pub(crate) fn submission(account: NewAccountFfi) -> postio_ui::onboarding::Submi
         oauth_client: None,
     }
 }
+
+/// Whether there is enough of an address to be worth looking up -- the
+/// desktop's rule (`postio_ui::onboarding::looks_like_an_address`), so the
+/// two first runs ask the network about the same strings.
+#[uniffi::export]
+pub fn looks_like_an_address(address: String) -> bool {
+    postio_ui::onboarding::looks_like_an_address(&address)
+}

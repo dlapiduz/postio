@@ -43,6 +43,24 @@ struct Shell: View {
     }
 
     var body: some View {
+        // A fresh install is the wizard, not an empty three-pane shell: with
+        // no account there is nothing for the panes to show (canvas 09).
+        if let firstRun = engine.firstRun, engine.accounts.isEmpty {
+            FirstRunView(
+                model: firstRun,
+                // The sheet's other routes: a browser sign-in, or a folder of
+                // mail on this Mac. The same `add_account` command as `⇧⌘N`.
+                otherWays: { engine.run(Intercepted.addAccount) },
+                // The account is saved; this starts its engine and swaps the
+                // window to the mail, as an add from Settings does (#1299).
+                finished: { engine.settingsActions.accountAdded?() }
+            )
+        } else {
+            shell
+        }
+    }
+
+    private var shell: some View {
         NavigationSplitView {
             // While the list is a result set the sidebar answers "how much
             // of the mailbox", not "which folder" (canvas 5, #1157).

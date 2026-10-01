@@ -34,12 +34,16 @@ final class Engine {
     /// state before then: it follows the system.
     private(set) var appearance: AppearanceFfi?
 
-    /// The configured accounts, for the settings window's Accounts pane.
+    /// The configured accounts, for the settings window's Accounts pane and
+    /// for whether the window is the first-run wizard.
     ///
-    /// Read once when the session opens. Nothing in this build changes them
-    /// -- adding an account is still `postio-provision` (#649) -- so there is
-    /// nothing yet to keep this in step with.
+    /// Read when the session opens and again whenever the pane or the
+    /// wizard changes them (`refreshAccounts`, `accountAdded`).
     private(set) var accounts: [AccountFfi] = []
+    /// The first-run wizard, while the store has no account (canvas 09).
+    /// Made once per session rather than per draw, so what was typed
+    /// survives the window redrawing around it.
+    private(set) var firstRun: FirstRunModel?
 
     /// The colour scheme `[ui].theme` asks for, or `nil` to follow the system.
     ///
@@ -106,6 +110,7 @@ final class Engine {
             let appearance = session.appearance()
             controller.ui = appearance
             accounts = session.accounts()
+            if accounts.isEmpty { firstRun = FirstRunModel(session: session) }
             vouch()
             reloadSavedSearches()
             loadZoom()
@@ -124,6 +129,7 @@ final class Engine {
             settingsActions.accountAdded = { [weak self] in
                 guard let self, let session = self.session else { return }
                 self.accounts = session.accounts()
+                if !self.accounts.isEmpty { self.firstRun = nil }
                 self.vouch()
                 _ = try? session.startSyncing()
                 self.mailboxes = session.mailboxes
@@ -638,6 +644,12 @@ final class Engine {
     func refreshAccounts() {
         guard let session else { return }
         accounts = session.accounts()
+        // Removing the last account is a fresh install again.
+        if accounts.isEmpty, firstRun == nil {
+            firstRun = FirstRunModel(session: session)
+        } else if !accounts.isEmpty {
+            firstRun = nil
+        }
         // Switching an account off takes it out of what the unified view
         // can vouch for, and the switch is right here.
         vouch()
