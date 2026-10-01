@@ -19,6 +19,6 @@
 # this file. See docs/engineering-notes.md before wondering why a pin did
 # nothing.
 [toolchain]
-channel = "1.98.0"
+channel = "1.99.0"
 profile = "minimal"
 components = ["rustfmt", "clippy"]

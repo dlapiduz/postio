@@ -1396,7 +1396,7 @@ fn is_likely_tracker(width: Option<String>, height: Option<String>, style: Optio
 
     let tiny = |value: &str| length_px(value).is_some_and(|px| px <= BEACON_PX);
 
-    if width.as_deref().is_some_and(&tiny) || height.as_deref().is_some_and(&tiny) {
+    if width.as_deref().is_some_and(tiny) || height.as_deref().is_some_and(tiny) {
         return true;
     }
     let Some(style) = style else { return false };
