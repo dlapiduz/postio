@@ -85,6 +85,25 @@ The `postio` module's source is `type: dir` pointing at the repository root
 disk, uncommitted changes included** — commit or stash first if you want a
 build that matches `HEAD`.
 
+## Why `--ignore-rust-version`
+
+The Flatpak is compiled by the Rust in Flathub's `rust-stable` SDK
+extension, not by the version `rust-toolchain.toml` pins. A Flatpak build
+is offline, so rustup cannot fetch a toolchain inside it. Flathub moves to
+a new Rust some days after its release, and this repository moves the day
+it ships. On 2026-10-01 the pin went to 1.99.0 while the extension still
+carried 1.98.1, and both bundles failed before compiling a line:
+
+    error: rustc 1.98.1 is not supported by the following packages:
+      postio-account@0.4.2 requires rustc 1.99
+
+`rust-version` is held equal to the pin on purpose
+(`scripts/checks/check-toolchain-pinned.py`). So the Flatpak builds tell
+cargo to skip that one check, and the compiler decides. If the code really
+needs something newer than the SDK has, it fails as a compile error naming
+the feature, which is the true answer. A version check refusing code that
+compiles is not. The window closes when Flathub catches up.
+
 ## Why a PNG icon, not just the scalable SVG
 
 The app ships its real icon as
