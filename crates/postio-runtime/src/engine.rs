@@ -864,6 +864,8 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 status: Rc::new(RefCell::new(StatusTracker::new())),
                 online: false,
                 to_sync: std::collections::VecDeque::new(),
+                inbox_ids: Vec::new(),
+                inbox_page_pending: false,
                 watcher: None,
                 backfill_covered: false,
             };
@@ -1158,6 +1160,15 @@ struct State {
     /// A queue rather than a loop, so one long mailbox cannot hold the engine
     /// away from everything else it is asked to do.
     to_sync: std::collections::VecDeque<MailboxId>,
+    /// The account's `MailboxRole::Inbox` folders, as [`queue_every_mailbox`]
+    /// last read them. What [`next_to_sync`] keys the INBOX-first rule on:
+    /// the role, never a folder name.
+    inbox_ids: Vec<MailboxId>,
+    /// INBOX's header pass is done and its newest page of bodies has been
+    /// seeded but not yet fetched. While set, [`next_to_sync`] still admits
+    /// no other mailbox. Cleared the moment that page is down. See
+    /// [`postio_sync::order`].
+    inbox_page_pending: bool,
     /// What is being watched for mail arriving, and how.
     ///
     /// `None` until the first connection tells us what the server can do —
@@ -1882,6 +1893,11 @@ async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut Sta
         }
     };
     mailboxes.sort_by_key(|mailbox| postio_sync::order::sync_priority(mailbox.role));
+    state.inbox_ids = mailboxes
+        .iter()
+        .filter(|mailbox| mailbox.role == postio_model::MailboxRole::Inbox)
+        .map(|mailbox| mailbox.id)
+        .collect();
     state.to_sync.clear();
     state.to_sync.extend(
         mailboxes
@@ -2642,6 +2658,56 @@ fn sync_lanes(concurrent_passes: usize) -> usize {
         .clamp(1, MAX_SYNC_LANES)
 }
 
+/// Whether an INBOX pass is waiting in the queue or running in a lane.
+fn inbox_pass_pending(state: &State, active: &[MailboxId]) -> bool {
+    state
+        .to_sync
+        .iter()
+        .chain(active)
+        .any(|mailbox| state.inbox_ids.contains(mailbox))
+}
+
+/// The next mailbox a wave may admit to a lane: INBOX first, and nothing
+/// else until INBOX has had its turn. This is the whole of the rule in
+/// [`postio_sync::order`].
+///
+/// - A queued INBOX is taken ahead of everything, wherever it sits in the
+///   queue (an IDLE wake or a requeued pass can leave it behind others).
+/// - While an INBOX pass is queued or running, nothing else is admitted: its
+///   headers must not share the store writer or the wire with another
+///   folder's.
+/// - While INBOX's newest page of bodies is still being fetched
+///   (`inbox_page_pending`, with `bodies_running` saying a fetch is actually
+///   in flight) nothing else is admitted either. If no fetch is running the
+///   page is not progressing -- paused, metered, interrupted -- so the hold
+///   is dropped rather than starving every other folder.
+///
+/// `None` means "hold the lane free", and the caller retries at its next
+/// completion boundary.
+fn next_to_sync(
+    state: &mut State,
+    active: &[MailboxId],
+    bodies_running: bool,
+) -> Option<MailboxId> {
+    if let Some(position) = state
+        .to_sync
+        .iter()
+        .position(|mailbox| state.inbox_ids.contains(mailbox))
+    {
+        return state.to_sync.remove(position);
+    }
+    if inbox_pass_pending(state, active) {
+        return None;
+    }
+    if state.inbox_page_pending {
+        if bodies_running && !state.backfill.is_idle() {
+            return None;
+        }
+        state.inbox_page_pending = false;
+    }
+    state.to_sync.pop_front()
+}
+
 /// Sync several mailboxes at once, in priority order, until something the
 /// wave cannot answer arrives.
 ///
@@ -2782,7 +2848,7 @@ async fn sync_wave(
     let mut active: Vec<MailboxId> = Vec::new();
     let mut running = FuturesUnordered::new();
     while running.len() < lanes {
-        let Some(mailbox) = state.to_sync.pop_front() else {
+        let Some(mailbox) = next_to_sync(state, &active, false) else {
             break;
         };
         match store.connect_background().await {
@@ -2869,6 +2935,29 @@ async fn sync_wave(
         };
     }
 
+    // Admit queued mailboxes into free lanes, as [`next_to_sync`] allows.
+    macro_rules! refill {
+        () => {
+            while running.len() < lanes {
+                let Some(mailbox) = next_to_sync(state, &active, !bodies.is_empty()) else {
+                    break;
+                };
+                match store.connect_background().await {
+                    Ok(connection) => {
+                        admitted.push(mailbox);
+                        active.push(mailbox);
+                        running.push(make_pass(mailbox, connection));
+                    }
+                    Err(error) => {
+                        state.to_sync.push_front(mailbox);
+                        tracing::warn!(%error, "no connection for a refilled sync lane");
+                        break;
+                    }
+                }
+            }
+        };
+    }
+
     while !running.is_empty() || !bodies.is_empty() || !probes.is_empty() || !drains.is_empty() {
         tokio::select! {
             biased;
@@ -2915,40 +3004,32 @@ async fn sync_wave(
                     let draining = !drains.is_empty();
                     act_on!(attend(parts, store, state, inbox, draining).await);
                 }
-                // The freed lane takes the next queued mailbox, highest
-                // priority first — one slow pass must not hold the folders
-                // queued behind the wave (see the refill note above).
-                if !asked_to_stop {
-                    while running.len() < lanes {
-                        let Some(mailbox) = state.to_sync.pop_front() else {
-                            break;
-                        };
-                        match store.connect_background().await {
-                            Ok(connection) => {
-                                admitted.push(mailbox);
-                                active.push(mailbox);
-                                running.push(make_pass(mailbox, connection));
-                            }
-                            Err(error) => {
-                                state.to_sync.push_front(mailbox);
-                                tracing::warn!(%error, "no connection for a refilled sync lane");
-                                break;
-                            }
-                        }
-                    }
-                }
                 // Its bodies start now, beside the lanes -- `settle_pass` has
                 // just seeded them -- rather than after the wave, which for
                 // INBOX beside an archive is the hour #631 is about. Not in
                 // place: an in-handler drain froze every other lane for as
                 // long as the queue was, and could take the write gate from a
                 // lane that was holding it. See [`BODIES_BESIDE_A_WAVE`].
+                //
+                // Claimed *before* the lane is refilled, because the refill
+                // asks whether INBOX's page of bodies is on the wire: a page
+                // claimed after it would read as "not progressing" and
+                // release the other folders onto the INBOX it just finished.
                 if !asked_to_stop
                     && bodies.is_empty()
-                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox).await
+                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
                 {
                     let inline_cap = state.backfill.policy().max_inline_bytes;
                     bodies.push(make_bodies(claims, inline_cap));
+                }
+                // The freed lane takes the next queued mailbox, highest
+                // priority first — one slow pass must not hold the folders
+                // queued behind the wave (see the refill note above). INBOX
+                // is the exception in the other direction: nothing else is
+                // admitted while it is syncing or its newest bodies are
+                // coming down ([`next_to_sync`]).
+                if !asked_to_stop {
+                    refill!();
                 }
             }
             // The two halves of `interruption`, as two arms, because they
@@ -2975,10 +3056,15 @@ async fn sync_wave(
                 settle_bodies(parts, state, results).await;
                 if !asked_to_stop
                     && bodies.is_empty()
-                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox).await
+                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
                 {
                     let inline_cap = state.backfill.policy().max_inline_bytes;
                     bodies.push(make_bodies(claims, inline_cap));
+                }
+                // INBOX's newest page may just have come down, which is what
+                // the other folders were being held for.
+                if !asked_to_stop {
+                    refill!();
                 }
             }
             // The drain beside the lanes finished. Settled and announced as
@@ -3064,7 +3150,7 @@ async fn sync_wave(
                     probes.push(make_probe(mailbox, path));
                 }
                 if bodies.is_empty()
-                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox).await
+                    && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
                 {
                     let inline_cap = state.backfill.policy().max_inline_bytes;
                     bodies.push(make_bodies(claims, inline_cap));
@@ -3119,14 +3205,25 @@ async fn claim_bodies_for_the_wave(
     store: &Store,
     state: &mut State,
     inbox: &async_channel::Receiver<Job>,
+    active: &[MailboxId],
 ) -> Option<Vec<postio_sync::backfill::Claim>> {
     if !nothing_asked(inbox)
         || !state.supervisor.link().is_online()
         || has_queued_work(parts, store).await
+        // INBOX's headers come before anybody's bodies, INBOX's own
+        // included: a body fetch shares the wire and the store writer with
+        // the header pass ([`next_to_sync`]).
+        || inbox_pass_pending(state, active)
     {
         return None;
     }
-    if state.backfill.is_idle() && top_up_backfill(parts, store, state).await == 0 {
+    // While INBOX's newest page is the only thing queued, finish that page
+    // and nothing past it: a top-up would seed the *next* page of INBOX and
+    // the other folders would wait for the whole mailbox.
+    if state.backfill.is_idle()
+        && !state.inbox_page_pending
+        && top_up_backfill(parts, store, state).await == 0
+    {
         return None;
     }
     let mut claims = Vec::new();
@@ -3507,7 +3604,7 @@ async fn settle_pass(
                 // the last top-up found: new mail arrives *above* whatever
                 // point the walk backwards through the archive had reached.
                 state.backfill_covered = false;
-                if let Err(error) = backfill::seed(
+                match backfill::seed(
                     connection,
                     &mut state.backfill,
                     mailbox,
@@ -3515,9 +3612,18 @@ async fn settle_pass(
                 )
                 .await
                 {
-                    parts.events.emit(Event::Error {
-                        message: error.to_string(),
-                    });
+                    // INBOX's newest page is queued: the other folders wait
+                    // for it ([`next_to_sync`]).
+                    Ok(queued) => {
+                        if queued > 0 && state.inbox_ids.contains(&mailbox) {
+                            state.inbox_page_pending = true;
+                        }
+                    }
+                    Err(error) => {
+                        parts.events.emit(Event::Error {
+                            message: error.to_string(),
+                        });
+                    }
                 }
 
                 // A sync is also when a send nobody could confirm may have
@@ -3971,6 +4077,8 @@ mod tests {
             status: Rc::new(RefCell::new(StatusTracker::new())),
             online: false,
             to_sync: std::collections::VecDeque::new(),
+            inbox_ids: Vec::new(),
+            inbox_page_pending: false,
             watcher: None,
             backfill_covered: false,
         }
