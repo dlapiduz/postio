@@ -311,6 +311,41 @@ struct MessageTableTests {
         #expect(reported.isEmpty)
     }
 
+    @Test func aMarkChangeRedrawsTheMarkWhereTheCursorIs() throws {
+        // `x` marks the row the cursor is on. The model changed and nothing
+        // redrew the row, so the tint the cell knows how to draw was never
+        // drawn -- the user saw no sign that anything was marked.
+        let source = StubRowSource(
+            rowCount: 3,
+            rows: [0: makeRow(id: 10), 1: makeRow(id: 11), 2: makeRow(id: 12)]
+        )
+        let controller = MessageTableController(source: source)
+        let scroll = MessageListView.makeTable(controller: controller)
+        // In a window, so the rows are real cells drawn once -- the question
+        // is whether a mark change draws them *again*.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 600),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = scroll
+        controller.tableView = scroll.documentView as? NSTableView
+        let table = try #require(controller.tableView)
+        table.reloadData()
+        scroll.layoutSubtreeIfNeeded()
+        controller.showCursor(on: 1)
+        let before = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: false) as? MessageRowCell)
+        #expect(!before.isMarkedForTesting)
+        var reported: [UInt32?] = []
+        controller.onCursorRowChanged = { reported.append($0) }
+
+        source.marked = [11]
+        controller.marksChanged()
+
+        let cell = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: false) as? MessageRowCell)
+        #expect(cell.isMarkedForTesting, "the mark is drawn")
+        #expect(table.selectedRow == 1, "and the cursor stays where it was")
+        #expect(reported.isEmpty, "which is not a move")
+    }
+
     @Test func aReloadWithNoCursorSelectsNothing() {
         let controller = mounted(rows: 10)
         controller.reload(keepingCursorOn: nil)

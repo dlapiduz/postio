@@ -238,6 +238,22 @@ public final class MessageTableController: NSObject, NSMenuDelegate {
         following = false
     }
 
+    /// Redraw the rows on screen because what is *marked* changed.
+    ///
+    /// The marks are the model's (`isSelected`), asked as each cell draws,
+    /// so all a change needs is the visible rows drawn again. Only those, and
+    /// not `reloadData()`: the count has not moved, and a full reload is
+    /// what loses the cursor's highlight.
+    public func marksChanged() {
+        guard let tableView else { return }
+        let visible = tableView.rows(in: tableView.visibleRect)
+        guard visible.length > 0 else { return }
+        tableView.reloadData(
+            forRowIndexes: IndexSet(integersIn: visible.location..<(visible.location + visible.length)),
+            columnIndexes: IndexSet(integersIn: 0..<max(tableView.numberOfColumns, 1))
+        )
+    }
+
     /// Whether the selection change now arriving is one we just made.
     private var following = false
 

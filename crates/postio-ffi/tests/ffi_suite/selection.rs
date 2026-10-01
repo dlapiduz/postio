@@ -263,3 +263,40 @@ async fn rows_that_left_the_mailbox_do_not_stay_selected() {
     );
     session.shutdown();
 }
+
+/// Whether a `SelectionChanged` is waiting, draining everything else.
+fn heard_selection_change(session: &Session) -> bool {
+    let mut heard = false;
+    while let Some(event) = session.try_next_event() {
+        heard |= matches!(event, postio_ffi::UiEvent::SelectionChanged);
+    }
+    heard
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_change_to_the_selection_is_announced() {
+    // The selection lives here, and the rows that draw it and the "12
+    // selected" bar live in the frontend. Nothing told the Mac it had
+    // changed, so `x` marked a message and the list drew nothing -- the
+    // tint was there to draw, and nobody asked for it.
+    let session = listed(5).await;
+    session.invoke("next_message");
+    let _ = heard_selection_change(&session);
+
+    session.invoke("toggle_selection");
+    assert!(heard_selection_change(&session), "x");
+
+    session.invoke("extend_selection_down");
+    assert!(heard_selection_change(&session), "shift-extend");
+
+    session.invoke("back");
+    assert!(heard_selection_change(&session), "escape clearing it");
+
+    session.select_all();
+    assert!(heard_selection_change(&session), "select all");
+
+    // And moving the cursor is not one: it changes no mark.
+    session.invoke("next_message");
+    assert!(!heard_selection_change(&session), "j marked nothing");
+    session.shutdown();
+}

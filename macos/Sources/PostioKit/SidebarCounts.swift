@@ -46,7 +46,7 @@ public enum SidebarCounts {
             // The tree itself: created, renamed, unsubscribed. The rows
             // change, not only their numbers.
             return true
-        case .conversationReady, .pageReady, .cursorMoved, .connectionChanged,
+        case .conversationReady, .pageReady, .cursorMoved, .selectionChanged, .connectionChanged,
              .reindexProgress, .syncProgress, .notice, .other:
             // A notice is a sentence about something that already happened.
             // Whatever moved the counts emitted its own event for it.

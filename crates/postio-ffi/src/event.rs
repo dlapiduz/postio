@@ -165,6 +165,15 @@ pub enum UiEvent {
         /// (#601, #71).
         chosen: bool,
     },
+    /// What is marked changed -- `x`, a shift-extension, select-all, or
+    /// `Escape` clearing it.
+    ///
+    /// No payload: the rows ask `is_selected` as they draw and the bar asks
+    /// `selection_summary`, so what the frontend needs is only *that* it
+    /// changed. Raised by this boundary, which is where the selection is;
+    /// without it the Mac's list drew no mark at all (the cursor moving is
+    /// [`CursorMoved`](Self::CursorMoved), and marks nothing).
+    SelectionChanged,
     /// An account's connection changed.
     ConnectionChanged {
         /// The account.

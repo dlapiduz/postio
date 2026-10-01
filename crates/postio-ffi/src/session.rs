@@ -4495,6 +4495,7 @@ impl Session {
         let marked = postio_ui::selection::range(&rows, anchor as usize, cursor as usize);
         *self.selection.lock().expect("selection lock") =
             postio_core::state::Selection::These(marked);
+        self.emit_local(UiEvent::SelectionChanged);
     }
 
     /// Where the cursor is, as a row.
@@ -4621,6 +4622,8 @@ impl Session {
                 postio_core::state::Selection::Everything { except }
             }
         };
+        drop(selection);
+        self.emit_local(UiEvent::SelectionChanged);
     }
 
     /// Select everything the current scope holds — `Ctrl+A`.
@@ -4630,6 +4633,7 @@ impl Session {
     pub fn select_all(&self) {
         *self.selection.lock().expect("selection lock") =
             postio_core::state::Selection::Everything { except: Vec::new() };
+        self.emit_local(UiEvent::SelectionChanged);
     }
 
     /// Say which accounts the aggregate view can currently vouch for.
@@ -4650,6 +4654,7 @@ impl Session {
     /// Unmark everything.
     pub fn clear_selection(&self) {
         *self.selection.lock().expect("selection lock") = postio_core::state::Selection::default();
+        self.emit_local(UiEvent::SelectionChanged);
     }
 
     /// What is marked right now, for a test or a frontend drawing a count.

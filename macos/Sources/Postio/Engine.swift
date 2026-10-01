@@ -382,7 +382,16 @@ final class Engine {
     /// Read fresh rather than cached: it is a property of a model that a
     /// keystroke can change, and a stale count is a claim about what an
     /// action is going to hit.
-    var selectionSummary: String? { session?.selectionSummary }
+    var selectionSummary: String? {
+        // Read so SwiftUI registers a dependency: the summary is the
+        // boundary's, through a `session` reference that never changes, so
+        // without this the bar was computed once and never again.
+        _ = selectionVersion
+        return session?.selectionSummary
+    }
+
+    /// Bumped whenever what is marked changes. See `selectionSummary`.
+    private(set) var selectionVersion = 0
 
     /// Whether the search field has the keyboard.
     ///
@@ -947,6 +956,12 @@ final class Engine {
         case .mailboxesChanged:
             // The read is above, with the rest of the count-moving events.
             break
+        case .selectionChanged:
+            // `x`, a shift-extension, select-all, Escape: the rows draw their
+            // marks again and the "12 selected" bar is asked again. Nothing
+            // did either, so a mark changed the model and nothing on screen.
+            controller.marksChanged()
+            selectionVersion += 1
         default:
             // Everything else is something this build has no opinion about.
             break
