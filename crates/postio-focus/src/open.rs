@@ -30,8 +30,6 @@ use crate::open_header::HeaderCard;
 /// The dialog's size, as screen 04 draws it.
 const WIDTH: i32 = 980;
 const HEIGHT: i32 = 820;
-/// The reading column's width.
-const COLUMN: i32 = 860;
 
 /// The toolbar, in the order screen 04 draws it. Task and Note join in
 /// milestone 3 (spec C9).
@@ -223,18 +221,15 @@ impl OpenMessage {
         column.append(&header_card.widget());
         column.append(&reader_widget);
         column.append(&fold_line);
-        let clamp = adw::Clamp::builder()
-            .maximum_size(COLUMN)
-            .tightening_threshold(COLUMN)
-            .child(&column)
-            .build();
         // One column: everything from the thread chip to the fold line
         // scrolls together (screen 04), the body drawn in it rather than
-        // in a scroller of its own.
+        // in a scroller of its own. It runs the dialog's width less a
+        // gutter a side (`focus.css`), and the body fills it (T197): the
+        // reference's narrower column left a dead margin beside the text.
         let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
-            .child(&clamp)
+            .child(&column)
             .build();
         scroller.add_css_class("focus-open-scroller");
         reader.flow_in(&scroller);

@@ -333,8 +333,10 @@ button.focus-open-close {
   border-bottom: 1px solid var(--postio-hairline);
 }
 
+/* The column's gutter is the toolbar's inset, so its words, the subject
+ * and the body share one left edge (T197). */
 .focus-open-column {
-  padding: var(--postio-space-4) 0;
+  padding: var(--postio-space-4) var(--postio-space-6);
 }
 
 .focus-open-thread {

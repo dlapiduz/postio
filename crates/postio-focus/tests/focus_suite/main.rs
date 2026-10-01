@@ -363,6 +363,10 @@ const CASES: &[(&str, fn())] = &[
         open_reading::the_open_message_is_one_scrolling_column as fn(),
     ),
     (
+        "open_reading::the_column_fills_the_dialog_less_a_gutter",
+        open_reading::the_column_fills_the_dialog_less_a_gutter as fn(),
+    ),
+    (
         "open_reading::the_column_draws_only_the_window_of_a_long_body",
         open_reading::the_column_draws_only_the_window_of_a_long_body as fn(),
     ),

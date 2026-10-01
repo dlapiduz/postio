@@ -1385,7 +1385,7 @@ impl Reader {
     /// (Focus's open message, screen 04): the header, the notices, the body
     /// and the parts scroll together in `scroller`, and the body is drawn
     /// flat on the column's ground -- no frame around correspondence, at the
-    /// reading measure -- keeping a quiet one only for mail that paints its
+    /// column's measure -- keeping a quiet one only for mail that paints its
     /// own page. What the view rasterises is still only what `scroller`
     /// shows ([`BodyView::flow_in`](crate::body_view::BodyView::flow_in)).
     ///
@@ -2043,7 +2043,9 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
 /// The rules a column that scrolls as one adds to every document
 /// ([`Reader::flow_in`]): the ground is the column's own, so the body needs
 /// no page of its own; and the body's frame goes, as does the padding
-/// inside it, with the text at a reading measure and size. Mail that paints
+/// inside it, with the text at the reading size and the column's measure: the
+/// column decides how wide a line runs (Focus's, T197), so the body's
+/// lines and the cards above them share their edges. Mail that paints
 /// its own page -- the sender's sheet, or a page background the sender set --
 /// keeps the frame, hairline and quiet, because its edge is the only thing
 /// telling it apart from the column.
@@ -2056,7 +2058,7 @@ const FLOW_CSS: &str = "\n:root { --flow-ground: #ffffff; }\n\
 
 /// What is added for correspondence, which has no page of its own.
 const FLOW_FLAT_CSS: &str = "body { font-size: 15px; line-height: 1.6; }\n\
-    .postio-body { max-width: 700px; padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
+    .postio-body { max-width: none; padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
 
 /// `document` as the column draws it.
 fn flow_document(document: &str) -> String {

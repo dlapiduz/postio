@@ -45,7 +45,7 @@ async fn three(fixture: &Fixture) {
                 minutes,
             )
             .await;
-        let body = format!("{subject}: a line long enough to scroll. ").repeat(400);
+        let body = format!("{subject}: a line long enough to scroll. ").repeat(1200);
         fixture.write_body(message, &body).await;
     }
 }

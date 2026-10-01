@@ -120,8 +120,8 @@ pub fn the_column_draws_only_the_window_of_a_long_body() {
     });
 }
 
-/// T183: correspondence is drawn flat on the column, at the reading
-/// measure; a message that paints a page of its own keeps a frame.
+/// T183: correspondence is drawn flat on the column, at the column's
+/// measure (T197); a message that paints a page of its own keeps a frame.
 pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
     crate::gtk_case(async {
         if !support::display() {
@@ -164,9 +164,12 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
         assert_eq!(reading.title(), "Plain");
         let (left, right) = extent();
         assert!(left < 1.0, "the plain body is inset {left}px: a frame");
+        // T197: the measure is the column's, so the body's lines and the
+        // cards above them share their edges.
+        let width = f64::from(reading.reader().view().width());
         assert!(
-            (600.0..=700.5).contains(&right),
-            "the plain body's lines run to {right}px, not the reading measure"
+            right > 0.9 * width && right <= width + 0.5,
+            "the plain body's lines run to {right}px of the column's {width}px"
         );
 
         support::keys(&window, &["j"]);
@@ -449,5 +452,42 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
             "the steps are left of the title"
         );
         assert!(x_of(&title) < x_of(close.upcast_ref()));
+    });
+}
+
+/// T197: the column runs the dialog's width less one gutter a side, the
+/// design system's `--postio-space-6`, and the body fills it: the header
+/// card, the body and the dialog's toolbar keep one left edge, with no
+/// dead margin beside the text.
+pub fn the_column_fills_the_dialog_less_a_gutter() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        long_message(&fixture).await;
+        let window = opened(&fixture, 1).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        let view = reading.reader().view().clone();
+        let column = scroller_of(&view);
+        let card = support::only(&dialog, "focus-open-header-card");
+        let gutter = f64::from(postio_widgets::widgets::space::S6);
+        let edges = |widget: &gtk::Widget| {
+            let bounds = widget.compute_bounds(&column).expect("in the column");
+            (
+                f64::from(bounds.x()),
+                f64::from(column.width()) - f64::from(bounds.x() + bounds.width()),
+            )
+        };
+        for (what, widget) in [("header card", card), ("body", view.clone().upcast())] {
+            let (left, right) = edges(&widget);
+            assert!(
+                (left - gutter).abs() < 1.0 && (right - gutter).abs() < 1.0,
+                "the {what} sits {left}px from the column's left and {right}px from its \
+                 right, in a {}px column; the gutter is {gutter}px",
+                column.width()
+            );
+        }
     });
 }
