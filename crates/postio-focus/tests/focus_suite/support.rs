@@ -860,3 +860,87 @@ impl Fixture {
         labels.attach(message, label.id).await.expect("attached");
     }
 }
+
+/// Press `name` (a GDK key name) as GTK delivers a key press: to the widget
+/// the window's keyboard is on (the window itself when nothing has it),
+/// through each key controller from the window down to it in the capture
+/// phase, then the target's own, then back up in the bubble phase, until
+/// one claims it. Answers whether one did.
+///
+/// [`press`] calls the window's handler directly, which is not what a key
+/// press does: it cannot see the keyboard sitting somewhere a controller
+/// takes the key first, or the handler never being reached -- which is
+/// what happened under every dialog (T195). This can. What it cannot run is a widget class's own key bindings (a
+/// scroller's, a window's focus moves): GTK offers no way to run them but a
+/// real event.
+pub fn deliver(window: &postio_focus::window::FocusWindow, name: &str) -> bool {
+    use gtk::prelude::*;
+    let key = gtk::gdk::Key::from_name(name).unwrap_or_else(|| panic!("{name} is a key"));
+    let state = if name.chars().count() == 1 && name.chars().all(char::is_uppercase) {
+        gtk::gdk::ModifierType::SHIFT_MASK
+    } else {
+        gtk::gdk::ModifierType::empty()
+    };
+    let keyval = gtk::glib::translate::IntoGlib::into_glib(key);
+    let target: gtk::Widget =
+        gtk::prelude::GtkWindowExt::focus(window).unwrap_or_else(|| window.clone().upcast());
+    // GTK runs a key through the widgets from the focus up to the innermost
+    // dialog presented over the window, and no further: a controller on the
+    // window, or anywhere between it and the dialog, never sees a key the
+    // dialog's keyboard is given. Measured with real key presses injected
+    // into the headless compositor (mutter's RemoteDesktop), GTK 4.22 and
+    // libadwaita 1.9 (T195).
+    let mut chain = vec![target.clone()];
+    while !chain
+        .last()
+        .is_some_and(|widget| widget.is::<adw::Dialog>())
+        && let Some(parent) = chain.last().and_then(|widget| widget.parent())
+    {
+        chain.push(parent);
+    }
+    let fire = |widget: &gtk::Widget, phase: gtk::PropagationPhase| -> bool {
+        let controllers = widget.observe_controllers();
+        (0..controllers.n_items()).any(|at| {
+            let Some(keys) = controllers
+                .item(at)
+                .and_downcast::<gtk::EventControllerKey>()
+            else {
+                return false;
+            };
+            keys.propagation_phase() == phase
+                && keys.emit_by_name::<bool>("key-pressed", &[&keyval, &0u32, &state])
+        })
+    };
+    let claimed = chain
+        .iter()
+        .rev()
+        .any(|widget| fire(widget, gtk::PropagationPhase::Capture))
+        || fire(&target, gtk::PropagationPhase::Target)
+        || chain
+            .iter()
+            .any(|widget| fire(widget, gtk::PropagationPhase::Bubble));
+    crate::settle();
+    claimed
+}
+
+/// Where the window's keyboard is, as the widget types and CSS classes
+/// from the window down: for a failure to name.
+pub fn focus_path(window: &postio_focus::window::FocusWindow) -> String {
+    use gtk::prelude::*;
+    let mut chain = Vec::new();
+    let mut at: Option<gtk::Widget> = gtk::prelude::GtkWindowExt::focus(window);
+    while let Some(widget) = at {
+        chain.push(format!(
+            "{}{:?}",
+            widget.type_().name(),
+            widget.css_classes()
+        ));
+        at = widget.parent();
+    }
+    chain.reverse();
+    if chain.is_empty() {
+        "nothing".to_owned()
+    } else {
+        chain.join(" > ")
+    }
+}

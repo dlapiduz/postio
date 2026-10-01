@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use gtk::glib::translate::IntoGlib;
 use gtk::{gdk, glib};
 use postio_client::Client;
 use postio_core::state::{Selection, ViewScope};
@@ -157,6 +158,13 @@ mod imp {
         pub places: RefCell<Option<Rc<crate::places::Places>>>,
         /// Whether the list shows Focus's own inbox, rather than a folder.
         pub at_inbox: Cell<bool>,
+        /// The last key press `handle_key` was given, by its event time and
+        /// key: so a press the window's controller and a dialog's both see
+        /// is handled once (`keys_under_dialogs`).
+        pub last_key: Cell<Option<(u32, u32)>>,
+        /// The dialogs over the window, held so its changes keep being
+        /// heard: libadwaita hands out a model of its own each time.
+        pub dialogs: RefCell<Option<gtk::gio::ListModel>>,
         /// The snooze picker, built the first time `s` opens it.
         pub snooze: RefCell<Option<Rc<WhenPicker>>>,
         /// The remind picker, built the first time `h` opens it.
@@ -246,6 +254,8 @@ mod imp {
                 saved: RefCell::default(),
                 places: RefCell::default(),
                 at_inbox: Cell::new(true),
+                last_key: Cell::new(None),
+                dialogs: RefCell::default(),
                 snooze: RefCell::default(),
                 remind: RefCell::default(),
                 labels: RefCell::default(),
@@ -346,9 +356,16 @@ impl FocusWindow {
             self,
             #[upgrade_or]
             glib::Propagation::Proceed,
-            move |_, key, _, state| window.handle_key(key, state)
+            move |controller, key, _, state| {
+                window
+                    .imp()
+                    .last_key
+                    .set(Some((controller.current_event_time(), key.into_glib())));
+                window.handle_key(key, state)
+            }
         ));
         self.add_controller(keys);
+        self.keys_under_dialogs();
 
         // The pointer, before a dialog's scrim takes it: see
         // `click_through_dialog`.
@@ -396,6 +413,70 @@ impl FocusWindow {
             move |_, _| window.show_about()
         ));
         self.add_action(&about);
+    }
+
+    /// Give every dialog over the window the window's keyboard (T195).
+    ///
+    /// GTK runs a key press through the widgets from the focus up to the
+    /// innermost dialog presented over the window and stops there, so the
+    /// window's own controller never sees a key while a dialog is up: `j`
+    /// and `k` did nothing in the open message, and the arrows fell through
+    /// to GTK's focus moves, which scrolled the column to whichever control
+    /// took the focus (T196). Each dialog gets a controller of its own that
+    /// asks the window, as the window's would have. The composer's is the
+    /// exception: it takes its keys through its own host.
+    fn keys_under_dialogs(&self) {
+        let dialogs = self.dialogs();
+        dialogs.connect_items_changed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |dialogs, at, _, added| {
+                for index in at..at + added {
+                    let Some(dialog) = dialogs.item(index).and_downcast::<adw::Dialog>() else {
+                        continue;
+                    };
+                    window.give_keys(&dialog);
+                }
+            }
+        ));
+        self.imp().dialogs.replace(Some(dialogs));
+    }
+
+    /// `dialog`'s key controller, once: what [`Self::keys_under_dialogs`]
+    /// adds.
+    fn give_keys(&self, dialog: &adw::Dialog) {
+        const KEYS: &str = "focus-window-keys";
+        if dialog.widget_name() == crate::compose::NAME {
+            return;
+        }
+        let controllers = dialog.observe_controllers();
+        let has = (0..controllers.n_items()).any(|index| {
+            controllers
+                .item(index)
+                .and_downcast::<gtk::EventController>()
+                .is_some_and(|controller| controller.name().as_deref() == Some(KEYS))
+        });
+        if has {
+            return;
+        }
+        let keys = gtk::EventControllerKey::new();
+        keys.set_name(Some(KEYS));
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |controller, key, _, state| {
+                let press = (controller.current_event_time(), key.into_glib());
+                // A press with no time is one a test emitted, not a repeat.
+                if press.0 != 0 && window.imp().last_key.get() == Some(press) {
+                    return glib::Propagation::Proceed;
+                }
+                window.handle_key(key, state)
+            }
+        ));
+        dialog.add_controller(keys);
     }
 
     fn show_about(&self) {

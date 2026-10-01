@@ -52,6 +52,7 @@ mod offline_send;
 mod one_composer;
 mod one_keymap;
 mod open_choice;
+mod open_keys;
 mod open_message;
 mod open_reading;
 mod pickers;
@@ -348,6 +349,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_message::enter_opens_the_conversation_over_the_list_at_once",
         open_message::enter_opens_the_conversation_over_the_list_at_once as fn(),
+    ),
+    (
+        "open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps",
+        open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps as fn(),
+    ),
+    (
+        "open_keys::j_and_k_step_the_open_message_from_where_the_keyboard_is",
+        open_keys::j_and_k_step_the_open_message_from_where_the_keyboard_is as fn(),
     ),
     (
         "open_reading::the_open_message_is_one_scrolling_column",
