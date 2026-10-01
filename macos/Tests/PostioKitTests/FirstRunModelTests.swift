@@ -187,6 +187,22 @@ import Testing
         #expect(model.counter == "3 of 3")
     }
 
+    @Test func theNameTypedIsTheNameSavedAndBlankIsAllowed() async {
+        // GTK asks for it first (5639e0ff): it is the `From` header and the
+        // sidebar's label. Optional -- blank means the address -- so it does
+        // not hold Connect back.
+        let boundary = Boundary(card: Self.found())
+        let model = boundary.model()
+        model.address = address
+        model.password = "hunter2"
+        #expect(model.canConnect, "no name is needed to connect")
+
+        model.name = "Ada Ostwald"
+        await model.connect()
+
+        #expect(boundary.connected.first?.name == "Ada Ostwald")
+    }
+
     @Test func aRefusedLoginSaysWhyAndStaysOnTheForm() async {
         let boundary = Boundary(card: Self.found(), complaint: "The server refused that password.")
         let model = boundary.model()

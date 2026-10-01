@@ -17,7 +17,7 @@ public struct FirstRunView: View {
     private let finished: () -> Void
 
     private enum Field: Hashable {
-        case address, password, imapHost, smtpHost, login
+        case name, address, password, imapHost, smtpHost, login
     }
 
     @FocusState private var focus: Field?
@@ -51,7 +51,7 @@ public struct FirstRunView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: AppSurface.sidebar))
-        .onAppear { focus = .address }
+        .onAppear { focus = .name }
         .onChange(of: focus) { left, _ in
             // Leaving the field is the deliberate step that looks it up --
             // never a keystroke, since each lookup goes to the network.
@@ -82,6 +82,16 @@ public struct FirstRunView: View {
 
     private var account: some View {
         VStack(alignment: .leading, spacing: PostioTokens.space6) {
+            // First, as on the desktop (5639e0ff): the `From` header and the
+            // sidebar's label. Optional -- blank sends as the bare address --
+            // and Return moves on, since there is nothing to look up yet.
+            labelled("Your name") {
+                TextField("", text: $model.name, prompt: Text("Ada Lovelace"))
+                    .textContentType(.name)
+                    .focused($focus, equals: .name)
+                    .onSubmit { focus = .address }
+                    .accessibilityLabel("Your name")
+            }
             labelled("Email address") {
                 TextField("", text: $model.address, prompt: Text("you@example.com"))
                     .textContentType(.emailAddress)
