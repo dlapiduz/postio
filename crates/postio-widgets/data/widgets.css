@@ -164,6 +164,25 @@ button.postio-icon-button:hover {
   color: var(--postio-ink);
 }
 
+/* The same icon button opening a menu (`widgets::icon_menu_button`): the
+   class is on the `menubutton` node, and the button it draws is inside. */
+menubutton.postio-icon-button > button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-dim);
+}
+
+menubutton.postio-icon-button > button:hover,
+menubutton.postio-icon-button > button:checked {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
 /* ── Chips (`widgets::chip`) ──────────────────────────────────────── */
 /* An offered narrowing. The outline tag from canvas 2b: mono, because it is
    a token the user could have typed, and hollow rather than filled so it
@@ -579,7 +598,9 @@ button.postio-icon-button:hover {
   color: var(--postio-faint);
 }
 
-.postio-recipient-chip-remove {
+/* Smaller than a lone icon button: it sits inside a chip, so it outranks
+   `button.postio-icon-button`. */
+button.postio-icon-button.postio-recipient-chip-remove {
   min-width: 0;
   min-height: 0;
   padding: 0;

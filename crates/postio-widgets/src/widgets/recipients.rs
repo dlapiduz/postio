@@ -159,12 +159,9 @@ impl RecipientChips {
         let label = gtk::Label::new(Some(&address.address));
         label.add_css_class("postio-recipient-chip-address");
         chip.append(&label);
-        let remove = gtk::Button::from_icon_name("window-close-symbolic");
-        remove.add_css_class("flat");
-        remove.add_css_class("postio-recipient-chip-remove");
         let spoken = format!("Remove {}", address.address);
-        remove.set_tooltip_text(Some(&spoken));
-        remove.update_property(&[gtk::accessible::Property::Label(&spoken)]);
+        let remove = super::icon_button("window-close-symbolic", &spoken);
+        remove.add_css_class("postio-recipient-chip-remove");
         let weak = Rc::downgrade(self);
         remove.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {

@@ -15,7 +15,7 @@ use postio_core::{CommandId, Keymap};
 use postio_ui::hints;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
-use postio_widgets::widgets::{Kind, Size, close_button, icon_button};
+use postio_widgets::widgets::{Kind, Size, close_button, icon_button, icon_menu_button};
 
 /// What a control asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
@@ -85,11 +85,10 @@ impl Chrome {
     pub fn new(keymap: &Keymap) -> Rc<Self> {
         // The top bar: compose, the command-bar field, the sync label, the
         // main menu and close.
+        // Icon buttons keep their own size, centred in the bar's 46px
+        // (`icon_button`, T193, T202).
         let compose = icon_button("document-edit-symbolic", "Compose");
         compose.add_css_class("focus-compose");
-        // An icon button keeps its own square: left to fill the bar's 46px
-        // it hovers as a tall pill, not a circle (T193).
-        compose.set_valign(gtk::Align::Center);
 
         let field = gtk::Button::new();
         postio_widgets::widgets::button::style(&field, Kind::Secondary, Size::Regular);
@@ -136,19 +135,12 @@ impl Chrome {
                 None => menu.append(Some(label), Some("win.about")),
             }
         }
-        let menu_button = gtk::MenuButton::builder()
-            .icon_name("open-menu-symbolic")
-            .menu_model(&menu)
-            .tooltip_text("Main menu")
-            .build();
+        let menu_button = icon_menu_button("open-menu-symbolic", "Main menu", menu.upcast_ref());
         menu_button.add_css_class("focus-menu");
-        menu_button.add_css_class("flat");
-        menu_button.set_valign(gtk::Align::Center);
 
         let close = close_button();
         close.add_css_class("focus-close");
         close.add_css_class("circular");
-        close.set_valign(gtk::Align::Center);
 
         let end = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         end.append(&sync_row);

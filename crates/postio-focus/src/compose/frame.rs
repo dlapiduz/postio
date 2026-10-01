@@ -131,12 +131,10 @@ impl Frame {
         heading.append(&title);
         heading.append(&saved);
 
-        let detach = gtk::Button::from_icon_name("window-new-symbolic");
-        detach.add_css_class("flat");
-        detach.set_tooltip_text(Some("Write in a window of its own"));
-        detach.update_property(&[gtk::accessible::Property::Label(
+        let detach = postio_widgets::widgets::icon_button(
+            "window-new-symbolic",
             "Write in a window of its own",
-        )]);
+        );
         // A button with a menu hung on it rather than a `GtkMenuButton`,
         // whose own nodes the button sheet never reaches: it draws as every
         // other button here does.
@@ -419,12 +417,9 @@ impl Frame {
             chip.add_css_class("focus-compose-label-chip");
             let name = gtk::Label::new(Some(&label.name));
             name.add_css_class("heading");
-            let remove = gtk::Button::from_icon_name("window-close-symbolic");
-            remove.add_css_class("flat");
-            remove.add_css_class("circular");
             let spoken = format!("Remove the label {}", label.name);
-            remove.set_tooltip_text(Some(&spoken));
-            remove.update_property(&[gtk::accessible::Property::Label(&spoken)]);
+            let remove = postio_widgets::widgets::icon_button("window-close-symbolic", &spoken);
+            remove.add_css_class("circular");
             let id = *id;
             let frame = Rc::downgrade(self);
             remove.connect_clicked(glib::clone!(

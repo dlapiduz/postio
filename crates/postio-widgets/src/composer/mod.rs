@@ -3716,7 +3716,8 @@ impl Composer {
 fn style_toolbar_button(button: &gtk::Button, id: CommandId, icon: &str, class: &str) {
     let spec = postio_core::registry::get(id);
     button.set_icon_name(icon);
-    button.add_css_class("flat");
+    // The shared icon button: its look, and its own size (T202).
+    crate::widgets::button::dress_icon(button, spec.title);
     button.add_css_class(class);
     button.set_tooltip_text(Some(&format!(
         "{} ({})",
@@ -3841,8 +3842,7 @@ fn sync_detach_button(button: &gtk::Button, detached: bool) {
         )
     };
     button.set_child(Some(&gtk::Image::from_icon_name(icon)));
-    button.set_tooltip_text(Some(tooltip));
-    button.update_property(&[gtk::accessible::Property::Label(tooltip)]);
+    crate::widgets::button::dress_icon(button, tooltip);
 }
 
 /// Recipient completion attached to one entry: a popover of suggestions from

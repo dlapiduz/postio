@@ -26,6 +26,7 @@
 //! it for the tooltip too.
 
 use adw::prelude::*;
+use gtk::gio;
 
 /// What a button is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,12 +106,41 @@ pub fn button(label: &str, kind: Kind, size: Size) -> gtk::Button {
 /// An icon-only button. `name` is required: it is the tooltip and the
 /// accessible name, and an icon button without one is a button a screen
 /// reader calls "button".
+///
+/// It is centred where it stands, at its own size (specs/007-postio-focus
+/// T202): left at the default `Fill`, a bar or a column taller or wider
+/// than the button stretches it, and it hovers as a tall pill rather than
+/// in its own shape (T193). The constructor sets it so no caller can forget.
 pub fn icon_button(icon: &str, name: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon);
-    button.add_css_class("postio-icon-button");
-    button.set_tooltip_text(Some(name));
-    button.update_property(&[gtk::accessible::Property::Label(name)]);
+    dress_icon(&button, name);
     button
+}
+
+/// An icon-only button that opens `menu`: the same look, size and
+/// placement as [`icon_button`], and the same required name.
+pub fn icon_menu_button(icon: &str, name: &str, menu: &gio::MenuModel) -> gtk::MenuButton {
+    let button = gtk::MenuButton::builder()
+        .icon_name(icon)
+        .menu_model(menu)
+        .build();
+    dress_icon(&button, name);
+    button
+}
+
+/// Make `button`, which shows an icon and no words, the shared icon
+/// button: the class its look and the surface-walking test key on, the
+/// tooltip and accessible name, and its own size, centred.
+///
+/// For a button whose icon is set elsewhere -- a toolbar's, dressed from
+/// the registry -- that is not built by [`icon_button`].
+pub fn dress_icon(button: &impl IsA<gtk::Widget>, name: &str) {
+    let widget: &gtk::Widget = button.upcast_ref();
+    widget.add_css_class("postio-icon-button");
+    widget.set_tooltip_text(Some(name));
+    widget.update_property(&[gtk::accessible::Property::Label(name)]);
+    widget.set_valign(gtk::Align::Center);
+    widget.set_halign(gtk::Align::Center);
 }
 
 /// The close control every closable surface wears: an X icon button,

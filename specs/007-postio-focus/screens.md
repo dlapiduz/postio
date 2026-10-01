@@ -51,6 +51,22 @@ email page) has that at the left, worded "Summary". No surface draws its own
 close; `close_buttons::every_closable_surface_has_the_same_x_at_the_right`
 walks them and asserts the widget and that nothing in the header is right of it.
 
+**One icon-button rule (T202).** Every button in Focus that shows an icon
+and no words is the one `postio_widgets::widgets::icon_button()` builds (or
+`icon_menu_button()` for one that opens a menu, or `dress_icon()` for a
+button whose icon is set elsewhere, the composer's formatting toolbar): the
+ghost `.postio-icon-button`, 26px, its name as tooltip and accessible name,
+and centred where it stands at its own size. The constructor sets the
+centring, so no caller can forget it: left at GTK's default `Fill`, a 46px
+bar or a wide column stretches the button and it hovers as a tall pill
+(T193). `icon_buttons::every_surfaces_icon_buttons_keep_their_own_shape`
+walks the window, the key map, the raw source, the open message and the
+composer (and `…the_digests…` the digest), and asserts each icon button wears
+the class and is allocated exactly what it asks for. Converted with it: the
+main menu (now `icon_menu_button`), the composer's detach and label removes,
+the recipient chips' removes, the formatting toolbar and the notice's "more"
+menu, which each drew libadwaita's `flat` look at its own size.
+
 **Mouse and keyboard pairs (T194).** Each row is an action a person expects
 from either device; "n/a" means the surface has no such thing.
 

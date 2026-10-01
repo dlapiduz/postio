@@ -158,7 +158,6 @@ impl OpenMessage {
         // still closes, so it carries no keycap.
         let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-open-close");
-        close.set_valign(gtk::Align::Center);
 
         let title = gtk::Label::new(None);
         title.add_css_class("focus-open-title");

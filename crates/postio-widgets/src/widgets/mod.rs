@@ -38,7 +38,7 @@ pub mod space {
 }
 
 pub use action_bar::{Action, ActionBar};
-pub use button::{Kind, Size, close_button, icon_button};
+pub use button::{Kind, Size, close_button, dress_icon, icon_button, icon_menu_button};
 pub use chip::{chip_button, filter_chip};
 pub use chrome::{kicker, stat_line};
 pub use field::field;

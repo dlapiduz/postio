@@ -41,6 +41,7 @@ mod empty;
 mod filtered;
 mod first_run;
 mod harness;
+mod icon_buttons;
 mod has_action;
 mod invitations;
 mod keymap;
@@ -426,6 +427,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "close_buttons::the_digest_has_the_same_x_at_the_right",
         close_buttons::the_digest_has_the_same_x_at_the_right as fn(),
+    ),
+    (
+        "icon_buttons::every_surfaces_icon_buttons_keep_their_own_shape",
+        icon_buttons::every_surfaces_icon_buttons_keep_their_own_shape as fn(),
+    ),
+    (
+        "icon_buttons::the_digests_icon_buttons_keep_their_own_shape",
+        icon_buttons::the_digests_icon_buttons_keep_their_own_shape as fn(),
     ),
     (
         "open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left",

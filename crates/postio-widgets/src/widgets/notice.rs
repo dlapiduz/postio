@@ -98,13 +98,13 @@ impl NoticeBar {
         root.append(&action.widget());
 
         let model = gio::Menu::new();
-        let menu = gtk::MenuButton::new();
-        menu.set_icon_name("view-more-symbolic");
-        menu.add_css_class("flat");
+        let menu = super::icon_menu_button(
+            "view-more-symbolic",
+            "More about this notice",
+            model.upcast_ref(),
+        );
         menu.add_css_class(&format!("{class}-menu"));
-        menu.set_menu_model(Some(&model));
         menu.set_visible(false);
-        menu.update_property(&[gtk::accessible::Property::Label("More about this notice")]);
         root.append(&menu);
 
         let group = gio::SimpleActionGroup::new();
