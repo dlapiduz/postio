@@ -105,6 +105,9 @@ struct Shell: View {
                 reader
             }
                 .background(Color(nsColor: AppSurface.background))
+                // The reading measure is the last thing to give way (FR-043):
+                // narrowing the window takes width from the list first.
+                .navigationSplitViewColumnWidth(min: 460, ideal: 720)
                 .onTapGesture { engine.focus(.reader) }
         }
         // How wide the window is, for the conversation rail's ladder -- whose
@@ -568,7 +571,20 @@ struct Shell: View {
                 // confident false statement about somebody's own mail. That
                 // is ADR 0005 Q10's worked example: you search for an
                 // invoice, find nothing, and conclude it does not exist.
-                if let plate = engine.session?.emptyPlate {
+                if engine.accounts.isEmpty {
+                    // A fresh install. "This store has no mail in it yet" was
+                    // true and led nowhere: nothing on screen said where mail
+                    // comes from. The button is the `add_account` command,
+                    // the same one `⇧⌘N` and the palette run.
+                    ContentUnavailableView {
+                        Label("No accounts yet", systemImage: "person.crop.circle.badge.plus")
+                    } description: {
+                        Text("Add the account your mail lives in, or a folder of mail already on this Mac.")
+                    } actions: {
+                        Button("Add Account…") { engine.run(Intercepted.addAccount) }
+                            .buttonStyle(ReaderButtonStyle(.primary))
+                    }
+                } else if let plate = engine.session?.emptyPlate {
                     ContentUnavailableView(
                         plate.title,
                         systemImage: "magnifyingglass",

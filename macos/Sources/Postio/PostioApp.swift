@@ -51,7 +51,10 @@ struct PostioApp: App {
             // `SessionLifetime` is the rule, and carries the rest of it.
             if SessionLifetime.shouldEnd(on: SessionPhase(now)) { engine.shutdown() }
         }
-        .defaultSize(width: 1100, height: 700)
+        // Canvas 25's proportions. At 1100pt the sidebar and the list left the
+        // reader about 310pt, the conversation rail took 118 of them, and a
+        // body read three words to a line.
+        .defaultSize(width: 1440, height: 900)
         .windowToolbarStyle(.unified)
         // Size and position across launches. `SceneStorage` handles the split
         // widths; the frame is `NSWindow`'s own autosave, which is the only
