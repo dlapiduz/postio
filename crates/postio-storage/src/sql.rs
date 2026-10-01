@@ -288,6 +288,8 @@ const CACHED_PLACEHOLDERS: usize = 64;
 /// cached statement does not. Nothing in this crate opens one -- it uses
 /// [`in_scope`] -- and a caller that does finishes it itself.
 pub async fn statement(connection: &Connection, sql: &str) -> Result<turso::Statement> {
+    #[cfg(feature = "test-support")]
+    crate::test_support::counting::note(sql);
     if placeholders_in(sql) > CACHED_PLACEHOLDERS {
         count_compile();
         #[allow(clippy::disallowed_methods)]

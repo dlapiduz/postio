@@ -111,6 +111,11 @@ for spec in "${FAILURES[@]}"; do
     echo "release gate: retrying isolated: $spec" >&2
     if cargo nextest run --profile "$PROFILE" -E "binary_id($binary_id) & test(=$test_name)"; then
         echo "release gate: confirmed a flake: $spec" >&2
+        # On a runner, an annotation too: the nightly runs through here, and a
+        # flake this forgives must still be visible on the green run (#1710).
+        if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            echo "::warning title=Flaky test::failed with the suite, passed alone: $spec"
+        fi
     else
         echo "release gate: failed again in isolation, not a flake: $spec" >&2
         REAL_FAILURES+=("$spec")

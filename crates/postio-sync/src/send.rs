@@ -515,7 +515,7 @@ async fn release(connection: &Connection, job: &SendJob) {
 ///
 /// The row has no server identity yet — the `APPEND` has not happened — which
 /// is what [`confirm_sent_copy`] attaches, and what
-/// `local_copies_awaiting_identity` lets a resync of Sent adopt rather than
+/// the storage layer's identity fallback lets a resync of Sent adopt rather than
 /// duplicate.
 ///
 /// Best-effort like everything else on this path: a row that cannot be written

@@ -2,10 +2,10 @@
 """The workspace version, every internal pin and the newest AppStream release
 entry name the same version.
 
-A version is written in three places by hand -- `[workspace.package]
+A version is written in four places by hand -- `[workspace.package]
 version` in the root Cargo.toml, the `postio-* = { version = "...", path =
 "../postio-..." }` pins some crates carry, and the newest `<release>` in
-the metainfo GNOME Software reads -- and `scripts/release-bump.py` moves
+the metainfo GNOME Software reads, and the macOS bundle's Info.plist -- and `scripts/release-bump.py` moves
 all three together on a tag push. v0.3.0 was tagged on 2026-09-11 and the
 release workflow failed after the tag existed, so that bump never landed:
 `main` kept saying 0.2.0, the changelog had no 0.3.0 entry, and nothing
@@ -28,6 +28,10 @@ METAINFO = Path("crates/postio-gtk/data/dev.postio.Postio.metainfo.xml")
 WORKSPACE_VERSION = re.compile(r'(?m)^version = "([0-9]+\.[0-9]+\.[0-9]+)"$')
 INTERNAL_PIN = re.compile(r'version = "([0-9]+\.[0-9]+\.[0-9]+)", path = "\.\./postio-')
 RELEASE = re.compile(r'<release version="([0-9]+\.[0-9]+\.[0-9]+)"')
+INFO_PLIST = Path("macos/Resources/Info.plist")
+PLIST_VERSION = re.compile(
+    r"<key>(CFBundleShortVersionString|CFBundleVersion)</key>\s*<string>([^<]*)</string>"
+)
 
 
 def main() -> int:
@@ -60,6 +64,17 @@ def main() -> int:
             f"{METAINFO}'s newest release is {releases[0]}; the workspace is {version} -- "
             "the changelog entry and the version move together (scripts/release-bump.py)"
         )
+
+    # The macOS bundle is a release asset (#1714); it said 0.1.0 through three
+    # releases because nothing moved it and nothing compared it.
+    plist = root / INFO_PLIST
+    if plist.exists():
+        for key, value in PLIST_VERSION.findall(plist.read_text(encoding="utf-8")):
+            if value != version:
+                problems.append(
+                    f"{INFO_PLIST}'s {key} is {value}; the workspace is {version} -- "
+                    "scripts/release-bump.py moves it with the rest"
+                )
 
     if problems:
         for problem in problems:

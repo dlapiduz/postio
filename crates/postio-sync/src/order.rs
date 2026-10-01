@@ -1,4 +1,5 @@
-//! Cross-mailbox sync order: which folder gets synced first.
+//! Cross-mailbox sync order: which folder gets synced first, and that INBOX
+//! gets synced before the rest begin.
 //!
 //! # Why this exists
 //!
@@ -15,6 +16,35 @@
 //! roles are a well-formed key elsewhere (storage round-trips, `BTreeMap`s) and
 //! it runs `Inbox, Archive, Sent, ...`. Archive right after Inbox is wrong for
 //! *this* purpose: it is exactly the huge folder nobody is waiting on.
+
+//! # INBOX is not merely first, it is alone (#1709)
+//!
+//! Ranking decides which mailbox *starts* first. It does not make INBOX
+//! *finish* first: the engine runs several lanes at once over several
+//! connections, all sharing one store writer and one pipe, so an INBOX that
+//! merely starts first still has its header batches interleaved with Sent's
+//! and Archive's, and bodies were claimed for whichever folder had rows.
+//! Postio Focus's whole screen is the inbox, so that is not good enough. The
+//! rule the engine's wave (`postio_runtime::engine`) follows, keyed on
+//! [`MailboxRole::Inbox`] and never on a folder name:
+//!
+//! 1. **INBOX's header pass runs alone.** While one is queued or running no
+//!    other mailbox is admitted to a lane, and no body of any folder is
+//!    claimed in the background.
+//! 2. **Then INBOX's newest page of bodies** -- the backfill's `seed_batch`,
+//!    newest first -- is fetched before any other mailbox is admitted. One
+//!    page, not the mailbox: a top-up past it would hold every other folder
+//!    for as long as INBOX is large. If the page is not actually progressing
+//!    (backfill paused, metered, interrupted) the hold is dropped instead of
+//!    starving everything.
+//! 3. **Only then the rest**, in [`sync_priority`] order, beside INBOX's
+//!    remaining bodies, which still outrank theirs.
+//!
+//! It applies wherever the queue is refilled, not only to a first sync: a
+//! reconnect after a long offline gap, an IDLE wake and a requeued
+//! interrupted pass all put INBOX back in front of the folders already
+//! waiting. Nothing here awaits the network on the UI's behalf, and a body the
+//! person asked for, or a queued write, is never held by it.
 
 use postio_model::MailboxRole;
 

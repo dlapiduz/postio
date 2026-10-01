@@ -85,8 +85,13 @@ exit 1
 """
 
 
-def run(stub_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def run(
+    stub_dir: Path, *args: str, actions: bool = False
+) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
+    environment.pop("GITHUB_ACTIONS", None)
+    if actions:
+        environment["GITHUB_ACTIONS"] = "true"
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
     return patience.run(
@@ -191,6 +196,30 @@ def main() -> int:
             "the output says which tests were confirmed flakes",
             "a_thing" in out and "b_thing" in out and "flake" in out,
             f"no flake confirmation in output:\n{out}",
+        )
+
+    # ── under Actions, a forgiven flake is still said out loud ───────
+    # The nightly runs through this script too (#1710), and the nightly is
+    # where flakes get noticed. A retry that turns one green must not make
+    # it invisible: on a runner each confirmed flake is an annotation on the
+    # run, which is what a person looking at a green tick actually sees.
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory))
+        result = run(stub_dir, actions=True)
+        out = result.stdout + result.stderr
+        case(
+            "under GitHub Actions each confirmed flake is a ::warning:: annotation",
+            "::warning" in out and out.count("::warning") >= 2 and "a_thing" in out,
+            f"expected one ::warning:: per flake:\n{out}",
+        )
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory))
+        result = run(stub_dir)
+        out = result.stdout + result.stderr
+        case(
+            "off a runner there is no annotation syntax in the output",
+            "::warning" not in out,
+            f"annotation syntax printed outside Actions:\n{out}",
         )
 
     # ── one failure reproduces alone: block the release ──────────────

@@ -508,12 +508,18 @@ can produce together.
 The steward loop's periodic `cargo check --workspace --all-targets` and
 `cargo test --workspace --no-fail-fast` against `main` are now a backstop
 rather than the only proof. If either is ever red: pull `ready` from open
-issues, fix on a branch, land it, restore the labels. A release runs the
-full suite itself now: `release.yml`'s `flatpak` job `needs: suite`, so
-nothing is built, signed, attested or published until the whole workspace
-passes under `--profile ci-full` — everything the nightly runs, through
-`scripts/test-with-flake-retry.sh`, so a busy runner cannot block a release
-on noise and a target that fails twice still can.
+issues, fix on a branch, land it, restore the labels. A release does not
+ship without the full suite: `release.yml` builds nothing until the whole
+workspace passes under `--profile ci-full` — everything the nightly runs,
+through `scripts/test-with-flake-retry.sh` — and skips that run only when a
+green nightly already ran it on the exact commit being released.
+
+**A release is a pull request.** `scripts/release-prepare.sh X.Y.Z` (from a
+worktree) makes the branch: the version bump, `docs/releases/X.Y.Z.md`, one
+commit; land it like anything else. Merging it is the release —
+`release.yml` publishes whenever `main` names a version with no tag yet,
+building every package `.github/release-variants.json` lists. A new package of
+a kind already built there is a row in that file, not a new job.
 
 ## Skills and design authorities
 

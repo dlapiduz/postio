@@ -40,21 +40,29 @@ permissions:
   # only, and the narrowest grant that can answer the question.
   actions: read
 
+# A pull request's superseded run is cancelled; `main`'s is not (#1710).
+# `main` is the only ref that writes build caches (see
+# .github/actions/build-cache), and a cancelled job writes nothing: 31 of 66
+# pushes in one week were cancelled by the next merge, which is part of how
+# `main` came to hold no build cache at all. Not cancelling still queues
+# rather than piles up -- GitHub keeps one pending run per group and replaces
+# it with the newest.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
 
-  # A cold debug build of this graph -- GTK, WebKit, ICU, and ~25 test
-  # binaries that each statically link the lot -- ran a runner out of disk and
-  # killed lld with SIGBUS mid-link. DWARF is the bulk of it, and none of it
-  # earns its keep here: line tables still give backtraces function names and
-  # line numbers, which is everything CI reads.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # No `CARGO_PROFILE_DEV_DEBUG` here, deliberately (#1710). This workflow
+  # used to set `line-tables-only`, back when the workspace default was full
+  # DWARF and a cold build ran a runner out of disk. The workspace is
+  # `debug = 0` now (Cargo.toml says why), and the override turned debug info
+  # back *on*: a test binary 239 MB instead of 70, every cache bigger, every
+  # link slower. A panic still names its file and line without it; only a
+  # backtrace's frames lose theirs.
 
   # .cargo/config.toml pins `jobs = 2` because four Claude sessions share one
   # eight-core workstation. That reasoning does not travel: a runner is one
@@ -161,15 +169,17 @@ jobs:
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
 
-      - name: Cache cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      # The registry, and `target/` for the tooling self-tests: most of them
+      # build throwaway sandboxes, but `test-ffi-bindgen.py` builds
+      # `postio-ffi` -- most of the workspace -- in this checkout's own
+      # `target/`, and with only the registry cached that was a cold build on
+      # every run that needed the self-tests, ~11 minutes of this job (#1710).
+      # Restored whether or not they run: `check.sh` needs the registry, and
+      # one cache per job is the build-cache action's rule.
+      - name: Restore the build cache
+        uses: ./.github/actions/build-cache
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+          name: tooling
 
       # One step running every invariant `scripts/check.sh` knows about,
       # rather than eight named here by hand (#1169). The eight used to be
@@ -314,6 +324,11 @@ jobs:
           fi
           echo "ok: no workflow opts into the live-server tests."
 
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
+
   # Three jobs, because the question has two halves and one answer.
   #
   # `nightly-status` asks what the last completed run concluded and never
@@ -344,6 +359,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       green: ${{ steps.ask.outputs.green }}
+      # The run `nightly` links to when it refuses. Undeclared, it was the
+      # empty string and the refusal pointed at nothing.
+      url: ${{ steps.ask.outputs.url }}
     steps:
       # Never fails. Its job is to answer, and `nightly` below is what turns
       # the answer into a verdict -- a step that exited non-zero here would
@@ -564,7 +582,6 @@ jobs:
       # the action for the measurement.
       - uses: ./.github/actions/rust-workspace
         with:
-          save-cache: "true"
           cache-name: "clippy"
 
       - name: cargo clippy
@@ -573,6 +590,11 @@ jobs:
       - name: Drop workspace artifacts before caching
         if: always()
         run: scripts/ci-drop-workspace-artifacts.sh
+
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
 
   test:
     name: Tests
@@ -586,7 +608,6 @@ jobs:
       # produces. The clippy job keeps a separate one; they cannot share.
       - uses: ./.github/actions/rust-workspace
         with:
-          save-cache: "true"
           cache-name: "build"
 
       # #1126: cargo's freshness check compares a source file's mtime
@@ -765,6 +786,11 @@ jobs:
       # the property this depends on (`actions/cache` preserving mtimes
       # through extraction) and what silently breaks if that ever stops
       # being true.
+      #
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
 
   # The two WebKit-heavy crates, one job each -- see the `test` job's
   # nextest step for why they are apart from the workspace and from each
@@ -785,7 +811,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/rust-workspace
         with:
-          save-cache: "true"
           cache-name: "build-gtk"
       - name: Restore mtimes from commit history
         run: scripts/restore-mtimes.py
@@ -813,6 +838,11 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- scripts/test-with-flake-retry.sh ci postio-gtk
 
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
+
   test-app:
     name: Tests (application)
     runs-on: ubuntu-26.04
@@ -822,7 +852,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/rust-workspace
         with:
-          save-cache: "true"
           cache-name: "build-app"
       - name: Restore mtimes from commit history
         run: scripts/restore-mtimes.py
@@ -842,6 +871,11 @@ jobs:
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo nextest run -p postio-app --profile ci
+
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
 
   # The macOS half, and the link.
   #
@@ -882,15 +916,16 @@ jobs:
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
 
-      - name: Cache cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      # The registry and `target/`. This cached only the registry, so
+      # `cargo build -p postio-ffi` was a cold 14-minute build on every run --
+      # the job's median was 16.7 minutes and it was the last to finish in 31
+      # of 56 pull requests (#1710). Shared with `macos-tooling`, which builds
+      # the same `postio-ffi` the same way: one cache, whichever job `main`
+      # ran last.
+      - name: Restore the build cache
+        uses: ./.github/actions/build-cache
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+          name: macos-ffi
 
       # Xcode's own toolchain, outside any Nix-style environment. Ghostty hit
       # this and hardcoded the fix in three places: a `swift` that is not the
@@ -920,6 +955,11 @@ jobs:
       # above touches, and both of which fail on their own terms.
       - name: Assemble Postio.app
         run: scripts/macos-bundle.sh
+
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
 
   # The tooling self-tests, on the platform whose shell they were never run
   # on (#1151).
@@ -970,15 +1010,10 @@ jobs:
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
 
-      - name: Cache cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - name: Restore the build cache
+        uses: ./.github/actions/build-cache
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+          name: macos-ffi
 
       # `test-issue-land-no-tests.py` asserts that the landing gate gives the
       # same answer under both test runners, so it needs the one that is not
@@ -1007,20 +1042,11 @@ jobs:
         run: scripts/install-cargo-deny.sh
 
       # `test-ffi-bindgen.py` builds `postio-ffi` -- most of the workspace --
-      # inside a 900 s patience window, and this job cached only the
-      # registry, so every run was a cold build on a macOS runner:
-      # 2026-09-14 saw it cross the cap twice, on the two pushes that changed
-      # Cargo.lock. The build artifacts are cached now, and the patience dial
-      # is doubled for the cold run that follows a lock change -- the base
-      # stays the number that is right on a warm runner.
-      - name: Cache the build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: target
-          key: ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-tooling-target-${{ hashFiles('rust-toolchain.toml') }}-
-
+      # inside a 900 s patience window. With only the registry cached that was
+      # a cold build on a macOS runner every time, and 2026-09-14 saw it cross
+      # the cap twice, on the two pushes that changed Cargo.lock. The
+      # `macos-ffi` cache restored above is what keeps it warm; the patience
+      # dial is doubled for the cold run that follows a lock change.
       # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
       # prerequisite is a broken runner rather than somebody's laptop. Set
       # explicitly, the way the Swift job sets it, rather than relied upon:
@@ -1031,3 +1057,8 @@ jobs:
           CI: "true"
           POSTIO_TEST_PATIENCE: "2"
         run: scripts/run-self-tests.sh --logs "$RUNNER_TEMP/self-test-logs"
+
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save

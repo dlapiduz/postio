@@ -1,0 +1,42 @@
+name: Build cache (save)
+description: >
+  The second half of `.github/actions/build-cache`: write the cache back, from
+  `main` only, and only when the restore was not already an exact hit. Put it
+  last in the job, guarded by `!cancelled()` -- a failing test still
+  leaves a target directory worth keeping, and the next run's cargo decides
+  what in it is fresh.
+
+  Why only `main`: see the restore half. Why not on an exact hit: the key
+  names every input that changes what cargo builds, so an exact hit has
+  nothing new to say, and `actions/cache/save` would refuse the duplicate key
+  anyway.
+
+  No expression syntax anywhere in this description: the runner evaluates it
+  in action metadata too, and a status function there fails every job that
+  loads the action.
+
+  Reads the key and the paths the restore half put in the job's environment,
+  so it takes no inputs and cannot cache something other than what was
+  restored. One build cache per job, for the same reason.
+
+runs:
+  using: composite
+  steps:
+    - name: Say why the cache is not saved
+      if: github.ref != 'refs/heads/main' || env.BUILD_CACHE_HIT == 'true'
+      shell: bash
+      env:
+        REF: ${{ github.ref }}
+      run: |
+        if [ "$REF" != "refs/heads/main" ]; then
+          echo "Not saving: only main writes build caches ($REF can read them)."
+        else
+          echo "Not saving: the restore was an exact hit."
+        fi
+
+    - name: Save the build cache
+      if: github.ref == 'refs/heads/main' && env.BUILD_CACHE_HIT != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ env.BUILD_CACHE_PATHS }}
+        key: ${{ env.BUILD_CACHE_KEY }}

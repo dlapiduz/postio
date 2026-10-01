@@ -1,0 +1,33 @@
+{
+  "variants": [
+    {
+      "id": "postio",
+      "kind": "flatpak",
+      "app_id": "dev.postio.Postio",
+      "manifest": "flatpak/dev.postio.Postio.json",
+      "asset": "postio-{version}-linux-x86_64.flatpak"
+    },
+    {
+      "id": "postio-tui",
+      "kind": "flatpak",
+      "app_id": "dev.postio.PostioTui",
+      "manifest": "flatpak/dev.postio.PostioTui.json",
+      "asset": "postio-tui-{version}-linux-x86_64.flatpak"
+    },
+    {
+      "id": "postio-tui",
+      "kind": "tarball",
+      "package": "postio-tui",
+      "bin": "postio-tui",
+      "profile": "release-tui",
+      "readme": "docs/book/src/terminal.md",
+      "asset": "postio-tui-{version}-linux-x86_64.tar.zst"
+    },
+    {
+      "id": "postio",
+      "kind": "macos-app",
+      "app": "Postio.app",
+      "asset": "postio-{version}-macos-arm64.zip"
+    }
+  ]
+}

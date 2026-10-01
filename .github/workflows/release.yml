@@ -1,49 +1,121 @@
 name: Release
 
-# Deliberately not part of CI. A Flatpak build compiles the whole workspace
-# --release inside a sandbox against a ~3 GB runtime it has to download first,
-# which is minutes of runner time that says nothing new about a commit. It runs
-# when a version is tagged, and on demand.
+# A release is the push that merges a release pull request (#1714).
+#
+# The version moves in that pull request -- `scripts/release-prepare.sh
+# X.Y.Z` makes it: the bump, the notes in docs/releases/X.Y.Z.md, one commit
+# -- so `main` always says the version it is. This workflow runs on every
+# push to `main`, and its first job answers "is this a release?" in seconds:
+# only when `Cargo.toml` names a version with no tag yet, newer than the
+# newest one. Every other push stops there.
+#
+# It used to run on a tag and bump the version itself, in every build job, on
+# a copy of the tree it could never commit -- an automated push cannot pass
+# `main`'s ruleset. So `main` said 0.3.0 while v0.4.2 was out.
+#
+# What a release ships is `.github/release-variants.json`, one row per
+# package. Each kind of package is one job below, run once per row of that
+# kind, so a second Flatpak or a second tarball is a row, not a job. Every
+# package carries its own SBOM and a provenance attestation.
+#
+# Nothing is published until everything is built: `publish` creates the
+# release as a draft, attaches every asset and `SHA256SUMS`, checks the list
+# against the variants file, and only then publishes -- which is also what
+# creates the tag. A package that fails to build leaves no release and no
+# tag, rather than a release with a hole in it (v0.3.0, v0.4.0 and v0.4.1 are
+# tags with no release, from the old shape).
+#
+# `workflow_dispatch` builds every package as a workflow artifact, versioned
+# `<version>-dev.<sha>`, and publishes nothing.
+#
+# A Flatpak build compiles the whole workspace --release inside a sandbox
+# against a ~3 GB runtime it has to download first; that is why none of this
+# is part of CI.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      skip-suite:
+        description: "Skip the full suite (a dispatch publishes nothing either way)"
+        type: boolean
+        default: false
 
 permissions:
-  contents: write        # to create the release and upload the bundle
+  contents: write        # to create the release and upload the packages
   id-token: write        # to mint the Sigstore signature behind an attestation
   attestations: write    # to publish the provenance and SBOM attestations
+  actions: read          # `plan` asks whether the nightly passed this commit
 
-env:
-  APP_ID: dev.postio.Postio
-  MANIFEST: flatpak/dev.postio.Postio.json
+# Never cancel a release half-way: a cancelled `publish` is a draft with half
+# its assets. A newer push waits, and is almost always "nothing to release".
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Is this a release?
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      suite: ${{ steps.plan.outputs.suite }}
+      flatpaks: ${{ steps.matrices.outputs.flatpaks }}
+      tarballs: ${{ steps.matrices.outputs.tarballs }}
+      macos: ${{ steps.matrices.outputs.macos }}
+    steps:
+      # One commit is enough: `release-plan.sh` asks origin for its tags
+      # (`git ls-remote`) rather than trusting this clone, which has none at
+      # this depth whatever `fetch-tags` says.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Decide
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKIP_SUITE: ${{ inputs.skip-suite && '--skip-suite' || '' }}
+        run: |
+          # shellcheck disable=SC2086  # an empty $SKIP_SUITE is no argument
+          scripts/release-plan.sh $SKIP_SUITE | tee -a "$GITHUB_OUTPUT"
+
+      # One JSON list per kind of package, for each build job's matrix.
+      - name: Read what the release ships
+        id: matrices
+        if: steps.plan.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          python3 scripts/release-variants.py check
+          {
+            echo "flatpaks=$(python3 scripts/release-variants.py matrix flatpak --version "$VERSION")"
+            echo "tarballs=$(python3 scripts/release-variants.py matrix tarball --version "$VERSION")"
+            echo "macos=$(python3 scripts/release-variants.py matrix macos-app --version "$VERSION")"
+          } | tee -a "$GITHUB_OUTPUT"
+
   # **The full suite, and nothing ships without it** (2026-09-19).
   #
-  # This workflow used to build and publish without running a test at all --
-  # CLAUDE.md said so in as many words, and the answer was "a release needs a
-  # local full-suite run first", which is a rule that lives in a person's
-  # memory and fails the day they are in a hurry.
+  # The pull-request gate is the sanity tier, so the integration suites that
+  # catch layers which each pass and were never joined up run on the nightly
+  # timer and here. A release is the last point at which finding one is
+  # cheaper than shipping it.
   #
-  # It matters more now than it did. The pull-request gate is the sanity tier,
-  # so the integration suites that catch layers which each pass and were never
-  # joined up run on the nightly timer and here. A tag is the last point at
-  # which finding one is cheaper than shipping it.
+  # Skipped when the nightly already passed this exact commit
+  # (`scripts/release-plan.sh` asks): it runs the identical suite -- the same
+  # `--profile ci-full` through the same flake-retry script, and the doctests
+  # -- so that is this answer already given. Anything short of the exact
+  # commit runs it here.
   #
-  # `--profile ci-full`: the measurement tier runs here too -- a release is the
-  # job with no one waiting on it and therefore the least excuse for running
-  # less than everything -- minus the one measurement that asserts on a
-  # stopwatch, which a shared runner cannot defend and which has never once
-  # finished on one. `.config/nextest.toml` says which and why.
-  #
-  # This asked for `--profile nightly` until 2026-09-19, and would have taken
-  # the release down with it: `cache_pressure` has been terminated on a runner
-  # at 240s, 720s and 1200s, so this gate could not have gone green and
-  # `flatpak` below `needs` it. Nothing would have been published, twenty
-  # minutes after the tag, for a reason nowhere near the tag.
+  # `--profile ci-full`: the measurement tier runs too, minus the one
+  # measurement that asserts on a stopwatch, which a shared runner cannot
+  # defend. `.config/nextest.toml` says which and why.
   suite:
     name: Full suite
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -55,9 +127,6 @@ jobs:
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # Keyed on the script rather than a version repeated here, as `ci.yml`
-      # and `nightly.yml` both do it: the key changes when the pin does and
-      # cannot go stale against it.
       - name: Cache cargo-nextest
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -67,45 +136,51 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
-      # Through the flake-retry script, not a bare nextest run. A release
-      # does not ship on a test that only failed because this runner was
-      # busy, and it does not *fail to ship* on one either: a target that
-      # fails once is retried alone before it is allowed to block anything,
-      # and one that fails twice still blocks. Cutting v0.2.0 by hand hit
-      # exactly that twice, and this repository's GTK editor cases still
-      # flake on a shared runner often enough to matter.
+      # Through the flake-retry script, not a bare nextest run. A release does
+      # not ship on a test that only failed because this runner was busy, and
+      # it does not *fail to ship* on one either: a target that fails once is
+      # retried alone before it is allowed to block anything, and one that
+      # fails twice still blocks.
       - name: Run the release gate
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-full
 
-      # nextest does not run doctests and does not say so. Asked for by name
-      # here for the same reason `nightly.yml` asks for them.
+      # nextest does not run doctests and does not say so.
       - name: cargo test --doc
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace --doc
 
+  # One job per Flatpak row of the variants file. A build job reads the tree
+  # as it is: the version is already in it, because the release pull request
+  # put it there, and the manifests build from the checkout (`"type": "dir"`).
   flatpak:
-    name: Flatpak bundle
-    # Nothing is built, signed, attested or published until the suite above
-    # is green. The bundle is the artifact people install; it is the wrong
-    # thing to produce optimistically.
-    needs: suite
+    name: Flatpak (${{ matrix.variant.id }})
+    needs: [plan, suite]
+    # `always()` because `suite` is skipped whenever the nightly already
+    # answered, and a skipped need otherwise skips this too.
+    if: >-
+      always() && needs.plan.outputs.build == 'true'
+      && needs.plan.outputs.flatpaks != '[]'
+      && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.plan.outputs.flatpaks || '[]') }}
+    env:
+      MANIFEST: ${{ matrix.variant.manifest }}
+      APP_ID: ${{ matrix.variant.app_id }}
+      ASSET: ${{ matrix.variant.asset }}
+      SBOM: ${{ matrix.variant.sbom }}
     steps:
-      # Full history, not the default single commit: bumping the version
-      # below needs `git log`/`git describe` against the *previous* tag to
-      # write the changelog, and pushing the bump needs real ancestry to
-      # rebase onto if `main` moves while this job runs.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
 
-      # A cold debug build already ran a runner out of disk once and killed lld
-      # with SIGBUS mid-link. This build is --release and additionally needs the
-      # GNOME runtime and SDK, so reclaim the preinstalled toolchains nothing
-      # here uses before starting rather than diagnosing it again.
+      # A cold debug build already ran a runner out of disk once and killed
+      # lld with SIGBUS mid-link. This build is --release and additionally
+      # needs the runtime and SDK, so reclaim the preinstalled toolchains
+      # nothing here uses before starting rather than diagnosing it again.
       - name: Reclaim disk
         run: |
           df -h /
@@ -113,109 +188,12 @@ jobs:
                       /usr/local/share/boost /usr/local/.ghcup
           df -h /
 
-      # #886: pushing a tag is the whole trigger for a release, not a script
-      # a session runs by hand first. Everything from here down to "Commit
-      # and push the version bump" is skipped on a `workflow_dispatch` rerun
-      # (github.ref_type != 'tag'), which still wants to rebuild whatever is
-      # already checked out, unbumped.
-      #
-      # This has to be the same job the Flatpak build runs in, not a job of
-      # its own: the bump below edits the working tree, and the build further
-      # down is what reads those files. Splitting them would need the edits
-      # carried across a job boundary, and the bundle agreeing with the
-      # version it claims to be rests on there being exactly one copy of
-      # them.
-      - uses: ./.github/actions/rust-workspace
-        if: github.ref_type == 'tag'
-
-      # Hand-written notes win when there are any: docs/releases/<version>.md
-      # is a paragraph or two and a list of what changed, written for a
-      # person, and it becomes both the GitHub release body and the AppStream
-      # changelog entry (release-bump.py renders its paragraphs and bullets).
-      # Without one the notes are the commit subjects since the last tag --
-      # complete, and unreadable past a few dozen commits.
-      - name: Generate release notes since the last tag
-        if: github.ref_type == 'tag'
-        run: |
-          : > release-notes.txt
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -s "docs/releases/${VERSION}.md" ]; then
-            cp "docs/releases/${VERSION}.md" release-notes.txt
-          else
-            LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
-            if [ -n "$LAST_TAG" ]; then
-              git log "$LAST_TAG"..HEAD --no-merges --format='- %s' \
-                | grep -v '^- chore(release):' >> release-notes.txt || true
-            fi
-          fi
-          [ -s release-notes.txt ] || echo "- Maintenance release" >> release-notes.txt
-          echo "--- release-notes.txt ---"
-          cat release-notes.txt
-
-      # The mechanical half of what cutting v0.2.0 by hand required: the
-      # workspace version, every internal path-dependency pin that names it,
-      # and the AppStream changelog. See scripts/release-bump.py and #886.
-      - name: Bump the workspace version for this release
-        if: github.ref_type == 'tag'
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          python3 scripts/release-bump.py "$VERSION" --notes-file release-notes.txt
-
-      # Also regenerates Cargo.lock for the bumped internal versions -- the
-      # same side effect this had by hand.
-      - name: Verify the bump compiles
-        if: github.ref_type == 'tag'
-        run: cargo check --workspace --all-targets
-
-      # No GTK suite runs in this job any more -- the gate moved to `suite`,
-      # which sets this up for itself. Kept because `flatpak --user` below
-      # wants a runtime directory too, and a release is the wrong place to
-      # find out which of the two needed it.
       - name: Give flatpak a runtime directory
-        if: github.ref_type == 'tag'
         run: |
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # The release gate used to run here as well as in `suite` above, which
-      # meant the whole workspace twice per release -- about forty minutes,
-      # for one answer. `suite` is the one that runs now: it gates the same
-      # way (`flatpak` `needs` it, so nothing is built, signed, attested or
-      # published until it is green), it covers strictly more (the
-      # measurement tier), and since it goes through the same flake-retry
-      # script it is no more likely to stop a release on noise. What is left
-      # here is the half that genuinely belongs after the bump: proving the
-      # bumped tree still compiles and still satisfies the invariants.
-      - name: Run repository invariant checks
-        if: github.ref_type == 'tag'
-        run: bash scripts/check.sh
-
-      # The bump is not committed and not pushed. It used to be pushed
-      # straight to `main`, and that could never have worked: the ruleset
-      # requires seven status checks on `main`, a direct push has no pull
-      # request and therefore no checks, and there is no bypass actor. v0.4.0
-      # is where this was finally found, because it is the first tag whose
-      # release gate went green -- v0.2.0 and v0.3.0 both died earlier and
-      # never reached the push. GitHub refused it with
-      #
-      #     GH013: ... 7 of 7 required status checks are expected
-      #
-      # five times, because the retry loop read every rejection as "main
-      # moved" and rebased against an error that rebasing cannot fix.
-      #
-      # Nothing needed the commit. `flatpak/dev.postio.Postio.json` builds the
-      # `postio` module from a `"type": "dir"` source pointing at the checkout,
-      # so the bundle is built from the working tree that `release-bump.py`
-      # has already edited -- the bundle and the version it claims agree
-      # because they come from the same files, not because a commit exists.
-      #
-      # So `main`'s Cargo.toml keeps saying whatever it said. That is the
-      # status quo made deliberate rather than a regression: it is already
-      # true after v0.3.0, and the tag is the real record of what was
-      # released. The alternative was letting an automated job push past the
-      # branch's own rules, which is a bigger thing to give up than a version
-      # string that nothing reads (maintainer, 2026-09-19).
       - name: Install flatpak
         run: |
           sudo apt-get update
@@ -223,26 +201,12 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
 
-      # Pinned to what the manifest declares. Reading them from the manifest
-      # rather than repeating the versions keeps this from drifting out of step
-      # with it -- a second copy of a version number is a second thing to forget.
-      # The runtime and SDK branch with `runtime-version`, so those are named
-      # here. The SDK *extensions* do not: `rust-stable` is a freedesktop
-      # extension and its branches follow freedesktop's versions, not GNOME's,
-      # so asking flathub for `org.freedesktop.Sdk.Extension.rust-stable//50`
-      # -- the manifest's GNOME runtime version -- resolves to nothing:
-      #
-      #   error: Nothing matches org.freedesktop.Sdk.Extension.rust-stable
-      #          in remote flathub
-      #
-      # and the bare-name fallback beneath it fails for the same reason, a
-      # ref with no branch being no more resolvable than a wrong one.
-      #
-      # So the extensions are left to `flatpak-builder --install-deps-from`
-      # below, which reads the manifest it is about to build and installs what
-      # that manifest actually requires. Guessing a branch from a version that
-      # does not govern it is what broke; the tool that parses the manifest
-      # does not have to guess.
+      # The runtime and SDK are read from the manifest rather than repeated
+      # here. The SDK *extensions* are not: `rust-stable` is a freedesktop
+      # extension whose branches follow freedesktop's versions, not GNOME's,
+      # so naming it with the manifest's runtime version resolves to nothing.
+      # `flatpak-builder --install-deps-from` below reads the manifest and
+      # installs what it actually requires.
       - name: Install the runtime the manifest asks for
         run: |
           RUNTIME=$(jq -r '.runtime + "//" + (."runtime-version"|tostring)' "$MANIFEST")
@@ -252,8 +216,9 @@ jobs:
           flatpak install --user -y flathub "$RUNTIME" "$SDK"
 
       # Flatpak builds offline, so every crate is pinned by checksum up front.
-      # Generated rather than committed: a stale copy is worse than none, since
-      # it would silently build something other than what Cargo.lock resolves.
+      # Generated rather than committed: a stale copy is worse than none,
+      # since it would silently build something other than what Cargo.lock
+      # resolves.
       - name: Generate the offline cargo sources
         run: |
           pip install --quiet aiohttp PyYAML tomlkit
@@ -265,8 +230,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .flatpak-builder
-          key: ${{ runner.os }}-flatpak-${{ hashFiles('Cargo.lock', 'flatpak/dev.postio.Postio.json') }}
-          restore-keys: ${{ runner.os }}-flatpak-
+          key: ${{ runner.os }}-flatpak-${{ matrix.variant.app_id }}-${{ hashFiles('Cargo.lock', matrix.variant.manifest) }}
+          restore-keys: ${{ runner.os }}-flatpak-${{ matrix.variant.app_id }}-
 
       - name: Build
         run: |
@@ -276,24 +241,12 @@ jobs:
 
       - name: Bundle
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = tag ] || VERSION="$(git rev-parse --short HEAD)"
-          BUNDLE="postio-${VERSION}-x86_64.flatpak"
-          flatpak build-bundle repo "$BUNDLE" "$APP_ID" --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
-          ls -lh "$BUNDLE"
-          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
-          echo "SBOM=postio-${VERSION}.spdx.json" >> "$GITHUB_ENV"
+          flatpak build-bundle repo "$ASSET" "$APP_ID" \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+          ls -lh "$ASSET"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: flatpak-bundle
-          path: ${{ env.BUNDLE }}
-
-      # What actually went into this build: 405 crates in Cargo.lock plus the
-      # Flatpak runtime, from the same Cargo.lock flatpak-cargo-generator read
-      # to produce the offline sources above. Answerable after the fact
-      # rather than reconstructed from a tag. #97 adds cargo-deny -- "what is
-      # in the graph" -- this is "what did we actually ship".
+      # What actually went into this build, from the same Cargo.lock
+      # flatpak-cargo-generator read for the offline sources.
       - name: Generate the SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
@@ -303,204 +256,69 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      # A tag push does not create a GitHub Release on its own -- nothing
-      # here ever did, so `gh release upload` below always failed with
-      # "release not found" the one time this workflow ran from an actual
-      # tag push (v0.2.0's own: the bundle, SBOM and attestations all built
-      # clean and were never published anywhere a person would find them).
-      # Guarded on not existing yet, unlike `gh release upload --clobber`
-      # below it: `create` has no clobber flag, and a rerun (workflow_dispatch
-      # against the same tag, after some earlier step failed) must not error
-      # out here just because this step already succeeded once.
-      #
-      # A 0.x tag is a pre-release on the release page too: `--prerelease`
-      # keeps it off the "Latest" badge and says what the version number
-      # already says. The same rule marks the AppStream entry
-      # `type="development"` (scripts/release-bump.py).
-      - name: Create the release
-        if: github.ref_type == 'tag'
-        run: |
-          PRERELEASE=""
-          case "${GITHUB_REF_NAME#v}" in 0.*) PRERELEASE="--prerelease" ;; esac
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --notes-file release-notes.txt $PRERELEASE
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Attach to the release
-        if: github.ref_type == 'tag'
-        run: gh release upload "$GITHUB_REF_NAME" "$BUNDLE" "$SBOM" --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      # A signed SLSA provenance statement tying the bundle to this
-      # repository, commit, workflow and runner. Before this, the only
-      # evidence a downloaded bundle came from this workflow was that it
-      # appeared on a release page -- exactly the evidence an attacker with a
-      # token also has. Verify with:
-      #   gh attestation verify postio-VERSION-x86_64.flatpak --repo dlapiduz/postio
+      # A signed SLSA provenance statement tying the package to this
+      # repository, commit, workflow and runner, and the SBOM to the package.
+      # Verify with: gh attestation verify <asset> --repo dlapiduz/postio
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ${{ env.BUNDLE }}
+          subject-path: ${{ env.ASSET }}
 
-      # Ties the SBOM to the exact bundle it describes, the same way the
-      # provenance attestation ties the bundle to the workflow that built it.
       - name: Attest the SBOM
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
-          subject-path: ${{ env.BUNDLE }}
+          subject-path: ${{ env.ASSET }}
           sbom-path: ${{ env.SBOM }}
 
-  # The terminal frontend's two packages (specs/005-tui-frontend R10): its own
-  # Flatpak on the plain freedesktop runtime, and a standalone download. Both
-  # after `flatpak`, which is what creates the release they attach to, and so
-  # after the suite. Each bumps the version the same way `flatpak` does.
-  tui-flatpak:
-    name: Terminal Flatpak bundle
-    needs: [suite, flatpak]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.variant.asset }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.SBOM }}
+          if-no-files-found: error
+
+  # One job per tarball row: a binary for a machine without Flatpak -- for the
+  # terminal app, usually a server reached over SSH -- with its README beside
+  # it.
+  tarball:
+    name: Tarball (${{ matrix.variant.id }})
+    needs: [plan, suite]
+    if: >-
+      always() && needs.plan.outputs.build == 'true'
+      && needs.plan.outputs.tarballs != '[]'
+      && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.plan.outputs.tarballs || '[]') }}
     env:
-      TUI_APP_ID: dev.postio.PostioTui
-      TUI_MANIFEST: flatpak/dev.postio.PostioTui.json
+      ASSET: ${{ matrix.variant.asset }}
+      SBOM: ${{ matrix.variant.sbom }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # The version only: the notes and the AppStream entry are the desktop
-      # package's. `cargo metadata` rewrites Cargo.lock for the bumped
-      # internal versions without compiling anything, which is all the
-      # offline sources below need.
-      - name: Bump the workspace version for this release
-        if: github.ref_type == 'tag'
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          printf -- '- Terminal package\n' > tui-notes.txt
-          python3 scripts/release-bump.py "$VERSION" --notes-file tui-notes.txt
-          cargo metadata --format-version 1 > /dev/null
-
-      - name: Give flatpak a runtime directory
-        run: |
-          runtime="${RUNNER_TEMP:-/tmp}/xdg"
-          mkdir -p "$runtime" && chmod 700 "$runtime"
-          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
-
-      - name: Install flatpak
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
-          flatpak remote-add --user --if-not-exists flathub \
-            https://flathub.org/repo/flathub.flatpakrepo
-
-      - name: Install the runtime the manifest asks for
-        run: |
-          RUNTIME=$(jq -r '.runtime + "//" + (."runtime-version"|tostring)' "$TUI_MANIFEST")
-          SDK=$(jq -r '.sdk + "//" + (."runtime-version"|tostring)' "$TUI_MANIFEST")
-          flatpak install --user -y flathub "$RUNTIME" "$SDK"
-
-      - name: Generate the offline cargo sources
-        run: |
-          pip install --quiet aiohttp PyYAML tomlkit
-          python3 flatpak/flatpak-cargo-generator.py Cargo.lock \
-            -o flatpak/cargo-sources.json
-
-      - name: Build
-        run: |
-          flatpak-builder --user --disable-rofiles-fuse --force-clean \
-            --install-deps-from=flathub \
-            --repo=repo build-dir "$TUI_MANIFEST"
-
-      - name: Bundle
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = tag ] || VERSION="$(git rev-parse --short HEAD)"
-          BUNDLE="${TUI_APP_ID}-${VERSION}-x86_64.flatpak"
-          flatpak build-bundle repo "$BUNDLE" "$TUI_APP_ID" --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
-          ls -lh "$BUNDLE"
-          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
-          echo "SBOM=${TUI_APP_ID}-${VERSION}.spdx.json" >> "$GITHUB_ENV"
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: tui-flatpak-bundle
-          path: ${{ env.BUNDLE }}
-
-      - name: Generate the SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          path: .
-          format: spdx-json
-          output-file: ${{ env.SBOM }}
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Attach to the release
-        if: github.ref_type == 'tag'
-        run: gh release upload "$GITHUB_REF_NAME" "$BUNDLE" "$SBOM" --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ env.BUNDLE }}
-
-      - name: Attest the SBOM
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
-        with:
-          subject-path: ${{ env.BUNDLE }}
-          sbom-path: ${{ env.SBOM }}
-
-  # `postio-tui`, for a machine without Flatpak -- a server reached over SSH
-  # is the usual one. It opens the store itself, as the desktop app does. It
-  # also builds the desktop executable, only to measure it: SC-004 compares
-  # the download's executable and the libraries it loads against the desktop
-  # app's.
-  tui-tarball:
-    name: Terminal download
-    needs: [suite, flatpak]
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
       - uses: ./.github/actions/rust-workspace
 
-      - name: Bump the workspace version for this release
-        if: github.ref_type == 'tag'
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          printf -- '- Terminal package\n' > tui-notes.txt
-          python3 scripts/release-bump.py "$VERSION" --notes-file tui-notes.txt
-
       - name: Build
-        run: |
-          cargo build --profile release-tui -p postio-tui --bin postio-tui
-          cargo build --release -p postio-app --bin postio
-
-      - name: Is it under half the desktop app?
-        run: |
-          scripts/measure-package-size.sh binaries \
-            target/release-tui/postio-tui -- target/release/postio
+        env:
+          PROFILE: ${{ matrix.variant.profile }}
+          PACKAGE: ${{ matrix.variant.package }}
+          BIN: ${{ matrix.variant.bin }}
+        run: cargo build --profile "$PROFILE" -p "$PACKAGE" --bin "$BIN"
 
       - name: Package
+        env:
+          PROFILE: ${{ matrix.variant.profile }}
+          BIN: ${{ matrix.variant.bin }}
+          README: ${{ matrix.variant.readme }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = tag ] || VERSION="$(git rev-parse --short HEAD)"
-          DIR="postio-tui-${VERSION}"
+          DIR="${ASSET%.tar.zst}"
           mkdir -p "$DIR"
-          install -m755 target/release-tui/postio-tui "$DIR/"
-          cp docs/book/src/terminal.md "$DIR/README.md"
-          TARBALL="postio-tui-${VERSION}-x86_64-linux.tar.zst"
-          tar --zstd -cf "$TARBALL" "$DIR"
-          ls -lh "$TARBALL"
-          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
-          echo "SBOM=postio-tui-${VERSION}.spdx.json" >> "$GITHUB_ENV"
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: tui-tarball
-          path: ${{ env.TARBALL }}
+          install -m755 "target/${PROFILE}/${BIN}" "$DIR/"
+          cp "$README" "$DIR/README.md"
+          tar --zstd -cf "$ASSET" "$DIR"
+          ls -lh "$ASSET"
 
       - name: Generate the SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -511,47 +329,237 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Attach to the release
-        if: github.ref_type == 'tag'
-        run: gh release upload "$GITHUB_REF_NAME" "$TARBALL" "$SBOM" --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ${{ env.TARBALL }}
+          subject-path: ${{ env.ASSET }}
 
       - name: Attest the SBOM
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
-          subject-path: ${{ env.TARBALL }}
+          subject-path: ${{ env.ASSET }}
           sbom-path: ${{ env.SBOM }}
 
-  # SC-004 for the Flatpaks: each installed with the runtime it names, since
-  # the terminal's plain freedesktop runtime against GNOME's is most of the
-  # difference. After both are published: a size is not a reason to withhold
-  # a working build, it is a reason the next one has to shrink, and a red job
-  # on the release says so.
-  package-sizes:
-    name: Terminal packages are under half
-    needs: [flatpak, tui-flatpak]
-    runs-on: ubuntu-26.04
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.variant.asset }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.SBOM }}
+          if-no-files-found: error
+
+  # The macOS app, zipped. Ad-hoc signed and not notarized (maintainer,
+  # 2026-10-01, revising ADR 0019 Q8): Gatekeeper refuses it on a double
+  # click, and a person opens it once with right-click -> Open. A Developer ID
+  # and notarization would remove that step; neither exists yet. Built on
+  # macos-latest, so Apple Silicon only.
+  macos:
+    name: macOS (${{ matrix.variant.id }})
+    needs: [plan, suite]
+    if: >-
+      always() && needs.plan.outputs.build == 'true'
+      && needs.plan.outputs.macos != '[]'
+      && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.plan.outputs.macos || '[]') }}
+    env:
+      ASSET: ${{ matrix.variant.asset }}
+      SBOM: ${{ matrix.variant.sbom }}
+      APP: macos/build/${{ matrix.variant.app }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The pin decides; see ci.yml's `fmt` job.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
+
+      # A release build of `postio-ffi`, so not CI's debug `macos-ffi`
+      # cache. Written from `main`, which is where a release runs.
+      - name: Restore the build cache
+        uses: ./.github/actions/build-cache
+        with:
+          name: macos-release
+
+      - name: Build
+        run: scripts/macos-build.sh --release
+
+      - name: Assemble the app
+        run: scripts/macos-bundle.sh --release
+
+      # `ditto`, not `zip`: it keeps the bundle's extended attributes and the
+      # ad-hoc signature intact, which `zip -r` does not.
+      - name: Zip
+        run: |
+          ditto -c -k --keepParent "$APP" "$ASSET"
+          ls -lh "$ASSET"
+
+      - name: Generate the SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: ${{ env.SBOM }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.ASSET }}
+
+      - name: Attest the SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: ${{ env.ASSET }}
+          sbom-path: ${{ env.SBOM }}
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.variant.asset }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.SBOM }}
+          if-no-files-found: error
+
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
+
+  # Everything built, so: one draft, every asset, the checksums, and a check
+  # against the variants file that nothing is missing -- then publish, which
+  # creates the tag at the commit that was built. Anything short of that
+  # leaves a draft and no tag, so re-running the failed jobs finishes it.
+  publish:
+    name: Publish
+    needs: [plan, flatpak, tarball, macos]
+    if: >-
+      always() && needs.plan.outputs.publish == 'true'
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.flatpak.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.tarball.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.macos.result)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      # Full history: drafting notes, when the release PR somehow left none,
+      # reads the commits since the last tag.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: bundles
+          path: assets
           merge-multiple: true
 
-      - name: Install both bundles and their runtimes
+      - name: Check every package is here
+        run: |
+          missing=0
+          for asset in $(python3 scripts/release-variants.py assets --version "$VERSION"); do
+            if [ -f "assets/$asset" ]; then
+              echo "  have $asset"
+            else
+              echo "::error::missing $asset"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Checksums
+        working-directory: assets
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      # docs/releases/<version>.md is the release PR's; drafted from commit
+      # subjects only if it is somehow absent.
+      - name: Notes
+        run: |
+          NOTES="docs/releases/${VERSION}.md"
+          if [ ! -s "$NOTES" ]; then
+            # shellcheck source=scripts/lib/release.sh
+            source scripts/lib/release.sh
+            release_draft_notes "$(release_newest_tag)" > "$NOTES"
+            [ -s "$NOTES" ] || echo "- Maintenance release" > "$NOTES"
+          fi
+          cp "$NOTES" release-notes.md
+          cat release-notes.md
+
+      # A 0.x is a pre-release on the release page too: it stays off the
+      # "Latest" badge, which is what the version number already says. The
+      # same rule marks the AppStream entry `type="development"`.
+      #
+      # A re-run finds its own draft and fills it again. A release that is
+      # already published is refused here even though `plan` should never
+      # have got this far for one: on 2026-10-01 a plan that could not see
+      # the tags set out to re-release v0.4.2, and `--clobber` below would
+      # have replaced its assets. The step that writes is the one that must
+      # not trust its inputs.
+      - name: Draft, attach, publish
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$draft" = false ]; then
+            echo "::error::$TAG is already published. Refusing to change it."
+            exit 1
+          fi
+          if [ "$draft" = none ]; then
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" \
+              --title "$TAG" --notes-file release-notes.md "${flags[@]}"
+          fi
+          gh release upload "$TAG" assets/* --clobber
+          gh release edit "$TAG" --draft=false
+          echo "published $(gh release view "$TAG" --json url --jq .url)"
+
+  # SC-004 (specs/005-tui-frontend): the terminal packages are under half the
+  # desktop ones. Beside `publish`, not in front of it: a size is not a reason
+  # to withhold a working release, it is a reason the next one has to shrink,
+  # and a red job on the run says so.
+  #
+  # The binaries comparison follows each executable's shared libraries with
+  # `ldd`, so it needs the desktop binary built here against host GTK -- the
+  # one inside the Flatpak links against the runtime's.
+  package-sizes:
+    name: Terminal packages are under half
+    needs: [plan, flatpak, tarball]
+    if: always() && needs.flatpak.result == 'success' && needs.tarball.result == 'success'
+    runs-on: ubuntu-26.04
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust-workspace
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Is the terminal binary under half the desktop one?
+        run: |
+          cargo build --release -p postio-app --bin postio
+          tar --zstd -xf "assets/postio-tui-${VERSION}-linux-x86_64.tar.zst"
+          scripts/measure-package-size.sh binaries \
+            "postio-tui-${VERSION}-linux-x86_64/postio-tui" -- target/release/postio
+
+      - name: Install both Flatpaks and their runtimes
         run: |
           sudo apt-get update
           sudo apt-get install -y flatpak
           flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
-          for bundle in bundles/*.flatpak; do
+          for bundle in "assets/postio-${VERSION}-linux-x86_64.flatpak" \
+                        "assets/postio-tui-${VERSION}-linux-x86_64.flatpak"; do
             flatpak install --user -y --noninteractive "$bundle"
           done
 

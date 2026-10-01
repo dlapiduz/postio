@@ -1,6 +1,6 @@
 name: Mutants
 
-# Mutation-tests the pure/logic crates nightly, beside the benches, and
+# Mutation-tests the pure/logic crates weekly (see `on:` below), and
 # never gates a PR -- it is slow by construction (a full rebuild and test
 # run per mutant; ~1900 mutants across these four crates), so blocking a PR
 # on it would be an hours-long check for a signal that changes rarely. See
@@ -19,24 +19,52 @@ name: Mutants
 # on this runner, not on a shared workstation, which is exactly the
 # distinction this workflow exists to draw. #99's own acceptance criteria
 # are what that first triage has to satisfy.
+#
+# Weekly, and only over a tree that moved (#1710). Nightly, it was red seven
+# nights of seven over the same survivors and cost 23% of a week's Linux
+# minutes, so nobody read it: the signal -- which tests a mutant got past --
+# changes when the code does, not when the clock does. Sunday 09:00 keeps it
+# off the nightly's 07:00 and the benches' 06:00.
 on:
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "0 9 * * 0"
   workflow_dispatch:
 
 permissions:
   contents: read
+  # The `changed` job reads the previous run's head SHA.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_BUILD_JOBS: 4
 
 jobs:
+  # Skips a scheduled run when `main` has not moved since the last one.
+  # Without `--rerun-failed`: nothing reads this workflow's conclusion, so a
+  # red run over an unchanged tree would only list the same survivors again.
+  changed:
+    name: Anything to test
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: scripts
+
+      - name: Compare against the last run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-anything-new.sh mutants.yml >> "$GITHUB_OUTPUT"
+
   mutants:
     name: Mutation testing (${{ matrix.crate }})
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     # One job per crate (#1458).
     #

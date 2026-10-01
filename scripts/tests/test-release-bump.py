@@ -34,6 +34,26 @@ HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "release-bump.py"
 
 METAINFO_PATH = "crates/postio-gtk/data/dev.postio.Postio.metainfo.xml"
+PLIST_PATH = "macos/Resources/Info.plist"
+
+# The macOS bundle's two version keys (#1714). It ships as a release asset
+# now, so it says the version it was released as -- it said 0.1.0 for three
+# releases because nothing moved it.
+PLIST = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>dev.postio.Postio</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.2.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+</dict>
+</plist>
+"""
 
 CARGO_TOML = """\
 [workspace]
@@ -84,6 +104,8 @@ def world(base: Path) -> Path:
 
     (root / "Cargo.toml").write_text(CARGO_TOML, encoding="utf-8")
     (root / METAINFO_PATH).write_text(METAINFO, encoding="utf-8")
+    (root / "macos" / "Resources").mkdir(parents=True)
+    (root / PLIST_PATH).write_text(PLIST, encoding="utf-8")
 
     # A pin that must be bumped: names the current workspace version and a
     # sibling path.
@@ -165,6 +187,23 @@ def main() -> int:
             "an unrelated dependency sharing the old version number is untouched",
             'some-unrelated-crate = { version = "0.2.0" }' in gtk_toml,
             f"a non-sibling dependency was touched:\n{gtk_toml}",
+        )
+
+        plist = (root / PLIST_PATH).read_text(encoding="utf-8")
+        case(
+            "the macOS bundle's short version string is bumped",
+            "<key>CFBundleShortVersionString</key>\n\t<string>0.3.0</string>" in plist,
+            f"Info.plist's CFBundleShortVersionString was not bumped:\n{plist}",
+        )
+        case(
+            "the macOS bundle's build version is bumped with it",
+            "<key>CFBundleVersion</key>\n\t<string>0.3.0</string>" in plist,
+            f"Info.plist's CFBundleVersion was not bumped:\n{plist}",
+        )
+        case(
+            "nothing else in Info.plist moves",
+            "<string>14.0</string>" in plist and "<string>dev.postio.Postio</string>" in plist,
+            f"an unrelated Info.plist value changed:\n{plist}",
         )
 
         metainfo = (root / METAINFO_PATH).read_text(encoding="utf-8")

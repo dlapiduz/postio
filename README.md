@@ -81,8 +81,8 @@ Every tagged release publishes a prebuilt `.flatpak` bundle on the
 build-provenance attestation and a software bill of materials beside it.
 
 ```bash
-# Download postio-<version>-x86_64.flatpak from the Releases page, then:
-flatpak install --user ./postio-<version>-x86_64.flatpak
+# Download postio-<version>-linux-x86_64.flatpak from the Releases page, then:
+flatpak install --user ./postio-<version>-linux-x86_64.flatpak
 flatpak run dev.postio.Postio
 ```
 
@@ -92,7 +92,7 @@ credentials and your mail, so it is worth checking that a downloaded bundle
 was built by this project's release workflow from the tagged commit:
 
 ```bash
-gh attestation verify postio-<version>-x86_64.flatpak --repo dlapiduz/postio
+gh attestation verify postio-<version>-linux-x86_64.flatpak --repo dlapiduz/postio
 ```
 
 Postio is not on Flathub yet; when it is, this section collapses to one
