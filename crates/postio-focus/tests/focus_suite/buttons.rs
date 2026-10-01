@@ -4,7 +4,6 @@
 //! allocated size, so that is what is read.
 
 use adw::prelude::*;
-use gtk::gdk;
 
 use crate::support::{self, Fixture};
 

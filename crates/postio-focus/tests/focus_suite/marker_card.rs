@@ -3,8 +3,6 @@
 //! the action and its key -- and the quoted sentence is highlighted in the
 //! body where it appears (research R2).
 
-use gtk::gdk;
-
 use crate::support::{self, Fixture};
 
 const SENTENCE: &str = "Please leave comments by Wednesday";

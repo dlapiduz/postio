@@ -29,6 +29,7 @@ pub mod names;
 pub mod open;
 mod open_header;
 pub mod places;
+mod rebuild;
 pub mod rule_dialog;
 pub mod row_menu;
 pub mod rules;

@@ -353,6 +353,8 @@ impl FocusWindow {
         imp.toast.overlay().set_child(Some(&imp.stage));
         self.set_content(Some(imp.toast.overlay()));
 
+        self.drop_focus_that_leaves();
+
         // Capture, not bubble: a single-key binding has to be seen before the
         // focused widget consumes it, and whether it should is the
         // resolver's decision (the classic window's rule).
@@ -420,6 +422,48 @@ impl FocusWindow {
             move |_, _| window.show_about()
         ));
         self.add_action(&about);
+    }
+
+    /// Take the keyboard off a widget that leaves the window (T200).
+    ///
+    /// GTK delivers a key from the window's focus up through its parents, and
+    /// leaves the focus where it was when its widget is removed: a row that
+    /// went with its message, or a list that redrew. The key then starts at a
+    /// widget with no parents and never reaches the window, so `j`, `z` and
+    /// `Esc` all do nothing until a click. When the widget holding the
+    /// keyboard leaves, the window has it instead, which is where every key
+    /// goes when nothing does.
+    fn drop_focus_that_leaves(&self) {
+        // The widget being watched, and the watch: one at a time, moved with
+        // the focus.
+        let watch: std::rc::Rc<std::cell::RefCell<Option<(gtk::Widget, glib::SignalHandlerId)>>> =
+            std::rc::Rc::default();
+        self.connect_focus_widget_notify(move |window| {
+            if let Some((old, id)) = watch.borrow_mut().take() {
+                old.disconnect(id);
+            }
+            let Some(focus) = gtk::prelude::GtkWindowExt::focus(window) else {
+                return;
+            };
+            let id = focus.connect_root_notify(glib::clone!(
+                #[weak]
+                window,
+                move |gone| {
+                    if gone.root().is_some() {
+                        return;
+                    }
+                    let gone = gone.clone();
+                    glib::idle_add_local_once(move || {
+                        if gtk::prelude::GtkWindowExt::focus(&window).as_ref() == Some(&gone)
+                            && gone.root().is_none()
+                        {
+                            gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+                        }
+                    });
+                }
+            ));
+            watch.borrow_mut().replace((focus, id));
+        });
     }
 
     /// Give every dialog over the window the window's keyboard (T195).

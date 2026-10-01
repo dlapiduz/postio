@@ -39,7 +39,7 @@ async fn three_with_bodies() -> (Fixture, postio_focus::window::FocusWindow) {
 }
 
 fn enter(window: &postio_focus::window::FocusWindow) {
-    support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+    support::press(window, "Return", gtk::gdk::ModifierType::empty());
 }
 
 pub fn enter_opens_the_conversation_over_the_list_at_once() {

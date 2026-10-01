@@ -5,8 +5,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::gdk;
-
 use crate::support::{self, Fixture};
 
 pub fn o_offers_the_links_and_parts_and_opens_only_what_is_chosen() {

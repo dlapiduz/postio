@@ -713,7 +713,8 @@ impl Fixture {
 }
 
 /// Press `name` (a GDK key name: "x", "J", "exclam", "Escape") with
-/// `state`'s modifiers, through the window's one keyboard path.
+/// `state`'s modifiers, as GTK would deliver it: [`deliver_with`], not a call
+/// to the window's handler (T200).
 pub fn press(
     window: &postio_focus::window::FocusWindow,
     name: &str,
@@ -891,6 +892,15 @@ pub fn deliver_with(
     let keyval = gtk::glib::translate::IntoGlib::into_glib(key);
     let target: gtk::Widget =
         gtk::prelude::GtkWindowExt::focus(window).unwrap_or_else(|| window.clone().upcast());
+    // GTK's key path starts at the focus and climbs its parents. A focus
+    // that has left the window (its row was destroyed in a redraw) has none,
+    // so no key would reach the window: a person's keyboard is dead until a
+    // click. Say so, rather than let the key quietly find nothing (T200).
+    assert!(
+        target.root().is_some(),
+        "{name}: the keyboard is on a {} that has left the window",
+        target.type_().name()
+    );
     // GTK runs a key through the widgets from the focus up to the innermost
     // dialog presented over the window, and no further: a controller on the
     // window, or anywhere between it and the dialog, never sees a key the
@@ -904,16 +914,6 @@ pub fn deliver_with(
         && let Some(parent) = chain.last().and_then(|widget| widget.parent())
     {
         chain.push(parent);
-    }
-    if std::env::var_os("CLICK_DEBUG").is_some() {
-        for widget in &chain {
-            let controllers = widget.observe_controllers();
-            let names: Vec<String> = (0..controllers.n_items())
-                .filter_map(|at| controllers.item(at))
-                .map(|c| format!("{}", c.type_().name()))
-                .collect();
-            eprintln!("deliver {name}: {} {:?}", widget.type_().name(), names);
-        }
     }
     let fire = |widget: &gtk::Widget, phase: gtk::PropagationPhase| -> bool {
         let controllers = widget.observe_controllers();
@@ -937,9 +937,6 @@ pub fn deliver_with(
             .iter()
             .any(|widget| fire(widget, gtk::PropagationPhase::Bubble));
     crate::settle();
-    if std::env::var_os("CLICK_DEBUG").is_some() {
-        eprintln!("deliver {name}: claimed {claimed}");
-    }
     claimed
 }
 
@@ -967,17 +964,57 @@ pub fn button_labelled(root: &impl gtk::prelude::IsA<gtk::Widget>, label: &str) 
     }
 }
 
-/// The list row under `root` that says `text`: the one a person clicks.
-pub fn row_saying(root: &impl gtk::prelude::IsA<gtk::Widget>, text: &str) -> gtk::Widget {
+/// Click the list row under `root` that says `text`, as a person does: the
+/// row on screen when they click. A list that is still redrawing replaces its
+/// rows, so a row found a moment ago may be gone; this finds one afresh until
+/// a click at its middle reaches it.
+pub fn click_row_saying(
+    window: &postio_focus::window::FocusWindow,
+    root: &impl gtk::prelude::IsA<gtk::Widget>,
+    text: &str,
+) {
     use gtk::prelude::*;
-    descendants(root)
-        .into_iter()
-        .find(|widget| {
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    loop {
+        crate::settle();
+        let row = descendants(root).into_iter().find(|widget| {
             widget.is::<gtk::ListBoxRow>()
                 && widget.is_mapped()
                 && texts(widget).iter().any(|said| said == text)
-        })
-        .unwrap_or_else(|| panic!("no row says {text:?}: {:?}", texts(root)))
+        });
+        if let Some(row) = row {
+            let native = native_of(&row, window);
+            // Mapped is not laid out: a row built a moment ago has no size
+            // until the next frame, and nothing can be clicked at no size.
+            let point = row
+                .compute_bounds(&native)
+                .filter(|bounds| bounds.width() > 0.0 && bounds.height() > 0.0)
+                .map(|bounds| {
+                    gtk::graphene::Point::new(
+                        bounds.x() + bounds.width() / 2.0,
+                        bounds.y() + bounds.height() / 2.0,
+                    )
+                });
+            if let Some(point) = point {
+                let (x, y) = (f64::from(point.x()), f64::from(point.y()));
+                let picked = native.pick(x, y, gtk::PickFlags::DEFAULT);
+                if picked
+                    .as_ref()
+                    .is_some_and(|picked| *picked == row || picked.is_ancestor(&row))
+                {
+                    click_on(&native, x, y, 1);
+                    return;
+                }
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no row saying {text:?} could be clicked: {:?}",
+            texts(root)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// [`click_at`] at (`x`, `y`) in `widget`'s own space, once a click there
@@ -1031,12 +1068,20 @@ fn wait_to_be_pickable(window: &gtk::Widget, widget: &gtk::Widget, x: f32, y: f3
         crate::settle();
         let point = widget
             .compute_point(window, &gtk::graphene::Point::new(x, y))
-            .unwrap_or_else(|| panic!("{} has no place in the window", widget.type_().name()));
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} has no place in the {}",
+                    widget.type_().name(),
+                    window.type_().name()
+                )
+            });
         let (x, y) = (f64::from(point.x()), f64::from(point.y()));
         let picked = window.pick(x, y, gtk::PickFlags::DEFAULT);
-        if picked
-            .as_ref()
-            .is_some_and(|picked| picked == widget || picked.is_ancestor(widget))
+        if widget.width() > 0
+            && widget.height() > 0
+            && picked
+                .as_ref()
+                .is_some_and(|picked| picked == widget || picked.is_ancestor(widget))
         {
             return (x, y);
         }
@@ -1060,8 +1105,11 @@ fn wait_to_be_pickable(window: &gtk::Widget, widget: &gtk::Widget, x: f32, y: f3
 /// it, and one that is not mapped, clipped away or insensitive cannot be
 /// clicked), through each `GestureClick` from the window down to it in the
 /// capture phase, then the picked widget's own, then back up in the bubble
-/// phase; and, as for keys ([`deliver`]), no further than the innermost
-/// dialog on the way.
+/// phase; and no further than the innermost dialog or popover surface on the
+/// way (a popover is a surface of its own; stopping at a dialog is the
+/// conservative reading of what [`deliver`] measured for keys, not something
+/// measured for the pointer: a click on the scrim is outside the dialog and
+/// reaches the window either way).
 ///
 /// GTK offers no way to build a button event in-process (`GdkEvent`s are
 /// made by a backend), so this drives the gestures' `pressed` and `released`
@@ -1081,10 +1129,12 @@ fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
     let picked = window
         .pick(x, y, gtk::PickFlags::DEFAULT)
         .unwrap_or_else(|| window.clone().upcast());
+    // A popover is a surface of its own: an event on it goes up to the
+    // popover and no further, as it does to a dialog.
     let mut chain = vec![picked.clone()];
     while !chain
         .last()
-        .is_some_and(|widget| widget.is::<adw::Dialog>())
+        .is_some_and(|widget| widget.is::<adw::Dialog>() || widget.is::<gtk::Native>())
         && let Some(parent) = chain.last().and_then(|widget| widget.parent())
     {
         chain.push(parent);
@@ -1124,16 +1174,6 @@ fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
             .unwrap_or_else(|| gtk::graphene::Point::new(x as f32, y as f32));
         (f64::from(point.x()), f64::from(point.y()))
     };
-    if std::env::var_os("CLICK_DEBUG").is_some() {
-        eprintln!(
-            "click_at {x},{y}: picked {} chain {:?} gestures {:?}",
-            picked.type_().name(),
-            chain.iter().map(|w| w.type_().name()).collect::<Vec<_>>(),
-            path.iter()
-                .map(|(w, g)| (w.type_().name(), g.propagation_phase()))
-                .collect::<Vec<_>>()
-        );
-    }
     for press in 1..=n_press {
         let mut reached = Vec::new();
         for (widget, gesture) in &path {

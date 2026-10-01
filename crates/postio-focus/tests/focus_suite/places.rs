@@ -43,9 +43,11 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
         assert!(places.is_open(), "g o opened it again");
         places.set_filter("trav");
         assert_eq!(places.names(), ["Travel"], "typing filters the places");
-        let travel = support::row_saying(&window, "Travel");
-        support::click(&window, &travel, 1);
-        assert!(!places.is_open(), "Enter closed the popover");
+        support::click_row_saying(&window, &window, "Travel");
+        assert!(
+            crate::settle_until(async || !places.is_open()).await,
+            "clicking a place closed the popover"
+        );
 
         assert!(
             crate::settle_until(async || {

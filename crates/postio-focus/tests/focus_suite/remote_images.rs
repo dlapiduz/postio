@@ -6,7 +6,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::gdk;
 use postio_model::test_corpus;
 
 use crate::support::{self, Fixture};

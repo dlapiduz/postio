@@ -116,6 +116,10 @@ const CASES: &[(&str, fn())] = &[
         first_run::the_wizard_opens_large_enough_for_the_server_details as fn(),
     ),
     (
+        "first_run::a_click_inside_the_form_is_the_forms_and_keeps_the_window_open",
+        first_run::a_click_inside_the_form_is_the_forms_and_keeps_the_window_open as fn(),
+    ),
+    (
         "first_run::the_window_close_button_closes_the_app_with_the_form_open",
         first_run::the_window_close_button_closes_the_app_with_the_form_open as fn(),
     ),

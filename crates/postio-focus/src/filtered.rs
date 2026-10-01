@@ -485,6 +485,10 @@ impl FilteredView {
 
     /// Draw the rows, each day under its heading.
     fn show_rows(&self) {
+        crate::rebuild::keeping_focus(&self.list, || self.rebuild_rows());
+    }
+
+    fn rebuild_rows(&self) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }

@@ -10,7 +10,6 @@
 
 use adw::prelude::*;
 use postio_account::backend::MockBackend;
-use postio_core::CommandId;
 use postio_model::TransportSecurity;
 use postio_widgets::onboarding::{Onboarding, Server, Settings, Status};
 
@@ -259,9 +258,15 @@ pub fn the_wizard_opens_large_enough_for_the_server_details() {
     });
 }
 
-/// T174: the window's close button still closes the app while the form is
-/// open. The form's dialog covers the window and takes a click meant for it,
-/// so the click has to be the window's before the dialog sees it.
+/// T174, T201: the window's close button still closes the app while the form
+/// is open. The form's dialog covers the window and takes a click meant for
+/// it, so the click has to be the window's before the dialog sees it.
+///
+/// The click is a real one: it lands on whatever is picked at the button's
+/// place -- the dialog host's scrim, not the button -- and runs the gestures
+/// on the way up, so it proves the window's capture gesture
+/// (`click_through_dialog`) is reached from the scrim, which is the one place
+/// the dialog's own boundary does not stop it.
 pub fn the_window_close_button_closes_the_app_with_the_form_open() {
     crate::gtk_case(async {
         if !support::display() {
@@ -281,10 +286,48 @@ pub fn the_window_close_button_closes_the_app_with_the_form_open() {
             f64::from(bounds.x() + bounds.width() / 2.0),
             f64::from(bounds.y() + bounds.height() / 2.0),
         );
+        let picked = window
+            .pick(x, y, gtk::PickFlags::DEFAULT)
+            .expect("something is under the close button");
+        assert!(
+            picked != close && !picked.is_ancestor(&close),
+            "the form's scrim should be over the close button, or this tests nothing: \
+             {} is",
+            picked.type_().name()
+        );
         support::click_at(&window, x, y, 1);
         assert!(
             crate::settle_until(async || !window.is_visible()).await,
             "the window's close button did nothing with the form open"
+        );
+    });
+}
+
+/// T201: a click inside the form is the form's, not the window's: it neither
+/// quits the app nor is taken by the window's capture gesture. (The gesture
+/// only acts on the close button's place, which the form does not cover.)
+pub fn a_click_inside_the_form_is_the_forms_and_keeps_the_window_open() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, _backend) = opened(MockBackend::new()).await;
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_some()).await,
+            "an empty store opened no add-account form"
+        );
+        crate::settle();
+        let dialog = window.add_account_dialog().expect("the form");
+        let body = dialog.child().expect("the form has content");
+        support::click(&window, &body, 1);
+        crate::settle();
+        assert!(
+            window.is_visible(),
+            "a click inside the form closed the window"
+        );
+        assert!(
+            window.add_account_dialog().is_some(),
+            "a click inside the form closed the form"
         );
     });
 }

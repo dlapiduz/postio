@@ -273,8 +273,7 @@ pub fn the_strip_counts_what_was_filtered_today() {
             places.names()
         );
         places.set_filter("filt");
-        let filtered = support::row_saying(&window, "Filtered");
-        support::click(&window, &filtered, 1);
+        support::click_row_saying(&window, &window, "Filtered");
         assert!(
             crate::settle_until(async || window.filtered().is_some()).await,
             "the popover's Filtered row did not open Filtered"
@@ -282,7 +281,13 @@ pub fn the_strip_counts_what_was_filtered_today() {
         support::press(&window, "Escape", gdk::ModifierType::empty());
         support::click(
             &window,
-            &support::only(&window, "focus-filtered-today-button"),
+            support::with_class(chrome.strip(), "focus-filtered-today-button")
+                .iter()
+                .find(|widget| {
+                    gtk::prelude::WidgetExt::is_mapped(*widget)
+                        && gtk::prelude::ObjectExt::is::<gtk::Button>(*widget)
+                })
+                .expect("the strip's filtered-today button"),
             1,
         );
         assert!(

@@ -67,7 +67,7 @@ pub async fn open_digest(
         support::subjects(window)
     );
     support::keys(window, &["j", "j"]);
-    support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+    support::press(window, "Return", gtk::gdk::ModifierType::empty());
     let digest = window.digest().expect("Enter opened the digest");
     assert!(
         crate::settle_until(async || digest.subjects().len() == 2).await,
