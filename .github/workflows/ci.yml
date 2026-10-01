@@ -344,6 +344,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       green: ${{ steps.ask.outputs.green }}
+      # The run `nightly` links to when it refuses. Undeclared, it was the
+      # empty string and the refusal pointed at nothing.
+      url: ${{ steps.ask.outputs.url }}
     steps:
       # Never fails. Its job is to answer, and `nightly` below is what turns
       # the answer into a verdict -- a step that exited non-zero here would
