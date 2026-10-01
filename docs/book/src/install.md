@@ -13,10 +13,10 @@ run` to try it without installing anything.
 Every tagged release publishes a `.flatpak` bundle on the
 [Releases page](https://github.com/dlapiduz/postio/releases), beside a
 signed build-provenance attestation and a software bill of materials.
-Download `postio-<version>-x86_64.flatpak`, then:
+Download `postio-<version>-linux-x86_64.flatpak`, then:
 
 ```bash
-flatpak install --user ./postio-<version>-x86_64.flatpak
+flatpak install --user ./postio-<version>-linux-x86_64.flatpak
 flatpak run dev.postio.Postio
 ```
 
@@ -30,11 +30,26 @@ the tagged commit, and hasn't been modified since. With the
 [GitHub CLI](https://cli.github.com):
 
 ```bash
-gh attestation verify postio-<version>-x86_64.flatpak --repo dlapiduz/postio
+gh attestation verify postio-<version>-linux-x86_64.flatpak --repo dlapiduz/postio
 ```
 
 Postio isn't on Flathub yet. When it is, this whole section becomes one
 `flatpak install` line.
+
+Every release also carries a `SHA256SUMS` file listing each download's
+checksum, and every download has its own attestation and software bill of
+materials beside it.
+
+## macOS
+
+Each release has `postio-<version>-macos-arm64.zip`, for Apple Silicon Macs.
+Unzip it and move `Postio.app` to Applications.
+
+It isn't signed with an Apple Developer ID or notarized yet, so the first
+time you open it macOS says it can't check it for malicious software.
+Right-click (or Control-click) `Postio.app`, choose **Open**, and confirm.
+macOS remembers the choice after that. The same `gh attestation verify`
+command above works on the zip.
 
 ## From source
 

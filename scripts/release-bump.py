@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bump the workspace version everywhere it is written by hand, for a
-tag-triggered release. See #886.
+release pull request (scripts/release-prepare.sh). See #886 and #1714.
 
 Cutting v0.2.0 meant bumping `[workspace.package] version` in the root
 `Cargo.toml`, six internal path-dependency pins that name it explicitly
@@ -12,10 +12,9 @@ joined them when it became a release asset (#1714). This is that, mechanised: th
 part with no judgment calls, which is exactly the part that should never
 depend on a person remembering all of it correctly under time pressure.
 
-Deliberately does not touch `Cargo.lock` or run `cargo` at all -- a
-release workflow runs `cargo check --workspace --all-targets` right after
-this anyway (to verify the bump compiles), and that regenerates the lock
-file as a side effect. Keeping this script to text edits only is what
+Deliberately does not touch `Cargo.lock` or run `cargo` at all --
+release-prepare.sh refreshes the lock file right after this with
+`cargo metadata`, and the pull request's CI proves the bump compiles. Keeping this script to text edits only is what
 lets it run in well under a second with no toolchain, in a test.
 
 Usage:
