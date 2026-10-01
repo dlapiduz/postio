@@ -118,6 +118,8 @@ impl OpenMessage {
                 CommandId::PrevMessage,
                 CommandId::NextMessage,
                 CommandId::DismissMarker,
+                // The render-mode line's switch, over an HTML body (T213).
+                CommandId::SwitchTreatment,
             ])
             .collect()
     }
@@ -232,6 +234,10 @@ impl OpenMessage {
             .build();
         scroller.add_css_class("focus-open-scroller");
         reader.flow_in(&scroller);
+        // Every body in app colours or as sent on paper, named by a line
+        // above it (T210-T213); `reader.treatment()` is what the column's
+        // width follows.
+        reader.use_treatments();
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.add_css_class("focus-open");
@@ -357,6 +363,8 @@ impl OpenMessage {
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.toolbar.set_keymap(keymap);
+        // The render-mode line's cap among them (T213).
+        self.reader.set_keymap(keymap);
         for (holder, command) in [
             (&self.up_key, CommandId::PrevMessage),
             (&self.down_key, CommandId::NextMessage),

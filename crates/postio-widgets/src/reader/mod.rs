@@ -10,6 +10,8 @@
 //! * [`actions`] -- which verbs the reading pane's bars carry; a surface with
 //!   a toolbar of its own passes none ([`Verbs`]).
 //! * [`chips`] -- the attachments under a message.
+//! * [`render_mode`] -- the line naming the treatment an HTML body is drawn
+//!   in, for a reader that draws treatments ([`Reader::use_treatments`]).
 //!
 //! What only the classic app draws stays in postio-gtk: the conversation
 //! rail, the parts panel, and the reading pane's place in the shell.
@@ -19,6 +21,7 @@ pub mod banner;
 pub mod chips;
 pub mod message_header;
 mod notices;
+pub mod render_mode;
 pub mod view;
 
 pub use actions::Verbs;

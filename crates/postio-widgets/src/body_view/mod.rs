@@ -131,6 +131,10 @@ pub(super) mod imp {
         /// widget whose CSS `color` is the column's ground token
         /// ([`BodyView::set_ground`]).
         pub(super) ground: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
+        /// The rest of the column's palette, read the same way: each a
+        /// reader variable (`--r-ink`) and the widget whose `color` is the
+        /// token it stands for ([`BodyView::add_palette_probe`]).
+        pub(super) palette: RefCell<Vec<(&'static str, glib::WeakRef<gtk::Widget>)>>,
         /// The ground the last render was asked for.
         pub(super) ground_drawn: RefCell<Option<String>>,
         /// The messages the user darkened (FR-013a): for this session only,
@@ -168,6 +172,7 @@ pub(super) mod imp {
                 darkened: RefCell::default(),
                 flow: RefCell::default(),
                 ground: RefCell::default(),
+                palette: RefCell::default(),
                 ground_drawn: RefCell::default(),
                 selection: RefCell::default(),
                 drag_start: Cell::new(None),
@@ -855,22 +860,39 @@ impl BodyView {
     /// renders again and reads the dark value -- and handed to the document
     /// as `--flow-ground`, never written into it as a literal (T203).
     pub fn set_ground(&self, probe: &impl IsA<gtk::Widget>) {
-        self.imp()
-            .ground
-            .replace(Some(probe.as_ref().downgrade()));
+        self.imp().ground.replace(Some(probe.as_ref().downgrade()));
     }
 
-    /// The ground the document is drawn on, as CSS, when there is one.
+    /// Read the document's `variable` (a reader palette variable such as
+    /// `--r-ink`) from `probe`, as [`set_ground`](Self::set_ground) reads
+    /// the ground: a widget whose CSS `color` is the column's token for it.
+    ///
+    /// What lets a body drawn in the app's colours (specs/007-postio-focus
+    /// T211) be drawn in the column's own ink, accent and hairlines rather
+    /// than the generated reader palette's -- the same tokens the chrome
+    /// around it is drawn in, in light and dark, with no colour written in
+    /// Rust.
+    pub fn add_palette_probe(&self, variable: &'static str, probe: &impl IsA<gtk::Widget>) {
+        self.imp()
+            .palette
+            .borrow_mut()
+            .push((variable, probe.as_ref().downgrade()));
+    }
+
+    /// The ground and palette the document is drawn with, as CSS, when the
+    /// view reads any.
     fn ground_css(&self) -> Option<String> {
-        let probe = self.imp().ground.borrow().as_ref()?.upgrade()?;
-        let colour = probe.color();
-        let channel = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-        Some(format!(
-            ":root{{--flow-ground:rgb({},{},{});}}",
-            channel(colour.red()),
-            channel(colour.green()),
-            channel(colour.blue())
-        ))
+        let imp = self.imp();
+        let mut declarations = Vec::new();
+        if let Some(probe) = imp.ground.borrow().as_ref().and_then(|weak| weak.upgrade()) {
+            declarations.push(format!("--flow-ground:{}", css_colour(&probe.color())));
+        }
+        for (variable, probe) in imp.palette.borrow().iter() {
+            if let Some(probe) = probe.upgrade() {
+                declarations.push(format!("{variable}:{}", css_colour(&probe.color())));
+            }
+        }
+        (!declarations.is_empty()).then(|| format!(":root{{{};}}", declarations.join(";")))
     }
 
     /// Whether the view flows inside a scroller.
@@ -1071,7 +1093,7 @@ impl BodyView {
         // that paints it is in place, so the column's ground read just now
         // can be the old scheme's: read it again once the main loop has
         // turned, and draw again if it moved.
-        if self.imp().ground.borrow().is_some() {
+        if self.imp().ground.borrow().is_some() || !self.imp().palette.borrow().is_empty() {
             let view = self.downgrade();
             glib::idle_add_local_once(move || {
                 let Some(view) = view.upgrade() else { return };
@@ -1228,5 +1250,21 @@ impl BodyView {
             snapshot.restore();
         }
         snapshot.pop();
+    }
+}
+
+/// A toolkit colour as CSS: `rgb()`, or `rgba()` when it is see-through --
+/// a hairline is a translucent ink.
+fn css_colour(colour: &gtk::gdk::RGBA) -> String {
+    let channel = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let (r, g, b) = (
+        channel(colour.red()),
+        channel(colour.green()),
+        channel(colour.blue()),
+    );
+    if colour.alpha() >= 0.999 {
+        format!("rgb({r},{g},{b})")
+    } else {
+        format!("rgba({r},{g},{b},{:.3})", colour.alpha().clamp(0.0, 1.0))
     }
 }

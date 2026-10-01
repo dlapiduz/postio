@@ -38,10 +38,13 @@ use postio_ui::allowlist::RemoteImageAllowList;
 // sanitizing and containing the body — is postio-ui's (#567, #590, ADR 0019
 // Q6): one implementation for every frontend, re-exported here so existing
 // paths keep resolving.
+pub use postio_body::treatment::Treatment;
 pub use postio_ui::reader::document::{
-    Absent, HeldBack, Rendering, Sheet, absent_html, body_html, content_security_policy,
+    Absent, HeldBack, Rendering, Sheet, Treated, absent_html, body_html, content_security_policy,
     document_for, reader_ground, sheet_for, wrap_document,
 };
+
+use super::render_mode::RenderModeLine;
 
 /// The message currently on screen, kept so the banner's two actions can ask
 /// for a re-render without the caller doing it for them.
@@ -69,6 +72,13 @@ struct Open {
     /// it serves exactly this body, policy and rendering; a banner or notice
     /// that changes either is drawn as before.
     prepared: Option<postio_ui::reader::document::Prepared>,
+    /// The treatment the person chose for this message -- `O`, or what they
+    /// remembered for its sender -- or `None` for the rule's
+    /// (specs/007-postio-focus T213). Read only by a reader that draws
+    /// treatments ([`Reader::use_treatments`]).
+    chosen: Option<Treatment>,
+    /// What is remembered for this message's sender, for the line to say.
+    remembered: Option<Treatment>,
 }
 
 /// Called with how many remote references the pane is currently holding
@@ -189,6 +199,9 @@ pub struct Reader {
     /// Where the reader is in the document, so a redraw of the same
     /// content can put them back there. See [`Place`].
     place: Rc<Place>,
+    /// Where a change to the allow list -- an "Always allow", an "Always
+    /// for this sender" -- is saved.
+    allowlist_path: Rc<std::path::PathBuf>,
     /// Set by [`Reader::set_actions_visible`]`(false)` — overrides what
     /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
     /// otherwise show the action bar for.
@@ -329,7 +342,18 @@ struct Place {
     consented: std::cell::Cell<bool>,
     /// The reader flows in its owner's column ([`Reader::flow_in`]).
     flow: std::cell::Cell<bool>,
+    /// Bodies are drawn under a treatment ([`Reader::use_treatments`]).
+    treatments: std::cell::Cell<bool>,
+    /// How the body on screen was treated, when it was.
+    treated: std::cell::Cell<Option<Treated>>,
+    /// The line naming it, once [`Reader::use_treatments`] made one.
+    line: RefCell<Option<Rc<RenderModeLine>>>,
+    /// Told the treatment on screen each time a body is drawn under one.
+    on_treatment: RefCell<Vec<TreatmentHandler>>,
 }
+
+/// Called with the treatment the body on screen is drawn in.
+type TreatmentHandler = Rc<dyn Fn(Treatment)>;
 
 /// What a reader's owner fetches remote images with: the URLs one document
 /// names as images, and where to hand what arrived, on the main thread.
@@ -350,6 +374,10 @@ impl Place {
             asked: RefCell::default(),
             consented: std::cell::Cell::new(false),
             flow: std::cell::Cell::new(false),
+            treatments: std::cell::Cell::new(false),
+            treated: std::cell::Cell::new(None),
+            line: RefCell::new(None),
+            on_treatment: RefCell::new(Vec::new()),
         }
     }
 }
@@ -547,6 +575,7 @@ impl Reader {
             loads: Rc::new(std::cell::Cell::new(0)),
             document: Rc::new(RefCell::new(String::new())),
             place,
+            allowlist_path: Rc::new(allowlist_path.clone()),
             actions_suppressed: Rc::new(std::cell::Cell::new(false)),
         };
 
@@ -1190,12 +1219,17 @@ impl Reader {
             .and_then(|prepared| prepared.verdict_for(body))
             .unwrap_or_else(|| postio_ui::reader::document::suits_reader_view(body));
         let rendering = postio_ui::reader::document::opening_rendering();
+        // What the person always wants for this sender is the choice the
+        // message opens with; `O` overrules it for this message alone.
+        let remembered = sender.and_then(|sender| self.allowlist.borrow().treatment_for(sender));
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
             rendering,
             bulk,
             prepared,
+            chosen: remembered,
+            remembered,
         });
         self.show_actions_unless_suppressed();
         let allowed = sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender));
@@ -1294,6 +1328,10 @@ impl Reader {
         // was being sent must not inherit its bar.
         self.set_send_state(None);
         self.notices.clear();
+        // A conversation is drawn as the classic reader draws it, with no
+        // treatment to name.
+        self.place.treated.set(None);
+        show_treatment(&self.place, None);
         load_document(&self.canvas(), document);
     }
 
@@ -1412,6 +1450,124 @@ impl Reader {
             ground.set_accessible_role(gtk::AccessibleRole::Presentation);
             container.append(&ground);
             self.view.set_ground(&ground);
+            // The rest of the column's palette, the same way: a body in the
+            // app's colours is drawn in the column's own tokens (T211).
+            for (variable, class) in FLOW_PALETTE {
+                let probe = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                probe.add_css_class(class);
+                probe.set_accessible_role(gtk::AccessibleRole::Presentation);
+                container.append(&probe);
+                self.view.add_palette_probe(variable, &probe);
+            }
+        }
+    }
+
+    /// Draw every single message under a treatment (specs/007-postio-focus
+    /// T210-T213): app colours or the original on paper, as the rule in
+    /// `postio_body::treatment` decides or the person chose, with a quiet
+    /// line above an HTML body naming which and offering the other.
+    ///
+    /// Focus's open message calls this once, before anything is shown; the
+    /// classic reader never does, and draws as it always has. A conversation
+    /// drawn as one document ([`render_thread`](Self::render_thread)) is not
+    /// treated.
+    pub fn use_treatments(&self) {
+        if self.place.treatments.replace(true) {
+            return;
+        }
+        let line = RenderModeLine::new();
+        line.set_key(
+            postio_core::Keymap::resolve(&Default::default())
+                .binding(postio_core::CommandId::SwitchTreatment),
+        );
+        let switcher = self.switcher();
+        line.connect_switch({
+            let switcher = switcher.clone();
+            move || {
+                switcher.switch();
+            }
+        });
+        line.connect_always(move || {
+            switcher.remember();
+        });
+        self.container
+            .insert_child_after(&line.widget(), Some(&self.under_header));
+        self.place.line.replace(Some(line));
+    }
+
+    /// The treatment the body on screen is drawn in: what the layout around
+    /// it reads to size its column (T207). App colours when nothing is
+    /// drawn under one -- plain text, a conversation, an empty pane, or a
+    /// reader that does not draw treatments.
+    pub fn treatment(&self) -> Treatment {
+        self.place
+            .treated
+            .get()
+            .map(|treated| treated.shown)
+            .unwrap_or_default()
+    }
+
+    /// How the body on screen was treated, and what the rule had chosen;
+    /// `None` when nothing is drawn under a treatment.
+    pub fn treated(&self) -> Option<Treated> {
+        self.place.treated.get()
+    }
+
+    /// Called with the treatment each time a body is drawn under one: a
+    /// message opening, `O`, a remembered choice. The same treatment can
+    /// arrive twice in a row; a caller sizing a column to it is idempotent.
+    pub fn connect_treatment_changed(&self, handler: impl Fn(Treatment) + 'static) {
+        self.place.on_treatment.borrow_mut().push(Rc::new(handler));
+    }
+
+    /// Draw the open message in the other treatment -- `O`
+    /// (`switch_treatment`). For this message only: the next one opens as
+    /// the rule or its sender's remembered choice says. False, and nothing
+    /// drawn, when there is no HTML body under a treatment to switch.
+    pub fn switch_treatment(&self) -> bool {
+        self.switcher().switch().is_some()
+    }
+
+    /// Remember the treatment on screen for the open message's sender --
+    /// "Always for this sender" -- beside their remote-image setting. False
+    /// when there is no sender or no treatment to remember.
+    pub fn remember_treatment(&self) -> bool {
+        self.switcher().remember().is_some()
+    }
+
+    /// The render-mode line, once [`use_treatments`](Self::use_treatments)
+    /// made one. Test-facing.
+    #[doc(hidden)]
+    pub fn render_mode_line(&self) -> Option<Rc<RenderModeLine>> {
+        self.place.line.borrow().clone()
+    }
+
+    /// The scale a paper body was zoomed by to fit the column, on top of
+    /// the person's own zoom ([`zoom`](Self::zoom)): 1.0 when it fitted or
+    /// is not on paper, and never under `postio_render::render::PAPER_FIT_FLOOR`,
+    /// below which the sheet scrolls sideways instead (T207, T212).
+    ///
+    /// Read off the snapshot on screen, so it answers for what is drawn: the
+    /// renderer fits a paper body to whatever width the view is given, and
+    /// a column that changes width is drawn again and fitted again.
+    pub fn paper_fit(&self) -> f64 {
+        self.view.document().map_or(1.0, |document| document.fit)
+    }
+
+    fn switcher(&self) -> Switcher {
+        Switcher {
+            view: self.view.downgrade(),
+            document: Rc::clone(&self.document),
+            loads: Rc::clone(&self.loads),
+            place: Rc::downgrade(&self.place),
+            notices: Rc::clone(&self.notices),
+            banner: Rc::downgrade(&self.banner),
+            reader_notice: Rc::downgrade(&self.reader_notice),
+            open: Rc::clone(&self.open),
+            highlight: Rc::clone(&self.highlight),
+            rendered: Rc::clone(&self.rendered),
+            allowlist: Rc::clone(&self.allowlist),
+            allowlist_path: Rc::clone(&self.allowlist_path),
         }
     }
 
@@ -1609,6 +1765,9 @@ impl Reader {
         // drift `KeycapButton` exists to end (#1002).
         self.reader_notice
             .set_action_key(keymap.binding(postio_core::CommandId::ViewOriginal));
+        if let Some(line) = self.place.line.borrow().as_ref() {
+            line.set_key(keymap.binding(postio_core::CommandId::SwitchTreatment));
+        }
     }
 
     /// Called with the invocation whenever a button in the action bar is
@@ -1763,6 +1922,9 @@ impl Reader {
         // A plate has no text of its own, and must not fall back to the
         // text of the message before it.
         self.place.plain.replace(String::new());
+        // Nor a treatment: there is no body to name one for.
+        self.place.treated.set(None);
+        show_treatment(&self.place, None);
         // A message is still open here — headers arrived, only the body has
         // not — so Reply, Forward and Archive stay reachable exactly as they
         // are from the keyboard while the pane explains why there is no body
@@ -1891,6 +2053,8 @@ impl Reader {
     fn reset(&self) {
         *self.open.borrow_mut() = None;
         self.absent.set(None);
+        self.place.treated.set(None);
+        show_treatment(&self.place, None);
         self.place.plain.replace(String::new());
         self.header.clear();
         // Nothing occupies the pane now, which is what `set_send_state`
@@ -1989,6 +2153,104 @@ struct Canvas<'a> {
     place: &'a Rc<Place>,
     /// Which notices the drawn message raises.
     notices: &'a NoticeSlot,
+}
+
+/// What `O` and the render-mode line's two controls need: the open message
+/// and everything [`render_open`] draws it with, and where the allow list is
+/// saved. The view and the place are held weakly, because the line's own
+/// buttons keep a `Switcher`, the line lives in the reader's widgets, and the
+/// view's signal handlers hold the place: a strong hold either way would be
+/// a cycle keeping every reader's renderer alive.
+#[derive(Clone)]
+struct Switcher {
+    view: glib::WeakRef<crate::body_view::BodyView>,
+    document: Rc<RefCell<String>>,
+    loads: Rc<std::cell::Cell<u32>>,
+    place: std::rc::Weak<Place>,
+    notices: Rc<NoticeSlot>,
+    banner: std::rc::Weak<RemoteImageBanner>,
+    reader_notice: std::rc::Weak<crate::widgets::NoticeBar>,
+    open: Rc<RefCell<Option<Open>>>,
+    highlight: Rc<RefCell<Vec<String>>>,
+    rendered: Rc<RefCell<Vec<RenderedHandler>>>,
+    allowlist: Rc<RefCell<RemoteImageAllowList>>,
+    allowlist_path: Rc<std::path::PathBuf>,
+}
+
+impl Switcher {
+    /// Draw the open message in the other treatment, and say which.
+    fn switch(&self) -> Option<Treatment> {
+        let place = self.place.upgrade()?;
+        let view = self.view.upgrade()?;
+        let banner = self.banner.upgrade()?;
+        let reader_notice = self.reader_notice.upgrade()?;
+        let next = place
+            .treated
+            .get()
+            .filter(|treated| treated.html)?
+            .shown
+            .other();
+        let sender = {
+            let mut open = self.open.borrow_mut();
+            let current = open.as_mut()?;
+            current.chosen = Some(next);
+            current.sender.clone()
+        };
+        let remote = if sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(&sender)) {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        };
+        // The same message, drawn again: the reader keeps their place.
+        place.keep.set(true);
+        render_open(
+            &Canvas {
+                view: &view,
+                document: &self.document,
+                loads: &self.loads,
+                place: &place,
+                notices: &self.notices,
+            },
+            &banner,
+            &reader_notice,
+            &self.open,
+            &self.highlight,
+            remote,
+            &self.rendered,
+        );
+        // An outcome, never content: which treatment, not whose mail.
+        tracing::debug!(
+            treatment = next.attribute_value(),
+            "switched the open message's treatment"
+        );
+        Some(next)
+    }
+
+    /// Remember the treatment on screen for the open message's sender.
+    fn remember(&self) -> Option<Treatment> {
+        let place = self.place.upgrade()?;
+        let shown = place.treated.get().filter(|treated| treated.html)?.shown;
+        let sender = {
+            let mut open = self.open.borrow_mut();
+            let current = open.as_mut()?;
+            current.chosen = Some(shown);
+            current.remembered = Some(shown);
+            current.sender.clone()?
+        };
+        {
+            let mut list = self.allowlist.borrow_mut();
+            list.set_treatment(&sender, Some(shown));
+            if let Err(error) = list.save_to(&self.allowlist_path) {
+                tracing::warn!(%error, "could not save a sender's treatment");
+            }
+        }
+        show_treatment(&place, Some(shown));
+        tracing::info!(
+            treatment = shown.attribute_value(),
+            "remembered a treatment for a sender"
+        );
+        Some(shown)
+    }
 }
 
 /// Hand `document` to the view, and count it.
@@ -2094,12 +2356,31 @@ const FLOW_FLAT_CSS: &str = "body { font-size: 15px; line-height: 1.6; }\n\
     .postio-body { max-width: 32em; padding: 0; border: 0; border-radius: 0; min-height: 0; }\n\
     pre.postio-body-text { margin: 0 0 0.8em 0; }\n";
 
+/// The reader palette variables a flowing column supplies from its own
+/// tokens, and the class of the probe each is read from: the owner's
+/// stylesheet sets each probe's `color` to the token (Focus's `focus.css`).
+/// A probe nobody styles reads as the toolkit's foreground, which is the
+/// ink -- a safe answer for every one of them but the ground.
+pub const FLOW_PALETTE: [(&str, &str); 6] = [
+    ("--r-ink", "postio-flow-ink"),
+    ("--r-ink-secondary", "postio-flow-ink-secondary"),
+    ("--r-dim", "postio-flow-dim"),
+    ("--r-accent", "postio-flow-accent"),
+    ("--r-hairline", "postio-flow-hairline"),
+    ("--r-hairline-strong", "postio-flow-hairline-strong"),
+];
+
 /// `document` as the column draws it.
 fn flow_document(document: &str) -> String {
     let own_page = document.contains("class=\"postio-canvas\"")
         || document.contains(&format!(
             "class=\"{}\"",
             postio_ui::reader::document::SENDERS_SHEET_CLASS
+        ))
+        || document.contains(&format!(
+            "{}=\"{}\"",
+            postio_body::treatment::TREATMENT_ATTRIBUTE,
+            Treatment::Paper.attribute_value()
         ));
     let mut css = String::from(FLOW_CSS);
     if !own_page {
@@ -2430,14 +2711,27 @@ fn render_open(
         };
         // What was sanitised off the main thread, when it was for exactly
         // this; the sanitiser here otherwise, as it always was.
-        let drawn = match current.prepared.as_ref() {
-            Some(prepared) if prepared.serves(&current.body, remote, current.rendering) => {
-                prepared.rendered().clone()
+        let drawn = if canvas.place.treatments.get() {
+            postio_ui::reader::document::body_html_treated(
+                &current.body,
+                remote,
+                current.chosen,
+                None,
+            )
+        } else {
+            match current.prepared.as_ref() {
+                Some(prepared) if prepared.serves(&current.body, remote, current.rendering) => {
+                    prepared.rendered().clone()
+                }
+                _ => body_html(&current.body, remote, current.rendering),
             }
-            _ => body_html(&current.body, remote, current.rendering),
         };
         (drawn, current.sender.clone(), current.bulk)
     };
+    let remembered = open
+        .borrow()
+        .as_ref()
+        .and_then(|current| current.remembered);
     let held_back = drawn.held_back;
     let content = drawn.html.clone();
     // After sanitizing and quote-folding, never before: ammonia would strip
@@ -2477,13 +2771,37 @@ fn render_open(
     // actually sent. `sheet_for` is where that rule lives, so this frontend
     // and the FFI one cannot express it differently.
     let sheet = sheet_for(drawn.rendering, bulk);
-    load_document(
-        canvas,
-        &document_for(&content, &drawn.styles, remote, sheet),
-    );
+    let document = match drawn.treated {
+        Some(treated) => postio_ui::reader::document::document_for_treated(
+            &content,
+            &drawn.styles,
+            remote,
+            treated.shown,
+        ),
+        None => document_for(&content, &drawn.styles, remote, sheet),
+    };
+    canvas.place.treated.set(drawn.treated);
+    show_treatment(canvas.place, remembered);
+    load_document(canvas, &document);
 
     for handler in rendered.borrow().iter() {
         handler(held_back);
+    }
+    if let Some(treated) = drawn.treated {
+        let handlers = canvas.place.on_treatment.borrow().clone();
+        for handler in handlers {
+            handler(treated.shown);
+        }
+    }
+}
+
+/// Put the render-mode line in step with what is drawn: the words for
+/// `place`'s treatment, or no line.
+fn show_treatment(place: &Place, remembered: Option<Treatment>) {
+    if let Some(line) = place.line.borrow().as_ref() {
+        line.show(place.treated.get().and_then(|treated| {
+            postio_ui::reader::document::render_mode_words(treated, remembered)
+        }));
     }
 }
 

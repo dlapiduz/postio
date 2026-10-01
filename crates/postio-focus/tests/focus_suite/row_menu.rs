@@ -62,7 +62,10 @@ fn choose(menu: &gtk::Popover, class: &str) {
 fn select_on_screen(window: &postio_focus::window::FocusWindow, indices: &[usize]) {
     for index in indices {
         let rows = window.pane().expect("the inbox").rows_on_screen();
-        assert!(rows[*index].press_at(30.0, 20.0), "the gutter took the press");
+        assert!(
+            rows[*index].press_at(30.0, 20.0),
+            "the gutter took the press"
+        );
         crate::settle();
     }
 }
@@ -113,7 +116,8 @@ pub fn a_right_click_on_a_row_offers_its_verbs_with_their_keys() {
             );
         }
         assert!(
-            said.iter().any(|text| text == "Mark read" || text == "Mark unread"),
+            said.iter()
+                .any(|text| text == "Mark read" || text == "Mark unread"),
             "no read verb: {said:?}"
         );
         let rules = support::with_class(&menu, "focus-row-menu-rule");
@@ -186,7 +190,11 @@ pub fn a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_sel
         );
         assert!(support::deliver(&window, "Escape"), "Escape was not taken");
         assert!(!menu.is_visible(), "Escape did not close the menu");
-        assert_eq!(selected(&window), 2, "closing the menu dropped the selection");
+        assert_eq!(
+            selected(&window),
+            2,
+            "closing the menu dropped the selection"
+        );
 
         // Inside: row 1. The menu names the selection and offers no reply.
         right_click(&window, 1);
@@ -196,7 +204,10 @@ pub fn a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_sel
             said.iter().any(|t| t == "2 selected"),
             "the menu does not say it acts on the selection: {said:?}"
         );
-        assert!(!said.iter().any(|t| t == "Reply"), "Reply on a selection: {said:?}");
+        assert!(
+            !said.iter().any(|t| t == "Reply"),
+            "Reply on a selection: {said:?}"
+        );
         choose(&menu, "focus-row-menu-archive");
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == before.len() - 2)

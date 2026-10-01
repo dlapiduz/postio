@@ -28,12 +28,9 @@ const PROSE: &str = "Uploaded the third draft of the harbour schedule with the \
 fn lines(document: &postio_render::RenderedDocument) -> Vec<(f64, f64, usize)> {
     let mut by_line: BTreeMap<u32, (f64, f64, usize, usize)> = BTreeMap::new();
     for cluster in &document.text.clusters {
-        let entry = by_line.entry(cluster.line).or_insert((
-            f64::MAX,
-            f64::MAX,
-            usize::MAX,
-            0,
-        ));
+        let entry = by_line
+            .entry(cluster.line)
+            .or_insert((f64::MAX, f64::MAX, usize::MAX, 0));
         entry.0 = entry.0.min(cluster.rect.y0);
         entry.1 = entry.1.min(cluster.rect.x0);
         entry.2 = entry.2.min(cluster.range.start);
@@ -227,8 +224,7 @@ pub fn the_columns_ground_is_the_dialogs_own_in_light_and_dark() {
                 "the body was not drawn again"
             );
             crate::settle_for(std::time::Duration::from_millis(300)).await;
-            let picture =
-                postio_widgets::capture::texture(&dialog).expect("the dialog was drawn");
+            let picture = postio_widgets::capture::texture(&dialog).expect("the dialog was drawn");
             let body = view
                 .compute_bounds(&dialog)
                 .expect("the body is in the dialog");
@@ -237,10 +233,7 @@ pub fn the_columns_ground_is_the_dialogs_own_in_light_and_dark() {
             let y = (body.y() + 6.0) as i32;
             let around = pixel(&picture.texture, (body.x() - 6.0) as i32, y);
             let inside = pixel(&picture.texture, (body.x() + body.width() - 6.0) as i32, y);
-            let close = around
-                .iter()
-                .zip(inside)
-                .all(|(a, b)| a.abs_diff(b) <= 1);
+            let close = around.iter().zip(inside).all(|(a, b)| a.abs_diff(b) <= 1);
             assert!(
                 close,
                 "{scheme:?}: the body's ground {inside:?} is not the dialog's {around:?}"

@@ -17,7 +17,10 @@ fn is_icon_only(widget: &gtk::Widget) -> bool {
     if !(widget.is::<gtk::Button>() || widget.is::<gtk::MenuButton>()) {
         return false;
     }
-    if widget.parent().is_some_and(|parent| parent.is::<gtk::MenuButton>()) {
+    if widget
+        .parent()
+        .is_some_and(|parent| parent.is::<gtk::MenuButton>())
+    {
         return false;
     }
     let inside = support::descendants(widget);

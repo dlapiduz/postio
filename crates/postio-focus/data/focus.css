@@ -313,6 +313,59 @@ banner.focus-banner button {
   color: var(--postio-surface);
 }
 
+/* The rest of the body's palette, read the same way, so a body drawn in app
+   colours is drawn in the dialog's own ink, accent and hairlines (T211). */
+.focus-open .postio-flow-ink {
+  color: var(--postio-ink);
+}
+
+.focus-open .postio-flow-ink-secondary {
+  color: var(--postio-ink-secondary);
+}
+
+.focus-open .postio-flow-dim {
+  color: var(--postio-dim);
+}
+
+.focus-open .postio-flow-accent {
+  color: var(--postio-accent);
+}
+
+.focus-open .postio-flow-hairline {
+  color: var(--postio-hairline);
+}
+
+.focus-open .postio-flow-hairline-strong {
+  color: var(--postio-hairline-strong);
+}
+
+/* The render-mode line over an HTML body (T213): quiet, one line, 20 tall,
+   the treatment named in ink-secondary and the rest muted. Its gaps -- 24
+   above, 12 to the body -- are the column's spacing table's (T208). */
+.focus-open .postio-render-mode {
+  min-height: 20px;
+  margin-bottom: 12px;
+  font-size: var(--postio-text-small);
+  color: var(--postio-dim);
+}
+
+.focus-open .postio-render-mode-mark {
+  color: var(--postio-dim);
+}
+
+.focus-open .postio-render-mode-title {
+  font-weight: 500;
+  color: var(--postio-ink-secondary);
+}
+
+.focus-open .postio-render-mode button {
+  min-height: 20px;
+  padding: 0;
+  font-size: var(--postio-text-small);
+  font-weight: normal;
+  color: var(--postio-ink-secondary);
+}
+
 .focus-open-header {
   min-height: 50px;
   padding: 0 var(--postio-space-3);

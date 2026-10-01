@@ -41,8 +41,8 @@ mod empty;
 mod filtered;
 mod first_run;
 mod harness;
-mod icon_buttons;
 mod has_action;
+mod icon_buttons;
 mod invitations;
 mod keymap;
 mod list_contract;
@@ -74,6 +74,7 @@ mod state;
 mod store_in_use;
 mod support;
 mod surfaced;
+mod treatments;
 mod undo;
 mod view_source;
 mod visible_window;
@@ -318,6 +319,10 @@ const CASES: &[(&str, fn())] = &[
         marker_card::a_marked_message_opens_with_its_card_and_its_sentence_highlighted as fn(),
     ),
     (
+        "treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours",
+        treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours as fn(),
+    ),
+    (
         "remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for",
         remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for as fn(),
     ),
@@ -432,7 +437,8 @@ const CASES: &[(&str, fn())] = &[
     ),
     (
         "row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection",
-        row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection as fn(),
+        row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection
+            as fn(),
     ),
     (
         "window_controls::the_top_bars_icon_buttons_hover_in_their_own_shape",

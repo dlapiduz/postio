@@ -893,6 +893,10 @@ impl FocusWindow {
             Ok(CommandId::Back) if reading.reader().finding() => reading.reader().close_find(),
             Ok(CommandId::Back) => reading.close(),
             Ok(CommandId::FindInMessage) => reading.reader().find_in_message(),
+            // App colours or the original, for this message (T213).
+            Ok(CommandId::SwitchTreatment) => {
+                reading.reader().switch_treatment();
+            }
             Ok(CommandId::FindNext) => reading.reader().find_step(true),
             Ok(CommandId::FindPrevious) => reading.reader().find_step(false),
             Ok(CommandId::NextMessage) => {
@@ -3429,9 +3433,7 @@ impl FocusWindow {
             Selection::Everything { except } => !except.contains(&row.id()),
         };
         let summary = inside
-            .then(|| {
-                postio_ui::selection::summary(&selection, Some(pane.feed().total()), &[])
-            })
+            .then(|| postio_ui::selection::summary(&selection, Some(pane.feed().total()), &[]))
             .flatten();
         imp.row_menu_alone.set(!inside);
         let menu = imp.row_menu.borrow().clone();

@@ -184,7 +184,11 @@ pub fn shift_click_extends_the_selection_to_a_range() {
             "rows 1 to 3 are selected: {:?}",
             selected_label(&window)
         );
-        assert_eq!(pane.cursor().selected(), 3, "the cursor is on the clicked row");
+        assert_eq!(
+            pane.cursor().selected(),
+            3,
+            "the cursor is on the clicked row"
+        );
         click_row_with(&rows[0], gdk::ModifierType::SHIFT_MASK);
         assert!(
             crate::settle_until(async || selected_label(&window).iter().any(|t| t == "4 selected"))
