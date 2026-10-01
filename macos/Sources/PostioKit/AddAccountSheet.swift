@@ -92,16 +92,28 @@ public struct AddAccountSheet: View {
                 route(.imap, "IMAP / SMTP", "password in Keychain", "tray")
                 route(.localStore, "Existing local store", "maildir, mbox or notmuch", "internaldrive")
             }
-            Text(
-                """
-                Consent happens in your browser and returns on a loopback port. \
-                The refresh token goes to the login Keychain — never to config.toml. \
-                Postio asks for your mail and nothing else: not your contacts, \
-                not your calendar, not your files.
-                """
-            )
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            Text(routeNote)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// What the selected route does with what you give it. One sentence per
+    /// route: the OAuth paragraph under "Existing local store" described a
+    /// browser sign-in that route never makes.
+    private var routeNote: String {
+        switch model.route {
+        case .outlook, .gmail:
+            """
+            Consent happens in your browser and returns on a loopback port. \
+            The refresh token goes to the login Keychain — never to config.toml. \
+            Postio asks for your mail and nothing else: not your contacts, \
+            not your calendar, not your files.
+            """
+        case .imap:
+            "The password goes to your login Keychain — never to config.toml."
+        case .localStore:
+            "Postio reads the folder where it is. Nothing is copied off this Mac, and nothing signs in."
         }
     }
 

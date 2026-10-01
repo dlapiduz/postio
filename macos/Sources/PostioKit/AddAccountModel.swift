@@ -139,7 +139,9 @@ public final class AddAccountModel: Identifiable {
         problem = nil
         switch step {
         case .address:
-            route = hint?.route ?? .imap
+            // The route is whatever is selected: the address's suggestion,
+            // set as it was typed, unless somebody picked another. Putting
+            // the suggestion back here discarded that choice.
             prefill()
             step = .credentials
         case .credentials: step = .store

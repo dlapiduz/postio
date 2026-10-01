@@ -75,6 +75,29 @@ import Testing
         #expect(model.imapPort > 0, "a port field showing 0 asks an unanswerable question")
     }
 
+    @Test func aRouteSomebodyPickedIsTheRouteTheyGet() {
+        // The address *suggests* a route; a click on another one is the
+        // person deciding. `next` used to put the suggestion back, so
+        // choosing "Existing local store" and pressing Continue asked for an
+        // IMAP password -- the local route was unreachable from the sheet.
+        let model = AddAccountModel()
+        model.address = unknown
+        model.route = .localStore
+        model.next()
+
+        #expect(model.route == .localStore)
+        #expect(model.canContinue, "a local store has no credential to wait for")
+    }
+
+    @Test func typingAnotherAddressSuggestsAgain() {
+        // The suggestion still follows the address while it is being typed:
+        // only the step forward stopped overriding a choice.
+        let model = AddAccountModel()
+        model.route = .localStore
+        model.address = unknown
+        #expect(model.route == providerHint(address: unknown).route)
+    }
+
     @Test func goingBackKeepsWhatWasTyped() {
         // Losing a typed address on Back is the kind of small cruelty that
         // makes people abandon a setup flow.
