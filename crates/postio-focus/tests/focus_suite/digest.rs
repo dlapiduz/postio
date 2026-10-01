@@ -390,10 +390,27 @@ pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
             "the rules list's keycaps do not teach their controls (T142)"
         );
 
+        // The list redraws itself when what each rule holds arrives; the
+        // keyboard must still be on a row of it after that, or no key
+        // reaches the window (T200: GTK's key path starts at the focus, and
+        // a destroyed row has no parents).
+        {
+            use gtk::prelude::*;
+            let focus = gtk::prelude::GtkWindowExt::focus(&window);
+            assert!(
+                focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.is_ancestor(rules.widget())),
+                "the keyboard is not in the rules list: {}",
+                support::focus_path(&window)
+            );
+        }
+
         support::press(&window, "Delete", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || window.remove_rule_confirmation().is_some()).await,
-            "Delete asked nothing"
+            "Delete asked nothing: {}",
+            support::focus_path(&window)
         );
         let dialog = window.remove_rule_confirmation().expect("the confirmation");
         let remove = support::button_labelled(&dialog, "Remove rule");

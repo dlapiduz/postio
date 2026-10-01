@@ -297,6 +297,48 @@ impl RulesView {
     /// One row a rule: its name, what it matches, when it delivers, when
     /// it next does, and what it holds.
     fn show(&self) {
+        // The rows are rebuilt, so a row that holds the keyboard is destroyed
+        // with it, and GTK's key path begins at the focus: with none left in
+        // the window, no key would reach it. The keyboard goes to the row
+        // that stands where its row stood.
+        let focused_at = self
+            .list
+            .root()
+            .and_then(|root| root.focus())
+            .filter(|focus| focus.is_ancestor(&self.list))
+            .and_then(|focus| {
+                let mut row = Some(focus);
+                while let Some(widget) = row {
+                    if let Some(row) = widget.downcast_ref::<gtk::ListBoxRow>() {
+                        return Some(row.index());
+                    }
+                    row = widget.parent();
+                }
+                None
+            });
+        self.rebuild();
+        let Some(at) = focused_at else {
+            return;
+        };
+        // The row's place, or the last row when it was the last and is gone,
+        // or the window itself when the list has emptied.
+        let row = self
+            .list
+            .row_at_index(at)
+            .or_else(|| self.list.row_at_index(at - 1));
+        match row {
+            Some(row) => {
+                row.grab_focus();
+            }
+            None => {
+                if let Some(root) = self.list.root() {
+                    root.set_focus(None::<&gtk::Widget>);
+                }
+            }
+        }
+    }
+
+    fn rebuild(&self) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }

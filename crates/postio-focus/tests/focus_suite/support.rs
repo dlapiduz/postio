@@ -937,20 +937,34 @@ pub fn deliver_with(
             .iter()
             .any(|widget| fire(widget, gtk::PropagationPhase::Bubble));
     crate::settle();
+    if std::env::var_os("CLICK_DEBUG").is_some() {
+        eprintln!("deliver {name}: claimed {claimed}");
+    }
     claimed
 }
 
-/// The button under `root` that says `label`: the one a person clicks.
+/// The button under `root` that says `label`: the one a person clicks,
+/// once it is on screen (a dialog's buttons are not, until it has opened).
 pub fn button_labelled(root: &impl gtk::prelude::IsA<gtk::Widget>, label: &str) -> gtk::Widget {
     use gtk::prelude::*;
-    descendants(root)
-        .into_iter()
-        .find(|widget| {
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    loop {
+        crate::settle();
+        if let Some(found) = descendants(root).into_iter().find(|widget| {
             widget.is::<gtk::Button>()
                 && widget.is_mapped()
                 && texts(widget).iter().any(|text| text == label)
-        })
-        .unwrap_or_else(|| panic!("no button says {label:?}: {:?}", texts(root)))
+        }) {
+            return found;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no button says {label:?}: {:?}",
+            texts(root)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// The list row under `root` that says `text`: the one a person clicks.
@@ -975,8 +989,9 @@ pub fn click_in(
     y: f32,
     n_press: i32,
 ) {
-    let (x, y) = wait_to_be_pickable(window, widget.as_ref(), x, y);
-    click_at(window, x, y, n_press);
+    let native = native_of(widget.as_ref(), window);
+    let (x, y) = wait_to_be_pickable(&native, widget.as_ref(), x, y);
+    click_on(&native, x, y, n_press);
 }
 
 /// Click the middle of `widget` as a person would, `n_press` times (2 is a
@@ -989,8 +1004,18 @@ pub fn click(
     use gtk::prelude::*;
     let widget = widget.as_ref();
     let (width, height) = (widget.width() as f32, widget.height() as f32);
-    let (x, y) = wait_to_be_pickable(window, widget, width / 2.0, height / 2.0);
-    click_at(window, x, y, n_press);
+    let native = native_of(widget, window);
+    let (x, y) = wait_to_be_pickable(&native, widget, width / 2.0, height / 2.0);
+    click_on(&native, x, y, n_press);
+}
+
+/// The surface `widget` is drawn on: the window, or a popover's own.
+fn native_of(widget: &gtk::Widget, window: &postio_focus::window::FocusWindow) -> gtk::Widget {
+    use gtk::prelude::*;
+    widget
+        .native()
+        .map(|native| native.upcast())
+        .unwrap_or_else(|| window.clone().upcast())
 }
 
 /// The window coordinates of (`x`, `y`) in `widget`, once that is a place a
@@ -998,12 +1023,7 @@ pub fn click(
 /// until it has stopped the point is over the scrim, not the button; a
 /// person clicks when the button is where they see it. Panics, naming what
 /// covers it, when it never is: a button under something is a bug.
-fn wait_to_be_pickable(
-    window: &postio_focus::window::FocusWindow,
-    widget: &gtk::Widget,
-    x: f32,
-    y: f32,
-) -> (f64, f64) {
+fn wait_to_be_pickable(window: &gtk::Widget, widget: &gtk::Widget, x: f32, y: f32) -> (f64, f64) {
     use gtk::prelude::*;
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
@@ -1024,7 +1044,10 @@ fn wait_to_be_pickable(
             panic!(
                 "a click at ({x}, {y}) never reached the {}: it lands on {}",
                 widget.type_().name(),
-                picked.map_or("nothing".to_owned(), |picked| picked.type_().name().to_string())
+                picked.map_or("nothing".to_owned(), |picked| picked
+                    .type_()
+                    .name()
+                    .to_string())
             );
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1048,6 +1071,13 @@ fn wait_to_be_pickable(
 /// a `GtkButton` claims what reaches it, and nothing above one is run.
 pub fn click_at(window: &postio_focus::window::FocusWindow, x: f64, y: f64, n_press: i32) {
     use gtk::prelude::*;
+    click_on(window.upcast_ref::<gtk::Widget>(), x, y, n_press);
+}
+
+/// [`click_at`] on a surface `native` (a window, or a popover's own), in its
+/// coordinates.
+fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
+    use gtk::prelude::*;
     let picked = window
         .pick(x, y, gtk::PickFlags::DEFAULT)
         .unwrap_or_else(|| window.clone().upcast());
@@ -1059,7 +1089,7 @@ pub fn click_at(window: &postio_focus::window::FocusWindow, x: f64, y: f64, n_pr
     {
         chain.push(parent);
     }
-    let window_widget: gtk::Widget = window.clone().upcast();
+    let window_widget = window.clone();
     let gestures = |widget: &gtk::Widget, phase: gtk::PropagationPhase| -> Vec<gtk::GestureClick> {
         let controllers = widget.observe_controllers();
         (0..controllers.n_items())
@@ -1099,7 +1129,9 @@ pub fn click_at(window: &postio_focus::window::FocusWindow, x: f64, y: f64, n_pr
             "click_at {x},{y}: picked {} chain {:?} gestures {:?}",
             picked.type_().name(),
             chain.iter().map(|w| w.type_().name()).collect::<Vec<_>>(),
-            path.iter().map(|(w, g)| (w.type_().name(), g.propagation_phase())).collect::<Vec<_>>()
+            path.iter()
+                .map(|(w, g)| (w.type_().name(), g.propagation_phase()))
+                .collect::<Vec<_>>()
         );
     }
     for press in 1..=n_press {
