@@ -30,6 +30,7 @@ fn entry<'a>(scope: &'a str, body: &'a str, styles: &'a str) -> Entry<'a> {
         styles,
         recipients: "",
         cc: "",
+        sheet: postio_ui::reader::document::Sheet::Theme,
     }
 }
 
