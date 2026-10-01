@@ -17,7 +17,10 @@ use postio_model::account::Account;
 pub fn badge(account: &Account) -> String {
     // A folder on this machine signs in to nothing, whatever auth method the
     // row carries -- every account row has one.
-    if matches!(account.backend, postio_model::account::Backend::Maildir { .. }) {
+    if matches!(
+        account.backend,
+        postio_model::account::Backend::Maildir { .. }
+    ) {
         return "Local mail".to_owned();
     }
     let backend = match &account.backend {
