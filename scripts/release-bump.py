@@ -7,7 +7,8 @@ Cutting v0.2.0 meant bumping `[workspace.package] version` in the root
 (`postio-model = { version = "0.1.0", path = "../postio-model" }` and
 siblings -- `cargo check` fails otherwise, since nothing else in the
 workspace resolves them), and adding a changelog entry to the AppStream
-metainfo GNOME Software reads, all by hand. This is that, mechanised: the
+metainfo GNOME Software reads, all by hand. The macOS bundle's Info.plist
+joined them when it became a release asset (#1714). This is that, mechanised: the
 part with no judgment calls, which is exactly the part that should never
 depend on a person remembering all of it correctly under time pressure.
 
@@ -38,6 +39,14 @@ from pathlib import Path
 
 CARGO_TOML = Path("Cargo.toml")
 METAINFO = Path("crates/postio-gtk/data/dev.postio.Postio.metainfo.xml")
+# The macOS bundle ships as a release asset (#1714), so it says the version it
+# was released as. Both keys carry the version: CFBundleVersion is the build
+# number macOS compares to decide which copy is newer, and a semver string
+# compares correctly there.
+INFO_PLIST = Path("macos/Resources/Info.plist")
+PLIST_VERSION_KEY = re.compile(
+    r"(<key>(?:CFBundleShortVersionString|CFBundleVersion)</key>\s*<string>)[^<]*(</string>)"
+)
 INTERNAL_PIN = re.compile(r'version = "([0-9]+\.[0-9]+\.[0-9]+)", path = "\.\./postio-')
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
@@ -72,6 +81,10 @@ def bump_internal_pins(root: Path, old: str, new: str) -> None:
         )
         if replaced != text:
             manifest.write_text(replaced, encoding="utf-8")
+
+
+def bump_info_plist(plist: str, new: str) -> str:
+    return PLIST_VERSION_KEY.sub(lambda m: f"{m.group(1)}{new}{m.group(2)}", plist)
 
 
 def escape(text: str) -> str:
@@ -171,6 +184,8 @@ def main(argv: list[str]) -> int:
 
     metainfo_path = root / METAINFO
     metainfo = metainfo_path.read_text(encoding="utf-8")
+    plist_path = root / INFO_PLIST
+    plist = plist_path.read_text(encoding="utf-8")
     notes = notes_path.read_text(encoding="utf-8")
 
     cargo_toml_path.write_text(
@@ -183,6 +198,7 @@ def main(argv: list[str]) -> int:
         ),
         encoding="utf-8",
     )
+    plist_path.write_text(bump_info_plist(plist, args.version), encoding="utf-8")
 
     print(f"bumped {old_version} -> {args.version}")
     return 0
