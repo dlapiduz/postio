@@ -132,23 +132,6 @@ pub fn classify(sanitized: &Sanitized) -> Treatment {
     }
 }
 
-/// The treatment a whole message body gets: app colours when it has no HTML
-/// to speak of, else [`classify`] over its HTML, sanitised with remote
-/// images blocked.
-///
-/// The reader classifies the sanitised result it already has, under the
-/// policy it drew with; this is the same rule for a caller that holds only
-/// the body.
-pub fn classify_body(body: &postio_model::message::MessageBody) -> Treatment {
-    match body.html.as_deref().filter(|html| !html.trim().is_empty()) {
-        Some(html) => classify(&crate::sanitize::sanitize_body(
-            html,
-            crate::sanitize::RemoteImages::Blocked,
-        )),
-        None => Treatment::AppColours,
-    }
-}
-
 /// The first paper trigger a sanitised body meets, if any.
 ///
 /// The page's own background is read from [`Sanitized::canvas`], because the

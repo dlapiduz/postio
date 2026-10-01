@@ -32,7 +32,7 @@ pub struct RenderModeLine {
 impl RenderModeLine {
     /// A line, hidden until a body with a treatment to name is drawn.
     pub fn new() -> Rc<Self> {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, crate::widgets::space::S2);
         root.add_css_class("postio-render-mode");
         root.set_visible(false);
         root.set_accessible_role(gtk::AccessibleRole::Group);

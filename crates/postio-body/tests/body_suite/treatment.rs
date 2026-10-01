@@ -26,11 +26,14 @@ fn sanitized(name: &str) -> Sanitized {
     sanitize::sanitize_body(html, RemoteImages::Blocked)
 }
 
+/// Plain text is app colours by the reader's rule, which never classifies
+/// it (`postio_ui::reader::document::body_html_treated`); the fixture is
+/// plain text only, which is what makes it the case.
 #[test]
-fn plain_text_is_app_colours() {
+fn plain_text_has_no_html_to_classify() {
     let body = body("plain-text-simple");
     assert!(body.html.is_none(), "the fixture grew an HTML part");
-    assert_eq!(treatment::classify_body(&body), Treatment::AppColours);
+    assert!(body.text.is_some_and(|text| !text.trim().is_empty()));
 }
 
 #[test]
@@ -45,7 +48,7 @@ fn office_work_mail_with_black_text_is_app_colours() {
 #[test]
 fn a_webmail_reply_chain_is_app_colours() {
     assert_eq!(
-        treatment::classify_body(&body("html-gmail-reply-chain")),
+        treatment::classify(&sanitized("html-gmail-reply-chain")),
         Treatment::AppColours
     );
 }
@@ -71,7 +74,7 @@ fn the_corpus_rendering_fixtures_land_where_their_shape_says() {
     // Correspondence: a white page, dark text on nothing.
     for name in ["html-white-page-reply", "html-dark-text-no-background"] {
         assert_eq!(
-            treatment::classify_body(&body(name)),
+            treatment::classify(&sanitized(name)),
             Treatment::AppColours,
             "{name}"
         );
@@ -79,7 +82,7 @@ fn the_corpus_rendering_fixtures_land_where_their_shape_says() {
     // Designed mail: coloured cards and a dark footer in layout tables.
     for name in ["html-designed-three-column", "html-newsletter"] {
         assert_eq!(
-            treatment::classify_body(&body(name)),
+            treatment::classify(&sanitized(name)),
             Treatment::Paper,
             "{name}"
         );
