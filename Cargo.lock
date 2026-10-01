@@ -4638,7 +4638,7 @@ dependencies = [
 
 [[package]]
 name = "postio-ai"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "io-http",
@@ -4728,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "postio-calendar"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "calcard",
  "chrono",
@@ -4738,7 +4738,7 @@ dependencies = [
 
 [[package]]
 name = "postio-classify"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "postio-body",
@@ -4826,7 +4826,7 @@ dependencies = [
 
 [[package]]
 name = "postio-focus"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "async-channel",
  "chrono",
@@ -5208,7 +5208,7 @@ dependencies = [
 
 [[package]]
 name = "postio-vault"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "postio-model",
@@ -5218,7 +5218,7 @@ dependencies = [
 
 [[package]]
 name = "postio-widgets"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "async-channel",
  "chrono",
