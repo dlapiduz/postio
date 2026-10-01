@@ -33,6 +33,7 @@ mod present_config;
 mod present_onboarding;
 mod present_reading;
 mod quote_folds;
+mod reader_treatment;
 mod reader_verbs;
 mod recipient_chips;
 mod support;
@@ -46,6 +47,10 @@ mod widgets_css;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "reader_treatment::a_reader_reports_its_treatment_and_tells_when_it_changes",
+        reader_treatment::a_reader_reports_its_treatment_and_tells_when_it_changes as fn(),
+    ),
     (
         "reader_verbs::a_header_can_leave_the_subject_to_its_surface",
         reader_verbs::a_header_can_leave_the_subject_to_its_surface as fn(),

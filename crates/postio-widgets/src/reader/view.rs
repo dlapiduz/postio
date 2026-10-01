@@ -206,7 +206,15 @@ pub struct Reader {
     /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
     /// otherwise show the action bar for.
     actions_suppressed: Rc<std::cell::Cell<bool>>,
+    /// How the body on screen is shown -- in the app's colours or as sent,
+    /// on paper -- and who to tell when that changes. The owner sizes its
+    /// column by it (Focus's message dialog, T207).
+    treatment: Rc<std::cell::Cell<postio_body::treatment::Treatment>>,
+    on_treatment: Rc<RefCell<Vec<TreatmentHandler>>>,
 }
+
+/// What [`Reader::connect_treatment_changed`] holds.
+type TreatmentHandler = Box<dyn Fn(postio_body::treatment::Treatment)>;
 
 impl Drop for Reader {
     /// Balances [`postio_ui::reader::cost::note_surface_created`] so that
@@ -577,6 +585,8 @@ impl Reader {
             place,
             allowlist_path: Rc::new(allowlist_path.clone()),
             actions_suppressed: Rc::new(std::cell::Cell::new(false)),
+            treatment: Rc::default(),
+            on_treatment: Rc::default(),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -885,6 +895,32 @@ impl Reader {
     /// notices and body, stacked.
     pub fn widget(&self) -> gtk::Widget {
         self.container.clone().upcast()
+    }
+
+    /// How the body on screen is shown: [`Treatment::AppColours`] until
+    /// whatever classifies the body says otherwise with
+    /// [`set_treatment`](Self::set_treatment).
+    ///
+    /// [`Treatment::AppColours`]: postio_body::treatment::Treatment::AppColours
+    pub fn treatment(&self) -> postio_body::treatment::Treatment {
+        self.treatment.get()
+    }
+
+    /// Say how the body on screen is shown, telling
+    /// [`connect_treatment_changed`](Self::connect_treatment_changed)'s
+    /// handlers when it differs from before.
+    pub fn set_treatment(&self, treatment: postio_body::treatment::Treatment) {
+        if self.treatment.replace(treatment) == treatment {
+            return;
+        }
+        for handler in self.on_treatment.borrow().iter() {
+            handler(treatment);
+        }
+    }
+
+    /// Run `handler` whenever the body's treatment changes.
+    pub fn connect_treatment_changed(&self, handler: impl Fn(postio_body::treatment::Treatment) + 'static) {
+        self.on_treatment.borrow_mut().push(Box::new(handler));
     }
 
     /// The body view -- test-facing, e.g. to watch `rendered` for whether a
