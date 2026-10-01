@@ -23,6 +23,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::io;
+use std::net::Ipv4Addr;
 use std::ops::Not;
 
 use io_sasl::mechanism::Sasl;
@@ -105,12 +106,8 @@ impl SmtpSession {
 
         let credentials = sasl_for(settings, password);
 
-        let mut coroutine = SmtpSessionOpen::new(
-            transport,
-            client_identity(&settings.username),
-            Some(credentials),
-            options,
-        );
+        let mut coroutine =
+            SmtpSessionOpen::new(transport, client_identity(), Some(credentials), options);
         let mut stream: Option<Box<dyn SmtpStream>> = None;
         let mut buffer = [0u8; READ_BUFFER];
         let mut resume: Option<&[u8]> = None;
@@ -464,16 +461,19 @@ fn sasl_for(settings: &ConnectionSettings, password: &SecretString) -> Sasl {
 // Address parsing
 // ---------------------------------------------------------------------------
 
-/// The `EHLO`/`HELO` identity this client announces: the account's own
-/// domain, or `localhost` when the username is not shaped like an address.
+/// The `EHLO` identity this client announces: the loopback address literal,
+/// `[127.0.0.1]`.
 ///
-/// Cosmetic rather than security-relevant — servers log it, none gate on it.
-fn client_identity(username: &str) -> SmtpEhloDomain<'static> {
-    let domain = username
-        .rsplit_once('@')
-        .map(|(_, domain)| domain)
-        .unwrap_or("localhost");
-    SmtpEhloDomain::SmtpDomain(SmtpDomain(Cow::Owned(domain.to_owned())))
+/// RFC 5321 §4.1.1.1 asks for the client's own FQDN, and §4.1.3 reserves the
+/// address literal for a client without one, which is what a desktop behind
+/// a NAT is. This used to announce the account's mail domain (the
+/// provider's name, not this machine's) or `localhost` with no `@` in the
+/// username, on the belief that no server gates on it. Servers do: Stalwart
+/// refuses `localhost` with `550 5.5.0 Invalid EHLO domain` before
+/// `MAIL FROM`, and a server checking HELO against its own domains refuses
+/// a client claiming to be it.
+fn client_identity() -> SmtpEhloDomain<'static> {
+    SmtpEhloDomain::from(Ipv4Addr::LOCALHOST)
 }
 
 /// Splits a bare `local@domain` address into the wire type, refusing
