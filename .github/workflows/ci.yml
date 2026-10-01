@@ -802,11 +802,23 @@ jobs:
   # that dies now fails the case in one turn of the loop rather than at
   # nextest's cap, so a flake here costs seconds and a retry, not four
   # minutes and a red run.
+  #
+  # Two shards (#1710 follow-up, 2026-10-01). Warm, this job was the PR's
+  # critical path at ~10.5 minutes, nearly all of it 688 tests run one at a
+  # time -- the `webkit` group in `.config/nextest.toml` allows a single web
+  # process, which is what keeps them reliable. Splitting the suite across
+  # two runners keeps that rule on each and halves the wall clock; both
+  # restore the same warm `build-gtk` cache, so the price is one runner's
+  # build check, not a second cold build.
   test-gtk:
-    name: Tests (GTK widgets)
+    name: Tests (GTK widgets ${{ matrix.shard }}/2)
     runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.rust == 'yes'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-workspace
@@ -826,10 +838,12 @@ jobs:
           key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
-      - name: cargo nextest run -p postio-gtk
+      - name: cargo nextest run -p postio-gtk (shard ${{ matrix.shard }}/2)
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
+        run: >-
+          dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
+          --partition count:${{ matrix.shard }}/2
 
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
