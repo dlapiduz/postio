@@ -68,11 +68,10 @@ jobs:
       tarballs: ${{ steps.matrices.outputs.tarballs }}
       macos: ${{ steps.matrices.outputs.macos }}
     steps:
-      # The tags are the record of what was released; one commit of history
-      # is enough to read them.
+      # One commit is enough: `release-plan.sh` asks origin for its tags
+      # (`git ls-remote`) rather than trusting this clone, which has none at
+      # this depth whatever `fetch-tags` says.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-tags: true
 
       - name: Decide
         id: plan
@@ -499,13 +498,22 @@ jobs:
       # "Latest" badge, which is what the version number already says. The
       # same rule marks the AppStream entry `type="development"`.
       #
-      # A re-run finds its own draft and fills it again; a release already
-      # published is never reached -- `plan` stops at its tag.
+      # A re-run finds its own draft and fills it again. A release that is
+      # already published is refused here even though `plan` should never
+      # have got this far for one: on 2026-10-01 a plan that could not see
+      # the tags set out to re-release v0.4.2, and `--clobber` below would
+      # have replaced its assets. The step that writes is the one that must
+      # not trust its inputs.
       - name: Draft, attach, publish
         run: |
           flags=()
           if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$draft" = false ]; then
+            echo "::error::$TAG is already published. Refusing to change it."
+            exit 1
+          fi
+          if [ "$draft" = none ]; then
             gh release create "$TAG" --draft --target "$GITHUB_SHA" \
               --title "$TAG" --notes-file release-notes.md "${flags[@]}"
           fi
