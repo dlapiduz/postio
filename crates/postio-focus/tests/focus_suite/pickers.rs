@@ -77,15 +77,22 @@ pub fn h_then_3_reminds_at_the_end_of_the_week() {
         support::press(&window, "3", gdk::ModifierType::empty());
         let connection = fixture.database.connect().await.expect("a connection");
         let reminders = postio_storage::repository::ReminderRepository::new(&connection);
-        let mut standing = None;
-        for _ in 0..200 {
-            standing = reminders.standing(thread).await.expect("a read");
-            if standing.is_some() {
-                break;
-            }
-            crate::settle();
-        }
-        let standing = standing.expect("no reminder was set");
+        // Wait on the stored reminder with the suite's patience, not a count
+        // of main-loop turns: under load 200 turns went by before the write.
+        assert!(
+            crate::settle_until(async || reminders
+                .standing(thread)
+                .await
+                .expect("a read")
+                .is_some())
+            .await,
+            "no reminder was set"
+        );
+        let standing = reminders
+            .standing(thread)
+            .await
+            .expect("a read")
+            .expect("the reminder just seen");
         assert_eq!(
             standing.due_at,
             expected.to_utc(),
@@ -157,15 +164,10 @@ async fn labels_become(
     thread: postio_model::ThreadId,
     wanted: &[&str],
 ) -> Vec<String> {
-    let mut names = Vec::new();
-    for _ in 0..300 {
-        names = labels_on(fixture, thread).await;
-        if names == wanted {
-            break;
-        }
-        crate::settle();
-    }
-    names
+    // The suite's patience, not a count of main-loop turns, which load can
+    // outrun before the write lands.
+    crate::settle_until(async || labels_on(fixture, thread).await == wanted).await;
+    labels_on(fixture, thread).await
 }
 
 /// US5 scenario 5: `l` lists the labels, each applied one marked and the
