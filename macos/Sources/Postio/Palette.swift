@@ -139,45 +139,7 @@ struct CheatSheet: View {
             }
             .padding(16)
             Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    // Grouped, and the grouping is the boundary's — the same
-                    // `postio_ui::cheatsheet::sections` the GTK overlay draws
-                    // from, so the two platforms teach the same sheet. The
-                    // flat list this used to draw was every key in the
-                    // application in one column: a thing to scroll rather
-                    // than a thing to learn from.
-                    ForEach(sections, id: \.title) { section in
-                        Text(section.title)
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-                            .padding(.top, 14)
-                            .padding(.bottom, 4)
-                            .accessibilityAddTraits(.isHeader)
-                        ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(row.title)
-                                Spacer()
-                                // The binding as written, not as glyphs: this
-                                // is the one surface that has to be able to
-                                // print `g g`, which no accelerator spelling
-                                // can hold.
-                                Text(row.binding ?? "—")
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundStyle(row.binding == nil ? .tertiary : .secondary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 5)
-                            .accessibilityElement(children: .ignore)
-                            // A sentence, not "Archive a" — the boundary
-                            // writes it so a screen reader hears a fact
-                            // rather than two columns.
-                            .accessibilityLabel(row.spoken)
-                        }
-                    }
-                }
-            }
+            CheatSheetList(sections: sections)
         }
         .frame(width: 520, height: 560)
         // Keyed on the context: `?` in the composer teaches a different
