@@ -30,4 +30,12 @@ import Testing
     @Test func noBindingIsADash() {
         #expect(CheatSheetKeys.label(nil) == "—")
     }
+
+    @Test func eachPressIsItsOwnCap() {
+        // A sequence is two presses, so two caps; a chord is one press
+        // however many keys are held, so one cap.
+        #expect(CheatSheetKeys.caps("g g") == ["G", "G"])
+        #expect(CheatSheetKeys.caps("cmd+shift+n") == ["⇧⌘N"])
+        #expect(CheatSheetKeys.caps(nil).isEmpty)
+    }
 }

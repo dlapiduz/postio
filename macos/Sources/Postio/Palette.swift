@@ -141,7 +141,7 @@ struct CheatSheet: View {
             Divider()
             CheatSheetList(sections: sections)
         }
-        .frame(width: 520, height: 560)
+        .frame(width: 880, height: 600)
         // Keyed on the context: `?` in the composer teaches a different
         // sheet than `?` in the list, and a sheet that kept the last one's
         // rows would be teaching keys that do not resolve here.

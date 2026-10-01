@@ -5,12 +5,19 @@
 /// presses in turn. The sheet printed the binding as `[keys]` spells it,
 /// `cmd+k`, beside a menu bar that says ⌘K for the same command.
 public enum CheatSheetKeys {
-    /// The label for `binding`, or a dash when the command has none.
-    public static func label(_ binding: String?) -> String {
-        guard let binding, !binding.isEmpty else { return "—" }
+    /// One cap per press: a sequence is two presses, a chord is one however
+    /// many keys are held for it. Empty when the command has no key.
+    public static func caps(_ binding: String?) -> [String] {
+        guard let binding else { return [] }
         return binding
             .split(separator: " ")
             .map { chord in MenuPlan.accelerator(from: String(chord)) ?? String(chord) }
-            .joined(separator: " ")
+    }
+
+    /// The caps as one line, or a dash when the command has none -- what a
+    /// screen reader or a plain-text surface gets.
+    public static func label(_ binding: String?) -> String {
+        let caps = caps(binding)
+        return caps.isEmpty ? "—" : caps.joined(separator: " ")
     }
 }
