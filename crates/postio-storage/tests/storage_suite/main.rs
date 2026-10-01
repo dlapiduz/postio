@@ -47,6 +47,7 @@ mod snoozed_due_index;
 mod statement_cache;
 mod store_key;
 mod sync_state;
+mod sync_statement_bounds;
 mod threading;
 mod threading_lookup_cost;
 mod threading_statement_count;
