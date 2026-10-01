@@ -48,6 +48,7 @@ pub mod reader_view;
 pub mod replying;
 pub mod sanitize;
 pub mod styles;
+pub mod treatment;
 
 pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline, editor_image_src};
 pub use edit::{EditHistory, EditStep};
