@@ -172,3 +172,65 @@ pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
         assert_eq!(reader.treatment(), Treatment::AppColours);
     });
 }
+
+/// Switching keeps the column where it was: with the body's top in view
+/// there is no place inside it to keep, and the redraw must not scroll the
+/// column to put the body's first line at the top (T213, found in screen
+/// 29's render).
+pub fn switching_the_treatment_leaves_the_column_where_it_was() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (work, _) = fixture
+            .file(
+                ("Dana Whitfield", "dana@treatments.example.com"),
+                "Building access",
+                "Hi everyone.",
+                10,
+            )
+            .await;
+        fixture
+            .write_html_body(
+                work,
+                // Long enough that the column scrolls: a short body fits the
+                // dialog, and there is nothing to jump.
+                &html_of("html-work-black-text").replace(
+                    "<p class=\"MsoNormal\"><span style=\"color:black\">Thanks,",
+                    &"<p class=\"MsoNormal\">More about the entrance works.</p>".repeat(40),
+                ),
+            )
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        assert!(
+            crate::settle_until(
+                async || reader.treated().is_some() && reader.view().tiles_settled()
+            )
+            .await,
+            "the office mail never drew"
+        );
+        let before = reader.scrolled_for_test();
+        support::keys(&window, &["O"]);
+        assert!(
+            crate::settle_until(
+                async || reader.treatment() == Treatment::Paper && reader.view().tiles_settled()
+            )
+            .await,
+            "O did not put the office mail on paper"
+        );
+        assert_eq!(
+            reader.scrolled_for_test(),
+            before,
+            "switching scrolled the column"
+        );
+    });
+}

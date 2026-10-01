@@ -323,6 +323,10 @@ const CASES: &[(&str, fn())] = &[
         treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours as fn(),
     ),
     (
+        "treatments::switching_the_treatment_leaves_the_column_where_it_was",
+        treatments::switching_the_treatment_leaves_the_column_where_it_was as fn(),
+    ),
+    (
         "remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for",
         remote_images::remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for as fn(),
     ),
