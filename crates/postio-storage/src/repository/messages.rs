@@ -1853,29 +1853,66 @@ impl<'a> MessageRepository<'a> {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<BackfillCandidate>> {
-        sql::all(
-            self.connection,
-            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.remote_id, mailboxes.role
-               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
-              WHERE messages.mailbox_id = ?1
-                AND (messages.body_state IN ('not_fetched', 'headers_only')
-                     OR (messages.body_parsed_with < ?4
-                         AND messages.body_encoding_problems = 1))
-                AND messages.uid IS NOT NULL
+        // Three seeks rather than one `OR`: no index serves a disjunction, so
+        // the single statement walked the folder and filtered it, and newest
+        // first the rows it passed over were exactly the bodies already
+        // fetched -- more of them on every top-up. Each arm below is a seek
+        // into an index that holds its rows in the order they are wanted, so
+        // the window is read and nothing else. Each is asked for the whole
+        // `offset + limit`, because the merged order, not any arm's, decides
+        // which are skipped.
+        const SELECT: &str = "SELECT messages.id, messages.uid, messages.size, \
+                    messages.received_at, mailboxes.path, messages.remote_id, mailboxes.role
+               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id";
+        const FILTER: &str = "messages.uid IS NOT NULL
                 AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0
-              ORDER BY messages.received_at DESC
-              LIMIT ?2 OFFSET ?3",
-            bind![
-                mailbox_id.get(),
-                limit,
-                offset,
-                postio_model::mime::PARSER_VERSION
-            ],
-            |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
-        )
-        .await
+              ORDER BY messages.received_at DESC, messages.id DESC
+              LIMIT ?2";
+        let window = i64::from(limit) + i64::from(offset);
+
+        let mut found = Vec::new();
+        for state in ["not_fetched", "headers_only"] {
+            found.extend(
+                sql::all(
+                    self.connection,
+                    &format!(
+                        "{SELECT}
+              WHERE messages.mailbox_id = ?1 AND messages.body_state = '{state}'
+                AND {FILTER}"
+                    ),
+                    bind![mailbox_id.get(), window],
+                    |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
+                )
+                .await?,
+            );
+        }
+        found.extend(
+            sql::all(
+                self.connection,
+                &format!(
+                    "{SELECT}
+              WHERE messages.mailbox_id = ?1 AND messages.body_encoding_problems = 1
+                AND messages.body_parsed_with < ?3
+                AND {FILTER}"
+                ),
+                bind![mailbox_id.get(), window, postio_model::mime::PARSER_VERSION],
+                |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
+            )
+            .await?,
+        );
+
+        // A message can be in two arms: still owing its body and carrying the
+        // caveat. Newest first, ties by id as each arm ordered them.
+        found.sort_by(|a, b| {
+            (b.received_at, b.message_id.get()).cmp(&(a.received_at, a.message_id.get()))
+        });
+        found.dedup_by_key(|candidate| candidate.message_id);
+        Ok(found
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect())
     }
 
     /// What `account_id`'s mail costs and how much of it is local.

@@ -699,6 +699,20 @@ CREATE INDEX idx_messages_in_reply_to
 CREATE INDEX idx_messages_list
     ON messages (mailbox_id, received_at DESC, id DESC, deleted_locally, snoozed_until);
 
+-- The backfill's top-up: a folder's newest messages that still owe a body.
+-- Newest first puts the bodies already fetched at the front, so a read that
+-- walks the folder and filters walks more of them on each of the hundreds of
+-- top-ups a backfill makes. `body_state` leads the order so each state seeks
+-- straight to the rows it wants, already in the order they are wanted.
+CREATE INDEX idx_messages_body_state
+    ON messages (mailbox_id, body_state, received_at DESC, id DESC);
+
+-- The same question for a body an older parser got wrong (see
+-- `body_parsed_with`): nearly every message has `body_encoding_problems = 0`,
+-- and the seek lands on the few that do not.
+CREATE INDEX idx_messages_body_problems
+    ON messages (mailbox_id, body_encoding_problems, received_at DESC, id DESC);
+
 CREATE INDEX idx_messages_list_id ON messages (account_id, list_id);
 
 CREATE INDEX idx_messages_mailbox_remote_id ON messages (mailbox_id, remote_id);
@@ -734,6 +748,13 @@ CREATE INDEX idx_operation_queue_drain
     ON operation_queue (account_id, state, next_attempt_at, id);
 
 CREATE INDEX idx_operation_queue_target ON operation_queue (target_kind, target_id);
+
+-- What the undrained queue holds, by state. Every sync batch asks "which
+-- moves, deletes and flag changes has the user made that the server has not
+-- heard about yet" (#368, #317), and the answer is the few rows in
+-- 'pending' or 'in_flight' among a table that also keeps every settled row
+-- for the undo window. Without this the batch read all of them, per batch.
+CREATE INDEX idx_operation_queue_state ON operation_queue (state, op_type);
 
 CREATE INDEX idx_recipients_address ON recipients (address_id, kind);
 

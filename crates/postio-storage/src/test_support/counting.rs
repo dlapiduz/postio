@@ -78,6 +78,40 @@ thread_local! {
     static COMPILES: Cell<usize> = const { Cell::new(0) };
 }
 
+thread_local! {
+    /// Every distinct statement text issued on this thread since [`record`],
+    /// with how many times it ran. `None` while nothing is recording.
+    ///
+    /// Thread-local, like the counters beside it, so a test recording its own
+    /// work is not handed another test's statements when a harness runs them
+    /// as threads of one process. The cost is the counters' own: it sees the
+    /// thread the test runs on, so a recording test uses a current-thread
+    /// runtime.
+    static RECORDED: std::cell::RefCell<Option<std::collections::BTreeMap<String, usize>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Start remembering the text of every statement prepared on this thread,
+/// discarding any earlier recording. The audit's input: [`recorded`] hands
+/// the set back and [`unbounded`] can then ask the planner about each.
+pub fn record() {
+    RECORDED.with(|seen| *seen.borrow_mut() = Some(Default::default()));
+}
+
+/// Stop recording and return each distinct statement with its run count.
+pub fn recorded() -> std::collections::BTreeMap<String, usize> {
+    RECORDED.with(|seen| seen.borrow_mut().take().unwrap_or_default())
+}
+
+/// Note `sql` if recording. Called by [`crate::sql`].
+pub(crate) fn note(sql: &str) {
+    RECORDED.with(|seen| {
+        if let Some(seen) = seen.borrow_mut().as_mut() {
+            *seen.entry(sql.to_owned()).or_default() += 1;
+        }
+    });
+}
+
 /// Count one statement. Called by [`crate::sql`].
 pub(crate) fn statement() {
     STATEMENTS.with(|seen| seen.set(seen.get() + 1));
@@ -188,6 +222,91 @@ pub async fn scans(connection: &crate::Connection, sql: &str) -> Vec<String> {
         .into_iter()
         .filter(|step| step.starts_with("SCAN"))
         .collect()
+}
+
+/// The tables whose size follows the mailbox, or the user's history: a read
+/// that touches all of one is a cost that grows with the store, and on an
+/// encrypted store each page of it is decrypted to be read.
+pub const GROWING_TABLES: &[&str] = &[
+    "messages",
+    "recipients",
+    "attachments",
+    "search_documents",
+    "message_search_bodies",
+    "message_headers",
+    "threads",
+    "thread_links",
+    "message_labels",
+    "operation_queue",
+];
+
+/// The plan of `sql`, one line per step, with every placeholder bound to `1`.
+///
+/// The planner does not care what the values are, only that there are enough
+/// of them; see `test_support::plan`, which this is the non-panicking form of.
+pub async fn plan_steps(connection: &crate::Connection, sql: &str) -> crate::Result<Vec<String>> {
+    let mut statement =
+        crate::sql::statement(connection, &format!("EXPLAIN QUERY PLAN {sql}")).await?;
+    let (mut highest, mut bare) = (0, 0);
+    let mut rest = sql;
+    while let Some(at) = rest.find('?') {
+        rest = &rest[at + 1..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() {
+            bare += 1;
+        }
+        highest = highest.max(digits.parse().unwrap_or(0));
+        rest = &rest[digits.len()..];
+    }
+    crate::sql::mapped(&mut statement, vec![1i64; highest.max(bare)], |row| {
+        crate::sql::RowExt::col::<String>(row, 3)
+    })
+    .await
+}
+
+/// The steps of `sql`'s plan that read all of a table in `tables`, or all of
+/// one scope of it.
+///
+/// Two shapes, because the second is the first one index level down:
+/// - `SCAN t`: every row of the table.
+/// - `SEARCH t USING INDEX i (mailbox_id=?)`, or a seek on `account_id` or
+///   `target_kind` alone: the index reaches the right folder, account or kind
+///   and then every row in it is read and filtered, one table lookup each.
+///   That is `needing_backfill_from` walking every body it had already
+///   fetched, on each of the hundreds of top-ups a backfill makes.
+///
+/// A `COVERING` index step is not a walk of the table -- it reads the index
+/// and nothing else -- and is not returned. An empty answer is the property:
+/// "this statement's cost does not follow the size of the store".
+pub async fn unbounded(connection: &crate::Connection, sql: &str, tables: &[&str]) -> Vec<String> {
+    let steps = match plan_steps(connection, sql).await {
+        Ok(steps) => steps,
+        Err(error) => panic!("cannot plan {sql}: {error}"),
+    };
+    steps
+        .into_iter()
+        .filter(|step| {
+            let on_a_growing_table = step
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|word| tables.contains(&word));
+            on_a_growing_table && (step.starts_with("SCAN") || walks_a_scope(step))
+        })
+        .collect()
+}
+
+/// A seek whose only key is a scope. See [`unbounded`].
+fn walks_a_scope(step: &str) -> bool {
+    let Some(open) = step.rfind('(') else {
+        return false;
+    };
+    let keys: Vec<&str> = step[open + 1..]
+        .trim_end_matches(')')
+        .split(" AND ")
+        .collect();
+    step.starts_with("SEARCH")
+        && !step.contains("COVERING INDEX")
+        && keys.len() == 1
+        && matches!(keys[0], "mailbox_id=?" | "account_id=?" | "target_kind=?")
 }
 
 /// How many store connections this process has opened so far.
