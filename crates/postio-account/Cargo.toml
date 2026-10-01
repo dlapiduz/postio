@@ -74,7 +74,7 @@ io-imap = { version = "0.7.1", default-features = false, features = ["client"], 
 # `io-pim-discovery`; naming it here adds no new version.
 domain = { version = "0.12", default-features = false, features = ["alloc", "std", "unstable-new"] }
 io-oauth = { version = "0.3", default-features = false, features = ["client"] }
-io-pim-discovery = { version = "0.7", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
+io-pim-discovery = { version = "0.8", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
 io-sasl = { workspace = true, optional = true }
 log = { version = "0.4", features = ["std"], optional = true }
 oo7 = "0.6.0-alpha"
