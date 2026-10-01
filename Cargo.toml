@@ -86,7 +86,7 @@ edition = "2024"
 #
 # When Postio is published, this stops being free: supporting an older compiler
 # then means a CI job that proves it, not a lower number here.
-rust-version = "1.98"
+rust-version = "1.99"
 license = "MIT"
 repository = "https://github.com/dlapiduz/postio"
 # Postio is an application, and these crates are its internals. None of them is
