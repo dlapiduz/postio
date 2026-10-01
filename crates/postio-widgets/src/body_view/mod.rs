@@ -859,7 +859,60 @@ impl BodyView {
                 view.report_current_message();
             }
         });
+        self.scroll_sideways();
         self.queue_resize();
+    }
+
+    /// Take a sideways scroll -- a touchpad's, or Shift with the wheel --
+    /// for a page wider than the column: one on paper that fitting would
+    /// have zoomed under `postio_render::render::PAPER_FIT_FLOOR`, which is
+    /// drawn at the floor and read across instead (T207). The column only
+    /// scrolls down, so the view moves its own sideways adjustment; a scroll
+    /// with nothing sideways in it is the column's.
+    fn scroll_sideways(&self) {
+        let scroll = gtk::EventControllerScroll::new(
+            gtk::EventControllerScrollFlags::BOTH_AXES,
+        );
+        scroll.connect_scroll({
+            let view = self.downgrade();
+            move |controller, dx, dy| {
+                let Some(view) = view.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                let state = controller.current_event_state();
+                if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                    return glib::Propagation::Proceed;
+                }
+                let shifted = state.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                let across = if dx != 0.0 {
+                    dx
+                } else if shifted {
+                    dy
+                } else {
+                    return glib::Propagation::Proceed;
+                };
+                let Some(adjustment) = view.imp().hadjustment.borrow().clone() else {
+                    return glib::Propagation::Proceed;
+                };
+                if adjustment.upper() - adjustment.page_size() <= 0.5 {
+                    return glib::Propagation::Proceed;
+                }
+                let step = match controller.unit() {
+                    gtk::gdk::ScrollUnit::Wheel => adjustment.step_increment(),
+                    _ => 1.0,
+                };
+                let most = adjustment.upper() - adjustment.page_size();
+                adjustment.set_value((adjustment.value() + across * step).clamp(0.0, most));
+                view.queue_draw();
+                // A diagonal touchpad scroll still moves the column down.
+                if dy != 0.0 && !shifted {
+                    glib::Propagation::Proceed
+                } else {
+                    glib::Propagation::Stop
+                }
+            }
+        });
+        self.add_controller(scroll);
     }
 
     /// Read the document's ground from `probe`: a widget styled so its CSS
@@ -1179,18 +1232,20 @@ impl BodyView {
 
     fn configure_adjustments(&self) {
         let imp = self.imp();
-        if self.flows() {
-            return;
-        }
-        let height = f64::from(self.height());
-        let upper = imp
-            .document
-            .borrow()
-            .as_ref()
-            .map_or(height, |doc| doc.size.height.max(height));
-        if let Some(adjustment) = imp.vadjustment.borrow().as_ref() {
-            let value = adjustment.value().min((upper - height).max(0.0));
-            adjustment.configure(value, 0.0, upper, 40.0, height * 0.9, height);
+        // A flowing view's height is its document's and the column scrolls
+        // it; across, a page wider than the column is still the view's own
+        // to scroll (`scroll_sideways`).
+        if !self.flows() {
+            let height = f64::from(self.height());
+            let upper = imp
+                .document
+                .borrow()
+                .as_ref()
+                .map_or(height, |doc| doc.size.height.max(height));
+            if let Some(adjustment) = imp.vadjustment.borrow().as_ref() {
+                let value = adjustment.value().min((upper - height).max(0.0));
+                adjustment.configure(value, 0.0, upper, 40.0, height * 0.9, height);
+            }
         }
         let width = f64::from(self.width());
         let wide = imp

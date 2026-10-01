@@ -332,6 +332,10 @@ const CASES: &[(&str, fn())] = &[
         treatments::switching_a_marked_message_keeps_the_reading_position as fn(),
     ),
     (
+        "open_layout::a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor",
+        open_layout::a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor as fn(),
+    ),
+    (
         "open_layout::the_dialogs_chrome_is_set_in_the_system_faces",
         open_layout::the_dialogs_chrome_is_set_in_the_system_faces as fn(),
     ),

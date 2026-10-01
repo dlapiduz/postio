@@ -723,6 +723,95 @@ pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
 
 
 
+/// T207: a page on paper takes the paper column, `min(640, dialog - 48)`,
+/// and a layout wider than that is zoomed to fit it -- a 640px newsletter
+/// in a 607px column at 0.95, with nothing to scroll sideways -- down to
+/// 0.85; a layout that would need less is drawn at 0.85 and scrolls
+/// sideways, which a sideways scroll on the body does.
+pub fn a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let newsletter = postio_model::mime::parse(
+            postio_model::test_corpus::load("html-newsletter-own-page").bytes(),
+        )
+        .body
+        .html
+        .expect("an HTML part");
+        assert!(newsletter.contains("width=\"640\""), "the fixture's page is 640 wide");
+        let floor = postio_render::render::PAPER_FIT_FLOOR;
+        for (html, wide) in [
+            (newsletter.clone(), 640.0),
+            (newsletter.replace("width=\"640\"", "width=\"900\""), 900.0),
+        ] {
+            let fixture = Fixture::empty().await;
+            let (message, _) = fixture
+                .file(("Field Notes", "news@example.com"), "Issue 48", "x", 10)
+                .await;
+            fixture.write_html_body(message, &html).await;
+            let window = opened_at(&fixture, 1, NARROW).await;
+            let reading = window.reading().expect("open");
+            let reader = reading.reader();
+            assert!(
+                crate::settle_until(async || reader.treatment()
+                    == postio_body::treatment::Treatment::Paper
+                    && reader.view().tiles_settled())
+                .await,
+                "the newsletter never went on paper"
+            );
+            let dialog = focus_dialog::dialog_width(window.width());
+            let column =
+                focus_dialog::column_width(dialog, postio_body::treatment::Treatment::Paper);
+            assert!(
+                crate::settle_until(async || reader.view().width() == column).await,
+                "a {wide}px page: the body is {}px, not the {column}px paper column",
+                reader.view().width()
+            );
+            let fit = reader.paper_fit();
+            let want = (f64::from(column) / wide).clamp(floor, 1.0);
+            assert!(
+                (fit - want).abs() < 0.01,
+                "a {wide}px page in a {column}px column is zoomed by {fit}, not {want}"
+            );
+            let view = reader.view().clone();
+            let document = view.document().expect("drawn");
+            let sideways = view.hadjustment().expect("the view scrolls sideways");
+            if want > floor {
+                assert!(
+                    document.size.width <= f64::from(column) + 0.5,
+                    "zoomed to fit, the page is still {}px",
+                    document.size.width
+                );
+            } else {
+                assert!(
+                    sideways.upper() - sideways.page_size() > 1.0,
+                    "at the floor the {}px page does not scroll sideways in {column}px",
+                    document.size.width
+                );
+                let scroll = view
+                    .observe_controllers()
+                    .into_iter()
+                    .filter_map(|controller| {
+                        controller.ok()?.downcast::<gtk::EventControllerScroll>().ok()
+                    })
+                    .find(|scroll| {
+                        scroll
+                            .flags()
+                            .contains(gtk::EventControllerScrollFlags::HORIZONTAL)
+                    })
+                    .expect("the body takes a sideways scroll");
+                scroll.emit_by_name::<bool>("scroll", &[&3.0f64, &0.0f64]);
+                assert!(
+                    sideways.value() > 0.0,
+                    "a sideways scroll did not move the page"
+                );
+            }
+            window.close();
+            crate::settle();
+        }
+    });
+}
 
 /// Spec C25: the dialog's chrome keeps the system's faces -- Adwaita Sans,
 /// and Adwaita Mono for keys, dates and addresses -- at the handoff's sizes,
