@@ -1241,7 +1241,7 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
 /// A naive `split(';')` is wrong on the one value that matters most here:
 /// `url(data:image/png;base64,...)` carries a semicolon of its own, and
 /// cutting there turns an inline image into two fragments of nonsense.
-fn split_declarations(value: &str) -> Vec<&str> {
+pub(crate) fn split_declarations(value: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;

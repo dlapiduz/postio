@@ -1,0 +1,40 @@
+Message-ID: <CAexample0001harbor@mail.example.com>
+Date: Sat, 26 Sep 2026 15:22:00 +0000
+From: Lena Park <lena@example.com>
+To: Ben Adeyemi <ben@example.org>
+Cc: Grace Okafor <grace@example.net>
+Subject: Re: Harbor API draft v3
+MIME-Version: 1.0
+In-Reply-To: <CAexample0000harbor@mail.example.org>
+References: <CAexample9999harbor@mail.example.com> <CAexample0000harbor@mail.example.org>
+Content-Type: multipart/alternative; boundary="000000000000harborv3"
+
+--000000000000harborv3
+Content-Type: text/plain; charset="UTF-8"
+
+Uploaded v3 of the Harbor API draft with the pagination changes.
+
+   - Cursor pagination on every list endpoint.
+   - Rate-limit headers are documented for every response.
+
+Please leave comments by Wednesday.
+
+Thanks,
+Lena
+
+On Mon, 21 Sep 2026 at 10:04, Ben Adeyemi <ben@example.org> wrote:
+
+> Looks good. Can the exports endpoint move under accounts?
+>
+> On Fri, 18 Sep 2026 at 16:40, Lena Park <lena@example.com> wrote:
+>
+>> Here is v2, with the auth section rewritten.
+>>
+>
+
+--000000000000harborv3
+Content-Type: text/html; charset="UTF-8"
+
+<div dir="ltr"><div>Uploaded v3 of the Harbor API draft with the pagination changes.</div><div><ul><li>Cursor pagination on every list endpoint.</li><li>Rate-limit headers are documented for every response.</li></ul><div><b>Please leave comments by Wednesday.</b></div><div><br></div><div>Thanks,</div><div>Lena</div></div><div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Mon, 21 Sep 2026 at 10:04, Ben Adeyemi &lt;<a href="mailto:ben@example.org">ben@example.org</a>&gt; wrote:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex"><div dir="ltr">Looks good. Can the exports endpoint move under accounts?</div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Fri, 18 Sep 2026 at 16:40, Lena Park &lt;<a href="mailto:lena@example.com">lena@example.com</a>&gt; wrote:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex"><div dir="ltr">Here is v2, with the auth section rewritten.</div></blockquote></div></blockquote></div>
+
+--000000000000harborv3--

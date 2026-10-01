@@ -24,3 +24,4 @@ mod outgoing;
 mod own_text;
 mod reader_view;
 mod replying;
+mod treatment;

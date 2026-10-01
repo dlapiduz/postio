@@ -376,6 +376,8 @@ corpus! {
         "A message whose inline styling tries to leave its own block: position fixed and absolute, a viewport-sized overlay, z-index, a transform, and viewport units \u{2014} beside ordinary colour and a layout table that must survive.",
     "html-every-url-vector": [Html, RemoteContent, Hostile] =>
         "Every way HTML and CSS name a remote resource: @import, @font-face, backgrounds, list markers, cursors, border images, content, a conditional rule, a background attribute, a pixel.",
+    "html-gmail-reply-chain": [Html, MultipartAlternative, PlainText, Threading] =>
+        "A webmail reply chain: two nested quoted blockquotes, an attribution line each, no colours or page of its own.",
     "html-illegible-sender-dark": [Html, ThemeContrast] =>
         "The sender's own dark-mode styling sets #333 text on #222: honoured, but not trusted.",
     "html-legacy-font-center": [Html] =>
@@ -386,8 +388,12 @@ corpus! {
         "A cid: PNG cut off halfway: the decoder must fail into a sized placeholder.",
     "html-newsletter": [Html, MultipartAlternative, QuotedPrintable, MailingList, Designed] =>
         "A real-shaped newsletter: nested layout tables, inline CSS, a media query, List-Unsubscribe and One-Click.",
+    "html-newsletter-own-page": [Html, MailingList, Designed, ThemeContrast] =>
+        "A newsletter that paints its own page (a body background) in a 640px layout table: rendered as sent, on paper.",
     "html-oversized-image": [Html, MultipartRelated, InlineImage, Base64, Hostile] =>
         "A PNG whose header declares 20,000 x 20,000 pixels in under a kilobyte: decode limits, not trust.",
+    "html-receipt-fixed-width": [Html, RemoteContent, Designed] =>
+        "A receipt with no background anywhere but a 560px layout table and a remote logo: paper by its layout alone.",
     "html-responsive-media": [Html, Designed] =>
         "Two columns that stack under @media (max-width: 600px): responsive rules judged against the pane's width.",
     "html-rtl-mixed": [Html] =>
@@ -406,6 +412,8 @@ corpus! {
         "About 40,000 pixels of lines with a unique last one: no height at which content may be cut off.",
     "html-white-page-reply": [Html, ThemeContrast, Threading] =>
         "A desktop-client reply that stamps a white page and black text on everything: correspondence, not design.",
+    "html-work-black-text": [Html, ThemeContrast] =>
+        "Office-client work mail: black text set on every span, Calibri, a bordered table with tinted headers, one red sentence.",
     "inline-disposed-body": [MultipartAlternative, PlainText, Html, QuotedPrintable] =>
         "Both alternatives carry Content-Disposition: inline \u{2014} the part that *is* the message, marked the way an attachment is.",
     "inline-image-cid": [MultipartRelated, InlineImage, Html, Base64, Attachment] =>
