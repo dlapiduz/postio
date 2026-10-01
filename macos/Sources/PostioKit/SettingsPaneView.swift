@@ -195,6 +195,10 @@ public struct SettingsPaneView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            // The whole row is the target. A plain button hit-tests only
+            // what it draws, and an unselected row draws a clear background
+            // -- so a click beside the label, on the row, did nothing.
+            .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
@@ -436,8 +440,10 @@ public struct SettingsPaneView: View {
                         )
                     }
                 }
-                .contentShape(Rectangle())
                 .padding(.vertical, 10)
+                // After the padding, so the row's full height takes the
+                // click -- not just its text, as the section list above.
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(open ? [.isSelected] : [])
