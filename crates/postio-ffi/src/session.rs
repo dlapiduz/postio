@@ -1169,24 +1169,6 @@ impl Session {
         blocking(self.connect_account(account))
     }
 
-    /// Add an account that signs in with a password. `None` when it was
-    /// added, a sentence when it was not.
-    #[uniffi::method(name = "addImapAccount")]
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_imap_account_ffi(
-        &self,
-        address: String,
-        password: String,
-        imap_host: String,
-        imap_port: u16,
-        smtp_host: String,
-        smtp_port: u16,
-    ) -> Option<String> {
-        blocking(self.add_imap_account(
-            address, password, imap_host, imap_port, smtp_host, smtp_port,
-        ))
-    }
-
     /// Add an account that is a directory on this machine. `None` when it
     /// was added, a sentence when it was not.
     #[uniffi::method(name = "addLocalAccount")]
@@ -1747,9 +1729,8 @@ impl Session {
     /// For the two states that leave an account unable to sign in without
     /// anything being wrong with its row — a provider that rotated its app
     /// password, and a row whose keyring entry never arrived or was removed
-    /// (the pane's *Partial* state). Neither is repaired by adding the
-    /// account again: `addImapAccount` leaves an address the store already
-    /// knows exactly as it found it.
+    /// (the pane's *Partial* state). This writes the keyring and nothing
+    /// else: no server is asked, and the row is left as it is.
     ///
     /// Blocks on the keyring; run it off the main actor.
     #[uniffi::method(name = "repairCredential")]
@@ -1918,11 +1899,9 @@ impl Session {
     ///
     /// `None` when the credential was stored, a sentence when it was not.
     ///
-    /// The route `AccountFfi::repair` names as `Password`, and the only way
-    /// a rotated app password reaches the keyring: `add_imap_account` writes
-    /// nothing over an address the store already knows, deliberately, and
-    /// `postio_session::provision::repair`'s own docs argue why that has to
-    /// stay true of the headless helper it is shared with.
+    /// The route `AccountFfi::repair` names as `Password`: the keyring alone,
+    /// for an account whose row is right. `postio_session::provision::repair`'s
+    /// own docs argue why that is shared with the headless helper.
     ///
     /// The password goes to the OS keyring and nowhere else — never
     /// `config.toml`, never a log (ADR 0014). It is not echoed back in the
@@ -2883,85 +2862,6 @@ impl Session {
         )
         .await
         .err()
-    }
-
-    /// Add an account. See [`add_imap_account_ffi`](Self::add_imap_account_ffi).
-    ///
-    /// The password goes to the OS keyring under the address and nowhere
-    /// else — never `config.toml`, never a log (ADR 0014). The row is written
-    /// only after the keyring has taken it, so a locked keyring leaves no
-    /// half-made account behind; `postio_session::provision` is where that
-    /// order is argued.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn add_imap_account(
-        &self,
-        address: String,
-        password: String,
-        imap_host: String,
-        imap_port: u16,
-        smtp_host: String,
-        smtp_port: u16,
-    ) -> Option<String> {
-        if !address.contains('@') {
-            return Some(format!("{address} does not look like an email address."));
-        }
-        // Refused rather than written: an account naming no server fails
-        // later, at sync, as a connection error nobody can act on.
-        if imap_host.trim().is_empty() || smtp_host.trim().is_empty() {
-            return Some(NO_SERVERS.to_owned());
-        }
-        let Some((database, _)) = self.store_and_blobs() else {
-            return Some("There is no store open to add an account to.".to_owned());
-        };
-
-        let server = |host: String, port: u16| postio_account::discovery::ServerSettings {
-            host,
-            port,
-            encryption: postio_account::discovery::Encryption::Tls,
-        };
-        let settings = postio_account::discovery::AccountSettings {
-            email: address.clone(),
-            imap: server(imap_host.trim().to_owned(), imap_port),
-            smtp: server(smtp_host.trim().to_owned(), smtp_port),
-            // The login is the address unless somebody says otherwise, and
-            // the two differ more often than they look like they should —
-            // every iCloud custom domain, for one. The sheet does not ask
-            // yet; when it does, this is the field.
-            login: address.clone(),
-            // Typed by the person adding the account, which no probe can
-            // claim: `Guess` is the honest source for settings nothing
-            // discovered, and it is what stops this presenting itself as a
-            // verified configuration.
-            source: postio_account::discovery::SettingsSource::Guess,
-            requires_app_password: false,
-            note: None,
-            password_help_url: None,
-            display_name: None,
-            oauth: None,
-            jmap: None,
-            backends: vec!["imap".to_owned()],
-        };
-        let account = postio_session::provision::account_from(&settings);
-
-        let Some(secrets) = self.secret_store() else {
-            return Some("There is no keyring to store the password in.".to_owned());
-        };
-        let password = postio_account::secret::Password::new(password);
-        // Awaited rather than driven on a runtime of its own. This built one
-        // per call, which is the fourth copy `blocking` was written to end:
-        // borrowing the session's engine runtime deadlocked (`Handle::block_on`
-        // needs that runtime driven, and under the full suite it is busy
-        // elsewhere), and building a private one panics outright the moment
-        // the caller is already on a runtime — which every test in this
-        // suite now is. `blocking::now` at the FFI edge is what knows the
-        // difference.
-        let outcome =
-            postio_session::provision::provision(&database, secrets.as_ref(), account, password)
-                .await;
-        match outcome {
-            Ok(_) => None,
-            Err(error) => Some(error.to_string()),
-        }
     }
 
     /// Add a local account. See

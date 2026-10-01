@@ -328,14 +328,14 @@ public struct AddAccountSheet: View {
                 if signsInHere {
                     Task { if await model.signIn(through: session) { done(true) } }
                 } else if model.step == .store {
-                    if model.finish(through: session) { done(true) }
+                    Task { if await model.finish(through: session) { done(true) } }
                 } else {
                     model.next()
                 }
             }
             .keyboardShortcut(.defaultAction)
             .buttonStyle(.borderedProminent)
-            .disabled(!model.canContinue || model.signingIn)
+            .disabled(!model.canContinue || model.signingIn || model.finishing)
         }
     }
 
@@ -347,6 +347,7 @@ public struct AddAccountSheet: View {
 
     private var continueTitle: String {
         if signsInHere { return model.signingIn ? "Signing in…" : "Sign in" }
+        if model.finishing { return "Signing in…" }
         return model.step == .store ? "Start sync" : "Continue"
     }
 

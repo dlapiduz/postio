@@ -143,7 +143,7 @@ import Testing
         #expect(model.estimate.contains("month"))
     }
 
-    @Test func anOauthRouteIsFinishedBySigningIn_notByStartSync() {
+    @Test func anOauthRouteIsFinishedBySigningIn_notByStartSync() async {
         // `finish` is the password path. An OAuth route has to *wait* on
         // somebody in another application, so pressing on without signing in
         // says where the sign-in is rather than closing over an account that
@@ -155,7 +155,8 @@ import Testing
         model.clientId = "the-users-own-client"
         model.next()
 
-        #expect(model.finish(through: nil) == false)
+        let finished = await model.finish(through: nil)
+        #expect(finished == false)
         #expect(model.problem?.contains("browser") == true)
     }
 

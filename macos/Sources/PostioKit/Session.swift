@@ -640,29 +640,6 @@ public final class PostioSession {
         inner.revokeRemoteImages(subject: subject)
     }
 
-    /// Add an account that signs in with a password.
-    ///
-    /// `nil` when it was added; a sentence when it was not. The password goes
-    /// to the OS keyring under the address and nowhere else — never
-    /// `config.toml`, never a log (ADR 0014).
-    public func addImapAccount(
-        address: String,
-        password: String,
-        imapHost: String,
-        imapPort: UInt16,
-        smtpHost: String,
-        smtpPort: UInt16
-    ) -> String? {
-        inner.addImapAccount(
-            address: address,
-            password: password,
-            imapHost: imapHost,
-            imapPort: imapPort,
-            smtpHost: smtpHost,
-            smtpPort: smtpPort
-        )
-    }
-
     /// What looking `address` up finds, for the first-run card (canvas 09).
     ///
     /// The desktop's lookup, with every connection it makes in the egress

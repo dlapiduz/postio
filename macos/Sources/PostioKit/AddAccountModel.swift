@@ -173,19 +173,32 @@ public final class AddAccountModel: Identifiable {
         }
     }
 
-    /// Finish: write the account, and answer whether the sheet may close.
-    public func finish(through session: PostioSession?) -> Bool {
+    /// Whether `finish` is out -- signing in can take as long as a server
+    /// takes to answer.
+    public private(set) var finishing = false
+
+    /// Finish: add the account, and answer whether the sheet may close.
+    ///
+    /// The password route signs in first and writes only if that works --
+    /// the first-run wizard's `connectAccount`. It used to write whatever
+    /// was typed, and a wrong password became an account that failed at
+    /// every sync from then on.
+    public func finish(through session: PostioSession?) async -> Bool {
         switch route {
         case .imap:
-            guard let session else { return false }
-            if let complaint = session.addImapAccount(
+            guard let session, !finishing else { return false }
+            let account = NewAccountFfi(
                 address: address,
+                name: "",
                 password: password,
-                imapHost: imapHost,
-                imapPort: UInt16(imapPort),
-                smtpHost: smtpHost,
-                smtpPort: UInt16(smtpPort)
-            ) {
+                login: address,
+                imap: ServerFfi(host: imapHost, port: UInt16(clamping: imapPort), security: .tls),
+                smtp: ServerFfi(host: smtpHost, port: UInt16(clamping: smtpPort), security: .tls)
+            )
+            finishing = true
+            let complaint = await Task.detached { session.connectAccount(account) }.value
+            finishing = false
+            if let complaint {
                 problem = complaint
                 return false
             }
