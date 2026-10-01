@@ -158,7 +158,7 @@ impl OpenMessage {
         // The header: Close, the title and position, and the steps.
         // An X icon at the right (T189), apart from the verbs; Escape
         // still closes, so it carries no keycap.
-        let close = postio_widgets::widgets::icon_button("window-close-symbolic", "Close");
+        let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-open-close");
         close.set_valign(gtk::Align::Center);
 

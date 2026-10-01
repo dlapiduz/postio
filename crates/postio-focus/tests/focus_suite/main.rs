@@ -28,6 +28,7 @@ mod bar;
 mod buttons;
 mod capture;
 mod chrome;
+mod close_buttons;
 mod colours;
 mod compose;
 mod corrections;
@@ -55,6 +56,7 @@ mod open_message;
 mod open_reading;
 mod pickers;
 mod places;
+mod pointer_pairs;
 mod registry_parity;
 mod reload;
 mod remind_on_send;
@@ -378,6 +380,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_reading::close_is_as_compact_as_the_toolbar_s_buttons",
         open_reading::close_is_as_compact_as_the_toolbar_s_buttons as fn(),
+    ),
+    (
+        "pointer_pairs::a_double_click_on_a_row_opens_its_message_as_enter_does",
+        pointer_pairs::a_double_click_on_a_row_opens_its_message_as_enter_does as fn(),
+    ),
+    (
+        "pointer_pairs::a_press_in_a_rows_gutter_toggles_its_selection",
+        pointer_pairs::a_press_in_a_rows_gutter_toggles_its_selection as fn(),
+    ),
+    (
+        "pointer_pairs::escape_closes_the_message_and_the_key_map",
+        pointer_pairs::escape_closes_the_message_and_the_key_map as fn(),
+    ),
+    (
+        "close_buttons::every_closable_surface_has_the_same_x_at_the_right",
+        close_buttons::every_closable_surface_has_the_same_x_at_the_right as fn(),
+    ),
+    (
+        "close_buttons::the_digest_has_the_same_x_at_the_right",
+        close_buttons::the_digest_has_the_same_x_at_the_right as fn(),
     ),
     (
         "open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left",

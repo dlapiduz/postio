@@ -119,8 +119,7 @@ pub struct Frame {
 impl Frame {
     /// The frame around `composer`, its keys read from `keymap`.
     pub fn new(composer: &Composer, keymap: &Keymap) -> Rc<Self> {
-        let close = gtk::Button::new();
-        postio_widgets::widgets::button::style(&close, Kind::Secondary, Size::Small);
+        let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-compose-close");
         let title = gtk::Label::new(Some(title(DraftKind::New)));
         title.add_css_class("focus-compose-title");
@@ -177,7 +176,8 @@ impl Frame {
         }
         let header = gtk::CenterBox::new();
         header.add_css_class("focus-compose-header");
-        header.set_start_widget(Some(&close));
+        // Close is the X at the right end, after the verbs (T192).
+        trailing.append(&close);
         header.set_center_widget(Some(&heading));
         header.set_end_widget(Some(&trailing));
 
@@ -317,10 +317,6 @@ impl Frame {
     /// Redraw the keycaps from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         let key = |command| hints::key(keymap, command);
-        self.close.set_child(Some(&keyhint::labelled(
-            "Close",
-            key(CommandId::Back).as_deref(),
-        )));
         self.send.set_child(Some(&keyhint::labelled(
             "Send",
             key(CommandId::Send).as_deref(),

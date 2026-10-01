@@ -6,11 +6,7 @@
 //! interpreted: invalid UTF-8 becomes the replacement character.
 
 use adw::prelude::*;
-use postio_core::{CommandId, Keymap};
-use postio_ui::hints;
-use postio_widgets::widgets::keyhint;
-use postio_widgets::widgets::space::S2;
-use postio_widgets::widgets::{Kind, Size};
+use postio_core::Keymap;
 
 /// The dialog's widget name, so it can be told from another dialog.
 pub const DIALOG_NAME: &str = "focus-raw-source";
@@ -19,22 +15,17 @@ pub const DIALOG_NAME: &str = "focus-raw-source";
 const WIDTH: i32 = 860;
 const HEIGHT: i32 = 680;
 
-/// A dialog showing `raw`, with Close and its key from `keymap`.
-pub fn dialog(raw: &[u8], keymap: &Keymap) -> adw::Dialog {
-    let close = gtk::Button::new();
-    postio_widgets::widgets::button::style(&close, Kind::Secondary, Size::Regular);
-    let close_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
-    close_row.append(&gtk::Label::new(Some("Close")));
-    if let Some(key) = hints::key(keymap, CommandId::Back) {
-        close_row.append(&keyhint::cap(&key));
-    }
-    close.set_child(Some(&close_row));
+/// A dialog showing `raw`, with the X at the right (T192; Escape also
+/// closes, so no keycap and `keymap` goes unread).
+pub fn dialog(raw: &[u8], _keymap: &Keymap) -> adw::Dialog {
+    let close = postio_widgets::widgets::close_button();
+    close.set_valign(gtk::Align::Center);
     let title = gtk::Label::new(Some("Raw source"));
     title.add_css_class("focus-open-title");
     let header = gtk::CenterBox::new();
     header.add_css_class("focus-open-header");
-    header.set_start_widget(Some(&close));
     header.set_center_widget(Some(&title));
+    header.set_end_widget(Some(&close));
 
     let buffer = gtk::TextBuffer::new(None);
     buffer.set_text(&String::from_utf8_lossy(raw));

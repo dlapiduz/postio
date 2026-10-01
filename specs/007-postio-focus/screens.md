@@ -40,6 +40,34 @@ the date.
 | 24 Digest this sender | 2026-09-28 | Known: "Match a list or a search instead…" was absent when first compared; T155 built it, and "Digest mail like this" appears only with a model configured. Found: (a) the demo's Oak Hill sender has one message in 90 days, so the preview lists one and says no "and N more"; (b) the key caps are the keymap's spellings, `Escape` and `Return` (C22); (c) Create is the shared primary button, bordered, where the reference's is filled black; (d) the cadence and day are GTK drop-downs; (e) the list behind keeps its cursor on the row whose sender is digested, with no selection: a selection would make the rule for every selected sender ("Digest these senders"), where the reference names one sender over three selected rows | (a) the demo store; (b) C22; (c) the shared button kinds (ADR 0043); (d) the toolkit's menus; (e) US10: "Digest these…" is one rule for the selection's senders |
 | 25 Obsidian capture | 2026-09-28 | Rendered over a throwaway vault of three projects, on the demo's to-do "Please leave comments by Wednesday" (`shot … 25`, the project list opened as drawn). Known: the preview puts the link before the date, `… [✉](postio://message/84) 📅 2026-10-02`, where the reference ends the line in the link (C21); keys are spelled as the keymap spells them, `Escape`, `ctrl+Return`, `ctrl+p`, `alt+s` (C22). Found: (a) Task and Note are a linked pair of toggle buttons, the chosen one grey, not a white segment on a grey track; (b) Add task is the shared primary button, raised and bold, not a dark fill; (c) the text is a plain entry, with no accent-ringed card round the Task field; (d) "Due" has no "from “by Wednesday”"; (e) the quick picks are Today and the coming Monday, Wednesday and Friday in date order, then None -- on the demo's Monday, "Today, Wed, Fri, Mon, None" -- the chosen day ringed as drawn; (f) the suggestion reads "the subject names Harbor", not "Lena Park is linked from 23 notes in Harbor"; (g) the project line gives the note, with no "› ## Inbox" heading; (h) the Inbox row reads "Tasks.md (no project)", projects are listed by name, and "N open" counts only the tasks Postio captured; (i) the preview wraps at the dialog's width, and the footnote is under the fold at this height; (j) the footnote says where the task goes, not "The row will then show “Task in Harbor · due Wed”"; (k) the dialog is 660 px wide and dims the list, whose to-do rows show Task `t` because a vault is configured | C21, C22; (a) and (b) the shared toggle and button kinds, and FR-091 reserves the accent and a dark fill for nothing; (c) the entry is GTK's own; (d) a marker keeps the day it read, not the words it read it from (data-model.md, markers); (e) quick picks are relative to the day the sheet opens, and the mail's own day is always among them; (f) `postio-vault` suggests from the subject's words alone (`Reason::NamedInSubject`), with no link graph read; (g) FR-180: a capture is appended to the end of the note, never under a heading; (h) `Vault::tasks` reads back only lines with a `postio://` link; (i) the dialog scrolls rather than grow past the window; (j) the row's "Task in … · due …" chip is not built yet (FR-181's read-back is wired, the row does not draw it); (k) FR-092, one dialog pattern for every window over the app, and C9 |
 
+## Interaction rules (T192-T194)
+
+**One close rule (T192).** Every surface that closes (the window's top bar,
+the open message, the composer, the digest, the raw source, the key map) wears
+the one X icon button `postio_widgets::widgets::close_button()` builds, at the
+right end of its header, after that header's verbs, with no keycap (Escape
+closes and the key map says so). A surface with a step back (the digest's
+email page) has that at the left, worded "Summary". No surface draws its own
+close; `close_buttons::every_closable_surface_has_the_same_x_at_the_right`
+walks them and asserts the widget and that nothing in the header is right of it.
+
+**Mouse and keyboard pairs (T194).** Each row is an action a person expects
+from either device; "n/a" means the surface has no such thing.
+
+| Surface | Keyboard | Mouse | State |
+|---|---|---|---|
+| List row | `j`/`k` move the cursor | click moves the cursor | present (GTK's single selection) |
+| List row | Enter opens | double-click opens, through the same `OpenMessage` command | fixed (T194) |
+| List row | `x` toggles selection | press in the row's gutter toggles it | fixed (T194) |
+| List row | `Shift`+`j`/`k` extends | Ctrl-click toggles, Shift-click ranges | gap: new task T198 |
+| List row | (none) | right-click menu of the row's verbs | gap: new task T199 |
+| List | `g g`, `G`, PageUp/PageDown | scroll wheel and scrollbar scroll | present (GTK's scrolled window) |
+| Open message | Escape closes | the X closes | present |
+| Open message | `j`/`k` step | the up/down buttons step | present (T195 owns the key) |
+| Composer | Escape asks to close | the X closes | present |
+| Key map, raw source, digest | Escape closes | the X closes | present |
+| Pickers, command bar | Escape closes | a press outside closes | present |
+
 ## Rendering them
 
 `cargo run -p postio-focus --example shot -- <png> <screen> [light|dark] [WxH]`

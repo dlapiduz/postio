@@ -15,7 +15,7 @@ use postio_core::{CommandId, Keymap};
 use postio_ui::hints;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
-use postio_widgets::widgets::{Kind, Size, icon_button};
+use postio_widgets::widgets::{Kind, Size, close_button, icon_button};
 
 /// What a control asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
@@ -141,7 +141,7 @@ impl Chrome {
         menu_button.add_css_class("focus-menu");
         menu_button.add_css_class("flat");
 
-        let close = icon_button("window-close-symbolic", "Close");
+        let close = close_button();
         close.add_css_class("focus-close");
         close.add_css_class("circular");
 

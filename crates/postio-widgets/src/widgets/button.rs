@@ -112,3 +112,14 @@ pub fn icon_button(icon: &str, name: &str) -> gtk::Button {
     button.update_property(&[gtk::accessible::Property::Label(name)]);
     button
 }
+
+/// The close control every closable surface wears: an X icon button,
+/// placed at the right end of the surface's header, never a worded button
+/// at the left (specs/007-postio-focus T192). One constructor so no surface
+/// can draw its own: the class `postio-close-button` is also what the
+/// surface-walking test finds them by.
+pub fn close_button() -> gtk::Button {
+    let button = icon_button("window-close-symbolic", "Close");
+    button.add_css_class("postio-close-button");
+    button
+}

@@ -75,7 +75,7 @@ pub struct DigestWindow {
     dialog: adw::Dialog,
     title: gtk::Label,
     subtitle: gtk::Label,
-    close_label: gtk::Label,
+    back_button: gtk::Button,
     archive: gtk::Button,
     archive_words: gtk::Box,
     rule_line: gtk::Box,
@@ -126,13 +126,16 @@ impl DigestWindow {
             allowlist,
             Verbs::NONE,
         );
-        let close = gtk::Button::new();
-        close.add_css_class("flat");
+        // The X at the right (T192); on the email page a "Summary" button
+        // at the left steps back, as Escape does.
+        let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-digest-close");
-        let close_words = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-        let close_label = gtk::Label::new(Some("Close"));
-        close_words.append(&close_label);
-        close.set_child(Some(&close_words));
+        close.set_valign(gtk::Align::Center);
+        let back = gtk::Button::new();
+        back.add_css_class("flat");
+        back.add_css_class("focus-digest-back");
+        back.set_label("Summary");
+        back.set_visible(false);
         let title = gtk::Label::new(None);
         title.add_css_class("focus-digest-title");
         let subtitle = gtk::Label::new(None);
@@ -152,9 +155,12 @@ impl DigestWindow {
         archive.set_child(Some(&archive_words));
         let header = gtk::CenterBox::new();
         header.add_css_class("focus-digest-header");
-        header.set_start_widget(Some(&close));
+        let trailing = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        trailing.append(&archive);
+        trailing.append(&close);
+        header.set_start_widget(Some(&back));
         header.set_center_widget(Some(&titles));
-        header.set_end_widget(Some(&archive));
+        header.set_end_widget(Some(&trailing));
 
         let edit = gtk::Button::new();
         edit.add_css_class("flat");
@@ -257,7 +263,7 @@ impl DigestWindow {
             dialog,
             title,
             subtitle,
-            close_label,
+            back_button: back.clone(),
             archive: archive.clone(),
             archive_words,
             rule_line,
@@ -293,16 +299,19 @@ impl DigestWindow {
         close.connect_clicked({
             let weak = weak.clone();
             move |_| {
-                if let Some(window) = weak.upgrade()
-                    && !window.back()
-                {
+                if let Some(window) = weak.upgrade() {
                     window.close();
                 }
             }
         });
-        if let Some(key) = hints::key(keymap, CommandId::Back) {
-            close_words.append(&keyhint::cap(&key));
-        }
+        back.connect_clicked({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(window) = weak.upgrade() {
+                    window.back();
+                }
+            }
+        });
         archive.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -595,11 +604,7 @@ impl DigestWindow {
         self.email_box.set_visible(page == DigestPage::Email);
         self.sub_row.set_visible(page != DigestPage::Email);
         self.archive.set_visible(page != DigestPage::Email);
-        self.close_label.set_text(if page == DigestPage::Email {
-            "Summary"
-        } else {
-            "Close"
-        });
+        self.back_button.set_visible(page == DigestPage::Email);
         if page != DigestPage::Email {
             self.show_header();
         }

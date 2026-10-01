@@ -1539,6 +1539,16 @@ impl FocusWindow {
                 }
             }
         ));
+        // Double-click (GTK's `activate` on the list) opens the row, as Enter
+        // does: the cursor goes to it and the one `OpenMessage` command runs.
+        pane.view().connect_activate(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_, position| {
+                window.cursor_to(Some(position));
+                window.act(CommandId::OpenMessage);
+            }
+        ));
         let empty = crate::empty::EmptyInbox::new();
         empty.connect_command(glib::clone!(
             #[weak(rename_to = window)]

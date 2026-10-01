@@ -53,6 +53,9 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     header.append(&title);
     header.append(&subtitle);
     header.append(&close);
+    let x = postio_widgets::widgets::close_button();
+    x.set_valign(gtk::Align::Center);
+    header.append(&x);
 
     let map = keymap_sheet::key_map(keymap);
     let total: usize = map.iter().map(|(_, rows)| rows.len() + 2).sum();
@@ -103,12 +106,19 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     content.append(&scrolled);
     content.append(&footer);
 
-    adw::Dialog::builder()
+    let dialog = adw::Dialog::builder()
         .title("Keys")
         .content_width(WIDTH)
         .content_height(HEIGHT)
         .child(&content)
-        .build()
+        .build();
+    let weak = dialog.downgrade();
+    x.connect_clicked(move |_| {
+        if let Some(dialog) = weak.upgrade() {
+            adw::prelude::AdwDialogExt::close(&dialog);
+        }
+    });
+    dialog
 }
 
 /// One group: its heading and its rows.

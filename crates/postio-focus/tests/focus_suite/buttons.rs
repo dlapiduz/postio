@@ -119,8 +119,13 @@ pub fn the_compose_dialog_draws_every_button_one_way() {
         );
         let dialog = window.compose_dialog().expect("the compose dialog");
         crate::settle();
-        for class in [
+        // T192: Close is the shared X icon, with no keycap.
+        assert_compact(
             "focus-compose-close",
+            &support::only(&dialog, "focus-compose-close"),
+            REGULAR,
+        );
+        for class in [
             "focus-compose-send-later",
             "focus-compose-send",
             "focus-compose-attach",

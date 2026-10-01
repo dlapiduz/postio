@@ -121,6 +121,10 @@ const FIRST_LINE: f32 = 22.0;
 const SECOND_LINE: f32 = 51.0;
 /// The marker dot in the gutter.
 const GUTTER_CENTRE: f32 = 30.0;
+
+/// How far either side of the gutter's centre a press still hits the
+/// selection box.
+const GUTTER_HIT: f32 = 14.0;
 const DOT: f32 = 7.0;
 /// An action's button on the second line, and the keycap in it.
 const ACTION_HEIGHT: f32 = 24.0;
@@ -390,7 +394,13 @@ impl RowWidget {
     /// there. Public, as the window's `handle_key` is, so a test presses
     /// the button a person presses without synthesizing a pointer event.
     pub fn press_at(&self, x: f32, y: f32) -> bool {
-        let Some(command) = self.imp().drawn.borrow().action_at(x, y) else {
+        // The gutter holds the selection box: a press there toggles the
+        // row's selection, the click pair of `x` (T194).
+        let in_gutter = (GUTTER_CENTRE - GUTTER_HIT..=GUTTER_CENTRE + GUTTER_HIT).contains(&x);
+        let Some(command) = self.imp().drawn.borrow().action_at(x, y).or(in_gutter
+            .then_some(postio_core::CommandId::ToggleSelection)
+            .filter(|_| self.item().is_some_and(|item| item.as_conversation().is_some())))
+        else {
             return false;
         };
         let (Some(item), Some(handler)) = (
