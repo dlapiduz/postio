@@ -850,10 +850,14 @@ final class Engine {
             listVersion += 1
             controller.tableView?.reloadData()
             // A body that arrived, or a flag that moved, may change the
-            // conversation on screen. The page is asked for again and loaded
-            // only if it came out different, so this costs a read, not a
-            // reload.
-            if conversation.conversation != nil { documentRevision += 1 }
+            // conversation on screen -- but only if it is one of *its*
+            // messages. See `PageRefresh`: every folder's sync used to
+            // recompose the open page, and cancel the compose a move was
+            // waiting on.
+            let onPage = Set(conversation.rows.map(\.id))
+            if conversation.conversation != nil, PageRefresh.needed(by: event, showing: onPage) {
+                documentRevision += 1
+            }
         case let .conversationReady(thread):
             if let since = openingSince, showingThread == thread {
                 ReaderTiming.note("conversation read", ms: ReaderTiming.ms(since: since))
@@ -864,8 +868,13 @@ final class Engine {
             // store was reading must not have the old conversation drawn
             // under it.
             if let read = session?.conversation, read.thread == thread, showingThread == thread {
+                // A conversation the page is not showing yet loads because
+                // its thread changed; bumping the revision as well composed
+                // it a second time. Only a re-read of the same thread needs
+                // the bump to be asked again.
+                let rereading = conversation.conversation?.thread == thread
                 conversation.show(read)
-                documentRevision += 1
+                if rereading { documentRevision += 1 }
             }
         case let .cursorMoved(row, message):
             // Every move re-arms, and a move to a row whose page has not
