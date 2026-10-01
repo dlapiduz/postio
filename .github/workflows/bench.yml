@@ -24,7 +24,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_BUILD_JOBS: 4
 
 jobs:
