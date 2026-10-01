@@ -215,18 +215,9 @@ public struct ConversationView: View {
                 if rail == .popover {
                     counter
                 }
-                Button {
-                    model.expandAll()
-                } label: {
-                    HStack(spacing: PostioTokens.space2) {
-                        Text("Expand all")
-                        if let chord = session.accelerator(for: "expand_all") {
-                            Text(chord)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .help("Open every message in this conversation")
+                Button("Expand all") { model.expandAll() }
+                    .buttonStyle(ReaderButtonStyle(.secondary))
+                    .help(withChord("Open every message in this conversation", "expand_all"))
                 Menu {
                     // The thread, not a message in it -- which is what
                     // `archive_thread` means and what the other two act on
@@ -281,31 +272,20 @@ public struct ConversationView: View {
         }
     }
 
-    @ViewBuilder
     private func verb(_ action: ConversationActionFfi) -> some View {
         let target = action.wholeConversation ? nil : latestMessage
-        let label = HStack(spacing: PostioTokens.space2) {
-            Text(action.title)
-            if let chord = session.accelerator(for: action.command) {
-                Text(chord).opacity(0.75)
-            }
-        }
-        let enabled = session.isAvailable(action.command, in: .reader)
-        // Two branches rather than a style-erasing wrapper: `.buttonStyle`
-        // takes a concrete type.
-        if action.primary {
-            Button(action: { run(action.command, target) }, label: { label })
-                .buttonStyle(.borderedProminent)
-                .disabled(!enabled)
-                .help(action.description)
-                .accessibilityLabel(action.description)
-        } else {
-            Button(action: { run(action.command, target) }, label: { label })
-                .buttonStyle(.bordered)
-                .disabled(!enabled)
-                .help(action.description)
-                .accessibilityLabel(action.description)
-        }
+        return Button(action.title) { run(action.command, target) }
+            .buttonStyle(ReaderButtonStyle(action.primary ? .primary : .secondary))
+            .disabled(!session.isAvailable(action.command, in: .reader))
+            .help(withChord(action.description, action.command))
+            .accessibilityLabel(action.description)
+    }
+
+    /// A tooltip with the key that does the same, which is where the chord
+    /// lives now that the button's label is the verb alone.
+    private func withChord(_ text: String, _ command: String) -> String {
+        guard let chord = session.accelerator(for: command) else { return text }
+        return "\(text)  \(chord)"
     }
 }
 
@@ -658,26 +638,12 @@ public struct ExpandedMessage: View {
         }
     }
 
-    @ViewBuilder
     private func action(_ item: ReaderActionPlan.Item) -> some View {
-        let label = HStack(spacing: PostioTokens.space2) {
-            Text(item.title)
-            if let chord = item.chord {
-                Text(chord).opacity(0.75)
-            }
-        }
-        // Two branches rather than a style-erasing wrapper: `.buttonStyle`
-        // takes a concrete type, and the ceremony of hiding that behind one
-        // is longer than saying it twice.
-        if item.prominent {
-            Button(action: { run(item.command, row.id) }, label: { label })
-                .buttonStyle(.borderedProminent)
-                .disabled(!item.enabled)
-        } else {
-            Button(action: { run(item.command, row.id) }, label: { label })
-                .buttonStyle(.bordered)
-                .disabled(!item.enabled)
-        }
+        Button(item.title) { run(item.command, row.id) }
+            .buttonStyle(ReaderButtonStyle(item.prominent ? .primary : .secondary))
+            .disabled(!item.enabled)
+            // The chord is the tooltip, not part of the label (canvas 25).
+            .help(item.chord.map { "\(item.title)  \($0)" } ?? item.title)
     }
 
 }

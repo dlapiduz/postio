@@ -41,7 +41,7 @@ public struct BlockedImagesNotice: View {
                 .truncationMode(.tail)
             Spacer(minLength: PostioTokens.space2)
             Button("Show", action: show)
-                .controlSize(.small)
+                .buttonStyle(ReaderButtonStyle(.secondary))
             Button {
                 showingGrants = true
             } label: {

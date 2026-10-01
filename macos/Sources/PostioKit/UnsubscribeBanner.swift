@@ -47,7 +47,7 @@ public struct UnsubscribeBanner: View {
                         .truncationMode(.middle)
                     Spacer(minLength: PostioTokens.space2)
                     Button(state == .leaving ? "Leaving…" : offer.action, action: leave)
-                        .controlSize(.small)
+                        .buttonStyle(ReaderButtonStyle(.secondary))
                         .disabled(state == .leaving)
                 }
                 if case .failed(let failure) = state {
