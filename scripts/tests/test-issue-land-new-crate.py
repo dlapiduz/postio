@@ -139,8 +139,11 @@ def world(base: Path, *, adds_a_crate: bool) -> tuple[Path, Path]:
     (stub_dir / "bin").mkdir(parents=True)
     (root / "scripts" / "checks").mkdir(parents=True)
 
+    # The repository's own pin, copied rather than written out: a literal
+    # here went stale at the 1.99 bump, and on a runner that has only the
+    # pinned toolchain the sandbox then had no rustfmt to run.
     (root / "rust-toolchain.toml").write_text(
-        '[toolchain]\nchannel = "1.98.0"\n', encoding="utf-8"
+        (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
     (root / "Cargo.toml").write_text(workspace_toml(MEMBERS), encoding="utf-8")
     for crate in MEMBERS:
