@@ -100,6 +100,10 @@ pub struct RenderedDocument {
     /// Messages whose text cannot reach the high-contrast floor on their
     /// paper: the reader opens them in Reader view instead (FR-013b).
     pub needs_reader_view: Vec<Scope>,
+    /// The scale a paper body was zoomed by to fit its column, on top of
+    /// the reader's own zoom: 1.0 when it fitted, or nothing was on paper,
+    /// and never below [`render::PAPER_FIT_FLOOR`] (T207, T212).
+    pub fit: f64,
     /// Counts this snapshot among the live ones while it exists.
     _live: Live,
 }

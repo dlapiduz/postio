@@ -34,7 +34,8 @@ const RENDERER_CSS: &str = ".postio-body { overflow-x: visible !important; \
 /// Lay out and record `request`'s document, drawing with `fonts`.
 pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     let scale = request.viewport.hidpi_scale;
-    let mut doc = lay_out(request, fonts, None);
+    let mut zoom = request.viewport.zoom;
+    let mut doc = lay_out(request, fonts, None, zoom);
     let (resolved, unresolved) = request.resources.counts();
     let placeholdered = request.resources.placeholdered();
     // The theme rule (research R10): classify, then repair against what is
@@ -42,7 +43,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     let plan = crate::present::plan(&doc, request);
     let mut style_passes = 1;
     if !plan.is_empty() {
-        let second = lay_out(request, fonts, Some(&plan));
+        let second = lay_out(request, fonts, Some(&plan), zoom);
         // The same markup parses to the same nodes; if it somehow did not,
         // the marks would land on the wrong ones, so keep the first layout.
         if second.tree().len() == plan.nodes {
@@ -50,11 +51,23 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
             style_passes = 2;
         }
     }
+    // Paper wider than the column is zoomed to fit (T207, T212): a 640px
+    // newsletter in a 480px column is drawn whole and smaller, never cut
+    // off and never scrolled sideways -- until fitting would take it under
+    // `PAPER_FIT_FLOOR`, below which it stays at that scale and scrolls.
+    // The fit multiplies the reader's own zoom rather than replacing it, so
+    // Ctrl+plus still means "larger" on a fitted sheet.
+    let fit = paper_fit(&doc);
+    if fit < 1.0 {
+        zoom *= fit;
+        let plan = (!plan.is_empty()).then_some(&plan);
+        doc = lay_out(request, fonts, plan, zoom);
+        style_passes += 1;
+    }
     // Zoom (research R11): the document lays out at the pane's width over
     // the zoom, and is painted at the device scale times the zoom. The
     // snapshot's geometry is then in the view's own pixels -- CSS pixels
     // times the zoom -- so the widget never does zoom arithmetic.
-    let zoom = request.viewport.zoom;
     let mut size = doc.root_element().final_layout().size;
     // Wider than the pane -- a fixed 600px table at 150% -- widens the
     // document, so the view scrolls it sideways rather than losing it.
@@ -108,6 +121,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         counts,
         outcome: Outcome::Rendered,
         needs_reader_view: plan.unreachable,
+        fit,
         _live: crate::Live::new(),
     };
     zoom_geometry(&mut document, zoom);
@@ -115,10 +129,59 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     document
 }
 
+/// The least a paper body is scaled to fit its column (the handoff's
+/// SPEC.md section 3): below it, text would be too small to read, so the
+/// sheet stays at this scale and the view scrolls it sideways instead.
+pub const PAPER_FIT_FLOOR: f64 = 0.85;
+
+/// The scale that fits every paper body in the document into its own box,
+/// at least [`PAPER_FIT_FLOOR`]; 1.0 when each already fits, or when nothing
+/// in the document is on paper.
+///
+/// Measured against the sheet, not the page: the sheet is as wide as the
+/// column, and what overflows it is the sender's layout. Zooming by the
+/// sheet's share of the layout lays the document out wider by exactly as
+/// much, so the layout fits the sheet at the new scale.
+fn paper_fit(doc: &blitz_dom::BaseDocument) -> f64 {
+    let selector = format!(
+        "div.{}[{}=\"{}\"]",
+        postio_body::sanitize::BODY_CLASS,
+        postio_body::treatment::TREATMENT_ATTRIBUTE,
+        postio_body::treatment::Treatment::Paper.attribute_value()
+    );
+    let sheets = doc.query_selector_all(&selector).unwrap_or_default();
+    sheets
+        .into_iter()
+        .filter_map(|id| {
+            let node = doc.get_node(id)?;
+            let left = node.absolute_position(0.0, 0.0).x;
+            let width = f64::from(node.final_layout().size.width);
+            let wide = f64::from(right_edge(doc, id) - left);
+            Some(fit_scale(wide, width))
+        })
+        .fold(1.0, f64::min)
+}
+
+/// How far `wide` CSS pixels of content must be scaled to fit `width`,
+/// within `[PAPER_FIT_FLOOR, 1.0]`. Half a pixel of slack: a layout that
+/// rounds a fraction past the column is not one to shrink.
+pub fn fit_scale(wide: f64, width: f64) -> f64 {
+    if wide <= width + 0.5 {
+        return 1.0;
+    }
+    (width / wide).clamp(PAPER_FIT_FLOOR, 1.0)
+}
+
 /// The right edge of the furthest laid-out box, in CSS pixels.
 fn content_width(doc: &blitz_dom::BaseDocument) -> f32 {
+    right_edge(doc, doc.root_element().id)
+}
+
+/// The right edge of the furthest laid-out box under `root`, `root`'s own
+/// included, in CSS pixels.
+fn right_edge(doc: &blitz_dom::BaseDocument, root: blitz_dom::NodeId) -> f32 {
     let mut widest = 0.0f32;
-    let mut stack = vec![doc.root_element().id];
+    let mut stack = vec![root];
     while let Some(id) = stack.pop() {
         let Some(node) = doc.get_node(id) else {
             continue;
@@ -167,6 +230,7 @@ fn lay_out(
     request: &RenderRequest,
     fonts: &FontSet,
     plan: Option<&crate::present::Plan>,
+    zoom: f64,
 ) -> blitz_dom::BaseDocument {
     let viewport = &request.viewport;
     let scale = viewport.hidpi_scale;
@@ -187,7 +251,7 @@ fn lay_out(
                 },
             );
             // Kept apart from the device scale, never folded into it.
-            blitz.set_zoom(viewport.zoom as f32);
+            blitz.set_zoom(zoom as f32);
             blitz
         }),
         base_url: Some(BASE_URL.to_owned()),

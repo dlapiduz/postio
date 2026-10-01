@@ -18,6 +18,7 @@ use postio_body::sanitize;
 /// renderers are asked under, re-exported so a caller preparing ahead needs
 /// no second path to it.
 pub use postio_body::sanitize::RemoteImages;
+use postio_body::treatment::{self, TREATMENT_ATTRIBUTE, Treatment, Trigger};
 use postio_model::message::MessageBody;
 
 /// The security origin every rendered message loads under.
@@ -263,7 +264,23 @@ fn reader_css() -> String {
     let mut css = embedded_font_faces().to_owned();
     css.push_str(include_str!("../../data/reader-tokens.css"));
     css.push_str(include_str!("../../data/reader.css"));
+    css.push_str(include_str!("../../data/treatment.css"));
+    css.push_str(&paper_palette_css());
     css
+}
+
+/// The paper sheet's palette: the light scheme, whatever the reader's, so
+/// anything of Postio's drawn on the sheet -- a quote fold's summary, a
+/// search match -- reads on white the way it does in light mode (T212). Read
+/// out of the generated palette, like [`senders_sheet_css`], so the colour
+/// has one source.
+fn paper_palette_css() -> String {
+    format!(
+        "\n.{}[{TREATMENT_ATTRIBUTE}=\"{}\"] {{{}\n}}\n",
+        sanitize::BODY_CLASS,
+        Treatment::Paper.attribute_value(),
+        light_tokens()
+    )
 }
 
 /// The reader's ground colour for the given scheme, as the generated palette
@@ -647,6 +664,36 @@ pub struct Rendered {
     /// The input cap the HTML body exceeded, if any: then `html` is the
     /// plain-text alternative, and the reader says why (spec 006 R6).
     pub over_cap: Option<postio_body::Cap>,
+    /// Which treatment it was drawn in, when it was drawn under one
+    /// ([`body_html_treated`]); `None` for the classic reader, which has no
+    /// treatments.
+    pub treated: Option<Treated>,
+}
+
+/// How a body was treated (specs/007-postio-focus T210-T213): what the
+/// render-mode line says, and what `⇧O` switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Treated {
+    /// The treatment it is drawn in.
+    pub shown: Treatment,
+    /// What the rule chose for it, before any choice the person made.
+    pub classified: Treatment,
+    /// Why the rule chose paper, when it did.
+    pub trigger: Option<Trigger>,
+    /// Whether the body is HTML: plain text has no other treatment to
+    /// offer, so no line names one.
+    pub html: bool,
+}
+
+impl Treated {
+    /// Plain text, or HTML too large to draw: app colours, with nothing to
+    /// switch to.
+    pub const TEXT: Treated = Treated {
+        shown: Treatment::AppColours,
+        classified: Treatment::AppColours,
+        trigger: None,
+        html: false,
+    };
 }
 
 impl Rendered {
@@ -810,6 +857,7 @@ pub fn body_html_in(
                 links_kept: reduced.links_kept,
                 links_dropped: reduced.links_dropped,
                 over_cap: None,
+                treated: None,
             };
         }
     }
@@ -855,6 +903,97 @@ fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
     Rendered {
         html,
         over_cap: Some(cap),
+        ..Rendered::default()
+    }
+}
+
+/// The class an HTML body drawn in app colours is wrapped in: Postio's own
+/// typography applies inside it, where [`ORIGINAL_CLASS`] reverts it.
+pub const APP_COLOURS_CLASS: &str = "postio-app-colours";
+
+/// The class a body is wrapped in when it goes on paper by the person's
+/// choice rather than the rule's: correspondence, which has no page margins
+/// of its own, so the sheet gives it some (`treatment.css`). Mail the rule
+/// put on paper is drawn edge to edge, its own margins its own business.
+pub const LETTER_CLASS: &str = "postio-letter";
+
+/// The body markup under a treatment (specs/007-postio-focus T210-T212):
+/// sanitised, classified, and drawn in app colours or as sent, on paper.
+///
+/// `chosen` is the person's choice -- `⇧O` on this message, or "Always for
+/// this sender" -- and wins over the rule; `None` lets the rule decide
+/// ([`treatment::classify`]). Plain text is always app colours and has no
+/// other to switch to.
+///
+/// Always [`Rendering::Original`]: reader view is the classic reader's
+/// answer to bulk mail, and paper is this one's.
+pub fn body_html_treated(
+    body: &MessageBody,
+    remote: RemoteImages,
+    chosen: Option<Treatment>,
+    scope: Option<&str>,
+) -> Rendered {
+    let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) else {
+        return Rendered {
+            treated: Some(Treated::TEXT),
+            ..body_html_in(body, remote, Rendering::Original, scope)
+        };
+    };
+    crate::reader::cost::bump(&crate::reader::cost::BODIES_SANITISED, 1);
+    let sanitized = sanitize::sanitize_body_in(html, remote, scope);
+    if let Some(cap) = sanitized.over_cap {
+        return Rendered {
+            treated: Some(Treated::TEXT),
+            ..over_cap(body, cap)
+        };
+    }
+    let trigger = treatment::paper_trigger(&sanitized);
+    let classified = if trigger.is_some() {
+        Treatment::Paper
+    } else {
+        Treatment::AppColours
+    };
+    let shown = chosen.unwrap_or(classified);
+    let (html, styles) = match shown {
+        Treatment::AppColours => (
+            format!(
+                r#"<div class="{APP_COLOURS_CLASS}">{}</div>"#,
+                quote::fold_html_quotes(&treatment::app_colours(&sanitized.html))
+            ),
+            treatment::app_colours_css(&sanitized.styles),
+        ),
+        Treatment::Paper => {
+            let letter = if classified == Treatment::Paper {
+                String::new()
+            } else {
+                format!(" {LETTER_CLASS}")
+            };
+            (
+                on_canvas(
+                    &format!(
+                        r#"<div class="{ORIGINAL_CLASS}{letter}">{}</div>"#,
+                        quote::fold_html_quotes(&sanitized.html)
+                    ),
+                    &sanitized,
+                ),
+                treatment::light_only(&sanitized.styles),
+            )
+        }
+    };
+    Rendered {
+        html,
+        styles,
+        held_back: HeldBack {
+            remote_images: sanitized.remote_blocked,
+            trackers: sanitized.trackers,
+        },
+        rendering: Rendering::Original,
+        treated: Some(Treated {
+            shown,
+            classified,
+            trigger,
+            html: true,
+        }),
         ..Rendered::default()
     }
 }
@@ -981,6 +1120,37 @@ pub(crate) fn number_quote_folds(content: &str, prefix: &str) -> String {
         out.push_str(rest);
     }
     out
+}
+
+/// [`document_for`], for a body drawn under `treatment`: its container
+/// carries [`TREATMENT_ATTRIBUTE`], which is what `treatment.css` styles and
+/// what the renderer reads to leave paper alone and hold app colours to the
+/// contrast guard.
+pub fn document_for_treated(
+    content: &str,
+    styles: &str,
+    remote: RemoteImages,
+    treatment: Treatment,
+) -> String {
+    wrap_document(
+        &format!(
+            "{}{}{}",
+            senders_stylesheet(styles),
+            number_quote_folds(&contain_body_treated(content, treatment), ""),
+            scroll_markers()
+        ),
+        remote,
+        Sheet::Theme,
+    )
+}
+
+/// [`contain_body`], naming the treatment the body is drawn in.
+pub fn contain_body_treated(content: &str, treatment: Treatment) -> String {
+    format!(
+        r#"<div class="{}" {TREATMENT_ATTRIBUTE}="{}">{content}</div>"#,
+        sanitize::BODY_CLASS,
+        treatment.attribute_value()
+    )
 }
 
 /// A sender's scoped CSS, in Postio's own `<style>` element.
@@ -2641,6 +2811,125 @@ mod no_webkit_tests {
             assert!(
                 !css.contains("-webkit-"),
                 "{name} still has a -webkit- rule"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod treatment_tests {
+    //! The document a treated body is drawn from (specs/007-postio-focus
+    //! T210-T212): which wrapper, which stylesheet, and the attribute the
+    //! renderer and `treatment.css` both read.
+
+    use super::*;
+
+    fn html(markup: &str) -> MessageBody {
+        MessageBody {
+            text: None,
+            html: Some(markup.to_owned()),
+        }
+    }
+
+    const NEWSLETTER: &str = "<html><head><style>body { color: #222 } \
+        @media (prefers-color-scheme: dark) { p { color: #eee } }</style></head>\
+        <body bgcolor=\"#f6f1e7\"><table width=\"640\"><tr><td><p>Issue 48</p></td></tr></table></body></html>";
+
+    const LETTER: &str = "<p style=\"color:black;font-family:Calibri\">Hi everyone,</p>";
+
+    #[test]
+    fn plain_text_is_app_colours_with_nothing_to_switch_to() {
+        let body = MessageBody {
+            text: Some("Hello.\n".to_owned()),
+            html: None,
+        };
+        let rendered = body_html_treated(&body, RemoteImages::Blocked, None, None);
+        assert_eq!(rendered.treated, Some(Treated::TEXT));
+        assert!(rendered.html.contains("Hello."));
+    }
+
+    #[test]
+    fn mail_that_paints_its_page_is_drawn_as_sent_on_paper() {
+        let rendered = body_html_treated(&html(NEWSLETTER), RemoteImages::Blocked, None, None);
+        let treated = rendered.treated.expect("treated");
+        assert_eq!(treated.shown, Treatment::Paper);
+        assert_eq!(treated.classified, Treatment::Paper);
+        assert_eq!(treated.trigger, Some(Trigger::PageBackground));
+        assert!(rendered.html.contains(ORIGINAL_CLASS), "{}", rendered.html);
+        assert!(
+            !rendered.html.contains(LETTER_CLASS),
+            "the rule's paper got a letter's margins"
+        );
+        assert!(rendered.html.contains("postio-canvas"), "the page was lost");
+        assert!(rendered.styles.contains("#222"), "{}", rendered.styles);
+        assert!(
+            !rendered.styles.contains("#eee"),
+            "the sender's dark design reached the white sheet: {}",
+            rendered.styles
+        );
+    }
+
+    #[test]
+    fn correspondence_is_drawn_in_app_colours() {
+        let rendered = body_html_treated(&html(LETTER), RemoteImages::Blocked, None, None);
+        let treated = rendered.treated.expect("treated");
+        assert_eq!(treated.shown, Treatment::AppColours);
+        assert!(treated.html);
+        assert!(
+            rendered.html.contains(APP_COLOURS_CLASS),
+            "{}",
+            rendered.html
+        );
+        assert!(!rendered.html.contains("Calibri") && !rendered.html.contains("black"));
+    }
+
+    #[test]
+    fn a_choice_wins_over_the_rule_and_a_chosen_sheet_gives_a_letter_margins() {
+        let paper = body_html_treated(
+            &html(LETTER),
+            RemoteImages::Blocked,
+            Some(Treatment::Paper),
+            None,
+        );
+        let treated = paper.treated.expect("treated");
+        assert_eq!(
+            (treated.shown, treated.classified),
+            (Treatment::Paper, Treatment::AppColours)
+        );
+        assert!(paper.html.contains(LETTER_CLASS), "{}", paper.html);
+        assert!(
+            paper.html.contains("Calibri"),
+            "paper is as sent: {}",
+            paper.html
+        );
+
+        let app = body_html_treated(
+            &html(NEWSLETTER),
+            RemoteImages::Blocked,
+            Some(Treatment::AppColours),
+            None,
+        );
+        assert_eq!(app.treated.map(|t| t.shown), Some(Treatment::AppColours));
+        assert!(!app.html.contains("postio-canvas"), "{}", app.html);
+        assert!(!app.html.contains("f6f1e7"), "{}", app.html);
+    }
+
+    #[test]
+    fn the_container_names_its_treatment_and_the_sheet_styles_it() {
+        for treatment in [Treatment::AppColours, Treatment::Paper] {
+            let document = document_for_treated("<p>x</p>", "", RemoteImages::Blocked, treatment);
+            let stamp = format!(
+                "class=\"{}\" {TREATMENT_ATTRIBUTE}=\"{}\"",
+                sanitize::BODY_CLASS,
+                treatment.attribute_value()
+            );
+            assert!(document.contains(&stamp), "{document}");
+            assert!(
+                document.contains(&format!(
+                    "[{TREATMENT_ATTRIBUTE}=\"{}\"]",
+                    treatment.attribute_value()
+                )),
+                "no rule styles {treatment:?}"
             );
         }
     }
