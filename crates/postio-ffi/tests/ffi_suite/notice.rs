@@ -249,3 +249,57 @@ async fn the_notice_carries_the_counts_the_parts_panel_needs() {
         notice.summary
     );
 }
+
+// -- `always_show_images` as a command (#1706) ----------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn always_show_images_grants_the_sender_the_notice_names() {
+    // The key presses what the notice's "Always allow" presses: a standing
+    // grant for this message's sender, and nobody else's.
+    let (session, messages) = a_store_with(&[("ada@example.com", 2), ("bo@example.com", 2)]).await;
+
+    assert!(
+        session.always_show_images_for(messages[0]).await,
+        "a notice was up, so the command acted"
+    );
+
+    assert!(
+        session
+            .reader_notice(messages[0])
+            .await
+            .expect("a notice")
+            .allowed
+    );
+    assert!(
+        !session
+            .reader_notice(messages[1])
+            .await
+            .expect("a notice")
+            .allowed,
+        "the grant is the sender's, not the domain's"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn always_show_images_does_nothing_where_the_notice_offers_nothing() {
+    // GTK's rule: a key on a message with nothing held back does nothing at
+    // all. Writing a grant there would be consent nobody was asked for.
+    let (session, message) = a_message_with_images("ada@example.com", 0).await;
+
+    assert!(!session.always_show_images_for(message).await);
+    assert!(
+        session.remote_image_grants().is_empty(),
+        "no grant was written"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn always_show_images_for_a_sender_already_allowed_is_not_a_second_grant() {
+    let (session, message) = a_message_with_images("ada@example.com", 3).await;
+    session.allow_sender("ada@example.com".to_owned());
+
+    assert!(
+        !session.always_show_images_for(message).await,
+        "the notice no longer asks, so there is nothing for the key to press"
+    );
+}

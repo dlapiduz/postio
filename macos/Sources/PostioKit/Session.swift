@@ -210,6 +210,16 @@ public final class PostioSession {
         inner.activateUnsubscribe(message: message)
     }
 
+    /// `always_show_images`: grant `message`'s sender a standing exception,
+    /// if the reader is asking for one, and say whether it was. The address
+    /// is the notice's own, so the key and the notice's "Always allow" cannot
+    /// grant different people.
+    ///
+    /// **`nonisolated`**: it renders the message to learn what was held back.
+    public nonisolated func alwaysShowImagesFor(_ message: Int64) -> Bool {
+        inner.alwaysShowImagesFor(message: message)
+    }
+
     /// Every activation this store holds, newest first — the Privacy pane's
     /// list. An action nobody can see afterwards is one nobody can audit.
     public func unsubscribeActivations() -> [UnsubscribeActivationFfi] {

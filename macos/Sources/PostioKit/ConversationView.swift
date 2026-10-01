@@ -46,6 +46,9 @@ public struct ConversationView: View {
     private let windowWidth: CGFloat
     /// The reader's own `⇧I`: no rail in this window (FR-047).
     private let railHidden: Bool
+    /// Where each unsubscribe offer has got to -- the engine's, see
+    /// `Unsubscribing`.
+    private let unsubscribing: Unsubscribing
 
     /// Where each message is in the page on screen, and what it says about
     /// itself -- the decode caveat rides here.
@@ -69,6 +72,7 @@ public struct ConversationView: View {
         showing: Int64? = nil,
         windowWidth: CGFloat = 0,
         railHidden: Bool = false,
+        unsubscribing: Unsubscribing = Unsubscribing(),
         onVerb: @escaping (ThreadVerbFfi, ThreadAnchorFfi?) -> Void
     ) {
         self.session = session
@@ -81,6 +85,7 @@ public struct ConversationView: View {
         self.showing = showing
         self.windowWidth = windowWidth
         self.railHidden = railHidden
+        self.unsubscribing = unsubscribing
         self.onVerb = onVerb
     }
 
@@ -156,7 +161,11 @@ public struct ConversationView: View {
     @ViewBuilder
     private var notices: some View {
         if let showing, let offer {
-            UnsubscribeBanner(offer: offer, message: showing, session: session)
+            UnsubscribeBanner(
+                offer: offer,
+                state: unsubscribing.state(of: showing),
+                leave: { run(Intercepted.unsubscribe, showing) }
+            )
                 .padding(.horizontal, PostioTokens.space6)
                 .padding(.top, PostioTokens.space3)
         }
@@ -347,6 +356,9 @@ public struct ExpandedMessage: View {
     /// cannot reach an `@State`. While this was one, the notice's button
     /// worked and the key did nothing.
     public let showingImages: Bool
+    /// Where this message's unsubscribe offer has got to -- the engine's, for
+    /// the same reason `showingImages` is: `X` is a command.
+    public let unsubscribe: Unsubscribing.State
     /// Whether the `⋯` menu offers to fold this message away.
     ///
     /// `false` in the single-message pane, where there is no conversation to
@@ -365,6 +377,7 @@ public struct ExpandedMessage: View {
         showingCc: Bool,
         showingOriginal: Bool,
         showingImages: Bool,
+        unsubscribe: Unsubscribing.State = .offered,
         collapsible: Bool = true,
         heights: BodyHeights? = nil,
         collapse: @escaping () -> Void,
@@ -379,6 +392,7 @@ public struct ExpandedMessage: View {
         self.showingCc = showingCc
         self.showingOriginal = showingOriginal
         self.showingImages = showingImages
+        self.unsubscribe = unsubscribe
         self.collapsible = collapsible
         self.heights = heights
         // Seeded from the cache, so a revisited message draws at the size
@@ -430,7 +444,11 @@ public struct ExpandedMessage: View {
                 // among the privacy features, and until this existed the
                 // sentence was not true on a Mac.
                 if let offer {
-                    UnsubscribeBanner(offer: offer, message: row.id, session: session)
+                    UnsubscribeBanner(
+                        offer: offer,
+                        state: unsubscribe,
+                        leave: { run(Intercepted.unsubscribe, row.id) }
+                    )
                 }
                 ReaderView(
                     source: session,

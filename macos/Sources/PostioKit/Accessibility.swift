@@ -203,6 +203,12 @@ public enum Intercepted {
     public static let showImages = "show_images"
     /// The palette's "Quit Postio"; AppKit answers `⌘Q` from the menu itself.
     public static let quit = "quit"
+    /// The reader's `X`: the unsubscribe banner's button, from the keyboard
+    /// and the palette, and only where the banner is.
+    public static let unsubscribe = "unsubscribe"
+    /// The reader's `i a`: the blocked-images notice's "Always allow", for
+    /// the sender the notice names, and only where the notice is.
+    public static let alwaysShowImages = "always_show_images"
     /// The settings window's account verbs. Every one acts on the row the
     /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
     /// alone; two of them need a sheet on top of that.
@@ -232,7 +238,7 @@ public enum Intercepted {
         moveSavedSearchUp, moveSavedSearchDown,
         openParts, nextPart, prevPart,
         savePart, saveAllParts, openPartExternally, openPart, renderPartOnce, showImages,
-        quit,
+        quit, unsubscribe, alwaysShowImages,
         compose, reply, replyAll, forward, toggleRail,
     ] + composeVerbs
 }

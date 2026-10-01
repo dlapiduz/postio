@@ -653,6 +653,7 @@ struct Shell: View {
                 showing: engine.cursorShowing,
                 windowWidth: engine.windowWidth,
                 railHidden: engine.railHidden,
+                unsubscribing: engine.unsubscribing,
                 onVerb: { engine.handle($0, of: $1) }
             )
         } else if let session = engine.session, let showing, let row = session.rowFor(showing) {
@@ -671,6 +672,7 @@ struct Shell: View {
                     showingCc: engine.ccRevealed.contains(showing),
                     showingOriginal: engine.original.isOn(showing),
                     showingImages: engine.rendered.isOn(showing),
+                    unsubscribe: engine.unsubscribing.state(of: showing),
                     collapsible: false,
                     heights: engine.bodyHeights,
                     collapse: {},

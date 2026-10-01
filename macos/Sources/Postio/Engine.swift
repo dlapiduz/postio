@@ -1202,6 +1202,20 @@ final class Engine {
         case Intercepted.openPart:
             guard showingParts else { return false }
             parts.ask(.preview)
+        case Intercepted.unsubscribe:
+            guard let session, let message = target ?? cursorShowing else { return false }
+            unsubscribe(message, through: session)
+        case Intercepted.alwaysShowImages:
+            // The notice's "Always allow", from the keyboard. The boundary
+            // decides whether the notice is up and whose grant it is; this
+            // only redraws what the grant lets through.
+            guard let session, let message = target ?? cursorShowing else { return false }
+            Task {
+                let granted = await Task.detached { session.alwaysShowImagesFor(message) }.value
+                guard granted else { return }
+                rendered.render(message)
+                documentRevision += 1
+            }
         case Intercepted.quit:
             // Through AppKit rather than around it, so the application
             // delegate's own termination path runs exactly as for `⌘Q`.
@@ -1290,6 +1304,14 @@ final class Engine {
     /// notice's own button presses the same thing.
     private(set) var rendered = RenderedOnce()
 
+    /// Where each message's unsubscribe offer has got to.
+    ///
+    /// Here for `rendered`'s reason: `X` is a command, and the banner's own
+    /// button runs that command rather than holding a state of its own. Not
+    /// cleared when the pane moves on -- a list left is left, and the banner
+    /// coming back on the next visit would offer a second activation.
+    private(set) var unsubscribing = Unsubscribing()
+
     /// Show `message` as its sender wrote it, or stop.
     ///
     /// A method rather than a settable property: `original` is
@@ -1313,6 +1335,25 @@ final class Engine {
 
     func toggleOriginal(_ message: Int64) {
         original.toggle(message)
+    }
+
+    /// Leave `message`'s list -- the banner's button and `X` alike.
+    ///
+    /// Only where the banner would be: a message with no list to leave takes
+    /// the key and leaves no trace, GTK's rule for the same command. Both
+    /// boundary calls are off this actor -- the offer is a read, and the
+    /// activation a write that can queue behind a sync's commit.
+    private func unsubscribe(_ message: Int64, through session: PostioSession) {
+        guard unsubscribing.begin(message) else { return }
+        Task {
+            let facts = await Task.detached { session.messageFacts(message) }.value
+            guard facts.offer != nil else {
+                unsubscribing.withdraw(message)
+                return
+            }
+            let complaint = await Task.detached { session.activateUnsubscribe(message) }.value
+            unsubscribing.finish(message, complaint: complaint)
+        }
     }
 
     private(set) var readerPage: UInt32 = 0

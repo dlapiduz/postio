@@ -20,28 +20,24 @@ import SwiftUI
 /// not say whose.
 public struct UnsubscribeBanner: View {
     private let offer: UnsubscribeOfferFfi
-    private let message: Int64
-    private let session: PostioSession
+    /// Where this message's offer has got to. Held by the engine, not here:
+    /// `X` and the palette press the same thing this button does (#1706),
+    /// and a command cannot reach a view's `@State`.
+    private let state: Unsubscribing.State
+    /// Run the `unsubscribe` command for this message -- the one deliberate
+    /// act, and the same path the key takes.
+    private let leave: () -> Void
 
-    /// Whether the activation is in flight. It writes, and a write queues
-    /// behind whatever the sync engine is committing — on a first sync that
-    /// is not a few milliseconds, so the banner says what it is doing.
-    @State private var leaving = false
-    /// What went wrong, if it did. Never a success message: the banner
-    /// disappearing *is* the success, and a green tick under a row that has
-    /// gone is a claim about nothing.
-    @State private var failure: String?
-    /// Whether this message's list has been left, so the banner goes.
-    @State private var left = false
-
-    public init(offer: UnsubscribeOfferFfi, message: Int64, session: PostioSession) {
+    public init(offer: UnsubscribeOfferFfi, state: Unsubscribing.State, leave: @escaping () -> Void) {
         self.offer = offer
-        self.message = message
-        self.session = session
+        self.state = state
+        self.leave = leave
     }
 
     public var body: some View {
-        if !left {
+        // Gone once recorded: the banner disappearing *is* the success, and
+        // a green tick under a row that has gone is a claim about nothing.
+        if state != .left {
             VStack(alignment: .leading, spacing: PostioTokens.space1) {
                 HStack(spacing: PostioTokens.space3) {
                     Image(systemName: "envelope.open")
@@ -50,11 +46,11 @@ public struct UnsubscribeBanner: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: PostioTokens.space2)
-                    Button(leaving ? "Leaving…" : offer.action) { leave() }
+                    Button(state == .leaving ? "Leaving…" : offer.action, action: leave)
                         .controlSize(.small)
-                        .disabled(leaving)
+                        .disabled(state == .leaving)
                 }
-                if let failure {
+                if case .failed(let failure) = state {
                     Text(failure)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -66,27 +62,6 @@ public struct UnsubscribeBanner: View {
             .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 6))
             .accessibilityElement(children: .contain)
             .accessibilityLabel(offer.summary)
-        }
-    }
-
-    /// Record the activation — the one deliberate act.
-    ///
-    /// Off the main actor, which the boundary asks for by name: this is the
-    /// only call in the pair that writes, and a write waits on the store's
-    /// machine-wide gate.
-    private func leave() {
-        failure = nil
-        leaving = true
-        let session = session
-        let message = message
-        Task {
-            let complaint = await Task.detached { session.activateUnsubscribe(message) }.value
-            leaving = false
-            if let complaint {
-                failure = complaint
-            } else {
-                left = true
-            }
         }
     }
 }

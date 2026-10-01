@@ -1016,6 +1016,17 @@ impl Session {
         self.allow_sender(address);
     }
 
+    /// `always_show_images` from the keyboard or the palette: what the
+    /// notice's "Always allow" presses, when the notice is up. See
+    /// [`Session::always_show_images_for`].
+    ///
+    /// **Off the main actor**: it renders the message to learn whether
+    /// anything was held back, the same render the notice comes from.
+    #[uniffi::method(name = "alwaysShowImagesFor")]
+    pub fn always_show_images_for_ffi(&self, message: i64) -> bool {
+        blocking(self.always_show_images_for(message))
+    }
+
     /// Always allow every address at this domain.
     #[uniffi::method(name = "allowDomain")]
     pub fn allow_domain_ffi(&self, domain: String) {
@@ -2484,6 +2495,25 @@ impl Session {
     /// Always allow `address`. See [`allow_sender_ffi`](Self::allow_sender_ffi).
     pub fn allow_sender(&self, address: String) {
         self.amend_allow_list(|list| list.allow(&address));
+    }
+
+    /// Grant `message`'s sender a standing exception, if the reader is asking
+    /// for one -- and answer whether it was.
+    ///
+    /// The command form of the notice's "Always allow" (#1706), and only
+    /// where that button would be: something held back, from a sender not
+    /// yet allowed. Anywhere else a key does nothing, GTK's rule for the
+    /// same command, because a grant written where no notice asked is
+    /// consent nobody was asked for. The address is the notice's own, so the
+    /// key and the button cannot grant different people.
+    pub async fn always_show_images_for(&self, message: i64) -> bool {
+        match self.reader_notice(message).await {
+            Some(notice) if !notice.allowed && !notice.sender.is_empty() => {
+                self.allow_sender(notice.sender);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Always allow `domain`. See [`allow_domain_ffi`](Self::allow_domain_ffi).

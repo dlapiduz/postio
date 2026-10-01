@@ -299,6 +299,11 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // AppKit's own Quit is the menu item; the registry's is the palette
         // row and whatever `[keys]` binds it to (#1706).
         C::Quit,
+        // The two banner buttons that were not yet commands: the
+        // blocked-images notice's "Always allow" and the unsubscribe banner's
+        // one deliberate act, from the keyboard and the palette (#1706).
+        C::AlwaysShowImages,
+        C::Unsubscribe,
         // The list has to be told to redraw after the query is re-asked.
         C::ToggleResultOrder,
         // The picker is a surface, and the four times it offers come from

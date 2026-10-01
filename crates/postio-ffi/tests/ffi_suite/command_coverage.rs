@@ -53,8 +53,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ZoomIn, "#1705"),
     (CommandId::ZoomOut, "#1705"),
     (CommandId::ZoomReset, "#1705"),
-    (CommandId::AlwaysShowImages, "#1706"),
-    (CommandId::Unsubscribe, "#1706"),
 ];
 
 /// Whether the Mac offers `id` at all. See the module note.
