@@ -1078,6 +1078,19 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_MAIL,
     },
     CommandSpec {
+        id: CommandId::MoreActions,
+        title: "More actions",
+        // `.`, the open message's More: the verbs a narrow dialog folds out
+        // of its action row (specs/007-postio-focus T206). Unbound
+        // elsewhere, in every app.
+        default_binding: ".",
+        alternate_bindings: &[],
+        contexts: Context::Reader.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
         id: CommandId::Search,
         title: "Search",
         default_binding: "/",

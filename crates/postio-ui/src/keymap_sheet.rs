@@ -152,6 +152,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::CancelSend
         // The marker is on the row it acts on, as the row's other verbs are.
         | C::DismissMarker
+        // The verbs a narrow dialog folds away are the row's verbs too.
+        | C::MoreActions
         // A picker is how snooze, move and label are answered, so its keys
         // sit with the verbs that open it.
         | C::PickerChoose1

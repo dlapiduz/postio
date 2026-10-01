@@ -45,6 +45,7 @@ stop_digesting_sender	D
 view_source	v
 open_attachment_or_link	o
 dismiss_marker	-
+more_actions	.
 search	/
 save_search	ctrl+s
 back_to_words	ctrl+BackSpace

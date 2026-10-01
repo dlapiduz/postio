@@ -153,6 +153,8 @@ command_ids! {
     OpenAttachmentOrLink => "open_attachment_or_link",
     /// Take a wrong marker off the message, and remember that it was wrong.
     DismissMarker => "dismiss_marker",
+    /// Show the open message's verbs that do not fit its action row.
+    MoreActions => "more_actions",
     /// Focus the search field.
     Search => "search",
     /// Save the current search as a pinned folder in the sidebar.
@@ -778,6 +780,9 @@ pub enum Command {
         /// `true` dismisses; `false` is undo's way back.
         dismissed: bool,
     },
+    /// Show the verbs a narrow message dialog folds out of its action row:
+    /// Label, Move and Delete (spec 007 T206).
+    MoreActions,
 
     // -- Search ----------------------------------------------------------
     /// Search, or focus the search field when `query` is `None`.
@@ -1280,6 +1285,7 @@ impl Command {
             Command::ViewSource { .. } => CommandId::ViewSource,
             Command::OpenAttachmentOrLink { .. } => CommandId::OpenAttachmentOrLink,
             Command::DismissMarker { .. } => CommandId::DismissMarker,
+            Command::MoreActions => CommandId::MoreActions,
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
             Command::BackToWords => CommandId::BackToWords,
@@ -1471,6 +1477,7 @@ impl Command {
                 target: MessageTarget::Selection,
                 dismissed: true,
             },
+            CommandId::MoreActions => Command::MoreActions,
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
             CommandId::BackToWords => Command::BackToWords,

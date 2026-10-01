@@ -110,6 +110,7 @@ bar in place, in the top bar's own field, with the results below it.
 | `Digest`, `Reader` | `U` | `unsubscribe` | All |
 | `Filtered` | `R` | `restore_filtered` | Focus |
 | message surfaces | `-` | `dismiss_marker` | Focus (T118) |
+| `Reader` | `.` | `more_actions`: the open message's More (Label, Move, Delete) | Focus (T206) |
 | `List` | `F` | `sweep_inbox`: shows a count, then acts | Focus (T128) |
 | `Filtered` | `1` … `7` | `filtered_tab_1` … `filtered_tab_7` | Focus |
 | `Digest` | `]` / `[` | `next_reference` / `prev_reference` | Focus, milestone 2 |
