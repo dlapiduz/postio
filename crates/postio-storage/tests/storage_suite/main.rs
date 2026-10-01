@@ -52,5 +52,6 @@ mod threading_lookup_cost;
 mod threading_statement_count;
 mod threads;
 mod unified_threads;
+mod upsert_identity_cost;
 mod wal_ceiling;
 mod write_gate;
