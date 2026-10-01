@@ -234,3 +234,77 @@ pub fn switching_the_treatment_leaves_the_column_where_it_was() {
         );
     });
 }
+
+/// `O` keeps the reading position of a marked message too. The column goes
+/// to the marked sentence once, when the message opens; after that the
+/// place is the person's, and a switch redrawing the body must not take
+/// them back to the sentence (found in screen 29's render).
+pub fn switching_a_marked_message_keeps_the_reading_position() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        const SENTENCE: &str = "Can everyone confirm the new entrance by Friday";
+        let fixture = Fixture::empty().await;
+        let (work, _) = fixture
+            .file(
+                ("Dana Whitfield", "dana@treatments.example.com"),
+                "Building access",
+                "Hi everyone.",
+                10,
+            )
+            .await;
+        fixture
+            .write_html_body(
+                work,
+                // The marked sentence far down, so opening scrolls to it.
+                &html_of("html-work-black-text").replace(
+                    "<p class=\"MsoNormal\"><span style=\"color:black\">Thanks,",
+                    &format!(
+                        "{}<p class=\"MsoNormal\">{SENTENCE}?</p>\
+                         <p class=\"MsoNormal\"><span style=\"color:black\">Thanks,",
+                        "<p class=\"MsoNormal\">More about the entrance works.</p>".repeat(40)
+                    ),
+                ),
+            )
+            .await;
+        fixture.ask(work, SENTENCE).await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        assert!(
+            crate::settle_until(async || !reader.view().highlight_rects().is_empty()
+                && reader.view().tiles_settled())
+            .await,
+            "the marked sentence was never highlighted"
+        );
+        assert!(
+            reader.scrolled_for_test() > 0.0,
+            "opening did not go to the marked sentence"
+        );
+        // The person reads back up to the top.
+        reader.view().scroll_to_edge(false);
+        crate::settle();
+        let before = reader.scrolled_for_test();
+        support::keys(&window, &["O"]);
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper
+                && !reader.view().highlight_rects().is_empty()
+                && reader.view().tiles_settled())
+            .await,
+            "O did not put the office mail on paper"
+        );
+        crate::settle();
+        assert_eq!(
+            reader.scrolled_for_test(),
+            before,
+            "switching took the column back to the marked sentence"
+        );
+    });
+}

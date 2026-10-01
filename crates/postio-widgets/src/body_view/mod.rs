@@ -121,6 +121,10 @@ pub(super) mod imp {
         pub(super) find: RefCell<super::find::FindState>,
         /// The range highlighted in the text on screen, if one is.
         pub(super) highlight: RefCell<Option<std::ops::Range<usize>>>,
+        /// A highlight still to be brought into view, waiting for the
+        /// column to grow to the document it is in: the adjustment watched,
+        /// and the handler to let go of.
+        pub(super) reveal: RefCell<Option<(gtk::Adjustment, glib::SignalHandlerId)>>,
         /// Where a drag began, in the view's coordinates.
         pub(super) drag_start: Cell<Option<gtk::graphene::Point>>,
         /// The scroller this view is laid out inside, when it takes its
@@ -178,6 +182,7 @@ pub(super) mod imp {
                 drag_start: Cell::new(None),
                 find: RefCell::default(),
                 highlight: RefCell::default(),
+                reveal: RefCell::default(),
                 toggled_folds: RefCell::default(),
                 focused_link: Cell::new(None),
                 launcher: RefCell::default(),
@@ -345,6 +350,10 @@ impl BodyView {
         imp.toggled_folds.borrow_mut().clear();
         imp.focused_link.set(None);
         imp.highlight.replace(None);
+        self.forget_reveal();
+        if let Some(sideways) = imp.hadjustment.borrow().as_ref() {
+            sideways.set_value(0.0);
+        }
         self.set_selection(None);
         self.set_content(content);
     }
@@ -944,23 +953,31 @@ impl BodyView {
 
     /// Scroll so document height `y` is at the top of what is in view.
     pub(super) fn scroll_document_to(&self, y: f64) {
-        match self.flow_scroller() {
+        self.scroll_document_reaching(y);
+    }
+
+    /// [`scroll_document_to`](Self::scroll_document_to), saying whether the
+    /// scroll got there: false when the adjustment stopped short, which a
+    /// column does when it has not yet grown to a document just drawn.
+    pub(super) fn scroll_document_reaching(&self, y: f64) -> bool {
+        let (adjustment, want) = match self.flow_scroller() {
             Some(scroller) => {
                 let Some(bounds) = self.compute_bounds(&scroller) else {
-                    return;
+                    return false;
                 };
                 let adjustment = scroller.vadjustment();
                 // Where the view starts in the column, whatever the column
                 // is scrolled to now.
                 let start = adjustment.value() + f64::from(bounds.y());
-                adjustment.set_value(start + y);
+                (adjustment, start + y)
             }
-            None => {
-                if let Some(adjustment) = self.imp().vadjustment.borrow().as_ref() {
-                    adjustment.set_value(y);
-                }
-            }
-        }
+            None => match self.imp().vadjustment.borrow().clone() {
+                Some(adjustment) => (adjustment, y),
+                None => return false,
+            },
+        };
+        adjustment.set_value(want);
+        (adjustment.value() - want).abs() < 0.5
     }
 
     /// How far the message is scrolled: the column's for a flowing view.

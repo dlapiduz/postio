@@ -328,6 +328,10 @@ const CASES: &[(&str, fn())] = &[
         treatments::switching_the_treatment_leaves_the_column_where_it_was as fn(),
     ),
     (
+        "treatments::switching_a_marked_message_keeps_the_reading_position",
+        treatments::switching_a_marked_message_keeps_the_reading_position as fn(),
+    ),
+    (
         "open_layout::the_dialogs_chrome_is_set_in_the_system_faces",
         open_layout::the_dialogs_chrome_is_set_in_the_system_faces as fn(),
     ),

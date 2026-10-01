@@ -97,6 +97,10 @@ pub struct OpenMessage {
     /// The message on screen, and a count that moves with every open, so a
     /// body that lands for an earlier one is dropped.
     shown: Rc<Cell<Option<MessageId>>>,
+    /// The message whose marked sentence the column was taken to: once, as
+    /// it opened. Every later draw of it -- `O`, images allowed, a fold --
+    /// marks the sentence where it stands and leaves the place the person's.
+    revealed: Cell<Option<MessageId>>,
     /// The inline parts of the message on screen, by content id: what the
     /// reader's `cid:` images resolve to.
     inline: Inline,
@@ -349,6 +353,7 @@ impl OpenMessage {
             fold_label,
             keymap: RefCell::new(keymap.clone()),
             shown,
+            revealed: Cell::new(None),
             inline,
             generation: Rc::default(),
             open,
@@ -710,6 +715,7 @@ impl OpenMessage {
         self.generation.set(generation);
         // The inline-image source reads this same cell.
         self.shown.set(Some(message));
+        self.revealed.set(None);
         self.body.replace(None);
         self.show_marker_card(message);
         self.header_card.clear();
@@ -1209,7 +1215,12 @@ impl OpenMessage {
             offset,
             source_len: own.chars().count(),
         });
-        self.reader.view().set_highlight(range);
+        if range.is_some() && self.revealed.get() != Some(shown) {
+            self.revealed.set(Some(shown));
+            self.reader.view().set_highlight(range);
+        } else {
+            self.reader.view().mark(range);
+        }
     }
 
     /// How many of the conversation's messages `[` and `]` can step

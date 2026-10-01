@@ -239,18 +239,65 @@ impl BodyView {
     /// a third of the way down; `None` takes the highlight away. The range
     /// is the rendered text's (`TextIndex::locate` finds it), and belongs to
     /// the message on screen: showing another clears it.
+    ///
+    /// The highlight is often set as a new document arrives, before the
+    /// column has grown to it; the scroll then waits for the column to grow
+    /// rather than stopping wherever the old document ended.
     pub fn set_highlight(&self, range: Option<std::ops::Range<usize>>) {
-        self.imp().highlight.replace(range);
-        let rects = self.highlight_rects();
-        if let Some(first) = rects.first() {
-            let y0 = rects.iter().map(|rect| rect.y0).fold(first.y0, f64::min);
-            let y1 = rects.iter().map(|rect| rect.y1).fold(first.y1, f64::max);
-            let (top, page) = self.window();
-            if y0 < top || y1 > top + page {
-                self.scroll_document_to((y0 - page / 3.0).max(0.0));
-            }
+        self.mark(range);
+        if !self.reveal_highlight() {
+            self.reveal_when_laid_out();
         }
+    }
+
+    /// Highlight `range`, as [`set_highlight`](Self::set_highlight) does,
+    /// without moving: for a redraw of a message whose sentence the person
+    /// was already taken to, where the place is now theirs.
+    pub fn mark(&self, range: Option<std::ops::Range<usize>>) {
+        self.forget_reveal();
+        self.imp().highlight.replace(range);
         self.queue_draw();
+    }
+
+    /// Bring the highlight into view, a third of the way down. False when
+    /// the scroll could not get there yet.
+    fn reveal_highlight(&self) -> bool {
+        let rects = self.highlight_rects();
+        let Some(first) = rects.first() else {
+            return true;
+        };
+        let y0 = rects.iter().map(|rect| rect.y0).fold(first.y0, f64::min);
+        let y1 = rects.iter().map(|rect| rect.y1).fold(first.y1, f64::max);
+        let (top, page) = self.window();
+        if y0 >= top && y1 <= top + page {
+            return true;
+        }
+        self.scroll_document_reaching((y0 - page / 3.0).max(0.0))
+    }
+
+    /// Try [`reveal_highlight`](Self::reveal_highlight) again each time
+    /// what scrolls the document changes its range -- the layout catching
+    /// up with the document -- until it gets there.
+    fn reveal_when_laid_out(&self) {
+        let Some(adjustment) = self.scrolling() else {
+            return;
+        };
+        let view = self.downgrade();
+        let handler = adjustment.connect_changed(move |_| {
+            if let Some(view) = view.upgrade()
+                && view.reveal_highlight()
+            {
+                view.forget_reveal();
+            }
+        });
+        self.imp().reveal.replace(Some((adjustment, handler)));
+    }
+
+    /// Stop waiting to bring a highlight into view.
+    pub(super) fn forget_reveal(&self) {
+        if let Some((adjustment, handler)) = self.imp().reveal.take() {
+            adjustment.disconnect(handler);
+        }
     }
 
     /// The highlight's rectangles, in document coordinates.
