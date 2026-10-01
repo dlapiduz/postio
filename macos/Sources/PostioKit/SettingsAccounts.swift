@@ -47,6 +47,17 @@ public final class SettingsAccounts {
         wishToken += 1
     }
 
+    /// The wish, once: answered and cleared.
+    ///
+    /// The pane takes it both when the token moves and when it appears,
+    /// because a command that opens the window creates the pane *after* the
+    /// token moved -- and a wish only read, never cleared, would open its
+    /// sheet again every time the window did.
+    public func take() -> Wish? {
+        defer { wish = nil }
+        return wish
+    }
+
     /// The row the keyboard is on, out of `accounts`.
     ///
     /// `nil` when the cursor names a row that is not there any more — a

@@ -93,7 +93,9 @@ public struct SettingsPaneView: View {
             // By token, not by value: adding two accounts in a row is two
             // sheets, and `onChange` on the wish alone would open only the
             // first.
-            .onChange(of: accountCursor.wishToken) { _, _ in grant(accountCursor.wish) }
+            .onChange(of: accountCursor.wishToken) { _, _ in grant(accountCursor.take()) }
+            // A command that opened this window asked before the pane existed.
+            .onAppear { grant(accountCursor.take()) }
             // Never pre-filled, and never with the old one: the old one is
             // what stopped working, and Postio does not have it to offer.
             .alert(
@@ -350,6 +352,9 @@ public struct SettingsPaneView: View {
     /// Two of the seven need a surface, and a command has no view to present
     /// one with. The other five are calls the engine makes itself.
     private func grant(_ wish: SettingsAccounts.Wish?) {
+        // Both wishes are about accounts, so that is the pane to be on --
+        // `⇧⌘N` raised the window on whatever pane it last showed.
+        if wish != nil { store.selected = "accounts" }
         switch wish {
         case .add:
             adding = AddAccountModel()

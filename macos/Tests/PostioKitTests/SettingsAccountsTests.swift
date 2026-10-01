@@ -62,4 +62,15 @@ import Testing
         pane.ask(.updateCredential(7))
         #expect(pane.wish == .updateCredential(7))
     }
+
+    @Test func aWishIsTakenOnceByWhicheverPaneIsThereToTakeIt() {
+        // `⇧⌘N` with the Settings window closed opens it, and the pane that
+        // appears was not there to see the token move -- so it takes the
+        // wish when it appears. Taken, not read: a second appearance must not
+        // open a second sheet nobody asked for.
+        let accounts = SettingsAccounts()
+        accounts.ask(.add)
+        #expect(accounts.take() == .add)
+        #expect(accounts.take() == nil)
+    }
 }
