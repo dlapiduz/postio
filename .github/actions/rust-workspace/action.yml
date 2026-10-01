@@ -10,13 +10,6 @@ description: >
   cold build of GTK and WebKit.
 
 inputs:
-  save-cache:
-    description: >
-      Whether this job writes the cache back. A job that restores someone
-      else's cache and never saves its own gets nothing from it unless the
-      two build the *same kind* of artifact -- see `cache-name`.
-    required: false
-    default: "false"
   cache-name:
     description: >
       Which cache this job reads and writes. It exists because `cargo clippy`
@@ -34,8 +27,10 @@ inputs:
 
       That was ~7 minutes of runner on every pull request, and it read as
       "the cache is cold" when the cache was fine and simply the wrong shape.
-      One cache per kind of build fixes it; the default keeps the existing
-      `build` cache key byte-identical, so no entry is orphaned by this.
+      One cache per kind of build fixes it.
+
+      Every job restores its cache; the ones that build it end with
+      `.github/actions/build-cache-save`, which writes it back from `main`.
     required: false
     default: "build"
 
@@ -123,37 +118,10 @@ runs:
       shell: bash
       run: scripts/install-shims.sh
 
-    # The cache key has to name the compiler. It no longer moves on its own
-    # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as
-    # a commit, and the cache must not survive it: a key of Cargo.lock alone
-    # still matches afterwards, so the runner spends ~50s restoring 2 GB of
-    # artifacts built by the old compiler that cargo then throws away. A miss
-    # is cheaper than a restore that buys nothing.
-    - name: Identify the compiler
-      id: rust
-      shell: bash
-      run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
-
-    - name: Cache cargo registry and target dir
-      if: inputs.save-cache == 'true'
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+    # Restored here; written back by `.github/actions/build-cache-save` at the
+    # end of the job, from `main` only (#1710). The key, the fallback and why a
+    # pull request never writes are that action's description.
+    - name: Restore the build cache
+      uses: ./.github/actions/build-cache
       with:
-        path: |
-          ~/.cargo/registry/index
-          ~/.cargo/registry/cache
-          ~/.cargo/git/db
-          target
-        key: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-
-
-    - name: Restore the shared build cache
-      if: inputs.save-cache != 'true'
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-      with:
-        path: |
-          ~/.cargo/registry/index
-          ~/.cargo/registry/cache
-          ~/.cargo/git/db
-          target
-        key: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-
+        name: ${{ inputs.cache-name }}

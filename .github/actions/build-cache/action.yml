@@ -1,0 +1,115 @@
+name: Build cache (restore)
+description: >
+  Restore a cargo build cache, and arrange for `build-cache-save` to write it
+  back at the end of the job -- from `main` only.
+
+  # Why a pull request never saves
+
+  `actions/cache` saves from whatever ref runs it, and a cache saved by a pull
+  request is readable only by that pull request (and its re-runs). So every
+  PR-scoped save bought the next PR nothing and spent the repository's 10 GB
+  quota doing it: on 2026-09-30 `refs/pull/1306/merge` held 9.4 GB and `main`
+  held no build cache at all, which made every pull request a cold build --
+  Tests 12.8 min cold against 3.5 warm, Clippy 8.1 against 1.8 (#1710).
+
+  A pull request can read `main`'s caches. So `main` is the only writer, every
+  pull request restores what it wrote, and the quota holds one generation of
+  `main`'s caches instead of whichever branch happened to push last.
+
+  # The key
+
+  The compiler, the lockfile, and the two files that hold build settings --
+  the root `Cargo.toml`'s profiles and `.cargo/config.toml`. A change to any
+  of them changes what cargo builds, and an exact hit on a key that did not
+  move would restore artifacts cargo then throws away, and never refresh them.
+  `epoch` is for a setting none of those files hold (a workflow `env:`): bump
+  it and the next `main` run writes a fresh cache.
+
+  The restore falls back to the newest cache with the same name and compiler,
+  so a lockfile change on a branch still starts from `main`'s last build.
+
+  # Split in two
+
+  A composite action has no post step, so it cannot save at the end of the job
+  the way `actions/cache` does. This half restores and records the key and the
+  paths in the job's environment; `.github/actions/build-cache-save` reads them
+  back, so the two cannot disagree about what was cached.
+
+inputs:
+  name:
+    description: >
+      Which cache. Jobs that build different things -- `cargo clippy` emits
+      check units, `cargo test` build units, `-p` and `--workspace` resolve
+      features differently -- need different names, or each restores the
+      other's artifacts and rebuilds anyway.
+    required: true
+  target:
+    description: Whether to cache `target/` as well as the registry.
+    required: false
+    default: "true"
+  extra-paths:
+    description: Further paths to cache, one per line (a tool binary, say).
+    required: false
+    default: ""
+  epoch:
+    description: Bump to retire every cache of this name; see the description.
+    required: false
+    default: "1"
+
+outputs:
+  cache-hit:
+    description: "'true' on an exact key hit."
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # Named for the compiler that built it: a toolchain bump must not restore
+    # 2 GB of artifacts cargo will throw away.
+    - name: Identify the compiler
+      id: key
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        EPOCH: ${{ inputs.epoch }}
+        FILES_HASH: ${{ hashFiles('**/Cargo.lock', 'Cargo.toml', '.cargo/config.toml') }}
+        TARGET: ${{ inputs.target }}
+        EXTRA: ${{ inputs.extra-paths }}
+      run: |
+        rust=$(rustc --version | tr ' ()/' '----')
+        prefix="${RUNNER_OS}-cargo-${NAME}-e${EPOCH}-${rust}-"
+        {
+          echo "BUILD_CACHE_KEY=${prefix}${FILES_HASH}"
+          echo "BUILD_CACHE_PREFIX=${prefix}"
+          echo "BUILD_CACHE_PATHS<<__paths__"
+          echo "~/.cargo/registry/index"
+          echo "~/.cargo/registry/cache"
+          echo "~/.cargo/git/db"
+          if [ "$TARGET" = "true" ]; then echo "target"; fi
+          if [ -n "$EXTRA" ]; then printf '%s\n' "$EXTRA"; fi
+          echo "__paths__"
+        } >> "$GITHUB_ENV"
+        echo "cache key: ${prefix}${FILES_HASH}"
+
+    - name: Restore the build cache
+      id: restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ env.BUILD_CACHE_PATHS }}
+        key: ${{ env.BUILD_CACHE_KEY }}
+        restore-keys: ${{ env.BUILD_CACHE_PREFIX }}
+
+    - name: Record whether it was an exact hit
+      shell: bash
+      env:
+        HIT: ${{ steps.restore.outputs.cache-hit }}
+        MATCHED: ${{ steps.restore.outputs.cache-matched-key }}
+      run: |
+        echo "BUILD_CACHE_HIT=${HIT:-false}" >> "$GITHUB_ENV"
+        if [ "${HIT:-false}" = "true" ]; then
+          echo "exact hit"
+        elif [ -n "$MATCHED" ]; then
+          echo "restored the nearest: $MATCHED"
+        else
+          echo "no cache: this job builds cold"
+        fi
