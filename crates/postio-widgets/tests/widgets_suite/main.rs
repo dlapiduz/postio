@@ -52,6 +52,10 @@ const CASES: &[(&str, fn())] = &[
         reader_treatment::a_reader_reports_its_treatment_and_tells_when_it_changes as fn(),
     ),
     (
+        "reader_treatment::a_reader_that_draws_no_treatments_answers_app_colours",
+        reader_treatment::a_reader_that_draws_no_treatments_answers_app_colours as fn(),
+    ),
+    (
         "reader_verbs::a_header_can_leave_the_subject_to_its_surface",
         reader_verbs::a_header_can_leave_the_subject_to_its_surface as fn(),
     ),
