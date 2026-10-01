@@ -423,14 +423,70 @@ final class Engine {
         }
     }
 
-    /// Whether the command palette is open.
+    /// The command name typed after `>` in the search box, or `nil` while
+    /// the box is a search (`CommandBox`). The field reports it as it changes.
     ///
-    /// A *surface*, which is why the boundary does not handle
-    /// `command_palette` the way it handles `next_message`: a session cannot
-    /// present a sheet. `postio-gtk`'s `run_action` makes the same call for
-    /// the same reason — a frontend has to know which commands it draws
-    /// something for, and only those.
-    var showingPalette = false
+    /// `command_palette` is still handled here and not by the boundary: it
+    /// opens a surface, and a session cannot. `postio-gtk`'s `run_action`
+    /// makes the same call for the same reason.
+    private(set) var commandQuery: String?
+    /// Which command row the keyboard is on.
+    private(set) var commandBox = CommandBox()
+
+    /// What the search box was last asked to hold -- `>` from ⌘K, nothing
+    /// after a command runs or Escape -- with a serial, so the same text
+    /// asked twice still arrives.
+    struct FieldRequest: Equatable {
+        let serial: Int
+        let text: String
+    }
+    private(set) var fieldRequest = FieldRequest(serial: 0, text: "")
+
+    private func askField(_ text: String) {
+        fieldRequest = FieldRequest(serial: fieldRequest.serial + 1, text: text)
+    }
+
+    /// The field's report: what follows `>`, or `nil` when it is a search.
+    func commandQueryChanged(_ query: String?) {
+        guard query != commandQuery else { return }
+        commandQuery = query
+        commandBox.queryChanged()
+    }
+
+    /// The commands the box offers for what has been typed, best first, for
+    /// the surface the box was opened over.
+    var commandRows: [PaletteEntryFfi] {
+        guard let commandQuery, let session else { return [] }
+        return session.paletteEntries(commandQuery, in: .list)
+    }
+
+    /// ↑ or ↓ in the box.
+    func moveCommand(by delta: Int) {
+        commandBox.move(by: delta, among: commandRows.count)
+    }
+
+    /// Return in the box: the highlighted command, or nothing when none
+    /// matched.
+    func runHighlightedCommand() {
+        let rows = commandRows
+        guard commandBox.highlighted < rows.count else { return }
+        runCommand(rows[commandBox.highlighted].id)
+    }
+
+    /// A command chosen from the box. The box empties and gives the keyboard
+    /// back first, so the command acts on the list rather than on a search
+    /// box still claiming focus.
+    func runCommand(_ id: String) {
+        leaveCommandMode()
+        dismissOverlays()
+        run(id)
+    }
+
+    private func leaveCommandMode() {
+        guard commandQuery != nil else { return }
+        commandQuery = nil
+        askField("")
+    }
     /// Whether the cheat sheet is open.
     var showingCheatSheet = false
 
@@ -1056,14 +1112,24 @@ final class Engine {
         }
         switch id {
         case Intercepted.palette:
+            // The search box, asked for a command: what `Ctrl+K` does in
+            // GTK's finder. The box keeps the keyboard and the commands
+            // appear under it as the name is typed (`CommandBox`).
             showingCheatSheet = false
-            showingPalette = true
+            askField(CommandBox.opening)
+            showingSearch = true
+            searchFocusAsks += 1
         case Intercepted.cheatSheet:
-            showingPalette = false
+            leaveCommandMode()
             showingCheatSheet = true
         case Intercepted.search:
             showingSearch = true
             searchFocusAsks += 1
+        case Intercepted.back where commandQuery != nil:
+            // Out of command mode and out of the box: the `>` was a question,
+            // and Escape is "never mind".
+            leaveCommandMode()
+            dismissOverlays()
         case Intercepted.back where showingSearch || session?.isSearching == true:
             // **Escape leaves search, scope and all.** It used to close the
             // field and nothing else, on the strength of a comment saying
@@ -1154,10 +1220,9 @@ final class Engine {
             conversation.focusNext()
         case Intercepted.prevInConversation:
             conversation.focusPrevious()
-        case Intercepted.back where showingPalette || showingCheatSheet:
+        case Intercepted.back where showingCheatSheet:
             // Escape means "get me out of here", and the innermost "here" is
-            // whichever of these is open.
-            showingPalette = false
+            // the sheet.
             showingCheatSheet = false
         // -- the settings window's accounts pane ------------------------
         //
@@ -1553,7 +1618,6 @@ final class Engine {
 
     /// Close whatever overlay is open, and put the keyboard back in the list.
     func dismissOverlays() {
-        showingPalette = false
         showingCheatSheet = false
         showingSearch = false
         paneContext = contextOf(pane)

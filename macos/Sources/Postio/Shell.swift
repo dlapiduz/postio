@@ -197,6 +197,10 @@ struct Shell: View {
                         dismiss: { engine.dismissOverlays() },
                         focusAsks: engine.searchFocusAsks,
                         searchStamp: engine.searchStamp,
+                        fieldRequest: engine.fieldRequest,
+                        onCommandQuery: { engine.commandQueryChanged($0) },
+                        onCommandMove: { engine.moveCommand(by: $0) },
+                        onCommandRun: { engine.runHighlightedCommand() },
                         wantsFocus: Binding(
                             get: { engine.showingSearch },
                             set: { engine.showingSearch = $0 }
@@ -210,22 +214,19 @@ struct Shell: View {
         // application's name belongs in the menu bar and the About window,
         // and a window that announces which program it is spends a line of
         // chrome telling you something you knew when you opened it.
-        // The palette, over everything, with the keyboard in it. `context`
-        // follows so the resolver answers for the surface that actually has
-        // focus -- a palette that still resolved keys as the list would
-        // archive mail while somebody typed a command's name.
-        .overlay {
-            if engine.showingPalette, let session = engine.session {
-                Color.black.opacity(0.12)
-                    .ignoresSafeArea()
-                    .onTapGesture { engine.dismissOverlays() }
-                Palette(
-                    session: session,
-                    context: .list,
-                    run: { engine.run($0) },
-                    dismiss: { engine.dismissOverlays() }
+        // The commands the search box offers while it holds `>`, just under
+        // the field at the trailing edge. Drawn here because the field lives
+        // in the toolbar, which cannot grow downward; the keyboard stays in
+        // the field, and typing there is what filters this.
+        .overlay(alignment: .topTrailing) {
+            if engine.commandQuery != nil {
+                CommandResults(
+                    rows: engine.commandRows,
+                    highlighted: engine.commandBox.highlighted,
+                    run: { engine.runCommand($0) }
                 )
-                .onAppear { engine.paneContext = .palette }
+                .padding(.top, PostioTokens.space2)
+                .padding(.trailing, PostioTokens.space4)
             }
         }
         .sheet(isPresented: $engine.showingCheatSheet) {
@@ -246,7 +247,7 @@ struct Shell: View {
         // preference can change while Postio is running and a cached copy
         // would keep animating for somebody who had just asked it to stop.
         .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
-        .animation(.easeOut(duration: Motion.current), value: engine.showingPalette)
+        .animation(.easeOut(duration: Motion.current), value: engine.commandQuery != nil)
         .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
         // What Postio said back. Bottom-*leading*, so it never lands under
         // the pending-chord hint at the other corner: both are transient and
