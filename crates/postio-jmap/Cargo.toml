@@ -18,7 +18,7 @@ chrono = { workspace = true }
 # The RFC 8620/8621 protocol crate — coroutines plus the std blocking
 # client. No TLS features: connections are opened on this workspace's own
 # cancellable pimalaya-stream, exactly like postio-account's OAuth exchange.
-io-jmap = { version = "0.3", default-features = false, features = ["client"] }
+io-jmap = { version = "0.4.1", default-features = false, features = ["client"] }
 pimalaya-stream = { workspace = true }
 
 # The MailBackend seam and nothing else: default-features = false leaves
