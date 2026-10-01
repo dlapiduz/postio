@@ -73,6 +73,7 @@ mod surfaced;
 mod undo;
 mod view_source;
 mod visible_window;
+mod window_controls;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
 /// `#[ignore]`, which means one thing here: this machine may not have what
@@ -392,6 +393,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "pointer_pairs::escape_closes_the_message_and_the_key_map",
         pointer_pairs::escape_closes_the_message_and_the_key_map as fn(),
+    ),
+    (
+        "window_controls::the_top_bars_icon_buttons_hover_in_their_own_shape",
+        window_controls::the_top_bars_icon_buttons_hover_in_their_own_shape as fn(),
     ),
     (
         "close_buttons::every_closable_surface_has_the_same_x_at_the_right",

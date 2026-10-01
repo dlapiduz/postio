@@ -85,7 +85,8 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
         crate::settle();
 
         // The raw source.
-        let source = postio_focus::source::dialog(b"From: a@example.com\r\n\r\nx", &window.keymap());
+        let source =
+            postio_focus::source::dialog(b"From: a@example.com\r\n\r\nx", &window.keymap());
         source.present(Some(&window));
         assert!(
             crate::settle_until(async || support::with_class(&source, "postio-close-button")
@@ -112,15 +113,16 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
         reading.close();
         crate::settle();
 
-
         // The composer.
         support::keys(&window, &["c"]);
         assert!(crate::settle_until(async || window.compose_dialog().is_some()).await);
         let compose = window.compose_dialog().expect("the compose dialog");
         assert!(
-            crate::settle_until(async || support::with_class(&compose, "postio-close-button")
-                .first()
-                .is_some_and(|close| close.width() > 0))
+            crate::settle_until(
+                async || support::with_class(&compose, "postio-close-button")
+                    .first()
+                    .is_some_and(|close| close.width() > 0)
+            )
             .await
         );
         assert_one_close_at_the_right("the composer", &compose);

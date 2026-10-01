@@ -87,6 +87,9 @@ impl Chrome {
         // main menu and close.
         let compose = icon_button("document-edit-symbolic", "Compose");
         compose.add_css_class("focus-compose");
+        // An icon button keeps its own square: left to fill the bar's 46px
+        // it hovers as a tall pill, not a circle (T193).
+        compose.set_valign(gtk::Align::Center);
 
         let field = gtk::Button::new();
         postio_widgets::widgets::button::style(&field, Kind::Secondary, Size::Regular);
@@ -140,10 +143,12 @@ impl Chrome {
             .build();
         menu_button.add_css_class("focus-menu");
         menu_button.add_css_class("flat");
+        menu_button.set_valign(gtk::Align::Center);
 
         let close = close_button();
         close.add_css_class("focus-close");
         close.add_css_class("circular");
+        close.set_valign(gtk::Align::Center);
 
         let end = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         end.append(&sync_row);

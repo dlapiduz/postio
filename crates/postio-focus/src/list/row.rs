@@ -399,7 +399,10 @@ impl RowWidget {
         let in_gutter = (GUTTER_CENTRE - GUTTER_HIT..=GUTTER_CENTRE + GUTTER_HIT).contains(&x);
         let Some(command) = self.imp().drawn.borrow().action_at(x, y).or(in_gutter
             .then_some(postio_core::CommandId::ToggleSelection)
-            .filter(|_| self.item().is_some_and(|item| item.as_conversation().is_some())))
+            .filter(|_| {
+                self.item()
+                    .is_some_and(|item| item.as_conversation().is_some())
+            }))
         else {
             return false;
         };
