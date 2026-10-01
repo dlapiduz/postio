@@ -922,10 +922,10 @@ final class Engine {
                 // "Once" means this view.
                 rendered.clear()
                 ccRevealed = []
-                // A new message starts at the top. Carrying the anchor over
-                // would resume somebody else's place in it.
-                readerPage = 0
-                readerPageToken += 1
+                // A new message's paging starts at the top. Without a scroll:
+                // that ran on the outgoing page a beat before the new one
+                // replaced it, and the message jumped on every move.
+                readerPages.newMessage()
             }
             cursorShowing = message
             openConversation(atRow: row)
@@ -1313,11 +1313,7 @@ final class Engine {
             // and a frontend claiming the key to do nothing is the bug this
             // return value exists for.
             guard showingThread == nil, cursorShowing != nil else { return false }
-            readerPage = readerPageAfter(
-                current: readerPage,
-                forward: id == Intercepted.scrollReaderDown
-            )
-            readerPageToken += 1
+            readerPages.turn(forward: id == Intercepted.scrollReaderDown)
         default:
             // A compose window in front gets first refusal on the composer's
             // own verbs — and only the window that has the keyboard, because
@@ -1466,7 +1462,7 @@ final class Engine {
         }
     }
 
-    private(set) var readerPage: UInt32 = 0
+    private(set) var readerPages = ReaderPages()
 
     /// How wide the main window is, for the rail's ladder -- whose steps are
     /// window widths, not a pane's.
@@ -1514,13 +1510,6 @@ final class Engine {
         }
     }
 
-    /// Bumped whenever a page turn is asked for.
-    ///
-    /// The *number* is not enough on its own: paging down at the last anchor
-    /// leaves it where it was, and a view watching the value would not
-    /// redraw — which is fine, but paging up from 0 twice has the same shape
-    /// and the token keeps the two honest.
-    private(set) var readerPageToken = 0
 
     /// Open a compose window for `draft`, or say why there is none.
     ///
