@@ -873,3 +873,140 @@ async fn a_queued_write_during_the_wave_is_drained_without_restarting_its_lanes(
     );
     drop(engine);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_inbox_syncs_its_headers_and_newest_bodies_before_any_other_mailbox() {
+    // #1709. Focus's whole screen is the inbox, so on a first sync INBOX has
+    // to be readable before anything else competes for the store writer and
+    // the wire. `sync_priority` only decided which mailbox *started* first;
+    // a wave runs several lanes at once, so INBOX shared it with Sent and
+    // Archive, and bodies for whichever folder had rows were claimed beside
+    // them.
+    //
+    // The rule, as an order on the server's own call log (causal, so it holds
+    // on any machine at any load): every INBOX header fetch precedes every
+    // other fetch of any kind, and INBOX's newest page of bodies -- the seed
+    // batch -- precedes every other mailbox's header and body fetch.
+    const INBOX: u32 = 300;
+    const OTHERS: [(&str, &[&str], u32); 5] = [
+        ("Archive", &["\\Archive"], 1_500),
+        ("Sent Messages", &["\\Sent"], 800),
+        ("Projects", &[], 600),
+        ("Receipts", &[], 600),
+        ("Travel", &[], 600),
+    ];
+    let mut builder = MockBackend::builder().mailbox(folder("INBOX", &[], INBOX));
+    for (path, attributes, count) in OTHERS {
+        builder = builder.mailbox(folder(path, attributes, count));
+    }
+    let backend = Arc::new(builder.build());
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(Duration::from_millis(5));
+
+    let policy = postio_runtime::BackfillPolicy::default();
+    let newest_page = policy.seed_batch as usize;
+    assert!(
+        newest_page < INBOX as usize,
+        "the page must be a part of INBOX"
+    );
+    let (database, engine, _directory) = engine_over_with(backend.clone(), policy).await;
+
+    // What a person would see: the moment INBOX holds all of its headers, the
+    // list query returns the full page, and nothing else has finished.
+    until("INBOX to hold every header", async || {
+        stored(&database, "INBOX").await == Some(INBOX)
+    })
+    .await;
+    let mut unfinished = Vec::new();
+    for (path, _, count) in OTHERS {
+        unfinished.push((path, stored(&database, path).await.unwrap_or(0) < count));
+    }
+    {
+        let connection = database.connect().await.expect("a connection");
+        let account = AccountRepository::new(&connection)
+            .list()
+            .await
+            .expect("accounts")
+            .remove(0);
+        let inbox = MailboxRepository::new(&connection)
+            .list_for_account(account.id)
+            .await
+            .expect("folders")
+            .into_iter()
+            .find(|mailbox| mailbox.path == "INBOX")
+            .expect("INBOX is discovered");
+        let page = MessageRepository::new(&connection)
+            .page(&ListQuery {
+                scope: ListScope::Mailbox(inbox.id),
+                limit: INBOX,
+                after: None,
+            })
+            .await
+            .expect("the list query");
+        assert_eq!(
+            page.len(),
+            INBOX as usize,
+            "the inbox list is not complete while other mailboxes sync"
+        );
+    }
+    assert!(
+        unfinished.iter().all(|(_, unfinished)| *unfinished),
+        "another mailbox had already finished when INBOX's last header landed: {unfinished:?}"
+    );
+
+    // Liveness only: the rule is about what came first, so the log is read
+    // once the other mailboxes have demonstrably begun and INBOX's page of
+    // bodies is down. Nothing later can change what came first, and waiting
+    // for four thousand messages to land would only measure the machine.
+    until(
+        "the other mailboxes to begin and INBOX's bodies to land",
+        async || {
+            let order = backend.fetch_order();
+            let inbox_bodies = order
+                .iter()
+                .filter(|event| matches!(event, FetchEvent::Body(path) if path == "INBOX"))
+                .count();
+            let others_begun = order
+                .iter()
+                .any(|event| matches!(event, FetchEvent::Header(path) if path != "INBOX"));
+            others_begun && inbox_bodies >= newest_page
+        },
+    )
+    .await;
+
+    let order = backend.fetch_order();
+    let is_inbox = |event: &FetchEvent| matches!(event, FetchEvent::Header(path) | FetchEvent::Body(path) if path == "INBOX");
+    let last_inbox_header = order
+        .iter()
+        .rposition(|event| matches!(event, FetchEvent::Header(path) if path == "INBOX"))
+        .expect("INBOX headers were fetched");
+    let first_other = order
+        .iter()
+        .position(|event| !is_inbox(event))
+        .expect("other mailboxes were fetched");
+    assert!(
+        last_inbox_header < first_other,
+        "another mailbox's fetch began before INBOX's headers were done: \
+         INBOX's last header was call {last_inbox_header}, the first other \
+         fetch was {first_other}"
+    );
+    let inbox_bodies: Vec<usize> = order
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| matches!(event, FetchEvent::Body(path) if path == "INBOX"))
+        .map(|(position, _)| position)
+        .collect();
+    assert!(
+        inbox_bodies.len() >= newest_page,
+        "INBOX's newest page of bodies was never fetched: {} of {newest_page}",
+        inbox_bodies.len()
+    );
+    assert!(
+        inbox_bodies[newest_page - 1] < first_other,
+        "another mailbox's fetch began before INBOX's newest {newest_page} \
+         bodies were down: the {newest_page}th INBOX body was call {}, the \
+         first other fetch was {first_other}",
+        inbox_bodies[newest_page - 1]
+    );
+    drop(engine);
+}

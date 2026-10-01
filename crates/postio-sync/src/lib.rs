@@ -35,7 +35,10 @@
 //! - [`initial`] enumerates a mailbox for the first time, newest message
 //!   first, so the app feels usable before the sync is done.
 //! - [`order`] ranks mailboxes *against each other* so INBOX and the folders a
-//!   person reads next are queued before a large Archive or Junk.
+//!   person reads next are queued before a large Archive or Junk. INBOX is
+//!   further held apart: its headers, then its newest page of bodies, are
+//!   synced before any other mailbox's pass or body begins, on a first sync
+//!   and after any gap (#1709) -- see [`order`] for the rule.
 //! - [`resync`] keeps an already-synced mailbox current: QRESYNC/CONDSTORE
 //!   incremental pulls, falling back to [`initial`] for a full re-enumeration
 //!   when the local state cannot answer "what changed" — most importantly
