@@ -870,9 +870,7 @@ impl BodyView {
     /// scrolls down, so the view moves its own sideways adjustment; a scroll
     /// with nothing sideways in it is the column's.
     fn scroll_sideways(&self) {
-        let scroll = gtk::EventControllerScroll::new(
-            gtk::EventControllerScrollFlags::BOTH_AXES,
-        );
+        let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         scroll.connect_scroll({
             let view = self.downgrade();
             move |controller, dx, dy| {

@@ -199,7 +199,12 @@ mod imp {
                     }
                     // Ctrl-click and Shift-click pick; a plain click is the
                     // list's, and moves the cursor.
-                    let held = gesture.current_event_state() | row.imp().held.get().unwrap_or_else(gdk::ModifierType::empty);
+                    let held = gesture.current_event_state()
+                        | row
+                            .imp()
+                            .held
+                            .get()
+                            .unwrap_or_else(gdk::ModifierType::empty);
                     let pick = if held.contains(gdk::ModifierType::CONTROL_MASK) {
                         Some(Pick::Toggle)
                     } else if held.contains(gdk::ModifierType::SHIFT_MASK) {

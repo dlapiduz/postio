@@ -25,7 +25,10 @@ fn reader(name: &str) -> (gtk::Window, Reader) {
     let reader = Reader::with_verbs(
         Rc::new(|_content_id: &str| None),
         RemoteImageAllowList::default(),
-        std::env::temp_dir().join(format!("postio-treatment-{name}-{}.json", std::process::id())),
+        std::env::temp_dir().join(format!(
+            "postio-treatment-{name}-{}.json",
+            std::process::id()
+        )),
         Verbs::NONE,
     );
     let window = gtk::Window::new();

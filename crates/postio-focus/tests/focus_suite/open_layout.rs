@@ -721,12 +721,10 @@ pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
 
 /// An office mail's HTML, from the corpus.
 fn office_html() -> String {
-    postio_model::mime::parse(
-        postio_model::test_corpus::load("html-work-black-text").bytes(),
-    )
-    .body
-    .html
-    .expect("an HTML part")
+    postio_model::mime::parse(postio_model::test_corpus::load("html-work-black-text").bytes())
+        .body
+        .html
+        .expect("an HTML part")
 }
 
 /// T208: over an HTML body the render-mode line sits 24px under the action
@@ -740,7 +738,12 @@ pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
         for card in [true, false] {
             let fixture = Fixture::empty().await;
             let (message, _) = fixture
-                .file(("Dana Whitfield", "dana@example.com"), "Building access", "x", 10)
+                .file(
+                    ("Dana Whitfield", "dana@example.com"),
+                    "Building access",
+                    "x",
+                    10,
+                )
                 .await;
             fixture.write_html_body(message, &office_html()).await;
             if card {
@@ -796,7 +799,10 @@ pub fn the_action_cards_sentence_wraps_and_is_never_cut() {
             .file(("Lena Park", "lena@example.com"), "Harbor", "x", 10)
             .await;
         fixture
-            .write_body(message, &format!("Hi all,\n\n{LONG}, so I can freeze it.\n"))
+            .write_body(
+                message,
+                &format!("Hi all,\n\n{LONG}, so I can freeze it.\n"),
+            )
             .await;
         fixture.ask(message, LONG).await;
         let window = opened_at(&fixture, 1, NARROW).await;
@@ -860,7 +866,10 @@ pub fn a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_fl
         .body
         .html
         .expect("an HTML part");
-        assert!(newsletter.contains("width=\"640\""), "the fixture's page is 640 wide");
+        assert!(
+            newsletter.contains("width=\"640\""),
+            "the fixture's page is 640 wide"
+        );
         let floor = postio_render::render::PAPER_FIT_FLOOR;
         for (html, wide) in [
             (newsletter.clone(), 640.0),
@@ -914,7 +923,10 @@ pub fn a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_fl
                     .observe_controllers()
                     .into_iter()
                     .filter_map(|controller| {
-                        controller.ok()?.downcast::<gtk::EventControllerScroll>().ok()
+                        controller
+                            .ok()?
+                            .downcast::<gtk::EventControllerScroll>()
+                            .ok()
                     })
                     .find(|scroll| {
                         scroll
@@ -970,10 +982,8 @@ pub fn the_dialogs_chrome_is_set_in_the_system_faces() {
         }
         assert!(
             !faces.is_empty()
-                && faces
-                    .iter()
-                    .all(|family| family.starts_with("Adwaita Sans")
-                        || family.starts_with("Adwaita Mono")),
+                && faces.iter().all(|family| family.starts_with("Adwaita Sans")
+                    || family.starts_with("Adwaita Mono")),
             "the chrome is set in {faces:?}"
         );
     });

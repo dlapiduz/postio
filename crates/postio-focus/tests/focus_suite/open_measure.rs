@@ -384,7 +384,10 @@ pub fn the_attribution_sits_between_the_sign_off_and_the_toggle() {
             [bytes[at], bytes[at + 1], bytes[at + 2]].map(i32::from)
         };
         // The ground: the column's right edge, beside the first line.
-        let ground = at(picture.texture.width() as usize - 2, (sign_off.y0 * scale) as usize);
+        let ground = at(
+            picture.texture.width() as usize - 2,
+            (sign_off.y0 * scale) as usize,
+        );
         let strongest = |rect: postio_render::Rect| -> i32 {
             let mut most = 0;
             for y in (rect.y0 * scale) as usize..(rect.y1 * scale) as usize {

@@ -945,7 +945,8 @@ mod tests {
             out.contains("<div dir=\"ltr\" class=\"postio-attribution x-gmail_attr\">On Mon"),
             "{out}"
         );
-        let plain = fold_html_quotes("<p>Thanks</p><p>On Mon, Ben wrote:</p><blockquote>q</blockquote>");
+        let plain =
+            fold_html_quotes("<p>Thanks</p><p>On Mon, Ben wrote:</p><blockquote>q</blockquote>");
         assert!(
             plain.contains("<p class=\"postio-attribution\">On Mon, Ben wrote:</p><details"),
             "{plain}"
@@ -996,7 +997,9 @@ mod tests {
     fn a_list_item_keeps_its_wrapped_lines_and_escapes_its_words() {
         let out = text_to_html("- a long item that\n  wraps onto a second line\n- <b>bold</b>\n");
         assert!(
-            out.contains("<li>a long item that wraps onto a second line</li><li>&lt;b&gt;bold&lt;/b&gt;</li>"),
+            out.contains(
+                "<li>a long item that wraps onto a second line</li><li>&lt;b&gt;bold&lt;/b&gt;</li>"
+            ),
             "{out}"
         );
     }

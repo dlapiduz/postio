@@ -198,7 +198,11 @@ mod tests {
         for key in ["e", "E", "Escape", "ctrl+Return", "g i", "."] {
             assert_eq!(short(key), key);
         }
-        assert_eq!(shortcut("Delete"), "Delete", "a screen reader hears the name");
+        assert_eq!(
+            shortcut("Delete"),
+            "Delete",
+            "a screen reader hears the name"
+        );
         assert_eq!(
             shortcut(&short("Delete")),
             "Delete",

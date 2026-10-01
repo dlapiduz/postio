@@ -174,10 +174,7 @@ impl ListPane {
                     if let Some(position) = row.item().and_then(|item| list.position_of(item.id()))
                     {
                         gesture.set_state(gtk::EventSequenceState::Claimed);
-                        handler(
-                            position,
-                            gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1),
-                        );
+                        handler(position, gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1));
                     }
                     return;
                 }

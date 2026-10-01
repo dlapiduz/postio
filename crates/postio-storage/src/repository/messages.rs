@@ -2011,8 +2011,7 @@ impl<'a> MessageRepository<'a> {
                 ))
             };
             let rows = if arm.uses_parser_version {
-                let arguments =
-                    bind![mailbox_id.get(), window, postio_model::mime::PARSER_VERSION];
+                let arguments = bind![mailbox_id.get(), window, postio_model::mime::PARSER_VERSION];
                 sql::all(self.connection, &statement, arguments, read).await?
             } else {
                 let arguments = bind![mailbox_id.get(), window];
@@ -3306,14 +3305,27 @@ mod tests {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         let mut walks: Vec<(String, String, &str)> = vec![
-            ("a header fetch".into(), NEEDING_A_HEADER_FETCH.into(), "idx_messages_list"),
-            ("payloads".into(), NEEDING_PAYLOADS.into(), "idx_messages_body_state"),
+            (
+                "a header fetch".into(),
+                NEEDING_A_HEADER_FETCH.into(),
+                "idx_messages_list",
+            ),
+            (
+                "payloads".into(),
+                NEEDING_PAYLOADS.into(),
+                "idx_messages_body_state",
+            ),
         ];
-        for (arm, index) in BACKFILL_ARMS
-            .iter()
-            .zip(["idx_messages_body_state"; 2].into_iter().chain(["idx_messages_body_problems"]))
-        {
-            walks.push((format!("bodies ({})", arm.predicate), backfill_arm(arm.predicate), index));
+        for (arm, index) in BACKFILL_ARMS.iter().zip(
+            ["idx_messages_body_state"; 2]
+                .into_iter()
+                .chain(["idx_messages_body_problems"]),
+        ) {
+            walks.push((
+                format!("bodies ({})", arm.predicate),
+                backfill_arm(arm.predicate),
+                index,
+            ));
         }
         for (walk, sql, index) in walks {
             let plan = test_support::plan(&connection, &sql).await;
