@@ -26,6 +26,16 @@ public enum ReaderPaging {
     /// (`pos-` and a number) rather than anything a message supplied. The
     /// interpolation is still into a string literal, so the id is built by
     /// the boundary rather than spliced here.
+    ///
+    /// **`@MainActor`, and it has to say so.** WebKit kills the process --
+    /// `crashDueToApplicationCallingMainThreadOnlyWebKitAPIFromBackgroundThread`
+    /// -- when `evaluateJavaScript` is called off the main thread, and a plain
+    /// `async` function does not run where its caller did: under the macOS 27
+    /// SDK's Swift, this one ran on the cooperative pool even when awaited from
+    /// a `@MainActor` task. Opening any conversation turned the page, so
+    /// opening any message SIGKILLed Postio; on CI's older toolchain it
+    /// happened to stay on the main thread.
+    @MainActor
     public static func scroll(_ view: WKWebView, to page: UInt32) async {
         let fragment = readerPageFragment(page: page)
         let script = """
