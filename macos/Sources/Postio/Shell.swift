@@ -647,6 +647,7 @@ struct Shell: View {
                 // any thread longer than one.
                 run: { engine.run($0, on: $1) },
                 reduced: engine.readerView.messages,
+                zoom: engine.zoom.factor,
                 revision: engine.documentRevision,
                 page: engine.readerPage,
                 pageToken: engine.readerPageToken,
@@ -671,6 +672,7 @@ struct Shell: View {
                     isLatest: true,
                     showingCc: engine.ccRevealed.contains(showing),
                     readerView: engine.readerView.isReduced(showing),
+                    zoom: engine.zoom.factor,
                     showingImages: engine.rendered.isOn(showing),
                     unsubscribe: engine.unsubscribing.state(of: showing),
                     collapsible: false,

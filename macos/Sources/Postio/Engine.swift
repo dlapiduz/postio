@@ -108,6 +108,7 @@ final class Engine {
             accounts = session.accounts()
             vouch()
             reloadSavedSearches()
+            loadZoom()
             self.appearance = appearance
             state = .open(controller)
             // Nothing was ever fetched before this: the store opened and
@@ -1234,6 +1235,12 @@ final class Engine {
             // already drawn as sent there is nothing to do.
             guard let message = target ?? cursorShowing else { return false }
             readerView.showOriginal(message)
+        case Intercepted.zoomIn:
+            changeZoom { $0.zoomIn() }
+        case Intercepted.zoomOut:
+            changeZoom { $0.zoomOut() }
+        case Intercepted.zoomReset:
+            changeZoom { $0.reset() }
         case Intercepted.toggleReaderView:
             guard let message = target ?? cursorShowing else { return false }
             toggleReaderView(message)
@@ -1280,6 +1287,35 @@ final class Engine {
     /// reach an `@State`: that is exactly why `⌘O` once did nothing while the
     /// `⋯` menu item beside it worked.
     private(set) var readerView = ReaderViewChoice()
+
+    /// How large the reader draws bodies -- one reader-wide preference, the
+    /// `[reader] zoom` GTK reads too (spec 006 FR-021d). See `ReaderZoom`.
+    private(set) var zoom = ReaderZoom(percent: 100, steps: settingsZoomSteps())
+
+    /// Read `[reader] zoom`. A file that will not parse keeps 100%: the
+    /// settings window is where that gets said, not the reading pane.
+    private func loadZoom() {
+        guard let path = try? settingsPath(),
+              let percent = settingsReaderZoom(text: settingsLoad(path: path))
+        else { return }
+        zoom = ReaderZoom(percent: percent, steps: zoom.steps)
+    }
+
+    /// Step the zoom and, when it moved, write it down.
+    ///
+    /// Only `[reader]` is touched -- `settingsPatchReaderZoom` leaves the rest
+    /// of a hand-edited file as it was. The view follows `zoom` at once; a
+    /// file that cannot be written is said, and the zoom on screen stays.
+    private func changeZoom(_ step: (inout ReaderZoom) -> Bool) {
+        guard step(&zoom) else { return }
+        do {
+            let path = try settingsPath()
+            let patched = try settingsPatchReaderZoom(text: settingsLoad(path: path), zoom: zoom.percent)
+            try settingsSave(path: path, text: patched)
+        } catch {
+            complain("The zoom could not be saved: \(error)")
+        }
+    }
 
     /// A message's parts, when the panel is open.
     ///

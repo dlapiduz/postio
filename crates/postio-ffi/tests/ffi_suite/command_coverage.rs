@@ -49,9 +49,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::FindInMessage, "#1705"),
     (CommandId::FindNext, "#1705"),
     (CommandId::FindPrevious, "#1705"),
-    (CommandId::ZoomIn, "#1705"),
-    (CommandId::ZoomOut, "#1705"),
-    (CommandId::ZoomReset, "#1705"),
 ];
 
 /// Whether the Mac offers `id` at all. See the module note.

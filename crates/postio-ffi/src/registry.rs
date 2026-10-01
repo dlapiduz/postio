@@ -285,6 +285,11 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ViewOriginal,
         // Reader view for one message, the other half of the same choice.
         C::ToggleReaderView,
+        // The reader's zoom: `WKWebView.pageZoom`, and `[reader] zoom` in
+        // the file GTK reads too.
+        C::ZoomIn,
+        C::ZoomOut,
+        C::ZoomReset,
         // The parts panel: a surface, a cursor this side holds, and verbs
         // that each need a dialog or a launcher.
         C::OpenParts,

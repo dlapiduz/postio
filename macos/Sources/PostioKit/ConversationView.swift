@@ -32,6 +32,8 @@ public struct ConversationView: View {
     private let run: (String, Int64?) -> Void
     /// The messages the reader asked to see as sent (`⌘O`).
     private let reduced: [Int64]
+    /// The reader's zoom (`ReaderZoom.factor`).
+    private let zoom: Double
     /// Bumped when what the page is made of may have changed -- see
     /// `ThreadDocumentView`.
     private let revision: Int
@@ -66,6 +68,7 @@ public struct ConversationView: View {
         model: ConversationModel,
         run: @escaping (String, Int64?) -> Void,
         reduced: [Int64] = [],
+        zoom: Double = 1,
         revision: Int = 0,
         page: UInt32 = 0,
         pageToken: Int = 0,
@@ -79,6 +82,7 @@ public struct ConversationView: View {
         self.model = model
         self.run = run
         self.reduced = reduced
+        self.zoom = zoom
         self.revision = revision
         self.page = page
         self.pageToken = pageToken
@@ -116,6 +120,7 @@ public struct ConversationView: View {
                     source: session,
                     thread: model.conversation?.thread ?? 0,
                     reduced: reduced,
+                    zoom: zoom,
                     revision: revision,
                     focus: focusMessage,
                     request: model.documentRequest,
@@ -345,6 +350,8 @@ public struct ExpandedMessage: View {
     /// while the menu item below it worked. `ReaderViewChoice` holds it, per
     /// message and per view.
     public let readerView: Bool
+    /// The reader's zoom (`ReaderZoom.factor`).
+    public let zoom: Double
     /// Whether this *message's* images are showing.
     ///
     /// Per message and reset with the pane, which is what "show once" means:
@@ -376,6 +383,7 @@ public struct ExpandedMessage: View {
         isLatest: Bool,
         showingCc: Bool,
         readerView: Bool,
+        zoom: Double = 1,
         showingImages: Bool,
         unsubscribe: Unsubscribing.State = .offered,
         collapsible: Bool = true,
@@ -391,6 +399,7 @@ public struct ExpandedMessage: View {
         self.isLatest = isLatest
         self.showingCc = showingCc
         self.readerView = readerView
+        self.zoom = zoom
         self.showingImages = showingImages
         self.unsubscribe = unsubscribe
         self.collapsible = collapsible
@@ -455,6 +464,7 @@ public struct ExpandedMessage: View {
                     message: row.id,
                     remoteImages: remoteImages,
                     reduced: readerView,
+                    zoom: zoom,
                     onHeight: { measured in
                         height = measured
                         heights?.remember(measured, for: row.id)

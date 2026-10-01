@@ -15,9 +15,10 @@ public struct ReaderView: NSViewRepresentable {
     private let source: any ReaderSource
     private let message: Int64?
     private let remoteImages: RemoteImagesFfi
-    /// Whether to draw what the sender wrote rather than what reader view
-    /// reduces it to.
+    /// Whether to draw this message in reader view rather than as sent.
     private let reduced: Bool
+    /// The reader's zoom, as `WKWebView.pageZoom` takes it (`ReaderZoom`).
+    private let zoom: Double
     private let onHeight: ((CGFloat) -> Void)?
     /// Called with the two facts the render already paid for — the notice
     /// and the caveat (#1589). They used to be their own boundary calls,
@@ -45,6 +46,7 @@ public struct ReaderView: NSViewRepresentable {
         message: Int64?,
         remoteImages: RemoteImagesFfi = .blocked,
         reduced: Bool = false,
+        zoom: Double = 1,
         page: UInt32 = 0,
         pageToken: Int = 0,
         onHeight: ((CGFloat) -> Void)? = nil,
@@ -54,6 +56,7 @@ public struct ReaderView: NSViewRepresentable {
         self.message = message
         self.remoteImages = remoteImages
         self.reduced = reduced
+        self.zoom = zoom
         self.page = page
         self.pageToken = pageToken
         self.onHeight = onHeight
@@ -89,11 +92,14 @@ public struct ReaderView: NSViewRepresentable {
         view.setAccessibilityRole(.group)
         view.setAccessibilityRoleDescription("article")
         view.setAccessibilityLabel(Pane.reader.label)
+        view.pageZoom = zoom
         coordinator.load(into: view, message: message, remote: remoteImages, reduced: reduced)
         return view
     }
 
     public func updateNSView(_ view: WKWebView, context: Context) {
+        // Set only when it moved: assigning re-lays out the page.
+        if view.pageZoom != zoom { view.pageZoom = zoom }
         context.coordinator.load(into: view, message: message, remote: remoteImages, reduced: reduced)
         // After the load, so a page turn that arrives with a new message
         // lands in the document that message produced rather than in the one

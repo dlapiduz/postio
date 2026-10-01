@@ -32,6 +32,8 @@ public struct ThreadDocumentView: NSViewRepresentable {
     private let source: any ReaderSource
     private let thread: Int64
     private let reduced: [Int64]
+    /// The reader's zoom, as `WKWebView.pageZoom` takes it (`ReaderZoom`).
+    private let zoom: Double
     /// Bumped when what the page is made of may have changed underneath it —
     /// a body arrived, a grant was made. The page is asked for again and
     /// loaded only if it came out different.
@@ -55,6 +57,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
         source: any ReaderSource,
         thread: Int64,
         reduced: [Int64] = [],
+        zoom: Double = 1,
         revision: Int = 0,
         focus: Int64? = nil,
         request: ConversationModel.DocumentRequest? = nil,
@@ -69,6 +72,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
         self.source = source
         self.thread = thread
         self.reduced = reduced
+        self.zoom = zoom
         self.revision = revision
         self.focus = focus
         self.request = request
@@ -111,6 +115,7 @@ public struct ThreadDocumentView: NSViewRepresentable {
         view.setAccessibilityRole(.group)
         view.setAccessibilityRoleDescription("article")
         view.setAccessibilityLabel(Pane.reader.label)
+        view.pageZoom = zoom
         // Whatever was asked before this view existed is not a request to it.
         coordinator.performed = request?.serial ?? 0
         coordinator.load(
@@ -120,6 +125,8 @@ public struct ThreadDocumentView: NSViewRepresentable {
     }
 
     public func updateNSView(_ view: ReaderSurface, context: Context) {
+        // Set only when it moved: assigning re-lays out the page.
+        if view.pageZoom != zoom { view.pageZoom = zoom }
         let coordinator = context.coordinator
         coordinator.onVerb = onVerb
         coordinator.onAnchors = onAnchors
