@@ -75,7 +75,14 @@ pub fn run() -> glib::ExitCode {
     let early = RefCell::new(Some(open_again()));
 
     if adw::init().is_err() {
-        tracing::error!("no display; Focus needs a Wayland or X11 session");
+        // Name what GTK was given: an empty pair is a terminal outside the
+        // desktop session (a tmux or ssh shell), which is not a broken build.
+        let named = |key: &str| std::env::var(key).unwrap_or_default();
+        tracing::error!(
+            wayland_display = %named("WAYLAND_DISPLAY"),
+            display = %named("DISPLAY"),
+            "no display; Focus needs a Wayland or X11 session (set WAYLAND_DISPLAY or DISPLAY)"
+        );
         return glib::ExitCode::FAILURE;
     }
 
