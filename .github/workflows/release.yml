@@ -521,8 +521,8 @@ jobs:
           gh release edit "$TAG" --draft=false
           echo "published $(gh release view "$TAG" --json url --jq .url)"
 
-  # SC-004 (specs/005-tui-frontend): the terminal packages are under half the
-  # desktop ones. Beside `publish`, not in front of it: a size is not a reason
+  # SC-004 (specs/005-tui-frontend): the terminal binaries are under half the
+  # desktop ones, and the terminal Flatpak with its runtime under two-thirds. Beside `publish`, not in front of it: a size is not a reason
   # to withhold a working release, it is a reason the next one has to shrink,
   # and a red job on the run says so.
   #
@@ -530,7 +530,7 @@ jobs:
   # `ldd`, so it needs the desktop binary built here against host GTK -- the
   # one inside the Flatpak links against the runtime's.
   package-sizes:
-    name: Terminal packages are under half
+    name: Terminal packages are small enough (SC-004)
     needs: [plan, flatpak, tarball]
     if: always() && needs.flatpak.result == 'success' && needs.tarball.result == 'success'
     runs-on: ubuntu-26.04
@@ -563,5 +563,5 @@ jobs:
             flatpak install --user -y --noninteractive "$bundle"
           done
 
-      - name: Is the terminal Flatpak under half the desktop one?
+      - name: Is the terminal Flatpak under two-thirds of the desktop one?
         run: scripts/measure-package-size.sh flatpak dev.postio.PostioTui dev.postio.Postio

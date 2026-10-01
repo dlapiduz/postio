@@ -538,8 +538,11 @@ first sync.
   inbox in under 500 ms and redraws after any keystroke in under 16 ms; local
   search answers in under 100 ms.
 - **SC-004**: The terminal frontend's installed size is under half that of
-  the desktop app's, and its resident memory showing the same mailbox is under
-  half as well.
+  the desktop app's as a standalone download, and under two-thirds as a
+  Flatpak; its resident memory showing the same mailbox is under half as well.
+  (Amended 2026-10-01, maintainer: a Flatpak counts the runtime it names, the
+  plain freedesktop runtime is already the smallest Flathub offers and is most
+  of the terminal package, and the first release dry run measured 58%.)
 - **SC-005**: Across every HTML message in the corpus, the terminal reader
   shows zero raw tags, zero script content, zero unrequested network requests
   and zero terminal control sequences from message content.

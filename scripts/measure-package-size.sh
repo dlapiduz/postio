@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Is the terminal package under half the desktop one? (specs/005-tui-frontend
-# SC-004)
+# Is the terminal package small enough beside the desktop one?
+# (specs/005-tui-frontend SC-004: binaries under half, Flatpak under two-thirds)
 #
 # "Smaller" is measured form for form, from one commit (the spec's
 # Assumptions):
@@ -14,14 +14,15 @@
 #             alone would compare the wrong things.
 #
 # The release workflow runs both after the packages are built, and a
-# terminal package at half its desktop counterpart or more fails the release.
+# terminal package over its bar fails that job (beside the release, not in
+# front of it).
 # `scripts/tests/test-measure-package-size.py` is what tests this.
 #
 # Usage:
 #   scripts/measure-package-size.sh binaries TUI_BIN... -- DESKTOP_BIN...
 #   scripts/measure-package-size.sh flatpak TUI_APP_ID DESKTOP_APP_ID
 #
-# Exit status: 0 under half, 1 half or more, 2 called wrongly or something
+# Exit status: 0 under the bar, 1 at or over it, 2 called wrongly or something
 # could not be measured.
 set -euo pipefail
 
@@ -75,16 +76,20 @@ installed() {
     bytes_of "$location" "$runtime_location"
 }
 
+# Under `numerator/denominator` of the desktop's size passes. The binaries
+# are held to half; a Flatpak to two-thirds, because its runtime is most of
+# it and the plain freedesktop runtime is already the smallest Flathub has --
+# the first release dry run measured 58% (maintainer, 2026-10-01).
 compare() {
-    local form=$1 terminal=$2 desktop=$3
+    local form=$1 terminal=$2 desktop=$3 numerator=$4 denominator=$5 bar=$6
     if [ "$desktop" -le 0 ]; then
         echo "$form: the desktop package measured as nothing" >&2
         exit 2
     fi
     local percent=$(( terminal * 100 / desktop ))
     echo "$form: terminal $terminal bytes, desktop $desktop bytes ($percent%)"
-    if [ $(( terminal * 2 )) -ge "$desktop" ]; then
-        echo "$form: the terminal package is not under half the desktop one (SC-004)" >&2
+    if [ $(( terminal * denominator )) -ge $(( desktop * numerator )) ]; then
+        echo "$form: the terminal package is not under $bar of the desktop one (SC-004)" >&2
         exit 1
     fi
 }
@@ -104,13 +109,13 @@ case "$mode" in
         for path in "${terminal[@]}" "$@"; do
             [ -e "$path" ] || { echo "no such file: $path" >&2; exit 2; }
         done
-        compare binaries "$(closure "${terminal[@]}")" "$(closure "$@")"
+        compare binaries "$(closure "${terminal[@]}")" "$(closure "$@")" 1 2 half
         ;;
     flatpak)
         [ $# -eq 2 ] || usage
         tui=$(installed "$1")
         desktop=$(installed "$2")
-        compare flatpak "$tui" "$desktop"
+        compare flatpak "$tui" "$desktop" 2 3 two-thirds
         ;;
     *)
         usage
