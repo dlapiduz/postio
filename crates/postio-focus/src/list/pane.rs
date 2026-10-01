@@ -7,6 +7,8 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{glib, graphene};
 
+use postio_widgets::list_model::WindowedModel;
+
 use super::feed::Feed;
 use super::heading::DayHeading;
 use super::model::RowObject;
@@ -152,6 +154,37 @@ impl ListPane {
     /// Run `handler` when a Ctrl- or Shift-click picks a row (T198).
     pub fn connect_row_pick(&self, handler: impl Fn(&super::FocusRow, Pick) + 'static) {
         self.on_pick.replace(Some(Rc::new(handler)));
+    }
+
+    /// Run `handler` on a secondary click on a row (T199): the row's place
+    /// in the list, and where the click was, in the list view's
+    /// coordinates. A click between rows -- a day's heading -- runs nothing.
+    pub fn connect_row_menu(&self, handler: impl Fn(u32, gtk::gdk::Rectangle) + 'static) {
+        let click = gtk::GestureClick::new();
+        click.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let view = self.view.downgrade();
+        let list = self.feed.list().downgrade();
+        click.connect_pressed(move |gesture, _, x, y| {
+            let (Some(view), Some(list)) = (view.upgrade(), list.upgrade()) else {
+                return;
+            };
+            let mut at = view.pick(x, y, gtk::PickFlags::DEFAULT);
+            while let Some(widget) = at {
+                if let Some(row) = widget.downcast_ref::<RowWidget>() {
+                    if let Some(position) = row.item().and_then(|item| list.position_of(item.id()))
+                    {
+                        gesture.set_state(gtk::EventSequenceState::Claimed);
+                        handler(
+                            position,
+                            gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1),
+                        );
+                    }
+                    return;
+                }
+                at = widget.parent();
+            }
+        });
+        self.view.add_controller(click);
     }
 
     /// Scroll to the very top, first heading showing, and hold it there

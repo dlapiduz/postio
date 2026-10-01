@@ -167,6 +167,11 @@ mod imp {
         pub dialogs: RefCell<Option<gtk::gio::ListModel>>,
         /// The snooze picker, built the first time `s` opens it.
         pub snooze: RefCell<Option<Rc<WhenPicker>>>,
+        /// The row's right-click menu (T199), built on its first use.
+        pub row_menu: RefCell<Option<Rc<crate::row_menu::RowMenu>>>,
+        /// Whether the open row menu is for its row alone, outside the
+        /// selection: a verb then lets the selection go first (T199).
+        pub row_menu_alone: Cell<bool>,
         /// The remind picker, built the first time `h` opens it.
         pub remind: RefCell<Option<Rc<WhenPicker>>>,
         /// The label picker, built the first time `l` opens it.
@@ -257,6 +262,8 @@ mod imp {
                 last_key: Cell::new(None),
                 dialogs: RefCell::default(),
                 snooze: RefCell::default(),
+                row_menu: RefCell::default(),
+                row_menu_alone: Cell::new(false),
                 remind: RefCell::default(),
                 labels: RefCell::default(),
                 moves: RefCell::default(),
@@ -506,6 +513,9 @@ impl FocusWindow {
         if let Some(bulk) = imp.bulk.borrow().as_ref() {
             bulk.set_keymap(&keymap);
         }
+        if let Some(menu) = imp.row_menu.borrow().as_ref() {
+            menu.set_keymap(&keymap);
+        }
         if let Some(reading) = imp.reading.borrow().as_ref() {
             reading.set_keymap(&keymap);
         }
@@ -556,6 +566,28 @@ impl FocusWindow {
     pub fn handle_key(&self, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
         // A picker at the row has the keyboard: its keys are the picker
         // context's, and what it does not use goes on to its field.
+        // The row menu has the keyboard while it is up (T199): Escape
+        // closes it, a verb's key runs that verb from it, and the arrows and
+        // Enter walk and press its items as GTK does.
+        if let Some(menu) = self.row_menu().filter(|menu| menu.is_open()) {
+            let command = postio_widgets::keys::chord(key, state).and_then(|chord| {
+                let mut resolver = self.imp().resolver.borrow_mut();
+                match resolver.as_mut()?.press(
+                    &chord,
+                    KeyContext::List,
+                    false,
+                    std::time::Instant::now(),
+                ) {
+                    Outcome::Command(id) => id.parse::<CommandId>().ok(),
+                    _ => None,
+                }
+            });
+            return if menu.press(command, key) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            };
+        }
         if let Some(picker) = self.open_picker() {
             return if picker.press(key, state) {
                 glib::Propagation::Stop
@@ -1685,6 +1717,12 @@ impl FocusWindow {
                 window.cursor_to(Some(position));
                 window.act(CommandId::OpenMessage);
             }
+        ));
+        // A right-click opens the row's menu (T199).
+        pane.connect_row_menu(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |position, at| window.open_row_menu(position, at)
         ));
         let empty = crate::empty::EmptyInbox::new();
         empty.connect_command(glib::clone!(
@@ -3319,6 +3357,71 @@ impl FocusWindow {
         commands.sort_by_key(|command| command.as_str());
         commands.dedup();
         commands
+    }
+
+    /// Open the row menu on the row at `position`, at `at` in the list's
+    /// coordinates (T199). The cursor goes to the row, as a click's does.
+    /// A row inside the selection gets a menu for the selection, and says
+    /// so; a row outside it gets one for itself, and the selection is let
+    /// go only when one of its verbs runs, so dismissing loses nothing. A
+    /// digest's row has its own verbs and no menu.
+    pub fn open_row_menu(&self, position: u32, at: gdk::Rectangle) {
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        if let Some(picker) = self.open_picker() {
+            picker.close();
+        }
+        self.cursor_to(Some(position));
+        let Some(row) = self.cursor_row() else {
+            return;
+        };
+        let Some(conversation) = row.as_conversation() else {
+            return;
+        };
+        let selection = imp.picked.selection();
+        let inside = match &selection {
+            Selection::These(picked) => picked.contains(&row.id()),
+            Selection::Everything { except } => !except.contains(&row.id()),
+        };
+        let summary = inside
+            .then(|| {
+                postio_ui::selection::summary(&selection, Some(pane.feed().total()), &[])
+            })
+            .flatten();
+        imp.row_menu_alone.set(!inside);
+        let menu = imp.row_menu.borrow().clone();
+        let menu = menu.unwrap_or_else(|| {
+            let menu = crate::row_menu::RowMenu::new(&self.keymap());
+            menu.connect_command(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |id| window.row_menu_chose(id)
+            ));
+            imp.row_menu.replace(Some(Rc::clone(&menu)));
+            menu
+        });
+        menu.open(
+            pane.view(),
+            &at,
+            summary.as_deref(),
+            conversation.summary.unread_count > 0,
+        );
+    }
+
+    /// A verb chosen from the row menu: the one command its key runs, on
+    /// the selection or, for a row outside it, on the row alone.
+    fn row_menu_chose(&self, id: CommandId) {
+        if self.imp().row_menu_alone.replace(false) {
+            self.clear_selection();
+        }
+        self.act(id);
+    }
+
+    /// The row's right-click menu, once a right-click has built it.
+    pub fn row_menu(&self) -> Option<Rc<crate::row_menu::RowMenu>> {
+        self.imp().row_menu.borrow().clone()
     }
 
     /// The picker open at the row, if one is.

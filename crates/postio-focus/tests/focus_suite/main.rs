@@ -64,6 +64,7 @@ mod registry_parity;
 mod reload;
 mod remind_on_send;
 mod remote_images;
+mod row_menu;
 mod rows;
 mod rule_query;
 mod selection;
@@ -416,6 +417,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "pointer_pairs::escape_closes_the_message_and_the_key_map",
         pointer_pairs::escape_closes_the_message_and_the_key_map as fn(),
+    ),
+    (
+        "row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys",
+        row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys as fn(),
+    ),
+    (
+        "row_menu::a_menu_verb_runs_its_command_on_the_row",
+        row_menu::a_menu_verb_runs_its_command_on_the_row as fn(),
+    ),
+    (
+        "row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection",
+        row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection as fn(),
     ),
     (
         "window_controls::the_top_bars_icon_buttons_hover_in_their_own_shape",

@@ -100,7 +100,7 @@ Decided with `/gtk-design` against screen 04 and the shots, light and dark.
   reached nothing before); the bar sits above the column, between the
   toolbar and the message, not at the column's top, so neither opening it
   nor its entry taking the keyboard scrolls the message; a query's first
-  match is the first from the top of what is in view; `ctrl+g`/`ctrl+shift+g`
+  match is the first from the top of what is in view; `mod+g`/`mod+shift+g`
   step; Escape closes find before it closes the message.
 - **The ground is a token.** The body was drawn on two hex values written
   into the reader's stylesheet, and dark's (`#1e1e1e`) was a shade off
@@ -127,13 +127,56 @@ from either device; "n/a" means the surface has no such thing.
 | List row | Enter opens | double-click opens, through the same `OpenMessage` command | fixed (T194) |
 | List row | `x` toggles selection | press in the row's gutter toggles it | fixed (T194) |
 | List row | `Shift`+`j`/`k` extends | Ctrl-click toggles, Shift-click ranges, each through the commands the keys run (`ToggleSelection`; `ExtendSelectionDown`/`Up` from the anchor) | fixed (T198) |
-| List row | (none) | right-click menu of the row's verbs | gap: new task T199 |
+| List row | the verbs' own keys | right-click menu of the row's verbs | fixed (T199) |
 | List | `g g`, `G`, PageUp/PageDown | scroll wheel and scrollbar scroll | present (GTK's scrolled window) |
 | Open message | Escape closes | the X closes | present |
 | Open message | `j`/`k` step | the up/down buttons step | present (T195 owns the key) |
 | Composer | Escape asks to close | the X closes | present |
 | Key map, raw source, digest | Escape closes | the X closes | present |
 | Pickers, command bar | Escape closes | a press outside closes | present |
+
+## The row menu (T199)
+
+A right-click on a list row opens a menu of the row's verbs, decided as
+`/ux-architect` from the open message's toolbar and the bulk bar, which are
+the two places those verbs already live:
+
+| Group | Verbs (each with its key from the keymap) |
+|---|---|
+| Open | Open (`Return`) |
+| Answer | Reply, Reply all, Forward |
+| Triage | Archive, Snooze…, Remind if no reply…, Mark read / Mark unread |
+| File | Label…, Move…, Digest mail like this… |
+| Lose | Delete, last and apart |
+
+- **One command each.** A verb hands its `CommandId` to the window's one
+  `act`, the path its key takes; the menu implements nothing. Its words are
+  the toolbar's and the bulk bar's, an ellipsis where a picker follows; the
+  read verb says which way it goes for the one row. Flag is not offered:
+  Focus answers no flag command yet.
+- **The cursor goes to the row**, as a click's does, so a picker the verb
+  opens hangs from that row.
+- **Inside the selection** the menu is for the selection: its heading says
+  "3 selected", and Open and the replies, which need one message, are left
+  out. **Outside it** the menu is for the row alone, and the selection is let
+  go only when a verb runs: Escape or a press outside leaves it as it was, so
+  a stray right-click loses nothing. (The file managers' rule -- a
+  right-click selects the row -- would drop a selection on every dismissed
+  menu.)
+- **Keys.** While it is up the menu has the keyboard: Escape closes it, a
+  verb's own key runs that verb from it, the arrows and Enter walk and press
+  its items. It does not grab (as the pickers do not, for the same reason),
+  and a press outside closes it.
+- **Not built:** opening the menu from the keyboard (`Menu`,
+  `Shift+F10`). Every verb in it already has its key, so it teaches rather
+  than gates; a binding for it would be a registry command, and the keymap
+  contract is not this task's to change.
+- The hook in the list is one secondary-button gesture on the list view
+  (`ListPane::connect_row_menu`), clear of the row widget's own clicks.
+
+Pinned by `row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys`,
+`…a_menu_verb_runs_its_command_on_the_row` and
+`…a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection`.
 
 ## Rendering them
 

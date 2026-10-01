@@ -104,7 +104,7 @@ pub fn the_measure_is_near_seventy_five_characters_from_the_left_edge() {
             .max()
             .unwrap_or(0);
         assert!(
-            (66..=80).contains(&longest),
+            (70..=78).contains(&longest),
             "the longest line holds {longest} characters in a {}px column: \
              the measure is not near 75",
             view.width()

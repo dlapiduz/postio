@@ -23,6 +23,7 @@
 //! | `04` | The to-do about the API draft, opened over screen 01 |
 //! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
 //! | `10` | The folders popover over screen 01 |
+//! | `26` | The row menu (T199), right-clicked on a row below screen 01's selection |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -64,6 +65,7 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use gtk::glib;
 use postio_core::CommandId;
 use postio_focus::window::FocusWindow;
+use postio_widgets::list_model::WindowedModel;
 use postio_model::listing::MarkerKind;
 use postio_model::{
     AccountId, Attachment, EmailAddress, Flag, FlagSet, Label, MailboxId, MailboxRole, Message,
@@ -206,6 +208,7 @@ const SCREENS: &[(&str, &str)] = &[
     ("23", "the email from a summary's reference"),
     ("24", "\"Digest this sender\" over the inbox"),
     ("25", "the capture sheet: a task from a to-do, into a vault"),
+    ("26", "the row menu, right-clicked on a row outside the selection"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -839,6 +842,29 @@ fn stage(
                 picker.is_shown() && picker.texts().iter().any(|line| line == wanted)
             }) {
                 return Err(format!("the picker never listed {wanted:?}"));
+            }
+        }
+        "26" => {
+            pick_three();
+            let row = pane
+                .rows_on_screen()
+                .into_iter()
+                .nth(7)
+                .ok_or("too few rows on screen")?;
+            let position = row
+                .item()
+                .and_then(|item| pane.feed().list().position_of(item.id()))
+                .ok_or("the row has no place")?;
+            let at = row
+                .compute_point(pane.view(), &gtk::graphene::Point::new(420.0, 20.0))
+                .ok_or("the row is not in the list")?;
+            window.open_row_menu(
+                position,
+                gtk::gdk::Rectangle::new(at.x() as i32, at.y() as i32, 1, 1),
+            );
+            let menu = window.row_menu().ok_or("no row menu")?;
+            if !settle_until(|| menu.is_open() && menu.widget().width() > 0) {
+                return Err("the row menu never showed".into());
             }
         }
         "22" | "23" => {

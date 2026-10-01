@@ -30,6 +30,7 @@ pub mod open;
 mod open_header;
 pub mod places;
 pub mod rule_dialog;
+pub mod row_menu;
 pub mod rules;
 pub mod source;
 pub mod startup;
