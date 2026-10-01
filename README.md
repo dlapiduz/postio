@@ -146,10 +146,10 @@ same mail as the desktop app, one of them open at a time; see
 ### macOS
 
 A native SwiftUI/AppKit application over the same engine, through a UniFFI
-boundary ([ADR 0019](docs/decisions/0019-macos-frontend.md)). **It lives on
-the `feature/macos` branch until it is closer to parity** ([#1306](https://github.com/dlapiduz/postio/pull/1306));
-the crates under it are on `main` and are built and tested by CI on both
-platforms. Thirteen of the
+boundary ([ADR 0019](docs/decisions/0019-macos-frontend.md)), on `main`
+since [#1306](https://github.com/dlapiduz/postio/pull/1306). CI builds the
+crates under it on both platforms, and builds the Swift package and runs its
+tests on a Mac. Thirteen of the
 fifteen workspace crates already built and tested on macOS before any porting
 began, which is what made this cheap: the two frontends share the store, the
 protocols, the search index, the keymap and every presentation decision that
@@ -168,7 +168,9 @@ open macos/build/Postio.app
 `macos/CLAUDE.md` has the two build loops and the Keychain behaviour of an
 ad-hoc-signed build, which asks again after every rebuild.
 
-**What works:** the three-pane shell, the message list over the paged store,
+**What works:** a first-run wizard that looks an address's servers up and
+signs in before it saves anything, the three-pane shell, the message list over
+the paged store,
 the reading pane with its remote-image blocking and per-sender allow list,
 conversations as one document in one web view with the rail beside them
 (ADR 0032, as GTK draws them),
@@ -185,11 +187,12 @@ with its activation log in Privacy settings, and repairing an account
 whose credential has expired, by password or by browser, whichever it
 broke by.
 
-**Deliberately not on the Mac:** two commands whose surface its design does
-not have — `detach_composer` (compose is already a window of its own) and
+**Deliberately not on the Mac:** three commands its design has no place
+for — `detach_composer` (compose is already a window of its own),
 `next_scope` (the sidebar lists every account at once, so there is no account
-strip to cycle). They are absent from its menus, palette and cheat sheet
-rather than drawn and dead.
+strip to cycle), and `darken_message` (a newsletter is drawn on its own light
+paper inside the dark window instead, as canvas 20 draws it). They are absent
+from its menus, palette and cheat sheet rather than drawn and dead.
 
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
 list honest: it sweeps every command in the registry and fails if one
@@ -306,9 +309,9 @@ rebindable; background sync with IDLE, full offline use, and undo.
 **Not yet:** filters and rules (designed, not built); AI features (a
 founding idea, deliberately after the fundamentals); Microsoft Graph;
 PGP/S-MIME; phishing and link warnings; vCard import/export. The native macOS
-frontend reads and writes mail today and is in the repository, but is not at
-parity with the Linux build and is not released — see
-[macOS](#macos) for what it can and cannot do. Windows is unscheduled.
+frontend is on `main` and every command in the registry reaches something on
+it, but it is built from the checkout, not packaged or released — see
+[macOS](#macos) for what it does. Windows is unscheduled.
 
 Postio is alpha software. Its test suite is large and its invariants are
 machine-checked, and you should still treat it as early: it has met few

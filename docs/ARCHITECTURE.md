@@ -348,10 +348,10 @@ dependencies at all.**
 **The macOS frontend is built** ([#15](https://github.com/dlapiduz/postio/issues/15),
 [ADR 0019](decisions/0019-macos-frontend.md)) — a native Swift frontend in
 `macos/` over the same engine, through a UniFFI boundary in `postio-ffi`, with
-the toolkit-free presentation logic extracted into `postio-ui`. It reads,
-searches, threads and writes mail. Compose was deferred in the original scope
-and is not deferred any more; it is not at parity with the GTK build and is
-not released.
+the toolkit-free presentation logic extracted into `postio-ui`. It sets
+accounts up, reads, searches, threads and writes mail, and it is on `main`
+(#1306). Compose was deferred in the original scope and is not deferred any
+more. It is built from the checkout and not yet released.
 
 **How far along it is, is a test rather than a claim.**
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` sweeps every command in
@@ -497,6 +497,5 @@ What remains open, as of 0.4.0:
 | Gap | Effect | Where |
 |---|---|---|
 | The rules engine is designed and not on `main` | `[filters]` are saved searches only; nothing files mail on arrival | ADR 0008/0028/0030, [#5](https://github.com/dlapiduz/postio/issues/5) |
-| The macOS frontend is read-only | Compose, settings edits and account setup still need the GTK app | ADR 0019 |
 | `[sync] notify_roles` does not cross the FFI | The macOS build notifies for every folder, not the configured ones | `docs/notes/2026-09-13-what-the-frontend-audit-found-and-what-remains.md` |
 | Wall-clock performance figures predate the engine swap | The counted budgets hold; the timings in `PERFORMANCE.md` have not been re-measured on Turso against a real mailbox | [`PERFORMANCE.md`](PERFORMANCE.md) |

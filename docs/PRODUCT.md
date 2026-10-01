@@ -78,24 +78,25 @@ an aspiration in a document: `postio-core` must not depend on GTK, and
 (`ARCHITECTURE.md` §9).
 
 **A native macOS frontend is built, well past the read-only slice it was
-scoped as, and lives on `feature/macos` until it is closer to parity**
-(#1306) — Swift over the same engine through the
+scoped as, and is on `main`** (#1306) — Swift over the same engine through the
 UniFFI boundary in `crates/postio-ffi` and the Swift package in `macos/`,
-[ADR 0019](decisions/0019-macos-frontend.md). Sign in, sync, the three-pane
+[ADR 0019](decisions/0019-macos-frontend.md). A first-run wizard that looks
+an address's servers up and signs in before saving, sync, the three-pane
 shell, the list, the reader with its privacy behaviour, conversations,
 search with the chips that teach the query language, the palette, the cheat
 sheet, a menu bar built from the command registry, compose with rich text
 and attachments, notifications, and a settings window. Compose was deferred
 in the original scope and is not deferred any more.
 
-**It is not at parity with the GTK build and does not claim to be.** What is
-missing is tracked, and the tracking is mechanical rather than remembered:
-`crates/postio-ffi/tests/ffi_suite/command_coverage.rs` sweeps every command
-in the registry and fails if one reaches nothing and is not listed as debt
-with the issue that will build it. `postio-app`'s
-`app_suite/command_wiring.rs` is the same sweep on the GTK side, and its list
-is empty. The macOS list is where the honest answer to "how far along is it"
-lives.
+**Every command reaches something on it, and that is a test rather than a
+claim:** `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` sweeps every
+command in the registry and fails if one reaches nothing and is not listed as
+debt with the issue that will build it. That list started at forty-nine and is
+empty, as `postio-app`'s `app_suite/command_wiring.rs` is on the GTK side.
+Three commands are scoped away by design rather than missing —
+`detach_composer`, `next_scope` and `darken_message`, whose surfaces the Mac's
+design does not have (`postio_core::registry::offered_on`). It is built from
+the checkout; there is no signed bundle to download yet.
 
 macOS is **not part of v1**, which stays Linux. The invariant the boundary
 was kept for turned out to be load-bearing rather than merely tidy: measured
