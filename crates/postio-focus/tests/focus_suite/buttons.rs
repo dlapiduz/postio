@@ -7,10 +7,12 @@ use adw::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// The design's action buttons (screens 04 and 05) are 26px tall; a
-/// regular button 30. Nothing in Focus is taller than a regular button.
+/// A regular button is 30px tall, and the open message's action row draws
+/// its verbs at that height (the message dialog handoff, T206). Nothing in
+/// Focus is taller than a regular button.
 const REGULAR: i32 = 30;
-const TOOLBAR: i32 = 26;
+/// The open message's header bar draws its icon buttons 32px square.
+const HEADER: i32 = 32;
 /// A keycap is 16px in the design, and never as tall as its button.
 const KEYCAP: i32 = 18;
 
@@ -85,14 +87,17 @@ pub fn the_open_message_toolbar_is_compact_with_its_keycaps_inside() {
                 !keycaps(button).is_empty(),
                 "a toolbar button without its key"
             );
-            assert_compact("a toolbar button", button, TOOLBAR);
+            // The message dialog handoff (T206) draws its action row's
+            // verbs 30px tall, a regular button's height, in a 44px row.
+            assert_compact("a toolbar button", button, REGULAR);
         }
         // T179: Delete is there beside the rest, with its key.
         let delete = support::only(&dialog, "focus-open-delete");
         assert!(!keycaps(&delete).is_empty(), "Delete shows no key");
-        // T189: Close is an X icon now, and carries no keycap.
+        // T189: Close is an X icon now, and carries no keycap; the
+        // handoff's header bar draws it 32px square (T206).
         for close in support::with_class(&dialog, "focus-open-close") {
-            assert_compact("Close", &close, REGULAR);
+            assert_compact("Close", &close, HEADER);
         }
     });
 }

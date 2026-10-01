@@ -42,6 +42,9 @@ const NOT_YET: &[&str] = &[
     "stop_digesting_sender",
     "view_source",
     "open_attachment_or_link",
+    // The open message's own (T206): its control is the dialog's More, and
+    // the command bar lists what the list reaches.
+    "more_actions",
     "save_search",
     "back_to_words",
     "send",

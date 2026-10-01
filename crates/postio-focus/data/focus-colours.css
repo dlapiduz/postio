@@ -72,3 +72,57 @@
   --postio-font-body: "Adwaita Sans", sans-serif;
   --postio-font-mono: "Adwaita Mono", monospace;
 }
+
+/* ── The open-message dialog's palette ─────────────────────────────────
+ *
+ * The one exception to the rule above, and a deliberate one: the
+ * maintainer's message-dialog handoff (2026-10-01, SPEC.md section 6; T209)
+ * gives the dialog a palette of its own, light and dark, so the reading
+ * surface is the same paper in every theme. Its colours are here, as the
+ * dialog's values of the same roles every Focus rule already reads, so no
+ * widget names a colour; `.focus-open` is the dialog's content, and every
+ * rule inside it picks these up. The window behind keeps libadwaita's.
+ *
+ * Light and dark are told apart by the media query, which GTK evaluates
+ * for an application's provider since 4.20 and libadwaita drives from
+ * AdwStyleManager (`open_layout::the_dialog_wears_its_palette_in_light_and_dark`
+ * proves it on screen).
+ */
+
+:root {
+  /* The list behind an open dialog: black at 20%. */
+  --postio-scrim: rgb(0 0 0 / 20%);
+}
+
+.focus-open {
+  --postio-surface: #fdfdfb;
+  --postio-ink: #1c2321;
+  --postio-ink-secondary: #4a5350;
+  --postio-dim: #68716d;
+  --postio-hairline: rgb(24 34 31 / 9%);
+  --postio-hairline-strong: rgb(24 34 31 / 16%);
+  --postio-accent: #0d7068;
+  --postio-accent-text: #0d7068;
+  /* The action card's fill: the accent at 8%. */
+  --postio-accent-soft: rgb(13 112 104 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Black at 45%. */
+    --postio-scrim: rgb(0 0 0 / 45%);
+  }
+
+  .focus-open {
+    --postio-surface: #1c2120;
+    --postio-ink: #e7ecea;
+    --postio-ink-secondary: #b7c0bc;
+    --postio-dim: #909a96;
+    --postio-hairline: rgb(255 255 255 / 8%);
+    --postio-hairline-strong: rgb(255 255 255 / 14%);
+    --postio-accent: #5fc4b5;
+    --postio-accent-text: #5fc4b5;
+    /* The accent at 12%. */
+    --postio-accent-soft: rgb(95 196 181 / 12%);
+  }
+}

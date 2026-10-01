@@ -75,10 +75,12 @@ pub fn a_plain_paragraph_break_is_a_short_gap_not_a_blank_line() {
     });
 }
 
-/// The measure is capped near 75 characters at the default size, now the
-/// column fills the dialog (T197), and the text keeps the column's left
-/// edge -- the toolbar's, the subject's, the header card's.
-pub fn the_measure_is_near_seventy_five_characters_from_the_left_edge() {
+/// The measure is the column's: 480px, 32em of the 15px reading size,
+/// about 70 characters (the message dialog handoff, T207, which replaces
+/// T203's 32em at the left of a full-width column). The text keeps the
+/// column's left edge -- the subject's, the sender block's -- and the
+/// column is centred in the dialog.
+pub fn the_measure_is_near_seventy_characters_in_a_centred_column() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -101,9 +103,21 @@ pub fn the_measure_is_near_seventy_five_characters_from_the_left_edge() {
             .max()
             .unwrap_or(0);
         assert!(
-            (70..=78).contains(&longest),
+            (64..=78).contains(&longest),
             "the longest line holds {longest} characters in a {}px column: \
-             the measure is not near 75",
+             the measure is not near 70",
+            view.width()
+        );
+        let content = reading.dialog().child().expect("the dialog's content");
+        let bounds = view.compute_bounds(&content).expect("in the dialog");
+        let (left, right) = (
+            bounds.x(),
+            content.width() as f32 - bounds.x() - bounds.width(),
+        );
+        assert!(
+            view.width() == 480 && (left - right).abs() <= 1.0,
+            "the body is {}px, {left}px from the dialog's left and {right}px from its \
+             right: not the centred 480px column",
             view.width()
         );
         let left = lines

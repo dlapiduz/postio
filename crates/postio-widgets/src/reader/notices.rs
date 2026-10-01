@@ -89,6 +89,15 @@ impl NoticeSlot {
         }
     }
 
+    /// Take no room while no notice is showing, and only the shown
+    /// notice's room while one is: for a reader flowing in its owner's
+    /// column ([`Reader::flow_in`](super::view::Reader::flow_in)), where the
+    /// whole message scrolls together and an empty slot would be a gap in
+    /// the column's rhythm rather than a place the body keeps.
+    pub(crate) fn set_collapsing(&self, collapsing: bool) {
+        self.stack.set_vhomogeneous(!collapsing);
+    }
+
     pub(crate) fn widget(&self) -> gtk::Widget {
         self.stack.clone().upcast()
     }

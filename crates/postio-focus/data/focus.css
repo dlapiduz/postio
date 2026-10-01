@@ -302,9 +302,29 @@ banner.focus-banner button {
   border-top: 1px solid var(--postio-hairline);
 }
 
-/* ── The open-email dialog (screen 04) ──────────────────────────────── */
+/* ── The open-message dialog (the maintainer's handoff, 2026-10-01) ──── */
+/* Sizes, gaps and type from the handoff's SPEC.md sections 1-5 (T205-T209 in
+   specs/007-postio-focus/tasks.md). Lengths are the handoff's pixels; type is
+   in rem against GTK's 11pt (14.67px), so text scaling moves it. The faces
+   are Focus's own (FR-093): Adwaita Sans where the handoff draws Barlow and
+   Barlow Condensed, Adwaita Mono where it draws IBM Plex Mono. Its colours
+   are roles, defined for the dialog in focus-colours.css. The vertical gaps
+   between the blocks are set in code from `postio_ui::focus_dialog::rhythm`,
+   not here, so the tests and the layout read one table. */
+
+/* One dialog pattern (FR-092): every dialog over Focus has the handoff's
+   corner and dims the list behind it the same way. */
+floating-sheet > sheet {
+  border-radius: 12px;
+}
+
+floating-sheet > dimming {
+  background-color: var(--postio-scrim);
+}
+
 .focus-open {
   background-color: var(--postio-surface);
+  color: var(--postio-ink);
 }
 
 /* The body is drawn on the same role: the reader reads its ground from this
@@ -366,107 +386,171 @@ banner.focus-banner button {
   color: var(--postio-ink-secondary);
 }
 
+/* A key inside the dialog: 16px tall, a 1px inset rule, muted. */
+.focus-open .postio-keyhint {
+  min-height: 16px;
+  min-width: 8px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--postio-radius-md);
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+  font-size: var(--postio-text-meta);
+  font-weight: normal;
+  color: var(--postio-dim);
+}
+
+/* The header bar, 52px: the steps at the left, the subject and the position
+   centred, Close at the right. */
 .focus-open-header {
-  min-height: 50px;
-  padding: 0 var(--postio-space-3);
-  border-bottom: 1px solid var(--postio-hairline);
+  min-height: 52px;
+  padding: 0 12px;
+}
+
+.focus-open-header button {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--postio-ink-secondary);
 }
 
 button.focus-open-close {
-  min-height: 26px;
-  padding: 0 var(--postio-space-2);
+  padding: 0;
 }
 
 .focus-open-title {
-  font-weight: bold;
+  font-weight: 600;
+  font-size: 0.9886rem;
   color: var(--postio-ink);
 }
 
 .focus-open-subtitle {
-  font-size: var(--postio-text-meta);
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-dim);
 }
 
+/* The action row, 44px between two hairlines. */
 .focus-open-toolbar {
-  min-height: 42px;
-  padding: 0 var(--postio-space-3);
-  border-bottom: 1px solid var(--postio-hairline);
+  min-height: 44px;
+  padding: 0 12px;
+  box-shadow: inset 0 1px var(--postio-hairline), inset 0 -1px var(--postio-hairline);
 }
 
-/* The column's gutter is the toolbar's inset, so its words, the subject
- * and the body share one left edge (T197). */
-.focus-open-column {
-  padding: var(--postio-space-4) var(--postio-space-6);
+/* 6px a side, where the handoff has 8: Adwaita Sans sets the nine verbs
+   wider than Barlow, and at 8 they would not fit the widest dialog. */
+.focus-open-toolbar button.postio-button-regular {
+  min-height: 30px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: var(--postio-text-reading);
+  font-weight: 500;
+  color: var(--postio-ink);
 }
 
+/* The thread marker: a quiet line, not a chip. */
 .focus-open-thread {
-  padding: var(--postio-space-1) var(--postio-space-2);
-  border-radius: var(--postio-radius-md);
-  background-color: var(--postio-raised-bg);
-  color: var(--postio-ink-secondary);
-  font-size: var(--postio-text-ui);
+  min-height: 20px;
+  font-size: var(--postio-text-body);
+  color: var(--postio-dim);
 }
 
 .focus-open-subject {
-  font-weight: bold;
-  font-size: var(--postio-text-title);
+  font-weight: 600;
+  font-size: 2.0455rem;
+  line-height: 1.1333;
   color: var(--postio-ink);
+}
+
+/* Label pills, 24px: an inset rule and the label's colour dot. */
+.focus-open-labels {
+  min-height: 24px;
 }
 
 .focus-open-label-pill {
-  padding: 0 var(--postio-space-2);
-  border: 1px solid var(--postio-hairline);
-  border-radius: 999px;
-  font-size: var(--postio-text-meta);
+  min-height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+  font-size: var(--postio-text-body);
+  font-weight: 500;
   color: var(--postio-ink-secondary);
 }
 
-/* The header card (04.4): a tinted card, small dim field names, the
-   sender's name bold and their address dim and mono. */
-.focus-open-header-card {
-  margin: var(--postio-space-2) 0;
-  padding: var(--postio-space-3) var(--postio-space-4);
-  border-radius: var(--postio-radius-lg);
+button.focus-open-add-label {
+  min-height: 24px;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-size: var(--postio-text-body);
+  font-weight: normal;
+  color: var(--postio-dim);
+}
+
+button.focus-open-add-label:hover {
   background-color: var(--postio-hover-bg);
 }
 
+/* The sender block: no box, a hairline above and below, 12px inside them,
+   22px rows. */
+.focus-open-header-card {
+  padding: 12px 0;
+  box-shadow: inset 0 1px var(--postio-hairline), inset 0 -1px var(--postio-hairline);
+  font-size: 0.9545rem;
+}
+
+.focus-open-header-card > * {
+  min-height: 22px;
+}
+
 .focus-open-field {
+  font-size: var(--postio-text-body);
   color: var(--postio-dim);
-  font-size: var(--postio-text-meta);
 }
 
 .focus-open-sender-name {
-  font-weight: bold;
+  font-weight: 600;
   color: var(--postio-ink);
+}
+
+/* 8px from the name: the line's own 3px and these 5. */
+.focus-open-sender-name + .focus-open-address {
+  margin-left: 5px;
 }
 
 .focus-open-address {
   font-family: var(--postio-font-mono);
-  font-size: var(--postio-text-meta);
-  color: var(--postio-dim);
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
 }
 
 .focus-open-date {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
   color: var(--postio-dim);
-  font-size: var(--postio-text-meta);
 }
 
 .focus-open-recipient {
   color: var(--postio-ink-secondary);
 }
 
-/* Attachments (04.6): cards in a row under the body -- a file icon, the
-   name in mono and the size beneath it. */
-.postio-attachments {
-  margin: var(--postio-space-3) 0 var(--postio-space-2);
+/* Attachments: 24px under the body, then a hairline, 16px below it, chips
+   8px apart (rhythm::BODY_TO_ATTACHMENTS, ATTACHMENTS_RULE_TO_CHIPS; the
+   reader owns this row, so its gaps are written here). */
+.focus-open .postio-attachments {
+  margin: 24px 0 0 0;
+  padding-top: 16px;
+  box-shadow: inset 0 1px var(--postio-hairline);
 }
 
 button.postio-attachment-card {
-  min-height: 0;
-  padding: var(--postio-space-2) var(--postio-space-3);
-  border: 1px solid var(--postio-hairline);
-  border-radius: var(--postio-radius-md);
+  min-height: 40px;
+  padding: 0 12px 0 10px;
+  border: none;
+  border-radius: 8px;
   background: none;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
 }
 
 button.postio-attachment-card:hover {
@@ -474,15 +558,15 @@ button.postio-attachment-card:hover {
 }
 
 .postio-attachment-card .postio-attachment-name {
-  font-family: var(--postio-font-mono);
-  font-size: var(--postio-text-ui);
+  font-family: var(--postio-font-body);
+  font-size: var(--postio-text-reading);
   font-weight: normal;
   color: var(--postio-ink);
 }
 
 .postio-attachment-card .postio-attachment-size {
   font-family: var(--postio-font-mono);
-  font-size: var(--postio-text-meta);
+  font-size: var(--postio-text-small);
   color: var(--postio-dim);
 }
 
@@ -499,32 +583,54 @@ button.focus-open-fold-line {
   font-size: var(--postio-text-meta);
 }
 
-/* The marker card (04.5): under the header card, outlined in the accent --
-   a marker is one of the three things FR-091 gives the accent. */
+/* The action card: the only filled element -- the accent, faint -- and one
+   of the three things FR-091 gives the accent. */
 .focus-marker-card {
-  margin: var(--postio-space-2) 0;
-  padding: var(--postio-space-2) var(--postio-space-3);
-  border: 1px solid var(--postio-accent);
-  border-radius: var(--postio-radius-md);
+  min-height: 48px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 8px;
+  background-color: var(--postio-accent-soft);
 }
 
 .focus-marker-chip {
-  padding: 0 var(--postio-space-1);
-  border: 1px solid var(--postio-accent);
-  border-radius: var(--postio-radius-sm);
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: var(--postio-radius-md);
+  box-shadow: inset 0 0 0 1px var(--postio-accent);
   color: var(--postio-accent);
-  font-weight: bold;
-  font-size: var(--postio-text-meta);
+  font-weight: 600;
+  font-size: var(--postio-text-label);
 }
 
 .focus-marker-date {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  font-weight: 500;
   color: var(--postio-accent);
-  font-weight: bold;
 }
 
 .focus-marker-quote {
-  color: var(--postio-accent);
+  font-size: 0.9545rem;
   font-style: italic;
+  color: var(--postio-ink);
+}
+
+button.focus-marker-action,
+button.focus-marker-dismiss {
+  min-height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  font-size: var(--postio-text-reading);
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+button.focus-marker-action:hover,
+button.focus-marker-dismiss:hover {
+  background-color: var(--postio-hover-bg);
 }
 
 /* ── The command bar (screens 07-09) ─────────────────────────────────── */

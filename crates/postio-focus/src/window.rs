@@ -909,6 +909,7 @@ impl FocusWindow {
             }
             Ok(CommandId::ViewSource) => self.view_source(),
             Ok(CommandId::DismissMarker) => self.dismiss_marker(),
+            Ok(CommandId::MoreActions) => reading.show_more(),
             Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(),
             // Screen 04's toolbar verbs and the Invite card's answers, for
             // the message on screen (US3, US8).
@@ -1324,6 +1325,11 @@ impl FocusWindow {
             CommandId::GoToFiltered => self.show_filtered(),
             CommandId::SweepInbox => self.ask_sweep(),
             CommandId::DismissMarker => self.dismiss_marker(),
+            CommandId::MoreActions => {
+                if let Some(reading) = self.reading() {
+                    reading.show_more();
+                }
+            }
             CommandId::DigestRule => self.new_digest_rule(),
             CommandId::BackToWords => {
                 if let Some(bar) = self.bar() {

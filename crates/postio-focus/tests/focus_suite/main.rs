@@ -54,6 +54,7 @@ mod one_composer;
 mod one_keymap;
 mod open_choice;
 mod open_keys;
+mod open_layout;
 mod open_measure;
 mod open_message;
 mod open_reading;
@@ -379,10 +380,6 @@ const CASES: &[(&str, fn())] = &[
         open_reading::the_open_message_is_one_scrolling_column as fn(),
     ),
     (
-        "open_reading::the_column_fills_the_dialog_less_a_gutter",
-        open_reading::the_column_fills_the_dialog_less_a_gutter as fn(),
-    ),
-    (
         "open_reading::the_column_draws_only_the_window_of_a_long_body",
         open_reading::the_column_draws_only_the_window_of_a_long_body as fn(),
     ),
@@ -408,8 +405,8 @@ const CASES: &[(&str, fn())] = &[
         open_reading::a_label_pill_carries_its_colour_dot as fn(),
     ),
     (
-        "open_reading::close_is_as_compact_as_the_toolbar_s_buttons",
-        open_reading::close_is_as_compact_as_the_toolbar_s_buttons as fn(),
+        "open_reading::close_is_the_header_s_square_and_the_verbs_are_30px",
+        open_reading::close_is_the_header_s_square_and_the_verbs_are_30px as fn(),
     ),
     (
         "pointer_pairs::a_double_click_on_a_row_opens_its_message_as_enter_does",
@@ -469,12 +466,40 @@ const CASES: &[(&str, fn())] = &[
         open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left as fn(),
     ),
     (
+        "open_layout::the_dialog_is_sized_by_the_window_and_never_by_the_message",
+        open_layout::the_dialog_is_sized_by_the_window_and_never_by_the_message as fn(),
+    ),
+    (
+        "open_layout::the_list_behind_is_dimmed_by_black_at_20_and_45_percent",
+        open_layout::the_list_behind_is_dimmed_by_black_at_20_and_45_percent as fn(),
+    ),
+    (
+        "open_layout::every_block_shares_both_edges_of_one_centred_column",
+        open_layout::every_block_shares_both_edges_of_one_centred_column as fn(),
+    ),
+    (
+        "open_layout::the_blocks_keep_the_handoffs_rhythm",
+        open_layout::the_blocks_keep_the_handoffs_rhythm as fn(),
+    ),
+    (
+        "open_layout::an_absent_block_takes_its_gap_with_it",
+        open_layout::an_absent_block_takes_its_gap_with_it as fn(),
+    ),
+    (
+        "open_layout::the_dialog_wears_its_palette_in_light_and_dark",
+        open_layout::the_dialog_wears_its_palette_in_light_and_dark as fn(),
+    ),
+    (
+        "open_layout::a_narrow_dialog_folds_label_move_and_delete_into_more",
+        open_layout::a_narrow_dialog_folds_label_move_and_delete_into_more as fn(),
+    ),
+    (
         "open_measure::a_plain_paragraph_break_is_a_short_gap_not_a_blank_line",
         open_measure::a_plain_paragraph_break_is_a_short_gap_not_a_blank_line as fn(),
     ),
     (
-        "open_measure::the_measure_is_near_seventy_five_characters_from_the_left_edge",
-        open_measure::the_measure_is_near_seventy_five_characters_from_the_left_edge as fn(),
+        "open_measure::the_measure_is_near_seventy_characters_in_a_centred_column",
+        open_measure::the_measure_is_near_seventy_characters_in_a_centred_column as fn(),
     ),
     (
         "open_measure::opening_find_keeps_the_reading_position",

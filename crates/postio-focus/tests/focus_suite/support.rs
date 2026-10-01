@@ -351,8 +351,21 @@ impl Fixture {
     /// A Focus window adopted over this store, and the client it reads
     /// through, once the first rows are on screen.
     pub async fn open(&self) -> (postio_focus::window::FocusWindow, postio_client::Client) {
+        self.open_sized(None).await
+    }
+
+    /// As [`open`](Self::open), the window asking to be `size` big when it
+    /// is first shown -- the only time GTK lets a window ask. The
+    /// compositor may still maximise it: its monitor is 1280x800.
+    pub async fn open_sized(
+        &self,
+        size: Option<(i32, i32)>,
+    ) -> (postio_focus::window::FocusWindow, postio_client::Client) {
         use gtk::prelude::*;
         let window = postio_focus::window::FocusWindow::new(None);
+        if let Some((width, height)) = size {
+            window.set_default_size(width, height);
+        }
         window.present();
         let session =
             postio_focus::startup::adopt(&window, self.host(), &postio_config::Config::default());

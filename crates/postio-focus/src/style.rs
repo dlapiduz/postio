@@ -40,6 +40,16 @@ pub fn install(display: &gtk::gdk::Display) {
         // because the screen would be subtly wrong.
         gtk::glib::g_critical!("postio-focus", "focus.css: {}: {error}", section.to_str());
     });
+    // A media query in these sheets is read against the provider's own
+    // scheme (GTK 4.20), not the system's: it follows AdwStyleManager here,
+    // so `prefers-color-scheme: dark` holds exactly when Focus is dark -- the
+    // message dialog's palette depends on it (focus-colours.css).
+    let manager = adw::StyleManager::for_display(display);
+    provider.set_prefers_color_scheme(scheme(manager.is_dark()));
+    manager.connect_dark_notify({
+        let provider = provider.clone();
+        move |manager| provider.set_prefers_color_scheme(scheme(manager.is_dark()))
+    });
     // The import first: CSS reads an `@import` only before the first rule.
     provider.load_from_string(&format!("{SURFACES}\n{COLOURS}"));
     gtk::style_context_add_provider_for_display(
@@ -48,6 +58,15 @@ pub fn install(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
     INSTALLED.with(|installed| installed.borrow_mut().push(display.clone()));
+}
+
+/// The scheme a media query sees.
+fn scheme(dark: bool) -> gtk::InterfaceColorScheme {
+    if dark {
+        gtk::InterfaceColorScheme::Dark
+    } else {
+        gtk::InterfaceColorScheme::Light
+    }
 }
 
 #[cfg(test)]

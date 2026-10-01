@@ -206,15 +206,7 @@ pub struct Reader {
     /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
     /// otherwise show the action bar for.
     actions_suppressed: Rc<std::cell::Cell<bool>>,
-    /// How the body on screen is shown -- in the app's colours or as sent,
-    /// on paper -- and who to tell when that changes. The owner sizes its
-    /// column by it (Focus's message dialog, T207).
-    treatment: Rc<std::cell::Cell<postio_body::treatment::Treatment>>,
-    on_treatment: Rc<RefCell<Vec<TreatmentHandler>>>,
 }
-
-/// What [`Reader::connect_treatment_changed`] holds.
-type TreatmentHandler = Box<dyn Fn(postio_body::treatment::Treatment)>;
 
 impl Drop for Reader {
     /// Balances [`postio_ui::reader::cost::note_surface_created`] so that
@@ -585,8 +577,6 @@ impl Reader {
             place,
             allowlist_path: Rc::new(allowlist_path.clone()),
             actions_suppressed: Rc::new(std::cell::Cell::new(false)),
-            treatment: Rc::default(),
-            on_treatment: Rc::default(),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
@@ -895,32 +885,6 @@ impl Reader {
     /// notices and body, stacked.
     pub fn widget(&self) -> gtk::Widget {
         self.container.clone().upcast()
-    }
-
-    /// How the body on screen is shown: [`Treatment::AppColours`] until
-    /// whatever classifies the body says otherwise with
-    /// [`set_treatment`](Self::set_treatment).
-    ///
-    /// [`Treatment::AppColours`]: postio_body::treatment::Treatment::AppColours
-    pub fn treatment(&self) -> postio_body::treatment::Treatment {
-        self.treatment.get()
-    }
-
-    /// Say how the body on screen is shown, telling
-    /// [`connect_treatment_changed`](Self::connect_treatment_changed)'s
-    /// handlers when it differs from before.
-    pub fn set_treatment(&self, treatment: postio_body::treatment::Treatment) {
-        if self.treatment.replace(treatment) == treatment {
-            return;
-        }
-        for handler in self.on_treatment.borrow().iter() {
-            handler(treatment);
-        }
-    }
-
-    /// Run `handler` whenever the body's treatment changes.
-    pub fn connect_treatment_changed(&self, handler: impl Fn(postio_body::treatment::Treatment) + 'static) {
-        self.on_treatment.borrow_mut().push(Box::new(handler));
     }
 
     /// The body view -- test-facing, e.g. to watch `rendered` for whether a
@@ -1463,7 +1427,8 @@ impl Reader {
     /// own page. What the view rasterises is still only what `scroller`
     /// shows ([`BodyView::flow_in`](crate::body_view::BodyView::flow_in)).
     ///
-    /// The attachments are drawn as cards, not pills. Called once, before
+    /// The attachments are drawn as cards, not pills, and the notice slot
+    /// takes no room while it has nothing to say. Called once, before
     /// anything is shown.
     ///
     /// The find bar leaves the column: a bar at the column's top is only on
@@ -1479,6 +1444,7 @@ impl Reader {
         self.view.flow_in(scroller);
         self.place.flow.set(true);
         self.chips.set_cards(true);
+        self.notices.set_collapsing(true);
         if let Some(container) = self.find.widget().parent().and_downcast::<gtk::Box>() {
             container.remove(self.find.widget());
             let ground = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -2386,14 +2352,20 @@ const FLOW_CSS: &str = "\nbody { background: var(--flow-ground); padding: 0; }\n
 
 /// What is added for correspondence, which has no page of its own.
 ///
-/// The measure is capped at 32em -- about 75 characters of Barlow at the
-/// 15px reading size, measured (T203) -- and sits at the column's left
-/// edge, under the subject and the header card, rather than centred: one
-/// left edge for the eye to come back to. A plain-text paragraph break is a
-/// 0.8em gap, the reference's 12px, not an empty line.
+/// The body fills its owner's column, which is the measure: Focus's message
+/// dialog sizes the column to 32em of the 15px reading size, about 70
+/// characters (T207), and centres it, so the body's lines share both edges
+/// with the blocks above them. The rhythm inside the body is the handoff's
+/// (T208): a 24px line, 12px between paragraphs -- a plain-text paragraph
+/// break is a gap, not an empty line -- and list items 4px apart under a
+/// 20px indent. The last block keeps no gap below it, so what follows the
+/// body measures its own distance from the last line.
 const FLOW_FLAT_CSS: &str = "body { font-size: 15px; line-height: 1.6; }\n\
-    .postio-body { max-width: 32em; padding: 0; border: 0; border-radius: 0; min-height: 0; }\n\
-    pre.postio-body-text { margin: 0 0 0.8em 0; }\n";
+    .postio-body { padding: 0; border: 0; border-radius: 0; min-height: 0; }\n\
+    pre.postio-body-text, p { margin: 0 0 0.8em 0; }\n\
+    ul, ol { margin: 0 0 0.8em 0; padding-left: 20px; }\n\
+    li + li { margin-top: 4px; }\n\
+    pre.postio-body-text:last-child, p:last-child { margin-bottom: 0; }\n";
 
 /// The reader palette variables a flowing column supplies from its own
 /// tokens, and the class of the probe each is read from: the owner's

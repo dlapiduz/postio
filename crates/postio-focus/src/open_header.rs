@@ -1,5 +1,6 @@
-//! The open message's header card (screen 04; T184): a tinted card with
-//! small dim From, To and Cc labels, the sender's name in bold with their
+//! The open message's sender block (screen 04; T184, restyled by T209 to
+//! the handoff's: no box, a hairline above and below): small dim From, To
+//! and Cc labels in a 44px column, the sender's name in bold with their
 //! address dim and in mono, and the date on the right -- "Today, 15:22"
 //! for today's mail, in full beyond it.
 //!
@@ -10,8 +11,9 @@
 use adw::prelude::*;
 use chrono::{DateTime, Local, Utc};
 use postio_model::EmailAddress;
+use postio_ui::focus_dialog;
 use postio_ui::reader::header::RECIPIENTS_SHOWN;
-use postio_widgets::widgets::space::{S1, S3};
+use postio_widgets::widgets::space::S1;
 
 /// The card, and the pieces that change with the message.
 pub struct HeaderCard {
@@ -30,7 +32,7 @@ fn field(text: &str) -> gtk::Label {
     label.add_css_class("focus-open-field");
     label.set_xalign(0.0);
     label.set_valign(gtk::Align::Baseline);
-    label.set_width_chars(4);
+    label.set_size_request(focus_dialog::SENDER_LABEL_COLUMN, -1);
     label
 }
 
@@ -58,8 +60,8 @@ impl HeaderCard {
     pub fn new() -> Self {
         let root = gtk::Grid::new();
         root.add_css_class("focus-open-header-card");
-        root.set_column_spacing(S3 as u32);
-        root.set_row_spacing(S1 as u32);
+        root.set_column_spacing(focus_dialog::SENDER_COLUMN_GAP as u32);
+        root.set_row_spacing(focus_dialog::SENDER_ROW_GAP as u32);
 
         let from_label = field("From");
         let from = line();

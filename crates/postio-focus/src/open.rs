@@ -18,18 +18,19 @@ use postio_client::Client;
 use postio_client::protocol::Body;
 use postio_core::{CommandId, Keymap};
 use postio_model::{Attachment, MessageBody, MessageId};
+use postio_ui::focus_dialog::{self, rhythm};
 use postio_ui::hints;
 use postio_widgets::reader::{Reader, RemoteImageAllowList, Verbs};
 use postio_widgets::widgets::keyhint;
-use postio_widgets::widgets::space::{S1, S2};
+use postio_widgets::widgets::space::S3;
 use postio_widgets::widgets::{Action, ActionBar, Kind, Size, icon_button};
 
 use crate::list::FocusRow;
 use crate::open_header::HeaderCard;
 
-/// The dialog's size, as screen 04 draws it.
-const WIDTH: i32 = 980;
-const HEIGHT: i32 = 820;
+/// The window size the dialog is fitted to before it knows its window's:
+/// the window's own default.
+const WINDOW: (i32, i32) = (1440, 900);
 
 /// The toolbar, in the order screen 04 draws it. Task and Note join in
 /// milestone 3 (spec C9).
@@ -43,7 +44,11 @@ const TOOLBAR: &[Action] = &[
     Action::new(CommandId::AddLabel, "Label", "focus-open-label"),
     Action::new(CommandId::Move, "Move", "focus-open-move"),
     Action::new(CommandId::Delete, "Delete", "focus-open-delete"),
+    Action::new(CommandId::MoreActions, "More", "focus-open-more"),
 ];
+
+/// What a narrow dialog folds into More (T206), in the action row's order.
+const FOLDED: [CommandId; 3] = [CommandId::AddLabel, CommandId::Move, CommandId::Delete];
 
 /// What a control in the dialog asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
@@ -69,6 +74,19 @@ pub struct OpenMessage {
     thread_chip: gtk::Box,
     subject: gtk::Label,
     labels: gtk::Box,
+    /// What holds the column to its width, centred in the dialog (T207).
+    clamp: adw::Clamp,
+    /// More's menu: the folded verbs, with their keys.
+    more: gtk::Popover,
+    more_items: gtk::Box,
+    /// The window's size the dialog was last fitted to, and whether it
+    /// follows the window's resizes yet.
+    window: Cell<(i32, i32)>,
+    following: Cell<bool>,
+    /// How wide the action row is with every verb laid out, once measured.
+    row_width: Cell<Option<i32>>,
+    /// The dialog itself, for a handler that must not keep it alive.
+    this: RefCell<std::rc::Weak<OpenMessage>>,
     /// Who it is from, to and copied, and when (screen 04): drawn here, in
     /// place of the reader's own header, which Focus does not show.
     header_card: Rc<HeaderCard>,
@@ -165,7 +183,6 @@ impl OpenMessage {
         title.add_css_class("focus-open-title");
         title.set_ellipsize(pango::EllipsizeMode::End);
         let subtitle = gtk::Label::new(None);
-        subtitle.add_css_class("dim-label");
         subtitle.add_css_class("focus-open-subtitle");
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
         titles.set_valign(gtk::Align::Center);
@@ -178,7 +195,7 @@ impl OpenMessage {
         let down = icon_button("go-down-symbolic", "Next message");
         let down_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         down_key.set_valign(gtk::Align::Center);
-        let steps = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        let steps = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::KEYCAP_GAP);
         steps.append(&up);
         steps.append(&up_key);
         steps.append(&down);
@@ -191,19 +208,42 @@ impl OpenMessage {
         header.set_end_widget(Some(&close));
 
         let toolbar = ActionBar::new(TOOLBAR, "focus-open-toolbar");
+        // The handoff's verbs sit edge to edge, each padded 8px a side.
+        if let Some(row) = toolbar.widget().downcast_ref::<gtk::Box>() {
+            row.set_spacing(0);
+        }
+        tighten_keycaps(&toolbar.widget());
+        // More, and the menu it opens: built once, filled from the keymap.
+        let more_items = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // The row menu's dress (T199): one menu pattern (FR-092).
+        more_items.add_css_class("focus-row-menu");
+        let more = gtk::Popover::builder()
+            .child(&more_items)
+            .has_arrow(false)
+            .position(gtk::PositionType::Bottom)
+            .build();
+        more.add_css_class("focus-row-menu-popover");
+        more.add_css_class("focus-open-more-menu");
+        if let Some(button) = toolbar.button(CommandId::MoreActions) {
+            more.set_parent(&button.widget());
+        }
 
-        // The column: the thread chip, the subject, the labels, the reader
-        // (its header card, the marker slot, the body, the attachments), and
-        // the fold line.
-        let thread_chip = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        // The column: the thread marker, the subject, the labels, the
+        // sender block, the reader (the action card, the body, the
+        // attachments), and the fold line. Each block carries the gap the
+        // handoff gives it (`rhythm`), so a block that is absent takes its
+        // gap with it (T208).
+        let thread_chip = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::THREAD_GAP);
         thread_chip.add_css_class("focus-open-thread");
-        thread_chip.set_halign(gtk::Align::Start);
+        thread_chip.set_margin_bottom(rhythm::MARKER_TO_SUBJECT);
         let subject = gtk::Label::new(None);
         subject.add_css_class("focus-open-subject");
         subject.set_xalign(0.0);
         subject.set_wrap(true);
-        let labels = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        subject.set_wrap_mode(pango::WrapMode::WordChar);
+        let labels = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::LABEL_GAP);
         labels.add_css_class("focus-open-labels");
+        labels.set_margin_top(rhythm::SUBJECT_TO_LABELS);
         let fold_label = gtk::Label::new(None);
         fold_label.set_xalign(0.0);
         let fold_line = gtk::Button::new();
@@ -213,24 +253,40 @@ impl OpenMessage {
         fold_line.set_halign(gtk::Align::Start);
         fold_line.set_visible(false);
 
+        let header_widget = header_card.widget();
+        header_widget.set_margin_top(rhythm::LABELS_TO_SENDER);
         let reader_widget = reader.widget();
-        let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
+        // The body sits 24px under the action card, or under the sender
+        // block when there is no card.
+        reader.view().set_margin_top(rhythm::CARD_TO_BODY);
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.add_css_class("focus-open-column");
+        column.set_margin_top(rhythm::TOP);
+        column.set_margin_bottom(rhythm::BOTTOM);
+        // Its own height, not the page's: the bottom padding sits under the
+        // last block, not at the foot of a stretched column.
+        column.set_valign(gtk::Align::Start);
         column.append(&thread_chip);
         column.append(&subject);
         column.append(&labels);
-        column.append(&header_card.widget());
+        column.append(&header_widget);
         column.append(&reader_widget);
         column.append(&fold_line);
-        // One column: everything from the thread chip to the fold line
-        // scrolls together (screen 04), the body drawn in it rather than
-        // in a scroller of its own. It runs the dialog's width less a
-        // gutter a side (`focus.css`), and the body fills it (T197): the
-        // reference's narrower column left a dead margin beside the text.
+        // One column for everything inside the message (T207): its width
+        // comes from the dialog's and the body's treatment
+        // (`focus_dialog::column_width`), centred, and every block fills
+        // it, so they share both edges. Everything from the thread marker
+        // to the fold line scrolls together (screen 04), the body drawn in
+        // it rather than in a scroller of its own.
+        let clamp = adw::Clamp::builder()
+            .child(&column)
+            .maximum_size(focus_dialog::COLUMN_APP_COLOURS)
+            .tightening_threshold(focus_dialog::COLUMN_APP_COLOURS)
+            .build();
         let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
-            .child(&column)
+            .child(&clamp)
             .build();
         scroller.add_css_class("focus-open-scroller");
         reader.flow_in(&scroller);
@@ -249,8 +305,8 @@ impl OpenMessage {
         content.append(&scroller);
 
         let dialog = adw::Dialog::builder()
-            .content_width(WIDTH)
-            .content_height(HEIGHT)
+            .content_width(focus_dialog::dialog_width(WINDOW.0))
+            .content_height(focus_dialog::dialog_height(WINDOW.1))
             .child(&content)
             .build();
         dialog.set_widget_name(DIALOG_NAME);
@@ -271,6 +327,13 @@ impl OpenMessage {
             thread_chip,
             subject,
             labels,
+            clamp,
+            more,
+            more_items,
+            window: Cell::new(WINDOW),
+            following: Cell::new(false),
+            row_width: Cell::new(None),
+            this: RefCell::default(),
             header_card,
             reader,
             fold_line,
@@ -294,6 +357,7 @@ impl OpenMessage {
         });
 
         let weak = Rc::downgrade(&page);
+        page.this.replace(weak.clone());
         close.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -337,8 +401,202 @@ impl OpenMessage {
                 }
             }
         });
+        // A body shown on paper takes the wider column; one shown in the
+        // app's colours the narrower. The dialog itself does not move.
+        page.reader.connect_treatment_changed({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(page) = weak.upgrade() {
+                    page.fit_column();
+                }
+            }
+        });
         page.set_keymap(keymap);
+        page.fold_into_more(focus_dialog::folds_into_more(page.dialog.content_width()));
         page
+    }
+
+    /// Size the dialog for a window `width` by `height` (T205): its width
+    /// and height come from the window and nothing else, so stepping
+    /// through the list never resizes it.
+    fn fit(&self, width: i32, height: i32) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        self.window.set((width, height));
+        let dialog = focus_dialog::dialog_width(width);
+        if self.dialog.content_width() != dialog {
+            self.dialog.set_content_width(dialog);
+        }
+        let tall = focus_dialog::dialog_height(height);
+        if self.dialog.content_height() != tall {
+            self.dialog.set_content_height(tall);
+        }
+        self.fit_column();
+        self.fold_into_more(
+            focus_dialog::folds_into_more(dialog) || self.full_row_width() > dialog,
+        );
+    }
+
+    /// How wide the action row is with every verb laid out: the handoff's
+    /// 760px rule assumes its narrower face, so a row that would not fit
+    /// folds too, rather than widening the dialog past its window's rule.
+    /// Measured once on screen and kept: only its words and its keys
+    /// change it.
+    fn full_row_width(&self) -> i32 {
+        if let Some(width) = self.row_width.get() {
+            return width;
+        }
+        let folded: Vec<gtk::Widget> = FOLDED
+            .iter()
+            .filter_map(|command| self.toolbar.button(*command))
+            .map(|button| button.widget())
+            .filter(|widget| !widget.is_visible())
+            .collect();
+        let more = self
+            .toolbar
+            .button(CommandId::MoreActions)
+            .map(|button| button.widget())
+            .filter(gtk::Widget::is_visible);
+        for widget in &folded {
+            widget.set_visible(true);
+        }
+        if let Some(more) = &more {
+            more.set_visible(false);
+        }
+        let (_, natural, _, _) = self
+            .toolbar
+            .widget()
+            .measure(gtk::Orientation::Horizontal, -1);
+        for widget in &folded {
+            widget.set_visible(false);
+        }
+        if let Some(more) = &more {
+            more.set_visible(true);
+        }
+        // Kept only once the row is on screen, dressed by its stylesheet.
+        if self.toolbar.widget().is_mapped() {
+            self.row_width.set(Some(natural));
+        }
+        natural
+    }
+
+    /// Fold Label, Move and Delete into More, or lay them out again.
+    fn fold_into_more(&self, fold: bool) {
+        for command in FOLDED {
+            if let Some(button) = self.toolbar.button(command) {
+                button.widget().set_visible(!fold);
+            }
+        }
+        if let Some(button) = self.toolbar.button(CommandId::MoreActions) {
+            button.widget().set_visible(fold);
+        }
+        if !fold {
+            self.more.popdown();
+        }
+    }
+
+    /// Whether the action row has folded its last verbs into More.
+    pub fn folded(&self) -> bool {
+        self.toolbar
+            .button(CommandId::MoreActions)
+            .is_some_and(|button| button.widget().is_visible())
+    }
+
+    /// More (`.`): the verbs the action row folded away, in a menu under
+    /// its button, each running its one command. Nothing when nothing is
+    /// folded.
+    pub fn show_more(&self) {
+        if !self.folded() {
+            return;
+        }
+        while let Some(child) = self.more_items.first_child() {
+            self.more_items.remove(&child);
+        }
+        let keymap = self.keymap.borrow().clone();
+        for command in FOLDED {
+            let Some(action) = TOOLBAR.iter().find(|action| action.command == command) else {
+                continue;
+            };
+            let item = gtk::Button::new();
+            postio_widgets::widgets::button::style(&item, Kind::Ghost, Size::Regular);
+            item.add_css_class("focus-row-menu-item");
+            item.add_css_class("focus-open-more-item");
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::KEYCAP_GAP);
+            let words = gtk::Label::new(Some(action.label));
+            words.set_xalign(0.0);
+            words.set_hexpand(true);
+            row.append(&words);
+            if let Some(key) = hints::key(&keymap, command) {
+                row.append(&keyhint::cap(&key));
+            }
+            item.set_child(Some(&row));
+            item.update_property(&[gtk::accessible::Property::Label(action.label)]);
+            let weak = self.this.borrow().clone();
+            item.connect_clicked(move |_| {
+                if let Some(page) = weak.upgrade() {
+                    page.more.popdown();
+                    page.run(command);
+                }
+            });
+            self.more_items.append(&item);
+        }
+        self.more.popup();
+        if let Some(first) = self.more_items.first_child() {
+            first.grab_focus();
+        }
+    }
+
+    /// Whether More's menu is open.
+    pub fn more_open(&self) -> bool {
+        self.more.is_visible()
+    }
+
+    /// More's menu, for a test to read.
+    pub fn more_menu(&self) -> gtk::Popover {
+        self.more.clone()
+    }
+
+    /// The column's width, for the dialog's and the body's treatment.
+    fn fit_column(&self) {
+        let dialog = focus_dialog::dialog_width(self.window.get().0);
+        let column = focus_dialog::column_width(dialog, self.reader.treatment());
+        if self.clamp.maximum_size() != column {
+            self.clamp.set_maximum_size(column);
+            self.clamp.set_tightening_threshold(column);
+        }
+    }
+
+    /// Fit the dialog to `parent`'s window now, and again whenever that
+    /// window is resized: its surface's `layout` says when, for every new
+    /// size, maximised and tiled ones included, and the window's own size
+    /// is read then -- the surface's includes the shadow a restored window
+    /// draws around itself.
+    fn follow(&self, parent: &gtk::Widget) {
+        let Some(window) = parent.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let (width, height) = (window.width(), window.height());
+        if width > 0 && height > 0 {
+            self.fit(width, height);
+        } else {
+            let (width, height) = window.default_size();
+            self.fit(width, height);
+        }
+        if self.following.get() {
+            return;
+        }
+        let Some(surface) = window.surface() else {
+            return;
+        };
+        self.following.set(true);
+        let page = self.this.borrow().clone();
+        let window = window.downgrade();
+        surface.connect_layout(move |_, _, _| {
+            if let (Some(page), Some(window)) = (page.upgrade(), window.upgrade()) {
+                page.fit(window.width(), window.height());
+            }
+        });
     }
 
     /// Whether a to-do's card offers Task `t` beside Snooze: once a vault is
@@ -365,6 +623,8 @@ impl OpenMessage {
         self.toolbar.set_keymap(keymap);
         // The render-mode line's cap among them (T213).
         self.reader.set_keymap(keymap);
+        // Its keys are part of its width.
+        self.row_width.set(None);
         for (holder, command) in [
             (&self.up_key, CommandId::PrevMessage),
             (&self.down_key, CommandId::NextMessage),
@@ -403,6 +663,7 @@ impl OpenMessage {
             .replace(summary.marker.clone().map(|marker| (message, marker)));
 
         if !self.open.get() {
+            self.follow(parent.upcast_ref());
             self.dialog.present(Some(parent));
             self.open.set(true);
         }
@@ -426,6 +687,7 @@ impl OpenMessage {
         self.show_labels(&[]);
         self.marker.replace(None);
         if !self.open.get() {
+            self.follow(parent.upcast_ref());
             self.dialog.present(Some(parent));
             self.open.set(true);
         }
@@ -642,10 +904,12 @@ impl OpenMessage {
             // The pill: the label's colour dot, as the list's pills draw it,
             // and its name.
             let colour = crate::places::label_rgb(label);
-            let pill = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+            let pill = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::LABEL_GAP);
             pill.add_css_class("focus-open-label-pill");
             let dot = crate::places::colour_dot(colour);
             dot.add_css_class("focus-open-label-dot");
+            // The dot's own size, so the pill's 8px inset reaches it.
+            dot.set_content_width(focus_dialog::LABEL_DOT);
             pill.append(&dot);
             pill.append(&gtk::Label::new(Some(&label.name)));
             self.labels.append(&pill);
@@ -655,7 +919,7 @@ impl OpenMessage {
         let add = gtk::Button::new();
         postio_widgets::widgets::button::style(&add, Kind::Ghost, Size::Regular);
         add.add_css_class("focus-open-add-label");
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::KEYCAP_GAP);
         row.append(&gtk::Label::new(Some("+ Label")));
         if let Some(key) = hints::key(&self.keymap.borrow(), CommandId::AddLabel) {
             row.append(&keyhint::cap(&key));
@@ -823,8 +1087,9 @@ impl OpenMessage {
     fn marker_card(&self, marker: &postio_model::listing::MarkerSummary) -> gtk::Box {
         let line = postio_ui::focus_row::marker_line(marker, chrono::Utc::now(), &chrono::Local)
             .capturing(self.capture.get());
-        let card = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        let card = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         card.add_css_class("focus-marker-card");
+        card.set_margin_top(rhythm::SENDER_TO_CARD);
         let chip = gtk::Label::new(Some(line.chip));
         chip.add_css_class("focus-marker-chip");
         chip.set_valign(gtk::Align::Center);
@@ -837,7 +1102,12 @@ impl OpenMessage {
         if let Some(quote) = &line.quote {
             let quote = gtk::Label::new(Some(&format!("\u{201c}{quote}\u{201d}")));
             quote.add_css_class("focus-marker-quote");
+            // Two lines at most, then an ellipsis: the card stays a card.
+            quote.set_wrap(true);
+            quote.set_wrap_mode(pango::WrapMode::WordChar);
+            quote.set_lines(2);
             quote.set_ellipsize(pango::EllipsizeMode::End);
+            quote.set_width_chars(1);
             quote.set_xalign(0.0);
             quote.set_hexpand(true);
             card.append(&quote);
@@ -856,7 +1126,7 @@ impl OpenMessage {
             let button = gtk::Button::new();
             postio_widgets::widgets::button::style(&button, Kind::Secondary, Size::Regular);
             button.add_css_class("focus-marker-action");
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::KEYCAP_GAP);
             row.append(&gtk::Label::new(Some(words)));
             if let Some(key) = hints::key(&keymap, command) {
                 row.append(&keyhint::cap(&key));
@@ -875,7 +1145,7 @@ impl OpenMessage {
         let dismiss = gtk::Button::new();
         postio_widgets::widgets::button::style(&dismiss, Kind::Ghost, Size::Regular);
         dismiss.add_css_class("focus-marker-dismiss");
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::KEYCAP_GAP);
         row.append(&gtk::Label::new(Some("Dismiss")));
         if let Some(key) = hints::key(&keymap, CommandId::DismissMarker) {
             row.append(&keyhint::cap(&key));
@@ -1045,4 +1315,22 @@ fn cid_key(content_id: &str) -> String {
         .trim_start_matches('<')
         .trim_end_matches('>')
         .to_ascii_lowercase()
+}
+
+/// Close each keycap under `root` up to its words: the handoff's 6px, where
+/// the shared keycap button leaves 8.
+fn tighten_keycaps(root: &gtk::Widget) {
+    let mut stack = vec![root.clone()];
+    while let Some(widget) = stack.pop() {
+        if widget.has_css_class("postio-keycap-button")
+            && let Some(content) = widget.first_child().and_downcast::<gtk::Box>()
+        {
+            content.set_spacing(focus_dialog::KEYCAP_GAP);
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
 }

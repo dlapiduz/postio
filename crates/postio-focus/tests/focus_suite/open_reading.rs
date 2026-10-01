@@ -292,8 +292,9 @@ pub fn the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full() {
     });
 }
 
-/// T185: an attachment is a card -- an icon, the name in mono and the size
-/// beneath it -- in a row under the body, not a pill over it.
+/// T185, as the message dialog handoff redraws it (T209): an attachment is
+/// a 40px chip -- an icon, the name in the body's face and the size in mono
+/// beside it -- in a row under the body, not a pill over it.
 pub fn an_attachment_is_a_card_under_the_body() {
     crate::gtk_case(async {
         if !support::display() {
@@ -325,23 +326,36 @@ pub fn an_attachment_is_a_card_under_the_body() {
             .expect("a label");
         assert_eq!(name.text(), "Harbor-API-v3.pdf");
         assert_eq!(size.text(), "47 KB");
-        let family = name
-            .pango_context()
-            .font_description()
-            .and_then(|font| font.family())
-            .map(|family| family.to_lowercase())
-            .unwrap_or_default();
-        assert!(family.contains("mono"), "the name is drawn in {family:?}");
+        let face = |label: &gtk::Label| {
+            label
+                .pango_context()
+                .font_description()
+                .and_then(|font| font.family())
+                .map(|family| family.to_lowercase())
+                .unwrap_or_default()
+        };
+        assert!(
+            !face(&name).contains("mono"),
+            "the name is drawn in {:?}",
+            face(&name)
+        );
+        assert!(
+            face(&size).contains("mono"),
+            "the size is drawn in {:?}",
+            face(&size)
+        );
         let y = |widget: &gtk::Widget| {
             widget
                 .compute_bounds(&dialog.child().expect("content"))
                 .expect("laid out")
                 .y()
         };
+        let middle = |widget: &gtk::Widget| y(widget) + widget.height() as f32 / 2.0;
         assert!(
-            y(size.upcast_ref()) > y(name.upcast_ref()),
-            "the size is not beneath the name"
+            (middle(size.upcast_ref()) - middle(name.upcast_ref())).abs() <= 1.0,
+            "the size is not beside the name"
         );
+        assert_eq!(card.height(), 40, "the chip is not 40px tall");
         // Under the body, not over it.
         let view = reading.reader().view().clone();
         assert!(
@@ -380,8 +394,10 @@ pub fn a_label_pill_carries_its_colour_dot() {
     });
 }
 
-/// T187: Close is the same compact pill as the toolbar's buttons.
-pub fn close_is_as_compact_as_the_toolbar_s_buttons() {
+/// T187, as the message dialog handoff redraws it (T206): Close is the
+/// header bar's 32px square icon button, and the action row's verbs are
+/// 30px buttons inside their 44px row.
+pub fn close_is_the_header_s_square_and_the_verbs_are_30px() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -396,12 +412,12 @@ pub fn close_is_as_compact_as_the_toolbar_s_buttons() {
         let dialog = reading.dialog();
         let close = support::only(&dialog, "focus-open-close");
         let verb = support::only(&dialog, "focus-open-archive");
-        assert!(
-            close.height() <= verb.height(),
-            "Close is {}px tall beside a toolbar button's {}px",
-            close.height(),
-            verb.height()
+        assert_eq!(
+            (close.width(), close.height()),
+            (32, 32),
+            "Close is not the header's 32px square"
         );
+        assert_eq!(verb.height(), 30, "a verb is not 30px tall");
     });
 }
 
@@ -458,7 +474,6 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
     });
 }
 
-/// T197: the column runs the dialog's width less one gutter a side, the
 /// design system's `--postio-space-6`, and the body fills it: the header
 /// card, the body and the dialog's toolbar keep one left edge, with no
 /// dead margin beside the text.

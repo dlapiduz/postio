@@ -30,7 +30,7 @@ type NodeHandler = Box<dyn Fn(&Node)>;
 pub struct Chips {
     row: gtk::Box,
     handlers: Rc<RefCell<Vec<NodeHandler>>>,
-    /// Drawn as cards -- an icon, the name in mono and the size beneath --
+    /// Drawn as cards -- an icon, the name, the size in mono, in a row --
     /// rather than as pills ([`Chips::set_cards`]).
     cards: Rc<Cell<bool>>,
 }
@@ -55,9 +55,10 @@ impl Chips {
         }
     }
 
-    /// Draw each attachment as a card, as Focus's open message does (screen
-    /// 04): a file icon, the name in mono and the size beneath it. Read
-    /// when the parts are next set.
+    /// Draw each attachment as a card, as Focus's open message does (the
+    /// message dialog handoff, T209): a 40px chip holding a file icon, the
+    /// name and the size in mono, in one row. Read when the parts are next
+    /// set.
     pub fn set_cards(&self, cards: bool) {
         self.cards.set(cards);
     }
@@ -110,15 +111,13 @@ impl Chips {
             button.add_css_class("postio-attachment-card");
             name.set_xalign(0.0);
             size.set_xalign(0.0);
-            let text = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            text.append(&name);
-            text.append(&size);
             let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
             icon.add_css_class("postio-attachment-icon");
             icon.set_accessible_role(gtk::AccessibleRole::Presentation);
             let card = gtk::Box::new(gtk::Orientation::Horizontal, crate::widgets::space::S3);
             card.append(&icon);
-            card.append(&text);
+            card.append(&name);
+            card.append(&size);
             button.set_child(Some(&card));
         } else {
             let line = gtk::Box::new(gtk::Orientation::Horizontal, 7);
