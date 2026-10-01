@@ -91,7 +91,9 @@ pub use parts::{
     part_note,
 };
 pub use provisioning::{
-    ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
+    DiscoveredFfi, NewAccountFfi, ProviderHintFfi, RouteFfi, ScopesFfi, SecurityFfi, ServerFfi,
+    SignInProgressFfi, SyncWindowChoiceFfi, SyncWindowFfi, provider_hint, sign_in_scopes,
+    sync_window_choices, write_initial_sync_window,
 };
 pub use rail::{RailEffectFfi, RailFfi, RailPresentationFfi, RailRowFfi, rail_presentation};
 pub use reader::{

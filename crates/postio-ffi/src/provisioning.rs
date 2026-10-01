@@ -169,3 +169,288 @@ pub fn sign_in_scopes(address: String) -> ScopesFfi {
             .to_owned(),
     }
 }
+
+// -- the first-run wizard (canvas 09) ---------------------------------------
+
+/// How a connection to one server is secured. Carried as discovery found
+/// it rather than flattened to a bool: that flattening once turned a
+/// provider's own STARTTLS answer into a TLS dial (#534).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SecurityFfi {
+    /// TLS from the first byte.
+    Tls,
+    /// Plain, upgraded with `STARTTLS`.
+    StartTls,
+    /// Unencrypted -- what a provider's loopback answer can say.
+    None,
+}
+
+/// One server: where it is and how it is reached.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServerFfi {
+    /// Hostname, **empty when nothing is known** -- see
+    /// [`ProviderHintFfi::imap_host`].
+    pub host: String,
+    /// Port.
+    pub port: u16,
+    /// Connection security.
+    pub security: SecurityFfi,
+}
+
+/// What looking an address up found, for the "Found settings" card.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DiscoveredFfi {
+    /// Whether the answer is authoritative -- a provider's own document or
+    /// the preset table -- rather than a guess the person should check.
+    pub found: bool,
+    /// The card's heading: `Found settings for tomlin.dev`, or what to do
+    /// when nothing was.
+    pub heading: String,
+    /// Where mail is read from.
+    pub imap: ServerFfi,
+    /// Where mail is sent through.
+    pub smtp: ServerFfi,
+    /// `imap.fastmail.com:993 · TLS`, the way the canvas writes it.
+    pub imap_line: String,
+    /// The same for `smtp`.
+    pub smtp_line: String,
+    /// The login, which is not always the address.
+    pub login: String,
+    /// Whether the provider refuses the account's own password.
+    pub requires_app_password: bool,
+    /// A sentence from the provider table, if it has one.
+    pub note: Option<String>,
+    /// Where to make an app password.
+    pub help_url: Option<String>,
+    /// Where the settings came from.
+    pub source: String,
+    /// Whether the provider's door is the browser rather than a password.
+    pub browser_sign_in: bool,
+}
+
+/// What `Connect` submits.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct NewAccountFfi {
+    /// The address mail arrives at.
+    pub address: String,
+    /// The name to send as. Empty means the address.
+    pub name: String,
+    /// On its way to the keyring, and nowhere else.
+    pub password: String,
+    /// What to sign in as.
+    pub login: String,
+    /// Where mail is read from.
+    pub imap: ServerFfi,
+    /// Where mail is sent through.
+    pub smtp: ServerFfi,
+}
+
+/// Without the password: a record that prints one is a log that keeps it.
+impl std::fmt::Debug for NewAccountFfi {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NewAccountFfi")
+            .field("address", &self.address)
+            .field("login", &self.login)
+            .field("password", &"<withheld>")
+            .field("imap", &self.imap)
+            .field("smtp", &self.smtp)
+            .finish()
+    }
+}
+
+/// How far back the first sync reaches (#876).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SyncWindowFfi {
+    /// About a month.
+    LastMonth,
+    /// A year, the field's own default.
+    LastYear,
+    /// No cap.
+    Everything,
+}
+
+/// One choice in the sync-window step.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SyncWindowChoiceFfi {
+    /// Which one.
+    pub window: SyncWindowFfi,
+    /// The picker's label.
+    pub label: String,
+    /// The rough size and time under it.
+    pub estimate: String,
+    /// Whether it is the default.
+    pub recommended: bool,
+}
+
+impl From<postio_ui::onboarding::SyncWindow> for SyncWindowFfi {
+    fn from(window: postio_ui::onboarding::SyncWindow) -> Self {
+        use postio_ui::onboarding::SyncWindow as W;
+        match window {
+            W::LastMonth => Self::LastMonth,
+            W::LastYear => Self::LastYear,
+            W::Everything => Self::Everything,
+        }
+    }
+}
+
+impl From<SyncWindowFfi> for postio_ui::onboarding::SyncWindow {
+    fn from(window: SyncWindowFfi) -> Self {
+        match window {
+            SyncWindowFfi::LastMonth => Self::LastMonth,
+            SyncWindowFfi::LastYear => Self::LastYear,
+            SyncWindowFfi::Everything => Self::Everything,
+        }
+    }
+}
+
+/// The sync-window step's choices, in the order the desktop offers them.
+#[uniffi::export]
+pub fn sync_window_choices() -> Vec<SyncWindowChoiceFfi> {
+    postio_ui::onboarding::SyncWindow::ALL
+        .into_iter()
+        .map(|window| SyncWindowChoiceFfi {
+            window: window.into(),
+            label: window.label().to_owned(),
+            estimate: window.estimate(),
+            recommended: window == postio_ui::onboarding::SyncWindow::default(),
+        })
+        .collect()
+}
+
+/// Write the chosen window to `[sync]` in the installed `config.toml`.
+/// `None` when it was written, a sentence when it was not.
+///
+/// A failure costs the size picked, not the account: the account is saved
+/// before this step is shown, and the field's default is `LastYear`'s.
+#[uniffi::export]
+pub fn write_initial_sync_window(window: SyncWindowFfi) -> Option<String> {
+    postio_ui::onboarding::write_sync_window(window.into())
+        .err()
+        .map(|error| format!("Postio could not save how far back to sync: {error}"))
+}
+
+impl From<postio_model::TransportSecurity> for SecurityFfi {
+    fn from(security: postio_model::TransportSecurity) -> Self {
+        use postio_model::TransportSecurity as S;
+        match security {
+            S::Tls => Self::Tls,
+            S::StartTls => Self::StartTls,
+            S::None => Self::None,
+        }
+    }
+}
+
+impl From<SecurityFfi> for postio_model::TransportSecurity {
+    fn from(security: SecurityFfi) -> Self {
+        match security {
+            SecurityFfi::Tls => Self::Tls,
+            SecurityFfi::StartTls => Self::StartTls,
+            SecurityFfi::None => Self::None,
+        }
+    }
+}
+
+impl From<&postio_ui::onboarding::Server> for ServerFfi {
+    fn from(server: &postio_ui::onboarding::Server) -> Self {
+        Self {
+            host: server.host.clone(),
+            port: server.port,
+            security: server.security.into(),
+        }
+    }
+}
+
+impl From<&ServerFfi> for postio_ui::onboarding::Server {
+    fn from(server: &ServerFfi) -> Self {
+        Self {
+            host: server.host.trim().to_owned(),
+            port: server.port,
+            security: server.security.into(),
+        }
+    }
+}
+
+/// The card for `address`, from what the shared onboarding answered.
+///
+/// `Found` is the only authoritative answer; a `Manual` one carries a
+/// suggestion to check, or nothing, and then the servers are empty rather
+/// than guessed and the ports are the implicit-TLS ones.
+pub(crate) fn discovered(address: &str, status: postio_ui::onboarding::Status) -> DiscoveredFfi {
+    use postio_ui::onboarding::{Server, Settings, Status};
+    let domain = postio_ui::onboarding::domain_of(address);
+    let (found, settings) = match status {
+        Status::Found(settings) => (true, settings),
+        Status::Manual {
+            suggestion: Some(settings),
+        } => (false, settings),
+        _ => (
+            false,
+            Settings {
+                imap: Server {
+                    port: 993,
+                    ..Server::default()
+                },
+                smtp: Server {
+                    port: 465,
+                    ..Server::default()
+                },
+                ..Settings::default()
+            },
+        ),
+    };
+    let heading = if found {
+        format!("Found settings for {domain}")
+    } else if settings.imap.host.is_empty() {
+        format!("Postio found no settings for {domain}. Enter the servers your provider gives.")
+    } else {
+        format!("Postio guessed the settings for {domain}. Check them before connecting.")
+    };
+    let line = |server: &Server| {
+        if server.host.is_empty() {
+            String::new()
+        } else {
+            server.line()
+        }
+    };
+    DiscoveredFfi {
+        found,
+        heading,
+        imap_line: line(&settings.imap),
+        smtp_line: line(&settings.smtp),
+        imap: (&settings.imap).into(),
+        smtp: (&settings.smtp).into(),
+        login: if settings.login.is_empty() {
+            address.trim().to_owned()
+        } else {
+            settings.login
+        },
+        requires_app_password: settings.requires_app_password,
+        note: settings.note,
+        help_url: settings.help_url,
+        source: settings.source,
+        browser_sign_in: settings.oauth_sign_in,
+    }
+}
+
+/// What the shared onboarding is handed for `account`.
+pub(crate) fn submission(account: NewAccountFfi) -> postio_ui::onboarding::Submission {
+    let login = if account.login.trim().is_empty() {
+        account.address.trim().to_owned()
+    } else {
+        account.login.trim().to_owned()
+    };
+    postio_ui::onboarding::Submission {
+        address: account.address.trim().to_owned(),
+        name: account.name.trim().to_owned(),
+        password: account.password,
+        settings: postio_ui::onboarding::Settings {
+            imap: (&account.imap).into(),
+            smtp: (&account.smtp).into(),
+            login,
+            source: "entered on this Mac".to_owned(),
+            ..postio_ui::onboarding::Settings::default()
+        },
+        oauth_client: None,
+    }
+}

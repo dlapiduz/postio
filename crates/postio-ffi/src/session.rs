@@ -88,6 +88,10 @@ pub struct SessionOptions {
     seeded_blobs: Option<(postio_storage::BlobStore, tempfile::TempDir)>,
     #[cfg(feature = "testing")]
     config: ConfigSource,
+    #[cfg(feature = "testing")]
+    discovery: Option<Arc<dyn postio_account::discovery::DiscoveryTransport>>,
+    #[cfg(feature = "testing")]
+    mail: Option<postio_session::MailOverride>,
 }
 
 /// The commands the boundary answers itself, rather than sending down the bus.
@@ -129,6 +133,11 @@ fn no_store() -> crate::PartsError {
     }
 }
 
+/// What adding an account with no server says. Refused rather than written:
+/// an account naming no server fails later, at sync, as a connection error
+/// nobody can act on.
+const NO_SERVERS: &str = "Postio needs the incoming and outgoing server names — it will not guess them from your address.";
+
 /// The next session's number within this process.
 ///
 /// See [`Session::serial`]. Monotonic and never reused: a session that has
@@ -153,6 +162,10 @@ impl SessionOptions {
             seeded_blobs: None,
             #[cfg(feature = "testing")]
             config: ConfigSource::Installed,
+            #[cfg(feature = "testing")]
+            discovery: None,
+            #[cfg(feature = "testing")]
+            mail: None,
         }
     }
 
@@ -259,6 +272,26 @@ impl SessionOptions {
     #[cfg(feature = "testing")]
     pub fn in_memory_on(runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
         Self::in_memory().on_bridge(runtime, commands)
+    }
+
+    /// Look new accounts' servers up through `discovery` rather than the
+    /// network. The first-run wizard's tests answer from the preset table
+    /// alone; nothing in the default suite may dial (CLAUDE.md).
+    #[cfg(feature = "testing")]
+    pub fn with_discovery_for_test(
+        mut self,
+        discovery: Arc<dyn postio_account::discovery::DiscoveryTransport>,
+    ) -> Self {
+        self.discovery = Some(discovery);
+        self
+    }
+
+    /// Sign in, read and send through `mail` rather than the servers an
+    /// account names -- what `Connect`'s proof is tested against.
+    #[cfg(feature = "testing")]
+    pub fn with_mail_for_test(mut self, mail: postio_session::MailOverride) -> Self {
+        self.mail = Some(mail);
+        self
     }
 
     /// Run on a runtime the caller owns, keeping whatever store these
@@ -398,12 +431,50 @@ fn serve(
     }
 }
 
+/// What a new account is looked up and signed in through, when a test says.
+type Seams = (
+    Option<Arc<dyn postio_account::discovery::DiscoveryTransport>>,
+    Option<postio_session::MailOverride>,
+);
+
+#[cfg(feature = "testing")]
+fn seams(options: &SessionOptions) -> Seams {
+    (options.discovery.clone(), options.mail.clone())
+}
+
+#[cfg(not(feature = "testing"))]
+fn seams(_options: &SessionOptions) -> Seams {
+    (None, None)
+}
+
+/// The wiring, looking new accounts up the way the desktop's first run
+/// does: over the network, with every connection the lookup makes written
+/// to the egress log like any other (#151). The wiring's own default
+/// transport records nothing, which would make the wizard the one thing on
+/// this Mac that dials without saying so.
+fn with_onboarding(wiring: Wiring, (discovery, mail): Seams) -> Wiring {
+    let discovery = discovery.unwrap_or_else(|| {
+        Arc::new(
+            postio_account::discovery::PimalayaTransport::new().with_egress(wiring.egress.clone()),
+        )
+    });
+    let wiring = wiring.with_discovery(discovery);
+    match mail {
+        Some(mail) => wiring.with_mail(mail),
+        None => wiring,
+    }
+}
+
 /// A command on its way to the host, with the aim it was issued under.
 type Aimed = (postio_core::Command, postio_core::state::SharedState);
 
 /// This session's line to the host: where its commands go, and what keeps
 /// its drain fed. Dropped by [`Session::shutdown`], which is what ends both.
 struct Link {
+    /// The host's client itself, for the requests that are not commands --
+    /// looking a new account's servers up, which the host answers with the
+    /// desktop's own onboarding.
+    client: postio_client::Client,
     /// Commands, in the order they were issued, each with its own aim.
     outbox: async_channel::Sender<Aimed>,
     /// Held only to be dropped: the task feeding the session's event stream
@@ -464,13 +535,14 @@ fn connect(host: &Host) -> (Wiring, EventStream, Link) {
     });
 
     let wiring = Wiring {
-        store: Arc::new(client),
+        store: Arc::new(client.clone()),
         ..host.wiring().clone()
     };
     (
         wiring,
         stream,
         Link {
+            client,
             outbox,
             _hearing: hearing,
         },
@@ -1075,6 +1147,26 @@ impl Session {
     #[uniffi::method(name = "unsubscribeActivations")]
     pub fn unsubscribe_activations_ffi(&self) -> Vec<crate::UnsubscribeActivationFfi> {
         blocking(self.unsubscribe_activations())
+    }
+
+    /// What looking `address` up finds: the first-run card (canvas 09).
+    ///
+    /// Asked on a deliberate step -- the address field losing focus, or
+    /// `Connect` -- never per keystroke: each lookup is DNS and HTTPS to the
+    /// address's domain, and each is written to the egress log. Blocks for
+    /// as long as the lookup takes, bounded by the probe's own deadlines, so
+    /// not from the main actor.
+    #[uniffi::method(name = "discoverAccount")]
+    pub fn discover_account_ffi(&self, address: String) -> crate::DiscoveredFfi {
+        blocking(self.discover_account(address))
+    }
+
+    /// Sign in to the servers `account` names and, only if that works, add
+    /// it. `None` when it was added, a sentence when it was not. Blocks on
+    /// the server, so not from the main actor.
+    #[uniffi::method(name = "connectAccount")]
+    pub fn connect_account_ffi(&self, account: crate::NewAccountFfi) -> Option<String> {
+        blocking(self.connect_account(account))
     }
 
     /// Add an account that signs in with a password. `None` when it was
@@ -1954,6 +2046,7 @@ impl Session {
         // Read before anything moves out of `options`, and once: both paths
         // below build the same configuration from it.
         let source = config_source(&options);
+        let seams = seams(&options);
         let caller = options.bridge;
 
         #[cfg(feature = "testing")]
@@ -2027,7 +2120,7 @@ impl Session {
             // own keychain.
             let secrets = options.secrets.clone();
             let host = serve(database, blobs, caller, |wiring| {
-                let wiring = wiring
+                let wiring = with_onboarding(wiring, seams)
                     .with_backfill(postio_session::backfill_policy(&sync_config))
                     .with_watch(postio_session::watch_policy(&sync_config));
                 match secrets {
@@ -2128,7 +2221,7 @@ impl Session {
         let ui_config = config.ui;
 
         let host = serve(database, blobs, caller, |wiring| {
-            wiring
+            with_onboarding(wiring, seams)
                 .with_secrets(secrets)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config))
@@ -2722,6 +2815,76 @@ impl Session {
             .collect()
     }
 
+    /// Look `address` up. See [`discover_account_ffi`](Self::discover_account_ffi).
+    pub async fn discover_account(&self, address: String) -> crate::DiscoveredFfi {
+        let client = self
+            .link
+            .lock()
+            .expect("link lock")
+            .as_ref()
+            .map(|link| link.client.clone());
+        let status = match client {
+            Some(client) => client
+                .discover(address.trim().to_owned())
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::info!(%error, "the host could not look the address up");
+                    postio_ui::onboarding::Status::Manual { suggestion: None }
+                }),
+            None => postio_ui::onboarding::Status::Manual { suggestion: None },
+        };
+        crate::provisioning::discovered(&address, status)
+    }
+
+    /// Sign in, then add. See [`connect_account_ffi`](Self::connect_account_ffi).
+    ///
+    /// The desktop's order (`postio_session::onboarding`): prove the login
+    /// against the real server, then the credential to the keyring, then the
+    /// row -- so a wrong password writes nothing, and a keyring that refuses
+    /// leaves no account without one.
+    ///
+    /// The proof and the writes are the host's helpers but not the host's
+    /// `AddAccount` request, which also starts the account's engine. On the
+    /// Mac the engines are this session's (`start_syncing`), and the window
+    /// starts the new one when this answers; the host starting a second
+    /// would be two connections syncing one mailbox.
+    pub async fn connect_account(&self, account: crate::NewAccountFfi) -> Option<String> {
+        if !postio_ui::onboarding::looks_like_an_address(&account.address) {
+            return Some(format!(
+                "{} does not look like an email address.",
+                account.address.trim()
+            ));
+        }
+        if account.imap.host.trim().is_empty() || account.smtp.host.trim().is_empty() {
+            return Some(NO_SERVERS.to_owned());
+        }
+        let wiring = {
+            let guard = self.wiring.lock().expect("wiring lock");
+            guard.as_ref()?.clone()
+        };
+        let submission = crate::provisioning::submission(account);
+        let proven = match &wiring.mail {
+            // Handed a mail server (a test's), the proof is signing in to it.
+            Some(mail) => postio_account::backend::MailBackend::connect(mail.backend.as_ref())
+                .await
+                .map(|_| postio_model::account::Backend::Imap)
+                .map_err(|error| postio_session::onboarding::explain(&error)),
+            None => postio_session::onboarding::prove(&submission, None).await,
+        };
+        let backend = match proven {
+            Ok(backend) => backend,
+            Err(reason) => return Some(reason),
+        };
+        postio_session::onboarding::persist(
+            &wiring.database,
+            wiring.secrets.as_ref(),
+            &submission,
+            backend,
+        )
+        .await
+        .err()
+    }
+
     /// Add an account. See [`add_imap_account_ffi`](Self::add_imap_account_ffi).
     ///
     /// The password goes to the OS keyring under the address and nowhere
@@ -2745,10 +2908,7 @@ impl Session {
         // Refused rather than written: an account naming no server fails
         // later, at sync, as a connection error nobody can act on.
         if imap_host.trim().is_empty() || smtp_host.trim().is_empty() {
-            return Some(
-                "Postio needs the incoming and outgoing server names — it will not                  guess them from your address."
-                    .to_owned(),
-            );
+            return Some(NO_SERVERS.to_owned());
         }
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open to add an account to.".to_owned());
