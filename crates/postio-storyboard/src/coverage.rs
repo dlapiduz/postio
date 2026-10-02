@@ -69,6 +69,11 @@ pub enum Effect {
     /// The command has no binding in this context after all, so it could not
     /// be pressed.
     Unbound,
+    /// The keyboard is in a text field and the binding is a bare key, so
+    /// typing wins: the letter is typed, not run. Correct, and not a gap.
+    Typing,
+    /// The key was pressed and nothing on the focus chain took it.
+    Dropped,
 }
 
 /// One command in one context.
@@ -122,6 +127,8 @@ pub fn tally(presses: &[Press]) -> BTreeMap<&'static str, usize> {
             Effect::ListedGap { .. } => "listed_gap",
             Effect::StaleGap { .. } => "stale_gap",
             Effect::Unbound => "unbound",
+            Effect::Typing => "typing",
+            Effect::Dropped => "dropped",
         };
         *counts.entry(key).or_insert(0) += 1;
     }
@@ -233,5 +240,22 @@ mod tests {
         let counts = tally(&presses);
         assert_eq!(counts.get("effect"), Some(&1));
         assert_eq!(counts.get("no_effect"), Some(&2));
+    }
+
+    #[test]
+    fn typing_and_dropped_are_counted_apart_from_unbound() {
+        let press = |effect| Press {
+            command: "reply".into(),
+            context: "composer".into(),
+            effect,
+        };
+        let counts = tally(&[
+            press(Effect::Typing),
+            press(Effect::Dropped),
+            press(Effect::Unbound),
+        ]);
+        assert_eq!(counts.get("typing"), Some(&1));
+        assert_eq!(counts.get("dropped"), Some(&1));
+        assert_eq!(counts.get("unbound"), Some(&1));
     }
 }
