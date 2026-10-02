@@ -278,6 +278,20 @@ def main() -> int:
         expect("no-runner", result.returncode == 0, f"exit {result.returncode}")
         expect("no-runner", "predates the runner" in result.stdout, result.stdout)
 
+        print("case: screens plays the screen storyboards in their variants and sheets them")
+        (Path(ctx["repo"]) / "storyboards" / "screens").mkdir(parents=True, exist_ok=True)
+        (Path(ctx["repo"]) / "storyboards" / "screens" / "inbox.toml").write_text(
+            'source = { kind = "design", ref = "01" }\n')
+        result = run(ctx, "screens")
+        lines = log_lines(ctx)
+        call = next((l for l in lines if l.startswith("runner run")), "")
+        sheet = next((l for l in lines if l.startswith("tool sheet")), "")
+        expect("screens", "screens/inbox.toml" in call and "list/" not in call, call)
+        expect("screens", "--variants" in call and "screens/runs" in call, call)
+        expect("screens", "--design-dir" in sheet and "Design/screens" in sheet and "screens/index.html" in sheet, sheet)
+        result = run(ctx, "screens", TOOL_EXIT="1")
+        expect("screens", result.returncode == 1, f"a screen that failed to render fails the sweep: {result.returncode}")
+
     if FAILURES:
         print(f"\n{len(FAILURES)} self-test assertion(s) failed:", file=sys.stderr)
         for failure in FAILURES:

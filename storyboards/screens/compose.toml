@@ -1,0 +1,5 @@
+# The screen `compose`, carried over from the old screen sweep's table (FR-030).
+source = { kind = "design", ref = "03-compose" }
+design = "03-compose"
+[[step]]
+command = "compose"

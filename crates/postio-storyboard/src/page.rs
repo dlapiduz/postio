@@ -249,6 +249,67 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
     out
 }
 
+/// The screen sweep's contact sheet (FR-030): each screen storyboard's
+/// last frame beside the design screen it answers to, one row per run.
+/// Returns the HTML and the runs that failed to render, by name.
+pub fn sheet(strips: &[Filmstrip], designs: &BTreeMap<String, String>) -> (String, Vec<String>) {
+    let mut failed = Vec::new();
+    let mut body = String::from(
+        "<h1>Screens</h1><p class=\"meta\">The design on the left, what the app drew on \
+         the right. A row with no design is a screen the canvas never drew.</p>\
+         <table class=\"obs sheet\">",
+    );
+    for strip in strips {
+        let run = &strip.run;
+        let variant = crate::run::variant_key(&run.variant);
+        let last = run.steps.iter().rev().find_map(|step| step.frame.as_ref());
+        let broken = matches!(
+            run.status,
+            Status::Error { .. } | Status::Unavailable { .. } | Status::NotApplicable { .. }
+        ) || last.is_none();
+        if broken {
+            failed.push(run.storyboard.name.clone());
+        }
+        let _ = write!(
+            body,
+            "<tr><td><strong>{}</strong><div class=\"muted\">{}</div>{}</td><td>",
+            escape(&run.storyboard.name),
+            escape(&variant),
+            status_reason(&run.status)
+                .map(|why| format!("<div class=\"failed\">{}</div>", escape(why)))
+                .unwrap_or_default()
+        );
+        match designs.get(&run.storyboard.name) {
+            Some(design) => {
+                let _ = write!(
+                    body,
+                    "<img src=\"{0}\" alt=\"design\" style=\"max-width:560px\">",
+                    escape(design)
+                );
+            }
+            None => body.push_str("<span class=\"muted\">no design</span>"),
+        }
+        body.push_str("</td><td>");
+        match last {
+            Some(frame) => {
+                let _ = write!(
+                    body,
+                    "<img src=\"{0}/{1}\" alt=\"app\" style=\"max-width:560px\">",
+                    escape(&strip.dir),
+                    escape(&frame.path)
+                );
+            }
+            None => body.push_str("<span class=\"failed\">NO FRAME</span>"),
+        }
+        body.push_str("</td></tr>");
+    }
+    body.push_str("</table>");
+    let html = TEMPLATE
+        .replace("{{title}}", "Screens")
+        .replace("{{body}}", &body);
+    (html, failed)
+}
+
 /// The parity section: one table per shared storyboard, a row per step, a
 /// column per app, divergence marked (spec US3).
 pub fn parity_section(parities: &[crate::parity::Parity], runs_prefix: &str) -> String {
@@ -1445,5 +1506,50 @@ mod tests {
             html.contains("cursor.index"),
             "the field that differs is named"
         );
+    }
+
+    #[test]
+    fn the_sheet_pairs_each_screen_with_its_design_and_names_failures() {
+        let mut ok = crate::fixtures::run(
+            "inbox-dark",
+            crate::apply::App::Classic,
+            &[("scheme", "dark")],
+            1,
+        );
+        ok.steps[0].frame = Some(crate::run::Frame {
+            path: "00.png".into(),
+            hash: "h".into(),
+        });
+        let mut broken = crate::fixtures::run("compose", crate::apply::App::Classic, &[], 1);
+        broken.status = Status::Error {
+            message: "no window".into(),
+        };
+        let strips = [
+            Filmstrip {
+                dir: "runs/classic/inbox-dark/scheme=dark".into(),
+                run: ok,
+            },
+            Filmstrip {
+                dir: "runs/classic/compose/default".into(),
+                run: broken,
+            },
+        ];
+        let designs: BTreeMap<String, String> = [(
+            "inbox-dark".to_owned(),
+            "../../screens/07-dark.png".to_owned(),
+        )]
+        .into();
+        let (html, failed) = sheet(&strips, &designs);
+        assert!(
+            html.contains("<img src=\"../../screens/07-dark.png\""),
+            "design on the left"
+        );
+        assert!(
+            html.contains("<img src=\"runs/classic/inbox-dark/scheme=dark/00.png\""),
+            "the app's own frame, unoutlined, on the right"
+        );
+        assert!(html.contains("scheme=dark"), "the variant is named");
+        assert_eq!(failed, ["compose"]);
+        assert!(html.contains("compose") && html.contains("no window"));
     }
 }
