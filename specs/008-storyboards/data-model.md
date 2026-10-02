@@ -165,6 +165,7 @@ One storyboard, on one app, in one variant, at one tree. It is written as
 | `commit` | sha, informative |
 | `delivery` | `chain` \| `direct` \| `real` |
 | `renderer` | e.g. `ngl` or `cairo` (R5) |
+| `stride` | frames sampled every this many ticks (R4) |
 | `seed`, `preset` | as run |
 | `status` | `passed` \| `failed` \| `not_applicable{reason}` \| `not_covered{reason}` \| `unavailable{reason}` \| `error{message}` |
 | `steps` | `[StepRun]` |
@@ -175,10 +176,11 @@ One storyboard, on one app, in one variant, at one tree. It is written as
 |---|---|
 | `step` | `StepRef` |
 | `input` | what was delivered: for a command, the chord it resolved to and the context |
-| `outcome` | `delivered` \| `unbound{context}` \| `nothing_to_type_into` \| `skipped{reason}` \| `not_covered{delivery}` |
+| `expect` | the step's prose expectation for this app (an override's if any), so a run reads on its own |
+| `outcome` | `delivered` \| `unbound{context}` \| `dropped` (the key reached nothing on the focus chain) \| `nothing_to_type_into` \| `skipped{reason}` \| `not_covered{delivery}` |
 | `observation` | `Observation` |
 | `checks` | `[CheckResult { path, expected, observed, result: pass\|fail\|not_applicable }]` |
-| `settle` | `settled{ms}` \| `jumped{frames}` \| `blanked{frames}` \| `unsettled{ms}` |
+| `settle` | `settled{ms}` \| `jumped{frames}` \| `blanked{frames}` \| `unsettled{ms}` \| `not_sampled` |
 | `frame` | the plain frame's path and its blake3 |
 | `outlined` | the outlined frame's path |
 | `extra_frames` | the paths named by `jumped` or `blanked` |
@@ -258,6 +260,15 @@ These are derived. Neither is stored as truth.
   7. Counts of unchanged runs.
 - **`summary.md`**: the same, as text, with no images. It carries the tree key
   on its first line, so `issue-land.sh` can tell whether it is current (R13).
+
+## Coverage press
+
+One command pressed by the generated pass (US6), in `coverage.json`: its
+command and context, and what it came to -- `effect`, `no_effect`,
+`listed_gap{reason}`, `stale_gap{reason}`, `unbound`, `typing` (a bare key
+while the keyboard is in a text field: typed, not run, which is right), or
+`dropped`. Commands that would reach outside the window are never pressed
+and are listed as skipped with the reason (FR-013).
 
 ## Gap list
 

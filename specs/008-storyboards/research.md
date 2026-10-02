@@ -125,6 +125,13 @@ one it used (FR-008). The GTK runners use **`chain`** by default.
 | **`chain`** | Emits `key-pressed` on every `EventControllerKey` along the focus chain, in GTK's own phase order: capture from the toplevel down, target, then bubble back up. It starts at the widget that really holds focus, and passes through dialogs and popovers. This is Focus's `support::deliver_with` (focus: `tests/focus_suite/support.rs:731-950`, T195/T200), promoted out of a test helper into the shared GTK half. | Swallowed keys: a dialog's controller consuming them, or focus left on a removed or unmapped widget (focus: `92a093b8`, `a19c4bbb`). It also sees keys reaching widget-internal controllers, because `observe_controllers()` lists those too. | Which toplevel the compositor considers active. Input-method composition. GTK's built-in key bindings that are not controllers on the chain. |
 | `real` | Input injected through the compositor. Not built in this spec. | Everything. | Nothing, but unproven (R15). |
 
+**One built-in is mirrored, deliberately.** `GtkText` activates on `Return`
+through a class shortcut, not a controller on the chain, and `Return` in the
+search field is how every search runs. When nothing on the chain claims a
+plain `Return` and the keyboard is on a `GtkText`, `chain` emits that
+field's `activate` -- what the binding does, and nothing more. No other
+built-in is mirrored.
+
 **Steps that depend on what `chain` cannot see** are marked
 `routing = "real"`. They are reported `not covered (delivery: chain)`, never
 passed. Examples: native Tab traversal that Postio does not handle itself, and

@@ -5,6 +5,7 @@
 # regression during backfill) and a hold on `j` strobed. Pinned: the pane
 # shows the cursor's own message after every step, and the runner fails the
 # storyboard itself if any frame in between is blank.
+apps   = ["classic"]   # the reading pane; Focus has none, it opens a dialog
 source = { kind = "commit", ref = "d1ddd2dc" }
 proof  = "pinned"
 
