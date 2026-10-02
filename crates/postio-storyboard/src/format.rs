@@ -11,7 +11,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::apply::App;
@@ -71,16 +72,18 @@ pub struct Storyboard {
 }
 
 /// Why a storyboard exists.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Source {
     /// What kind of thing `reference` points at.
     pub kind: SourceKind,
     /// The thing itself: `#1687`, a commit, a canvas screen.
+    #[serde(rename = "ref")]
     pub reference: String,
 }
 
 /// What a [`Source`] points at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     /// An issue.
@@ -98,7 +101,7 @@ pub enum SourceKind {
 }
 
 /// Where an issue storyboard's red evidence comes from (research R0).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Proof {
     /// Against the base's code.
@@ -121,7 +124,7 @@ pub enum Apps {
 }
 
 /// Whether routing is chained or real.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Routing {
     /// The runner's chain of responders.
@@ -132,7 +135,7 @@ pub enum Routing {
 }
 
 /// A calibration storyboard's expected verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Calibration {
     /// A known-true storyboard.
@@ -177,7 +180,7 @@ pub enum Input {
 }
 
 /// What a wait is for.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Wait {
     /// A fixed time.
@@ -187,7 +190,7 @@ pub enum Wait {
 }
 
 /// An environment change a step can cause (research R11).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvEvent {
     /// A message arrives.
@@ -205,7 +208,8 @@ pub enum EnvEvent {
 }
 
 /// How a step waits for the app to settle (research R4).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settle {
     /// Settled when these checks hold.
     pub until: Option<Checks>,
@@ -249,7 +253,7 @@ pub enum Leaf {
 }
 
 /// A step named by its id or by its 1-based index.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum StepRef {
     /// A step id.
@@ -259,7 +263,8 @@ pub enum StepRef {
 }
 
 /// What one app does differently at one step.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StepOverride {
     /// Replaces the step's checks.
     pub check: Option<Checks>,
@@ -270,7 +275,8 @@ pub struct StepOverride {
 }
 
 /// Why a step does not exist in an app.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Skip {
     /// The reason, shown with the skipped step.
     pub reason: String,
@@ -330,9 +336,204 @@ pub fn load(path: &Path) -> Result<Storyboard, LoadError> {
 
 /// Parse storyboard text. `path` names it in errors and supplies the default
 /// name, its file stem.
-pub fn parse(_text: &str, path: &Path) -> Result<Storyboard, LoadError> {
-    let _ = path;
-    Ok(Storyboard::default())
+pub fn parse(text: &str, path: &Path) -> Result<Storyboard, LoadError> {
+    let raw: RawStoryboard = toml::from_str(text).map_err(|error| LoadError::Parse {
+        path: path.to_owned(),
+        message: error.to_string(),
+    })?;
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(Storyboard {
+        name: raw.name.unwrap_or(stem),
+        source: raw.source,
+        proof: raw.proof,
+        seed: raw.seed,
+        preset: raw.preset,
+        apps: raw.apps.unwrap_or_default(),
+        vary: raw
+            .vary
+            .into_iter()
+            .map(|(axis, values)| (axis, values.into_iter().map(|v| v.0).collect()))
+            .collect(),
+        design: raw.design,
+        routing: raw.routing.unwrap_or_default(),
+        calibration: raw.calibration,
+        steps: raw.step,
+        overrides: raw
+            .app
+            .into_iter()
+            .map(|(app, section)| (app, section.step))
+            .collect(),
+        path: path.to_owned(),
+    })
+}
+
+/// The file as TOML shapes it. `[[step]]` and `[app.<app>.step.<ref>]` are
+/// the file's spelling; [`Storyboard`] names them for what they hold.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStoryboard {
+    name: Option<String>,
+    source: Option<Source>,
+    proof: Option<Proof>,
+    seed: Option<String>,
+    preset: Option<String>,
+    apps: Option<Apps>,
+    #[serde(default)]
+    vary: BTreeMap<String, Vec<AxisValue>>,
+    design: Option<String>,
+    routing: Option<Routing>,
+    calibration: Option<Calibration>,
+    #[serde(default)]
+    step: Vec<Step>,
+    #[serde(default)]
+    app: BTreeMap<App, RawAppSection>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAppSection {
+    #[serde(default)]
+    step: BTreeMap<String, StepOverride>,
+}
+
+/// An axis value as written: `"dark"`, or a bare `200` for the text axis.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AxisValueRaw {
+    Text(String),
+    Number(i64),
+}
+
+struct AxisValue(String);
+
+impl<'de> Deserialize<'de> for AxisValue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(match AxisValueRaw::deserialize(deserializer)? {
+            AxisValueRaw::Text(text) => text,
+            AxisValueRaw::Number(number) => number.to_string(),
+        }))
+    }
+}
+
+impl<'de> Deserialize<'de> for Apps {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match Value::deserialize(deserializer)? {
+            Value::String(text) if text == "auto" => Ok(Apps::Auto),
+            list @ Value::Array(_) => serde_json::from_value(list)
+                .map(Apps::Named)
+                .map_err(D::Error::custom),
+            other => Err(D::Error::custom(format!(
+                "apps is \"auto\" or a list of apps, not {other}"
+            ))),
+        }
+    }
+}
+
+/// The inputs a step may carry, for the message that says it took the wrong
+/// number of them.
+const INPUTS: &str = "command, key, type, wait, event";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStep {
+    id: Option<String>,
+    command: Option<String>,
+    key: Option<String>,
+    #[serde(rename = "type")]
+    typed: Option<String>,
+    wait: Option<Wait>,
+    event: Option<EnvEvent>,
+    check: Option<Checks>,
+    expect: Option<String>,
+    design: Option<String>,
+    settle: Option<Settle>,
+    routing: Option<Routing>,
+}
+
+impl<'de> Deserialize<'de> for Step {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawStep::deserialize(deserializer)?;
+        let mut inputs = Vec::new();
+        inputs.extend(raw.command.map(Input::Command));
+        inputs.extend(raw.key.map(Input::Key));
+        inputs.extend(raw.typed.map(Input::Type));
+        inputs.extend(raw.wait.map(Input::Wait));
+        inputs.extend(raw.event.map(Input::Event));
+        let found = inputs.len();
+        let Some(input) = inputs.pop().filter(|_| found == 1) else {
+            return Err(D::Error::custom(format!(
+                "a step takes exactly one input of {INPUTS}, and this one has {found}"
+            )));
+        };
+        Ok(Step {
+            id: raw.id,
+            input,
+            check: raw.check.unwrap_or_default(),
+            expect: raw.expect,
+            design: raw.design,
+            settle: raw.settle,
+            routing: raw.routing,
+        })
+    }
+}
+
+/// The table keys that make a table a leaf. Nothing else is special.
+const SENTINELS: [&str; 5] = ["same_as", "changed", "unchanged", "absent", "one_of"];
+
+impl<'de> Deserialize<'de> for Checks {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let map = BTreeMap::<String, Value>::deserialize(deserializer)?;
+        table_of(map).map_err(D::Error::custom)
+    }
+}
+
+fn table_of(map: impl IntoIterator<Item = (String, Value)>) -> Result<Checks, String> {
+    let mut out = BTreeMap::new();
+    for (key, value) in map {
+        let node = check_of(value).map_err(|message| format!("check `{key}`: {message}"))?;
+        out.insert(key, node);
+    }
+    Ok(Checks(out))
+}
+
+fn check_of(value: Value) -> Result<Check, String> {
+    match value {
+        Value::Object(map) => {
+            if !map.keys().any(|key| SENTINELS.contains(&key.as_str())) {
+                return table_of(map).map(Check::Table);
+            }
+            if map.len() != 1 {
+                return Err(format!(
+                    "a leaf takes exactly one of {}",
+                    SENTINELS.join(", ")
+                ));
+            }
+            let (key, value) = map.into_iter().next().expect("length is one");
+            let flag = |leaf: Leaf| match value {
+                Value::Bool(true) => Ok(Check::Leaf(leaf)),
+                _ => Err(format!("`{key}` is written `{key} = true`")),
+            };
+            match key.as_str() {
+                "changed" => flag(Leaf::Changed),
+                "unchanged" => flag(Leaf::Unchanged),
+                "absent" => flag(Leaf::Absent),
+                "same_as" => serde_json::from_value(value)
+                    .map(|step| Check::Leaf(Leaf::SameAs(step)))
+                    .map_err(|_| "`same_as` names a step id or a 1-based index".to_owned()),
+                _ => match value {
+                    Value::Array(values) => Ok(Check::Leaf(Leaf::OneOf(values))),
+                    _ => Err("`one_of` takes a list".to_owned()),
+                },
+            }
+        }
+        Value::String(_) | Value::Bool(_) | Value::Number(_) => {
+            Ok(Check::Leaf(Leaf::Literal(value)))
+        }
+        other => Err(format!("{other} is not a literal, a table or a sentinel")),
+    }
 }
 
 #[cfg(test)]
