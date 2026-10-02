@@ -52,6 +52,7 @@ decision stands as of 0.4.0 (2026-09-14).
 | [0041](0041-one-app-opens-the-store-at-a-time.md) | One app opens the store at a time; each runs the host inside it | Accepted (2026-09-25), with `specs/005-tui-frontend` |
 | [0042](0042-the-reading-renderer-is-disconnected-and-memory-safe.md) | The reading renderer is disconnected and memory-safe | Accepted (2026-09-27), with `specs/006-email-rendering` |
 | [0043](0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md) | The GTK both desktop apps share lives in `postio-widgets` | Accepted (2026-09-27), with `specs/007-postio-focus` |
+| [0044](0044-every-frontend-is-observable-and-storyboarded.md) | Every frontend is observable and storyboarded | Accepted (2026-10-02), with `specs/008-storyboards` |
 
 ## Writing one
 
