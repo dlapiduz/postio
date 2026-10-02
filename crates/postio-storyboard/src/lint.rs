@@ -16,7 +16,6 @@ use postio_core::CommandId;
 use postio_ui::keymap::Binding;
 use serde_json::Value;
 
-use crate::apply::App;
 use crate::format::{Apps, Checks, Input, Leaf, SourceKind, Step, StepRef, Storyboard, Wait, load};
 
 /// One rule a storyboard broke.
@@ -182,7 +181,7 @@ pub fn lint(storyboard: &Storyboard) -> Vec<LintError> {
     }
 
     for (app, steps) in &storyboard.overrides {
-        let name = app_name(*app);
+        let name = app.to_string();
         if let Apps::Named(apps) = &storyboard.apps
             && !apps.contains(app)
         {
@@ -228,10 +227,6 @@ fn step_checks(step: &Step) -> Vec<&Checks> {
         out.push(until);
     }
     out
-}
-
-fn app_name(app: App) -> String {
-    format!("{app:?}").to_ascii_lowercase()
 }
 
 /// The 1-based position a step reference names: an explicit id first, then

@@ -123,7 +123,10 @@ RULES: dict[str, dict[str, object]] = {
             "libsqlite3-sys",
             "turso",
             "turso_core",
-            "tokio",
+            # Not "tokio": the crate reads the command registry, which is
+            # postio-core, and postio-core depends on tokio for its own
+            # runtime types (research R7 needs the registry). The crate
+            # itself never starts or awaits anything.
         ],
         "why": (
             "postio-storyboard is the pure half of storyboards -- format, "

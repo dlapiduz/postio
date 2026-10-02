@@ -15,7 +15,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::apply::App;
+use crate::apply::{App, unprovided_for_named_apps};
 
 /// Why a storyboard file did not load.
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +35,16 @@ pub enum LoadError {
         path: PathBuf,
         /// What was wrong with it.
         message: String,
+    },
+    /// A named app lacks a command the storyboard presses.
+    #[error("{path}: `apps` names {app}, which does not provide `{command}`")]
+    Unprovided {
+        /// The file.
+        path: PathBuf,
+        /// The app.
+        app: App,
+        /// The command id.
+        command: String,
     },
 }
 
@@ -346,7 +356,7 @@ pub fn parse(text: &str, path: &Path) -> Result<Storyboard, LoadError> {
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Ok(Storyboard {
+    let board = Storyboard {
         name: raw.name.unwrap_or(stem),
         source: raw.source,
         proof: raw.proof,
@@ -368,7 +378,17 @@ pub fn parse(text: &str, path: &Path) -> Result<Storyboard, LoadError> {
             .map(|(app, section)| (app, section.step))
             .collect(),
         path: path.to_owned(),
-    })
+    };
+    // Naming an app is a promise it can play the storyboard; `auto` makes no
+    // promise and is only filtered (rule 8).
+    match unprovided_for_named_apps(&board).into_iter().next() {
+        Some((app, command)) => Err(LoadError::Unprovided {
+            path: path.to_owned(),
+            app,
+            command,
+        }),
+        None => Ok(board),
+    }
 }
 
 /// The file as TOML shapes it. `[[step]]` and `[app.<app>.step.<ref>]` are
