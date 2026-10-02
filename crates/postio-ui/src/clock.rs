@@ -18,17 +18,21 @@ fn slot() -> &'static Mutex<Option<DateTime<Local>>> {
 
 /// The current instant: the frozen one if there is one, else the system's.
 pub fn now() -> DateTime<Local> {
-    Local::now()
+    slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(Local::now)
 }
 
 /// Stop the clock at `at`, for every thread, until [`thaw`].
 pub fn freeze(at: DateTime<Local>) {
-    let _ = at;
-    let _ = slot();
+    *slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
 }
 
 /// Let the clock run again.
-pub fn thaw() {}
+pub fn thaw() {
+    *slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
 
 #[cfg(test)]
 mod tests {
