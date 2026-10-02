@@ -15,15 +15,14 @@
 //! ```
 //!
 //! Met against a real store on 2026-09-17: created 08:48, and
-//! `body_parsed_with` was added to the schema at 10:36 the same morning. There
-//! are no migrations by design (`schema::HEAD`'s own header says why), so the
-//! remedy is to resync — but nothing said so, and the store went on running,
-//! spraying the same warning per folder forever.
+//! `body_parsed_with` was added to the schema at 10:36 the same morning.
 //!
 //! So the schema is stamped when it is applied and checked when it is opened.
-//! An older store is refused with a sentence naming the remedy, and left
-//! exactly as it was, for the same reason the foreign store is: "rebuilt by
-//! resyncing" means the file has to survive being refused.
+//! A stamp `schema::MIGRATIONS` leads from is carried forward in place (the
+//! storage suite's `migrations` case); one no step reaches -- like the `1`
+//! below -- is refused with a sentence naming the remedy, and left exactly
+//! as it was, because starting over sets the file aside rather than
+//! deleting it.
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
@@ -65,9 +64,9 @@ async fn a_store_from_an_older_schema_is_refused_and_left_alone() {
     };
     assert!(
         matches!(error, postio_storage::Error::SchemaFromAnotherBuild { .. }),
-        "the refusal has to name the remedy: there are no migrations, so \
-         resyncing is the only way out and a person cannot infer that from \
-         \"no such column\". Got: {error}"
+        "the refusal has to name the remedy: no migration leads from this \
+         stamp, so a fresh store is the only way out and a person cannot \
+         infer that from \"no such column\". Got: {error}"
     );
     let said = error.to_string();
     assert!(

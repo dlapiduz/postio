@@ -450,6 +450,18 @@ impl Store {
     /// permissions the store itself gets — a mail store is not world-readable
     /// even for the instant between `create` and `chmod`.
     pub async fn open(path: impl AsRef<Path>, key: &Subkey) -> Result<Self> {
+        Self::open_reporting(path, key, || {}).await
+    }
+
+    /// [`Store::open`], calling `migrating` before it changes the store's
+    /// shape rather than reading it -- an earlier build's store being carried
+    /// forward ([`schema::MIGRATIONS`]), which can take long enough on a big
+    /// mailbox that a window should say so.
+    pub async fn open_reporting(
+        path: impl AsRef<Path>,
+        key: &Subkey,
+        migrating: impl Fn(),
+    ) -> Result<Self> {
         let path = path.as_ref();
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             crate::perm::ensure_private_dir(parent)?;
@@ -477,10 +489,39 @@ impl Store {
             store.apply_schema().await?;
         } else {
             store.prove_the_key_fits().await?;
-            store.prove_the_schema_matches().await?;
+            store.bring_the_schema_to_head(&migrating).await?;
         }
 
         Ok(store)
+    }
+
+    /// Write a new store at `path` from `text` rather than [`schema::HEAD`],
+    /// stamped as the build whose schema that was would have stamped it.
+    ///
+    /// The shape of a store an earlier build left behind, for the tests that
+    /// prove such a store is migrated or refused. `text` is that build's
+    /// `HEAD`, verbatim: `tests/schemas/` keeps the ones a migration starts
+    /// from. `rows` is SQL run after it, for what the store held.
+    #[cfg(feature = "test-support")]
+    pub async fn create_at_schema(
+        path: impl AsRef<Path>,
+        key: &Subkey,
+        text: &str,
+        rows: &str,
+    ) -> Result<()> {
+        let path = path.as_ref();
+        let database = Self::build(path, key).await?;
+        let connection = database.connect()?;
+        crate::sql::execute(&connection, "PRAGMA foreign_keys = OFF", ()).await?;
+        connection.execute_batch(text).await?;
+        crate::sql::execute(
+            &connection,
+            &format!("PRAGMA user_version = {}", schema::fingerprint(text)),
+            (),
+        )
+        .await?;
+        connection.execute_batch(rows).await?;
+        Ok(())
     }
 
     async fn build(path: &Path, key: &Subkey) -> Result<turso::Database> {
@@ -536,7 +577,7 @@ impl Store {
         crate::sql::execute(&connection, "PRAGMA foreign_keys = OFF", ()).await?;
         connection.execute_batch(schema::HEAD).await?;
         // Stamped in the same breath as the schema it describes, so the two
-        // cannot be written apart. See `prove_the_schema_matches`.
+        // cannot be written apart. See `bring_the_schema_to_head`.
         crate::sql::execute(
             &connection,
             &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
@@ -546,31 +587,165 @@ impl Store {
         Ok(())
     }
 
-    /// Refuses a store whose schema is not the one this build compiles
-    /// against.
+    /// Carries a store an earlier build wrote forward to this build's
+    /// schema, or refuses it when no recorded step leads from its stamp.
     ///
     /// [`prove_the_key_fits`](Self::prove_the_key_fits) answers "can this file
     /// be read at all", and a store written by an *earlier build of this
-    /// engine* passes it: same cipher, same key, same file format. So it opens,
-    /// and then fails one statement at a time on whatever column has been
+    /// engine* passes it: same cipher, same key, same file format. So it would
+    /// open, and then fail one statement at a time on whatever column has been
     /// added since. Met on 2026-09-17 against a store two hours older than
     /// `messages.body_parsed_with`, which opened, synced, and warned
     /// `no such column` once per folder for as long as it ran.
     ///
-    /// There are no migrations ([`schema::HEAD`] argues why), so this cannot
-    /// repair anything and does not try. It refuses, names the remedy, and
-    /// leaves the file alone — "rebuilt by resyncing" means the old one has to
-    /// survive being refused.
-    async fn prove_the_schema_matches(&self) -> Result<()> {
+    /// A stamp [`schema::migrations_from`] has a path from is migrated in
+    /// place: each step's statements, then the new stamp. Every statement is
+    /// safe to run twice, so a store cut off before the stamp is written runs
+    /// them again on its next open rather than being left half-carried. A
+    /// stamp with no path is refused, untouched, with
+    /// [`Error::SchemaFromAnotherBuild`] -- the file survives being refused,
+    /// because starting over sets it aside rather than deleting it.
+    async fn bring_the_schema_to_head(&self, migrating: &impl Fn()) -> Result<()> {
         let connection = self.connect_bare()?;
         let found: i64 = crate::sql::scalar(&connection, "PRAGMA user_version", ()).await?;
         if found == schema::FINGERPRINT {
             return Ok(());
         }
-        Err(Error::SchemaFromAnotherBuild {
-            found,
-            expected: schema::FINGERPRINT,
-        })
+        let Some(steps) = schema::migrations_from(found) else {
+            return Err(Error::SchemaFromAnotherBuild {
+                found,
+                expected: schema::FINGERPRINT,
+            });
+        };
+        migrating();
+        tracing::info!(
+            from = found,
+            to = schema::FINGERPRINT,
+            steps = steps.len(),
+            "migrating the store's schema"
+        );
+        // A step may create a table that names one created after it, as
+        // `HEAD` does; the store's own connections turn the keys back on.
+        crate::sql::execute(&connection, "PRAGMA foreign_keys = OFF", ()).await?;
+        for step in steps {
+            connection.execute_batch(step.statements).await?;
+        }
+        crate::sql::execute(
+            &connection,
+            &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
+            (),
+        )
+        .await?;
+        tracing::info!(to = schema::FINGERPRINT, "the store's schema is migrated");
+        Ok(())
+    }
+
+    /// The schema stamp the store at `path` carries, read without opening
+    /// it as this build's: what `postio-store status` compares against
+    /// [`schema::FINGERPRINT`] and [`schema::migrations_from`] to say whether
+    /// the next open will use it as it is, migrate it, or refuse it. Writes
+    /// nothing.
+    pub async fn stamp_at(path: impl AsRef<Path>, key: &Subkey) -> Result<i64> {
+        let database = Self::build(path.as_ref(), key).await.map_err(|error| {
+            if held_elsewhere(&error) {
+                Error::InUse
+            } else {
+                as_key_failure(error)
+            }
+        })?;
+        let connection = database.connect()?;
+        crate::sql::scalar(&connection, "PRAGMA user_version", ())
+            .await
+            .map_err(as_key_failure)
+    }
+
+    /// [`Error::InUse`] when another process has the store at `path` open;
+    /// `Ok` otherwise, including when there is no store there at all.
+    ///
+    /// What setting a store aside asks first: renaming a file another Postio
+    /// is writing would leave that one writing into the copy that was set
+    /// aside. Reads nothing and writes nothing -- the engine takes its lock
+    /// when the database is built, and that is the only question asked. Any
+    /// other failure to build (a key that does not fit) is not somebody else
+    /// having it, and answers `Ok`.
+    pub async fn refuse_if_in_use(path: impl AsRef<Path>, key: &Subkey) -> Result<()> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(());
+        }
+        match Self::build(path, key).await {
+            Err(error) if held_elsewhere(&error) => Err(Error::InUse),
+            _ => Ok(()),
+        }
+    }
+
+    /// Copy what a person set up in the store at `earlier` into this one:
+    /// their accounts, the identities they send as and their signatures,
+    /// each under the id it had, so the references between them hold.
+    /// Answers how many accounts came across.
+    ///
+    /// For a store that has just been started over (`postio_session::
+    /// start_over`): `earlier` is the one set aside, at a schema this build
+    /// would refuse, so it is read without the schema check and only by the
+    /// columns both schemas have -- a column this build added takes its
+    /// default, one it dropped stays behind. Everything else in `earlier`
+    /// is either the server's, and comes back with the next sync, or the
+    /// local-only state the person was told stays behind.
+    ///
+    /// The passwords are not here to copy: they are in the keyring, under
+    /// each account's address, and stay there.
+    pub async fn carry_accounts_from(
+        &self,
+        earlier: impl AsRef<Path>,
+        key: &Subkey,
+    ) -> Result<usize> {
+        let earlier = Self::build(earlier.as_ref(), key)
+            .await
+            .map_err(as_key_failure)?;
+        let from = earlier.connect()?;
+        let to = self.connect_bare()?;
+        crate::sql::execute(&to, "PRAGMA foreign_keys = OFF", ()).await?;
+        let mut accounts = 0;
+        for table in ["accounts", "signatures", "identities"] {
+            let theirs = columns(&from, table).await?;
+            let shared: Vec<String> = columns(&to, table)
+                .await?
+                .into_iter()
+                .filter(|column| theirs.contains(column))
+                .collect();
+            if shared.is_empty() {
+                continue;
+            }
+            let list = shared.join(", ");
+            let marks = (1..=shared.len())
+                .map(|at| format!("?{at}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            // A handful of rows, a person's own: there is no page to bound.
+            let rows = crate::sql::all_unbounded(
+                &from,
+                &format!("SELECT {list} FROM {table}"),
+                (),
+                |row| {
+                    (0..shared.len())
+                        .map(|at| row.get_value(at).map_err(Into::into))
+                        .collect::<Result<Vec<Value>>>()
+                },
+            )
+            .await?;
+            for values in rows {
+                crate::sql::execute(
+                    &to,
+                    &format!("INSERT INTO {table} ({list}) VALUES ({marks})"),
+                    values,
+                )
+                .await?;
+                if table == "accounts" {
+                    accounts += 1;
+                }
+            }
+        }
+        Ok(accounts)
     }
 
     /// How many bytes the file is holding that nothing is using.
@@ -975,6 +1150,20 @@ impl std::ops::DerefMut for Checkout {
 /// which the SDK's error has no variant of its own for. Any other locking
 /// failure -- a filesystem that refuses locks at all -- is not somebody else
 /// having the store, and keeps its own words.
+/// `table`'s columns on `connection`, in declared order; none when there is
+/// no such table.
+async fn columns(connection: &Connection, table: &str) -> Result<Vec<String>> {
+    use crate::sql::RowExt as _;
+    // A table's columns are few, and a schema read once per start-over.
+    crate::sql::all_unbounded(
+        connection,
+        &format!("PRAGMA table_info({table})"),
+        (),
+        |row| row.text(1),
+    )
+    .await
+}
+
 fn held_elsewhere(error: &Error) -> bool {
     let Error::Engine(engine) = error else {
         return false;

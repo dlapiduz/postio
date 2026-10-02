@@ -45,6 +45,7 @@ mod mailbox_roles;
 mod mailbox_size;
 mod mailboxes;
 mod markers;
+mod migrations;
 mod messages;
 mod operations;
 mod promoted_headers;
