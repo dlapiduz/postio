@@ -1262,6 +1262,11 @@ impl FocusWindow {
                         id: account.id,
                         server: account.incoming.host.clone(),
                         address: account.address.address.clone(),
+                        name: if account.display_name.is_empty() {
+                            account.address.address.clone()
+                        } else {
+                            account.display_name.clone()
+                        },
                     })
                     .collect(),
             );

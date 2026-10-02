@@ -24,6 +24,8 @@ pub struct AccountFacts {
     pub server: String,
     /// The account's address.
     pub address: String,
+    /// What the account is called, as the sidebar and the settings call it.
+    pub name: String,
 }
 
 /// The banner under the header strip, when one is shown.
@@ -35,6 +37,14 @@ pub enum Banner {
         server: String,
         /// The address it refused.
         address: String,
+    },
+    /// One account's sync is failing for a reason that is not its password
+    /// (ADR 0005 Q10): the account is named, and what it said.
+    Failing {
+        /// The account's name.
+        account: String,
+        /// Why, in the words the sync reported.
+        reason: String,
     },
     /// The machine has no network (screen 18).
     Offline,
@@ -61,6 +71,7 @@ impl Banner {
     pub fn heading(&self) -> String {
         match self {
             Banner::SignIn { server, .. } => format!("Can't sign in to {server}"),
+            Banner::Failing { account, .. } => format!("{account} can't sync"),
             Banner::Offline => "You're offline".to_owned(),
             Banner::FirstSync { .. } => "First sync".to_owned(),
         }
@@ -72,6 +83,11 @@ impl Banner {
             Banner::SignIn { address, .. } => format!(
                 "The server rejected the password for {address}. Mail on this computer is \
                  still available."
+            ),
+            // The other accounts' mail is not in question: the list is
+            // still every account's, this one's as of its last sync.
+            Banner::Failing { reason, .. } => format!(
+                "{reason} Mail already on this computer, from every account, is still here."
             ),
             Banner::Offline => {
                 "Everything you do is saved here and syncs when you're back.".to_owned()
@@ -95,7 +111,7 @@ impl Banner {
             Banner::SignIn { .. } => {
                 Some(("Update password\u{2026}", BannerAction::UpdatePassword))
             }
-            Banner::Offline => Some(("Retry now", BannerAction::Retry)),
+            Banner::Failing { .. } | Banner::Offline => Some(("Retry now", BannerAction::Retry)),
             Banner::FirstSync { .. } => None,
         }
     }
@@ -112,7 +128,7 @@ impl Banner {
 
     /// Whether the banner is drawn in the error colour.
     pub fn is_error(&self) -> bool {
-        matches!(self, Banner::SignIn { .. })
+        matches!(self, Banner::SignIn { .. } | Banner::Failing { .. })
     }
 }
 
@@ -129,12 +145,13 @@ fn count(value: u32) -> String {
     crate::selection::count(value)
 }
 
-/// The banner `statuses` call for, if any: a sign-in error first, then
-/// offline, then a first sync.
+/// The banner `statuses` call for, if any: a sign-in error first, then an
+/// account that cannot sync, then offline, then a first sync.
 ///
-/// Only a refused password is a sign-in banner: a setting that is wrong is
-/// said by the sync label and the account's settings, and the banner's one
-/// button could not fix it. Only a machine with no network is offline:
+/// Only a refused password is a sign-in banner: its button opens the
+/// credential flow, and retrying a rejected credential is how an account gets
+/// locked. Any other failure names the account and the reason, with Retry.
+/// Only a machine with no network is offline:
 /// `Connecting` is backoff that retries on its own, and every launch passes
 /// through it. Only a pass with no sync behind it is a first sync.
 pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -> Option<Banner> {
@@ -153,6 +170,28 @@ pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -
             address: facts.address.clone(),
         });
     }
+    // Any other failure names its account and says what the sync said; the
+    // button retries, which is right for everything but a refused password.
+    let failing = statuses.iter().find_map(|(account, status)| {
+        let ConnectionState::Failing { reason } = status.state else {
+            return None;
+        };
+        let facts = accounts.iter().find(|facts| facts.id == *account)?;
+        Some(Banner::Failing {
+            account: facts.name.clone(),
+            // `Event::Error` names no account, so the sync's own words reach
+            // an account's status only when it was the one in view; the
+            // kind of failure is always its own, and is what a person can
+            // act on (ADR 0005 Q10).
+            reason: status
+                .detail
+                .clone()
+                .unwrap_or_else(|| failure_words(reason).to_owned()),
+        })
+    });
+    if failing.is_some() {
+        return failing;
+    }
     if statuses
         .iter()
         .any(|(_, status)| status.state == ConnectionState::Offline)
@@ -166,6 +205,16 @@ pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -
             .is_none()
             .then_some(Banner::FirstSync { done, total })
     })
+}
+
+/// What a kind of failure means to the person, when the sync said no more.
+fn failure_words(reason: FailureReason) -> &'static str {
+    match reason {
+        FailureReason::Auth => "The server rejected the password.",
+        FailureReason::Network => "The server can't be reached. It will try again on its own.",
+        FailureReason::Server => "The server is refusing the work. It will try again, slower.",
+        FailureReason::Config => "The account's settings are wrong. Check them in settings.",
+    }
 }
 
 /// What the sync label says, and the icon beside it.
@@ -470,6 +519,7 @@ mod tests {
             id: account(n),
             server: format!("imap{n}.example.com"),
             address: format!("ada{n}@example.com"),
+            name: format!("Work {n}"),
         }
     }
 
@@ -514,6 +564,85 @@ mod tests {
     }
 
     #[test]
+    fn one_account_failing_for_another_reason_is_named_with_its_reason() {
+        // ADR 0005 Q10: a view that cannot include an account says so and
+        // names it. Not its password, so no sign-in; not the network, so no
+        // "offline": one account, and what its server said.
+        let accounts = [facts(1), facts(2)];
+        let failing = SyncStatus {
+            detail: Some("The server's certificate does not verify.".into()),
+            ..status(
+                ConnectionState::Failing {
+                    reason: FailureReason::Config,
+                },
+                None,
+            )
+        };
+        let statuses = [
+            (account(1), status(ConnectionState::Online, None)),
+            (account(2), failing),
+        ];
+        let shown = banner(&statuses, &accounts).expect("a failing account is said");
+        assert_eq!(
+            shown,
+            Banner::Failing {
+                account: "Work 2".into(),
+                reason: "The server's certificate does not verify.".into(),
+            }
+        );
+        assert_eq!(shown.heading(), "Work 2 can't sync");
+        assert_eq!(
+            shown.sentence(),
+            "The server's certificate does not verify. Mail already on this computer, \
+             from every account, is still here."
+        );
+        assert_eq!(
+            shown.action(),
+            Some(("Retry now", BannerAction::Retry)),
+            "a failure that is not the password offers Retry"
+        );
+        assert!(shown.is_error());
+        // A rejected password still outranks it.
+        let both = [
+            (
+                account(1),
+                status(
+                    ConnectionState::Failing {
+                        reason: FailureReason::Auth,
+                    },
+                    None,
+                ),
+            ),
+            statuses[1].clone(),
+        ];
+        assert!(matches!(
+            banner(&both, &accounts),
+            Some(Banner::SignIn { .. })
+        ));
+    }
+
+    #[test]
+    fn a_failure_with_no_words_still_says_so() {
+        let accounts = [facts(1)];
+        let silent = [(
+            account(1),
+            status(
+                ConnectionState::Failing {
+                    reason: FailureReason::Server,
+                },
+                None,
+            ),
+        )];
+        let Some(Banner::Failing { reason, .. }) = banner(&silent, &accounts) else {
+            panic!("a failing account is said");
+        };
+        assert_eq!(
+            reason,
+            "The server is refusing the work. It will try again, slower."
+        );
+    }
+
+    #[test]
     fn nothing_to_say_says_nothing() {
         let accounts = [facts(1)];
         let calm = [(account(1), status(ConnectionState::Online, None))];
@@ -546,7 +675,10 @@ mod tests {
                 None,
             ),
         )];
-        assert_eq!(banner(&config, &accounts), None);
+        assert!(!matches!(
+            banner(&config, &accounts),
+            Some(Banner::SignIn { .. })
+        ));
     }
 
     #[test]

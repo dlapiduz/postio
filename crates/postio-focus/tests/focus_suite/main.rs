@@ -384,6 +384,10 @@ const CASES: &[(&str, fn())] = &[
         bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query as fn(),
     ),
     (
+        "state::a_failing_account_is_named_and_the_others_mail_stays_listed",
+        state::a_failing_account_is_named_and_the_others_mail_stays_listed as fn(),
+    ),
+    (
         "bar::in_rec_lists_receipts_newest_first",
         bar::in_rec_lists_receipts_newest_first as fn(),
     ),

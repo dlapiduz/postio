@@ -537,3 +537,96 @@ pub fn during_a_first_sync_what_has_arrived_opens_and_is_found() {
         );
     });
 }
+
+/// T248, ADR 0005 Q10 (the classic app's `degraded_unified`): one account
+/// failing for a reason that is not its password is named by the banner,
+/// with Retry, and the inbox of the account that works stays on screen.
+pub fn a_failing_account_is_named_and_the_others_mail_stays_listed() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        let (second, inbox) = fixture.second_account().await;
+        fixture
+            .file_as(second.id, inbox, "Lunch on Friday", 10)
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "both accounts' mail should be listed: {:?}",
+            support::subjects(&window)
+        );
+        let tell = |event| assert!(sink.emit(event), "the hub took the event");
+        tell(Event::ConnectionChanged {
+            account: fixture.account.id,
+            state: ConnectionState::Online,
+        });
+        tell(Event::SyncProgress {
+            account: fixture.account.id,
+            done: 40,
+            total: 40,
+        });
+        tell(Event::ConnectionChanged {
+            account: second.id,
+            state: ConnectionState::Failing {
+                reason: FailureReason::Config,
+            },
+        });
+        assert!(
+            crate::settle_until(async || window
+                .banner_showing()
+                .is_some_and(|(title, ..)| title.starts_with("Second can't sync")))
+            .await,
+            "the failing account is not named: {:?}",
+            window.banner_showing()
+        );
+        let (title, button, _) = window.banner_showing().expect("a banner");
+        assert!(
+            title.contains("settings are wrong"),
+            "the banner gives the reason: {title}"
+        );
+        assert!(
+            !title.contains("Can't sign in"),
+            "it is not the password: {title}"
+        );
+        assert_eq!(button.as_deref(), Some("Retry now"));
+        let mut mail = support::subjects(&window);
+        mail.sort();
+        assert_eq!(
+            mail,
+            ["Budget", "Lunch on Friday"],
+            "the mail of the account that works, and what the other already synced, \
+             stays listed"
+        );
+
+        // Retry is a button a person can press, and pressing it leaves the
+        // banner until the account says it is back.
+        let banner = support::only(&window, "focus-banner");
+        let retry = support::descendants(&banner)
+            .into_iter()
+            .find(|widget| widget.is::<gtk::Button>() && widget.is_mapped())
+            .expect("the banner's Retry is on screen");
+        support::click(&window, &retry, 1);
+        crate::settle();
+        tell(Event::ConnectionChanged {
+            account: second.id,
+            state: ConnectionState::Online,
+        });
+        assert!(
+            crate::settle_until(async || window.banner_showing().is_none()).await,
+            "the banner stayed after the account came back: {:?}",
+            window.banner_showing()
+        );
+    });
+}
