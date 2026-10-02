@@ -27,6 +27,8 @@
 //! | `27` | A newsletter that paints its own page, opened: on paper (handoff screens 03, 04) |
 //! | `28` | Office mail in black text, opened: in app colours (handoff screens 11, 13) |
 //! | `29` | The same office mail switched to the original with `O`: on paper (handoff screen 12) |
+//! | `30` | A long newsletter with no page of its own, opened: in app colours (T218) |
+//! | `31` | The same newsletter past its render deadline: the plain-text fallback (T218) |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -221,6 +223,8 @@ const SCREENS: &[(&str, &str)] = &[
         "29",
         "office mail opened, switched to the original on paper",
     ),
+    ("30", "a long newsletter opened, in app colours"),
+    ("31", "the same newsletter fallen back to its plain text"),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -590,8 +594,8 @@ fn render(args: &[String]) -> Result<String, String> {
     if matches!(request.screen.as_str(), "05" | "06") {
         runtime.block_on(compose_demo(&database, account));
     }
-    if matches!(request.screen.as_str(), "27" | "28" | "29") {
-        runtime.block_on(treatment_demo(&database, account, request.screen == "27"));
+    if matches!(request.screen.as_str(), "27" | "28" | "29" | "30" | "31") {
+        runtime.block_on(treatment_demo(&database, account, &request.screen));
     }
     let blobs = BlobStore::open(
         blobs_dir.path().to_path_buf(),
@@ -810,13 +814,25 @@ fn stage(
                 return Err("the opened message never drew with its sentence lit".into());
             }
         }
-        "27" | "28" | "29" => {
+        "27" | "28" | "29" | "30" | "31" => {
             pick_three();
             pane.cursor().set_selected(OPENED as u32 + 1);
             window.act(CommandId::OpenMessage);
-            let Some(reading) = window.reading() else {
+            let Some(mut reading) = window.reading() else {
                 return Err("Enter opened nothing".into());
             };
+            if screen == "31" {
+                // Opened again with every render held on its thread past
+                // the deadline: what shows is the fallback, as a layout
+                // that took too long leaves it. The dialog is built by the
+                // first open, and reused by the next.
+                settle_until(|| reading.reader().view().document().is_some());
+                reading.close();
+                settle_until(|| !reading.dialog().is_mapped());
+                reading.reader().view().hold_renders();
+                window.act(CommandId::OpenMessage);
+                reading = window.reading().ok_or("Enter opened nothing")?;
+            }
             let drawn = |words: &str| {
                 settle_until(|| {
                     reading
@@ -828,13 +844,23 @@ fn stage(
                         && reading.reader().view().tiles_settled()
                 })
             };
-            let words = if screen == "27" {
-                "dividing perennials"
-            } else {
-                "temporary routes"
+            let words = match screen {
+                "27" => "dividing perennials",
+                "30" => "Tip 1: docs",
+                "31" => "Release notes, part 1",
+                _ => "temporary routes",
             };
             if !drawn(words) {
                 return Err("the opened message never drew under a treatment".into());
+            }
+            if screen == "31"
+                && !settle_until(|| {
+                    reading.reader().view().document().is_some_and(|document| {
+                        matches!(document.outcome, postio_render::Outcome::FellBack(_))
+                    })
+                })
+            {
+                return Err("the held render never fell back".into());
             }
             if screen == "29" {
                 let reader = reading.reader();
@@ -1309,7 +1335,8 @@ fn opened_parts() -> Vec<Attachment> {
 /// the newsletter that paints its own page, or the office mail in black
 /// text with the question its card quotes. The row keeps its place, so the
 /// screens open it the way screen 04 does.
-async fn treatment_demo(database: &Store, account: AccountId, newsletter: bool) {
+async fn treatment_demo(database: &Store, account: AccountId, screen: &str) {
+    let newsletter = matches!(screen, "27" | "30" | "31");
     let connection = database.connect().await.expect("a connection");
     let messages = MessageRepository::new(&connection);
     let newest = RfcMessageId::new(format!(
@@ -1325,11 +1352,18 @@ async fn treatment_demo(database: &Store, account: AccountId, newsletter: bool) 
     else {
         return;
     };
-    let (fixture, from, subject, to) = if newsletter {
+    let (fixture, from, subject, to) = if screen == "27" {
         (
             "html-newsletter-own-page",
             EmailAddress::new(Some("Field Notes Weekly"), "news@example.com"),
             "Issue 48: The quiet season",
+            EmailAddress::new(Some("You"), "you@example.com"),
+        )
+    } else if newsletter {
+        (
+            "html-newsletter-many-tables",
+            EmailAddress::new(Some("Example Tools"), "news@tools.example.com"),
+            "Release notes: a faster deploy",
             EmailAddress::new(Some("You"), "you@example.com"),
         )
     } else {
