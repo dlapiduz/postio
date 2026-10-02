@@ -14,6 +14,7 @@
 # Usage
 # -----
 #   scripts/storyboards.sh run   [--app classic|focus|all] [--only <glob>] [--no-frames] [--delivery chain|direct]
+#                                [--jobs <n>]      # runners side by side (default: half the cores, at most 4)
 #                                [--variants]      # every variant each storyboard asks for
 #                                [--calibration]   # play only the reviewer's calibration set
 #   scripts/storyboards.sh lint                    # load and lint the whole catalogue
@@ -61,6 +62,7 @@ ONLY=""
 OPEN=0
 CALIBRATION=0
 ACCEPTANCE=""
+JOBS=""
 RUNNER_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -72,6 +74,7 @@ while [ $# -gt 0 ]; do
         --open)      OPEN=1; shift ;;
         --calibration) CALIBRATION=1; shift ;;
         --acceptance) ACCEPTANCE="${2:?--acceptance needs a file}"; shift 2 ;;
+        --jobs)      JOBS="${2:?--jobs needs a number}"; shift 2 ;;
         -h|--help)   usage; exit 0 ;;
         *) echo "storyboards.sh: unknown argument '$1' -- try --help" >&2; exit 2 ;;
     esac
@@ -96,7 +99,7 @@ BASE_RUNS="$REVIEW/base"
 # variant, and stopped on the way out.
 HEADLESS_STARTED=0
 headless() {
-    export POSTIO_TEST_DISPLAY="postio-storyboard-$$"
+    export POSTIO_TEST_DISPLAY="${POSTIO_STORYBOARD_DISPLAY:-postio-storyboard-$$}"
     export POSTIO_TEST_GEOMETRY="1920x1200"
     if [ "$HEADLESS_STARTED" = 0 ]; then
         HEADLESS_STARTED=1
@@ -157,6 +160,52 @@ selected() {
     done
 }
 
+# How many runners side by side: --jobs, else half the cores, at most four.
+jobs() {
+    local n="${JOBS:-}"
+    if [ -z "$n" ]; then
+        n=$(( $(nproc 2>/dev/null || echo 2) / 2 ))
+        [ "$n" -le 4 ] || n=4
+    fi
+    [ "$n" -ge 1 ] 2>/dev/null || n=1
+    echo "$n"
+}
+
+# Plays <files> on <app>'s runner in $(jobs) shards, prints each shard's
+# output in order once all are done, and echoes the worst exit code last on
+# stdout (the output goes to stderr, so the caller can take the code).
+run_shards() {
+    local app="$1" bin="$2"; shift 2
+    local n i code worst=0 commit logs=() pids=() shard
+    n=$(jobs)
+    [ "$n" -le "$#" ] || n=$#
+    commit=$(git rev-parse HEAD 2>/dev/null)
+    for ((i = 0; i < n; i++)); do
+        shard=()
+        local k=0 file
+        for file in "$@"; do
+            [ $((k % n)) -eq "$i" ] && shard+=("$file")
+            k=$((k + 1))
+        done
+        logs+=("$(mktemp)")
+        (
+            POSTIO_STORYBOARD_DISPLAY="postio-storyboard-$$-$app-$i"
+            headless "$bin" run "${shard[@]}" --out "$RUNS" \
+                --tree-key "$KEY" --commit "$commit" \
+                ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
+        ) >"${logs[$i]}" 2>&1 &
+        pids+=($!)
+    done
+    for ((i = 0; i < n; i++)); do
+        wait "${pids[$i]}"
+        code=$?
+        cat "${logs[$i]}" >&2
+        rm -f "${logs[$i]}"
+        [ "$code" -le "$worst" ] || worst=$code
+    done
+    echo "$worst"
+}
+
 run_command() {
     local apps app crate bin status=0 code files
     mapfile -t files < <(selected)
@@ -185,11 +234,12 @@ run_command() {
         fi
         bin="$(target_dir)/debug/examples/storyboard"
         [ -x "$bin" ] || { echo "storyboards.sh: no runner at $bin" >&2; exit 2; }
-        # The headless compositor, never the maintainer's display.
-        headless "$bin" run "${files[@]}" --out "$RUNS" \
-            --tree-key "$KEY" --commit "$(git rev-parse HEAD 2>/dev/null)" \
-            ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
-        code=$?
+        # The catalogue is split across runners side by side, each on a
+        # headless compositor of its own (never the maintainer's display):
+        # every storyboard settles by waiting, so one runner leaves most of
+        # the machine idle, and SC-002's five minutes for both apps cannot
+        # be met one at a time. Round-robin, so the slow surfaces spread.
+        code=$(run_shards "$app" "$bin" "${files[@]}")
         if [ "$code" -gt "$status" ]; then
             status=$code
         fi
