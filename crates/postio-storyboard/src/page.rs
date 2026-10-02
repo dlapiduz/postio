@@ -249,6 +249,115 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
     out
 }
 
+/// The parity section: one table per shared storyboard, a row per step, a
+/// column per app, divergence marked (spec US3).
+pub fn parity_section(parities: &[crate::parity::Parity], runs_prefix: &str) -> String {
+    if parities.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "<section class=\"run\" id=\"parity\"><header><h2>Across the apps</h2></header>",
+    );
+    for parity in parities {
+        let diverging = parity.diverging().count();
+        let _ = write!(
+            out,
+            "<div class=\"reason\"><strong>{}</strong> <span class=\"muted\">{}</span>{}</div>\
+             <table class=\"obs parity\"><tr><th>step</th>",
+            escape(&parity.storyboard),
+            escape(&parity.variant),
+            if diverging > 0 {
+                format!(" <span class=\"badge failed\">{diverging} diverging</span>")
+            } else {
+                String::new()
+            }
+        );
+        for app in &parity.apps {
+            let _ = write!(out, "<th>{}</th>", escape(app_name(*app)));
+        }
+        out.push_str("</tr>");
+        for row in &parity.rows {
+            let _ = write!(out, "<tr><td>{}", row.step);
+            if row.diverging {
+                let fields = differing_fields(row);
+                let _ = write!(
+                    out,
+                    " <span class=\"badge failed\">diverging</span><div class=\"muted\">{}</div>",
+                    escape(&fields.join(", "))
+                );
+            }
+            out.push_str("</td>");
+            for app in &parity.apps {
+                let name = app_name(*app);
+                if row.skipped.contains(app) {
+                    out.push_str("<td class=\"muted\">skipped</td>");
+                    continue;
+                }
+                let src = format!(
+                    "{}/{name}/{}/{}/{}",
+                    runs_prefix.trim_end_matches('/'),
+                    parity.storyboard,
+                    parity.variant,
+                    crate::run::RunWriter::outlined(row.step)
+                );
+                let _ = write!(
+                    out,
+                    "<td><a href=\"{0}\"><img src=\"{0}\" alt=\"{name} step {1}\" loading=\"lazy\" \
+                     style=\"max-width:280px\"></a></td>",
+                    escape(&src),
+                    row.step
+                );
+            }
+            out.push_str("</tr>");
+        }
+        out.push_str("</table>");
+    }
+    out.push_str("</section>");
+    out
+}
+
+fn app_name(app: crate::apply::App) -> &'static str {
+    match app {
+        crate::apply::App::Classic => "classic",
+        crate::apply::App::Focus => "focus",
+        crate::apply::App::Terminal => "terminal",
+        crate::apply::App::Macos => "macos",
+    }
+}
+
+/// The shared fields on which a diverging row's apps disagree.
+fn differing_fields(row: &crate::parity::ParityRow) -> Vec<String> {
+    let flat: Vec<Vec<(String, String)>> = row
+        .observations
+        .values()
+        .map(|observation| {
+            let mut rows = Vec::new();
+            if let Ok(value) = serde_json::to_value(observation) {
+                flatten("", &value, &mut rows);
+            }
+            rows.retain(|(path, _)| path != "keyboard.widget" && !path.starts_with("app."));
+            rows
+        })
+        .collect();
+    let mut paths: Vec<String> = flat
+        .iter()
+        .flatten()
+        .map(|(path, _)| path.clone())
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .filter(|path| {
+            let values: Vec<Option<&String>> = flat
+                .iter()
+                .map(|rows| rows.iter().find(|(p, _)| p == path).map(|(_, v)| v))
+                .collect();
+            values.windows(2).any(|pair| pair[0] != pair[1])
+        })
+        .collect()
+}
+
 /// The page, as HTML.
 pub fn render(header: &Header, strips: &[Filmstrip]) -> String {
     render_with(header, strips, None, None)
@@ -1282,5 +1391,59 @@ mod tests {
             "an unchanged storyboard is not shown in full"
         );
         assert!(html.contains("1 unchanged against the base: tab-cycles-panes"));
+    }
+
+    #[test]
+    fn the_parity_section_lines_apps_up_and_marks_divergence() {
+        use crate::apply::App;
+        use crate::parity::{Parity, ParityRow};
+        let observation = |index| {
+            let mut o = crate::fixtures::observation();
+            o.cursor.index = index;
+            o
+        };
+        let parities = [Parity {
+            storyboard: "archive-walks-down".into(),
+            variant: "default".into(),
+            apps: vec![App::Classic, App::Focus],
+            rows: vec![
+                ParityRow {
+                    step: 0,
+                    observations: [
+                        (App::Classic, observation(Some(0))),
+                        (App::Focus, observation(Some(0))),
+                    ]
+                    .into(),
+                    skipped: vec![],
+                    diverging: false,
+                },
+                ParityRow {
+                    step: 1,
+                    observations: [
+                        (App::Classic, observation(Some(1))),
+                        (App::Focus, observation(None)),
+                    ]
+                    .into(),
+                    skipped: vec![],
+                    diverging: true,
+                },
+            ],
+        }];
+        let html = parity_section(&parities, "runs");
+        assert!(
+            html.contains("<img src=\"runs/classic/archive-walks-down/default/01.outlined.png\"")
+        );
+        assert!(
+            html.contains("<img src=\"runs/focus/archive-walks-down/default/01.outlined.png\"")
+        );
+        assert_eq!(
+            html.matches(">diverging<").count(),
+            1,
+            "only step 1 diverges"
+        );
+        assert!(
+            html.contains("cursor.index"),
+            "the field that differs is named"
+        );
     }
 }
