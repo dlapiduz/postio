@@ -33,7 +33,7 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "release-bump.py"
 
-METAINFO_PATH = "crates/postio-gtk/data/dev.postio.Postio.metainfo.xml"
+METAINFO_PATH = "crates/postio-focus/data/dev.postio.Postio.metainfo.xml"
 PLIST_PATH = "macos/Resources/Info.plist"
 
 # The macOS bundle's two version keys (#1714). It ships as a release asset
@@ -100,7 +100,8 @@ def world(base: Path) -> Path:
     root = base / "repo"
     (root / "crates" / "postio-model").mkdir(parents=True)
     (root / "crates" / "postio-storage").mkdir(parents=True)
-    (root / "crates" / "postio-gtk" / "data").mkdir(parents=True)
+    (root / "crates" / "postio-gtk").mkdir(parents=True)
+    (root / METAINFO_PATH).parent.mkdir(parents=True)
 
     (root / "Cargo.toml").write_text(CARGO_TOML, encoding="utf-8")
     (root / METAINFO_PATH).write_text(METAINFO, encoding="utf-8")

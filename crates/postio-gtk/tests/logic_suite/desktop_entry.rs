@@ -10,8 +10,10 @@ use postio_gtk::{app, resources};
 
 /// The desktop entry as it ships, next to the icon it names.
 fn entry() -> glib::KeyFile {
+    // The package's entry lives in postio-focus, the app the package
+    // becomes.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("data")
+        .join("../postio-focus/data")
         .join(format!("{}.desktop", app::APP_ID));
     assert!(
         path.exists(),
@@ -89,8 +91,10 @@ fn the_desktop_entry_passes_the_freedesktop_validator() {
         eprintln!("skipping: desktop-file-validate is not installed");
         return;
     };
+    // The package's entry lives in postio-focus, the app the package
+    // becomes.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("data")
+        .join("../postio-focus/data")
         .join(format!("{}.desktop", app::APP_ID));
     let out = std::process::Command::new(validator)
         .arg(&path)
@@ -188,7 +192,8 @@ fn the_flatpak_installs_the_icon_sizes_a_session_asks_for() {
 
     let mut missing = Vec::new();
     for size in REQUIRED {
-        let relative = format!("crates/postio-gtk/data/icons/{size}/apps/dev.postio.Postio.png");
+        let relative =
+            format!("crates/postio-widgets/data/icons/{size}/apps/dev.postio.Postio.png");
         if !root.join(&relative).exists() {
             missing.push(format!("{relative} (not in the repository)"));
         } else if !manifest.contains(&relative) {
@@ -225,11 +230,11 @@ fn the_flatpak_installs_the_scalable_icon() {
 
     for (source, installed) in [
         (
-            "crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg",
+            "crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg",
             "/app/share/icons/hicolor/scalable/apps/dev.postio.Postio.svg",
         ),
         (
-            "crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg",
+            "crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg",
             "/app/share/icons/hicolor/symbolic/apps/dev.postio.Postio-symbolic.svg",
         ),
     ] {

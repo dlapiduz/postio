@@ -3,29 +3,20 @@
 //! Two jobs, in this order:
 //!
 //! 1. Read the Industry design system's `:root` token block and generate
-//!    `data/tokens.css`, through `postio_ui::tokens` — a build-dependency
-//!    now (#569) rather than `#[path = "src/tokens.rs"]`, so the parser and
-//!    emitter this crate uses at build time are the same crate a second
-//!    frontend links at run time, not two copies kept in step by
-//!    convention. The generated file is checked in so that a build outside
-//!    the repository (or without the `Design/` tree) still works, and
-//!    `postio-ui`'s own drift tests fail if the checked-in copy has
-//!    drifted from the source. The reader's palette, `reader-tokens.css`,
-//!    is generated the same way but written into `postio-ui`'s own data
-//!    directory (#799) rather than this crate's — the reader's data lives
-//!    with the reader, this crate only builds it. The metrics both desktop
-//!    apps share — spacing, radii, chip and type sizes — go the same way
-//!    into `postio-widgets`' data directory (specs/007-postio-focus research
-//!    R11): `metrics.css`, which the shared widgets' sheet imports, and the
-//!    spacing ramp as Rust, `space.rs`, which `postio_widgets::widgets::space`
-//!    includes. `tokens.css` keeps this app's colours, faces and shadows.
+//!    `data/tokens.css`, this app's colours, faces and shadows, through
+//!    `postio_ui::tokens`. The generated file is checked in so that a build
+//!    outside the repository (or without the `Design/` tree) still works,
+//!    and `postio-ui`'s drift tests fail if the checked-in copy has drifted
+//!    from the source. The data every desktop app shares -- the metrics,
+//!    the spacing ramp and the reader's palette -- is `postio-widgets`'
+//!    build step's to generate.
 //! 2. Compile `data/postio.gresource.xml` into the GResource bundle that
 //!    carries the stylesheet and the app icons, so the app resolves both
 //!    without a system font installation and without touching the network.
-//!    The vendored fonts and the reader's stylesheets are not in this
-//!    bundle: they are `postio-ui`'s data, embedded directly where that
-//!    crate reads them, so the bytes have one owner instead of a second
-//!    copy here.
+//!    The icons are `postio-widgets`' files (`../postio-widgets/data/icons`,
+//!    a second source directory), not a copy. The vendored fonts and the
+//!    reader's stylesheets are not in this bundle: they are `postio-ui`'s
+//!    data, embedded directly where that crate reads them.
 
 use std::path::{Path, PathBuf};
 
@@ -39,11 +30,6 @@ fn main() {
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let data_dir = manifest_dir.join("data");
-    let ui_data_dir = manifest_dir
-        .parent()
-        .expect("crates/postio-gtk")
-        .join("postio-ui")
-        .join("data");
     let widgets_data_dir = manifest_dir
         .parent()
         .expect("crates/postio-gtk")
@@ -54,24 +40,23 @@ fn main() {
         Some(source) => {
             println!("cargo:rerun-if-changed={}", source.display());
             generate_tokens(&source, &data_dir.join("tokens.css"));
-            generate_metrics(&source, &widgets_data_dir.join("metrics.css"));
-            generate_space(&source, &widgets_data_dir.join("space.rs"));
-            generate_reader_tokens(&source, &ui_data_dir.join("reader-tokens.css"));
         }
         None => {
             println!(
                 "cargo:warning=Industry design system not found; \
-                 keeping the checked-in data/tokens.css, \
-                 ../postio-widgets/data/metrics.css, \
-                 ../postio-widgets/data/space.rs and \
-                 ../postio-ui/data/reader-tokens.css. \
-                 Set POSTIO_DESIGN_SYSTEM to the styles.css to regenerate them."
+                 keeping the checked-in data/tokens.css. \
+                 Set POSTIO_DESIGN_SYSTEM to the styles.css to regenerate it."
             );
         }
     }
 
     glib_build_tools::compile_resources(
-        &[data_dir.to_str().expect("data dir path is not UTF-8")],
+        &[
+            data_dir.to_str().expect("data dir path is not UTF-8"),
+            widgets_data_dir
+                .to_str()
+                .expect("widgets data dir path is not UTF-8"),
+        ],
         data_dir
             .join("postio.gresource.xml")
             .to_str()
@@ -108,34 +93,6 @@ fn generate_tokens(source: &Path, out: &Path) {
     let label = relative_label(source);
     let generated = tokens::generate(&parsed, &label)
         .unwrap_or_else(|e| panic!("cannot generate tokens.css: {e}"));
-    write_if_changed(out, &generated);
-}
-
-/// The metrics both desktop apps share, as a stylesheet of their own.
-/// Checked in for the reason `tokens.css` is.
-fn generate_metrics(source: &Path, out: &Path) {
-    let parsed = parse_source(source);
-    let label = relative_label(source);
-    let generated = tokens::generate_metrics(&parsed, &label)
-        .unwrap_or_else(|e| panic!("cannot generate metrics.css: {e}"));
-    write_if_changed(out, &generated);
-}
-
-/// The spacing ramp as Rust constants, beside the stylesheet that carries
-/// the same numbers. Checked in for the reason `tokens.css` is.
-fn generate_space(source: &Path, out: &Path) {
-    let parsed = parse_source(source);
-    let label = relative_label(source);
-    let generated = tokens::generate_space_rs(&parsed, &label)
-        .unwrap_or_else(|e| panic!("cannot generate space.rs: {e}"));
-    write_if_changed(out, &generated);
-}
-
-fn generate_reader_tokens(source: &Path, out: &Path) {
-    let parsed = parse_source(source);
-    let label = relative_label(source);
-    let generated = tokens::generate_reader(&parsed, &label)
-        .unwrap_or_else(|e| panic!("cannot generate reader-tokens.css: {e}"));
     write_if_changed(out, &generated);
 }
 

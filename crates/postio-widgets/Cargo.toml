@@ -46,6 +46,7 @@ webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 
 [build-dependencies]
 glib-build-tools = "0.22.8"
+postio-ui.workspace = true
 
 [dev-dependencies]
 # The crate's own suite, with its hooks on: a render held past its deadline

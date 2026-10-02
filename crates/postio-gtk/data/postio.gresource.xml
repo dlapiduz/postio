@@ -2,8 +2,8 @@
 <!--
   Everything the UI needs at runtime, compiled into the binary.
 
-  Paths are relative to `data/`, the sourcedir build.rs passes to
-  glib-compile-resources. The vendored fonts and the reader's own
+  Paths are relative to `data/`, or to `postio-widgets/data/` (the icons),
+  the two sourcedirs build.rs passes to glib-compile-resources. The vendored fonts and the reader's own
   stylesheets are not here: they are `postio-ui`'s data (#799, ADR 0023),
   embedded directly where that crate reads them, so the bytes have one
   owner instead of a second copy in this bundle.

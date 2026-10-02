@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 CARGO_TOML = Path("Cargo.toml")
-METAINFO = Path("crates/postio-gtk/data/dev.postio.Postio.metainfo.xml")
+METAINFO = Path("crates/postio-focus/data/dev.postio.Postio.metainfo.xml")
 # The macOS bundle ships as a release asset (#1714), so it says the version it
 # was released as. Both keys carry the version: CFBundleVersion is the build
 # number macOS compares to decide which copy is newer, and a semver string

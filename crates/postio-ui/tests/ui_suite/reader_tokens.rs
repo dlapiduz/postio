@@ -59,7 +59,7 @@ fn label(path: &std::path::Path) -> String {
 
 fn generated() -> String {
     std::fs::read_to_string(manifest_dir().join("data").join("reader-tokens.css"))
-        .expect("data/reader-tokens.css is missing; run `cargo build -p postio-gtk`")
+        .expect("data/reader-tokens.css is missing; run `cargo build -p postio-widgets`")
 }
 
 /// The checked-in sheet must be exactly what the generator produces from the
@@ -73,7 +73,7 @@ fn generated_reader_tokens_are_reproducible() {
     let actual = generated();
     assert_eq!(
         expected, actual,
-        "data/reader-tokens.css is stale. Run `cargo build -p postio-gtk` and commit the result."
+        "data/reader-tokens.css is stale. Run `cargo build -p postio-widgets` and commit the result."
     );
 }
 

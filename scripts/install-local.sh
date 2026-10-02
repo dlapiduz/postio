@@ -121,15 +121,15 @@ cargo build --release --package postio-app --bin postio \
 target="${CARGO_TARGET_DIR:-$here/target}"
 
 install -Dm755 "$target/release/postio" "$bin"
-install -Dm644 "$here/crates/postio-gtk/data/dev.postio.Postio.desktop" "$desktop"
-install -Dm644 "$here/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg" "$icon_svg"
-install -Dm644 "$here/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" "$icon_symbolic"
+install -Dm644 "$here/crates/postio-focus/data/dev.postio.Postio.desktop" "$desktop"
+install -Dm644 "$here/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg" "$icon_svg"
+install -Dm644 "$here/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" "$icon_symbolic"
 for size in "${icon_sizes[@]}"; do
     install -Dm644 \
-        "$here/crates/postio-gtk/data/icons/${size}x${size}/apps/dev.postio.Postio.png" \
+        "$here/crates/postio-widgets/data/icons/${size}x${size}/apps/dev.postio.Postio.png" \
         "$data_home/icons/hicolor/${size}x${size}/apps/dev.postio.Postio.png"
 done
-install -Dm644 "$here/crates/postio-gtk/data/dev.postio.Postio.metainfo.xml" "$metainfo"
+install -Dm644 "$here/crates/postio-focus/data/dev.postio.Postio.metainfo.xml" "$metainfo"
 refresh_caches
 
 echo "Installed: $bin"

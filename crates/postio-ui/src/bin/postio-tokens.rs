@@ -1,6 +1,6 @@
 //! Emit the design tokens for a frontend that cannot be handed Rust.
 //!
-//! The GTK frontend gets its tokens through `postio-gtk/build.rs`, which can
+//! The GTK frontends get theirs through `postio-widgets/build.rs`, which can
 //! call the emitter directly. Swift cannot, so this writes the file that
 //! `scripts/macos-build.sh` puts into the package.
 //!

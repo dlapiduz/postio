@@ -79,7 +79,7 @@ fn generated() -> String {
 
 fn generated_metrics() -> String {
     std::fs::read_to_string(widgets_dir().join("data").join("metrics.css"))
-        .expect("postio-widgets/data/metrics.css is missing; run `cargo build -p postio-gtk`")
+        .expect("postio-widgets/data/metrics.css is missing; run `cargo build -p postio-widgets`")
 }
 
 /// The checked-in sheet must be exactly what the generator produces from the
@@ -105,7 +105,7 @@ fn generated_metrics_are_reproducible() {
     assert_eq!(
         expected,
         generated_metrics(),
-        "postio-widgets/data/metrics.css is stale. Run `cargo build -p postio-gtk` and commit the result."
+        "postio-widgets/data/metrics.css is stale. Run `cargo build -p postio-widgets` and commit the result."
     );
 }
 
@@ -393,10 +393,10 @@ fn the_rust_spacing_scale_is_the_css_one_and_checked_in() {
     let rust = tokens::generate_space_rs(&parsed, &label(&path)).unwrap();
     assert!(rust.contains("pub const S3: i32 = 10;"), "{rust}");
     let checked_in = std::fs::read_to_string(widgets_dir().join("data").join("space.rs"))
-        .expect("postio-widgets/data/space.rs is missing; run `cargo build -p postio-gtk`");
+        .expect("postio-widgets/data/space.rs is missing; run `cargo build -p postio-widgets`");
     assert_eq!(
         rust, checked_in,
-        "postio-widgets/data/space.rs is stale. Run `cargo build -p postio-gtk` and commit the result."
+        "postio-widgets/data/space.rs is stale. Run `cargo build -p postio-widgets` and commit the result."
     );
 }
 

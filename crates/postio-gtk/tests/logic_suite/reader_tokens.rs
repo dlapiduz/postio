@@ -25,7 +25,7 @@ fn ui_data_dir() -> PathBuf {
 
 fn generated() -> String {
     std::fs::read_to_string(ui_data_dir().join("reader-tokens.css"))
-        .expect("postio-ui/data/reader-tokens.css is missing; run `cargo build -p postio-gtk`")
+        .expect("postio-ui/data/reader-tokens.css is missing; run `cargo build -p postio-widgets`")
 }
 
 fn reader_css() -> String {

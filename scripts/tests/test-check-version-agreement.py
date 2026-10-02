@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import patience  # noqa: E402  -- enabled by the sys.path line above
 
 CHECK = Path(__file__).resolve().parent.parent / "checks" / "check-version-agreement.py"
-METAINFO = "crates/postio-gtk/data/dev.postio.Postio.metainfo.xml"
+METAINFO = "crates/postio-focus/data/dev.postio.Postio.metainfo.xml"
 FAILURES: list[str] = []
 
 

@@ -141,7 +141,7 @@ fn the_entry_is_named_after_the_id_and_its_icon_ships_in_the_package() {
     assert!(
         root()
             .join(format!(
-                "crates/postio-gtk/data/icons/scalable/apps/{icon}.svg"
+                "crates/postio-widgets/data/icons/scalable/apps/{icon}.svg"
             ))
             .exists()
     );
@@ -205,7 +205,7 @@ fn the_desktop_flatpak_builds_and_installs_focus() {
 /// is composed for its own app id only.
 #[test]
 fn the_desktop_apps_metainfo_names_focus_as_a_second_launcher() {
-    let metainfo = read("crates/postio-gtk/data/dev.postio.Postio.metainfo.xml");
+    let metainfo = read("crates/postio-focus/data/dev.postio.Postio.metainfo.xml");
     let launchable = format!("<launchable type=\"desktop-id\">{APP_ID}.desktop</launchable>");
     assert!(
         metainfo.contains(&launchable),
@@ -249,6 +249,33 @@ fn the_release_checks_the_bundle_carries_both_apps() {
                 .filter(|line| !line.trim_start().starts_with('#'))
                 .any(|line| line.split_whitespace().any(|word| word == installed)),
             "the `flatpak` job never checks the build for {installed}"
+        );
+    }
+}
+
+/// Nothing the package installs, and nothing Focus compiles in, is read
+/// from the classic app's crate, which goes whole when the classic app is
+/// removed: the icons and the token build are `postio-widgets`', the
+/// desktop entry and metainfo are here.
+#[test]
+fn nothing_focus_ships_is_read_from_the_classic_crate() {
+    for (what, text) in [
+        (
+            "the Flatpak manifest",
+            read("flatpak/dev.postio.Postio.json"),
+        ),
+        (
+            "postio-widgets' build step",
+            read("crates/postio-widgets/build.rs"),
+        ),
+        (
+            "postio-widgets' resource bundle",
+            read("crates/postio-widgets/data/widgets.gresource.xml"),
+        ),
+    ] {
+        assert!(
+            !text.contains("postio-gtk/"),
+            "{what} reads a file under crates/postio-gtk"
         );
     }
 }

@@ -661,10 +661,10 @@ pub fn generate_metrics(tokens: &Tokens, source: &str) -> Result<String, TokenEr
     writeln!(out, " * Source : {source}").unwrap();
     writeln!(
         out,
-        " * Emitted by: crates/postio-gtk/build.rs via postio_ui::tokens"
+        " * Emitted by: crates/postio-widgets/build.rs via postio_ui::tokens"
     )
     .unwrap();
-    writeln!(out, " * Regenerate: cargo build -p postio-gtk").unwrap();
+    writeln!(out, " * Regenerate: cargo build -p postio-widgets").unwrap();
     writeln!(out, " *").unwrap();
     writeln!(
         out,
@@ -738,10 +738,10 @@ pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenE
     writeln!(out, "// Source     : {source}").unwrap();
     writeln!(
         out,
-        "// Emitted by : crates/postio-gtk/build.rs via postio_ui::tokens"
+        "// Emitted by : crates/postio-widgets/build.rs via postio_ui::tokens"
     )
     .unwrap();
-    writeln!(out, "// Regenerate : cargo build -p postio-gtk").unwrap();
+    writeln!(out, "// Regenerate : cargo build -p postio-widgets").unwrap();
     writeln!(out, "//").unwrap();
     writeln!(
         out,
@@ -774,10 +774,10 @@ pub fn generate_reader(tokens: &Tokens, source: &str) -> Result<String, TokenErr
     writeln!(out, " * Source : {source}").unwrap();
     writeln!(
         out,
-        " * Emitted by: crates/postio-gtk/build.rs via crates/postio-gtk/src/tokens.rs"
+        " * Emitted by: crates/postio-widgets/build.rs via postio_ui::tokens"
     )
     .unwrap();
-    writeln!(out, " * Regenerate: cargo build -p postio-gtk").unwrap();
+    writeln!(out, " * Regenerate: cargo build -p postio-widgets").unwrap();
     writeln!(out, " *").unwrap();
     writeln!(
         out,

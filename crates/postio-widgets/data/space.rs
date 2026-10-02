@@ -1,8 +1,8 @@
 // GENERATED FILE — do not edit by hand.
 //
 // Source     : Design/_ds/industry-b0b46d6e-4b0c-403e-a94f-85bdc36b6c2f/styles.css
-// Emitted by : crates/postio-gtk/build.rs via postio_ui::tokens
-// Regenerate : cargo build -p postio-gtk
+// Emitted by : crates/postio-widgets/build.rs via postio_ui::tokens
+// Regenerate : cargo build -p postio-widgets
 //
 // The design system's spacing ramp in whole pixels, the same numbers
 // `--postio-space-N` carries in metrics.css.

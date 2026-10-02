@@ -2,21 +2,20 @@
 <!--
   What the shared widgets need at runtime, compiled into the binary by
   build.rs. Its own prefix, beside the classic app's /dev/postio/Postio, so
-  either app can register both bundles.
+  an app can register both bundles.
 -->
 <gresources>
   <gresource prefix="/dev/postio/Widgets">
     <!-- Hand-written; every value in it is a postio role the app defines. -->
     <file compressed="true">widgets.css</file>
 
-    <!-- Generated from the design system by postio-gtk's build.rs: the
-         metrics both apps share, which widgets.css imports. -->
+    <!-- Generated from the design system by this crate's build.rs: the
+         metrics every app shares, which widgets.css imports. -->
     <file compressed="true">metrics.css</file>
   </gresource>
 
-  <!-- The app icon, from the classic app's own committed files (build.rs adds
-       postio-gtk/data/icons as a source directory): one file with two homes
-       in the binary, never a second copy in the tree. Laid out as an icon
+  <!-- The app icon, from data/icons (build.rs adds it as a source
+       directory), the files the packaging installs too. Laid out as an icon
        theme under a resource path expects, <context>/<name>.svg. -->
   <gresource prefix="/dev/postio/Widgets/icons">
     <file compressed="true" alias="scalable/apps/dev.postio.Postio.svg">scalable/apps/dev.postio.Postio.svg</file>

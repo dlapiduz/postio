@@ -163,9 +163,9 @@ if [ "$FOCUS" = 1 ]; then
         mkdir -p "$APPS" "$ICONS/scalable/apps" "$ICONS/symbolic/apps"
         sed "s|^Exec=.*|Exec=$TARGET/release/postio-focus %U|" \
             "$TREE/crates/postio-focus/data/$ID.desktop" > "$APPS/$ID.desktop"
-        install -m644 "$TREE/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg" \
+        install -m644 "$TREE/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg" \
             "$ICONS/scalable/apps/dev.postio.Postio.svg"
-        install -m644 "$TREE/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" \
+        install -m644 "$TREE/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" \
             "$ICONS/symbolic/apps/dev.postio.Postio-symbolic.svg"
         command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
         command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$ICONS" || true

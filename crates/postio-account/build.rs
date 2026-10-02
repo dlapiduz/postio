@@ -3,7 +3,7 @@
 //! Issue #191: the shipped provider table is data, not Rust literals, and
 //! `build.rs` is what keeps a broken shipped file from ever compiling. This
 //! compiles `providers_toml.rs` a second time via `#[path]` -- the same
-//! idiom `postio-gtk/build.rs` uses for design tokens (`docs/ARCHITECTURE.md`
+//! idiom `postio-widgets/build.rs` uses for design tokens (`docs/ARCHITECTURE.md`
 //! §10) -- so the parser that runs here and the one the crate uses at
 //! runtime for this same file (`discovery/builtin.rs`) and for a user's own
 //! `providers.toml` overlay are the identical module. There is nothing to

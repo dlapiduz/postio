@@ -118,13 +118,13 @@ compiles is not. The window closes when Flathub catches up.
 ## Why a PNG icon, not just the scalable SVG
 
 The app ships its real icon as
-`crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg`, and that
+`crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg`, and that
 is what the running app itself uses (via `postio_gtk::resources`, bundled
 into the `GResource`). For the *installed* desktop icon —
 `/app/share/icons/hicolor/...`, which is what the shell's app grid and
 alt-tab switcher read via the freedesktop icon theme spec — this manifest
 also installs a 128×128 rasterization,
-`crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png`, alongside
+`crates/postio-widgets/data/icons/128x128/apps/dev.postio.Postio.png`, alongside
 16×16 and 32×32 (#1023). Those two smaller ones are not a fallback for the
 same reason: the mark is *drawn* heavier as it shrinks — the slash thickens
 and the unread dot is dropped below 24px — so they are separate artwork
@@ -146,8 +146,8 @@ manifest installs both files.
 Regenerate the PNG if the SVG ever changes:
 
 ```bash
-magick -background none crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg \
-    -resize 128x128 crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png
+magick -background none crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg \
+    -resize 128x128 crates/postio-widgets/data/icons/128x128/apps/dev.postio.Postio.png
 ```
 
 ## Permissions

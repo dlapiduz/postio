@@ -63,7 +63,7 @@ cp macos/Resources/Info.plist "$APP/Contents/Info.plist"
 # AppKit reads that SVG as a vector, so each size is a real render rather than
 # an upscale of the 128px PNG, and `swift` and `iconutil` are on every Mac. A
 # rasterizer from Homebrew would be a build dependency contributors do not have.
-ICON_SVG=crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg
+ICON_SVG=crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg
 ICONSET=$(mktemp -d)/Postio.iconset
 if swift scripts/macos-icon.swift "$ICON_SVG" "$ICONSET" \
     && iconutil -c icns -o "$APP/Contents/Resources/Postio.icns" "$ICONSET"; then
