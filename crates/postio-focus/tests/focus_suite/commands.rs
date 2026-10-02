@@ -371,10 +371,17 @@ pub fn the_row_menu_flags_and_unflags() {
             "the menu's Flag did not flag it"
         );
 
+        // The menu reads the row when it opens, and the row hears of the
+        // flag from the store a moment after: a menu opened before then says
+        // Flag, so each look closes it and asks again.
         assert!(
             crate::settle_until(async || {
                 let menu = right_clicked(&window).await;
-                support::texts(&menu).iter().any(|text| text == "Unflag")
+                let says = support::texts(&menu).iter().any(|text| text == "Unflag");
+                if !says && let Some(menu) = window.row_menu() {
+                    menu.close();
+                }
+                says
             })
             .await,
             "a flagged row's menu never says Unflag"
