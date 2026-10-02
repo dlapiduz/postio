@@ -105,6 +105,33 @@ pub fn set_never(text: &str, entry: &str, present: bool) -> Result<Option<String
     Ok(Some(render(text, doc)))
 }
 
+/// `[focus] reading` set to `reading`: where `Return` opens a message, as
+/// `toggle_reading_pane` chose it (T232). `None` when the file already says
+/// so -- and a file that says nothing says `dialog`, the default.
+pub fn set_reading(text: &str, reading: crate::Reading) -> Result<Option<String>> {
+    let mut doc = document(text)?;
+    let written = doc
+        .get("focus")
+        .and_then(|focus| focus.get("reading"))
+        .and_then(Item::as_str)
+        .map(str::to_owned);
+    let says = written.as_deref().unwrap_or(crate::Reading::default().as_str());
+    if says == reading.as_str() {
+        return Ok(None);
+    }
+    let focus = doc
+        .as_table_mut()
+        .entry("focus")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| shape("[focus] is not a table"))?;
+    // A section made implicit by `[focus.filter]` alone is written out now
+    // that it holds a key of its own.
+    focus.set_implicit(false);
+    focus.insert("reading", toml_edit::value(reading.as_str()));
+    Ok(Some(render(text, doc)))
+}
+
 /// `[focus.filter] stop_markers` with `{ sender, kind }` in it, or without
 /// it: a marker kind the person stopped for a sender by dismissing it
 /// again and again (FR-108), or that correction taken back. `None` when the
@@ -303,6 +330,46 @@ at = \"16:00\"
                 .filter
                 .never
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn reading_is_the_dialog_unless_the_file_says_pane() {
+        use crate::Reading;
+        assert_eq!(
+            Config::from_toml_str("").expect("it reads").focus.reading,
+            Reading::Dialog
+        );
+        let pane = Config::from_toml_str("[focus]\nreading = \"pane\"\n").expect("it reads");
+        assert_eq!(pane.focus.reading, Reading::Pane);
+    }
+
+    #[test]
+    fn reading_is_written_beside_filtering_and_nothing_else_moves() {
+        use crate::Reading;
+        let written = set_reading(FILE, Reading::Pane)
+            .expect("an edit")
+            .expect("a change");
+        assert!(
+            written.starts_with("# My settings.\n[ui]\ndensity = \"compact\" # as I like it\n")
+        );
+        assert!(written.contains("[focus]\nfiltering = true\nreading = \"pane\"\n"));
+        let config = Config::from_toml_str(&written).expect("it reads");
+        assert_eq!(config.focus.reading, Reading::Pane);
+        assert_eq!(config.focus.digests.len(), 1, "the rule is untouched");
+        assert_eq!(set_reading(&written, Reading::Pane).expect("an edit"), None);
+        let back = set_reading(&written, Reading::Dialog)
+            .expect("an edit")
+            .expect("a change");
+        assert_eq!(
+            Config::from_toml_str(&back).expect("it reads").focus.reading,
+            Reading::Dialog
+        );
+        // A file that says nothing already says the dialog.
+        assert_eq!(set_reading("", Reading::Dialog).expect("an edit"), None);
+        assert_eq!(
+            set_reading("", Reading::Pane).expect("an edit").as_deref(),
+            Some("[focus]\nreading = \"pane\"\n")
         );
     }
 

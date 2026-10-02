@@ -40,6 +40,9 @@ pub struct FocusConfig {
     /// into Filtered; what is already there stays where it is.
     #[serde(default = "crate::yes")]
     pub filtering: bool,
+    /// Where `Return` opens a message (T232): over the list, or beside it.
+    #[serde(default)]
+    pub reading: Reading,
     /// `[focus.filter]`: the user's own word on filtering.
     #[serde(default, skip_serializing_if = "FocusFilter::is_empty")]
     pub filter: FocusFilter,
@@ -57,10 +60,32 @@ pub struct FocusConfig {
     pub extras: Extras,
 }
 
+/// `[focus] reading`: where an open message is drawn (spec 007 T232).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Reading {
+    /// The message dialog, over the list. Focus's default.
+    #[default]
+    Dialog,
+    /// A pane beside the list, where the window is wide enough for one.
+    Pane,
+}
+
+impl Reading {
+    /// The word the file spells it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reading::Dialog => "dialog",
+            Reading::Pane => "pane",
+        }
+    }
+}
+
 impl Default for FocusConfig {
     fn default() -> Self {
         FocusConfig {
             filtering: true,
+            reading: Reading::default(),
             filter: FocusFilter::default(),
             digests: Vec::new(),
             model: None,
