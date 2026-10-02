@@ -405,7 +405,8 @@ stated as if it were intended.
 
 `/ux-review --calibrate` reviews the set and reports accuracy. It runs:
 - whenever the reviewer's prompt template or agent definition changes;
-- nightly, as a measurement.
+- during a `/steward` pass, as a measurement. CI has no model to run a
+  reviewer, so this cannot be a nightly CI job.
 
 A reviewer that passes a `must_fail` storyboard has failed calibration, and the
 page says so at the top.

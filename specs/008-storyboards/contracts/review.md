@@ -162,7 +162,8 @@ each storyboard, its expected verdict, the actual verdict, and the hit rate.
 
 - **Passing** means every `must_fail` failed and every `must_pass` passed.
 - **When it runs**: on any change to `.claude/agents/ux-reviewer.md` or to the
-  prompt template, and nightly as a measurement.
+  prompt template, and during a `/steward` pass as a measurement. CI has no
+  model to run a reviewer.
 - **The page** shows the last calibration's date and result in its header.
 
 ## What reaches the maintainer (FR-021, FR-022)
