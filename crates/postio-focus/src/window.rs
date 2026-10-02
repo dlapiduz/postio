@@ -1704,7 +1704,7 @@ impl FocusWindow {
                     }
                 }
             }
-            CommandId::ShowImages | CommandId::AlwaysShowImages => {
+            CommandId::ShowImages | CommandId::AlwaysShowImages | CommandId::Unsubscribe => {
                 if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
                     reading.reader().run_banner_command(id);
                 }
@@ -3749,6 +3749,17 @@ impl FocusWindow {
                             && let Err(error) = postio_config::save_zoom(&path, percent)
                         {
                             tracing::warn!(%error, "could not save the zoom");
+                        }
+                    }
+                ));
+                // The notice only asks; leaving the list is logged by the
+                // host, on this one deliberate click (T261).
+                reading.reader().connect_unsubscribe_activated(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |_| {
+                        if let Some(message) = window.reading().and_then(|r| r.shown()) {
+                            window.unsubscribe(message);
                         }
                     }
                 ));

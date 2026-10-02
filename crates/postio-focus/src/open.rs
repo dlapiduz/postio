@@ -1001,6 +1001,7 @@ impl OpenMessage {
         self.fold_line.set_visible(false);
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
+        self.reader.set_unsubscribe(None);
         // Whatever the last message was read down to, this one is read from
         // its top: the view is put there now, and the new document's first
         // snapshot starts there too.
@@ -1264,6 +1265,17 @@ impl OpenMessage {
                     shown_body.replace(Some(body.clone()));
                     reader.render_prepared(&body, sender.as_deref(), prepared);
                     reader.set_encoding_problems(encoding_problems);
+                    // After `render_prepared`, which clears it: the notice
+                    // belongs to this message. The shared rule names the
+                    // list and withholds it from mail on its way out.
+                    let offer = reading.row.as_deref().and_then(|row| {
+                        postio_ui::unsubscribe::offer(
+                            reading.send_state,
+                            row.list_id.as_deref(),
+                            &row.from,
+                        )
+                    });
+                    reader.set_unsubscribe(offer.as_ref().map(|o| o.list_identifier.as_str()));
                 }
                 Body::Partial => reader.show_absent(postio_ui::reader::document::Absent::Partial),
                 Body::Offline => reader.show_absent(postio_ui::reader::document::Absent::Offline),
