@@ -594,7 +594,7 @@ fn render(args: &[String]) -> Result<String, String> {
         window.present();
         window.show_start_over(|| {});
         let shown = Instant::now();
-        settle_until(|| window.is_mapped() && shown.elapsed() > Duration::from_millis(300));
+        settle_until(|| window.is_mapped() && shown.elapsed() > Duration::from_millis(1500));
         let outcome = postio_widgets::capture::png(&window, std::path::Path::new(&request.path))
             .map_err(|error| error.to_string());
         window.destroy();

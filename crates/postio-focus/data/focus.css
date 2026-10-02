@@ -19,8 +19,17 @@ window.focus-window {
   color: var(--postio-ink);
 }
 
+/* The pages before the inbox -- the wait, and why there is no mail -- on
+   the window's surface, painted by the page itself so what is drawn does
+   not depend on the window's own background being part of the frame. */
+.focus-opening,
+.focus-unavailable {
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+}
+
 /* The top bar (46 px): compose, the command-bar field, the sync label, the
-   main menu and close. */
+   main menu and close. Before the inbox it holds close alone (T216). */
 .focus-top-bar {
   min-height: 46px;
   padding: 0 var(--postio-space-4);
