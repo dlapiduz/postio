@@ -136,7 +136,6 @@ mod gtk_reader_teardown;
 mod gtk_reading_pane;
 mod gtk_result_order;
 mod gtk_row;
-mod row_timestamp_reads_the_clock;
 mod gtk_saved_searches_live;
 mod gtk_search_live;
 mod gtk_search_panel;
@@ -168,6 +167,7 @@ mod gtk_startup_focus;
 mod gtk_store_opening;
 mod gtk_style;
 mod gtk_toast;
+mod gtk_toast_tone_and_undo;
 mod gtk_toggle_rail;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
@@ -181,6 +181,7 @@ mod gtk_window_teardown;
 mod list_contract;
 mod list_model;
 mod no_stray_prints;
+mod row_timestamp_reads_the_clock;
 
 /// Cases held out of a default run, by name. See `app_suite`'s copy for what
 /// this is for; nothing here is held out today.
@@ -1602,6 +1603,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_toast::the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo",
         gtk_toast::the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo as fn(),
+    ),
+    (
+        "gtk_toast_tone_and_undo::a_toast_says_its_tone_and_whether_it_offers_undo",
+        gtk_toast_tone_and_undo::a_toast_says_its_tone_and_whether_it_offers_undo as fn(),
     ),
     (
         "gtk_unavailable::the_screen_shows_what_it_was_told_and_asks_to_try_again_once",
