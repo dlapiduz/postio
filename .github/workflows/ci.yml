@@ -381,7 +381,7 @@ jobs:
         run: |
           set -euo pipefail
           last=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&per_page=1" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&branch=main&per_page=1" \
             --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)"' 2>/dev/null || true)
 
           if [ -z "$last" ] || [ "$last" = "null" ]; then
@@ -393,9 +393,11 @@ jobs:
           conclusion=$(printf '%s' "$last" | cut -f1)
           url=$(printf '%s' "$last" | cut -f2)
           when=$(printf '%s' "$last" | cut -f3)
-          # Any completed run counts, scheduled or dispatched -- `gh workflow
-          # run Nightly` after landing a fix is a documented way to clear this,
-          # and filtering to `event=schedule` would silently ignore it. A
+          # Any completed run on `main` counts, scheduled or dispatched -- `gh
+          # workflow run Nightly` after landing a fix is a documented way to
+          # clear this, and filtering to `event=schedule` would silently ignore
+          # it. A run on another branch never counts: an agent's full suite on a
+          # feature branch says nothing about `main`. A
           # `workflow_call` from the job below does not appear here at all:
           # a reused workflow's jobs belong to the caller's run.
           echo "Last Nightly: $conclusion ($when)"

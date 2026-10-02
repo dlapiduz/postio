@@ -73,8 +73,12 @@ fi
 
 # `status=completed`, so a run still going is not mistaken for an answer --
 # and this run is not completed, so the first entry is the previous one.
+# `branch=`, so only runs on the branch being tested count: an agent may run
+# the full suite on a feature branch before landing, and that run must not
+# become the one a scheduled run on `main` compares against.
+BRANCH="${GITHUB_REF_NAME:-main}"
 last=$(gh api \
-    "repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW}/runs?status=completed&per_page=1" \
+    "repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW}/runs?status=completed&branch=${BRANCH}&per_page=1" \
     --jq '.workflow_runs[0] | "\(.conclusion)\t\(.head_sha)"' 2>/dev/null) || last=""
 
 if [ -z "$last" ] || [ "$last" = "null" ]; then
