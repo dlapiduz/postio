@@ -5210,6 +5210,7 @@ dependencies = [
  "postio-model",
  "postio-search",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]
