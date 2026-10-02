@@ -1,8 +1,9 @@
 # ADR 0009 — The AI subsystem
 
-- **Status:** Accepted — **GO** (2026-08-24); not built as of 0.4.0 (there is
-  no `postio-ai`); amended 2026-09-14 for the Turso engine and the egress log
-  that landed, see below
+- **Status:** Accepted (2026-08-24). `postio-ai` is built as the client for
+  a model the person runs on this computer, which Focus uses (spec 007
+  milestone 2); summarise, draft reply, semantic search and remote providers
+  are not built
 - **Date:** 2026-08-24
 - **Issue:** [#7 AI subsystem: summarize, draft reply, semantic search](https://github.com/dlapiduz/postio/issues/7)
 - **Related:** [ADR 0002](0002-extensible-command-vocabulary.md) (the seam this
@@ -14,6 +15,31 @@
   language. Every provider call is recorded in an **egress log the user can
   read**, and a cloud provider is off until a per-account, per-feature opt-in
   turns it on.
+
+---
+
+## What is built
+
+`crates/postio-ai` is the client for the model a person runs on this
+computer (spec 007 FR-165 to FR-175, research R16). Postio embeds no model
+and starts no runtime; the person names one in `[focus.model]`, and with no
+such section no client exists and nothing connects.
+
+- It speaks the OpenAI-compatible chat completions Ollama and llama.cpp's
+  server both serve, over `io-http` with no TLS, to a
+  `postio_config::ModelEndpoint` — which can only be built from a loopback
+  address or a local socket.
+- It answers three questions, each in a flat schema checked on the client:
+  Focus's needs-action question, digest summaries, and "more like this".
+- Every connection is a row in `egress_log` under the `model` subsystem
+  (Q6).
+- Its graph holds no send path, no other HTTP client, no store engine, no
+  toolkit and no inference engine (`check-crate-boundaries.py`, Q1).
+
+It depends on `postio-model`, `postio-config` and `postio-classify`, whose
+needs-action seam it answers. The design below for summarising threads,
+drafting replies, semantic search and a remote provider behind consent is
+not built.
 
 ---
 
@@ -43,12 +69,11 @@ because of what the code can reach, not because everybody remembered.
           ...
 ```
 
-`postio-ai` depends on `postio-model` (message types), `postio-core` (to
-register its commands) and `postio-storage` (embeddings, egress log). It
-**does not depend on `postio-account` (`postio-imap`, when this was written),
-`postio-smtp` or `postio-sync`**, and `scripts/checks/check-crate-boundaries.py`
-— which guarded two crates then and guards ten now — gains an entry for
-exactly this.
+When `postio-ai` grows the features below it gains `postio-core` (to
+register its commands) and `postio-storage` (embeddings). It **does not
+depend on `postio-account`, `postio-smtp`, `postio-sync` or
+`postio-runtime`**, and `scripts/checks/check-crate-boundaries.py` has an
+entry for exactly this.
 
 That is the whole enforcement of "AI must never send mail": there is no send in
 its dependency closure. A procedural rule ("the AI code must ask first") is one
@@ -123,8 +148,8 @@ enforces (`crates/postio-bench/benches/search_budget.rs`).
   missing 100 ms at realistic mailbox sizes, an ANN index becomes its own
   issue with a number attached — rather than being built speculatively now.
 - **A message with no embedding is not invisible.** Full-text candidates (the
-  `USING fts` indexes; FTS5 when this was written) are always in the merge, so
-  semantic search degrades to today's search rather than to nothing.
+  `USING fts` indexes) are always in the merge, so semantic search degrades
+  to full-text search rather than to nothing.
 
 ---
 
@@ -151,14 +176,15 @@ Four structural answers:
    pixel either.
 4. **A proposal is shown before it is anything.** A drafted reply opens in the
    composer with the text in it and the send button un-pressed. The user's
-   existing gesture — read, then `Ctrl+Enter` — is the confirmation, which is
+   existing gesture — read, then Send (`mod+Return`) — is the confirmation, which is
    better than a new dialogue because it is the one they already perform for
    every message they send.
 
 **The test that holds it:** a corpus fixture whose body contains tool-shaped
 and instruction-shaped text, asserted to produce no command, no network request
-beyond the one completion, and no live link in the rendered output. It belongs
-in the default suite, and it is the same fixture [ADR 0010](0010-mcp-surface.md)
+beyond the one completion, and no live link in the rendered output. It is
+`untrusted-instructions`, in the corpus's `prompt-injection` category, in the
+default suite, and it is the same fixture [ADR 0010](0010-mcp-surface.md)
 uses.
 
 ---
@@ -183,19 +209,14 @@ this seam, and three of its properties matter more here than they did there:
 
 ## Q6 — The egress log
 
-`postio-qhz.2` asked for a request log to *prove* the privacy claim rather than
-assert it. AI is the first subsystem that makes a deliberate outbound request,
-so it is where that log starts.
+The egress log *proves* the privacy claim rather than asserting it. It is
+one table, `egress_log` in `crates/postio-storage/src/schema.rs`, whose
+`subsystem` is `'imap'`, `'smtp'`, `'discovery'` or `'model'`; a model's
+calls go there, not in a table of their own.
 
-Every provider call appends a row: timestamp, account, feature, provider id,
-locality, message ids included, total bytes sent, outcome. It is visible in the
-settings panel, and revoking consent is one action away from reading it.
-
-> **Amended 2026-09-14:** the log landed first for the mail protocols, as one
-> table — `egress_log` in `crates/postio-storage/src/schema.rs`, its
-> `subsystem` constrained to `'imap'`, `'smtp'` and `'discovery'` (#151). An
-> AI provider's rows belong in that table under a fourth `subsystem` value,
-> not in a table of their own.
+Every provider call appends a row: when, the account if there is one, the
+host and port, and whether it connected. It is visible in Settings' Privacy
+section, and revoking consent is one action away from reading it.
 
 **The log records ids, counts and outcomes — never content.** That is the same
 rule as `ARCHITECTURE.md` §11's "logs never carry message content", and it is
@@ -238,11 +259,9 @@ Linux desktop where the user very likely already has Ollama.
 
 ## Consequences
 
-- New crate `postio-ai`; an entry in `check-crate-boundaries.py`; a
-  `message_embeddings` table in `crates/postio-storage/src/schema.rs` (there
-  are no migrations to write) and a fourth value in `egress_log.subsystem`'s
-  CHECK — the log that landed is one table, not an `ai_egress_log` beside it.
-  All of it still future work.
+- `postio-ai`, its entry in `check-crate-boundaries.py` and the `model`
+  value of `egress_log.subsystem` exist; semantic search adds a
+  `message_embeddings` table.
 - `postio-index` gains a merge step and keeps its budget bench as the gate.
 - `postio-search` does not change at all, which is the point.
 - The composer becomes the place drafted replies land, which is one more reason
