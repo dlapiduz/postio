@@ -115,7 +115,7 @@ does four things to mail:
 Its filing and digest rules act only while Focus runs. It has the same
 commands and keys as the classic app, and both desktop apps draw with the
 same widgets, from `postio-widgets`
-([ADR 0043](decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md)).
+([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)).
 It is one app at a time with the others, like the terminal. It ships in the
 desktop Flatpak as a second launcher, not as a package of its own. Its
 settings are `[focus]` in [`config.toml`](config.md).

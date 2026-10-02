@@ -118,7 +118,7 @@ nearly everything depends on `postio-model`.
 **Postio Focus added six crates** (`specs/007-postio-focus`). `postio-focus`
 is the second desktop app, a sibling of `postio-app` that never depends on it
 or on `postio-gtk`. `postio-widgets` is what both desktop apps draw with
-([ADR 0043](decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md)).
+([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)).
 The other four are Focus's engine work, and the classic app could use each
 of them too. `postio-classify` decides what is filtered, held and marked.
 The filing pass in `postio-sync` and the host's body-stage task call it.
@@ -365,7 +365,7 @@ hide inside the thing meant to catch it.
   `postio-gtk` or `postio-app`, nor `postio-gtk` on `postio-focus`.** The
   widgets reach mail only through `postio-client`, and neither desktop app
   stands on the other
-  ([ADR 0043](decisions/0043-gtk-both-desktop-apps-share-lives-in-postio-widgets.md)).
+  ([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)).
 - **`postio-classify` links nothing that sends mail or reaches the network**,
   and **`postio-calendar` is a pure leaf**: no database engine, toolkit,
   async runtime or network. The classifier's answer is a fixed schema, and it
