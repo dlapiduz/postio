@@ -3,8 +3,8 @@
 # Found while filming #813: the sidebar's own count says Flagged has 9, and
 # walking there with j lists 9 rows, but the go_to_flagged chord shows
 # "Flagged is empty" with 0 rows. Open until the chord and the sidebar row
-# load the same list.
-source = { kind = "spec", ref = "specs/008-storyboards" }
+# load the same list (#1747).
+source = { kind = "issue", ref = "#1747" }
 proof  = "open"
 
 [[step]]
