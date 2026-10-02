@@ -72,6 +72,7 @@ mod row_menu;
 mod rows;
 mod rule_query;
 mod selection;
+mod settings;
 mod shot;
 mod starts_offline;
 mod state;
@@ -931,6 +932,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "visible_window::a_jump_to_the_bottom_reads_the_ends_and_nothing_between",
         visible_window::a_jump_to_the_bottom_reads_the_ends_and_nothing_between as fn(),
+    ),
+    (
+        "settings::mod_comma_and_the_menu_open_settings_in_focuss_frame",
+        settings::mod_comma_and_the_menu_open_settings_in_focuss_frame as fn(),
+    ),
+    (
+        "settings::every_section_focus_shows_is_reachable_and_appearance_is_not",
+        settings::every_section_focus_shows_is_reachable_and_appearance_is_not as fn(),
+    ),
+    (
+        "settings::a_signature_made_in_settings_signs_the_next_message",
+        settings::a_signature_made_in_settings_signs_the_next_message as fn(),
+    ),
+    (
+        "settings::a_folder_left_out_of_backfill_is_written_and_shown",
+        settings::a_folder_left_out_of_backfill_is_written_and_shown as fn(),
+    ),
+    (
+        "settings::mod_e_opens_config_toml_in_the_persons_editor",
+        settings::mod_e_opens_config_toml_in_the_persons_editor as fn(),
     ),
 ];
 

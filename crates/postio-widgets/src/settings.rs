@@ -381,6 +381,7 @@ fn filter_display_order(config: &Config) -> Vec<String> {
 /// at all.
 fn two_columns(left: &impl IsA<gtk::Widget>, right: &impl IsA<gtk::Widget>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    row.set_widget_name(TWO_COLUMNS);
     row.add_css_class("postio-settings-columns");
 
     let left_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -407,6 +408,43 @@ fn two_columns(left: &impl IsA<gtk::Widget>, right: &impl IsA<gtk::Widget>) -> g
     row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     row.append(&right_box);
     row
+}
+
+/// Remove every row from `list`, and nothing else: a list can hold a
+/// popover too (the account rows' menu), which `remove_all` would try to
+/// remove as a row forever. Stops at a row the list no longer parents, as
+/// one being torn down may not.
+fn clear_rows(list: &gtk::ListBox) {
+    while let Some(row) = list.row_at_index(0) {
+        if row.parent().as_ref() != Some(list.upcast_ref::<gtk::Widget>()) {
+            break;
+        }
+        list.remove(&row);
+    }
+}
+
+/// The name every [`two_columns`] row carries, so a narrow panel can find
+/// them and stack them.
+const TWO_COLUMNS: &str = "postio-settings-two-columns";
+
+/// `row`, a [`two_columns`] row, side by side or stacked: stacked, the rule
+/// between the halves runs across rather than down.
+fn stack_columns(row: &gtk::Box, stacked: bool) {
+    let (along, across) = if stacked {
+        (gtk::Orientation::Vertical, gtk::Orientation::Horizontal)
+    } else {
+        (gtk::Orientation::Horizontal, gtk::Orientation::Vertical)
+    };
+    row.set_orientation(along);
+    let mut child = row.first_child();
+    while let Some(widget) = child {
+        if let Some(rule) = widget.downcast_ref::<gtk::Separator>() {
+            rule.set_orientation(across);
+            rule.set_margin_top(if stacked { space::S6 } else { 0 });
+            rule.set_margin_bottom(if stacked { space::S6 } else { 0 });
+        }
+        child = widget.next_sibling();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +627,9 @@ mod imp {
         /// The app the panel is drawn in (`set_frontend`): which sections
         /// and which commands' keys it shows. `None` shows everything.
         pub frontend: Cell<Option<postio_core::Frontend>>,
+        /// Whether the panes are narrow enough that two columns stack
+        /// (`set_narrow`).
+        pub narrow: Cell<bool>,
         /// Every account's folders, for Sync & storage's per-folder backfill
         /// control (ADR 0016). Empty until an app installs the backfill
         /// presenter, and the control is not drawn while it is.
@@ -838,6 +879,7 @@ mod imp {
                 list_viewport: Cell::new(0),
                 row_height: RefCell::default(),
                 frontend: Cell::new(None),
+                narrow: Cell::new(false),
                 folders: RefCell::default(),
                 backfill_handlers: RefCell::default(),
                 accounts_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -1249,9 +1291,7 @@ impl SettingsPanel {
     /// Rebuilds the privacy rows from whatever allow-list is held.
     fn redraw_privacy(&self) {
         let imp = self.imp();
-        while let Some(row) = imp.privacy_list.row_at_index(0) {
-            imp.privacy_list.remove(&row);
-        }
+        clear_rows(&imp.privacy_list);
         let senders: Vec<String> = imp
             .remote_image_allowlist
             .borrow()
@@ -1369,9 +1409,7 @@ impl SettingsPanel {
     /// Rebuilds the unsubscribe-log rows from whatever was last handed in.
     fn redraw_unsubscribe_activations(&self) {
         let imp = self.imp();
-        while let Some(row) = imp.unsubscribe_list.row_at_index(0) {
-            imp.unsubscribe_list.remove(&row);
-        }
+        clear_rows(&imp.unsubscribe_list);
         let activations = imp.unsubscribe_activations.borrow();
         for activation in activations.iter() {
             imp.unsubscribe_list
@@ -1437,9 +1475,7 @@ impl SettingsPanel {
         // changed: the same account is still the open one.
         imp.redrawing.set(true);
         let open_on = *imp.account_detail_id.borrow();
-        while let Some(row) = imp.accounts_list.row_at_index(0) {
-            imp.accounts_list.remove(&row);
-        }
+        clear_rows(&imp.accounts_list);
         for account in imp.accounts.borrow().iter() {
             imp.accounts_list.append(&self.account_row(account));
         }
@@ -1502,9 +1538,7 @@ impl SettingsPanel {
     /// which on a machine that has never synced is exactly the claim.
     pub fn set_egress(&self, entries: Vec<postio_model::egress::EgressEvent>) {
         let imp = self.imp();
-        while let Some(row) = imp.egress_list.row_at_index(0) {
-            imp.egress_list.remove(&row);
-        }
+        clear_rows(&imp.egress_list);
         for entry in &entries {
             let row = gtk::ListBoxRow::new();
             row.add_css_class("postio-settings-egress-row");
@@ -1851,9 +1885,7 @@ impl SettingsPanel {
         // the list is small, and a diff is a second description of the same
         // state free to disagree with the first.
         if let Some(list) = imp.account_detail_signature_list.get() {
-            while let Some(row) = list.row_at_index(0) {
-                list.remove(&row);
-            }
+            clear_rows(&list);
             for signature in &account.signatures {
                 let row = gtk::ListBoxRow::new();
                 let label = gtk::Label::new(Some(&signature.name));
@@ -2744,9 +2776,7 @@ impl SettingsPanel {
         let Ok(config) = Config::from_toml_str(&self.text()) else {
             return;
         };
-        while let Some(row) = imp.filters_list.row_at_index(0) {
-            imp.filters_list.remove(&row);
-        }
+        clear_rows(&imp.filters_list);
         let order = filter_display_order(&config);
         let pinned = config.ordered_filter_keys();
         for key in &order {
@@ -3033,8 +3063,9 @@ impl SettingsPanel {
         backfill_heading.set_visible(false);
         backfill.set_visible(false);
 
-        imp.sync_pane
-            .append(&two_columns(left.widget(), right.widget()));
+        let columns = two_columns(left.widget(), right.widget());
+        stack_columns(&columns, imp.narrow.get());
+        imp.sync_pane.append(&columns);
 
         let _ = imp.sync_controls.set(SyncControls {
             check_for_mail,
@@ -3058,9 +3089,7 @@ impl SettingsPanel {
         let Ok(config) = Config::from_toml_str(&self.text()) else {
             return;
         };
-        while let Some(row) = imp.keys_list.row_at_index(0) {
-            imp.keys_list.remove(&row);
-        }
+        clear_rows(&imp.keys_list);
         let frontend = imp.frontend.get();
         for spec in postio_core::registry::all()
             .filter(|spec| frontend.is_none_or(|app| spec.requires.offered_by(app)))
@@ -3478,8 +3507,9 @@ impl SettingsPanel {
         checks.append(sender_avatars.widget());
         right.control(&checks);
 
-        imp.appearance_pane
-            .append(&two_columns(left.widget(), right.widget()));
+        let columns = two_columns(left.widget(), right.widget());
+        stack_columns(&columns, imp.narrow.get());
+        imp.appearance_pane.append(&columns);
 
         let _ = imp.appearance.set(AppearanceControls {
             theme,
@@ -3837,6 +3867,24 @@ impl SettingsPanel {
         self.imp().header_bar.clone()
     }
 
+    /// The find-a-setting field, for a host that draws its own header
+    /// rather than mounting [`SettingsPanel::header_bar`]: Focus's dialog
+    /// wears the message dialog's header. Taken out of the header bar, so
+    /// the host can place it.
+    pub fn search_field(&self) -> gtk::SearchEntry {
+        let imp = self.imp();
+        if imp.search.parent().is_some() {
+            imp.header_bar.remove(&imp.search);
+        }
+        imp.search.clone()
+    }
+
+    /// Whether a Keyboard row is waiting for the key to bind: every key is
+    /// the panel's until it has one.
+    pub fn is_capturing(&self) -> bool {
+        self.imp().capturing.borrow().is_some()
+    }
+
     /// Which pane is on screen.
     pub fn current_section(&self) -> Section {
         self.imp().current.get()
@@ -3951,6 +3999,30 @@ impl SettingsPanel {
             self.show_section(first);
         }
         self.redraw_visible_pane();
+    }
+
+    /// Stack each pane's two columns into one, for a host too narrow to
+    /// give each half room: Focus's dialog, at most 820 wide.
+    pub fn set_narrow(&self, narrow: bool) {
+        let imp = self.imp();
+        if imp.narrow.replace(narrow) == narrow {
+            return;
+        }
+        // Narrow, the panel is as wide as the pane on screen needs, not the
+        // widest of them all.
+        imp.stack.set_hhomogeneous(!narrow);
+        for pane in [&imp.sync_pane, &imp.appearance_pane] {
+            let mut child = pane.first_child();
+            while let Some(widget) = child {
+                if let Some(row) = widget
+                    .downcast_ref::<gtk::Box>()
+                    .filter(|row| row.widget_name() == TWO_COLUMNS)
+                {
+                    stack_columns(row, narrow);
+                }
+                child = widget.next_sibling();
+            }
+        }
     }
 
     /// Whether this panel shows `section` at all.
@@ -4616,6 +4688,22 @@ impl SettingsPanel {
         ] {
             pane.add_css_class("postio-settings-pane-body");
             pane.set_vexpand(true);
+            // A pane with no list of its own to scroll scrolls whole when
+            // the window is shorter than it: Focus's dialog is the window's
+            // height less 80, and one column of Sync & storage is taller.
+            if matches!(
+                section,
+                Section::Composing | Section::Appearance | Section::Sync | Section::Privacy
+            ) {
+                let scroller = gtk::ScrolledWindow::builder()
+                    .hscrollbar_policy(gtk::PolicyType::Never)
+                    .vscrollbar_policy(gtk::PolicyType::Automatic)
+                    .propagate_natural_height(true)
+                    .child(pane)
+                    .build();
+                imp.stack.add_named(&scroller, Some(section.label()));
+                continue;
+            }
             imp.stack.add_named(pane, Some(section.label()));
         }
 

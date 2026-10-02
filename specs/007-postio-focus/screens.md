@@ -477,9 +477,11 @@ check per folder, under its account's address when there is more than one,
 cleared to skip that folder's backfill (ADR 0016); Focus has no sidebar to
 carry the classic app's folder menu.
 
-**Narrow.** Below 760 px (the width at which the message dialog folds its
-action row into More) a pane's two columns stack into one, the rule between
-them running across.
+**One column.** The dialog is at most 820 px wide, so a pane is at most
+606: too narrow for the classic window's two columns side by side. In Focus
+a pane's two columns stack into one, the rule between them running across,
+and the dialog is as wide as the pane on screen needs rather than the widest
+of them.
 
 **Keys.** `mod+comma` and the main menu's Settings open it; `mod+comma`
 again, Escape and the X close it, back to the list as it was. While it is

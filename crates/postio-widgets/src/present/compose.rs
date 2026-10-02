@@ -124,14 +124,29 @@ pub fn install_signature_default(
     selected: impl Fn() -> Option<MailboxId> + 'static,
 ) {
     let client = client.clone();
+    let weak = composer.downgrade();
     composer.connect_signature_default(move |answer| {
         let client = client.clone();
+        let weak = weak.clone();
         let selected = selected();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // resolves the rest.
-            let resolved = client.default_signature(account, selected).await;
-            answer(resolved.ok().flatten());
+            let resolved = client
+                .default_signature(account, selected)
+                .await
+                .ok()
+                .flatten();
+            // A default the composer has not been told about: one made in
+            // Settings since it read the account's signatures, or the first
+            // compose, whose read has not landed yet. Read them again first,
+            // or the draft signs with the identity's own instead (T234).
+            if let (Some(id), Some(composer)) = (resolved, weak.upgrade())
+                && !composer.has_signature(id)
+            {
+                install_identities(&composer, &client, account).await;
+            }
+            answer(resolved);
         });
     });
 }

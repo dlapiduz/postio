@@ -1171,6 +1171,9 @@ fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
         (0..controllers.n_items())
             .filter_map(|at| controllers.item(at).and_downcast::<gtk::GestureClick>())
             .filter(|gesture| gesture.propagation_phase() == phase)
+            // A primary click: a gesture for another button (a row's
+            // context menu on the secondary) never sees it.
+            .filter(|gesture| matches!(gesture.button(), 0 | gtk::gdk::BUTTON_PRIMARY))
             .collect()
     };
     // The path, in the order GTK runs it: widget and gesture.

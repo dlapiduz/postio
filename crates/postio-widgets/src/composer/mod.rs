@@ -1267,6 +1267,16 @@ impl Composer {
         self.apply_signature();
     }
 
+    /// Whether the account's signatures, as this composer was last told
+    /// them, include `id`.
+    pub fn has_signature(&self, id: SignatureId) -> bool {
+        self.imp()
+            .signatures
+            .borrow()
+            .iter()
+            .any(|signature| signature.id == id)
+    }
+
     /// Selects the named signature with `id` in the picker, if the account
     /// has it. `false` when it does not — the caller falls back to the
     /// identity's own rather than leaving a stale selection in place.

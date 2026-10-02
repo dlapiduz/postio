@@ -172,6 +172,14 @@ pub fn adopt_at(
     window.set_saved_searches(saved_searches(config));
     window.set_remote_runtime(host.runtime());
     window.set_config_path(config_path.map(std::path::Path::to_path_buf));
+    // What Settings' connection test and token-expiry line read, from this
+    // process (T234).
+    window.set_settings_seams(crate::settings::Seams {
+        runtime: host.runtime(),
+        secrets: host.wiring().secrets.clone(),
+        attachments_eager: config.sync.attachment_fetch
+            == postio_config::sync::AttachmentFetch::Eager,
+    });
     // Focus's notifications follow the classic app's `[sync]` settings,
     // and are only ever about mail that stayed in its inbox (FR-153).
     host.notify_with(config.sync.clone());

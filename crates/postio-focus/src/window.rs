@@ -248,6 +248,15 @@ mod imp {
         /// `startup::adopt_at` (ADR 0041). Called again once an account is
         /// added after a first run that started with none (T171).
         pub start_syncing: RefCell<Option<Rc<dyn Fn()>>>,
+        /// Settings (T234), built on its first open and kept
+        /// (`crate::settings`).
+        pub settings: RefCell<Option<Rc<crate::settings::Settings>>>,
+        /// What Settings asks of the process that opened the store, set by
+        /// `startup::adopt_at`.
+        pub settings_seams: RefCell<Option<crate::settings::Seams>>,
+        /// Where `EditConfig` opens `config.toml`: the person's editor,
+        /// unless a test has said otherwise (T235).
+        pub editor: RefCell<Option<Rc<dyn Fn(&std::path::Path)>>>,
     }
 
     impl Default for FocusWindow {
@@ -322,6 +331,9 @@ mod imp {
                 capture: RefCell::default(),
                 adding_account: RefCell::default(),
                 start_syncing: RefCell::default(),
+                settings: RefCell::default(),
+                settings_seams: RefCell::default(),
+                editor: RefCell::default(),
             }
         }
     }
@@ -698,6 +710,9 @@ impl FocusWindow {
         if let Some(capture) = imp.capture.borrow().as_ref() {
             capture.set_keymap(&keymap);
         }
+        if let Some(settings) = imp.settings.borrow().as_ref() {
+            settings.set_keymap(&keymap, &problems);
+        }
         imp.keymap.replace(keymap);
         // Every cap was drawn again: its control's shortcut follows it.
         crate::a11y::teach_shortcuts(self);
@@ -766,6 +781,11 @@ impl FocusWindow {
                 glib::Propagation::Proceed
             };
         }
+        // A Keyboard row in Settings waiting for its key takes every key,
+        // Escape included, until it has one (T234).
+        if self.settings_takes_every_key() {
+            return glib::Propagation::Proceed;
+        }
         let Some(chord) = postio_widgets::keys::chord(key, state) else {
             return glib::Propagation::Proceed;
         };
@@ -820,6 +840,9 @@ impl FocusWindow {
             }
             if dialog.widget_name() == crate::capture::DIALOG_NAME {
                 return self.capture_key(outcome);
+            }
+            if dialog.widget_name() == crate::settings::DIALOG_NAME {
+                return self.settings_key(outcome);
             }
             return match outcome {
                 Outcome::Command(id)
@@ -1493,6 +1516,10 @@ impl FocusWindow {
             CommandId::Refresh => self.post(Command::Refresh),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
+            // Settings (T234) and its file in the person's editor (T235):
+            // `crate::settings`.
+            CommandId::Settings => self.toggle_settings(),
+            CommandId::EditConfig => self.edit_config(),
             CommandId::OpenMessage => match self.digest_at_cursor() {
                 Some(digest) => self.open_digest(digest),
                 None => self.open_message(),
@@ -2418,6 +2445,9 @@ impl FocusWindow {
             _ => {}
         }
         self.hear_sync(event);
+        if let Some(settings) = self.imp().settings.borrow().as_ref() {
+            settings.hear(event);
+        }
         if let Some(pane) = self.imp().pane.borrow().as_ref() {
             pane.feed().handle(event);
         }
@@ -3957,6 +3987,7 @@ impl FocusWindow {
         commands.extend([CommandId::GoToFiltered, CommandId::GoToDigestRules]);
         commands.push(CommandId::Undo);
         commands.push(CommandId::AddAccount);
+        commands.extend(crate::settings::Settings::controls());
         commands.extend(crate::compose::Compose::controls());
         commands.extend(crate::capture::CaptureSheet::controls());
         // The answering actions a marked row draws, each a button.
