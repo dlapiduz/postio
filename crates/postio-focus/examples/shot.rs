@@ -30,6 +30,7 @@
 //! | `30` | A long newsletter with no page of its own, opened: in app colours (T218) |
 //! | `31` | The same newsletter past its render deadline: the plain-text fallback (T218) |
 //! | `32` | A new message with an attachment and "Remind if no reply" chosen (T221's states) |
+//! | `33` | A store no migration reaches: the page offering a fresh store (T215, T216) |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -218,7 +219,7 @@ const SCREENS: &[(&str, &str)] = &[
         "26",
         "the row menu, right-clicked on a row outside the selection",
     ),
-    ("30", "a store no migration reaches, offering a fresh store"),
+    ("33", "a store no migration reaches, offering a fresh store"),
     ("27", "a newsletter opened, on paper"),
     ("28", "office mail opened, in app colours"),
     (
@@ -586,9 +587,9 @@ fn render(args: &[String]) -> Result<String, String> {
         adw::ColorScheme::ForceLight
     });
 
-    // Screen 30 is before there is a store at all: the page a store no
+    // Screen 33 is before there is a store at all: the page a store no
     // migration reaches leaves the window on (T215, T216).
-    if request.screen == "30" {
+    if request.screen == "33" {
         let window = FocusWindow::new(None);
         window.set_default_size(request.size.0, request.size.1);
         window.present();
