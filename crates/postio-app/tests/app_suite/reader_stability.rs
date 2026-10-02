@@ -146,6 +146,7 @@ async fn watch_for(duration: std::time::Duration, each: impl FnMut()) {
 /// is measured against, such as how soon a body lands, which the patience
 /// multiplier would stretch past the app's own unscaled grace.
 async fn watch_exactly(duration: std::time::Duration, mut each: impl FnMut()) {
+    // POSTIO-FIXED-DEADLINE: the window is the app's own unscaled grace, which this measures against.
     let until = std::time::Instant::now() + duration;
     while std::time::Instant::now() < until {
         settle();
