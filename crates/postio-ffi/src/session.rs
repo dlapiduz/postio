@@ -32,6 +32,18 @@ pub enum SessionError {
         /// A sentence for the user, naming the platform's keyring.
         message: String,
     },
+    /// The store was written at a schema this build cannot carry forward
+    /// (`postio_session::Remedy::StartOver`).
+    ///
+    /// Its own case, not a `StoreUnavailable`: trying again meets the same
+    /// file every time, so a surface that offers "Try again" for it is a dead
+    /// end. The way forward is starting the store over, which sets it aside
+    /// rather than deleting it (`postio_session::start_over`).
+    #[error("{message}")]
+    StoreFromAnotherBuild {
+        /// A sentence for the user, already written by the store layer.
+        message: String,
+    },
     /// The tokio runtime the engine needs could not be started.
     #[error("{message}")]
     RuntimeUnavailable {
@@ -41,6 +53,18 @@ pub enum SessionError {
 }
 
 impl SessionError {
+    /// Maps a store refusal onto the case the frontend routes on: whether
+    /// trying again can help, or only starting the store over.
+    fn from_refusal(refusal: postio_session::Refusal) -> Self {
+        let message = refusal.sentence;
+        match refusal.remedy {
+            postio_session::Remedy::TryAgain => SessionError::StoreUnavailable { message },
+            postio_session::Remedy::StartOver { .. } => {
+                SessionError::StoreFromAnotherBuild { message }
+            }
+        }
+    }
+
     /// Maps a keyring failure onto the case the frontend routes on.
     ///
     /// A match rather than `to_string`, and that is the entire point of this
@@ -2262,8 +2286,9 @@ impl Session {
         // blocks. That is what the sentence above about the keyring is
         // already telling a Swift caller -- do not invoke this on the main
         // actor -- and it covers the store open for exactly the same reason.
-        let (database, blobs) = blocking(postio_session::open_store_at(path, &key))
-            .map_err(|message| SessionError::StoreUnavailable { message })?;
+        let (database, blobs) =
+            blocking(postio_session::open_store_at_reporting(path, &key, &|_| {}))
+                .map_err(SessionError::from_refusal)?;
 
         let config = load_config(&source);
         let keys = config.keys;
