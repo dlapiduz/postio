@@ -18,6 +18,7 @@ pub mod format;
 pub mod key;
 pub mod lint;
 pub mod page;
+pub mod prompt;
 pub mod run;
 
 #[cfg(test)]
