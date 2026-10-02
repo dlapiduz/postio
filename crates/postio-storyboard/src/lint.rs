@@ -257,7 +257,9 @@ fn lint_references(
             StepRef::Id(id) => id.clone(),
             StepRef::Index(index) => index.to_string(),
         };
-        if !position_of(storyboard, &reference).is_some_and(|at| at < number) {
+        // Step 0, the starting state, is earlier than every step.
+        let starting_state = reference == "0";
+        if !starting_state && !position_of(storyboard, &reference).is_some_and(|at| at < number) {
             errors.push(LintError::SameAsNotEarlier {
                 step: number,
                 target: reference,
@@ -488,6 +490,16 @@ mod tests {
             script.contains(&tlds),
             "the script's reserved TLDs are not {tlds}"
         );
+    }
+
+    #[test]
+    fn same_as_the_starting_state_is_earlier_than_every_step() {
+        // Step 0 is where the storyboard began, so "back to how it was" is
+        // `same_as = 0` -- a reference to the past, never to the future.
+        let text = format!(
+            "{GOOD}[[step]]\ncommand = \"back\"\ncheck = {{ cursor.index = {{ same_as = 0 }} }}\n"
+        );
+        assert_eq!(lint_text(&text), vec![]);
     }
 
     #[test]
