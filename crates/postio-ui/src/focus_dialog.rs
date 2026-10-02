@@ -34,6 +34,9 @@ pub const COLUMN_PAPER_INSET: i32 = 48;
 
 /// Between a control's words and its keycap.
 pub const KEYCAP_GAP: i32 = 6;
+/// Between a step's chevron and its keycap (T219): a glyph rather than a
+/// word, and the pair has to stay small in the header.
+pub const STEP_KEYCAP_GAP: i32 = 4;
 /// Between label pills, and between a pill's dot and its name.
 pub const LABEL_GAP: i32 = 6;
 /// A label pill's colour dot, across.

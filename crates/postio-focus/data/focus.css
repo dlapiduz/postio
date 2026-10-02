@@ -418,6 +418,17 @@ button.focus-open-close {
   padding: 0;
 }
 
+/* The steps (T219): one pair, each the chevron and its key's cap inside one
+   quiet button, as every verb in the dialog carries its key. Padded 4px a
+   side, so the pair is no wider than the handoff's two chevrons and caps;
+   the shared icon button's square does not apply to a button with a word
+   in it. */
+.focus-open-header button.focus-open-step {
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 4px;
+}
+
 .focus-open-title {
   font-weight: 600;
   font-size: 0.9886rem;

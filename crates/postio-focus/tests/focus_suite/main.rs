@@ -507,6 +507,10 @@ const CASES: &[(&str, fn())] = &[
         open_reading::close_is_an_x_icon_at_the_right_and_the_steps_at_the_left as fn(),
     ),
     (
+        "open_reading::the_steps_carry_their_keys_inside_and_stay_compact",
+        open_reading::the_steps_carry_their_keys_inside_and_stay_compact as fn(),
+    ),
+    (
         "open_layout::the_dialog_is_sized_by_the_window_and_never_by_the_message",
         open_layout::the_dialog_is_sized_by_the_window_and_never_by_the_message as fn(),
     ),

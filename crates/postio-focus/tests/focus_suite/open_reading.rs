@@ -455,17 +455,7 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
         let dialog_widget: gtk::Widget = dialog.clone().upcast();
         let x_of =
             |widget: &gtk::Widget| widget.compute_bounds(&dialog_widget).expect("laid out").x();
-        let steps: Vec<gtk::Widget> = support::descendants(&dialog)
-            .into_iter()
-            .filter(|w| {
-                w.downcast_ref::<gtk::Button>().is_some_and(|b| {
-                    matches!(
-                        b.icon_name().as_deref(),
-                        Some("go-up-symbolic" | "go-down-symbolic")
-                    )
-                })
-            })
-            .collect();
+        let steps = support::with_class(&dialog, "focus-open-step");
         assert_eq!(steps.len(), 2, "the two step buttons");
         for step in &steps {
             assert!(
@@ -479,5 +469,57 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
             "the steps are left of the title"
         );
         assert!(x_of(&title) < x_of(close.upcast_ref()));
+    });
+}
+
+/// T219: the steps are one compact pair, each a single control that
+/// carries its key inside it -- the chevron, then its cap -- the way every
+/// other control in Focus teaches its key ("Reply e", "Inbox g o"). Four
+/// separate things, two icon buttons and two caps standing beside them,
+/// took the header's whole left third.
+pub fn the_steps_carry_their_keys_inside_and_stay_compact() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
+            .await;
+        fixture.write_body(message, "A body.").await;
+        let window = opened(&fixture, 1).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        assert!(
+            crate::settle_until(async || support::only(&dialog, "focus-open-close").width() > 0)
+                .await
+        );
+        let steps = support::with_class(&dialog, "focus-open-step");
+        assert_eq!(steps.len(), 2, "the two steps, each one control");
+        for (step, key, name) in [
+            (&steps[0], "k", "Previous message"),
+            (&steps[1], "j", "Next message"),
+        ] {
+            assert!(step.is::<gtk::Button>(), "{name} is not a button");
+            assert_eq!(step.tooltip_text().as_deref(), Some(name));
+            let caps: Vec<String> = support::descendants(step)
+                .into_iter()
+                .filter(|w| w.has_css_class("postio-keyhint") && w.is_visible())
+                .filter_map(|w| w.downcast::<gtk::Label>().ok())
+                .map(|label| label.text().to_string())
+                .collect();
+            assert_eq!(caps, vec![key.to_owned()], "{name}'s key is not inside it");
+        }
+        let pair = steps[0].parent().expect("the steps sit together");
+        assert_eq!(
+            steps[1].parent().as_ref(),
+            Some(&pair),
+            "the steps are not one pair"
+        );
+        assert!(
+            pair.width() <= 88,
+            "the steps take {}px of the header",
+            pair.width()
+        );
     });
 }

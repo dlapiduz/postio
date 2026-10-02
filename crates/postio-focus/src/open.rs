@@ -23,7 +23,7 @@ use postio_ui::hints;
 use postio_widgets::reader::{Reader, RemoteImageAllowList, Verbs};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::S3;
-use postio_widgets::widgets::{Action, ActionBar, Kind, Size, icon_button};
+use postio_widgets::widgets::{Action, ActionBar, Kind, Size};
 
 use crate::list::FocusRow;
 use crate::open_header::HeaderCard;
@@ -193,17 +193,20 @@ impl OpenMessage {
         titles.append(&title);
         titles.append(&subtitle);
 
-        let up = icon_button("go-up-symbolic", "Previous message");
-        let up_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        up_key.set_valign(gtk::Align::Center);
-        let down = icon_button("go-down-symbolic", "Next message");
-        let down_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        down_key.set_valign(gtk::Align::Center);
-        let steps = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::KEYCAP_GAP);
+        // The steps (T219): one pair, each a single control carrying its
+        // key inside it -- the chevron, then its cap -- as every verb in the
+        // dialog carries its own ("Reply e"). A cap standing beside its
+        // button made four things of two, and taught a screen reader
+        // nothing: a cap inside a button is the button's shortcut
+        // (`a11y::teach_shortcuts`).
+        let (up, up_key) = step("go-up-symbolic", "Previous message");
+        let (down, down_key) = step("go-down-symbolic", "Next message");
+        let steps = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        steps.add_css_class("linked");
+        steps.add_css_class("focus-open-steps");
+        steps.set_valign(gtk::Align::Center);
         steps.append(&up);
-        steps.append(&up_key);
         steps.append(&down);
-        steps.append(&down_key);
 
         let header = gtk::CenterBox::new();
         header.add_css_class("focus-open-header");
@@ -1374,4 +1377,23 @@ fn tighten_keycaps(root: &gtk::Widget) {
             stack.push(next);
         }
     }
+}
+
+/// One of the header's steps: a button showing `icon` and, after it, the
+/// holder its key's cap is put in from the keymap. The shared icon button's
+/// dress -- its name as the tooltip and accessible label -- with words
+/// inside, so it is sized by them rather than as a square.
+fn step(icon: &str, name: &str) -> (gtk::Button, gtk::Box) {
+    let image = gtk::Image::from_icon_name(icon);
+    image.set_accessible_role(gtk::AccessibleRole::Presentation);
+    let key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    key.set_valign(gtk::Align::Center);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::STEP_KEYCAP_GAP);
+    content.append(&image);
+    content.append(&key);
+    let button = gtk::Button::new();
+    button.set_child(Some(&content));
+    postio_widgets::widgets::button::dress_icon(&button, name);
+    button.add_css_class("focus-open-step");
+    (button, key)
 }
