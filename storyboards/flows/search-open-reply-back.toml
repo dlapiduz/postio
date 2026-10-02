@@ -1,0 +1,49 @@
+# Search, open a hit, reply, and come back (ux-architect §4).
+#
+# `/` and a query narrow the list, Return hands the keyboard to the hits,
+# `Enter` opens one, `e` replies, and Escape twice walks back out: first
+# the composer, then the search. Nothing should be lost on the way: the
+# folder returns whole.
+#
+# The reply step is red: the preview offers Reply with `e`, but `e` is
+# unbound in the search context, even after Enter has opened the hit.
+source = { kind = "flow", ref = "ux-architect §4" }
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+type    = "harbour"
+settle  = { until = { rows.count = { changed = true } } }
+check   = { rows.count = { changed = true } }
+expect  = "The list narrows to the mail that matches."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.region = "list" }
+expect  = "The keyboard moves to the hits; the first hit is in the reading pane."
+
+[[step]]
+id      = "hit"
+command = "open_message"
+check   = { composer.open = false }
+expect  = "The hit is open in the reading pane."
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "The reply takes the pane, quoting the hit."
+
+[[step]]
+command = "back"
+check   = { composer.open = false }
+expect  = "Escape leaves the composer and the hit is back in the pane."
+
+[[step]]
+command = "back"
+check   = { composer.open = false, overlay.kind = "none", rows.count = { same_as = 0 } }
+expect  = "A second Escape leaves the search: the list is the whole Inbox again."
