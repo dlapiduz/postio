@@ -188,8 +188,18 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 /// The render deadline for every test that is not about the deadline: the
 /// production bound, scaled by `POSTIO_TEST_PATIENCE`, so a debug build on a
 /// busy runner does not fall back by accident (spec 006 research R6).
+/// The render deadline for tests that assert what a render *shows*.
+///
+/// Not the product's 400 ms. Past its deadline a `BodyView` shows the plain
+/// text instead (FR-023), so a content test given the product deadline is
+/// really asking "does this render finish in 400 ms on this machine right
+/// now" -- a stopwatch, which this project does not ask of a shared runner.
+/// On a loaded CI shard a designed page missed it, and the assertion about
+/// the scroll range met the one-line fallback, 51px tall (2026-10-01). The
+/// deadline itself has its own test, with its own 1 ms deadline
+/// (`body_view::a_render_past_its_deadline_shows_the_plain_text`).
 pub(crate) fn reader_deadline() -> std::time::Duration {
-    postio_test_support::scaled(postio_gtk::body_view::DEFAULT_RENDER_DEADLINE)
+    postio_test_support::scaled(std::time::Duration::from_secs(30))
 }
 
 const CASES: &[(&str, fn())] = &[
