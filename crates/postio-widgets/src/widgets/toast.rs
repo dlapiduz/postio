@@ -217,7 +217,8 @@ impl Toast {
             .button_label(button_label)
             .build();
         toast.connect_button_clicked(move |_| on_click());
-        self.push(toast);
+        // A prompt is a gesture that could not run, like a notice.
+        self.push(toast, Tone::Warning, false);
     }
 
     /// Dismisses whatever is showing and shows `toast` instead.
