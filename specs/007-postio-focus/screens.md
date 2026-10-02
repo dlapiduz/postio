@@ -135,6 +135,101 @@ from either device; "n/a" means the surface has no such thing.
 | Key map, raw source, digest | Escape closes | the X closes | present |
 | Pickers, command bar | Escape closes | a press outside closes | present |
 
+## The composer (T221)
+
+Decided with `/ux-architect` and `/gtk-design` from the maintainer's walk
+(2026-10-01: "the compose window looks pretty bad ... especially the buttons
+at the top"), against the message dialog it now matches (T205-T214). The
+walk found the header carrying five controls and two long keycaps: the title
+was centred but the verbs reached it from the right, `ctrl+shift+Return` was
+the widest thing in the bar, Send's cap made a box inside a box, Attach was
+drawn twice (the footer and the toolbar's paperclip), and the editor sat on
+a grey of its own under rows on another.
+
+**The rule: the composer is the message dialog with the composer's verbs.**
+Pressing Reply in the message dialog puts Send where Reply was.
+
+- **Size.** The message dialog's rule (`postio_ui::focus_dialog`, T205):
+  `clamp(640, W - 2 * max(96, 0.18 * W), 820)` wide, the window less 80
+  tall, following the window's resizes. 820 x 820 at 1440 x 900, 655 x 688
+  at 1024 x 768. It was a fixed 980 x 820, wider than the window's own rule
+  allowed at 1024.
+- **Header bar, 52px: the message dialog's anatomy.** Left, Detach, an icon
+  button (T202) where the message dialog has its steps; it carries its key in
+  its tooltip, not a cap, because it is the rarest verb here. Centre, the
+  title ("New message", "Reply", "Reply to all", "Forward") at the message
+  dialog's title size, and under it, in the mono subtitle the message
+  dialog uses for "Message 5 of 60", what will be sent and what has happened
+  to it: "Plain text · 58 words · Draft saved locally 16:12". Right, the one
+  shared close X (T192). Nothing else: no verb reaches the title from either
+  side, at any width.
+- **Action row, 44px between two hairlines: the composer's verbs.** Send
+  `ctrl+↵`, Send later `ctrl+⇧+↵` with its ▾, Attach `ctrl+⇧+a`, Remind if no
+  reply `ctrl+h` (and its day once chosen). Send first, where Reply sits in
+  the message dialog's row. Send is the dialog's one primary button -- in
+  Focus a plain raised button with a bold label (FR-091: no button wears
+  the accent or `suggested-action`) -- and the others are the message
+  dialog's quiet row verbs, no frame of their own and a tint under the
+  pointer. Send later is secondary in the same way Reply all is beside
+  Reply: the same kind as the other verbs, after Send.
+- **Keycaps: the keymap's spelling, compacted.** `hints::short`, which the
+  message dialog already uses for `Del`, now also draws `Return` as `↵` and
+  `shift` as `⇧` -- the glyphs Focus's own hint lines (`↵ open`) and the
+  classic rail (`⇧I`) already draw. `ctrl` stays a word, as the command bar's
+  `ctrl+k` spells it, and the `+` stays. `ctrl+shift+Return` (17 characters)
+  is `ctrl+⇧+↵` (8). What is pressed and what a screen reader hears keep the
+  binding's own names. The caps are the message dialog's: 16px, an inset
+  hairline, muted.
+- **One column: the reader's.** Everything under the action row -- the field
+  rows, the formatting toolbar, the editor, the recipient warning and the
+  attachments -- shares one column, `min(480, dialog - 96)`, centred:
+  the app colours column the message is read in (T207). So the left edge of
+  To, of the toolbar and of the first line written is one edge, and a reply
+  is written at the measure it will be read at, about 70 characters. The
+  wider paper column is for mail that paints its own page; nothing written
+  here does.
+- **Field rows: the sender block's grid.** To (with "+ Cc" at its right),
+  Cc and Bcc when shown, From, Subject and Labels: 40px rows, each with a
+  hairline under it, the names in one label column as wide as the widest
+  name (a size group, so "Subject" and "To" start their values at one x),
+  in the message dialog's muted 13px, and the values in ink, 12px after it
+  (the sender block's column gap). Every row runs the column's full width.
+- **Formatting toolbar.** The composer's own icon buttons, the shared
+  26px ghost (T202), in one row under the fields, its first button at the
+  column's left edge. The paperclip is hidden in Focus: Attach is a verb in
+  the action row with its key on it, and one control for one verb is the
+  rule. The classic composer keeps it.
+- **Editor: on the dialog's surface.** The editing document reads its
+  ground, ink, secondary ink, muted ink, accent and hairlines from probes
+  styled with the dialog's own roles, exactly as the open message's body
+  does (T203, T211), and draws its text at the column's edge (no inset of
+  its own), Barlow 15/24 with paragraphs 12 apart: what is written looks as
+  the app colours treatment will draw it to be read. It fills the dialog's
+  remaining height. The classic composer keeps its own ground and inset.
+- **Footer: none.** Its three parts moved: Attach and Remind to the action
+  row, where verbs are; the word count to the subtitle, where the message
+  dialog says its counts. One band less, and the editor has its height.
+
+**States.**
+
+| State | What the composer shows |
+|---|---|
+| Empty (new message) | "New message", "Plain text · 0 words"; the caret in To; an empty editor on the dialog's surface. Send is live: sending with no recipient is refused by the composer with its reason, as before |
+| Reply, reply all, forward | The title names it; recipients as chips; "Re:" on the subject; the thread's labels with "from the thread"; the caret above the quote, folded to one "▸ Quoted message" line in the dialog's muted ink on a hairline rule. The subtitle counts what will be sent, the quote included |
+| Attachments | Cards under the editor, in the column, as the message dialog draws its attachments |
+| Invalid recipient | The composer's warning line under the editor, in the column ("Grac in To does not look like an address"); Send stays live and asks before sending |
+| Sending | Not a state of the dialog: Send writes the Outbox and closes it at once (local-first); the list's toast says what happened |
+| Offline | The same composer: Send queues in the Outbox (FR-055) and the window's banner says it is offline. Nothing greys out or waits |
+| A send that failed, reopened from Drafts | The subtitle says "Not sent — {reason}" in place of the saved time |
+| Narrow (1024 x 768) | 655 x 688; the column stays 480; the four verbs fit the action row with their caps |
+
+Pinned by `compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own`,
+`…send_is_the_one_primary_and_nothing_wears_the_accent`,
+`…the_keycaps_are_short`, `…the_field_rows_share_their_edges`,
+`…the_editor_is_drawn_on_the_dialogs_surface`,
+`…the_close_is_the_shared_x` and `…the_dialog_follows_the_message_dialogs_size_rule`,
+with `postio-ui`'s `hints` cases for the compact spelling.
+
 ## The row menu (T199)
 
 A right-click on a list row opens a menu of the row's verbs, decided as

@@ -117,25 +117,30 @@ The dialog is an `AdwDialog`, 980×820 px.
 
 ## Compose (05, 06)
 
-The composer is an `AdwDialog`, 980×820 px, and can be detached.
+The composer is an `AdwDialog` at the message dialog's size
+(`postio_ui::focus_dialog`), and can be detached. Its layout is the message
+dialog's with the composer's verbs (T221; screens.md, "The composer").
 
-- **Header.**
-  - Left: Close `Esc`.
-  - Centre: "New message" or "Reply to all", with "Draft saved locally 16:12"
-    under it.
-  - Right: "Send later ▾", then Send, raised, `Ctrl ↵`.
-- **Fields,** 42 px each:
-  - **From:** the identity's name, with the address and ▾ on the right.
-  - **To:** recipient chips (name, address in mono, ×). On the right, "Cc
-    `Ctrl ⇧C` · Bcc `Ctrl ⇧B`".
+- **Header (52 px).**
+  - Left: Detach, an icon button.
+  - Centre: "New message", "Reply", "Reply to all" or "Forward", with
+    "Plain text · 58 words · Draft saved locally 16:12" under it in mono.
+  - Right: the shared close X (T192).
+- **Action row (44 px, hairlines above and below).** Send `ctrl+↵`, the one
+  primary (raised, bold); Send later `ctrl+⇧+↵` ▾; Attach `ctrl+⇧+a`; "Remind
+  if no reply · Tue 29 Sep" `ctrl+h`; Task after sending `ctrl+t`
+  (milestone 3).
+- **One column,** `min(480, dialog − 96)`, centred, for everything below.
+- **Fields,** 40 px each, one label column:
+  - **To:** recipient chips (name, address in mono, ×). On the right,
+    "+ Cc".
   - **Cc:** when replying to all.
-  - **Subject:** in bold.
+  - **From:** the identity's name, with the address and ▾.
+  - **Subject.**
   - **Labels:** chips, with "from the thread" on the right when replying.
-- **Body.**
+- **Formatting toolbar:** icon buttons, 26 px.
+- **Body:** on the dialog's surface, in its ink, at the column's edges.
 - **Attachments:** cards, as in 04.
-- **Footer.** Attach `Ctrl ⇧A`, "Remind if no reply · Tue 29 Sep" `Ctrl H`,
-  and Task after sending `Ctrl T` (milestone 3). On the right, "Plain text ·
-  58 words".
 - **Suggestions.** A 440 px popover. Each row shows the name (bold), the
   address (mono), and "wrote 42 times", "wrote twice" or "list". Its footer
   reads "↑↓ choose · ↵ or Tab add · from your address book and mail on this
