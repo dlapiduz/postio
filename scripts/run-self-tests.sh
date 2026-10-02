@@ -27,7 +27,7 @@
 # `scripts/tests/test-run-self-tests.py` is what tests it.
 #
 # Usage:
-#   scripts/run-self-tests.sh [--jobs N] [--dir DIR] [--logs DIR]
+#   scripts/run-self-tests.sh [--jobs N] [--dir DIR] [--logs DIR] [--skip FILE]...
 #
 # Exit status: 0 every self-test that applies here passed, 1 one or more
 # failed, and a test that stood down for this platform (exit 77) is counted
@@ -40,12 +40,14 @@ DIR="$HERE/tests"
 # .cargo/config.toml already pins two jobs per cargo.
 JOBS=4
 LOGS=""
+SKIP=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --jobs) JOBS="$2"; shift 2 ;;
         --dir)  DIR="$2"; shift 2 ;;
         --logs) LOGS="$2"; shift 2 ;;
+        --skip) SKIP+=("$2"); shift 2 ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -61,6 +63,22 @@ mkdir -p "$LOGS"
 LIST="$LOGS/.self-tests"
 # Sorted, so a failure is reported in the same order twice.
 find "$DIR" -maxdepth 1 -name 'test-*.py' | sort > "$LIST"
+
+# `--skip <file>`: a test that runs somewhere better. test-ffi-bindgen.py
+# builds postio-ffi -- most of the workspace -- and was 900 of a 919 s run
+# here, so CI runs it in the macOS job, which builds postio-ffi anyway, and
+# the self-test jobs skip it. Named in the output: a test that quietly
+# stopped running is what this runner exists to refuse.
+for name in ${SKIP[@]+"${SKIP[@]}"}; do
+    if grep -q "/$name\$" "$LIST"; then
+        grep -v "/$name\$" "$LIST" > "$LIST.kept" || true
+        mv "$LIST.kept" "$LIST"
+        echo "skipped $name, as asked"
+    else
+        echo "--skip $name names no self-test under $DIR" >&2
+        exit 2
+    fi
+done
 COUNT="$(wc -l < "$LIST" | tr -d ' ')"
 [ "$COUNT" -gt 0 ] || { echo "no self-tests under $DIR" >&2; exit 2; }
 
@@ -92,11 +110,14 @@ FAILED="$LOGS/.failed"
 STOOD_DOWN="$LOGS/.not-applicable"
 : > "$FAILED"
 : > "$STOOD_DOWN"
+: > "$LOGS/.times"
 # shellcheck disable=SC2016
 xargs -P "$JOBS" -I{} sh -c '
     log="$2/$(basename "$1").log"
+    start=$(date +%s)
     python3 "$1" > "$log" 2>&1
     status=$?
+    printf "%s %s\n" "$(( $(date +%s) - start ))" "$(basename "$1")" >> "$2/.times"
     [ "$status" -eq 0 ] && exit 0
     if [ "$status" -eq '"$NOT_APPLICABLE_EXIT"' ]; then
         printf "%s\n" "$1" >> "$2/.not-applicable"
@@ -127,6 +148,16 @@ if [ "$STOOD" -gt 0 ]; then
     echo "$STOOD not applicable on this platform, and said so:"
     sed 's|.*/|  |' "$STOOD_DOWN"
 fi
+
+# Where the time went. The CI job that runs these takes ten minutes and more
+# when scripts change, and until this nothing said which tests that was.
+# Whole seconds, wall clock, each test alone -- several run at once, so the
+# numbers add up to more than the job.
+echo
+echo "slowest self-tests:"
+sort -rn "$LOGS/.times" | head -n 10 | while read -r seconds name; do
+    printf '  %4ss %s\n' "$seconds" "$name"
+done
 
 if [ ! -s "$FAILED" ]; then
     echo "every self-test that applies here passed"

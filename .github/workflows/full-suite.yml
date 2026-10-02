@@ -1,0 +1,92 @@
+name: Full suite on request
+
+# The nightly's whole run -- every integration suite, the measurement tier,
+# the coverage floors and the docs -- on a pull request, when somebody asks.
+#
+# A pull request's own CI runs the sanity tier, the suites a vocabulary change
+# breaks, and the GTK, application and macOS jobs. The rest of the
+# integration suites run on the nightly timer, so for most changes a broken
+# join is found the next morning. For a new feature or a big change that is
+# too late to be cheap. Labelling the pull request `full-suite` runs the
+# nightly here, on the pull request, before it merges:
+#
+#     gh pr edit <n> --add-label full-suite
+#     scripts/issue-land.sh --detach --full-suite      # labels the PR it opens
+#
+# `Full suite on request` is a required check. Without the label it passes in
+# seconds and says it was not asked for; with it, it passes only if the full
+# suite does. So asking is binding: a requested run that fails blocks the
+# merge, the way the nightly gate blocks while the nightly is red.
+#
+# Its own workflow, not a job in ci.yml, on purpose. Label events would have
+# to re-run all of ci.yml, and a re-run of the same check names on the same
+# commit can mask a failing run with a skipped one. Here only this workflow's
+# checks are touched.
+#
+# A label added by the workflow token does not trigger anything; add it with
+# your own `gh`, which is what `issue-land.sh` does.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: full-suite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  requested:
+    name: Asked for
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Is the full suite requested?
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-suite') }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ] || [ "$LABELLED" = true ]; then
+            echo "Requested ($EVENT) -- running the full suite on this ref."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not requested: no full-suite label."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The nightly itself, reused rather than copied -- the same reason ci.yml's
+  # re-run gives: a second definition of what the full suite runs would drift
+  # from the first. Runs called this way belong to this workflow's run, so
+  # they never count as "the last nightly".
+  suite:
+    name: Full suite
+    needs: requested
+    if: needs.requested.outputs.run == 'true'
+    uses: ./.github/workflows/nightly.yml
+
+  result:
+    name: Full suite on request
+    needs: [requested, suite]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide
+        env:
+          RUN: ${{ needs.requested.outputs.run }}
+          SUITE: ${{ needs.suite.result }}
+        run: |
+          if [ "$RUN" != true ]; then
+            echo "Not requested. Label the pull request full-suite to run it."
+            exit 0
+          fi
+          if [ "$SUITE" = success ]; then
+            echo "The full suite passes on this pull request."
+            exit 0
+          fi
+          echo "::error::The full suite was requested and did not pass (${SUITE})."
+          exit 1

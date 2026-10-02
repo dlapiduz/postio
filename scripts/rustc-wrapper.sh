@@ -61,9 +61,10 @@ fi
 # sessions were evicting each other continuously. That reads from inside a
 # session as "the compile cache died and it fell back to compiling locally".
 #
-# 30G rather than a bigger number because the disk is shared with the
-# worktrees themselves: /home had 88 GB free with nine of them present, and
-# a target directory is the larger appetite of the two.
+# 60G (2026-10-01, maintainer; #1199). It was 30G while /home was short of
+# space, and 30G filled again: 72% hits over five days, ~18,000 misses at ~5 s
+# each. /home now has well over 100 GB free and the worktrees live on their
+# own volume, so the reason for the smaller number is gone.
 #
 # `SCCACHE_IDLE_TIMEOUT=0` keeps the server up. The default stops it after ten
 # idle minutes, which does not lose the on-disk cache but does mean several
@@ -150,7 +151,7 @@ if [ -n "${OUT_DIR:-}" ]; then
 fi
 
 if command -v sccache >/dev/null 2>&1; then
-    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
+    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-60G}"
     export SCCACHE_IDLE_TIMEOUT="${SCCACHE_IDLE_TIMEOUT:-0}"
     export SCCACHE_ERROR_LOG="${SCCACHE_ERROR_LOG:-${SCCACHE_DIR:-${HOME:-}/.cache/sccache}/sccache.log}"
     export SCCACHE_LOG="${SCCACHE_LOG:-info}"

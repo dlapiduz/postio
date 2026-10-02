@@ -18,7 +18,7 @@ chrono = { workspace = true }
 # The Gmail REST v1 protocol crate — coroutines plus the std blocking
 # client. No TLS features: connections open on this workspace's own
 # cancellable pimalaya-stream, like the JMAP adapter beside it.
-io-gmail = { version = "0.3", default-features = false, features = ["client"] }
+io-gmail = { version = "0.4", default-features = false, features = ["client"] }
 pimalaya-stream = { workspace = true }
 
 # The MailBackend seam and nothing else.

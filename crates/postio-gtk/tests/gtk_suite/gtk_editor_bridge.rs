@@ -272,3 +272,41 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
     settle("the fold to close", || open() == "false");
     assert_eq!(open(), "false", "the quote would not fold back up");
 }
+
+/// The editor page says when its script is listening (#1716).
+///
+/// The page's HTML makes the body editable the moment it is parsed; the
+/// script that turns edits into bridge messages is injected afterwards, at
+/// document end. A test that types once the body is editable can type into
+/// that gap -- the edits happen, nothing reports them, and its wait for the
+/// edit to cross the bridge runs out its deadline. That failed on CI twice in
+/// a week. `editor.js` sets the marker as its last statement, and the tests
+/// that type wait for it.
+pub fn the_editor_page_says_when_its_script_is_listening() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under the headless runner to exercise this)");
+        return;
+    }
+    let window = gtk::Window::new();
+    window.set_default_size(600, 400);
+    let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_millis(1));
+    window.set_child(Some(editor.widget()));
+    window.present();
+
+    let loaded = Rc::new(RefCell::new(false));
+    editor.widget().connect_load_changed({
+        let loaded = loaded.clone();
+        move |_, event| {
+            if event == webkit6::LoadEvent::Finished {
+                *loaded.borrow_mut() = true;
+            }
+        }
+    });
+    editor.load(Document::new());
+    settle("the editor page to load", || *loaded.borrow());
+    assert_eq!(
+        eval(editor.widget(), crate::EDITOR_LISTENING),
+        "true",
+        "a loaded editor page does not say its script is listening"
+    );
+}

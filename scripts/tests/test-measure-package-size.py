@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Self-test for scripts/measure-package-size.sh (specs/005-tui-frontend SC-004).
 
-The terminal package must be under half the desktop one, form for form: the
-standalone binaries with their shared libraries against the desktop binary
-with its libraries, and each Flatpak with its runtime. The release workflow
-runs the script after both are built and fails when the terminal is not
-under half. So what must not drift is:
+The terminal package must be smaller than the desktop one, form for form:
+the standalone binaries with their shared libraries under half the desktop
+binary with its libraries, and each Flatpak with its runtime under two-thirds
+(amended 2026-10-01). The release workflow runs the script after both are
+built and fails that job when the terminal is over its bar. So what must not
+drift is:
 
-  * the comparison itself: under half passes, half or more fails, and the
+  * the comparison itself: under the bar passes, at or over it fails, and the
     line it prints names both sizes;
   * a Flatpak is its installed app *and* the runtime it names, because the
     terminal's lighter runtime is most of the difference, and measuring the
@@ -81,6 +82,9 @@ with tempfile.TemporaryDirectory() as scratch:
         ("apps/desktop", 300),
         ("runtimes/freedesktop", 1000),
         ("runtimes/gnome", 4000),
+        # Terminal packages at 58% and 70% of the desktop's 4300.
+        ("runtimes/freedesktop-58", 2394),
+        ("runtimes/freedesktop-70", 2910),
     ]:
         sized(root / directory / "files" / "blob", size)
     stub = root / "stub"
@@ -94,6 +98,12 @@ case "$*" in
   "info --show-location dev.postio.Postio") echo {root}/apps/desktop ;;
   "info --show-location org.freedesktop.Platform/x86_64/25.08") echo {root}/runtimes/freedesktop ;;
   "info --show-location org.gnome.Platform/x86_64/50") echo {root}/runtimes/gnome ;;
+  "info --show-runtime dev.test.FiftyEight") echo test.Platform58 ;;
+  "info --show-location dev.test.FiftyEight") echo {root}/apps/tui ;;
+  "info --show-location test.Platform58") echo {root}/runtimes/freedesktop-58 ;;
+  "info --show-runtime dev.test.Seventy") echo test.Platform70 ;;
+  "info --show-location dev.test.Seventy") echo {root}/apps/tui ;;
+  "info --show-location test.Platform70") echo {root}/runtimes/freedesktop-70 ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 """
@@ -107,6 +117,22 @@ esac
         "a flatpak is measured with its runtime",
         flat.returncode == 0 and "1100" in flat.stdout and "4300" in flat.stdout,
         flat.stdout + flat.stderr,
+    )
+
+    # The Flatpak bar is two-thirds, not half (maintainer, 2026-10-01): the
+    # smallest Flathub runtime is most of the terminal package, and the first
+    # release dry run measured 58%. The binaries stay at half.
+    fifty_eight = run("flatpak", "dev.test.FiftyEight", "dev.postio.Postio", env=env)
+    case(
+        "a terminal flatpak at 58% of the desktop passes -- under two-thirds",
+        fifty_eight.returncode == 0,
+        fifty_eight.stdout + fifty_eight.stderr,
+    )
+    seventy = run("flatpak", "dev.test.Seventy", "dev.postio.Postio", env=env)
+    case(
+        "a terminal flatpak at 70% fails, and says the bar is two-thirds",
+        seventy.returncode == 1 and "two-thirds" in seventy.stderr,
+        seventy.stdout + seventy.stderr,
     )
 
     missing = run("flatpak", "dev.postio.Nothing", "dev.postio.Postio", env=env)

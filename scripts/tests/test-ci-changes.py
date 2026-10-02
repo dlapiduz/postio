@@ -99,6 +99,10 @@ def main() -> int:
     case("the book", "pull_request", ["docs/book/src/index.md"], "no", "yes", "no")
     case("a design canvas", "pull_request", ["Design/Mail Client.dc.html"], "no", "no", "no")
     case("another workflow", "pull_request", [".github/workflows/hooks.yml"], "no", "no", "no")
+    # Like the nightly it calls: a workflow of its own, with nothing for
+    # ci.yml's compile jobs to prove about the workspace.
+    case("the full-suite-on-request workflow", "pull_request",
+         [".github/workflows/full-suite.yml"], "no", "no", "no")
     case("mise pins", "pull_request", ["mise.toml"], "no", "no", "no")
 
     # The macOS half. Swift cannot reach a Rust build, and a Rust change
@@ -114,6 +118,11 @@ def main() -> int:
     for script in ("macos-build.sh", "macos-test.sh", "macos-bundle.sh", "ffi-bindgen.sh"):
         case(f"a macOS build script: {script}", "pull_request", [f"scripts/{script}"],
              "no", "no", "yes")
+    # test-ffi-bindgen.py runs in the macOS job, which builds postio-ffi
+    # anyway, rather than among the tooling self-tests, where that build was
+    # 15 of the job's 16 minutes. So a change to it has to start the macOS job.
+    case("the bindings generator's self-test", "pull_request",
+         ["scripts/tests/test-ffi-bindgen.py"], "no", "no", "yes")
     # The boundary crate is where the two halves meet: its Rust is tested on a
     # cheap Linux runner (ADR 0019 Q7) and its bindings are what the Swift
     # links against, so it obliges both.

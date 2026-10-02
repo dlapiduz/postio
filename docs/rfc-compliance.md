@@ -293,6 +293,7 @@ every exchange against `io-smtp`'s sans-I/O transport with no socket involved.
 
 | § | What it says | Verdict |
 |---|---|---|
+| **§4.1.1.1, §4.1.3** `EHLO` identity | The client's FQDN, or an address literal when it has none | **Compliant.** A desktop behind a NAT has no FQDN of its own, so the greeting is `EHLO [127.0.0.1]`. It used to be the account's mail domain, which is the provider's name and not this machine's, or `localhost`, which Stalwart refuses with `550 5.5.0`. |
 | **§4.1.1.4** `DATA` terminator | The payload ends `CRLF "." CRLF` | **Compliant.** The generator produces a message whose last body line has *no* CRLF; `io-smtp` supplies it before the terminator, so the dot begins its own line. Asserted against the bytes on the wire, not read from the crate. |
 | **§4.5.2** Transparency | A line beginning `.` is stuffed to `..` | **Compliant.** `postio-model` really will produce a body line that is a bare `.`; it reaches the wire as `..`. Unstuffed it *is* the terminator, and the message would be delivered truncated with no error anywhere. |
 | **§3.3, §4.1.1.2–3** Envelope versus headers | The reverse-path and forward-paths are the transaction's addresses, independent of the message's own headers | **Compliant.** Every `To`, `Cc` *and* `Bcc` address gets its own `RCPT TO`; the `DATA` bytes carry no `Bcc` header and not the bcc'd address. See below — this one is a privacy claim, so it earns more than a row. |

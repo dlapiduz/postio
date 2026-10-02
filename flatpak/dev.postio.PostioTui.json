@@ -34,7 +34,7 @@
             "name": "postio-tui",
             "buildsystem": "simple",
             "build-commands": [
-                "cargo --offline build --profile release-tui --package postio-tui --bin postio-tui",
+                "cargo --offline build --ignore-rust-version --profile release-tui --package postio-tui --bin postio-tui",
                 "install -Dm755 target/release-tui/postio-tui /app/bin/postio-tui"
             ],
             "sources": [

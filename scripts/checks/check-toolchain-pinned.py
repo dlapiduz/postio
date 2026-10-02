@@ -31,6 +31,13 @@ CI, on a lint nobody wrote.
    somebody; while the only consumer is this repository, the honest promise is
    the compiler that is actually used.
 
+4. The repository's ``mise.toml`` does not name ``rust``. mise exports
+   ``RUSTUP_TOOLCHAIN`` for every shell in the repository, which beats this
+   file (below), so a ``rust`` entry there is a second pin that wins. One
+   arrived as ``rust = "latest"`` in an unrelated commit (2026-09-05),
+   resolved to the 1.98 that was installed, and kept every session on 1.98
+   after the 1.99 bump. mise.toml's own header already said it must not.
+
 # What this check cannot see, and what to do about it
 
 ``RUSTUP_TOOLCHAIN`` in the environment **overrides rust-toolchain.toml**.
@@ -133,6 +140,19 @@ def pinned_version(root: Path) -> str | None:
     return found.group(1) if found else None
 
 
+MISE_RUST = re.compile(r'^\s*rust\s*=', re.MULTILINE)
+
+
+def mise_pins_rust(root: Path) -> int | None:
+    """The line of mise.toml that names `rust`, if any."""
+    path = root / "mise.toml"
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    match = MISE_RUST.search(text)
+    return None if match is None else text[: match.start()].count("\n") + 1
+
+
 def floating_workflows(root: Path) -> list[str]:
     """Workflow lines that pick a toolchain instead of honouring the file."""
     offenders: list[str] = []
@@ -205,15 +225,13 @@ def main() -> int:
         )
         return 1
 
-    msrv = declared_msrv(root)
-    if msrv is not None and as_tuple(msrv) < as_tuple(pinned)[: len(as_tuple(msrv))]:
+    mise_line = mise_pins_rust(root)
+    if mise_line is not None:
         print(
-            f"toolchain check FAILED: Cargo.toml claims rust-version = "
-            f'"{msrv}" but rust-toolchain.toml pins {pinned}.\n'
-            f"  Nothing ever builds this workspace on {msrv}, so the claim is "
-            f"untested -- it becomes false the first time anyone uses a newer\n"
-            f"  feature, and no gate here would notice. Either set rust-version "
-            f"to match the pin, or add a CI job that checks on {msrv}.",
+            f"toolchain check FAILED: mise.toml:{mise_line} names rust, and mise "
+            f"exports RUSTUP_TOOLCHAIN from it,\n"
+            f"  which beats rust-toolchain.toml ({pinned}) in every shell in this "
+            f"repository. Delete the line: the pin is rust-toolchain.toml's.",
             file=sys.stderr,
         )
         return 1

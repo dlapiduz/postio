@@ -74,7 +74,8 @@ jobs:
 
 
 def build_tree(
-    root: Path, *, toolchain: str | None, workflow: str, manifest: str | None = None
+    root: Path, *, toolchain: str | None, workflow: str, manifest: str | None = None,
+    mise: str | None = None,
 ) -> None:
     """A git repository with an optional rust-toolchain.toml and one workflow.
 
@@ -86,6 +87,8 @@ def build_tree(
         (root / "rust-toolchain.toml").write_text(toolchain, encoding="utf-8")
     if manifest is not None:
         (root / "Cargo.toml").write_text(manifest, encoding="utf-8")
+    if mise is not None:
+        (root / "mise.toml").write_text(mise, encoding="utf-8")
     workflows = root / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text(workflow, encoding="utf-8")
@@ -100,11 +103,12 @@ def case(
     env_toolchain: str | None = None,
     strict: bool = False,
     manifest: str | None = None,
+    mise: str | None = None,
 ) -> None:
     """Assert the check's verdict on one tree."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        build_tree(root, toolchain=toolchain, workflow=workflow, manifest=manifest)
+        build_tree(root, toolchain=toolchain, workflow=workflow, manifest=manifest, mise=mise)
         # The check finds its root from its own location, not the cwd, so it
         # has to be run from a copy that lives inside the throwaway tree.
         scripts = root / "scripts"
@@ -212,6 +216,17 @@ def main() -> int:
     # ── a pin that is not a pin ──────────────────────────────────────────
     # `channel = "stable"` in the file floats exactly like the workflow did,
     # so it must not be mistaken for a fix.
+    # mise sets RUSTUP_TOOLCHAIN for every shell in the repository, and that
+    # beats rust-toolchain.toml. `rust = "latest"` in mise.toml resolved to
+    # whatever was installed -- 1.98 -- and outlived the 1.99 bump (2026-10-01).
+    for label, mise_toml, expected in (
+        ("mise.toml naming rust is a second pin and fails", '[tools]\npython = "3.14.7"\nrust = "latest"\n', 1),
+        ("mise.toml naming an exact rust fails too", '[tools]\nrust = "1.99.0"\n', 1),
+        ("mise.toml without rust passes", '[tools]\npython = "3.14.7"\n', 0),
+        ("rust named only in a comment passes", '# Rust: rust-toolchain.toml owns it\n[tools]\njq = "1.8.1"\n', 0),
+    ):
+        case(label, toolchain=exact, workflow=WORKFLOW_PINNED, expected=expected, mise=mise_toml)
+
     for floating in ("stable", "beta", "nightly", "1.98"):
         expected = 0 if floating == "1.98" else 1
         case(

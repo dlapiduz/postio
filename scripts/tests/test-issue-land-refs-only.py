@@ -160,9 +160,10 @@ def land(
     )
 
 
-def run_case(*, refs_only: bool) -> None:
-    """One landing, in its own sandbox, with `--refs-only` or without."""
-    prefix = f"[refs_only={refs_only}] "
+def run_case(*, refs_only: bool, full_suite: bool = False) -> None:
+    """One landing, in its own sandbox, with `--refs-only` or without --
+    and with `--full-suite` or without, which labels the PR it opens."""
+    prefix = f"[refs_only={refs_only} full_suite={full_suite}] "
     channel = pinned_channel()
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
@@ -189,7 +190,7 @@ def run_case(*, refs_only: bool) -> None:
         git("checkout", "-q", "-b", "issue-1189-refs-only-check", cwd=root)
         (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
 
-        extra_args = ["--refs-only"] if refs_only else []
+        extra_args = (["--refs-only"] if refs_only else []) + (["--full-suite"] if full_suite else [])
         result = land(root, target, stub_dir, extra_args)
         records = (stub_dir / "calls").read_bytes().split(b"\0")
         calls = [record.decode("utf-8") for record in records if record]
@@ -208,6 +209,16 @@ def run_case(*, refs_only: bool) -> None:
             )
             return
         body = create_calls[0]
+
+        # `--full-suite` asks CI to run the nightly on the pull request
+        # (.github/workflows/full-suite.yml). The label is what asks, and it
+        # has to come from this script's own `gh`: one the workflow token
+        # adds triggers nothing.
+        labelled = [c for c in calls if c.startswith("pr edit") and "--add-label full-suite" in c]
+        if full_suite:
+            expect(f"{prefix}the PR is labelled full-suite", len(labelled) == 1, f"gh calls:\n{calls}")
+        else:
+            expect(f"{prefix}no full-suite label unless asked", not labelled, f"gh calls:\n{calls}")
 
         if refs_only:
             expect(
@@ -340,6 +351,7 @@ def main() -> int:
     print("issue-land --refs-only self-test")
     run_case(refs_only=True)
     run_case(refs_only=False)
+    run_case(refs_only=False, full_suite=True)
     run_negation_case()
 
     print()

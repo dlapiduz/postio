@@ -49,7 +49,7 @@ pub(crate) async fn record(
 
     let mut trimmed = message.clone();
     trimmed.from.retain(|address| !is_own(address));
-    if trimmed.sender.as_ref().is_some_and(&is_own) {
+    if trimmed.sender.as_ref().is_some_and(is_own) {
         trimmed.sender = None;
     }
     trimmed.reply_to.retain(|address| !is_own(address));

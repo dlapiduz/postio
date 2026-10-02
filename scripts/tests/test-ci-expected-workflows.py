@@ -329,12 +329,16 @@ on:
         # not run reports no check, and a required check that never reports
         # is a PR that never merges (#1107). So a prose-only change now
         # schedules CI, and wait-for-checks.sh waits for it: the cheap jobs
-        # run, the compile jobs report as skipped.
-        if prose.returncode != 0 or prose.stdout.strip() != "CI":
+        # run, the compile jobs report as skipped. "Full suite on request"
+        # runs on every pull request too, for the same reason -- its check
+        # is required, so it reports "not requested" when nobody asked.
+        scheduled = sorted(prose.stdout.split("\n")) if prose.returncode == 0 else []
+        scheduled = [name for name in scheduled if name]
+        if scheduled != ["CI", "Full suite on request"]:
             FAILURES.append(
                 "a prose-only change against the real workflows must schedule "
-                f"CI, whose compile jobs then skip themselves (exit "
-                f"{prose.returncode}, stdout {prose.stdout!r})"
+                f"CI and Full suite on request, whose expensive jobs then skip "
+                f"themselves (exit {prose.returncode}, stdout {prose.stdout!r})"
             )
 
     for failure in FAILURES:
