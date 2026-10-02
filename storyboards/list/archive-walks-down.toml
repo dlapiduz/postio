@@ -1,0 +1,34 @@
+# Archive under the cursor, and the row below takes its place (#1687).
+#
+# The defect: archiving or deleting under the cursor scrolled the list to
+# the top and moved the cursor somewhere else, so the next `a` archived a
+# message the person never looked at. Fixed before storyboards existed, so
+# this is pinned: the checks name the exact row the cursor must land on.
+source = { kind = "issue", ref = "#1687" }
+proof  = "pinned"
+design = "06-mouse-parity-undo"
+
+[[step]]
+id      = "down"
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 1 }
+
+[[step]]
+id      = "second"
+command = "next_message"
+check   = { cursor.index = 2 }
+
+[[step]]
+command = "archive"
+check   = { keyboard.region = "list", cursor.index = { same_as = "second" }, notice.undo = true }
+expect  = "The archived row is gone and the one below takes its place under the cursor. The list does not scroll and nothing jumps."
+
+[[step]]
+command = "archive"
+check   = { keyboard.region = "list", cursor.index = { same_as = "second" } }
+expect  = "A second archive works on the row that took the first one's place."
+
+[[step]]
+command = "undo"
+check   = { keyboard.region = "list" }
+expect  = "The last archived row comes back, in its place."
