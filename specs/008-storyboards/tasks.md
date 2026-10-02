@@ -168,7 +168,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
   - `proof` missing when `kind = issue`;
   - an unknown command id;
   - a chord that does not parse after `expand_mod`;
-  - an address on a non-reserved domain, as `user@realmail.com` would be;
+  - an address on a non-reserved domain;
   - `same_as` pointing forward;
   - an override naming a missing step;
   - `calibration` outside `calibration/`;
@@ -808,16 +808,16 @@ screens` reproduces the old contact sheet (quickstart § 8).
 
   Add `storyboards.sh run --variants`. The page names the variant on every
   frame. T092 goes green.
-- [ ] T094 [US7] Turn each row of `scripts/screens.sh`'s `SCREENS` table into
+- [X] T094 [US7] Turn each row of `scripts/screens.sh`'s `SCREENS` table into
   `storyboards/screens/<name>.toml`. Each has zero steps, its seed or preset,
   its variant, and `design = "<canvas screen>"`, or no `design` where the
   table said `-`. Add any preset `shot` hand-feeds to `postio_app::demo`'s
   preset list.
-- [ ] T095 [US7] [TEST] Extend `scripts/tests/test-storyboards-sh.sh`:
+- [X] T095 [US7] [TEST] Extend `scripts/tests/test-storyboards-sh.sh`:
   `screens` writes an `index.html` that pairs each design PNG with the
   rendered frame, and exits non-zero naming any screen that failed to render
   (the old `screens.sh` contract).
-- [ ] T096 [US7] Implement `scripts/storyboards.sh screens` over the
+- [X] T096 [US7] Implement `scripts/storyboards.sh screens` over the
   zero-step storyboards, and delete `scripts/screens.sh`. Update every
   mention of it: `grep -rn screens.sh` across `.claude/`, `docs/`, `scripts/`
   and `CLAUDE.md`. T095 goes green.
@@ -830,20 +830,20 @@ screens` reproduces the old contact sheet (quickstart § 8).
   It states the rule only: the `Observation` contract, a runner per frontend,
   and interaction changes shipping with storyboards (plan § ADR). Add it to
   `docs/decisions/README.md`.
-- [ ] T098 [P] Update `CLAUDE.md`:
+- [X] T098 [P] Update `CLAUDE.md`:
   - **in the loop**: a change to a GTK app's interaction ships with its
     storyboard, and runs `/ux-review` before `issue-land.sh`;
   - add `/ux-review` to § Skills;
   - under "Say it where it persists", add a maintainer rejection → a
     storyboard.
-- [ ] T099 [P] Update the skills:
+- [X] T099 [P] Update the skills:
   - `.claude/skills/gtk-design/SKILL.md` § 6: storyboards beside `shot`, and
     `storyboards.sh screens` in place of `screens.sh`;
   - `.claude/skills/ux-architect/SKILL.md` § 4: "review the flow" means
     writing it as a storyboard in `storyboards/flows/`;
   - `.claude/skills/issue/SKILL.md`: UI issues get a storyboard first,
     written from the acceptance, before the implementation.
-- [ ] T100 [P] Add a test in `scripts/tests/` asserting
+- [X] T100 [P] Add a test in `scripts/tests/` asserting
   `check-no-personal-data.py`'s `tracked_files` includes `storyboards/`
   (FR-027).
 - [ ] T101 Measure SC-002 with:
