@@ -298,7 +298,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 - [X] T034 Add `tone()` and `offers_undo()` to `crates/postio-gtk/src/toast.rs`,
   recorded at show time. Update the show-sites that know their tone. T033
   goes green.
-- [ ] T035 [TEST] Add an `app_suite` case, `observe.rs`, plus its row in
+- [X] T035 [TEST] Add an `app_suite` case, `observe.rs`, plus its row in
   `crates/postio-app/tests/app_suite/main.rs`'s `CASES`. Over the seeded
   wiring (as `keystroke.rs` builds it), after `deliver::press`:
   - `j` gives `keyboard.region = list`, `cursor.index = 1` and
@@ -309,7 +309,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
   - `a` on a row gives `notice.undo = true`;
   - `back_depth` is `None`;
   - `app.classic.pane` is present.
-- [ ] T036 Implement `Window::observe()` in `crates/postio-gtk/src/window.rs`,
+- [X] T036 Implement `Window::observe()` in `crates/postio-gtk/src/window.rs`,
   following `contracts/observation.md` § Classic, including region naming from
   focus ancestors. `observe()` performs no store read. T035 goes green.
 
