@@ -33,16 +33,26 @@ pub async fn open_under(
     let window = postio_focus::window::FocusWindow::new(None);
     window.present();
     let session = postio_focus::startup::adopt_at(&window, fixture.host(), &config, Some(&path));
-    assert!(
-        session.follow_config(&window, &path),
-        "the config is watched"
-    );
+    // Followed when the machine has an inotify instance to spare: inotify is
+    // shared machine-wide. A case about a reload asserts it has one
+    // (`watched`); the rest do not need it.
+    WATCHED.with(|watched| watched.set(session.follow_config(&window, &path)));
     support::keep(session);
     assert!(
         crate::settle_until(async || !window.rows_on_screen().is_empty()).await,
         "the store's inbox never reached the screen"
     );
     (window, directory, path)
+}
+
+thread_local! {
+    /// Whether the last [`open_under`] is following its file.
+    static WATCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the window [`open_under`] last opened follows its file live.
+pub fn watched() -> bool {
+    WATCHED.with(std::cell::Cell::get)
 }
 
 /// One message in the inbox, and a window over it under `text`.
@@ -565,6 +575,7 @@ pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
              name = \"Atlas\"\n",
         )
         .await;
+        assert!(watched(), "the config is watched");
         mod_comma(&window);
         let dialog = settings_shown(&window).await.expect("Settings opened");
         let filters = || {

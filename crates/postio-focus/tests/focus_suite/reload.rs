@@ -195,6 +195,7 @@ pub fn a_saved_compose_section_reaches_the_next_reply() {
             "[compose]\nsignature_on_reply = \"above_quote\"\n",
         )
         .await;
+        assert!(crate::settings::watched(), "the config is watched");
         let order = |text: &str| -> Option<bool> {
             Some(text.find("Ada at Atlas")? < text.find("The quoted line.")?)
         };
@@ -240,6 +241,7 @@ pub fn a_saved_reader_zoom_reaches_the_open_message() {
         fixture.write_body(message, "A body to read.").await;
         let (window, _directory, path) =
             crate::settings::open_under(&fixture, "[reader]\nzoom = 100\n").await;
+        assert!(crate::settings::watched(), "the config is watched");
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let zoom = || {
@@ -298,6 +300,7 @@ pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
             }
         }
         let (_window, _directory, path) = crate::settings::open_under(&fixture, "").await;
+        assert!(crate::settings::watched(), "the config is watched");
         assert!(
             crate::settle_until(async || written.iter().all(|blob| blobs.contains(blob))).await,
             "with no [storage] at all, nothing is evicted at start"

@@ -34,9 +34,14 @@ fn rows(dialog: &adw::Dialog) -> Vec<gtk::ListBoxRow> {
         .collect()
 }
 
-/// Run the account menu's `verb` on the row at `index`, as its menu does:
-/// on the row on screen when it runs, since a change redraws the rows.
-fn account_verb(window: &postio_focus::window::FocusWindow, index: usize, verb: &str) {
+/// Run the account menu's `verb` on `account`'s row, as its menu does: on
+/// the row on screen when it runs, since a change redraws the rows, and
+/// checked to be that account's once the menu is open.
+fn account_verb(
+    window: &postio_focus::window::FocusWindow,
+    account: postio_model::ids::AccountId,
+    verb: &str,
+) {
     let settings = window.settings().expect("Settings is open");
     let dialog = settings.dialog().clone();
     let panel = settings.panel();
@@ -44,9 +49,17 @@ fn account_verb(window: &postio_focus::window::FocusWindow, index: usize, verb: 
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     loop {
         crate::settle();
-        let place = rows(&dialog).into_iter().nth(index).and_then(|row| {
-            let bounds = row.compute_bounds(&row.parent()?)?;
-            (bounds.height() > 0.0).then(|| f64::from(bounds.y() + bounds.height() / 2.0))
+        let name = format!("postio-account-{}", account.get());
+        let row = rows(&dialog)
+            .into_iter()
+            .find(|row| row.widget_name() == name.as_str());
+        let place = row.as_ref().and_then(|row| {
+            let list = row.parent()?.downcast::<gtk::ListBox>().ok()?;
+            let bounds = row.compute_bounds(&list)?;
+            let y = bounds.y() + bounds.height() / 2.0;
+            // The row the menu will find there is this account's.
+            (bounds.height() > 0.0 && list.row_at_y(y as i32).as_ref() == Some(row))
+                .then_some(f64::from(y))
         });
         if let Some(y) = place {
             panel.test_open_account_menu(1.0, y);
@@ -58,7 +71,7 @@ fn account_verb(window: &postio_focus::window::FocusWindow, index: usize, verb: 
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "{verb} is on row {index}'s menu"
+            "{verb} is on the account's menu"
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -122,12 +135,12 @@ pub fn account_rows_persist_enable_default_and_removal() {
         assert!(crate::settle_until(async || account(&database, second.id).await.enabled).await);
 
         // Set as default moves the marker.
-        account_verb(&window, 1, "account.set-default");
+        account_verb(&window, second.id, "account.set-default");
         assert!(
             crate::settle_until(async || account(&database, second.id).await.is_default).await,
             "Set as default reached the store"
         );
-        account_verb(&window, 0, "account.set-default");
+        account_verb(&window, fixture.account.id, "account.set-default");
         assert!(
             crate::settle_until(
                 async || account(&database, fixture.account.id).await.is_default
@@ -138,7 +151,7 @@ pub fn account_rows_persist_enable_default_and_removal() {
         );
 
         // Remove marks it pending and takes its row away at once...
-        account_verb(&window, 1, "account.remove");
+        account_verb(&window, second.id, "account.remove");
         assert!(
             crate::settle_until(async || account(&database, second.id).await.pending_deletion)
                 .await,
@@ -196,7 +209,7 @@ pub fn update_credential_opens_a_prefilled_form_over_the_window() {
         };
         assert!(form().is_none(), "no form opens unasked");
 
-        account_verb(&window, 0, "account.update-credential");
+        account_verb(&window, fixture.account.id, "account.update-credential");
         assert!(
             crate::settle_until(async || form().is_some()).await,
             "Update credential opened the account form"
@@ -243,7 +256,7 @@ pub fn rebuilding_an_index_refills_it_and_clears_the_row() {
         let dialog = settings_shown(&window).await.expect("Settings opened");
         assert!(crate::settle_until(async || rows(&dialog).len() == 1).await);
 
-        account_verb(&window, 0, "account.rebuild-index");
+        account_verb(&window, fixture.account.id, "account.rebuild-index");
         let database = fixture.database.clone();
         let account = fixture.account.id;
         assert!(
