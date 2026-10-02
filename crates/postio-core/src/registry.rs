@@ -1506,7 +1506,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Quit,
         title: "Quit Postio",
         default_binding: "mod+q",
-        alternate_bindings: &[],
+        // Close window, everywhere on the desktop: Postio has one window,
+        // so closing it is quitting (spec 007 T216).
+        alternate_bindings: &["mod+w"],
         // Universal, and chrome: quitting means the same with an empty window
         // as with a full one.
         contexts: ContextSet::ANY,

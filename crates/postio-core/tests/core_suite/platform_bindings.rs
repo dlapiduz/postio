@@ -18,7 +18,9 @@
 //! line it changed is a key the contract names, `mark_unread` and
 //! `focus_sidebar` became `toggle_read` and `go_to_folders`, and Focus's
 //! own commands were added as rows of their own -- `switch_treatment O`,
-//! the open message's app colours or original (T213), among them.
+//! the open message's app colours or original (T213), among them. `quit`
+//! gained `ctrl+w`, Close window, so the window that says why there is no
+//! mail closes as every desktop window does (T216).
 
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;

@@ -122,7 +122,7 @@ command from inside a text field.
 | `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |
 | `ctrl+shift+n` or `alt+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
-| `ctrl+q` | Quit Postio | Everywhere |  | `quit` |
+| `ctrl+q` or `ctrl+w` | Quit Postio | Everywhere |  | `quit` |
 | `i i` | Show remote images | List, conversation, reader |  | `show_images` |
 | `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
 | `U` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |

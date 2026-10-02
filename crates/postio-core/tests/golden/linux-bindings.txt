@@ -75,7 +75,7 @@ cheat_sheet	?
 settings	ctrl+comma | alt+comma
 add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
-quit	ctrl+q
+quit	ctrl+q | ctrl+w
 show_images	i i
 always_show_images	i a
 unsubscribe	U
