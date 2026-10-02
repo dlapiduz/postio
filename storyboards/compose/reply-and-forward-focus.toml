@@ -1,0 +1,25 @@
+# Reply puts the caret in the body, Forward puts it in To (#690, #325).
+#
+# The defect: Forward opened with the keyboard in the body, where there is
+# no recipient yet, and Reply did nothing at all unless the row had first
+# been activated. Here the cursor is on a row that was never opened.
+source = { kind = "issue", ref = "#690" }
+proof  = "pinned"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+check   = { cursor.index = 0 }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "The reply is seeded, its recipient filled in, and the caret is in the body."
+
+[[step]]
+command = "back"
+check   = { composer.open = false }
+
+[[step]]
+command = "forward"
+check   = { composer.open = true, keyboard.field = "to" }
+expect  = "The forward is seeded with the original and the caret is in To, where a recipient is wanted."

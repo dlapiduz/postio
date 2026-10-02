@@ -1,0 +1,30 @@
+# `c` opens a blank composer even with a draft left over (#491, #1196,
+# #1240, #426).
+#
+# The defect: `c` reopened the last unsent draft instead of starting a new
+# one, a Reply showed the stale draft's text, and two unsaved drafts were
+# treated as the same one. The seed holds a draft, "Notes for Thursday".
+# `c` must open an empty one, and Escape must leave to the list.
+source = { kind = "issue", ref = "#491" }
+proof  = "pinned"
+seed   = "draft-left-over"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+check   = { composer.open = false }
+
+[[step]]
+id      = "blank"
+command = "compose"
+check   = { composer.open = true, keyboard.region = "composer", keyboard.field = "to" }
+expect  = "A new, empty message: To, Subject and body are blank. Nothing of Notes for Thursday is in it."
+
+[[step]]
+command = "back"
+check   = { composer.open = false }
+expect  = "Escape leaves the empty composer without asking, and the conversation is back in the pane."
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "The reply is seeded from the message that was selected: Re: Tuesday walkthrough notes, quoting that message. Nothing of the left-over draft is in it."
