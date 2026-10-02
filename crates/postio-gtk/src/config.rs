@@ -292,15 +292,7 @@ fn save_current_search(window: &Window, path: &Path) {
 
 /// Write `[reader] zoom = percent` to `path`, touching only `[reader]`.
 fn save_zoom(path: &Path, percent: u16) {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
-    let mut config = Config::from_toml_str(&original).unwrap_or_default();
-    if config.reader.zoom == percent {
-        return;
-    }
-    config.reader.zoom = percent;
-    let written = postio_config::patch_reader(&original, &config.reader)
-        .and_then(|patched| Config::write_text_to_path(&patched, path));
-    if let Err(error) = written {
+    if let Err(error) = postio_config::save_zoom(path, percent) {
         tracing::warn!(%error, "could not save the zoom");
     }
 }

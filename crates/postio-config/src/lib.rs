@@ -88,7 +88,7 @@ pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
 pub use model::{EndpointRefused, FocusModel, ModelEndpoint, ModelFeature, ModelProblem, Reach};
-pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader};
+pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader, save_zoom};
 pub use storage::StorageConfig;
 pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 pub use tui::{Preview, TuiConfig};
