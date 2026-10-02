@@ -621,6 +621,10 @@ const CASES: &[(&str, fn())] = &[
         reading_pane::archiving_steps_the_pane_past_the_message as fn(),
     ),
     (
+        "reading_pane::a_message_opened_away_from_the_inbox_opens_in_the_dialog",
+        reading_pane::a_message_opened_away_from_the_inbox_opens_in_the_dialog as fn(),
+    ),
+    (
         "reading_pane::the_composer_takes_over_the_pane",
         reading_pane::the_composer_takes_over_the_pane as fn(),
     ),

@@ -337,7 +337,7 @@ message). Reply, Reply all, Forward and `c` put the composer where the
 message was: its header, its action row and its column, computed from the
 pane's width. The list stays beside it. Send or `Escape` hands the pane back
 to the message it answered, or to the empty pane when there was none.
-Below 980 it is the composer's dialog, as before.
+Below 980 the composer has its dialog.
 
 **States.**
 
@@ -351,8 +351,9 @@ Below 980 it is the composer's dialog, as before.
 | Dense | Focus has one row density. A row narrower than the inbox's gives up its sender's column first, from 222 to no less than 120, so the subject keeps 260 for itself, its pills and the time (`focus_row::row_columns`); once the sender's column has narrowed, a marked row's second line starts under the sender, so the chip, the date and the answers keep the row's width. At 620 (1440) nothing moves; at 460 and 404 the sender is 120 and the subject starts at 188 |
 | Narrow (< 980) | No pane: the dialog, as above |
 
-The pane appears only on the inbox's own page. Filtered, the digest rules
-and a digest open their messages as they always have.
+The pane is the inbox list's. Filtered, the digest rules and a digest over
+the window have no list beside a pane, so a message opened from them opens
+in the dialog; back on the inbox, the next one opens beside the list.
 
 **Compared (2026-10-02)**: screens 34 (a message open beside the list, the
 handoff's sample as screen 04), 35 (the pane with nothing open) and 36 (Reply

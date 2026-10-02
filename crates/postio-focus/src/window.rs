@@ -444,6 +444,13 @@ impl FocusWindow {
             window.save_geometry();
             glib::Propagation::Proceed
         });
+        // Leaving the inbox's page for Filtered or the digest rules takes the
+        // reading pane with it; coming back brings it (T232).
+        imp.pages.connect_visible_child_notify(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| window.place_reading()
+        ));
 
         // Capture, not bubble: a single-key binding has to be seen before the
         // focused widget consumes it, and whether it should is the
@@ -2592,6 +2599,8 @@ impl FocusWindow {
             }
             DigestAction::Open { message, subject } => {
                 if let Some(reading) = self.reading_dialog() {
+                    // Over the digest, not in the pane behind it.
+                    self.place_reading();
                     reading.show_found(self, message, &subject);
                 }
             }
@@ -3370,11 +3379,16 @@ impl FocusWindow {
             0 => self.width(),
             width => width,
         };
-        let listing = imp
-            .list_or_empty
-            .borrow()
-            .as_ref()
-            .is_some_and(|stack| stack.visible_child_name().as_deref() == Some(LIST));
+        // The pane is the inbox list's: Filtered, the digest rules and a
+        // digest over the window have no list beside it, and an empty inbox
+        // has nothing to open.
+        let listing = imp.pages.visible_child_name().as_deref() == Some(INBOX)
+            && self.digest().is_none()
+            && imp
+                .list_or_empty
+                .borrow()
+                .as_ref()
+                .is_some_and(|stack| stack.visible_child_name().as_deref() == Some(LIST));
         let placement = if listing {
             focus_dialog::placement(chosen, width)
         } else {
@@ -3544,10 +3558,15 @@ impl FocusWindow {
     /// and a message closed beside the list leaves the keyboard in the list,
     /// on the row it was on (T232).
     fn reading_changed(&self) {
-        self.show_pane_page();
         let Some(reading) = self.reading() else {
             return;
         };
+        // A message opened where the pane does not reach -- over a digest --
+        // goes back to where messages open, once it closes.
+        if !reading.is_open() {
+            self.place_reading();
+        }
+        self.show_pane_page();
         if reading.in_pane()
             && !reading.is_open()
             && let Some(pane) = self.pane()

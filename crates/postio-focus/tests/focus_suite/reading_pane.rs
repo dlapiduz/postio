@@ -50,6 +50,25 @@ fn read_in_pane(window: &postio_focus::window::FocusWindow) {
     crate::settle();
 }
 
+/// Wait until the pane is on screen at the width its window gives it: a
+/// pane just shown is laid out on the next frame, and a busy compositor
+/// takes its time.
+async fn pane_laid_out(window: &postio_focus::window::FocusWindow) {
+    assert!(
+        crate::settle_until(async || {
+            let expected = focus_dialog::pane_width(window.width());
+            window.reading_pane().is_some_and(|pane| {
+                pane.is_mapped()
+                    && expected.is_some_and(|expected| (pane.width() - expected).abs() <= 1)
+            })
+        })
+        .await,
+        "the pane never took its width: {:?} in a {} window",
+        window.reading_pane().map(|pane| pane.width()),
+        window.width()
+    );
+}
+
 /// The list's cursor, as a row index.
 fn cursor(window: &postio_focus::window::FocusWindow) -> u32 {
     window.pane().expect("the list").cursor().selected()
@@ -141,7 +160,7 @@ pub fn return_shows_the_message_beside_the_list_and_keeps_its_cursor() {
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await,
             "the pane never showed the cursor's row"
         );
-        crate::settle();
+        pane_laid_out(&window).await;
         let pane = pane(&window);
         let list = window.pane().expect("the list").view().clone();
         assert!(list.is_mapped(), "the list left the screen");
@@ -256,6 +275,7 @@ pub fn escape_and_the_x_return_the_keyboard_to_the_list() {
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await
         );
+        pane_laid_out(&window).await;
         let close = on_screen(&pane(&window), "focus-open-close").expect("the pane's X");
         support::click(&window, &close, 1);
         assert!(
@@ -557,5 +577,59 @@ pub fn archiving_steps_the_pane_past_the_message() {
             "the last row archived did not leave the pane on the previous one: {:?}",
             pane_title(&window)
         );
+    });
+}
+
+/// The pane is the inbox's: a message opened from Filtered, which has no
+/// list beside a pane, opens in the dialog over it, and back in the inbox
+/// the next one opens beside the list again.
+pub fn a_message_opened_away_from_the_inbox_opens_in_the_dialog() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.file_five().await;
+        fixture
+            .filtered(
+                ("Forge", "noreply@forge.test"),
+                "Build 1182 passed",
+                "notification",
+                Some("Forge"),
+                30,
+            )
+            .await;
+        let (window, _client) = fixture.open_five().await;
+        read_in_pane(&window);
+        support::keys(&window, &["g", "f"]);
+        assert!(
+            crate::settle_until(async || window
+                .filtered()
+                .is_some_and(|view| view.subjects() == ["Build 1182 passed"]))
+            .await,
+            "g f did not list the filtered message"
+        );
+        support::keys(&window, &["j"]);
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || dialog_up(&window)).await,
+            "a message opened from Filtered did not open in the dialog"
+        );
+        assert_eq!(
+            window.reading().map(|reading| reading.title()).as_deref(),
+            Some("Build 1182 passed")
+        );
+        support::deliver(&window, "Escape");
+        assert!(crate::settle_until(async || !dialog_up(&window)).await);
+
+        support::keys(&window, &["g", "i"]);
+        assert!(crate::settle_until(async || window.filtered().is_none()).await);
+        support::keys(&window, &["j"]);
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || pane_title(&window).is_some()).await,
+            "back in the inbox, Return did not open beside the list"
+        );
+        assert!(!dialog_up(&window));
     });
 }
