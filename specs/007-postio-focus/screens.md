@@ -430,6 +430,55 @@ Pinned by `read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read`,
 `…r_in_the_open_message_marks_it_unread_again`, with `postio-ui`'s `dwell`
 cases.
 
+## Sending states (T239)
+
+ADR 0021 Decision 3 and the classic app's `unconfirmed_send`. A draft that
+left the composer is in one of three states a person may have to act on, and
+Focus says which and offers what settles it.
+
+**Where they are listed.** Drafts lists what is being written, what stopped
+("Not sent") and what nobody could confirm ("Not confirmed"). The Outbox
+lists what is on its way ("Waiting to send", "Sending"). The Outbox is a view
+over the Drafts folder, not a folder, so `g o` lists it only while something
+waits in it, under Drafts, with its count.
+
+**The row.** The state's word (`postio_ui::row::send_state_word`) is drawn
+in the trailing column, before the date. It is dim while the draft is on its
+way and in ink once it needs the person. A draft being written says nothing
+more, since its folder already says it. Screen readers hear the same word.
+
+**Opening.** `Return` on a draft being written opens the composer (US11
+scenario 3). A draft in any of the other states opens as the open message,
+in the dialog or the pane: Focus has no preview, so opening is the only way
+to look, and the composer would change the draft. Editing a queued draft
+takes it off the queue, and editing an unconfirmed one clears what lets
+Postio find it in Sent (`focus_dialog::opens_to_read`). The subtitle carries
+the state's word, as the row does.
+
+**The action row.** Received mail's verbs give way to the ones that settle
+the state (`focus_dialog::send_verbs`), the registry's own commands with
+their own keys:
+
+| State | Offered |
+|---|---|
+| Waiting to send | Cancel send, Edit |
+| Sending | nothing: a cancel is refused once submission starts, and a retry risks a second copy |
+| Not sent | Retry send, Edit |
+| Not confirmed | Retry send, Mark as sent, Edit |
+
+Edit is `Return`. It closes the message and opens the draft in the composer,
+which takes a waiting send off the queue before anything is edited. Cancel
+send, Retry send and Mark as sent act on the draft behind the open message.
+That moves it to the other list, so the message closes and the cursor stays.
+The cursor does not open the next row in its place. On mail that is not a
+draft being sent, their keys say "That message is not one being sent".
+
+Pinned by `sending_states::an_unconfirmed_send_says_so_and_mark_as_sent_settles_it`,
+`…a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back`,
+`…edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer` and
+`…the_pane_offers_a_waiting_send_its_verbs`, with `postio-ui`'s
+`focus_dialog` cases.
+
 ## The row menu (T199)
 
 A right-click on a list row opens a menu of the row's verbs, decided as
