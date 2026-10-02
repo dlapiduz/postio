@@ -1,0 +1,40 @@
+# The reading pane does not flash between messages (d1ddd2dc, #749, #947).
+#
+# The defect: moving from message to message reloaded the whole document,
+# so the pane went black or blank between them (reopened as a maybe-
+# regression during backfill) and a hold on `j` strobed. Pinned: the pane
+# shows the cursor's own message after every step, and the runner fails the
+# storyboard itself if any frame in between is blank.
+source = { kind = "commit", ref = "d1ddd2dc" }
+proof  = "pinned"
+
+[[step]]
+id      = "one"
+command = "next_message"
+check   = { reading.id = { changed = true }, cursor.index = 1 }
+expect  = "The next message replaces the last in place, with no flash."
+
+[[step]]
+command = "next_message"
+check   = { reading.id = { changed = true }, cursor.index = 2 }
+
+[[step]]
+command = "next_message"
+check   = { reading.id = { changed = true }, cursor.index = 3 }
+
+[[step]]
+command = "next_message"
+check   = { reading.id = { changed = true }, cursor.index = 4 }
+
+[[step]]
+command = "next_message"
+check   = { reading.id = { changed = true }, cursor.index = 5 }
+
+[[step]]
+command = "next_message"
+check   = { reading.id = { changed = true }, cursor.index = 6 }
+
+[[step]]
+command = "prev_message"
+check   = { reading.id = { changed = true }, cursor.index = 5 }
+expect  = "Walking back is as steady as walking forward."

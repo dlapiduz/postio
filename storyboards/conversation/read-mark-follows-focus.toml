@@ -1,0 +1,27 @@
+# Opening a conversation marks only the focused message read, and does not
+# tear the pane down to do it (#797, #1400).
+#
+# The defect: opening marked the newest message read without the focus
+# ever reaching it, and the mark itself rebuilt the conversation, so the
+# pane flashed a moment after it opened. The long-thread has its last two
+# messages unread; opening focuses message 7, so after the dwell message 7
+# is read and message 6 still is not. The run fails on a blank frame, and
+# `reading.id` must be the same before and after.
+#
+# The runner's store takes no writes (its command handler is a stand-in),
+# so the unread badge cannot be asserted: what this pins is that dwelling
+# on the focused message leaves the pane exactly as it was.
+source = { kind = "issue", ref = "#797" }
+proof  = "pinned"
+seed   = "long-thread"
+
+[[step]]
+id      = "open"
+wait    = { until = { reading.id = "7" } }
+check   = { reading.focused = 6 }
+expect  = "The conversation appears with message 7 focused; nothing has been marked yet."
+
+[[step]]
+wait    = { ms = 1500 }
+check   = { reading.id = { same_as = "open" }, reading.focused = 6 }
+expect  = "After the dwell the pane is exactly as it was: no redraw, no scroll, focus still on the newest message."
