@@ -177,7 +177,13 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
                 .is_some_and(|settings| front == *settings.upcast_ref::<gtk::Window>()),
             "the settings window is in front once it is open"
         );
-        assert_eq!(window.observe().view, View::Settings);
+        let seen = window.observe();
+        assert_eq!(seen.view, View::Settings);
+        assert_eq!(
+            seen.keyboard.region,
+            Region::Settings,
+            "the keyboard is in the window in front, not the list behind it: {seen:#?}"
+        );
         window.close_settings();
         while glib::MainContext::default().iteration(false) {}
         assert!(

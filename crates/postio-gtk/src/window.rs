@@ -3882,8 +3882,16 @@ impl Window {
         let composer = imp.composer.borrow().clone();
         let composer_open = composer.as_ref().is_some_and(|c| c.is_open());
 
+        // Settings is a window of its own (#1179): while it is in front the
+        // keyboard is there, whatever the main window's focus still names.
+        let settings_in_front = self
+            .settings_window()
+            .is_some_and(|settings| self.frontmost() == *settings.upcast_ref::<gtk::Window>());
+
         let region = if dialog.is_some() {
             Region::Dialog
+        } else if settings_in_front {
+            Region::Settings
         } else if cheatsheet_up && imp.cheatsheet.get().is_some_and(|c| within(c.upcast_ref())) {
             Region::Cheatsheet
         } else if finder_has_keyboard {
