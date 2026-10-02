@@ -514,13 +514,21 @@ fn settle_and_capture(
     settings: &settle::Settings,
     writer: Option<&RunWriter>,
 ) -> (Settle, Option<Frame>, Option<String>) {
-    if !options.frames {
-        // No frames: let the step's work land, then move on.
-        deliver::drain();
-        pump(Duration::from_millis(150));
-        return (Settle::NotSampled, None, None);
-    }
+    // Settled the same way whether or not frames are kept. "No frames"
+    // means nothing is written, not that the step is given less time: a
+    // check run that waited less than a filmed one would disagree with it
+    // about anything on a timer, which is how a live search's debounce
+    // made the two read #1744 differently.
     let settled = settle::settle(window.upcast_ref(), settings);
+    if !options.frames {
+        let verdict = match settled.verdict {
+            settle::Verdict::Settled { ms } => Settle::Settled { ms },
+            settle::Verdict::Jumped { .. } => Settle::Jumped { frames: vec![] },
+            settle::Verdict::Blanked { .. } => Settle::Blanked { frames: vec![] },
+            settle::Verdict::Unsettled { ms } => Settle::Unsettled { ms },
+        };
+        return (verdict, None, None);
+    }
     let mut extra_names = Vec::new();
     if let Some(writer) = writer {
         for (n, texture) in settled.extra.iter().enumerate() {
