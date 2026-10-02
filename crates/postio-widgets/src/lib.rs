@@ -24,5 +24,6 @@ pub mod reader;
 pub mod settings;
 pub mod startup;
 pub mod state;
+pub mod storyboard;
 pub mod style;
 pub mod widgets;

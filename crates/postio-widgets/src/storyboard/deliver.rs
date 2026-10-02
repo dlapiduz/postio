@@ -21,6 +21,7 @@ use postio_ui::keymap::{Chord, Key, Modifiers};
 /// Why a chord has no GDK spelling.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ChordError {
+    /// The key name GDK does not know.
     #[error("GDK has no key named {0:?}")]
     UnknownKey(String),
 }
@@ -29,7 +30,7 @@ pub enum ChordError {
 ///
 /// A character key reports the character it types, so `J` is `Key::J` held
 /// with Shift, which is what GTK delivers and what
-/// `Chord::from_key_event` folds back into `J`. A chord with an unexpanded
+/// `keys::chord` folds back into `J`. A chord with an unexpanded
 /// `mod` cannot get here: it does not parse as a [`Chord`].
 pub fn chord_to_gdk(chord: &Chord) -> Result<(gdk::Key, gdk::ModifierType), ChordError> {
     let name = chord.key.keysym_name();
@@ -54,8 +55,11 @@ pub fn chord_to_gdk(chord: &Chord) -> Result<(gdk::Key, gdk::ModifierType), Chor
 /// What became of a key press.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Delivery {
-    /// A controller claimed the key: the type name of the widget it is on.
-    Delivered { stopped_at: String },
+    /// A controller claimed the key.
+    Delivered {
+        /// The type name of the widget the claiming controller is on.
+        stopped_at: String,
+    },
     /// Nothing took it: the keyboard was on a widget that has left the
     /// window or is not shown, or no controller on the chain wanted it.
     Dropped,
@@ -239,7 +243,6 @@ pub fn type_text(window: &gtk::Window, text: &str, hook: Option<TypeInto>) -> Ty
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keymap::ChordFromGdk;
 
     fn chord(text: &str) -> Chord {
         text.parse().expect("a chord")
@@ -265,7 +268,7 @@ mod tests {
             let original = chord(text);
             let (key, state) = chord_to_gdk(&original).expect("a key");
             assert_eq!(
-                Chord::from_key_event(key, state),
+                crate::keys::chord(key, state),
                 Some(original),
                 "{text} did not survive the trip"
             );

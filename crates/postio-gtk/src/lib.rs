@@ -107,7 +107,9 @@ pub mod shell;
 pub mod sidebar;
 pub use postio_widgets::startup;
 pub mod state;
-pub mod storyboard;
+// Moved to postio-widgets, where Focus plays storyboards with it (ADR 0043;
+// specs/007-postio-focus T265). Re-exported until T256 removes this crate.
+pub use postio_widgets::storyboard;
 pub mod style;
 pub mod thread_row;
 // The undo toast is drawn by both desktop apps (ADR 0043).
