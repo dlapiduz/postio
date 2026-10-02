@@ -98,7 +98,10 @@ pub mod search;
 // Moved to postio-ui (#566, ADR 0019): the selection model has no toolkit
 // in it, and re-exporting keeps every call site and test resolving here.
 pub use postio_ui::selection;
-pub mod settings;
+// Moved to postio-widgets (ADR 0043; specs/007-postio-focus T233), where
+// Focus opens the same window. Re-exported so every call site and test here
+// still resolves `postio_gtk::settings`.
+pub use postio_widgets::settings;
 pub mod shell;
 pub mod sidebar;
 pub mod startup;

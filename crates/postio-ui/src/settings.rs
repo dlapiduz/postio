@@ -177,6 +177,17 @@ impl Section {
         }
     }
 
+    /// Whether `frontend`'s settings show this section.
+    ///
+    /// A section is shown where the app honours what it sets. Focus honours
+    /// none of Appearance's `[ui]` keys -- its row is one fixed design and it
+    /// follows the system's scheme (`specs/007-postio-focus`
+    /// classic-parity.md rows 18, 19) -- so a control there would change
+    /// nothing a person could see.
+    pub fn shown_in(self, frontend: postio_core::Frontend) -> bool {
+        !(self == Section::Appearance && frontend == postio_core::Frontend::Focus)
+    }
+
     /// The `config.toml` table this pane owns, for the footer line.
     ///
     /// `None` for the three panes that own no table: `Accounts` lives in the
@@ -300,6 +311,34 @@ pub const MAPPABLE_ROLES: [(postio_model::mailbox::MailboxRole, &str); 5] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_shows_every_section_but_the_one_whose_keys_it_does_not_honour() {
+        // Appearance is `[ui]`: theme, density, hover actions and avatars,
+        // none of which Focus honours (classic-parity.md rows 18, 19).
+        let focus: Vec<Section> = Section::ALL
+            .into_iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Focus))
+            .collect();
+        assert_eq!(
+            focus,
+            [
+                Section::Accounts,
+                Section::Filters,
+                Section::Composing,
+                Section::Keyboard,
+                Section::Sync,
+                Section::Privacy,
+                Section::ConfigFile,
+            ]
+        );
+        assert!(
+            Section::ALL
+                .into_iter()
+                .all(|section| section.shown_in(postio_core::Frontend::Classic)),
+            "the classic app shows all eight"
+        );
+    }
 
     const SAMPLE: &str = "\
 # edits here and in the panel are the same file

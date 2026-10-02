@@ -614,3 +614,421 @@ button.postio-icon-button.postio-recipient-chip-remove {
 .postio-flow-ground {
   color: var(--postio-surface);
 }
+
+/* ── Settings (`settings::SettingsPanel`, canvas 3f) ─────────────────
+   The panel and the file are the same thing: a plate over the raw TOML,
+   the folder list's own selected-row treatment for its section nav, and a
+   validity line where a save button would otherwise go. No transition.
+   Measurements (`NAV_WIDTH`, `BODY_HEIGHT`) are Rust constants in
+   `src/settings.rs`, applied as size requests rather than CSS -- this is
+   colour, spacing and type only. Both desktop apps draw it (T233): the
+   classic app in a window of its own, Focus in its dialog, which re-dresses
+   the accent's uses for FR-091 in its own sheet. */
+/* The panel has no frame of its own: the window or the dialog around it
+   draws the border, the shadow and the header. */
+.postio-settings {
+  background-color: var(--postio-surface);
+}
+
+/* Letterspaced, like every other kicker in the application. It names the
+   window rather than the pane; the pane names itself, below. */
+.postio-settings-window-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: var(--postio-text-ui);
+  letter-spacing: 0.12em;
+  color: var(--postio-ink);
+}
+
+.postio-settings-search {
+  min-height: 30px;
+  border-radius: var(--postio-radius-sm);
+}
+
+/* The same chip vocabulary the query bar uses for an operator: a small
+   labelled tag, not a bespoke pill. */
+.postio-settings-tag {
+  font-size: var(--postio-text-meta);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* No dedicated error colour exists in the design system (`.postio-status`
+   uses the accent for its failing state too); this follows the same rule
+   rather than inventing a red. */
+.postio-settings-tag.invalid {
+  background: none;
+  border: 1px solid var(--postio-accent);
+  color: var(--postio-accent-text);
+}
+
+/* ── The fixed sidebar ───────────────────────────────────────────────
+   Over a tinted ground, so the pane beside it reads as the surface and
+   this reads as the frame. Its width is fixed in Rust (`NAV_WIDTH`) and
+   never negotiable: the pane starting in the same place on all eight
+   sections is most of what makes the model legible. */
+.postio-settings-nav {
+  padding: 10px 0 12px;
+  background-color: var(--postio-ground);
+  box-shadow: inset -1px 0 var(--postio-hairline);
+}
+
+.postio-settings-nav-list {
+  background: none;
+}
+
+.postio-settings-nav-heading {
+  padding: 14px 16px 6px;
+}
+
+/* The sidebar's own folder-row treatment: one selection idiom across the
+   application, not two. */
+.postio-settings-nav-row {
+  min-height: 34px;
+  padding: 0 14px;
+  border-left: 3px solid transparent;
+}
+
+.postio-settings-nav-row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+/* A solid accent fill with a darker rule down its left edge — the
+   drawing's own mark for "this is the pane you are looking at", and
+   strong enough to find from across the window. */
+.postio-settings-nav-row:selected {
+  padding-left: 11px;
+  border-left: 3px solid var(--postio-accent-active);
+  background-color: var(--postio-accent);
+}
+
+.postio-settings-nav-row label {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-nav-icon {
+  color: var(--postio-dim);
+}
+
+.postio-settings-nav-row:selected label,
+.postio-settings-nav-row:selected .postio-settings-nav-icon {
+  font-weight: 500;
+  color: var(--postio-accent-fg);
+}
+
+.postio-settings-nav-row:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+/* ── The pane ────────────────────────────────────────────────────────
+   One at a time, and the header above it repeats the sidebar's name: with
+   a single pane on screen, the title is the only thing that says which of
+   the eight you are in without looking back at the sidebar. */
+.postio-settings-pane {
+  background-color: var(--postio-surface);
+}
+
+.postio-settings-pane-header {
+  padding: 18px 22px 16px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-settings-pane-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.3125rem;
+  color: var(--postio-ink);
+}
+
+.postio-settings-pane-description {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-pane-body {
+  padding: 20px 22px;
+}
+
+/* The pane's own bottom row of verbs — Reset to defaults, Revert file. */
+.postio-settings-pane-actions {
+  padding-top: 14px;
+}
+
+/* Two columns with a rule between them, and real space either side of it.
+   The space is the point: columns flush against a divider read as a
+   border on two boxes rather than as one pane divided in two. */
+.postio-settings-column {
+  padding: 0 24px;
+}
+
+.postio-settings-columns > separator {
+  background-color: var(--postio-hairline);
+}
+
+/* A bordered block of mono facts, with its actions inside it. */
+.postio-stat-block {
+  padding: 14px 16px;
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
+.postio-settings-view {
+  padding: 14px 18px;
+  background-color: var(--postio-ground);
+}
+
+.postio-settings-view text {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink);
+  background: none;
+}
+
+/* The strip along the foot, present and identical on all eight panes:
+   a state mark, what is being written, and the way out to $EDITOR. There
+   is no save button because there is nothing to save — the file and the
+   window are the same thing — and this line is what says so. */
+.postio-settings-footer-row {
+  min-height: 38px;
+  padding: 0 16px;
+  background-color: var(--postio-ground);
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+/* The one thing on the strip that is a colour rather than a word. Square,
+   like every other mark in this application. */
+.postio-settings-footer-dot {
+  min-width: 8px;
+  min-height: 8px;
+  background-color: var(--postio-accent);
+}
+
+/* `[ui] in config.toml` — which table this pane writes. */
+.postio-settings-footer-target {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-footer {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-faint);
+}
+
+/* ── A keybinding's row (Design/screens/22) ──────────────────────────
+   One line: what it does on the left, the key on the right. The cap is the
+   control — pressing it is what starts a rebind — so it is a real button
+   wearing the keycap's own vocabulary rather than a label with a second
+   button beside it. */
+.postio-settings-keys-line {
+  padding: 9px 14px;
+}
+
+button.postio-settings-keys-binding {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-small);
+  min-height: 24px;
+  min-width: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--postio-key-border);
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: var(--postio-surface);
+  box-shadow: none;
+  color: var(--postio-key-fg);
+}
+
+button.postio-settings-keys-binding:hover {
+  border-color: var(--postio-accent);
+  color: var(--postio-accent-text);
+}
+
+button.postio-settings-keys-binding:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
+}
+
+/* Waiting for the key. A bordered accent field in place of the cap, so the
+   row that is listening is the one that looks different. */
+button.postio-settings-keys-binding.postio-settings-keys-capturing {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-accent-text);
+}
+
+/* ── An account's row (Design/screens/21) ────────────────────────────
+   Initials, address, the `default` tag, and one mono line of facts. It
+   used to be four stacked labels, which read as four rows of one account
+   rather than one row of four facts. */
+.postio-settings-account-line {
+  padding: 10px 14px;
+}
+
+.postio-settings-account-row {
+  border-left: 3px solid transparent;
+}
+
+.postio-settings-account-row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+/* Selected, not focused: this is the account whose form is open below, and
+   the two states have to look different or bulk actions feel unpredictable.
+   The tint plus the left rule is the selection idiom the sidebar and the
+   message list already use. */
+.postio-settings-account-row:selected {
+  border-left-color: var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+}
+
+.postio-settings-account-row:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+/* The initials chip, square like every other mark here. */
+.postio-settings-account-avatar {
+  min-width: 34px;
+  min-height: 34px;
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-small);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-account-address {
+  font-size: 0.9659rem;
+  color: var(--postio-ink);
+}
+
+.postio-settings-account-metadata {
+  font-size: var(--postio-text-small);
+}
+
+/* `default`, beside the address. A word, never a colour alone. */
+.postio-settings-account-default {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  padding: 1px 6px;
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* The one state on the row that is a problem rather than a fact. No red:
+   the design system has no error colour, and `.postio-status` uses the
+   accent for its failing state too. */
+.postio-settings-account-warning {
+  color: var(--postio-accent-text);
+}
+
+/* The account's signatures (#1086). Rows rather than bare text: each one
+   opens an editor, so it has to look like something you can press. */
+.postio-settings-signature-list {
+  background-color: transparent;
+}
+
+.postio-settings-signature-list row {
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-settings-signature-list row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-row {
+  padding: var(--postio-space-2) var(--postio-space-3);
+}
+
+/* The body. A framed field like the Name entry above it: without this it is
+   text on the ground, and nothing says it can be typed into. */
+.postio-settings-signature-text {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-text text {
+  background-color: transparent;
+}
+
+/* What the last connection test found (#980). Under the servers it is about,
+   because the result is something you read, compare against the fields above,
+   and then edit -- a toast would take it away before either. */
+.postio-settings-account-detail-test-status {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-body);
+  line-height: 1.5;
+}
+
+/* A refusal, in the accent's warning cousin rather than a red banner: the
+   same call `.postio-onboarding-failed` makes, for the same reason. Nothing
+   has gone wrong with Postio -- the server said no. */
+.postio-settings-account-detail-test-status.postio-settings-account-detail-test-failed {
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
+/* A group heading inside the account detail view (#966).
+
+   The one place that view has a heading, and without a rule it renders
+   identically to the field labels beneath it -- so "Mailbox roles" read as a
+   sixth field rather than as the name of the five that follow. The condensed
+   face is what every other heading in this application uses, and secondary
+   ink keeps it under the account's own name rather than competing with it. */
+.postio-settings-account-detail-group {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  color: var(--postio-ink-secondary);
+}
+
+/* ── A check in a form (`widgets::CheckRow`) ───────────────────────── */
+/* A boolean that is a value in a form (#1179). Square, because every
+   indicator in this application is square, and visibly filled when checked
+   rather than relying on a tick a person has to look for. */
+.postio-check {
+  min-height: 26px;
+  color: var(--postio-ink);
+  font-size: var(--postio-text-ui);
+}
+
+.postio-check check {
+  min-width: 15px;
+  min-height: 15px;
+  margin-right: var(--postio-space-2);
+  padding: 0;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: 0;
+  background-image: none;
+  background-color: var(--postio-surface);
+  box-shadow: none;
+  -gtk-icon-source: none;
+}
+
+.postio-check check:hover {
+  border-color: var(--postio-accent);
+}
+
+.postio-check check:checked {
+  border-color: var(--postio-accent);
+  /* A filled square with a thin gap inside its own border — the drawing's
+     mark, and legible at a glance in a way a tick glyph scaled to 15px is
+     not. The gap is an inset ring in the surface colour over an accent
+     fill, rather than the other way round: an accent ring over a surface
+     fill leaves the middle empty, which reads as a third state. */
+  background-color: var(--postio-accent);
+  box-shadow: inset 0 0 0 2px var(--postio-surface);
+}
+
+.postio-check:focus-visible check {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
+}

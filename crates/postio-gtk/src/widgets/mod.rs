@@ -16,16 +16,12 @@
 //! mechanism wired to nothing is what `check-uncalled-pub-fn` exists to
 //! catch. It lands with the collapsed conversation row it belongs to.
 
-pub mod checkrow;
-pub mod nav_row;
-pub mod settings_group;
-
 // The controls both desktop apps draw moved to postio-widgets (ADR 0043).
 // Re-exported under their old paths, so every surface here that names
 // `crate::widgets::keyhint` or `crate::widgets::ActionBar` is unchanged.
 pub use postio_widgets::widgets::{
-    action_bar, button, chip, chrome, field, keycap, keyhint, notes, notice, plate, screen,
-    segmented, space,
+    action_bar, button, checkrow, chip, chrome, field, keycap, keyhint, nav_row, notes, notice,
+    plate, screen, segmented, settings_group, space,
 };
 
 pub use action_bar::{Action, ActionBar};
@@ -35,9 +31,9 @@ pub use chip::{chip_button, filter_chip};
 pub use chrome::{kicker, stat_line};
 pub use keycap::KeycapButton;
 pub use keyhint::KeyLine;
-pub use nav_row::{nav_count, nav_name, nav_row};
 pub use notes::{ListOrEmpty, callout, empty_note};
 pub use notice::{NoticeBar, NoticeMenuItem};
+pub use postio_widgets::widgets::{nav_count, nav_name};
 pub use screen::under_window_chrome;
 pub use segmented::SegmentedControl;
 pub use settings_group::SettingsGroup;

@@ -24,3 +24,4 @@ pub mod compose;
 pub mod config;
 pub mod onboarding;
 pub mod reading;
+pub mod settings;

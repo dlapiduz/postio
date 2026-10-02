@@ -15,11 +15,13 @@
 
 pub mod action_bar;
 pub mod button;
+pub mod checkrow;
 pub mod chip;
 pub mod chrome;
 pub mod field;
 pub mod keycap;
 pub mod keyhint;
+pub mod nav_row;
 pub mod notes;
 pub mod notice;
 pub mod pickers;
@@ -27,6 +29,7 @@ pub mod plate;
 pub mod recipients;
 pub mod screen;
 pub mod segmented;
+pub mod settings_group;
 pub mod toast;
 
 /// The design system's spacing ramp in whole pixels -- `S1` 3px to `S8`
@@ -39,12 +42,15 @@ pub mod space {
 
 pub use action_bar::{Action, ActionBar};
 pub use button::{Kind, Size, close_button, dress_icon, icon_button, icon_menu_button};
+pub use checkrow::CheckRow;
 pub use chip::{chip_button, filter_chip};
 pub use chrome::{kicker, stat_line};
 pub use field::field;
 pub use keycap::KeycapButton;
 pub use keyhint::KeyLine;
+pub use nav_row::{nav_count, nav_name, nav_row};
 pub use notes::{ListOrEmpty, callout, empty_note};
 pub use notice::{NoticeBar, NoticeMenuItem};
 pub use screen::under_window_chrome;
 pub use segmented::SegmentedControl;
+pub use settings_group::SettingsGroup;

@@ -30,7 +30,7 @@
 //! [`Section::Privacy`] is a third, stranger kind: not a form over a table,
 //! because there is no table — the remote-image allow-list it manages lives
 //! entirely outside `config.toml` (see [`Section::key`]'s own doc). It reads
-//! and writes [`crate::reader::RemoteImageAllowList`] directly, with nothing
+//! and writes [`postio_ui::allowlist::RemoteImageAllowList`] directly, with nothing
 //! for the debounced buffer write to do.
 //!
 //! # Two halves
@@ -40,7 +40,7 @@
 //! widget: it shows the live validity line (`postio_config::validate` does
 //! the parsing and timing already; this module only formats the result), and
 //! it writes the buffer back to disk on a short debounce after typing settles
-//! — see [`write_atomically`] for why that write is a rename, not an
+//! — see `write_atomically` for why that write is a rename, not an
 //! in-place write.
 //!
 //! # Revert
@@ -50,18 +50,26 @@
 //! canvas 3f's "Revert file" button. [`SettingsPanel::note_known_good`] is
 //! what keeps that memory honest when the edit that validated did not come
 //! from this panel at all: `$EDITOR` writes the same file, through the same
-//! watcher, and `crate::config`'s bridge reports every reload here, not only
-//! the ones this widget's own buffer caused.
+//! watcher, and the app's config follower reports every reload here, not
+//! only the ones this widget's own buffer caused.
+//!
+//! # Both desktop apps
+//!
+//! The classic app opens the panel in a window of its own and Focus in its
+//! dialog (ADR 0043; specs/007-postio-focus T233, T234). What differs
+//! between them is said to the panel, never decided inside it:
+//! [`SettingsPanel::set_frontend`] picks the sections and the commands the
+//! Keyboard section lists, and [`SettingsPanel::set_row_height_probe`] lends
+//! Appearance the app's own row to measure. Its presenters, which join it to
+//! the store's host, are [`crate::present::settings`].
 //!
 //! # What this module does not do
 //!
-//! Launching `$EDITOR` itself is `crate::config`'s job: `CommandId::EditConfig`
-//! resolves from the keymap (see `crates/postio-gtk/tests/gtk_live_config.rs`)
-//! independently of this panel being open, and the palette already gives it
-//! an accessible control, so this panel does not duplicate that with a
-//! second button of its own. `CommandId::Settings` (`window.rs::run()`) is
-//! what makes the panel itself reachable from a binding and the palette,
-//! alongside the main menu.
+//! Launch `$EDITOR` itself: `CommandId::EditConfig` is the app's to answer
+//! ([`crate::editor`]), independently of this panel being open, and the
+//! panel's footer button raises that same command rather than spawning
+//! anything. `CommandId::Settings` is what makes the panel itself reachable
+//! from a binding, the palette and the main menu.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::path::{Path, PathBuf};
@@ -81,7 +89,6 @@ use postio_core::CommandId;
 use postio_model::ids::SignatureId;
 use postio_model::{Account, AccountId, MailboxRole, UnsubscribeActivation};
 
-use crate::keymap::{Chord, ChordFromGdk};
 use crate::widgets::{
     CheckRow, ListOrEmpty, SegmentedControl, SettingsGroup, kicker, space, stat_line,
 };
@@ -409,13 +416,18 @@ fn two_columns(left: &impl IsA<gtk::Widget>, right: &impl IsA<gtk::Widget>) -> g
 /// `path`, with the user's home directory collapsed to `~` — what the header
 /// shows, matching canvas 3f's `~/.config/postmark/config.toml`.
 fn display_path(path: &Path) -> String {
-    std::env::var_os("HOME")
-        .and_then(|home| {
-            path.strip_prefix(home)
-                .ok()
-                .map(|rest| format!("~/{}", rest.display()))
-        })
-        .unwrap_or_else(|| path.display().to_string())
+    display_path_under(path, std::env::var_os("HOME").as_deref().map(Path::new))
+}
+
+/// [`display_path`] with `home` given rather than read from the
+/// environment, which a test cannot set safely.
+fn display_path_under(path: &Path, home: Option<&Path>) -> String {
+    home.and_then(|home| {
+        path.strip_prefix(home)
+            .ok()
+            .map(|rest| format!("~/{}", rest.display()))
+    })
+    .unwrap_or_else(|| path.display().to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -435,15 +447,15 @@ use postio_config::save::write_atomically;
 /// The account id `SettingsPanel::account_row` stamped onto `row`, or
 /// [`AccountId::UNASSIGNED`] if this is not an account row at all.
 fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
-    // glib cannot know the type a key was stored under; this file can — see
-    // `account_row`'s own comment.
-    #[allow(unsafe_code)]
-    unsafe {
-        row.data::<i64>("postio-account-id")
-            .map(|p| AccountId::new(*p.as_ref()))
-            .unwrap_or(AccountId::UNASSIGNED)
-    }
+    row.widget_name()
+        .strip_prefix(ACCOUNT_ROW)
+        .and_then(|id| id.parse::<i64>().ok())
+        .map_or(AccountId::UNASSIGNED, AccountId::new)
 }
+
+/// What an account row's widget name starts with; its id follows. A name
+/// rather than `set_data`, which is unsafe, and this crate has none.
+const ACCOUNT_ROW: &str = "postio-account-";
 // `account_badge` moved to `postio_ui::account`: what an account *is* -- IMAP
 // or Gmail, a password or OAuth 2 -- reads the same in both settings panes,
 // and it needs nothing from either toolkit.
@@ -469,17 +481,22 @@ fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
 /// `CheckRow` both know the difference, so the widgets can outlive the
 /// value they show.
 pub struct AppearanceControls {
+    /// System, light or dark.
     pub theme: SegmentedControl,
+    /// Airy, snug or compact rows.
     pub density: SegmentedControl,
     /// `26px rows · 41 per screen` — what the density choice above actually
     /// costs, in the units a person is choosing between.
     pub density_stat: gtk::Label,
+    /// Whether a hovered row shows its action icons.
     pub hover_actions: CheckRow,
+    /// Whether rows show the sender's initials.
     pub sender_avatars: CheckRow,
 }
 
 /// Sync & storage's controls, held for the same reason.
 pub struct SyncControls {
+    /// IMAP IDLE, polling, or only on request.
     pub check_for_mail: SegmentedControl,
     /// What the chosen mode actually means in minutes — the number the
     /// segmented control deliberately does not carry. See
@@ -489,21 +506,31 @@ pub struct SyncControls {
     /// Three values, so a segmented control rather than the drawing's
     /// checkbox — see [`SettingsPanel::ensure_sync_controls`].
     pub attachments: SegmentedControl,
+    /// Whether mail is checked as Postio starts.
     pub sync_on_startup: CheckRow,
+    /// Whether new mail raises a notification.
     pub notify: CheckRow,
     /// `index 38 MB · stores 7.9 GB` and `3 accounts · last pass 41 min`,
     /// the bordered block's two lines.
     pub stats_size: gtk::Label,
+    /// How many accounts the store holds.
     pub stats_accounts: gtk::Label,
     /// Which mailbox roles a notification is worth raising for, as a comma
     /// list (#874). An `Entry`, because it is a list a person types and not
     /// a choice between three things — ADR 0029 Q3.
     pub notify_roles: gtk::Entry,
+    /// "Back up locally" (ADR 0016): its heading, hidden while no folders
+    /// are known.
+    pub backfill_heading: gtk::Label,
+    /// The folders' checks.
+    pub backfill: gtk::Box,
 }
 
 /// Composing's controls.
 pub struct ComposingControls {
+    /// Where a reply's signature goes.
     pub on_reply: SegmentedControl,
+    /// Where a forward's signature goes.
     pub on_forward: SegmentedControl,
 }
 
@@ -555,6 +582,21 @@ mod imp {
         /// How tall the message list is, so Appearance can say how many rows
         /// of the chosen density fit in one. Zero means nobody has said.
         pub list_viewport: Cell<i32>,
+        /// How tall the app's message row is at a density and a width
+        /// (`set_row_height_probe`).
+        #[allow(clippy::type_complexity)]
+        pub row_height: RefCell<Option<Box<dyn Fn(Density, i32) -> i32>>>,
+        /// The app the panel is drawn in (`set_frontend`): which sections
+        /// and which commands' keys it shows. `None` shows everything.
+        pub frontend: Cell<Option<postio_core::Frontend>>,
+        /// Every account's folders, for Sync & storage's per-folder backfill
+        /// control (ADR 0016). Empty until an app installs the backfill
+        /// presenter, and the control is not drawn while it is.
+        pub folders:
+            RefCell<std::collections::BTreeMap<AccountId, Vec<postio_model::mailbox::Mailbox>>>,
+        /// Who to tell when a folder's backfill check is changed by hand.
+        #[allow(clippy::type_complexity)]
+        pub backfill_handlers: RefCell<Vec<Box<dyn Fn(postio_model::ids::MailboxId, bool)>>>,
         /// The eight panes themselves.
         pub accounts_pane: gtk::Box,
         pub filters_pane: gtk::Box,
@@ -729,9 +771,10 @@ mod imp {
         /// writes back to — handed in by `window.rs`'s
         /// [`super::SettingsPanel::set_remote_image_allowlist`] rather than
         /// loaded here, the same reason `Window::new_reader` takes its own
-        /// path rather than hardcoding [`crate::reader::RemoteImageAllowList::path`]:
+        /// path rather than hardcoding [`postio_ui::allowlist::RemoteImageAllowList::path`]:
         /// a test needs a scratch path, not the real state directory.
-        pub remote_image_allowlist: RefCell<Option<(crate::reader::RemoteImageAllowList, PathBuf)>>,
+        pub remote_image_allowlist:
+            RefCell<Option<(postio_ui::allowlist::RemoteImageAllowList, PathBuf)>>,
         /// One row per past one-click-unsubscribe activation (#971), newest
         /// first — the log itself, not something this pane can act on: it is
         /// read-only history, unlike `privacy_list`'s revocable exceptions.
@@ -793,6 +836,10 @@ mod imp {
                 command: RefCell::new(Vec::new()),
                 editor_button: OnceCell::new(),
                 list_viewport: Cell::new(0),
+                row_height: RefCell::default(),
+                frontend: Cell::new(None),
+                folders: RefCell::default(),
+                backfill_handlers: RefCell::default(),
                 accounts_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 filters_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 composing_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -970,7 +1017,7 @@ impl SettingsPanel {
 
     /// Replaces the buffer's text, as though the user had typed it: the
     /// validity line recomputes and a write is scheduled, same as any other
-    /// edit. A test seam, in the same spirit as `crate::palette::Palette`'s
+    /// edit. A test seam, in the same spirit as `the palette`'s
     /// `set_query`.
     ///
     /// Redraws explicitly rather than leaning on `connect_changed` alone: a
@@ -1187,12 +1234,12 @@ impl SettingsPanel {
     ///
     /// `path` is where a revoke writes back to — `window.rs` hands in the
     /// path its readers share one allow list by
-    /// ([`Window::new_reader`](super::window::Window::new_reader)), and a
+    /// (the classic window's `new_reader`), and a
     /// revoke here updates that shared list as well as the file, so it
     /// reaches every reader of the app, open ones included (T020).
     pub fn set_remote_image_allowlist(
         &self,
-        list: crate::reader::RemoteImageAllowList,
+        list: postio_ui::allowlist::RemoteImageAllowList,
         path: PathBuf,
     ) {
         *self.imp().remote_image_allowlist.borrow_mut() = Some((list, path));
@@ -1237,7 +1284,7 @@ impl SettingsPanel {
         // And the list the app's readers share, so the revoke reaches every
         // reader -- open ones included -- rather than only the next one to
         // read the file (T020).
-        postio_widgets::reader::shared_allowlist(path)
+        crate::reader::shared_allowlist(path)
             .borrow_mut()
             .revoke(sender);
         drop(guard);
@@ -1512,14 +1559,9 @@ impl SettingsPanel {
         // so unlike every other list in this panel these rows are
         // selectable.
         row.set_selectable(true);
-        // glib cannot know the type a key was stored under; this file can —
-        // the same technique `Sidebar`'s rows use for their own ids (#292).
-        #[allow(unsafe_code)]
-        unsafe {
-            row.set_data("postio-account-id", account.id.get());
-        }
+        row.set_widget_name(&format!("{ACCOUNT_ROW}{}", account.id.get()));
 
-        let avatar = gtk::Label::new(Some(&crate::row::initials(Some(&account.address))));
+        let avatar = gtk::Label::new(Some(&postio_ui::row::initials(Some(&account.address))));
         avatar.add_css_class("postio-settings-account-avatar");
         avatar.set_valign(gtk::Align::Center);
 
@@ -1720,6 +1762,8 @@ impl SettingsPanel {
         None
     }
 
+    /// Runs `handler` when an account row's menu, or a key aimed at the
+    /// focused row, asks for an [`AccountAction`].
     pub fn connect_account_action(&self, handler: impl Fn(AccountId, AccountAction) + 'static) {
         self.imp()
             .account_action
@@ -2570,6 +2614,7 @@ impl SettingsPanel {
             .unwrap_or_default()
     }
 
+    /// Runs `handler` when a field of the account detail view is committed.
     pub fn connect_account_edited(&self, handler: impl Fn(AccountId, AccountEdit) + 'static) {
         self.imp()
             .account_edited
@@ -2979,6 +3024,15 @@ impl SettingsPanel {
         right.section("Local store");
         right.control(&stats);
 
+        // Every folder backs up to completion unless the person says
+        // otherwise (ADR 0016). Hidden until an app hands the folders over.
+        let backfill_heading = right.section("Back up locally");
+        let backfill = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
+        backfill.add_css_class("postio-settings-backfill");
+        right.control(&backfill);
+        backfill_heading.set_visible(false);
+        backfill.set_visible(false);
+
         imp.sync_pane
             .append(&two_columns(left.widget(), right.widget()));
 
@@ -2991,7 +3045,10 @@ impl SettingsPanel {
             stats_size,
             stats_accounts,
             notify_roles,
+            backfill_heading,
+            backfill,
         });
+        self.redraw_backfill();
         imp.sync_controls.get().expect("just set")
     }
 
@@ -3004,7 +3061,10 @@ impl SettingsPanel {
         while let Some(row) = imp.keys_list.row_at_index(0) {
             imp.keys_list.remove(&row);
         }
-        for spec in postio_core::registry::all() {
+        let frontend = imp.frontend.get();
+        for spec in postio_core::registry::all()
+            .filter(|spec| frontend.is_none_or(|app| spec.requires.offered_by(app)))
+        {
             imp.keys_list.append(&self.key_row(spec, &config.keys));
         }
     }
@@ -3205,7 +3265,7 @@ impl SettingsPanel {
             self.redraw_keys();
             return;
         }
-        let Some(chord) = Chord::from_key_event(keyval, state) else {
+        let Some(chord) = crate::keys::chord(keyval, state) else {
             // A key this build has no name for -- stay in capture mode and
             // wait for a real one, the same as pressing a bare modifier.
             return;
@@ -3240,7 +3300,7 @@ impl SettingsPanel {
 
     /// Feeds a keypress to whichever command's row is capturing, as a real
     /// key controller would. `#[doc(hidden)]` because it exists only for
-    /// tests: [`postio_gtk::window::Window::handle_key`](crate::window::Window::handle_key)
+    /// tests: a window's own key handling
     /// resolves a synthetic keypress against the app's own resolver
     /// directly rather than dispatching a real `GdkEvent`, so it never
     /// reaches this panel's own capture controller — this is the seam that
@@ -3299,46 +3359,39 @@ impl SettingsPanel {
     /// What the chosen density actually costs, in the units a person is
     /// choosing between: `40px rows · 18 per screen`.
     ///
-    /// **Measured, not tabulated.** The height comes from a real
-    /// [`crate::row::MessageRowView`] laid out at this density with a
-    /// representative message in it, because that is the only number that
-    /// stays true when the row's anatomy or the font changes; a constant
-    /// here would be a second source of truth that nothing keeps in step.
+    /// **Measured, not tabulated.** The height comes from the app's own row,
+    /// laid out at this density with a representative message in it
+    /// ([`SettingsPanel::set_row_height_probe`]), because that is the only
+    /// number that stays true when the row's anatomy or the font changes; a
+    /// constant here would be a second source of truth that nothing keeps in
+    /// step. The row is the app's, not this crate's, so the app measures it.
     ///
     /// The per-screen figure needs the height of the list the rows go in,
-    /// which this widget cannot see — `window.rs` hands it over
-    /// ([`SettingsPanel::set_list_viewport_height`]). Without it the line
+    /// which this widget cannot see — the app hands it over
+    /// ([`SettingsPanel::set_list_viewport_height`]). Without either the line
     /// says only what it knows, rather than dividing by a guess.
     fn density_stat_text(&self, density: Density) -> String {
-        let probe = crate::row::MessageRowView::new();
-        probe.set_density(density);
-        probe.set_row(Some(crate::list::Row {
-            id: postio_model::ids::MessageId::new(1),
-            thread: None,
-            from: Some(postio_model::EmailAddress::new(
-                Some("Ada Lovelace"),
-                "ada@example.com",
-            )),
-            subject: Some("A representative subject line".into()),
-            preview: Some("And the snippet under it, which the compact density drops.".into()),
-            received_at: chrono::Utc::now(),
-            seen: true,
-            flagged: false,
-            answered: false,
-            send_state: None,
-            send_at: None,
-            has_attachments: false,
-            thread_count: 1,
-            participants: Vec::new(),
-        }));
-        let height = probe.measured_height(DENSITY_PROBE_WIDTH).ceil() as i32;
-        let height = height.max(1);
+        let measured = self
+            .imp()
+            .row_height
+            .borrow()
+            .as_ref()
+            .map(|probe| probe(density, DENSITY_PROBE_WIDTH).max(1));
+        let Some(height) = measured else {
+            return String::new();
+        };
         match self.imp().list_viewport.get() {
             viewport if viewport > 0 => {
                 format!("{height}px rows · {} per screen", viewport / height)
             }
             _ => format!("{height}px rows"),
         }
+    }
+
+    /// How tall the app's message row is at a density and a width: what the
+    /// Appearance pane's density line measures with.
+    pub fn set_row_height_probe(&self, probe: impl Fn(Density, i32) -> i32 + 'static) {
+        self.imp().row_height.replace(Some(Box::new(probe)));
     }
 
     /// How tall the message list is, so the density line can say how many
@@ -3882,13 +3935,134 @@ impl SettingsPanel {
         query.split_whitespace().all(|word| haystack.contains(word))
     }
 
+    /// Draw the panel for `frontend`: the sections it shows
+    /// ([`Section::shown_in`]) and the commands the Keyboard section lists,
+    /// which are the ones that app offers. A panel never told shows all of
+    /// both.
+    pub fn set_frontend(&self, frontend: postio_core::Frontend) {
+        let imp = self.imp();
+        imp.frontend.set(Some(frontend));
+        imp.nav.invalidate_filter();
+        if !self.shown(self.current_section())
+            && let Some(first) = Section::ALL
+                .into_iter()
+                .find(|section| self.shown(*section))
+        {
+            self.show_section(first);
+        }
+        self.redraw_visible_pane();
+    }
+
+    /// Whether this panel shows `section` at all.
+    pub fn shown(&self, section: Section) -> bool {
+        self.imp()
+            .frontend
+            .get()
+            .is_none_or(|frontend| section.shown_in(frontend))
+    }
+
+    /// Runs `handler` with a folder and whether its backfill is now skipped,
+    /// whenever a person changes one of Sync & storage's folder checks (ADR
+    /// 0016). Never for the state [`SettingsPanel::set_account_folders`]
+    /// draws.
+    pub fn connect_backfill_exclusion_changed(
+        &self,
+        handler: impl Fn(postio_model::ids::MailboxId, bool) + 'static,
+    ) {
+        self.imp()
+            .backfill_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// One account's folders as they stand, for Sync & storage's per-folder
+    /// backfill control. Empty does nothing: there is no account to name.
+    pub fn set_account_folders(&self, folders: Vec<postio_model::mailbox::Mailbox>) {
+        let Some(account) = folders.first().map(|folder| folder.account_id) else {
+            return;
+        };
+        self.imp().folders.borrow_mut().insert(account, folders);
+        if self.imp().sync_controls.get().is_some() {
+            self.redraw_backfill();
+        }
+    }
+
+    /// Whether `path`'s folder is backed up locally, as Sync & storage's
+    /// check for it says; `None` when it draws no check for that folder.
+    pub fn backfill_check(&self, path: &str) -> Option<gtk::CheckButton> {
+        let controls = self.imp().sync_controls.get()?;
+        let mut child = controls.backfill.first_child();
+        while let Some(widget) = child {
+            if let Some(check) = widget.downcast_ref::<gtk::CheckButton>()
+                && check.widget_name() == path
+            {
+                return Some(check.clone());
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+
+    /// Draws "Back up locally": a check per selectable folder, checked
+    /// while its backfill runs, under its account's address when there is
+    /// more than one account.
+    fn redraw_backfill(&self) {
+        let imp = self.imp();
+        let Some(controls) = imp.sync_controls.get() else {
+            return;
+        };
+        while let Some(child) = controls.backfill.first_child() {
+            controls.backfill.remove(&child);
+        }
+        let folders = imp.folders.borrow();
+        let accounts = imp.accounts.borrow();
+        let several = folders.len() > 1;
+        for (account, mailboxes) in folders.iter() {
+            if several {
+                let address = accounts
+                    .iter()
+                    .find(|row| row.id == *account)
+                    .map(|row| row.address.address.clone())
+                    .unwrap_or_default();
+                let heading = stat_line(&address);
+                heading.add_css_class("postio-settings-backfill-account");
+                controls.backfill.append(&heading);
+            }
+            for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
+                let check = CheckRow::new(&mailbox.path);
+                check.set_active(!mailbox.backfill_excluded);
+                check.widget().set_widget_name(&mailbox.path);
+                check
+                    .widget()
+                    .update_property(&[gtk::accessible::Property::Label(&format!(
+                        "Back up {} locally",
+                        mailbox.path
+                    ))]);
+                let id = mailbox.id;
+                check.connect_toggled(glib::clone!(
+                    #[weak(rename_to = panel)]
+                    self,
+                    move |active| {
+                        for handler in panel.imp().backfill_handlers.borrow().iter() {
+                            handler(id, !active);
+                        }
+                    }
+                ));
+                controls.backfill.append(check.widget());
+            }
+        }
+        let any = !folders.is_empty();
+        controls.backfill_heading.set_visible(any);
+        controls.backfill.set_visible(any);
+    }
+
     /// Tells the panel who to ask to run a command it has a button for.
     ///
     /// The panel raises `CommandId`s and runs none of them, for the same
-    /// reason it never writes an account edit itself: `postio-app` owns the
-    /// store and the network, and `window.rs` already has the one dispatch
-    /// every keystroke and every menu item goes through. A second path from
-    /// a button straight to the runtime is how two surfaces come to disagree
+    /// reason it never writes an account edit itself: the app owns the store
+    /// and the network, and its window already has the one dispatch every
+    /// keystroke and every menu item goes through. A second path from a
+    /// button straight to the runtime is how two surfaces come to disagree
     /// about what `Refresh` means.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.imp().command.borrow_mut().push(Box::new(handler));
@@ -4372,7 +4546,7 @@ impl SettingsPanel {
             move |row| {
                 Section::ALL
                     .get(row.index().max(0) as usize)
-                    .is_none_or(|section| panel.matches_search(*section))
+                    .is_none_or(|section| panel.shown(*section) && panel.matches_search(*section))
             }
         ));
 
@@ -4579,26 +4753,22 @@ pinned = false
 
     #[test]
     fn a_path_under_home_is_shown_with_a_tilde() {
-        // SAFETY: single-threaded test; nothing else reads `HOME` here.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("HOME", "/home/example")
-        };
         assert_eq!(
-            display_path(Path::new("/home/example/.config/postio/config.toml")),
+            display_path_under(
+                Path::new("/home/example/.config/postio/config.toml"),
+                Some(Path::new("/home/example"))
+            ),
             "~/.config/postio/config.toml"
         );
     }
 
     #[test]
     fn a_path_outside_home_is_shown_verbatim() {
-        // SAFETY: single-threaded test; nothing else reads `HOME` here.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("HOME", "/home/example")
-        };
         assert_eq!(
-            display_path(Path::new("/etc/postio/config.toml")),
+            display_path_under(
+                Path::new("/etc/postio/config.toml"),
+                Some(Path::new("/home/example"))
+            ),
             "/etc/postio/config.toml"
         );
     }
