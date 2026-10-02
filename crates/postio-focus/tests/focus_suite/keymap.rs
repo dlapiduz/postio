@@ -79,10 +79,13 @@ pub fn every_key_the_key_map_shows_runs_its_command() {
             }
         }
         assert!(checked > 30, "only {checked} keys were checked");
+        // `a`, then the menu chord the second keyboard layer gave it.
+        let chord =
+            postio_config::keys::expand_mod("mod+shift+a", postio_config::paths::Platform::host());
         assert!(
-            rows.iter()
-                .any(|(title, keys)| title == "Archive" && keys == &["a".to_owned()]),
-            "archive shows a: {rows:?}"
+            rows.iter().any(|(title, keys)| title == "Archive"
+                && keys == &["a".to_owned(), chord.clone()]),
+            "archive shows a and {chord}: {rows:?}"
         );
 
         let dialog = window.key_map().expect("the key map");

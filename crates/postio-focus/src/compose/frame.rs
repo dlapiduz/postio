@@ -343,8 +343,19 @@ impl Frame {
     /// are (`hints::short`: `ctrl+⇧+↵`, not `ctrl+shift+Return`).
     pub fn set_keymap(&self, keymap: &Keymap) {
         let key = |command| hints::key(keymap, command).map(|key| hints::short(&key));
+        // `mod+Return` while it is bound, though Send's primary is
+        // `mod+shift+d`: the Mac's menu chord, the one every Mac mail client
+        // uses for Send. The composer's cap is the short key it has always
+        // taught (T221).
+        let send_key = hints::hint_as(
+            keymap,
+            CommandId::Send,
+            &postio_config::keys::expand_mod("mod+Return", postio_config::paths::Platform::host()),
+            "Send",
+        )
+        .map(|hint| hints::short(&hint.key));
         self.send
-            .set_child(Some(&labelled("Send", key(CommandId::Send).as_deref())));
+            .set_child(Some(&labelled("Send", send_key.as_deref())));
         // Send later opens a menu: its words and key like the others, then
         // the arrow that says so.
         let later = labelled("Send later", key(CommandId::ScheduleSend).as_deref());
