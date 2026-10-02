@@ -649,9 +649,21 @@ mod tests {
     #[test]
     fn the_sheet_prints_only_everywhere_and_the_readers_own_surface() {
         for context in [Context::List, Context::Composer, Context::Sidebar] {
-            let titles: Vec<&str> = sections(&defaults(), context, in_the_list().1)
+            let printed = sections(&defaults(), context, in_the_list().1);
+            // A command another test in this binary registers at run time
+            // gets a section of its own, last; that is the extension sheet's
+            // case, not this one. Read after the sheet, so nothing it printed
+            // can have been registered since.
+            let namespaces: Vec<&str> = registry::every_action()
+                .filter_map(|spec| match spec.id {
+                    ActionId::Ext(id) => Some(id.namespace()),
+                    ActionId::Builtin(_) => None,
+                })
+                .collect();
+            let titles: Vec<&str> = printed
                 .iter()
                 .map(|section| section.title)
+                .filter(|title| !namespaces.contains(title))
                 .collect();
 
             let expected: Vec<&str> = [EVERYWHERE, IN_THE_BOX, heading(context)]
