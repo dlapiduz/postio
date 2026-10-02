@@ -14,6 +14,7 @@
 pub mod apply;
 pub mod check;
 pub mod format;
+pub mod key;
 pub mod lint;
 pub mod page;
 pub mod run;

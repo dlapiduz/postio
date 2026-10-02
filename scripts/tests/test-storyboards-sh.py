@@ -90,6 +90,7 @@ def setup(tmp: Path) -> dict[str, str]:
     (catalogue / "gaps" / "classic.toml").write_text("")
     (catalogue / "README.md").write_text("")
     (repo / "crates" / "postio-app").mkdir(parents=True)
+    (repo / "crates" / "postio-app" / "Cargo.toml").write_text("")
     subprocess.run(["git", "init", "-q", "-b", "feature/storyboards", str(repo)], check=True)
 
     bin_dir = tmp / "bin"
@@ -186,6 +187,25 @@ def main() -> int:
         expect("page", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
         expect("page", "--runs" in call and "Design/review/feature-storyboards/runs" in call, call)
         expect("page", "Design/review/feature-storyboards/index.html" in call, call)
+
+        print("case: key passes the tree ids of the app's crates and the catalogue")
+        repo = ctx["repo"]
+        subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com",
+             "commit", "-qm", "seed"],
+            check=True,
+        )
+        tree = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "HEAD:storyboards"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        result = run(ctx, "key", "--app", "classic")
+        call = next((l for l in log_lines(ctx) if l.startswith("tool key")), "")
+        expect("key", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
+        expect("key", f"--tree storyboards={tree}" in call, call)
+        expect("key", "--tree crates/postio-gtk=absent" in call, call)
+        expect("key", "crates/postio-app=" in call and "crates/postio-app=absent" not in call, call)
 
     if FAILURES:
         print(f"\n{len(FAILURES)} self-test assertion(s) failed:", file=sys.stderr)
