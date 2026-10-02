@@ -9,37 +9,41 @@
 # The long-thread seed is the one conversation of seven messages. Its
 # document is only a little taller than the pane, so one page reaches the
 # end: the checks assert on the offset changing, not on how far.
+#
+# The thread opens on its newest message (#1385), which here is its end, so
+# the walk goes up first. Open while #1385 is: the pane still opens at the
+# top, so Page Up has nowhere to go.
 source = { kind = "issue", ref = "#1402" }
-proof  = "pinned"
+proof  = "open"
 seed   = "long-thread"
 
 [[step]]
 id      = "start"
 wait    = { until = { reading.id = "7" } }
-check   = { reading.scroll.offset = 0, reading.id = "7" }
-expect  = "The conversation is already filling the reading pane at launch, scrolled to the top."
+check   = { reading.id = "7" }
+expect  = "The conversation is already filling the reading pane at launch, on its newest message, which is its end."
 
 [[step]]
-id      = "page-down"
-command = "scroll_reader_down"
-settle  = { until = { reading.scroll.offset = { changed = true } } }
-check   = { reading.scroll.offset = { changed = true }, reading.id = "7" }
-expect  = "The pane scrolls down by a page, smoothly, with no flash."
-
-[[step]]
+id      = "page-up"
 command = "scroll_reader_up"
 settle  = { until = { reading.scroll.offset = { changed = true } } }
-check   = { reading.scroll.offset = 0 }
-expect  = "Page Up scrolls back to the top."
+check   = { reading.scroll.offset = { changed = true }, reading.id = "7" }
+expect  = "Page Up scrolls back by a page, smoothly, with no flash."
+
+[[step]]
+command = "scroll_reader_down"
+settle  = { until = { reading.scroll.offset = { changed = true } } }
+check   = { reading.scroll.offset = { changed = true } }
+expect  = "Page Down scrolls forward again."
+
+[[step]]
+key     = "shift+space"
+settle  = { until = { reading.scroll.offset = { changed = true } } }
+check   = { reading.scroll.offset = { changed = true } }
+expect  = "Shift+Space pages back up, the same as Page Up."
 
 [[step]]
 key     = "space"
 settle  = { until = { reading.scroll.offset = { changed = true } } }
 check   = { reading.scroll.offset = { changed = true } }
 expect  = "Space pages down, the same as Page Down."
-
-[[step]]
-key     = "shift+space"
-settle  = { until = { reading.scroll.offset = { changed = true } } }
-check   = { reading.scroll.offset = 0 }
-expect  = "Shift+Space pages back up."

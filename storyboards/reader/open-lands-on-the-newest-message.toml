@@ -3,10 +3,16 @@
 # The defect: the one-document pane opened on the oldest message, so a
 # person arriving at a long thread read it from the top when what they came
 # for was the newest. The rail's read-mark and the scroll then fought each
-# other. Pinned: the focused message is the last of the seven (index 6) and
-# the pane has not scrolled away from it by itself.
+# other. The focused message is the last of the seven (index 6), and the
+# pane is scrolled to it: the long-thread document is only a little taller
+# than the pane, so landing on the newest message is landing at the end,
+# where Page Down has nowhere to go.
+#
+# Open again: the fix set the focus and not the scroll -- the rail said
+# "7 of 7 in view" over a pane showing messages 1 to 4 -- and this
+# storyboard checked only the focus, so it passed (#1385, reopened).
 source = { kind = "issue", ref = "#1385" }
-proof  = "pinned"
+proof  = "open"
 seed   = "long-thread"
 
 [[step]]
@@ -19,3 +25,8 @@ expect  = "The conversation fills the reading pane with its newest message focus
 wait    = { ms = 600 }
 check   = { reading.id = "7", reading.focused = 6 }
 expect  = "Nothing moves on its own once the pane has settled: no scroll, no jump to another message."
+
+[[step]]
+command = "scroll_reader_down"
+check   = { reading.scroll.offset = { unchanged = true }, reading.id = "7" }
+expect  = "Page Down has nowhere to go: the newest message, at the end of the thread, is already what the pane shows."
