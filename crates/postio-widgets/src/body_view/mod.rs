@@ -1112,15 +1112,24 @@ impl BodyView {
         if let Some(held) = imp.held.borrow_mut().as_mut() {
             held.push(request.resources.hold_lookup());
         }
-        let result = self.renderer().request(request);
+        let result = std::rc::Rc::new(self.renderer().request(request));
         imp.pending.set(Some(generation));
         // The deadline (FR-023): if the render is still out when it passes,
         // give up on it and show the plain text instead.
         let view = self.downgrade();
+        let answered = std::rc::Rc::clone(&result);
         glib::timeout_add_local_once(imp.deadline.get(), move || {
             let Some(view) = view.upgrade() else { return };
             let imp = view.imp();
             if imp.pending.get() != Some(generation) {
+                return;
+            }
+            // Out by the deadline, or only not yet collected? The poll
+            // below is a main-loop timer too, and a main thread busy past
+            // the deadline finds both due at once; a render that finished
+            // in time is the one shown (T218).
+            if let Ok(document) = answered.try_recv() {
+                view.show(document);
                 return;
             }
             view.renderer().abandon(generation);

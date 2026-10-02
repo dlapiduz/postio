@@ -21,6 +21,7 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+mod body_view_fallback;
 mod body_view_highlight;
 mod body_view_resets;
 mod capture;
@@ -92,6 +93,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "harness::an_empty_case_is_listed_and_runs",
         harness::an_empty_case_is_listed_and_runs as fn(),
+    ),
+    (
+        "body_view_fallback::a_finished_render_is_shown_when_the_main_loop_was_late",
+        body_view_fallback::a_finished_render_is_shown_when_the_main_loop_was_late as fn(),
     ),
     (
         "body_view_resets::a_message_shown_after_a_darkened_one_is_not_darkened",
