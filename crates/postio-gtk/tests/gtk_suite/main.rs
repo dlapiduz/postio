@@ -136,6 +136,7 @@ mod gtk_reader_teardown;
 mod gtk_reading_pane;
 mod gtk_result_order;
 mod gtk_row;
+mod row_timestamp_reads_the_clock;
 mod gtk_saved_searches_live;
 mod gtk_search_live;
 mod gtk_search_panel;
@@ -748,6 +749,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer",
         gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer as fn(),
+    ),
+    (
+        "row_timestamp_reads_the_clock::a_rows_timestamp_follows_a_frozen_clock",
+        row_timestamp_reads_the_clock::a_rows_timestamp_follows_a_frozen_clock as fn(),
     ),
     (
         "gtk_row::rows_under_one_cascade_read_one_palette",
