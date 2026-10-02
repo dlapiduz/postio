@@ -456,7 +456,11 @@ impl SyncTracker {
         let Some(latest) = mailboxes.iter().filter_map(|m| m.last_synced_at).max() else {
             return false;
         };
-        let converted = to_instant(latest, Utc::now(), Instant::now());
+        let converted = to_instant(
+            latest,
+            crate::clock::now().with_timezone(&Utc),
+            Instant::now(),
+        );
         if converted.is_some() && self.status.last_sync.is_none() {
             self.status.last_sync = converted;
             return true;
