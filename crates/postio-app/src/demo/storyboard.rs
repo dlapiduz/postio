@@ -101,10 +101,21 @@ impl Default for Options {
     }
 }
 
-/// The variants `board` asks Classic for, and the axes it asked for that
-/// Classic does not have.
-pub fn variants_for(board: &Storyboard) -> (Vec<BTreeMap<String, String>>, Vec<String>) {
-    postio_storyboard::apply::variants(board, &runner_info())
+/// The variants to play `board` in on Classic, and the axes it asked for
+/// that Classic does not have: with `every`, each variant it asks for (the
+/// pre-review sweep); without, the one it asks for by default, which keeps
+/// an app default wherever the storyboard allows it -- so `inbox-dark` is
+/// still filmed dark on the per-edit run.
+pub fn variants_to_play(
+    board: &Storyboard,
+    every: bool,
+) -> (Vec<BTreeMap<String, String>>, Vec<String>) {
+    if every {
+        postio_storyboard::apply::variants(board, &runner_info())
+    } else {
+        let (variant, ignored) = postio_storyboard::apply::default_variant(board, &runner_info());
+        (vec![variant], ignored)
+    }
 }
 
 /// What Classic's runner can do, for applicability and `runner list`. Each

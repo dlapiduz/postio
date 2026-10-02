@@ -234,12 +234,9 @@ fn play(args: &[String]) -> ExitCode {
         // Each variant the storyboard asks for and Classic supports, with
         // --variants; otherwise the one variant the flags named, or failing
         // that the one the storyboard asks for by default.
-        let variants = if args.iter().any(|arg| arg == "--variants") {
-            postio_app::demo::storyboard::variants_for(&board)
-        } else if options.variant.is_empty() {
-            let (variant, ignored) =
-                postio_storyboard::apply::default_variant(&board, &runner_info());
-            (vec![variant], ignored)
+        let every = args.iter().any(|arg| arg == "--variants");
+        let variants = if every || options.variant.is_empty() {
+            postio_app::demo::storyboard::variants_to_play(&board, every)
         } else {
             (vec![options.variant.clone()], Vec::new())
         };
