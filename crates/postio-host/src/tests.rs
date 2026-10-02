@@ -509,6 +509,30 @@ fn a_draft_sent_from_a_frontend_is_queued_and_a_discard_after_it_keeps_it() {
 }
 
 #[test]
+fn a_queued_send_is_dated_by_the_clock_seam() {
+    // A reply sent during a storyboard was listed in the Outbox under the
+    // real day, months after the frozen one, and moved between two runs.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    let frozen = chrono::Local::now() - chrono::Duration::days(30);
+    postio_model::clock::freeze(frozen);
+    world.rt.block_on(async {
+        client
+            .queue_send(7, a_draft(account, "Ready."), None)
+            .await
+            .expect("queued");
+    });
+    postio_model::clock::thaw();
+    let drafts = drafts_in(&world, account);
+    assert_eq!(
+        drafts[0].updated_at.timestamp_millis(),
+        frozen.timestamp_millis(),
+        "stored to the millisecond"
+    );
+}
+
+#[test]
 fn a_composition_closed_empty_leaves_no_draft() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);

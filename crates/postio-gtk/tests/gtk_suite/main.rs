@@ -167,6 +167,7 @@ mod gtk_startup_focus;
 mod gtk_store_opening;
 mod gtk_style;
 mod gtk_toast;
+mod gtk_toast_tone_and_undo;
 mod gtk_toggle_rail;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
@@ -180,6 +181,13 @@ mod gtk_window_teardown;
 mod list_contract;
 mod list_model;
 mod no_stray_prints;
+mod row_timestamp_reads_the_clock;
+mod storyboard_chain_delivery;
+mod storyboard_outline;
+mod storyboard_reach;
+mod storyboard_settle;
+mod storyboard_support;
+mod storyboard_typing;
 
 /// Cases held out of a default run, by name. See `app_suite`'s copy for what
 /// this is for; nothing here is held out today.
@@ -237,6 +245,82 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "storyboard_outline::the_focused_widgets_bounds_are_drawn_over",
+        storyboard_outline::the_focused_widgets_bounds_are_drawn_over as fn(),
+    ),
+    (
+        "storyboard_outline::the_caption_carries_the_region_name",
+        storyboard_outline::the_caption_carries_the_region_name as fn(),
+    ),
+    (
+        "storyboard_outline::the_plain_frame_is_untouched",
+        storyboard_outline::the_plain_frame_is_untouched as fn(),
+    ),
+    (
+        "storyboard_settle::a_static_window_settles",
+        storyboard_settle::a_static_window_settles as fn(),
+    ),
+    (
+        "storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames",
+        storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames as fn(),
+    ),
+    (
+        "storyboard_settle::an_empty_window_is_blank",
+        storyboard_settle::an_empty_window_is_blank as fn(),
+    ),
+    (
+        "storyboard_settle::a_window_that_never_stops_changing_is_unsettled",
+        storyboard_settle::a_window_that_never_stops_changing_is_unsettled as fn(),
+    ),
+    (
+        "storyboard_reach::a_focused_mapped_list_is_reachable",
+        storyboard_reach::a_focused_mapped_list_is_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::an_unmapped_focus_is_not_reachable",
+        storyboard_reach::an_unmapped_focus_is_not_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable",
+        storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable as fn(),
+    ),
+    (
+        "storyboard_reach::no_focus_widget_is_not_reachable",
+        storyboard_reach::no_focus_widget_is_not_reachable as fn(),
+    ),
+    (
+        "storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry",
+        storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry as fn(),
+    ),
+    (
+        "storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view",
+        storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view as fn(),
+    ),
+    (
+        "storyboard_typing::a_hook_takes_what_no_editable_does",
+        storyboard_typing::a_hook_takes_what_no_editable_does as fn(),
+    ),
+    (
+        "storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into",
+        storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list",
+        storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it",
+        storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered",
+        storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::return_in_a_text_field_activates_it",
+        storyboard_chain_delivery::return_in_a_text_field_activates_it as fn(),
+    ),
     (
         "body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once",
         body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once as fn(),
@@ -748,6 +832,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer",
         gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer as fn(),
+    ),
+    (
+        "row_timestamp_reads_the_clock::a_rows_timestamp_follows_a_frozen_clock",
+        row_timestamp_reads_the_clock::a_rows_timestamp_follows_a_frozen_clock as fn(),
     ),
     (
         "gtk_row::rows_under_one_cascade_read_one_palette",
@@ -1597,6 +1685,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_toast::the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo",
         gtk_toast::the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo as fn(),
+    ),
+    (
+        "gtk_toast_tone_and_undo::a_toast_says_its_tone_and_whether_it_offers_undo",
+        gtk_toast_tone_and_undo::a_toast_says_its_tone_and_whether_it_offers_undo as fn(),
     ),
     (
         "gtk_unavailable::the_screen_shows_what_it_was_told_and_asks_to_try_again_once",

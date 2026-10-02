@@ -1,0 +1,36 @@
+# The Outbox reader does not offer Reply, Forward or Unsubscribe (#1523-#1525).
+#
+# The defect: opening a message queued to send showed the reader's verbs
+# for mail somebody else sent, so `e` composed a reply to your own mail
+# still on its way out. The key has to refuse with a notice instead.
+# Open: Reply on the Outbox's message still opens a composer (reply to
+# yourself, with the quote header already typed). The check is the intent.
+source = { kind = "issue", ref = "#1749" }
+proof  = "open"
+seed   = "outbox"
+
+[[step]]
+command = "focus_sidebar"
+check   = { keyboard.region = "sidebar" }
+
+[[step]]
+key     = "j"
+[[step]]
+key     = "j"
+[[step]]
+key     = "j"
+
+[[step]]
+id      = "outbox"
+key     = "j"
+check   = { rows.count = 1, cursor.index = 0 }
+expect  = "The Outbox lists the one message queued to send."
+
+[[step]]
+command = "cycle_pane"
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "reply"
+check   = { composer.open = false }
+expect  = "Nothing opens. A notice says an outgoing message cannot be replied to."

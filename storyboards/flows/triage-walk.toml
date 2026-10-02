@@ -1,0 +1,36 @@
+# Triage: j a j a u (ux-architect §4).
+#
+# Walk down, archive, walk, archive, change your mind. Each archive must
+# say what happened and offer undo; the cursor stays on the row that took
+# the archived one's place; `u` brings the last one back. The thirty-thread
+# seed is long enough that nothing runs out.
+source = { kind = "flow", ref = "ux-architect §4" }
+seed   = "thirty-threads"
+
+[[step]]
+id      = "j1"
+command = "next_message"
+check   = { cursor.index = 1, keyboard.region = "list" }
+
+[[step]]
+id      = "a1"
+command = "archive"
+check   = { cursor.index = { same_as = "j1" }, notice.undo = true, rows.count = { changed = true } }
+expect  = "The row goes, the next one is under the cursor, and a toast offers Undo."
+
+[[step]]
+id      = "j2"
+command = "next_message"
+check   = { cursor.index = 2 }
+
+[[step]]
+id      = "a2"
+command = "archive"
+check   = { cursor.index = { same_as = "j2" }, notice.undo = true }
+expect  = "The same again: one row gone, the cursor on its replacement, the toast refreshed."
+
+[[step]]
+id      = "undo"
+command = "undo"
+check   = { keyboard.region = "list", rows.count = { changed = true } }
+expect  = "The last archived row comes back in its place, and the keyboard is still on the list."

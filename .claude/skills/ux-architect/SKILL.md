@@ -141,8 +141,10 @@ shows sync state at all, it must handle all four.
 
 ## 4. Review the flow, not the screen
 
-Screens are reviewed in isolation and then feel wrong in sequence. Walk the
-whole path:
+Screens are reviewed in isolation and then feel wrong in sequence. A flow you
+review is a flow you **write down**: as a storyboard in `storyboards/flows/`
+(the format is `storyboards/README.md`), so it is filmed on every change and
+judged by `/ux-review`, not only walked once. Walk the whole path:
 
 > `/` → type → results → `Enter` opens the thread in the reading pane →
 > `J`/`K` walk it → `e` replies → `Ctrl+Enter` sends → `Esc` returns

@@ -90,14 +90,22 @@ pub fn editor_css(presentation: Presentation) -> String {
         "\n:root {{\n  --e-text-size: {}px;\n  --e-pad: {}px;\n}}\n",
         presentation.text_size, presentation.padding
     );
+    // The palette switches on `prefers-color-scheme`, which a web view
+    // resolves from its own settings rather than from ours. Restating the
+    // chosen half last, under a plain `:root`, is what makes the
+    // application's choice win -- in both directions: restating only the
+    // dark half left a light application on a dark-preferring desktop with
+    // a dark editor (#1677). It is also why a scheme change is a new sheet
+    // rather than a new document (FR-075): reloading would lose the caret
+    // and the undo history.
     if presentation.dark {
-        // The palette switches on `prefers-color-scheme`, which a web view
-        // resolves from its own settings rather than from ours. Restating the
-        // dark block under an explicit selector is what makes the application's
-        // choice win -- and is why a scheme change is a new sheet rather than a
-        // new document (FR-075): reloading would lose the caret and the undo
-        // history.
         css.push_str(&dark_tokens_restated());
+    } else {
+        let _ = write!(
+            css,
+            "\n:root {{{}\n}}\n",
+            crate::reader::document::light_tokens()
+        );
     }
     css
 }
@@ -232,11 +240,28 @@ mod tests {
             ..Presentation::default()
         });
         assert_ne!(light, dark, "the scheme made no difference to the sheet");
-        assert!(
-            dark.matches("--r-ground").count() > light.matches("--r-ground").count(),
-            "the dark sheet does not restate the palette, so it depends on \
-             the engine agreeing about the scheme rather than on our choice"
-        );
+    }
+
+    #[test]
+    fn each_scheme_states_its_palette_last_so_the_engine_cannot_overrule_it() {
+        // #1677. The palette switches on `prefers-color-scheme`, which the web
+        // view answers from its own settings. Only the dark sheet restated
+        // its half, so an application forced light, on a desktop that prefers
+        // dark, drew a dark editor: the media block was the last word. The
+        // last `--r-ground` each sheet declares is the one that applies.
+        let last_ground = |css: &str| {
+            css.rsplit_once("--r-ground:")
+                .and_then(|(_, rest)| rest.split_once(';'))
+                .map(|(value, _)| value.trim().to_owned())
+                .expect("the sheet declares a ground")
+        };
+        for dark in [false, true] {
+            let css = editor_css(Presentation {
+                dark,
+                ..Presentation::default()
+            });
+            assert_eq!(last_ground(&css), editor_ground(dark), "dark = {dark}");
+        }
     }
 
     #[test]

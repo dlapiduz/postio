@@ -1,0 +1,7 @@
+# Design 12's offline state: the connection drops. Replaces the screen-sweep
+# row `syncing`, which drew search's "still syncing" readout -- the `search`
+# screen shows that now (FR-030).
+source = { kind = "design", ref = "12-states-empty-offline-syncfail" }
+design = "12-states-empty-offline-syncfail"
+[[step]]
+event = "connection_lost"

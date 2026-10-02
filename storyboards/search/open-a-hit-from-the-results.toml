@@ -1,0 +1,32 @@
+# Opening a hit from the search results reads that message (#961, #767, #1526).
+#
+# The defects: search ignored the account scope, opening a hit reached an
+# unwired dispatcher (nothing opened), and a hit was listed once per folder
+# it was filed in. Pinned: the results are 11 distinct hits under "All mail",
+# and `o` on the first puts exactly that message in the reader.
+#
+# Real routing is not needed: the chain delivers the key to the list, and
+# open_message is the list's own binding.
+source = { kind = "issue", ref = "#961" }
+proof  = "pinned"
+seed   = "two-accounts"
+design = "05-search"
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+type    = "harbour"
+settle  = { until = { rows.count = { changed = true } } }
+check   = { rows.count = 11, cursor.id = "43" }
+expect  = "Eleven hits, each once, with the scope listing All mail and Inbox only."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.region = "list", cursor.index = 0 }
+
+[[step]]
+command = "open_message"
+check   = { view = "reader", reading.id = "43", keyboard.region = "list", rows.count = 11 }
+expect  = "The reader shows the first hit, the Tide gate interlock proposal, and the results stay listed beside it."

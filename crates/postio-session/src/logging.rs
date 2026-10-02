@@ -274,6 +274,7 @@ const OURS: &[&str] = &[
     "postio_storage",
     "postio_sync",
     "postio_test_support",
+    "postio_storyboard",
     "postio_tui",
     "postio_ui",
     "io_imap",

@@ -212,7 +212,7 @@ pub struct Draft {
 impl Draft {
     /// Builds an empty draft for `account_id`.
     pub fn new(account_id: AccountId) -> Self {
-        let now = Utc::now();
+        let now = crate::clock::now().with_timezone(&Utc);
         Self {
             id: DraftId::UNASSIGNED,
             account_id,
@@ -339,6 +339,20 @@ mod tests {
     use super::*;
     use crate::account::Signature;
     use crate::ids::IdentityId;
+
+    #[test]
+    fn a_new_draft_is_dated_by_the_clock_seam() {
+        // A reply queued during a storyboard was dated with the real day,
+        // months after the frozen one, and differed between two runs.
+        let _turn = crate::clock::TURN.lock().unwrap_or_else(|e| e.into_inner());
+        let frozen = chrono::Local::now();
+        crate::clock::freeze(frozen);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let draft = Draft::new(AccountId::UNASSIGNED);
+        crate::clock::thaw();
+        assert_eq!(draft.created_at, frozen.with_timezone(&Utc));
+        assert_eq!(draft.updated_at, draft.created_at);
+    }
 
     fn identity(address: &str, signature: Option<&str>) -> Identity {
         let mut identity = Identity::new(
