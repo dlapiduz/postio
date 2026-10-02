@@ -21,6 +21,7 @@ use postio_ui::keymap::{Chord, Key, Modifiers};
 /// Why a chord has no GDK spelling.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ChordError {
+    /// The key name GDK does not know.
     #[error("GDK has no key named {0:?}")]
     UnknownKey(String),
 }
@@ -54,8 +55,11 @@ pub fn chord_to_gdk(chord: &Chord) -> Result<(gdk::Key, gdk::ModifierType), Chor
 /// What became of a key press.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Delivery {
-    /// A controller claimed the key: the type name of the widget it is on.
-    Delivered { stopped_at: String },
+    /// A controller claimed the key.
+    Delivered {
+        /// The type name of the widget the claiming controller is on.
+        stopped_at: String,
+    },
     /// Nothing took it: the keyboard was on a widget that has left the
     /// window or is not shown, or no controller on the chain wanted it.
     Dropped,

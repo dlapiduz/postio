@@ -40,18 +40,31 @@ impl Default for Settings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     /// The frame stopped changing, `ms` after sampling began, and stayed so.
-    Settled { ms: u64 },
+    Settled {
+        /// Milliseconds from the start of sampling.
+        ms: u64,
+    },
     /// It changed again after settling; `frames` pictures are kept.
-    Jumped { frames: usize },
+    Jumped {
+        /// Pictures kept.
+        frames: usize,
+    },
     /// A sampled frame was empty or one colour; `frames` pictures are kept.
-    Blanked { frames: usize },
+    Blanked {
+        /// Pictures kept.
+        frames: usize,
+    },
     /// It never stopped changing within [`Settings::max`].
-    Unsettled { ms: u64 },
+    Unsettled {
+        /// Milliseconds it was watched for.
+        ms: u64,
+    },
 }
 
 /// The step's frame and what was seen on the way to it.
 #[derive(Debug)]
 pub struct Settled {
+    /// What watching showed.
     pub verdict: Verdict,
     /// The step's frame: the settled one, or the last seen if it never was.
     pub texture: gdk::Texture,
