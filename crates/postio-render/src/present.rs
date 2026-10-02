@@ -262,12 +262,12 @@ fn sheets(doc: &BaseDocument) -> String {
 /// ink and accent, and a colour the sender set on purpose -- is held to the
 /// floor against what is painted behind it, a colour that misses it drawn
 /// in the container's ink instead ([`theme::guard`]). No background is
-/// changed, except that in dark an image keeps a white canvas behind it, as
-/// FR-015 has it: a transparent logo drawn for a white page.
+/// changed. The white canvas an image keeps behind it in dark (FR-015) is
+/// the treatment's stylesheet's (`postio-ui`'s `treatment.css`): a mark per
+/// image here made every newsletter in dark lay out twice (T218).
 fn guard_app_colours(
     doc: &BaseDocument,
     container: &Node,
-    theme: theme::Theme,
     floor: f64,
     rules: &mut Rules,
     plan: &mut Plan,
@@ -278,23 +278,6 @@ fn guard_app_colours(
     else {
         return;
     };
-    if theme.dark {
-        for id in descendants(doc, container.id) {
-            if doc
-                .get_node(id)
-                .and_then(|n| n.element_data())
-                .is_some_and(|e| e.name.local == local_name!("img"))
-            {
-                rules.add(
-                    id,
-                    format!(
-                        "background-color: {} !important",
-                        css(Rgb::from_u8(255, 255, 255))
-                    ),
-                );
-            }
-        }
-    }
     let mut runs = Vec::new();
     crate::snapshot::text_runs(doc, container.id, &mut runs);
     let mut seen = std::collections::HashSet::new();
@@ -367,7 +350,7 @@ pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
                         Presentation::Styled
                     },
                 );
-                guard_app_colours(doc, container, theme, floor, &mut rules, &mut plan);
+                guard_app_colours(doc, container, floor, &mut rules, &mut plan);
                 continue;
             }
             None => {}

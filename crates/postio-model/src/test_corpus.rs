@@ -388,6 +388,8 @@ corpus! {
         "A cid: PNG cut off halfway: the decoder must fail into a sized placeholder.",
     "html-newsletter": [Html, MultipartAlternative, QuotedPrintable, MailingList, Designed] =>
         "A real-shaped newsletter: nested layout tables, inline CSS, a media query, List-Unsubscribe and One-Click.",
+    "html-newsletter-many-tables": [Html, MultipartAlternative, MailingList, Designed, RemoteContent] =>
+        "A long release-notes newsletter: two dozen nested layout tables, remote images, no page of its own; app colours, and a text part.",
     "html-newsletter-own-page": [Html, MailingList, Designed, ThemeContrast] =>
         "A newsletter that paints its own page (a body background) in a 640px layout table: rendered as sent, on paper.",
     "html-oversized-image": [Html, MultipartRelated, InlineImage, Base64, Hostile] =>

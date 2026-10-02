@@ -21,6 +21,18 @@ use support::{DARK, LIGHT, render, request_for};
 /// A fixture drawn under `chosen` (or the rule's choice), in `theme`, in a
 /// column `width` CSS pixels wide.
 fn drawn(name: &str, chosen: Option<Treatment>, theme: Theme, width: f64) -> RenderedDocument {
+    drawn_with(name, chosen, theme, width, "")
+}
+
+/// [`drawn`], with `css` added after the reader's own sheet, as the column
+/// adds its palette.
+fn drawn_with(
+    name: &str,
+    chosen: Option<Treatment>,
+    theme: Theme,
+    width: f64,
+    css: &str,
+) -> RenderedDocument {
     let body = postio_model::mime::parse(test_corpus::load(name).bytes()).body;
     let rendered = document::body_html_treated(&body, RemoteImages::Blocked, chosen, None);
     let treated = rendered.treated.expect("drawn under a treatment");
@@ -32,7 +44,11 @@ fn drawn(name: &str, chosen: Option<Treatment>, theme: Theme, width: f64) -> Ren
     );
     // As the open message's column draws it: the body has no padding of
     // its own there, so the column is the view's width.
-    let html = html.replacen("</style>", "body { padding: 0; }</style>", 1);
+    let html = html.replacen(
+        "</style>",
+        &format!("body {{ padding: 0; }}{css}</style>"),
+        1,
+    );
     let mut request = request_for(html, theme);
     request.viewport.width = width;
     render(&request)
@@ -222,4 +238,42 @@ fn the_fit_is_the_columns_share_clamped_to_the_floor() {
     assert_eq!(fit_scale(640.3, 640.0), 1.0, "half a pixel is not a reason");
     assert!((fit_scale(640.0, 608.0) - 0.95).abs() < 1e-9);
     assert_eq!(fit_scale(1000.0, 480.0), PAPER_FIT_FLOOR);
+}
+
+/// An ordinary newsletter in the app's colours lays out once, in dark as in
+/// light (T218). The dark-mode white behind an image is the treatment's
+/// stylesheet's, not a mark per `<img>` for a second layout: that doubled
+/// every newsletter's layout in dark, and with the render's other costs
+/// took a long one past the reader's deadline into the plain-text
+/// fallback.
+#[test]
+fn an_app_colours_newsletter_with_images_lays_out_once() {
+    for theme in [LIGHT, DARK] {
+        // The column supplies its own accent, the system's, which reads on
+        // its ground (`FLOW_PALETTE`); the generated palette's light accent
+        // does not reach 4.5:1 on its ground, and every link would be
+        // repaired -- a second layout this test is not about.
+        let accent = if theme.dark { "#78aeed" } else { "#0461be" };
+        let doc = drawn_with(
+            "html-newsletter-many-tables",
+            None,
+            theme,
+            480.0,
+            &format!(":root {{ --r-accent: {accent}; }}"),
+        );
+        assert_eq!(
+            doc.messages[0].presentation,
+            if theme.dark {
+                Presentation::Adapted
+            } else {
+                Presentation::Styled
+            },
+            "not drawn in app colours"
+        );
+        assert_eq!(
+            doc.counts.style_passes, 1,
+            "dark: {}: laid out more than once",
+            theme.dark
+        );
+    }
 }

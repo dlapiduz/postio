@@ -82,6 +82,16 @@
   height: auto;
 }
 
+/* In dark an image keeps the white canvas it was drawn for (spec 006
+   FR-015): a transparent logo made for a white page stays legible. A rule
+   here rather than the renderer's repair pass, which would lay the whole
+   body out a second time to set it (T218). */
+@media (prefers-color-scheme: dark) {
+  .postio-body[data-postio-treatment="app"] img {
+    background-color: white;
+  }
+}
+
 .postio-body[data-postio-treatment="app"] table.postio-grid {
   border-collapse: collapse;
   width: 100%;

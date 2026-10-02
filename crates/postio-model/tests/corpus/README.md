@@ -201,6 +201,7 @@ body's treatment (`postio_body::treatment`) is proven on real-shaped markup.
 |---|---|
 | `html-work-black-text.eml` | Office-client work mail: `color:black` on every span, Calibri in a `<style>` block, `&nbsp;` spacer paragraphs, a bordered table whose header cells are tinted, a dark-red sentence, a grey signature. Paints no page, so it is drawn in app colours: the black is dropped, the red kept only where it reads. |
 | `html-gmail-reply-chain.eml` | A webmail reply with two nested quoted messages, each behind an attribution line, a list and a bold line. No colours, no page: app colours, with the quotes folded. |
+| `html-newsletter-many-tables.eml` | A 45 KB release-notes newsletter with no page background: 24 sections, each a nested two-column layout table with a remote image (blocked), buttons and links, a scoped `<style>` with media queries, and a text part. Drawn in app colours; how long an ordinary newsletter takes to lay out, and what its plain-text fallback looks like (specs/007-postio-focus T218). |
 | `html-newsletter-own-page.eml` | A newsletter whose `<body>` paints its own page and whose content sits in a 640px layout table with a tinted hero block. Rendered as sent, on paper. |
 | `html-receipt-fixed-width.eml` | A receipt with no background anywhere but a 560px layout table and a remote logo: paper by its layout alone, which is the trigger a colour test cannot see. |
 
