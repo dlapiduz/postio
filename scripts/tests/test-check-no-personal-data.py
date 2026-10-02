@@ -115,6 +115,14 @@ def main() -> int:
         False,
     )
 
+    # Storyboards type addresses into fields and are public like fixtures
+    # (specs/008-storyboards FR-027): the check must read them.
+    case(
+        "a real address in a storyboard fails",
+        {"storyboards/compose/to-someone.toml": b'[[step]]\ntype = "grace@realdomain.net"\n'},
+        True,
+    )
+
     # A corpus fixture that is legitimately not UTF-8 is text, not binary,
     # and must still be read. Skipping on "does not decode" instead of "has a
     # NUL" would have turned the check off over the mail fixtures.
