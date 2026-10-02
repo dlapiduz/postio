@@ -144,10 +144,15 @@ pub fn render_reviewed(header: &Header, strips: &[Filmstrip], reviewed: &Reviewe
     render_with(header, strips, Some(reviewed), None)
 }
 
+/// The most `summary` may come to: under GitHub's 65,536-character limit on
+/// a pull request body, with room for what `issue-land.sh` writes around it.
+pub const SUMMARY_LIMIT: usize = 60_000;
+
 /// The summary a pull request carries, as text with no images
 /// (contracts/review.md § What reaches the maintainer). Its first line is
 /// `storyboards-key: <key>`, which is how a landing tells whether it is
-/// current.
+/// current. It is a digest: each item gives its first sentence, and past
+/// [`SUMMARY_LIMIT`] the rest is counted and left to the page.
 pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> String {
     let key = header
         .tree_key
@@ -183,15 +188,25 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
     if asks.is_empty() {
         let _ = writeln!(out, "nothing");
     }
-    for ask in &asks {
-        let _ = write!(out, "- {} {}: {}", ask.kind, ask.citation, ask.says);
-        if let Some(reason) = ask.reason {
-            let _ = write!(out, " (contested: {reason})");
-        }
-        let _ = writeln!(out);
-    }
+    let lines: Vec<String> = asks
+        .iter()
+        .map(|ask| {
+            let mut line = format!(
+                "- {} {}: {}",
+                ask.kind,
+                ask.citation,
+                first_sentence(ask.says)
+            );
+            if let Some(reason) = ask.reason {
+                let _ = write!(line, " (contested: {})", first_sentence(reason));
+            }
+            line.push('\n');
+            line
+        })
+        .collect();
 
-    let _ = writeln!(out, "\n## Changed and new storyboards\n");
+    let mut tail = String::new();
+    let _ = writeln!(tail, "\n## Changed and new storyboards\n");
     // Each storyboard once, with the strongest class its runs have.
     let mut listed: BTreeMap<&str, Class> = BTreeMap::new();
     for run in reviewed.manifest.batches.iter().flat_map(|b| &b.runs) {
@@ -201,7 +216,7 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
         }
     }
     if listed.is_empty() {
-        let _ = writeln!(out, "none");
+        let _ = writeln!(tail, "none");
     }
     for (name, class) in listed {
         let class = match class {
@@ -223,7 +238,7 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
                     .filter(|f| f.storyboard == name)
                     .count();
                 let _ = writeln!(
-                    out,
+                    tail,
                     "- {name} ({class}): {} pass, {} fail, {} question; {findings} finding(s)",
                     of(Kind::Pass),
                     of(Kind::Fail),
@@ -231,22 +246,56 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
                 );
             }
             None => {
-                let _ = writeln!(out, "- {name} ({class}): not reviewed");
+                let _ = writeln!(tail, "- {name} ({class}): not reviewed");
             }
         }
     }
 
-    let _ = writeln!(out, "\n## Coverage\n");
+    let _ = writeln!(tail, "\n## Coverage\n");
     let count = |wanted: &str| {
         strips
             .iter()
             .filter(|s| status_class(&s.run.status) == wanted)
             .count()
     };
-    let _ = writeln!(out, "- unchanged: {}", reviewed.manifest.unchanged);
-    let _ = writeln!(out, "- not covered: {}", count("not_covered"));
-    let _ = writeln!(out, "- not applicable: {}", count("not_applicable"));
+    let _ = writeln!(tail, "- unchanged: {}", reviewed.manifest.unchanged);
+    let _ = writeln!(tail, "- not covered: {}", count("not_covered"));
+    let _ = writeln!(tail, "- not applicable: {}", count("not_applicable"));
+    // The asks, as many as fit with the tail; the rest are counted.
+    let room = SUMMARY_LIMIT.saturating_sub(out.len() + tail.len() + 64);
+    let mut used = 0;
+    let mut shown = 0;
+    for line in &lines {
+        if used + line.len() > room {
+            break;
+        }
+        out.push_str(line);
+        used += line.len();
+        shown += 1;
+    }
+    if shown < lines.len() {
+        let _ = writeln!(out, "- ... and {} more on the page", lines.len() - shown);
+    }
+    out.push_str(&tail);
     out
+}
+
+/// `text` up to the end of its first sentence, or its first 200 characters.
+fn first_sentence(text: &str) -> &str {
+    let text = text.trim();
+    let end = text
+        .char_indices()
+        .find(|&(i, c)| {
+            matches!(c, '.' | '?' | '!')
+                && text[i + c.len_utf8()..].starts_with(char::is_whitespace)
+        })
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(text.len());
+    let end = text
+        .char_indices()
+        .nth(200)
+        .map_or(end, |(cap, _)| end.min(cap));
+    &text[..end]
 }
 
 /// The screen sweep's contact sheet (FR-030): each screen storyboard's
@@ -1400,6 +1449,42 @@ mod tests {
             assert!(text.contains("unchanged: 1"), "{text}");
             assert!(text.contains("not covered: 1"), "{text}");
             assert!(text.contains("not applicable: 0"), "{text}");
+        }
+
+        #[test]
+        fn the_summary_gives_each_item_its_first_sentence() {
+            // A PR body is a digest: the page holds the full text.
+            let mut value = verdicts_json();
+            value["verdicts"][2]["says"] = json!(format!(
+                "The first sentence says it. {}",
+                "Then much more. ".repeat(80)
+            ));
+            let (_dir, strips, reviewed) = bundled(Some(value), true);
+            let text = summary(&Header::default(), &strips, &reviewed);
+            let line = text
+                .lines()
+                .find(|l| l.contains("archive-walks-down/2/classic/default"))
+                .expect("the question is listed");
+            assert!(line.ends_with("The first sentence says it."), "{line}");
+        }
+
+        #[test]
+        fn the_summary_fits_a_pull_request_body() {
+            // GitHub refuses a body over 65,536 characters, and this branch's
+            // own review came to 70,889: the PR could not be opened.
+            let mut value = verdicts_json();
+            let question = value["verdicts"][2].clone();
+            let many = value["verdicts"].as_array_mut().expect("verdicts");
+            for _ in 0..2000 {
+                let mut q = question.clone();
+                q["says"] = json!("Is this the right thing to do here, or not at all?");
+                many.push(q);
+            }
+            let (_dir, strips, reviewed) = bundled(Some(value), true);
+            let text = summary(&Header::default(), &strips, &reviewed);
+            assert!(text.len() <= SUMMARY_LIMIT, "{} bytes", text.len());
+            assert!(text.contains("more on the page"), "the rest is pointed at");
+            assert!(text.contains("## Coverage"), "the tail sections survive");
         }
 
         #[test]
