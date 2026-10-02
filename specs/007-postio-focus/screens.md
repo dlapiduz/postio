@@ -426,6 +426,82 @@ Pinned by `row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys`,
 `…a_menu_verb_runs_its_command_on_the_row` and
 `…a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection`.
 
+## Settings (T233-T235)
+
+Decided with `/ux-architect` and `/gtk-design`, against screens 40 to 43.
+
+**A dialog over the list.** Settings is an `AdwDialog` presented over the
+window, as every other surface Focus opens over the list is: the open
+message, the composer, the key map, the digest. Focus is one window, and
+this is its one kind of surface over it.
+
+- *Not a window of its own* (the classic app's). A second toplevel has its
+  own scheme to track and its own keyboard to forward to the window's
+  resolver, it goes behind the window it belongs to, and Focus has no other.
+- *Not a page that takes the window* (the digest rules' and Filtered's
+  shape). Those are views of mail, walked with the list's keys; Settings is
+  not mail. A page would make it a place to navigate to and out of, a mode
+  with its own way back, where a dialog closes the way everything over the
+  list closes and leaves the list's cursor, selection and scroll where they
+  were. The list showing at the sides says where Settings was opened from.
+
+**The message dialog's frame.** The dialog's size follows the open
+message's rule (`postio_ui::focus_dialog`): `clamp(640, W − 2·max(96,
+0.18·W), 820)` wide and the window's height less 80, so the two surfaces
+are the same object at every window size. The header is the message
+dialog's: 52 px, "Settings" centred in the dialog's title face, the one X
+(`close_button()`, T192) at the right end, and nothing to its right. Where
+the message dialog has its steps, at the left, Settings has its
+find-a-setting field, which filters the section list. There is no action
+row: a section's own verbs (Add account, Reset to defaults, Revert file)
+sit in its pane, and the file's are on the foot strip, where "Open in
+$EDITOR" carries its key (`mod+e`). Every icon button is `icon_button()`,
+centred at its own size (T202).
+
+**The panel is the classic app's, shared.** Below the header is
+`postio_widgets::settings::SettingsPanel`: the section list down the left
+(214 px, fixed), one pane, and the foot strip (the file's state, the table
+the pane writes, and the way out to the editor). Focus draws it in its own
+type and colours: Adwaita Sans and Adwaita Mono, as the rest of the chrome
+(C25), and the system's accent (C26), which here paints only the keyboard
+focus ring (FR-091). The section list's current row, a checked box and a
+key being rebound are drawn in the neutral selection and the ink, as a
+selected list row is, rather than the accent's fill.
+
+**What Focus shows.** Accounts, Filters, Composing, Keyboard, Sync &
+storage, Privacy and Config file. Appearance is not shown: every key it
+sets (`[ui]` theme, density, hover actions, avatars) is one Focus does not
+honour (classic-parity.md rows 18, 19). Keyboard lists the commands Focus
+offers, with the key each has. Sync & storage adds "Back up locally": a
+check per folder, under its account's address when there is more than one,
+cleared to skip that folder's backfill (ADR 0016); Focus has no sidebar to
+carry the classic app's folder menu.
+
+**Narrow.** Below 760 px (the width at which the message dialog folds its
+action row into More) a pane's two columns stack into one, the rule between
+them running across.
+
+**Keys.** `mod+comma` and the main menu's Settings open it; `mod+comma`
+again, Escape and the X close it, back to the list as it was. While it is
+open its controls have the keyboard -- typing in a field types -- and only
+the window's keys that mean something here are the window's: Escape,
+`mod+comma`, and `mod+e`, which opens `config.toml` in `$VISUAL` or
+`$EDITOR` from anywhere in Focus. A Keyboard row waiting for a key takes
+every key, Escape included, until it has one. Changes write `config.toml`
+as they are made, and Focus follows the file live (`Session::follow_config`):
+keys, filters, sync, `[focus]`, `[compose]`, `[reader]` and `[storage]` take
+effect without a restart.
+
+**States.** Accounts with none says so and offers Add account; a folder
+list appears once an account has synced its folders; the connection test
+says what each server answered, in its words. Nothing in Settings waits on
+the network except "Test connection", which dials out only when pressed.
+
+Pinned by `settings::mod_comma_and_the_menu_open_settings_in_focuss_frame`,
+`…every_section_focus_shows_is_reachable_and_appearance_is_not`,
+`…escape_and_the_x_close_it`, `…a_privacy_toggle_and_a_signature_persist`,
+and `settings_wiring`'s ports of the classic app's wiring cases.
+
 ## Rendering them
 
 `cargo run -p postio-focus --example shot -- <png> <screen> [light|dark] [WxH]`
