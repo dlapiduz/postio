@@ -172,6 +172,13 @@ fn named_list_states() -> Vec<ListState> {
                     account: AccountId::new(2),
                     state: postio_core::ConnectionState::Online,
                 });
+                // A pass has finished: only then is an empty inbox "empty"
+                // rather than still syncing (T220).
+                feeds.apply(&postio_core::Event::SyncProgress {
+                    account: AccountId::new(2),
+                    done: 0,
+                    total: 0,
+                });
             },
             matches: |window| matches!(window.list_state().state(), Some(State::InboxZero { .. })),
         },
