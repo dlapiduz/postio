@@ -106,7 +106,7 @@ spec raised (2026-09-26 unless dated):
 |---|---|
 | `Design/postio-focus-design/screens/NN-*.png` | How every screen looks: layout, density, hierarchy, copy, which controls exist. 01–20 are the inbox's core; 21–25 are Filtered, the digest summary and its email, the digest rule dialog, and Obsidian capture |
 | `Design/postio-focus-design/SPEC.md` | What each screen does, and the GTK colour and widget mapping |
-| `Design/focus-message-dialog/SPEC.md` and `screens/` | The open message's frame, column, rhythm, components and body treatments (FR-039), as amended by C25 and C26 |
+| `Design/focus-message-dialog/SPEC.md` and `screens/` | The open message's frame, column, rhythm, components and body treatments (FR-039); C25 and C26 replace its fonts and accent |
 | `Design/postio-focus-design/KEYS.md` | The default key bindings, for every app |
 | `Design/postio-focus-design/source/*.dc.html` | The exact spacing, sizes and copy behind the PNGs. They are not code to port |
 | `Design/focus-product-brief.md` | The why, the principles, the four things Focus does to mail, and how classification works |
