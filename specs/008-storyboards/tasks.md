@@ -329,7 +329,7 @@ outlined frames, observations and check results.
 pinned to the exact row. A storyboard for an open defect fails on the right
 step. Two runs are identical (spec US1; quickstart §§ 2–4).
 
-- [ ] T037 [US1] Move `shot`'s setup into a new library module,
+- [X] T037 [US1] Move `shot`'s setup into a new library module,
   `crates/postio-app/src/demo.rs`, behind a new `demo` feature:
   - the module holds `populate`, the `show_*` helpers, seeds per research R11
     and presets;
@@ -340,7 +340,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
   `shot`'s existing tests (`shot.rs` around line 868) stay green.
   `scripts/screens.sh` renders the same screens as before. Compare a handful
   by hash before and after the move.
-- [ ] T038 [US1] Add the neutral seeds `thirty-threads`, `long-thread` and
+- [X] T038 [US1] Add the neutral seeds `thirty-threads`, `long-thread` and
   `draft-left-over` to `crates/postio-app/src/demo.rs`, through
   `postio_storage::seed` helpers, so the catalogue seed's rows have the mail
   they need. Keep it deterministic: no `Utc::now()`.
@@ -438,7 +438,7 @@ failures returned to the implementer before the maintainer sees anything.
 `must_fail` storyboard and passes every `must_pass` one, citing frames (spec
 US2; quickstart § 5).
 
-- [ ] T049 [P] [US2] [TEST] Write bundle tests in
+- [X] T049 [P] [US2] [TEST] Write bundle tests in
   `crates/postio-storyboard/src/bundle.rs`. From runs plus an acceptance file:
   - `manifest.json` lists batches of one app and one surface, each at most
     60 frames;
@@ -447,18 +447,18 @@ US2; quickstart § 5).
     a path under `Design/postio-focus-design/` is refused
     (contracts/review.md);
   - with no base present, every run is `new`.
-- [ ] T050 [US2] Implement `crates/postio-storyboard/src/bundle.rs` and the
+- [X] T050 [US2] Implement `crates/postio-storyboard/src/bundle.rs` and the
   `bundle` subcommand. T049 goes green.
-- [ ] T051 [P] [US2] [TEST] Write prompt tests in
+- [X] T051 [P] [US2] [TEST] Write prompt tests in
   `crates/postio-storyboard/src/bundle.rs`. `prompt <bundle>`:
   - renders `templates/reviewer-prompt.md` with the manifest's batches;
   - contains the six sections of contracts/review.md § The prompt template;
   - contains no text from outside the bundle;
   - prints the template's blake3.
-- [ ] T052 [US2] Write `crates/postio-storyboard/templates/reviewer-prompt.md`
+- [X] T052 [US2] Write `crates/postio-storyboard/templates/reviewer-prompt.md`
   from contracts/review.md § The prompt template, and implement `prompt`.
   T051 goes green.
-- [ ] T053 [P] [US2] [TEST] Write verdict-validator tests in
+- [X] T053 [P] [US2] [TEST] Write verdict-validator tests in
   `crates/postio-storyboard/src/verdicts.rs`. Each of these is a named
   rejection:
   - a missing citation field;
@@ -468,16 +468,16 @@ US2; quickstart § 5).
   - an empty `says`.
 
   A complete file passes. `contests.toml` entries attach to their refs.
-- [ ] T054 [US2] Implement `crates/postio-storyboard/src/verdicts.rs` and
+- [X] T054 [US2] Implement `crates/postio-storyboard/src/verdicts.rs` and
   `verdicts check`. T053 goes green.
-- [ ] T055 [US2] [TEST] Extend the page tests in
+- [X] T055 [US2] [TEST] Extend the page tests in
   `crates/postio-storyboard/src/page.rs`:
   - verdicts render beside their frames, each linking to its frame;
   - **Needs you** holds exactly the contests and questions;
   - "review incomplete" or "no review ran" shows when appropriate;
   - `summary.md`'s first line is `storyboards-key: <key>`, and it holds no
     image.
-- [ ] T056 [US2] Implement the review sections of the page and `summary.md`.
+- [X] T056 [US2] Implement the review sections of the page and `summary.md`.
   T055 goes green.
 - [X] T057 [US2] Write `crates/postio-storyboard/src/key.rs` and its tests
   together, in the same test-first order. The key is blake3 over the given
