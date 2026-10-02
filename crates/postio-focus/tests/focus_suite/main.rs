@@ -76,6 +76,7 @@ mod rows;
 mod rule_query;
 mod save_attachments;
 mod selection;
+mod sending_states;
 mod settings;
 mod settings_wiring;
 mod shot;
@@ -605,6 +606,19 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_reading::the_steps_carry_their_keys_inside_and_stay_compact",
         open_reading::the_steps_carry_their_keys_inside_and_stay_compact as fn(),
+    ),
+    (
+        "sending_states::an_unconfirmed_send_says_so_and_mark_as_sent_settles_it",
+        sending_states::an_unconfirmed_send_says_so_and_mark_as_sent_settles_it as fn(),
+    ),
+    (
+        "sending_states::a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back",
+        sending_states::a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back as fn(),
+    ),
+    (
+        "sending_states::edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer",
+        sending_states::edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer
+            as fn(),
     ),
     (
         "read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read",

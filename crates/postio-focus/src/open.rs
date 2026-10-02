@@ -55,6 +55,21 @@ const TOOLBAR: &[Action] = &[
     Action::new(CommandId::MoreActions, "More", "focus-open-more"),
 ];
 
+/// The action row of a message on its way or stopped (T239), in the order
+/// it draws them: which of these show is `focus_dialog::send_verbs`'s
+/// answer for the message's state. Edit is `OpenMessage`: for a draft,
+/// opening is writing.
+const SEND_TOOLBAR: &[Action] = &[
+    Action::new(
+        CommandId::CancelSend,
+        "Cancel send",
+        "focus-open-cancel-send",
+    ),
+    Action::new(CommandId::RetrySend, "Retry send", "focus-open-retry-send"),
+    Action::new(CommandId::MarkSent, "Mark as sent", "focus-open-mark-sent"),
+    Action::new(CommandId::OpenMessage, "Edit", "focus-open-edit"),
+];
+
 /// What a narrow dialog folds into More (T206), in the action row's order.
 const FOLDED: [CommandId; 3] = [CommandId::AddLabel, CommandId::Move, CommandId::Delete];
 
@@ -83,6 +98,11 @@ pub struct OpenMessage {
     up_key: gtk::Box,
     down_key: gtk::Box,
     toolbar: Rc<ActionBar>,
+    /// The action row in place of [`Self::toolbar`] while the message is a
+    /// draft with a send state (T239).
+    send_bar: Rc<ActionBar>,
+    /// That state, from the row the message was opened from.
+    send_state: Cell<Option<postio_model::DraftState>>,
     thread_chip: gtk::Box,
     subject: gtk::Label,
     labels: gtk::Box,
@@ -176,6 +196,10 @@ impl OpenMessage {
             .iter()
             .map(|action| action.command)
             .chain([
+                // A message on its way or stopped (T239).
+                CommandId::CancelSend,
+                CommandId::RetrySend,
+                CommandId::MarkSent,
                 CommandId::Back,
                 CommandId::PrevMessage,
                 CommandId::NextMessage,
@@ -263,6 +287,12 @@ impl OpenMessage {
             row.set_spacing(0);
         }
         tighten_keycaps(&toolbar.widget());
+        let send_bar = ActionBar::new(SEND_TOOLBAR, "focus-open-toolbar");
+        if let Some(row) = send_bar.widget().downcast_ref::<gtk::Box>() {
+            row.set_spacing(0);
+        }
+        tighten_keycaps(&send_bar.widget());
+        send_bar.set_visible(false);
         // More, and the menu it opens: built once, filled from the keymap.
         let more_items = gtk::Box::new(gtk::Orientation::Vertical, 0);
         // The row menu's dress (T199): one menu pattern (FR-092).
@@ -372,6 +402,7 @@ impl OpenMessage {
         content.add_css_class("focus-open");
         content.append(&header);
         content.append(&toolbar.widget());
+        content.append(&send_bar.widget());
         // Find sits above the column, not at its top, so opening it keeps
         // the reading position (T203).
         content.append(reader.find_bar().widget());
@@ -393,6 +424,8 @@ impl OpenMessage {
             up_key,
             down_key,
             toolbar,
+            send_bar,
+            send_state: Cell::new(None),
             thread_chip,
             subject,
             labels,
@@ -483,14 +516,14 @@ impl OpenMessage {
                 }
             });
         }
-        page.toolbar.connect_command({
+        for bar in [&page.toolbar, &page.send_bar] {
             let weak = weak.clone();
-            move |command| {
+            bar.connect_command(move |command| {
                 if let Some(page) = weak.upgrade() {
                     page.run(command.id());
                 }
-            }
-        });
+            });
+        }
         page.fold_line.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -874,6 +907,13 @@ impl OpenMessage {
                 button.set_key(key.as_deref());
             }
         }
+        self.send_bar.set_keymap(keymap);
+        for action in SEND_TOOLBAR {
+            if let Some(button) = self.send_bar.button(action.command) {
+                let key = hints::key(keymap, action.command).map(|key| hints::short(&key));
+                button.set_key(key.as_deref());
+            }
+        }
         // The render-mode line's cap among them (T213).
         self.reader.set_keymap(keymap);
         // Its keys are part of its width.
@@ -910,6 +950,7 @@ impl OpenMessage {
         self.messages.set(summary.message_count.max(1));
         self.thread.borrow_mut().clear();
         self.at.set(0);
+        self.set_send_state(summary.representative.send_state);
         self.show_position(true);
         self.show_labels(&conversation.labels);
         self.marker
@@ -937,6 +978,7 @@ impl OpenMessage {
         self.show_labels(&[]);
         self.marker.replace(None);
         self.row.set(None);
+        self.set_send_state(None);
         self.present(parent.upcast_ref());
         self.show_message(message);
     }
@@ -963,6 +1005,28 @@ impl OpenMessage {
         self.reader.view().scroll_to_edge(false);
         self.arm_dwell(message);
         self.load(message, generation);
+    }
+
+    /// Draw the action row for a message whose draft is in `state`: the
+    /// received verbs for mail on its way nowhere, and otherwise the verbs
+    /// that settle that state (T239; `focus_dialog::send_verbs`).
+    fn set_send_state(&self, state: Option<postio_model::DraftState>) {
+        self.send_state.set(state);
+        let verbs = focus_dialog::send_verbs(state);
+        self.toolbar.set_visible(verbs.is_none());
+        self.send_bar.set_visible(verbs.is_some());
+        for action in SEND_TOOLBAR {
+            if let Some(button) = self.send_bar.button(action.command) {
+                button
+                    .widget()
+                    .set_visible(verbs.is_some_and(|verbs| verbs.contains(&action.command)));
+            }
+        }
+    }
+
+    /// The send state of the draft on screen, when it is one (T239).
+    pub fn send_state(&self) -> Option<postio_model::DraftState> {
+        self.send_state.get()
     }
 
     /// Run `read` with a message that has stayed open for the dwell
@@ -1071,6 +1135,17 @@ impl OpenMessage {
                     self.at.get() + 1
                 ));
             }
+        }
+        // A draft on its way or stopped says which, as its row does (T239).
+        if let Some(state) = self
+            .send_state
+            .get()
+            .filter(|state| *state != postio_model::DraftState::Sent)
+        {
+            said.push_str(&format!(
+                " \u{b7} {}",
+                postio_ui::row::send_state_word(state)
+            ));
         }
         self.subtitle.set_text(&said);
         self.show_thread_chip(messages);

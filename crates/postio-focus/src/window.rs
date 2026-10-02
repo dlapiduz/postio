@@ -70,6 +70,10 @@ pub type Notifier = Rc<
 /// Where a test takes notifications instead of the desktop.
 type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 
+/// What Cancel send, Retry send and Mark as sent say over a message that is
+/// not a draft on its way or stopped (T239).
+const NOT_BEING_SENT: &str = "That message is not one being sent";
+
 /// The stop-digesting confirmation (US10 scenario 5).
 const STOP_DIALOG: &str = "focus-stop-digesting";
 
@@ -1106,9 +1110,18 @@ impl FocusWindow {
             Ok(CommandId::MoreActions) => reading.show_more(),
             // The open message moves between the dialog and the pane (T232).
             Ok(CommandId::ToggleReadingPane) => self.toggle_reading_pane(),
+            // Edit: `Return` on a draft on its way or stopped, already open,
+            // writes it (T239).
+            Ok(CommandId::OpenMessage) if self.offered_on_open_draft(CommandId::OpenMessage) => {
+                self.act(CommandId::OpenMessage);
+            }
             // `Return` on the row already open beside the list: it is open.
             Ok(CommandId::OpenMessage) if reading.in_pane() => self.open_message(),
             Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(None),
+            // What settles a send (T239).
+            Ok(id @ (CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent)) => {
+                self.act(id);
+            }
             // Read or unread, set by the person: the read clock stops, so
             // a message kept unread stays unread while it is open (T237).
             Ok(CommandId::ToggleRead) => {
@@ -1566,6 +1579,17 @@ impl FocusWindow {
             | CommandId::RebuildAccountIndex
             | CommandId::SetDefaultAccount
             | CommandId::MapMailboxRole => self.account_verb(id),
+            // Edit, on a draft on its way or stopped that is open (T239):
+            // the composer takes a waiting send off the queue before
+            // anything is edited.
+            CommandId::OpenMessage if self.offered_on_open_draft(id) => {
+                if let Some(reading) = self.reading()
+                    && let Some(message) = reading.shown()
+                {
+                    reading.close();
+                    self.open_draft(message);
+                }
+            }
             CommandId::OpenMessage => match self.digest_at_cursor() {
                 Some(digest) => self.open_digest(digest),
                 None => self.open_message(),
@@ -1632,6 +1656,19 @@ impl FocusWindow {
             // A Focus row is a whole conversation, so `A` is `a` here.
             CommandId::ArchiveThread => self.act(CommandId::Archive),
             CommandId::Flag | CommandId::Unsnooze => self.send(Command::default_for(id)),
+            // A send on its way or stopped, from the list or the open
+            // message (T239): the draft behind the message aimed at.
+            CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent => {
+                // One the open message offers moves the message out of the
+                // list it was opened from, so it closes; the cursor stays,
+                // and the list's next row -- a draft being written, often --
+                // is not opened in its place.
+                let offered = self.offered_on_open_draft(id);
+                self.settle_send(id);
+                if offered && let Some(reading) = self.reading() {
+                    reading.close();
+                }
+            }
             // The capture sheet (US15), from the row or the open message.
             CommandId::CaptureTask => self.open_capture(crate::capture::Mode::Task),
             CommandId::CaptureNote => self.open_capture(crate::capture::Mode::Note),
@@ -2296,6 +2333,48 @@ impl FocusWindow {
             Some(reading) => reading.shown(),
             None => self.cursor_row().map(|row| row.id()),
         }
+    }
+
+    /// Whether the open message is a draft on its way or stopped whose
+    /// action row offers `id` (T239).
+    fn offered_on_open_draft(&self, id: CommandId) -> bool {
+        self.reading()
+            .filter(|reading| reading.is_open())
+            .and_then(|reading| postio_ui::focus_dialog::send_verbs(reading.send_state()))
+            .is_some_and(|verbs| verbs.contains(&id))
+    }
+
+    /// Cancel, retry or settle the send of the draft behind the message
+    /// aimed at (T239), naming the draft so the host acts on that one and
+    /// says so in the toast, or says why not. A message that is no draft
+    /// says that instead of doing nothing.
+    fn settle_send(&self, id: CommandId) {
+        let (Some(message), Some(client)) =
+            (self.aimed_message(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+            let behind = client.draft_behind(message).await.ok().flatten();
+            let Some(draft) = behind.map(|draft| Some(draft.id)) else {
+                if let Some(window) = window.upgrade() {
+                    window.imp().toast.show_notice(NOT_BEING_SENT);
+                    window.follow_toast();
+                }
+                return;
+            };
+            let command = match id {
+                CommandId::CancelSend => Command::CancelSend { draft },
+                CommandId::RetrySend => Command::RetrySend { draft },
+                _ => Command::MarkSent { draft },
+            };
+            // POSTIO-GLIB-SAFE: as above.
+            if let Err(error) = client.send(command).await {
+                tracing::warn!(%error, "Focus could not send a command: {error}");
+            }
+        });
     }
 
     /// `g t`, `g s`, `g r`: list the folder of `role` in the account Focus
@@ -3552,9 +3631,10 @@ impl FocusWindow {
             return;
         }
         // A draft is written, not read: passing over one opens no composer.
-        let draft = row
-            .as_conversation()
-            .is_some_and(|row| row.summary.representative.send_state.is_some());
+        // One on its way or stopped is read, so the pane shows it (T239).
+        let draft = row.as_conversation().is_some_and(|row| {
+            !postio_ui::focus_dialog::opens_to_read(row.summary.representative.send_state)
+        });
         if draft || matches!(row, FocusRow::Digest(_)) {
             if let Some(reading) = self.reading() {
                 reading.close();
@@ -3707,11 +3787,12 @@ impl FocusWindow {
             return;
         };
         // A draft is written, not read: it opens in the composer (US11
-        // scenario 3), whichever app left it.
-        if row
-            .as_conversation()
-            .is_some_and(|row| row.summary.representative.send_state.is_some())
-        {
+        // scenario 3), whichever app left it -- unless it is on its way or
+        // stopped, which opens to be read, with the verbs that settle it
+        // (T239).
+        if row.as_conversation().is_some_and(|row| {
+            !postio_ui::focus_dialog::opens_to_read(row.summary.representative.send_state)
+        }) {
             self.open_draft(row.id());
             return;
         }
@@ -4126,6 +4207,16 @@ impl FocusWindow {
                     bar.open();
                     bar.set_text(&query);
                 }
+            }
+            // A view over Drafts, listed as Snoozed is (T239).
+            Destination::Outbox(account) => {
+                self.imp().at_inbox.set(false);
+                self.imp().has_action.set(false);
+                self.clear_selection();
+                pane.feed().list().set_single_heading(None);
+                pane.feed().open(ListScope::Outbox(account));
+                chrome.set_place(name);
+                self.show_counts();
             }
         }
     }

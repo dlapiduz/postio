@@ -29,6 +29,9 @@ const DOT_BOX: i32 = 16;
 /// A label's dot's radius.
 const DOT_RADIUS: f64 = 4.0;
 
+/// What the Outbox is called, in the popover and the header.
+pub const OUTBOX: &str = "Outbox";
+
 /// Which section a place is listed under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Section {
@@ -413,6 +416,25 @@ impl Places {
                         mark: Mark::Icon(icon(mailbox.role)),
                     });
                 }
+                // The Outbox, while anything waits in it (T239): a view over
+                // Drafts, so it has no mailbox row of its own to be listed by.
+                // POSTIO-GLIB-SAFE: as above.
+                let waiting = client
+                    .list_count(postio_model::ListScope::Outbox(account.id))
+                    .await
+                    .unwrap_or(0);
+                if waiting > 0 {
+                    found.push(Entry {
+                        section: Section::Mailboxes,
+                        rank: role_rank(MailboxRole::Outbox),
+                        name: OUTBOX.to_owned(),
+                        count: Some(waiting.to_string()),
+                        command: None,
+                        go: None,
+                        destination: Destination::Outbox(account.id),
+                        mark: Mark::Icon(icon(MailboxRole::Outbox)),
+                    });
+                }
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.labels(account.id).await;
                 for label in read.unwrap_or_default() {
@@ -529,6 +551,8 @@ fn role_rank(role: MailboxRole) -> usize {
     match role {
         MailboxRole::Inbox => 0,
         MailboxRole::Drafts => 1,
+        // What Drafts sent on its way, listed under it.
+        MailboxRole::Outbox => 1,
         MailboxRole::Sent => 2,
         MailboxRole::Snoozed => 3,
         MailboxRole::Archive => 4,

@@ -28,6 +28,7 @@ use gtk::graphene;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_core::Keymap;
+use postio_model::DraftState;
 use postio_ui::focus_row::{MAX_PILLS, count_badge, marker_line};
 use postio_ui::label_colour::{Rgb, label_colour};
 
@@ -619,6 +620,33 @@ impl RowWidget {
             );
             trailing_texts.push(count);
         }
+        // A draft on its way or stopped says which (T239): dim while it is
+        // on its way, in ink once it needs the person. A draft being
+        // written says nothing more; its folder already says it.
+        if let Some(state) = summary
+            .representative
+            .send_state
+            .filter(|state| !matches!(state, DraftState::Editing | DraftState::Sent))
+        {
+            let word = postio_ui::row::send_state_word(state);
+            let layout = self.layout(word, false, 1.0);
+            let (word_width, _) = layout.pixel_size();
+            trailing -= GAP + word_width as f32;
+            let colour = if matches!(state, DraftState::Queued | DraftState::Sending) {
+                &palette.dim
+            } else {
+                &palette.ink
+            };
+            self.put(
+                snapshot,
+                &layout,
+                trailing,
+                middle,
+                word_width as f32,
+                colour,
+            );
+            trailing_texts.push(word.to_owned());
+        }
         if summary.has_attachments {
             trailing -= GAP + ICON;
             self.draw_icon(
@@ -1066,6 +1094,13 @@ pub fn spoken(item: &FocusRow) -> String {
     }
     if summary.has_unread() {
         parts.push("unread".to_owned());
+    }
+    if let Some(state) = summary
+        .representative
+        .send_state
+        .filter(|state| !matches!(state, DraftState::Editing | DraftState::Sent))
+    {
+        parts.push(postio_ui::row::send_state_word(state).to_owned());
     }
     if let Some(marker) = &summary.marker {
         let line = marker_line(marker, chrono::Utc::now(), &chrono::Local);

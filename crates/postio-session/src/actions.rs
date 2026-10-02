@@ -2056,7 +2056,9 @@ impl Actions {
             messages: Vec::new(),
             removed: Vec::new(),
             arrived: None,
-            reloaded: Vec::new(),
+            // And the row moves from Drafts to the Outbox, both lists over
+            // the Drafts folder.
+            reloaded: drafts_folder(&connection, account).await?,
             changed: Vec::new(),
             // The way back is `CancelSend`, which is a command a person can
             // reach rather than an inverse invented to satisfy undo's shape.
@@ -2093,6 +2095,8 @@ impl Actions {
                 // An answer to an invitation taken back inside its window is
                 // withdrawn whole: the row it answers repaints unanswered.
                 let changed = self.withdraw_answer(&transaction, &draft).await?;
+                // The row leaves the Outbox for Drafts.
+                let reloaded = drafts_folder(&transaction, account).await?;
                 transaction.commit().await.map_err(store_failure)?;
                 Ok(Applied {
                     lasts: None,
@@ -2105,7 +2109,7 @@ impl Actions {
                     messages: Vec::new(),
                     removed: Vec::new(),
                     arrived: None,
-                    reloaded: Vec::new(),
+                    reloaded,
                     changed,
                     inverse: Vec::new(),
                 })
@@ -2206,7 +2210,8 @@ impl Actions {
             messages: Vec::new(),
             removed: Vec::new(),
             arrived: None,
-            reloaded: Vec::new(),
+            // A sent draft is no longer listed in Drafts.
+            reloaded: drafts_folder(&connection, draft.account_id).await?,
             changed: Vec::new(),
             // No inverse, and #674 asked for one -- worth saying why.
             //
@@ -2273,6 +2278,23 @@ impl Actions {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// `account`'s Drafts folder, as the one list a draft's send verb moves its
+/// row within: Drafts and the Outbox are both over it (spec 003), so a list
+/// event for it is what tells either to read its rows again. Empty when the
+/// account has none yet; there is then no row to have moved.
+async fn drafts_folder(
+    connection: &postio_storage::Connection,
+    account: AccountId,
+) -> Result<Vec<MailboxId>, CommandError> {
+    Ok(MailboxRepository::new(connection)
+        .by_role(account, postio_model::mailbox::MailboxRole::Drafts)
+        .await
+        .map_err(store_failure)?
+        .map(|mailbox| mailbox.id)
+        .into_iter()
+        .collect())
 }
 
 /// Which folder a relocation lands in.
@@ -3630,6 +3652,67 @@ mod tests {
             DraftState::Editing,
             "and it is left exactly as it was"
         );
+    }
+
+    #[tokio::test]
+    async fn settling_a_send_says_the_drafts_list_changed() {
+        // Each of the three verbs moves a draft between the lists that show
+        // it -- Retry from Drafts into the Outbox, Cancel back out of it,
+        // Mark as sent out of Drafts -- and both lists are over the Drafts
+        // folder (spec 003). A list hears that its rows moved only from a
+        // list event, and with none it kept drawing the row the verb had
+        // just moved (Focus's T239).
+        let world = world().await;
+        let drafts_folder = {
+            let connection = world.database.connect().await.expect("a connection");
+            test_support::mailbox(&connection, &world.account, "Drafts")
+                .await
+                .id
+        };
+        let draft = |state: DraftState| {
+            let world = &world;
+            async move {
+                let connection = world.database.connect().await.expect("a connection");
+                let drafts = postio_storage::repository::DraftRepository::new(&connection);
+                let mut draft = postio_model::Draft::new(world.account.id);
+                draft.to = vec![postio_model::EmailAddress::new(
+                    None::<String>,
+                    "quinn@example.net",
+                )];
+                let id = drafts.save(&mut draft).await.expect("save");
+                if state == DraftState::Queued {
+                    drafts
+                        .queue_send(&mut draft, chrono::Utc::now())
+                        .await
+                        .expect("queue it");
+                } else {
+                    drafts.set_state(id, state).await.expect("the state");
+                }
+                id
+            }
+        };
+        let listed = Event::MessageListChanged {
+            account: world.account.id,
+            mailbox: drafts_folder,
+        };
+        for (state, command) in [
+            (DraftState::Failed, CommandId::RetrySend),
+            (DraftState::Queued, CommandId::CancelSend),
+            (DraftState::Unconfirmed, CommandId::MarkSent),
+        ] {
+            let id = draft(state).await;
+            world.drained().await;
+            let command = match command {
+                CommandId::RetrySend => Command::RetrySend { draft: Some(id) },
+                CommandId::CancelSend => Command::CancelSend { draft: Some(id) },
+                _ => Command::MarkSent { draft: Some(id) },
+            };
+            world.run(command.clone()).await.expect("it applies");
+            assert!(
+                world.drained().await.contains(&listed),
+                "{command:?} moved a draft and said nothing to the lists over Drafts"
+            );
+        }
     }
 
     // ── Marking read because you looked at it (#71) ──────────────────────

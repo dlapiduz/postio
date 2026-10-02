@@ -6,8 +6,12 @@
 //! the dialog or moves its column: the only inputs are the window's size and
 //! [`Treatment`], and neither changes on a step unless the body's treatment
 //! does.
+//!
+//! And which verbs its action row offers a message on its way or stopped
+//! ([`send_verbs`], T239), since that is a rule too and not a widget's.
 
 use postio_body::treatment::Treatment;
+use postio_core::CommandId;
 
 /// The narrowest the dialog gets.
 pub const DIALOG_MIN: i32 = 640;
@@ -120,6 +124,43 @@ pub fn placement(chosen: Placement, window: i32) -> Placement {
         Placement::Pane if pane_width(window).is_some() => Placement::Pane,
         _ => Placement::Dialog,
     }
+}
+
+/// Whether `Return` on a row in `state` opens it as the open message, rather
+/// than in the composer (T239; screens.md, "Sending states").
+///
+/// Only a draft still being written opens to be written. One on its way, or
+/// one that stopped, opens to be read: Focus has no preview, so `Return` is
+/// the only way to look, and opening it in the composer would change it --
+/// editing a waiting send takes it off the queue, and editing an
+/// unconfirmed one clears what lets Postio find it in Sent (ADR 0021).
+pub fn opens_to_read(state: Option<postio_model::DraftState>) -> bool {
+    state != Some(postio_model::DraftState::Editing)
+}
+
+/// The open message's verbs for a draft whose send is in `state`, in the
+/// order its action row draws them, or `None` for mail that is not on its
+/// way anywhere -- received mail, and a send the server took -- which keeps
+/// the received toolbar.
+///
+/// `OpenMessage` is Edit: for a draft, opening is writing. `Sending` offers
+/// nothing: cancelling is refused once the submission has started, and
+/// retrying would risk a second copy (ADR 0021), so offering either would be
+/// offering a refusal. The same judgement as
+/// [`ReaderAction::for_send_state`](crate::reader::header::ReaderAction::for_send_state),
+/// with Mark as sent drawn for an unconfirmed send rather than left to the
+/// palette, and Edit, since Focus's open message has no composer behind it.
+pub fn send_verbs(state: Option<postio_model::DraftState>) -> Option<&'static [CommandId]> {
+    use CommandId::{CancelSend, MarkSent, OpenMessage, RetrySend};
+    use postio_model::DraftState;
+    Some(match state? {
+        DraftState::Sent => return None,
+        DraftState::Editing => &[OpenMessage],
+        DraftState::Queued => &[CancelSend, OpenMessage],
+        DraftState::Sending => &[],
+        DraftState::Failed => &[RetrySend, OpenMessage],
+        DraftState::Unconfirmed => &[RetrySend, MarkSent, OpenMessage],
+    })
 }
 
 /// The vertical rhythm, in pixels (an 8px grid around a 24px body line).
@@ -257,5 +298,54 @@ mod tests {
         assert_eq!(column_width(820, Treatment::Paper), 640);
         assert_eq!(column_width(dialog_width(1024), Treatment::Paper), 607);
         assert_eq!(column_width(640, Treatment::Paper), 592);
+    }
+
+    #[test]
+    fn a_draft_on_its_way_or_stopped_opens_to_be_read_and_one_being_written_does_not() {
+        use postio_model::DraftState;
+        // Received mail, and a send the server took, read as mail.
+        assert!(opens_to_read(None));
+        assert!(opens_to_read(Some(DraftState::Sent)));
+        // Looking at these must not change them: editing a waiting send
+        // takes it off the queue (ADR 0021).
+        for state in [
+            DraftState::Queued,
+            DraftState::Sending,
+            DraftState::Failed,
+            DraftState::Unconfirmed,
+        ] {
+            assert!(
+                opens_to_read(Some(state)),
+                "{state:?} opens in the composer"
+            );
+        }
+        assert!(!opens_to_read(Some(DraftState::Editing)));
+    }
+
+    #[test]
+    fn each_send_state_offers_the_verbs_that_settle_it() {
+        use postio_core::CommandId::{CancelSend, MarkSent, OpenMessage, RetrySend};
+        use postio_model::DraftState;
+        assert_eq!(send_verbs(None), None, "received mail has its own verbs");
+        assert_eq!(send_verbs(Some(DraftState::Sent)), None);
+        assert_eq!(
+            send_verbs(Some(DraftState::Queued)),
+            Some(&[CancelSend, OpenMessage][..])
+        );
+        // Cancelling is refused once the submission starts, and retrying
+        // would risk a second copy: nothing is offered rather than a refusal.
+        assert_eq!(send_verbs(Some(DraftState::Sending)), Some(&[][..]));
+        assert_eq!(
+            send_verbs(Some(DraftState::Failed)),
+            Some(&[RetrySend, OpenMessage][..])
+        );
+        assert_eq!(
+            send_verbs(Some(DraftState::Unconfirmed)),
+            Some(&[RetrySend, MarkSent, OpenMessage][..])
+        );
+        assert_eq!(
+            send_verbs(Some(DraftState::Editing)),
+            Some(&[OpenMessage][..])
+        );
     }
 }

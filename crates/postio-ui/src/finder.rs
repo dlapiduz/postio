@@ -243,6 +243,9 @@ pub enum Destination {
     Label(postio_model::ids::LabelId),
     /// A saved search's query, in the one query language.
     Search(String),
+    /// An account's Outbox: its drafts whose send is under way. A view over
+    /// the Drafts folder, not a folder of its own (spec 003).
+    Outbox(postio_model::ids::AccountId),
 }
 
 /// One place the bar can go, as the frontend knows it.
