@@ -4848,6 +4848,7 @@ dependencies = [
  "glib",
  "gtk4",
  "libadwaita",
+ "mimalloc",
  "pango",
  "postio-account",
  "postio-body",

@@ -30,6 +30,11 @@ chrono = { workspace = true, features = ["std"] }
 gio = "0.22.9"
 glib = { version = "0.22.9", features = ["v2_72"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+# The binary's allocator: `postio` is Focus now, and the engine's page cache
+# and fts index churn small allocations on the hot path, which is why the
+# shipped binary has used mimalloc (`postio-app`'s `main.rs`). The memory
+# measurements (#1606) measure the heap under it too.
+mimalloc = "0.1"
 pango = { version = "0.22.9", features = ["v1_56"] }
 # The keyring the store key is read from: this process opens the store.
 postio-account.workspace = true
