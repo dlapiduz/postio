@@ -1675,7 +1675,7 @@ impl ConversationView {
                 .map(|(id, _)| *id)
                 .collect()
         };
-        let now = chrono::Local::now();
+        let now = postio_ui::clock::now();
         let messages: Vec<crate::reader::view::ThreadMessage> = rows
             .iter()
             .map(|row| {
@@ -1780,7 +1780,8 @@ impl ConversationView {
     fn apply_chrome(&self, messages: &[Row]) {
         let imp = self.imp();
         self.fill_rail(messages);
-        imp.header.set_conversation(messages, chrono::Local::now());
+        imp.header
+            .set_conversation(messages, postio_ui::clock::now());
         self.fill_header_envelope();
         // Which bar, decided from the message the bar is scoped to: its
         // verbs aim at the conversation's latest message, and a thread you
@@ -1979,7 +1980,7 @@ impl ConversationView {
             .iter()
             .map(|row| postio_ui::row::initials(row.from.as_ref()))
             .collect();
-        let now = chrono::Local::now();
+        let now = postio_ui::clock::now();
         let whens: Vec<String> = messages
             .iter()
             .map(|row| postio_ui::row::timestamp(row.received_at, now))
