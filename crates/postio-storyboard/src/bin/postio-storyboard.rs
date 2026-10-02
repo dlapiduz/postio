@@ -17,7 +17,7 @@ usage:
                            --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
   postio-storyboard prompt <bundle> (--list | --batch <n>)
   postio-storyboard verdicts check <bundle>
-  postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]";
+  postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]\n                         [--bundle <dir> [--bundle-prefix <path>]]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -198,10 +198,48 @@ fn page_command(args: &[String]) -> ExitCode {
         title: flag(args, "--title").unwrap_or_default(),
         tree_key: flag(args, "--key"),
     };
-    let html = page::render(&header, &strips);
+    let out_path = PathBuf::from(&out);
+    let reviewed = match flag(args, "--bundle") {
+        Some(bundle_dir) => {
+            // The page links frames through the bundle, so it needs to know
+            // where the bundle is from the page.
+            let bundle_path = PathBuf::from(&bundle_dir);
+            let prefix = flag(args, "--bundle-prefix").unwrap_or_else(|| {
+                let from = out_path.parent().unwrap_or(std::path::Path::new(""));
+                bundle_path
+                    .strip_prefix(from)
+                    .unwrap_or(&bundle_path)
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            match page::load_review(&bundle_path, &prefix) {
+                Ok(reviewed) => Some(reviewed),
+                Err(error) => {
+                    eprintln!("postio-storyboard page: {error}");
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        None => None,
+    };
+    let html = match &reviewed {
+        Some(reviewed) => page::render_reviewed(&header, &strips, reviewed),
+        None => page::render(&header, &strips),
+    };
     if let Err(error) = std::fs::write(&out, html) {
         eprintln!("postio-storyboard page: {out}: {error}");
         return ExitCode::from(2);
+    }
+    if let Some(reviewed) = &reviewed {
+        let summary_path = out_path.with_file_name("summary.md");
+        let text = page::summary(&header, &strips, reviewed);
+        if let Err(error) = std::fs::write(&summary_path, text) {
+            eprintln!(
+                "postio-storyboard page: {}: {error}",
+                summary_path.display()
+            );
+            return ExitCode::from(2);
+        }
     }
     println!("{out} ({} runs)", strips.len());
     ExitCode::SUCCESS
