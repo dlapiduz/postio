@@ -5,7 +5,7 @@
 # still on its way out. The key has to refuse with a notice instead.
 # Open: Reply on the Outbox's message still opens a composer (reply to
 # yourself, with the quote header already typed). The check is the intent.
-source = { kind = "issue", ref = "#1523" }
+source = { kind = "issue", ref = "#1749" }
 proof  = "open"
 seed   = "outbox"
 

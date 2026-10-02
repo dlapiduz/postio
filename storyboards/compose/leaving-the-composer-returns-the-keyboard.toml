@@ -5,7 +5,8 @@
 # "other" on GtkPaned. A person cannot see that, but the next key is the
 # test, and the list is where the keyboard was when the composer opened
 # (compare #1474 / 6eadd8e2 for search). Open: the check is the intent.
-source = { kind = "flow", ref = "ux-architect §4" }
+source = { kind = "issue", ref = "#1751" }
+proof  = "open"
 
 [[step]]
 wait    = { until = { reading.id = "12" } }
