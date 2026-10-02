@@ -1,0 +1,95 @@
+Message-ID: <notes-2026-10-01.stacked@notes.fernbrook.example.org>
+Date: Thu, 01 Oct 2026 08:30:00 +0000
+From: Fernbrook Parish Notes <notes@fernbrook.example.org>
+To: Wren Abbott <wren.abbott@example.com>
+Subject: Parish notes: the orchard, the library and the ferry
+MIME-Version: 1.0
+List-Id: Fernbrook Parish Notes <notes.fernbrook.example.org>
+List-Unsubscribe: <https://notes.fernbrook.example.org/leave>
+Content-Type: multipart/alternative; boundary="fernbrook-boundary"
+
+--fernbrook-boundary
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Fernbrook Parish Notes
+
+What changed in the village this fortnight.
+
+Orchard walk
+Saplings planted along the east path; volunteers meet at the gate at nine.
+
+Cider press
+The press is mended and the first pressing is booked for the twelfth.
+
+Library hours
+The reading room stays open until eight on Thursdays from next week.
+
+Map archive
+Sixty survey sheets of the valley are now scanned and free to browse.
+
+Ferry notice
+The morning crossing moves to quarter past seven while the jetty is resurfaced.
+
+Harbour lights
+New lamps line the slipway, dimmed after midnight for the bats.
+
+Leave the list: https://notes.fernbrook.example.org/leave
+
+--fernbrook-boundary
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; padding: 0; }
+  @media only screen and (max-width: 600px) {
+    .stack { display: block !important; width: 100% !important; box-sizing: border-box; }
+  }
+</style></head>
+<body>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td align="center">
+<table role="presentation" style="max-width:600px;width:100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td colspan="2" style="padding:16px 8px">
+<h1 style="font-size:22px;margin:0">Fernbrook Parish Notes</h1>
+<p style="font-size:14px;line-height:20px;margin:6px 0 0 0">What changed in the village this fortnight.</p>
+</td></tr>
+<tr>
+<td class="stack" width="50%" valign="top" style="padding:0 8px 16px 8px">
+<h2 style="font-size:18px;margin:0 0 6px 0">Orchard walk</h2>
+<p style="font-size:14px;line-height:20px;margin:0">Saplings planted along the east path; volunteers meet at the gate at nine.</p>
+</td>
+<td class="stack" width="50%" valign="top" style="padding:0 8px 16px 8px">
+<h2 style="font-size:18px;margin:0 0 6px 0">Cider press</h2>
+<p style="font-size:14px;line-height:20px;margin:0">The press is mended and the first pressing is booked for the twelfth.</p>
+</td>
+</tr>
+<tr>
+<td class="stack" width="50%" valign="top" style="padding:0 8px 16px 8px">
+<h2 style="font-size:18px;margin:0 0 6px 0">Library hours</h2>
+<p style="font-size:14px;line-height:20px;margin:0">The reading room stays open until eight on Thursdays from next week.</p>
+</td>
+<td class="stack" width="50%" valign="top" style="padding:0 8px 16px 8px">
+<h2 style="font-size:18px;margin:0 0 6px 0">Map archive</h2>
+<p style="font-size:14px;line-height:20px;margin:0">Sixty survey sheets of the valley are now scanned and free to browse.</p>
+</td>
+</tr>
+<tr>
+<td class="stack" width="50%" valign="top" style="padding:0 8px 16px 8px">
+<h2 style="font-size:18px;margin:0 0 6px 0">Ferry notice</h2>
+<p style="font-size:14px;line-height:20px;margin:0">The morning crossing moves to quarter past seven while the jetty is resurfaced.</p>
+</td>
+<td class="stack" width="50%" valign="top" style="padding:0 8px 16px 8px">
+<h2 style="font-size:18px;margin:0 0 6px 0">Harbour lights</h2>
+<p style="font-size:14px;line-height:20px;margin:0">New lamps line the slipway, dimmed after midnight for the bats.</p>
+</td>
+</tr>
+<tr><td colspan="2" style="padding:8px;font-size:12px">You are receiving this because you joined the parish list. <a href="https://notes.fernbrook.example.org/leave">Leave the list</a>.</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>
+--fernbrook-boundary--

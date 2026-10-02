@@ -398,6 +398,8 @@ corpus! {
         "A receipt with no background anywhere but a 560px layout table and a remote logo: paper by its layout alone.",
     "html-responsive-media": [Html, Designed] =>
         "Two columns that stack under @media (max-width: 600px): responsive rules judged against the pane's width.",
+    "html-responsive-stacked-cells": [Html, MultipartAlternative, MailingList, Designed] =>
+        "Layout-table cells made display:block by @media (max-width: 600px): the stacked columns are drawn in the 480px column.",
     "html-rtl-mixed": [Html] =>
         "Arabic and Hebrew paragraphs with Latin runs inside, plus an English line: bidirectional layout.",
     "html-script-forms": [Html, Hostile] =>
