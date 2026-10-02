@@ -399,7 +399,7 @@ impl FocusWindow {
         let saved = postio_widgets::state::Geometry::load(DEFAULT_GEOMETRY);
         glib::Object::builder()
             .property("application", application)
-            .property("title", "Postio Focus")
+            .property("title", crate::app::NAME)
             .property("default-width", saved.width)
             .property("default-height", saved.height)
             .property("maximized", saved.maximized)
@@ -676,7 +676,7 @@ impl FocusWindow {
 
     fn show_about(&self) {
         let about = adw::AboutDialog::builder()
-            .application_name("Postio Focus")
+            .application_name(crate::app::NAME)
             .version(env!("CARGO_PKG_VERSION"))
             .license_type(gtk::License::MitX11)
             .build();

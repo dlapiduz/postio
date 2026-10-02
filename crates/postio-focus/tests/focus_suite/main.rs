@@ -512,6 +512,10 @@ const CASES: &[(&str, fn())] = &[
         desktop::focus_says_which_application_it_is as fn(),
     ),
     (
+        "desktop::the_window_is_titled_postio",
+        desktop::the_window_is_titled_postio as fn(),
+    ),
+    (
         "pickers::s_then_2_snoozes_the_row_until_tomorrow_morning",
         pickers::s_then_2_snoozes_the_row_until_tomorrow_morning as fn(),
     ),

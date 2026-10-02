@@ -24,6 +24,10 @@ use crate::window::FocusWindow;
 /// the XDG directories, so the switch moved none of them.
 pub const APP_ID: &str = "dev.postio.Postio";
 
+/// The app's name, as its window title and About dialog say it. Focus is
+/// Postio (spec 007, C27); "Postio Focus" was its name as a second launcher.
+pub const NAME: &str = "Postio";
+
 /// The icon Postio is drawn with, which the Flatpak installs and the
 /// desktop entry's `Icon=` names: the window's default icon, the desktop
 /// entry and the binary's bundled theme all use this name.

@@ -26,6 +26,19 @@ pub fn focus_says_which_application_it_is() {
     );
 }
 
+/// Focus is Postio (spec 007, C27): the window a person switches to is
+/// titled with the app's name, not the name it had as a second launcher.
+pub fn the_window_is_titled_postio() {
+    use gtk::prelude::GtkWindowExt;
+    crate::gtk_case(async {
+        if !crate::support::display() {
+            return;
+        }
+        let window = postio_focus::window::FocusWindow::new(None);
+        assert_eq!(window.title().as_deref(), Some("Postio"));
+    });
+}
+
 /// T217: a running Focus is drawn with the Postio icon. The dock matches the
 /// window to `dev.postio.Postio.desktop`, whose `Icon=` names the
 /// package's one icon; a window with no icon of its own (an AdwWindow's
