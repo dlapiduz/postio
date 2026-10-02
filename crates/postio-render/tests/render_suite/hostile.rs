@@ -2,13 +2,11 @@
 //! inside its message, finishes within the bound, links only where a
 //! reader may follow, and fetches nothing.
 
-mod support;
-
 use std::time::Instant;
 
+use crate::support::{DARK, LIGHT, render, request};
 use postio_model::test_corpus::{self, Category};
 use postio_render::{DEFAULT_RENDER_DEADLINE, LinkTarget, Outcome, Rect};
-use support::{DARK, LIGHT, render, request};
 
 /// Inside `outer`, give or take a pixel of antialiasing.
 fn inside(inner: Rect, outer: Rect) -> bool {
