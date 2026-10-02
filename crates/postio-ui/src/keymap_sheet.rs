@@ -143,6 +143,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::Delete
         | C::Move
         | C::ToggleRead
+        // `*`, with no mark on the row (C13).
+        | C::Flag
         | C::Snooze
         | C::Unsnooze
         | C::RemindIfNoReply
@@ -240,9 +242,9 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::QuoteBlock => None,
         // The terminal composer's (`Requirement::Terminal`).
         C::EditExternally | C::TogglePreview => None,
-        // The three-pane apps' surfaces (`Requirement::ThreePane`): flags,
-        // the sidebar, the panes, and the parts panel. Focus has none.
-        C::Flag | C::ToggleSidebar | C::CyclePane | C::CyclePaneBack | C::OpenParts => None,
+        // The three-pane apps' surfaces (`Requirement::ThreePane`): the
+        // sidebar, the panes, and the parts panel. Focus has none.
+        C::ToggleSidebar | C::CyclePane | C::CyclePaneBack | C::OpenParts => None,
         // A stacked conversation pane's, which Focus's dialog is not.
         C::ToggleFold | C::ExpandAll | C::ToggleRail => None,
         // The folder list's own keys.
@@ -434,7 +436,14 @@ mod tests {
             .iter()
             .flat_map(|(_, rows)| rows.iter().map(|row| row.action))
             .collect();
-        assert!(!rows.contains(&CommandId::Flag.into()), "a three-pane verb");
+        assert!(
+            !rows.contains(&CommandId::OpenParts.into()),
+            "a three-pane verb"
+        );
+        assert!(
+            rows.contains(&CommandId::Flag.into()),
+            "Focus flags on `*` (C13)"
+        );
         assert!(
             !rows.contains(&CommandId::Send.into()),
             "the composer teaches its own"
