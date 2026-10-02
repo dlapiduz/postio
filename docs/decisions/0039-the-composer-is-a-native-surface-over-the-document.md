@@ -1,10 +1,10 @@
 # ADR 0039 — The composer is a native surface over the document
 
-- **Status:** Accepted — decided 2026-09-18. **Supersedes [ADR 0003](0003-rich-text-compose.md) Q2**
-  (the `contenteditable` WebView), which it answers again on evidence ADR 0003
-  said it did not have. Everything else in ADR 0003 — the restricted subset,
-  the hardening requirements, the privacy posture — stands unchanged and is
-  what makes this possible.
+- **Status:** Accepted (2026-09-18). Not built: the composer still edits in
+  a WebKitGTK view (`postio-widgets`' `composer/`). It replaces
+  [ADR 0003](0003-rich-text-compose.md) Q2 (the `contenteditable` WebView);
+  the rest of ADR 0003 — the restricted subset, the hardening requirements,
+  the privacy posture — stands, and is what makes this possible.
 - **Date:** 2026-09-18
 - **Issue:** [#1543](https://github.com/dlapiduz/postio/issues/1543) (`needs-architecture`),
   which asked whether the *reader* could be Blitz and required an explicit
@@ -17,7 +17,7 @@
   this)
 - **Decision:** the composer stops being a `WebView`. Its editing surface
   becomes a **native toolkit text view over `postio_body::Document`** —
-  `GtkTextView` in `postio-gtk`, `NSTextView` in the Swift frontend — and the
+  `GtkTextView` in `postio-widgets`, `NSTextView` in the Swift frontend — and the
   **editing algebra moves into `postio-body` as pure functions on `Document`**.
   No `contenteditable`, no bundled script, no script-message bridge, and no
   browser engine in the compose path at all.
@@ -26,30 +26,23 @@
 
 ## Context
 
-#1543 spiked a Blitz reading surface and reached the question it said would
-decide the matter: *Blitz has no `contenteditable` and no JavaScript, so what
-happens to the composer?* The spike named three options — Blitz reader plus a
-native composer, WebKit kept for the composer alone, or something defensible —
-and recorded that "ship both engines is worse than either alone".
-
-That framing contains one mistake, and correcting it is most of this decision.
-**`GtkTextView` is not a second engine.** "Two engines" is a real cost when it
+The reader draws mail with Blitz (`postio-render`, ADR 0042), which has no
+`contenteditable` and no JavaScript, so the composer is the one surface left
+on a browser engine. **`GtkTextView` is not a second engine.** "Two engines" is a real cost when it
 means two HTML/CSS implementations — two sanitiser targets, two font stacks,
 two sets of layout behaviour, two security postures to keep true. A toolkit
 text widget is none of those. It is the same class of thing as `GtkLabel`, and
 Postio is already full of them. So the choice is not between one engine and
 two; it is between one engine plus a widget, and two engines.
 
-The second thing that changed is that ADR 0003's premises have expired. It was
-written on 2026-08-24, when nothing existed, and it chose `contenteditable`
-because that view "arrives with selection handling, IME, native undo,
-spell-check, drag-and-drop and paste already working". Measured against the
-tree at `13cf825d`, three of those six are not being collected:
+ADR 0003 chose `contenteditable` because that view "arrives with selection
+handling, IME, native undo, spell-check, drag-and-drop and paste already
+working". Three of those six are not collected:
 
 | ADR 0003 said it gives us | What is actually there |
 |---|---|
 | Native undo | **Rejected and turned off.** ADR 0004 Q5 ruled that a DOM undo step and a `Document` step disagree about what one step is, put the history in `postio_body::EditHistory`, and made widget-native undo the documented silent failure mode |
-| Spell-check | **Never enabled.** `set_spell_checking_enabled` is called nowhere; the word "spell" does not appear in `postio-gtk`'s composer at all. The feature ADR 0003 counted has never been switched on |
+| Spell-check | **Never enabled.** `set_spell_checking_enabled` is called nowhere |
 | The input dialect | **Re-implemented in Rust anyway.** The markdown sequences live in `postio_ui::editor::markdown` and are *generated into* `editor.js` by `markdown_table_js`, because "a hand-written copy in JavaScript is a copy that drifts" |
 | Selection, IME, drag-and-drop, paste | Genuinely provided — and also provided by `GtkTextView`, from the same `GtkIMContext` stack WebKitGTK sits on under GTK |
 
@@ -57,7 +50,7 @@ So the surface is being paid for in full and used for less than half of what
 it was chosen for. What it charges in exchange is specific and countable:
 `editor.js` (260 lines), three registered script-message handlers, a formatting
 path that runs `execCommand` strings through `evaluate_javascript`, and
-`tests/gtk_suite/gtk_editable_dialect.rs` (224 lines) whose whole job is to pin
+`postio-gtk`'s `gtk_editable_dialect.rs`, whose whole job is to pin
 *WebKit's* dialect so `postio_body::parse` can absorb it. That test exists
 because the markup is a foreign engine's opinion rather than Postio's.
 
@@ -81,7 +74,7 @@ algebra in `postio-body` that operates on `Document` directly.**
                               │                             (postio-body,
                               │                              pure, closed set)
                               ├──> EditHistory              (already exists)
-                              └──> render into GtkTextBuffer  (postio-gtk)
+                              └──> render into GtkTextBuffer  (postio-widgets)
 ```
 
 The direction of flow is the one ADR 0004 Q3 already draws, with the WebView
@@ -106,8 +99,8 @@ position in `Document` is the one genuinely new mechanism. It is named again
 under "What would falsify this".
 
 **Inline images** are `GtkTextChildAnchor` holding a `GtkPicture` over the blob
-bytes — strictly simpler than today's path, which resolves a `postio-cid:` URI
-through a custom scheme handler registered on a `WebContext`.
+bytes — strictly simpler than resolving a `postio-cid:` URI through a custom
+scheme handler registered on a `WebContext`, as the WebKit composer does.
 
 **Paste** normalises through `postio_body::parse`, which is what it already
 does and must keep doing whatever the surface is: hostile markup narrowing into
@@ -120,19 +113,16 @@ the suggestion menu with it. This is a feature Postio *gains* by leaving the
 WebView, not one it gives up.
 
 **Accessibility** likewise. `GtkTextView` implements `GtkAccessibleText`
-natively (GTK 4.14+; 4.22 here). The current composer calls
-`set_accessible_role(AccessibleRole::TextBox)` on a `WebView` — a role claim
-with no interface behind it, leaving a screen reader to reach WebKit's own
-out-of-process tree. ADR 0032's screen-reader gate is still open in the index;
-this narrows it rather than widening it.
+natively. The WebKit composer can only claim
+`AccessibleRole::TextBox` on a `WebView` — a role with no interface behind it,
+leaving a screen reader to reach WebKit's own out-of-process tree.
 
 ## Q2 — Why not a Blitz composer?
 
 **Because it does not exist, and building it is the months ADR 0003 was right
 to refuse.**
 
-Checked against `blitz-dom` 0.3.0-beta.2 rather than assumed: the string
-`contenteditable` does not occur anywhere in its source. What is there is
+`blitz-dom` has no `contenteditable`. What is there is
 `Document::hit()`, a `TextSelection` of node-and-offset endpoints, IME,
 keyboard and pointer event handling, AccessKit, and `parley::PlainEditor` —
 and that last one is bound to `<input>` and `<textarea>` nodes, which is
@@ -149,17 +139,12 @@ moment one stops trying to make them, both get easier.
 
 ## Q3 — Why not keep WebKit for the composer alone?
 
-The spike called this "worse than either", and it is worth writing down *why*,
-because it is the option that looks like the safe one.
+It is what the tree does today, and it looks like the safe option. It is not:
 
-- **It keeps the entire cost.** Three processes and ~408 MB of helpers stay
-  linked and running for the surface used least often. Nothing about the
-  reader's engine changes that; the WebView is the WebView.
-- **It keeps the flicker, on exactly the swap that has it.** The black
-  composite comes from a second GL surface being swapped in. The composer takes
-  over the reading pane (ADR 0034), so reader↔composer *is* that swap. Moving
-  the reader to Blitz and leaving the composer on WebKit does not remove the
-  second surface — it renames which one is second.
+- **It keeps the entire cost.** WebKitGTK's processes and ~408 MB of helpers
+  stay linked and running for the surface used least often.
+- **It keeps a second GL surface** on the swap between reading and writing:
+  the composer takes the place of the open message (ADR 0034).
 - **It keeps the script posture and the dialect contract**, which are the two
   things in the compose path that need an argument written about them.
 - **It keeps macOS compose blocked.** ADR 0019 shipped read-only, with compose
@@ -168,31 +153,19 @@ because it is the option that looks like the safe one.
   `Document` in `postio-body` ports by definition, because the Swift frontend
   already links it.
 
-## Q4 — Does this depend on the Blitz reader?
+## Q4 — What it removes
 
-**No, and that is the strongest argument for taking it first.**
-
-A native composer is right in both worlds:
-
-- If Blitz ships for the reader, WebKitGTK leaves the tree entirely, in two
-  independent moves rather than one large one.
-- If Blitz does not ship, the reader keeps WebKit and the composer is *still*
-  better native — no dialect contract, no bundled script, no bridge, real
-  spell-check, real accessibility, a portable editor, and one fewer GL surface.
-
-The reader question turns on evidence that is still being gathered (#1543).
-This one turns on evidence already in the tree. They are separable, so
-separating them is what stops the composer from being the thing that blocks the
-reader decision for another six months.
+With the reader on Blitz (ADR 0042), the composer is the last thing that links
+WebKitGTK. Building this takes the browser engine out of the Linux app
+entirely.
 
 ---
 
 ## Alternatives
 
-**Keep the `contenteditable` WebView (status quo).** Defensible only on inertia
-now that three of its six stated benefits are provably unclaimed. Its real
-remaining advantage is that it works today, which is a reason to sequence
-carefully — see below — not a reason to decide differently.
+**Keep the `contenteditable` WebView.** Three of its six stated benefits are
+unclaimed. Its real remaining advantage is that it works, which is a reason to
+sequence carefully — see below — not a reason to decide differently.
 
 **`GtkTextBuffer` as the record, serialised to HTML.** The flat tag model made
 the ADR 0003 case against `GtkTextView`, and it would be a real objection if the
@@ -218,9 +191,9 @@ rich document, not a source format.
   `apply(&Document, EditIntent) -> Document`, beside the `EditHistory` that
   already consumes the results. No new dependencies; it stays a pure leaf, and
   `check-crate-boundaries.py` keeps it that way.
-- **`postio-gtk`** loses `data/editor.js`, the three script-message handlers,
-  `editing_view`/`editing_settings`, every `evaluate_javascript` formatting
-  call, and `tests/gtk_suite/gtk_editable_dialect.rs` — the dialect stops being
+- **`postio-widgets`** loses `composer/editor.js`, the three script-message
+  handlers, every `evaluate_javascript` formatting call, and webkit6 from its
+  graph; `gtk_editable_dialect.rs` goes too — the dialect stops being
   a foreign engine's and becomes Postio's, so the contract is a `postio-body`
   unit test instead of a WebKit integration one.
 - **`postio-ui`** keeps `editor/markdown.rs` unchanged and stops generating
@@ -247,8 +220,8 @@ rich document, not a source format.
 
 ## Sequencing
 
-The composer works today, and a rewrite that takes it away for a fortnight is
-worse than the thing it fixes. So:
+The composer works, and a rewrite that takes it away for a fortnight is worse
+than the thing it fixes. So:
 
 1. `EditIntent` and `apply` in `postio-body`, proven against `Document` with no
    UI at all. Independently useful, and it is where the risk actually is.
@@ -256,7 +229,7 @@ worse than the thing it fixes. So:
    through `parse`-the-DOM, keeping the surface. Both paths are `Document`-in,
    `Document`-out, so this is a swap with the old behaviour one revert away.
 3. Build the `GtkTextView` surface beside it, behind nothing user-visible,
-   until `gtk_composer.rs` passes against it.
+   until the composer suites pass against it.
 4. Delete the WebView composer, `editor.js`, the handlers and the dialect test
    in one commit. **One surface, not two behind a flag** — the same rule the
    spike set for the reader.
@@ -277,7 +250,7 @@ into a list item before step 3 is considered locked.**
 
 Second, and smaller: if `libspelling`'s adapter turns out to fight a buffer
 that is re-rendered from a `Document` rather than edited in place, spell-check
-returns to being a thing Postio does not have — which is where it is today, so
+returns to being a thing Postio does not have — which is where it is now, so
 this would cost nothing already counted, but the claim in Q1 should not be left
 standing if it is false.
 
