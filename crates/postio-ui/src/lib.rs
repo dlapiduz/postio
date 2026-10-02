@@ -14,6 +14,7 @@
 pub mod account;
 pub mod allowlist;
 pub mod cheatsheet;
+pub mod clock;
 pub mod conversation;
 pub mod dwell;
 pub mod editor;
