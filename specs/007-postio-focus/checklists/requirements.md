@@ -53,6 +53,3 @@
       embeds or ships one (FR-165 to FR-169).
     - A simple built-in detector marks questions and to-dos when no model is
       connected (FR-104 to FR-108).
-- **Planning is gated.** `/speckit-plan` waits until the new message
-  renderer has merged to `main` (see *The message view waits for the new
-  renderer* in the spec).

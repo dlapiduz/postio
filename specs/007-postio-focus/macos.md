@@ -1,10 +1,8 @@
 # Focus on macOS: a starting brief
 
-For whoever builds the Focus design in `macos/`. It says what is true on
-`feature/postio-focus` as of the merge of `main`'s macOS frontend
-(2026-10-02). It is a starting point and not a spec: the spec is
-[`spec.md`](spec.md), and where this file and the spec disagree, the spec is
-right.
+For whoever builds the Focus design in `macos/`. It is a starting point and
+not a spec: the spec is [`spec.md`](spec.md), and where this file and the
+spec disagree, the spec is right.
 
 ## What Focus is
 
@@ -13,23 +11,26 @@ decision C27). Home is a dense, keyboard-first inbox that shows mail as it
 arrived. It does four things to mail: it calls out real actions (invitations,
 questions, to-dos), holds some mail back into digests on a cadence the person
 chooses, hides spam and automated updates with a reason each, and later links
-mail to an Obsidian vault. It has no folder sidebar and no reading pane. A
-message opens in a dialog over the list, and `Esc` returns to the same place.
+mail to an Obsidian vault. It has no folder sidebar. A message opens in a
+dialog over the list, or beside it for those who choose (`F8`), and `Esc`
+returns to the same place.
 
 Read these before drawing anything:
 
 - [`spec.md`](spec.md): the user stories, the requirements, and the table
   *Where the inputs disagree* (C1 to C27), which records every decision the
   maintainer has taken against the design files;
-- [`screens.md`](screens.md): each screen, 01 to 24, against its reference
-  image, with every known difference and its reason;
+- [`screens.md`](screens.md): each screen against its reference image, with
+  every known difference and its reason, and the designs that have no image
+  (the open message, the reading pane, sending states, the row menu,
+  Settings);
 - [`contracts/focus-surface.md`](contracts/focus-surface.md): rows, markers,
   the bar, the pickers, dialogs and states, as a frontend must draw them;
 - [`contracts/keymap.md`](contracts/keymap.md): the one keymap;
-- the message dialog: tasks T205 to T213 in [`tasks.md`](tasks.md), with
-  decisions C25 and C26. They cover the dialog's size from the window, the
-  one centred column, the vertical rhythm, and the two body treatments: app
-  colours, or the original on a paper sheet.
+- the open message: [`screens.md`](screens.md), "The open message", with
+  decisions C25 and C26: the dialog's size from the window, the one centred
+  column, the vertical rhythm, and the two body treatments, app colours or
+  the original on a paper sheet.
 
 ## What macOS can use as it is
 
@@ -61,7 +62,7 @@ The engine is shared, and none of Focus's engine work is GTK:
   commands (`switch_treatment`, `more_actions`, the pickers, the digest and
   filtered commands) are rows of the one table. `offered_on` already scopes
   what a platform has no surface for.
-- **Store refusals.** `Session.open` now raises `SessionError.
+- **Store refusals.** `Session.open` raises `SessionError.
   storeFromAnotherBuild` when the store's schema cannot be carried forward,
   which is distinct from `storeUnavailable` (try again) and `keyringLocked`.
 
@@ -108,9 +109,9 @@ The engine is shared, and none of Focus's engine work is GTK:
   Every app reads the same registry and gives each command the same key.
   What differs is which commands a frontend offers (`Requirement` against
   `Frontend`) and what a platform has no surface for (`offered_on`). `mod`
-  resolves to `cmd` on the Mac. Since this merge the defaults the Mac's
-  tests assert include `]`/`[` for the next and previous message and
-  `mod+z` for Undo, with `u` freed.
+  resolves to `cmd` on the Mac, and the Mac's tests assert the one keymap's
+  defaults: `]`/`[` for the next and previous message in a thread, `mod+z`
+  for Undo.
 - **ADR 0043.** Focus is the one desktop app. New work is Focus's design or a
   shared crate's, never the classic three-pane app's. A capability goes in
   the lowest layer that can hold it: `postio-ui` or `postio-core` for logic
