@@ -24,7 +24,13 @@ path = "src/main.rs"
 # (`postio_focus::demo`, the `shot` and `storyboard` examples). Off by
 # default: the seeds and the in-memory store are test-support code and must
 # not reach a normal build.
-demo = ["dep:postio-index", "dep:postio-storage", "postio-storage/test-support", "dep:tempfile"]
+demo = [
+    "dep:postio-index",
+    "dep:postio-storage",
+    "postio-storage/test-support",
+    "dep:postio-storyboard",
+    "dep:tempfile",
+]
 
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
@@ -64,6 +70,10 @@ postio-widgets.workspace = true
 postio-vault.workspace = true
 # The demo store's search index; only the `demo` feature builds it.
 postio-index = { workspace = true, optional = true }
+# The storyboard runner's pure half -- format, checks, run records. Only the
+# `demo` feature, which is where the runner lives, builds it
+# (specs/008-storyboards).
+postio-storyboard = { workspace = true, optional = true }
 # The demo's store; only the `demo` feature builds it.
 postio-storage = { workspace = true, optional = true }
 # The demo's blob directory; only the `demo` feature builds it.
@@ -94,6 +104,7 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
 # The suite drives the shot and the storyboard runner, which sit behind `demo`.
 postio-focus = { path = ".", features = ["demo"] }
+postio-storyboard.workspace = true
 
 # Focus's GTK suite: the custom harness of postio-app's app_suite, for its
 # reasons -- GTK initializes on exactly one thread per process (#41), and
@@ -101,6 +112,12 @@ postio-focus = { path = ".", features = ["demo"] }
 # Needs the seeded store and the demo module, which are behind `demo`.
 [[example]]
 name = "shot"
+required-features = ["demo"]
+
+# The storyboard runner (specs/008-storyboards); `scripts/storyboards.sh run`
+# builds it.
+[[example]]
+name = "storyboard"
 required-features = ["demo"]
 
 [[test]]

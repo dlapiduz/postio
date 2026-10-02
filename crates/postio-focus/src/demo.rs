@@ -17,6 +17,36 @@
 
 #![allow(missing_docs)]
 
+pub mod storyboard;
+
+/// A condition of the store, named as every app names it
+/// (specs/008-storyboards R11). Focus builds the two its demo has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seed {
+    /// Today's inbox over the storage seed: the default.
+    Small,
+    /// An account with its folders and no mail in the inbox.
+    Empty,
+}
+
+impl Seed {
+    /// Every seed Focus can build.
+    pub const ALL: [Seed; 2] = [Seed::Small, Seed::Empty];
+
+    /// The name a storyboard uses.
+    pub fn id(self) -> &'static str {
+        match self {
+            Seed::Small => "small",
+            Seed::Empty => "empty",
+        }
+    }
+
+    /// The seed a storyboard's name stands for.
+    pub fn from_id(id: &str) -> Option<Seed> {
+        Seed::ALL.into_iter().find(|seed| seed.id() == id)
+    }
+}
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Local, TimeZone, Utc};

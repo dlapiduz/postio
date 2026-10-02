@@ -733,7 +733,7 @@ impl FocusWindow {
     }
 
     /// Which surface owns the keyboard: the open message, or the list.
-    fn key_context(&self) -> KeyContext {
+    pub fn key_context(&self) -> KeyContext {
         if self
             .compose()
             .is_some_and(|compose| compose.dialog().is_some())

@@ -74,6 +74,7 @@ mod selection;
 mod shot;
 mod starts_offline;
 mod state;
+mod storyboards;
 mod store_in_use;
 mod support;
 mod surfaced;
@@ -442,6 +443,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps",
         open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps as fn(),
+    ),
+    (
+        "storyboards::a_storyboard_plays_on_focus_and_writes_its_run",
+        storyboards::a_storyboard_plays_on_focus_and_writes_its_run as fn(),
     ),
     (
         "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",
