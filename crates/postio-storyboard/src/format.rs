@@ -68,6 +68,7 @@ pub struct Storyboard {
     /// Per-app overrides, keyed by app and then by step id or index.
     pub overrides: BTreeMap<App, BTreeMap<String, StepOverride>>,
     /// The file it was read from. Empty for text that did not come from one.
+    #[serde(skip)]
     pub path: PathBuf,
 }
 

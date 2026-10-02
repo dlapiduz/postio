@@ -6,9 +6,18 @@
 //! storyboard checks only what every app can observe. Each failure is its own
 //! named error, so a test (and a person) can say which rule a file broke.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-use crate::format::Storyboard;
+use postio_config::keys::expand_mod;
+use postio_config::paths::Platform;
+use postio_core::CommandId;
+use postio_ui::keymap::Binding;
+use serde_json::Value;
+
+use crate::apply::App;
+use crate::format::{Apps, Checks, Input, Leaf, SourceKind, Step, StepRef, Storyboard, Wait, load};
 
 /// One rule a storyboard broke.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -104,16 +113,270 @@ pub enum LintError {
 }
 
 /// Every rule `storyboard` breaks. Empty means clean.
-pub fn lint(_storyboard: &Storyboard) -> Vec<LintError> {
-    Vec::new()
+pub fn lint(storyboard: &Storyboard) -> Vec<LintError> {
+    let mut errors = Vec::new();
+
+    match &storyboard.source {
+        None => errors.push(LintError::MissingSource),
+        Some(source) if source.kind == SourceKind::Issue && storyboard.proof.is_none() => {
+            errors.push(LintError::MissingProof);
+        }
+        Some(_) => {}
+    }
+
+    if let Some(stem) = storyboard.path.file_stem().map(|s| s.to_string_lossy())
+        && storyboard.name != stem
+    {
+        errors.push(LintError::NameIsNotStem {
+            name: storyboard.name.clone(),
+            stem: stem.into_owned(),
+        });
+    }
+
+    let in_calibration = storyboard.path.parent().is_some_and(|dir| {
+        dir.components()
+            .any(|part| part.as_os_str() == "calibration")
+    });
+    if storyboard.calibration.is_some() && !in_calibration {
+        errors.push(LintError::CalibrationOutsideDirectory);
+    }
+
+    let one_app = matches!(&storyboard.apps, Apps::Named(apps) if apps.len() == 1);
+    let mut seen_ids = BTreeSet::new();
+    for (index, step) in storyboard.steps.iter().enumerate() {
+        let number = index + 1;
+        if let Some(id) = &step.id
+            && !seen_ids.insert(id.as_str())
+        {
+            errors.push(LintError::DuplicateStepId { id: id.clone() });
+        }
+        match &step.input {
+            Input::Command(command) if CommandId::from_str(command).is_err() => {
+                errors.push(LintError::UnknownCommand {
+                    step: number,
+                    command: command.clone(),
+                });
+            }
+            Input::Key(key) => {
+                let expanded = expand_mod(key, Platform::Freedesktop);
+                if let Err(reason) = Binding::from_str(&expanded) {
+                    errors.push(LintError::BadChord {
+                        step: number,
+                        key: key.clone(),
+                        reason: reason.to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+        for checks in step_checks(step) {
+            lint_references(storyboard, checks, number, &mut errors);
+            if !one_app {
+                for (path, _) in checks.leaves() {
+                    if path == "keyboard.widget" || path == "app" || path.starts_with("app.") {
+                        errors.push(LintError::SharedCheckOnPrivateField { step: number, path });
+                    }
+                }
+            }
+        }
+    }
+
+    for (app, steps) in &storyboard.overrides {
+        let name = app_name(*app);
+        if let Apps::Named(apps) = &storyboard.apps
+            && !apps.contains(app)
+        {
+            errors.push(LintError::OverrideForOtherApp { app: name.clone() });
+        }
+        for (reference, over) in steps {
+            match position_of(storyboard, reference) {
+                Some(number) => {
+                    if let Some(checks) = &over.check {
+                        lint_references(storyboard, checks, number, &mut errors);
+                    }
+                }
+                None => errors.push(LintError::OverrideMissingStep {
+                    app: name.clone(),
+                    step: reference.clone(),
+                }),
+            }
+        }
+    }
+
+    // Addresses can be in any string at all, so look at all of them rather
+    // than at the fields someone thought of.
+    let value = serde_json::to_value(storyboard).unwrap_or(Value::Null);
+    let mut strings = Vec::new();
+    collect_strings(&value, &mut strings);
+    for text in strings {
+        for address in addresses_in(text) {
+            if !is_reserved(&address) {
+                errors.push(LintError::UnreservedAddress { address });
+            }
+        }
+    }
+    errors
+}
+
+/// The checks a step carries: its own, those of a wait, and those of a settle.
+fn step_checks(step: &Step) -> Vec<&Checks> {
+    let mut out = vec![&step.check];
+    if let Input::Wait(Wait::Until(until)) = &step.input {
+        out.push(until);
+    }
+    if let Some(until) = step.settle.as_ref().and_then(|s| s.until.as_ref()) {
+        out.push(until);
+    }
+    out
+}
+
+fn app_name(app: App) -> String {
+    format!("{app:?}").to_ascii_lowercase()
+}
+
+/// The 1-based position a step reference names: an explicit id first, then
+/// an index. `None` when it names nothing.
+fn position_of(storyboard: &Storyboard, reference: &str) -> Option<usize> {
+    storyboard
+        .steps
+        .iter()
+        .position(|step| step.id.as_deref() == Some(reference))
+        .map(|index| index + 1)
+        .or_else(|| {
+            let index: usize = reference.parse().ok()?;
+            (1..=storyboard.steps.len())
+                .contains(&index)
+                .then_some(index)
+        })
+}
+
+fn lint_references(
+    storyboard: &Storyboard,
+    checks: &Checks,
+    number: usize,
+    errors: &mut Vec<LintError>,
+) {
+    for (_, leaf) in checks.leaves() {
+        let Leaf::SameAs(target) = leaf else { continue };
+        let reference = match target {
+            StepRef::Id(id) => id.clone(),
+            StepRef::Index(index) => index.to_string(),
+        };
+        if !position_of(storyboard, &reference).is_some_and(|at| at < number) {
+            errors.push(LintError::SameAsNotEarlier {
+                step: number,
+                target: reference,
+            });
+        }
+    }
+}
+
+fn collect_strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
+    match value {
+        Value::String(text) => out.push(text),
+        Value::Array(items) => items.iter().for_each(|item| collect_strings(item, out)),
+        Value::Object(map) => map.values().for_each(|item| collect_strings(item, out)),
+        _ => {}
+    }
+}
+
+/// The email addresses in `text`, shaped as the personal-data check shapes
+/// them: a local part, an `@`, and a dotted domain ending in letters.
+fn addresses_in(text: &str) -> Vec<String> {
+    let local_char = |c: char| c.is_ascii_alphanumeric() || "._%+-".contains(c);
+    let domain_char = |c: char| c.is_ascii_alphanumeric() || c == '.' || c == '-';
+    let mut found = Vec::new();
+    for (at, _) in text.match_indices('@') {
+        let local = text[..at]
+            .chars()
+            .rev()
+            .take_while(|c| local_char(*c))
+            .count();
+        let domain: String = text[at + 1..]
+            .chars()
+            .take_while(|c| domain_char(*c))
+            .collect();
+        let domain = domain.trim_end_matches('.');
+        let tld = domain.rsplit('.').next().unwrap_or("");
+        if local > 0
+            && domain.contains('.')
+            && tld.len() >= 2
+            && tld.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            found.push(format!("{}@{domain}", &text[at - local..at]));
+        }
+    }
+    found
+}
+
+fn is_reserved(address: &str) -> bool {
+    let domain = address
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut labels = domain.split('.');
+    let tld = domain.rsplit('.').next().unwrap_or("");
+    RESERVED_TLDS.contains(&tld) || labels.any(|label| RESERVED_LABELS.contains(&label))
 }
 
 /// Load and lint every storyboard under `root`, returning what went wrong as
 /// `(file, message)`. Gap lists (`gaps/`) are not storyboards, and
 /// non-`.toml` files (the README, `.gitkeep`) are not either.
-pub fn lint_catalogue(_root: &Path) -> Vec<(PathBuf, String)> {
-    Vec::new()
+pub fn lint_catalogue(root: &Path) -> Vec<(PathBuf, String)> {
+    let mut files = Vec::new();
+    collect_files(root, &mut files);
+    files.sort();
+    let mut problems = Vec::new();
+    let mut names: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for file in files {
+        let board = match load(&file) {
+            Ok(board) => board,
+            Err(error) => {
+                problems.push((file, error.to_string()));
+                continue;
+            }
+        };
+        for error in lint(&board) {
+            problems.push((file.clone(), error.to_string()));
+        }
+        match names.get(&board.name) {
+            Some(other) => {
+                let error = LintError::DuplicateName {
+                    name: board.name.clone(),
+                    other: other.clone(),
+                };
+                problems.push((file, error.to_string()));
+            }
+            None => {
+                names.insert(board.name.clone(), file);
+            }
+        }
+    }
+    problems
 }
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name != "gaps") {
+                collect_files(&path, out);
+            }
+        } else if path.extension().is_some_and(|ext| ext == "toml") {
+            out.push(path);
+        }
+    }
+}
+
+/// Labels any one of which makes a domain reserved, as the personal-data
+/// check spells them. A test reads that script, so the two cannot drift.
+const RESERVED_LABELS: [&str; 1] = ["example"];
+/// Top-level domains that are reserved on their own.
+const RESERVED_TLDS: [&str; 3] = ["test", "invalid", "localhost"];
 
 #[cfg(test)]
 mod tests {
@@ -383,9 +646,3 @@ mod tests {
         assert!(problems.is_empty(), "{problems:#?}");
     }
 }
-
-/// Labels any one of which makes a domain reserved, as the personal-data
-/// check spells them. A test reads that script, so the two cannot drift.
-const RESERVED_LABELS: [&str; 1] = ["example"];
-/// Top-level domains that are reserved on their own.
-const RESERVED_TLDS: [&str; 3] = ["test", "invalid", "localhost"];
