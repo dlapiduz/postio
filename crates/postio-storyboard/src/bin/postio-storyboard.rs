@@ -16,7 +16,7 @@ usage:
   postio-storyboard bundle --runs <dir> [--base <dir> [--base-sha <sha>]] --acceptance <file>
                            --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
   postio-storyboard prompt <bundle> (--list | --batch <n>)
-  postio-storyboard verdicts check <bundle>
+  postio-storyboard verdicts (check | merge) <bundle>
   postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]\n                         [--bundle <dir> [--bundle-prefix <path>]]";
 
 fn main() -> ExitCode {
@@ -137,6 +137,18 @@ fn prompt_command(args: &[String]) -> ExitCode {
 }
 
 fn verdicts_command(args: &[String]) -> ExitCode {
+    if let (Some("merge"), Some(bundle_dir)) = (args.first().map(String::as_str), args.get(1)) {
+        return match verdicts::merge(&PathBuf::from(bundle_dir)) {
+            Ok(batches) => {
+                println!("verdicts: merged {batches} batch file(s)");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("postio-storyboard verdicts merge: {error}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let (Some("check"), Some(bundle_dir)) = (args.first().map(String::as_str), args.get(1)) else {
         eprintln!("{USAGE}");
         return ExitCode::from(2);

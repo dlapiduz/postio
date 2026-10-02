@@ -394,6 +394,44 @@ pub fn check(bundle: &Path) -> Result<Review, Vec<Rejection>> {
     }
 }
 
+/// Merges the per-batch files a multi-batch review writes
+/// (`verdicts.1.json`, `verdicts.2.json`, ...) into `verdicts.json`, so one
+/// `check` reads the whole review. Batches are taken in number order; the
+/// bundle and reviewer come from the first. A single-batch review already
+/// wrote `verdicts.json` and has nothing to merge.
+pub fn merge(bundle: &Path) -> Result<usize, String> {
+    let mut batches: Vec<(usize, std::path::PathBuf)> = std::fs::read_dir(bundle)
+        .map_err(|error| format!("{}: {error}", bundle.display()))?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let number = name.strip_prefix("verdicts.")?.strip_suffix(".json")?;
+            Some((number.parse().ok()?, entry.path()))
+        })
+        .collect();
+    batches.sort_by_key(|(number, _)| *number);
+    let mut merged: Option<Review> = None;
+    for (_, path) in &batches {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let review: Review =
+            serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+        match &mut merged {
+            None => merged = Some(review),
+            Some(all) => {
+                all.verdicts.extend(review.verdicts);
+                all.findings.extend(review.findings);
+            }
+        }
+    }
+    if let Some(all) = merged {
+        let json = serde_json::to_string_pretty(&all).map_err(|error| error.to_string())?;
+        std::fs::write(bundle.join("verdicts.json"), json + "\n")
+            .map_err(|error| format!("verdicts.json: {error}"))?;
+    }
+    Ok(batches.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,4 +703,44 @@ mod tests {
         assert_eq!(review.verdicts[0].verdict, Kind::Fail);
         assert_eq!(review.findings[0].severity, Some(Severity::Polish));
     }
+
+    #[test]
+    fn batches_merge_into_one_review_in_number_order() {
+        let dir = tempfile::tempdir().expect("temp");
+        let batch = |n: usize, storyboard: &str| {
+            serde_json::json!({
+                "bundle": { "tree_key": "k", "base": null },
+                "reviewer": { "agent": "ux-reviewer", "model": "m", "template": "t" },
+                "verdicts": [{
+                    "storyboard": storyboard, "step": "1", "app": "classic",
+                    "variant": "default", "frame": "runs/x.png",
+                    "verdict": "pass", "says": "fine"
+                }],
+                "findings": []
+            })
+            .to_string()
+            .pipe(|text| std::fs::write(dir.path().join(format!("verdicts.{n}.json")), text))
+        };
+        batch(2, "second").expect("written");
+        batch(1, "first").expect("written");
+        assert_eq!(merge(dir.path()), Ok(2));
+        let merged: Review = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("verdicts.json")).expect("merged"),
+        )
+        .expect("a review");
+        let order: Vec<_> = merged
+            .verdicts
+            .iter()
+            .map(|v| v.storyboard.as_str())
+            .collect();
+        assert_eq!(order, ["first", "second"]);
+        assert_eq!(merged.bundle.tree_key, "k");
+    }
+
+    trait Pipe: Sized {
+        fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
+            f(self)
+        }
+    }
+    impl Pipe for String {}
 }
