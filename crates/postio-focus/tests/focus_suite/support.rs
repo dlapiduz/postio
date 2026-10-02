@@ -145,6 +145,13 @@ impl Fixture {
         (host, sink)
     }
 
+    /// The fixture's blob store, as the host opens it: what a case files a
+    /// raw source into, and reads back.
+    pub fn blob_store(&self) -> BlobStore {
+        BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
+            .expect("a blob store")
+    }
+
     pub fn host(&self) -> Host {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");

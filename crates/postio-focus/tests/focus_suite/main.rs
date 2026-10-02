@@ -805,6 +805,18 @@ const CASES: &[(&str, fn())] = &[
         registry_parity::every_offered_command_that_is_whole_reaches_a_handler as fn(),
     ),
     (
+        "reload::a_saved_compose_section_reaches_the_next_reply",
+        reload::a_saved_compose_section_reaches_the_next_reply as fn(),
+    ),
+    (
+        "reload::a_saved_reader_zoom_reaches_the_open_message",
+        reload::a_saved_reader_zoom_reaches_the_open_message as fn(),
+    ),
+    (
+        "reload::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs",
+        reload::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs as fn(),
+    ),
+    (
         "registry_parity::every_focus_command_has_a_key_a_bar_row_and_a_control",
         registry_parity::every_focus_command_has_a_key_a_bar_row_and_a_control as fn(),
     ),

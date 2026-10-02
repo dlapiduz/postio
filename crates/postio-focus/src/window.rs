@@ -257,6 +257,11 @@ mod imp {
         /// Where `EditConfig` opens `config.toml`: the person's editor,
         /// unless a test has said otherwise (T235).
         pub editor: RefCell<Option<Rc<dyn Fn(&std::path::Path)>>>,
+        /// `[compose]` as the file last said: where a signature goes (T235).
+        pub compose_config: RefCell<postio_config::ComposeConfig>,
+        /// `[reader]`'s zoom as the file last said, once it has said one
+        /// (T235).
+        pub zoom: Cell<Option<u16>>,
     }
 
     impl Default for FocusWindow {
@@ -334,6 +339,8 @@ mod imp {
                 settings: RefCell::default(),
                 settings_seams: RefCell::default(),
                 editor: RefCell::default(),
+                compose_config: RefCell::default(),
+                zoom: Cell::default(),
             }
         }
     }
@@ -1206,6 +1213,8 @@ impl FocusWindow {
         if self.imp().warm.get() {
             compose.warm();
         }
+        // Where its signature goes, as `[compose]` says (T235).
+        crate::settings::place_signatures(compose.composer(), &self.imp().compose_config.borrow());
         if let Some(pane) = self.imp().reading_pane.borrow().as_ref()
             && self.imp().placement.get() == postio_ui::focus_dialog::Placement::Pane
         {
@@ -3566,6 +3575,10 @@ impl FocusWindow {
                     move |id| window.act(id)
                 ));
                 reading.set_capture(self.imp().focus_config.borrow().vault.is_some());
+                // The zoom `[reader]` says (T235).
+                if let Some(zoom) = self.imp().zoom.get() {
+                    reading.reader().set_zoom(zoom);
+                }
                 // Opening or closing it changes what the reading pane shows,
                 // and closing it there gives the keyboard back to the list.
                 reading.connect_changed(glib::clone!(

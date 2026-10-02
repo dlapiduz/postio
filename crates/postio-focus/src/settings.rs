@@ -471,6 +471,24 @@ impl crate::window::FocusWindow {
         }
     }
 
+    /// Take `[compose]` as the file says now: the next reply or forward
+    /// places its signature by it (T235).
+    pub fn set_compose_config(&self, compose: postio_config::ComposeConfig) {
+        if let Some(composer) = self.composer() {
+            place_signatures(&composer, &compose);
+        }
+        self.imp().compose_config.replace(compose);
+    }
+
+    /// Take `[reader]` as the file says now: the open message reads at its
+    /// zoom, and so does the next (T235).
+    pub fn set_reader_config(&self, reader: &postio_config::ReaderConfig) {
+        self.imp().zoom.set(Some(reader.zoom));
+        if let Some(reading) = self.reading() {
+            reading.reader().set_zoom(reader.zoom);
+        }
+    }
+
     fn imp_settings(&self) -> &RefCell<Option<Rc<Settings>>> {
         &self.imp().settings
     }
@@ -505,4 +523,20 @@ impl crate::window::FocusWindow {
             });
         }
     }
+}
+
+/// Tell `composer` where a signature goes on a reply and on a forward, as
+/// `compose` says.
+pub(crate) fn place_signatures(
+    composer: &postio_widgets::composer::Composer,
+    compose: &postio_config::ComposeConfig,
+) {
+    let placement = |setting| match setting {
+        postio_config::SignaturePlacement::AboveQuote => postio_body::Placement::AboveQuote,
+        postio_config::SignaturePlacement::BelowQuote => postio_body::Placement::BelowQuote,
+    };
+    composer.set_signature_placement(
+        placement(compose.signature_on_reply),
+        placement(compose.signature_on_forward),
+    );
 }

@@ -86,7 +86,10 @@ impl Session {
     /// Follow `config.toml` at `path` while the window lives (US7 scenario
     /// 1): a saved `[keys]` reaches the keyboard, every keycap and the key
     /// map at once; a saved `[focus]` reaches the host's Focus mode -- its
-    /// filing and its digests -- and what the empty inbox names. A file
+    /// filing and its digests -- and what the empty inbox names; a saved
+    /// `[compose]` places the next signature, `[reader]` zooms the open
+    /// message, and `[storage]` brings the store under its new ceiling
+    /// (T235). A file
     /// that does not validate changes nothing, and the last good keys stay
     /// (`postio_widgets::present::config`). `false` when the file cannot be
     /// watched: edits then wait for a restart.
@@ -111,6 +114,27 @@ impl Session {
                 let focus = service.config().focus.clone();
                 host.enable_focus(setup(focus.clone(), Some(service.path())));
                 window.set_focus_config(focus);
+            }
+            // What used to wait for a restart (T235).
+            if update.changed.compose {
+                window.set_compose_config(service.config().compose.clone());
+            }
+            if update.changed.reader {
+                window.set_reader_config(&service.config().reader);
+            }
+            if update.changed.storage {
+                postio_host::maintenance::enforce_ceiling(
+                    host.wiring(),
+                    service.config().storage.max_bytes,
+                );
+            }
+            // Whichever save this was -- Settings' own, or the editor's --
+            // a file that loads without error is what Settings' "Revert
+            // file" goes back to.
+            if service.status().is_valid()
+                && let Ok(text) = std::fs::read_to_string(service.path())
+            {
+                window.settings_note_known_good(&text);
             }
             std::ops::ControlFlow::Continue(())
         })
@@ -170,6 +194,8 @@ pub fn adopt_at(
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
     window.set_focus_config(config.focus.clone());
     window.set_saved_searches(saved_searches(config));
+    window.set_compose_config(config.compose.clone());
+    window.set_reader_config(&config.reader);
     window.set_remote_runtime(host.runtime());
     window.set_config_path(config_path.map(std::path::Path::to_path_buf));
     // What Settings' connection test and token-expiry line read, from this
