@@ -98,12 +98,23 @@ pub fn a_snapshot_fills_the_view_and_scrolls_with_it() {
     let (before, _) = postio_ui::test_support::snapshot_counts();
     view.set_content(content("html-designed-three-column"));
     assert!(until(|| view.document().is_some()), "no snapshot arrived");
-    let doc = view.document().expect("a snapshot");
     // One snapshot shown, and its cost reported with it (Principle V).
     let (after, counts) = postio_ui::test_support::snapshot_counts();
     assert_eq!(after - before, 1, "one render, one snapshot counted");
     assert!(counts.nodes > 0 && counts.display_list_commands > 0);
     let adjustment = scroller.vadjustment();
+    // The first snapshot can be laid out at a width the window then changes
+    // -- a late allocation, a scrollbar arriving -- and `size_allocate`
+    // re-renders at the new one; the adjustment follows the newest document.
+    // On a loaded CI runner the assertion once read the first: an upper of
+    // 564 against a 51px-tall snapshot. So wait for the view to settle, and
+    // hold the settled document to its adjustment -- and use it below, since
+    // its text positions are the ones on screen.
+    until(|| {
+        view.document()
+            .is_some_and(|settled| adjustment.upper() == settled.size.height)
+    });
+    let doc = view.document().expect("a snapshot");
     assert_eq!(
         adjustment.upper(),
         doc.size.height,
