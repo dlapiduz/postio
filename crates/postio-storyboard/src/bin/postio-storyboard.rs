@@ -7,11 +7,12 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use postio_storyboard::{lint, page};
+use postio_storyboard::{key, lint, page};
 
 const USAGE: &str = "\
 usage:
   postio-storyboard lint <storyboards-dir>
+  postio-storyboard key --tree <path=id>...
   postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]";
 
 fn main() -> ExitCode {
@@ -19,6 +20,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("lint") => lint_command(&args[1..]),
         Some("page") => page_command(&args[1..]),
+        Some("key") => key_command(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -75,5 +77,20 @@ fn page_command(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     println!("{out} ({} runs)", strips.len());
+    ExitCode::SUCCESS
+}
+
+fn key_command(args: &[String]) -> ExitCode {
+    let trees: Vec<&str> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, arg)| *i > 0 && args[i - 1] == "--tree" && !arg.starts_with("--"))
+        .map(|(_, arg)| arg.as_str())
+        .collect();
+    if trees.is_empty() {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    println!("{}", key::key(&trees));
     ExitCode::SUCCESS
 }

@@ -16,6 +16,7 @@
 #   scripts/storyboards.sh run   [--app classic|focus|all] [--only <glob>] [--no-frames] [--delivery chain|direct]
 #   scripts/storyboards.sh lint                    # load and lint the whole catalogue
 #   scripts/storyboards.sh page  [--open]          # Design/review/<branch>/index.html from the runs
+#   scripts/storyboards.sh key   [--app classic|focus|all]   # the review key for HEAD's tree
 #
 # `--only` matches a storyboard's path under storyboards/ without `.toml`:
 # `--only 'list/*'`, `--only search/escape-leaves-search`. Calibration
@@ -36,7 +37,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -161,8 +162,29 @@ page_command() {
     fi
 }
 
+# The review key (research R13): the git tree ids of what a review depends
+# on -- the app's crates and the catalogue -- at HEAD. A rebase that does not
+# touch them keeps the key; a commit sha would not survive one. A crate not
+# on this branch is keyed as absent, so adding it changes the key.
+key_command() {
+    local bin paths path id trees=()
+    case "$APP" in
+        classic) paths="crates/postio-gtk crates/postio-app crates/postio-ui" ;;
+        focus)   paths="crates/postio-focus crates/postio-widgets crates/postio-ui" ;;
+        all)     paths="crates/postio-gtk crates/postio-app crates/postio-focus crates/postio-widgets crates/postio-ui" ;;
+        *) echo "storyboards.sh: no key for app '$APP'" >&2; exit 2 ;;
+    esac
+    for path in $paths storyboards; do
+        id=$(git rev-parse -q --verify "HEAD:$path" 2>/dev/null || echo absent)
+        trees+=(--tree "$path=$id")
+    done
+    bin=$(tool)
+    "$bin" key "${trees[@]}"
+}
+
 case "$COMMAND" in
     run)  run_command ;;
+    key)  key_command ;;
     lint) lint_command ;;
     page) page_command ;;
     -h|--help) usage ;;
