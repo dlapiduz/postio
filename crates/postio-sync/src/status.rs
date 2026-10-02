@@ -47,7 +47,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use postio_model::MailboxId;
 
-use crate::connect::Link;
+use crate::connect::{Blocker, Link};
 use crate::initial::Progress;
 
 /// How far a batch fetch has gotten inside one mailbox.
@@ -114,6 +114,9 @@ pub enum SyncStatus {
         reason: String,
         /// Whether the user has to supply a new password.
         needs_credentials: bool,
+        /// Whether there is none to supply -- the keyring holds no password
+        /// -- rather than one the server refused.
+        no_password: bool,
     },
 }
 
@@ -194,6 +197,7 @@ impl StatusTracker {
             Link::Blocked(blocker) => SyncStatus::Error {
                 reason: blocker.reason().to_owned(),
                 needs_credentials: blocker.needs_credentials(),
+                no_password: matches!(blocker, Blocker::NoPassword(_)),
             },
         };
         self.status.clone()
@@ -334,7 +338,6 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::connect::Blocker;
 
     fn at(second: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap() + TimeDelta::seconds(second as i64)
@@ -403,6 +406,7 @@ mod tests {
             SyncStatus::Error {
                 reason: "the server rejected the app-specific password".to_owned(),
                 needs_credentials: true,
+                no_password: false,
             }
         );
     }

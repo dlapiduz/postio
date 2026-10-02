@@ -51,7 +51,7 @@ impl From<postio_core::ConnectionState> for ConnectionStateFfi {
             ConnectionState::Online => ConnectionStateFfi::Online,
             ConnectionState::Failing { reason } => ConnectionStateFfi::Failing {
                 reason: match reason {
-                    FailureReason::Auth => FailureReasonFfi::Auth,
+                    FailureReason::Auth | FailureReason::NoPassword => FailureReasonFfi::Auth,
                     FailureReason::Network => FailureReasonFfi::Network,
                     FailureReason::Server => FailureReasonFfi::Server,
                     _ => FailureReasonFfi::Other,

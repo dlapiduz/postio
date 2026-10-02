@@ -37,6 +37,9 @@ pub enum Banner {
         server: String,
         /// The address it refused.
         address: String,
+        /// Whether the keyring holds no password for it at all, rather than
+        /// one the server refused.
+        missing: bool,
     },
     /// One account's sync is failing for a reason that is not its password
     /// (ADR 0005 Q10): the account is named, and what it said.
@@ -80,6 +83,14 @@ impl Banner {
     /// The sentence after the heading.
     pub fn sentence(&self) -> String {
         match self {
+            Banner::SignIn {
+                address,
+                missing: true,
+                ..
+            } => format!(
+                "Postio has no password saved for {address}. Mail on this computer is \
+                 still available."
+            ),
             Banner::SignIn { address, .. } => format!(
                 "The server rejected the password for {address}. Mail on this computer is \
                  still available."
@@ -148,7 +159,7 @@ fn count(value: u32) -> String {
 /// The banner `statuses` call for, if any: a sign-in error first, then an
 /// account that cannot sync, then offline, then a first sync.
 ///
-/// Only a refused password is a sign-in banner: its button opens the
+/// Only a refused or missing password is a sign-in banner: its button opens the
 /// credential flow, and retrying a rejected credential is how an account gets
 /// locked. Any other failure names the account and the reason, with Retry.
 /// Only a machine with no network is offline:
@@ -156,18 +167,20 @@ fn count(value: u32) -> String {
 /// through it. Only a pass with no sync behind it is a first sync.
 pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -> Option<Banner> {
     let refused = statuses.iter().find_map(|(account, status)| {
-        let refused = status.state
-            == ConnectionState::Failing {
-                reason: FailureReason::Auth,
-            };
-        refused
+        let ConnectionState::Failing { reason } = status.state else {
+            return None;
+        };
+        let missing = reason == FailureReason::NoPassword;
+        (reason == FailureReason::Auth || missing)
             .then(|| accounts.iter().find(|facts| facts.id == *account))
             .flatten()
+            .map(|facts| (facts, missing))
     });
-    if let Some(facts) = refused {
+    if let Some((facts, missing)) = refused {
         return Some(Banner::SignIn {
             server: facts.server.clone(),
             address: facts.address.clone(),
+            missing,
         });
     }
     // Any other failure names its account and says what the sync said; the
@@ -211,6 +224,7 @@ pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -
 fn failure_words(reason: FailureReason) -> &'static str {
     match reason {
         FailureReason::Auth => "The server rejected the password.",
+        FailureReason::NoPassword => "Postio has no password saved for this account.",
         FailureReason::Network => "The server can't be reached. It will try again on its own.",
         FailureReason::Server => "The server is refusing the work. It will try again, slower.",
         FailureReason::Config => "The account's settings are wrong. Check them in settings.",
@@ -551,6 +565,7 @@ mod tests {
             Some(Banner::SignIn {
                 server: "imap3.example.com".into(),
                 address: "ada3@example.com".into(),
+                missing: false,
             })
         );
         assert_eq!(banner(&everything[..2], &accounts), Some(Banner::Offline));
@@ -686,6 +701,7 @@ mod tests {
         let sign_in = Banner::SignIn {
             server: "imap.example.com".into(),
             address: "ada@example.com".into(),
+            missing: false,
         };
         assert_eq!(
             sign_in.title(),
@@ -724,10 +740,37 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_password_is_told_apart_from_a_rejected_one() {
+        let accounts = [facts(1)];
+        let none = ConnectionState::Failing {
+            reason: FailureReason::NoPassword,
+        };
+        let shown = banner(&[(account(1), status(none, None))], &accounts)
+            .expect("a missing password shows the sign-in banner");
+        assert_eq!(
+            shown.sentence(),
+            "Postio has no password saved for ada1@example.com. Mail on this computer is \
+             still available."
+        );
+        assert_eq!(shown.heading(), "Can't sign in to imap1.example.com");
+        assert_eq!(
+            shown.action(),
+            Some(("Update password\u{2026}", BannerAction::UpdatePassword))
+        );
+        let refused = banner(&[(account(1), status(AUTH, None))], &accounts).expect("a banner");
+        assert!(
+            refused
+                .sentence()
+                .starts_with("The server rejected the password")
+        );
+    }
+
+    #[test]
     fn each_banner_is_a_heading_and_a_sentence() {
         let sign_in = Banner::SignIn {
             server: "imap.example.com".into(),
             address: "ada@example.com".into(),
+            missing: false,
         };
         assert_eq!(sign_in.heading(), "Can't sign in to imap.example.com");
         assert_eq!(

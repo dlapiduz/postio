@@ -3931,9 +3931,13 @@ fn connection_of(status: &SyncStatus) -> postio_core::ConnectionState {
             postio_core::ConnectionState::Online
         }
         SyncStatus::Error {
-            needs_credentials, ..
+            needs_credentials,
+            no_password,
+            ..
         } => postio_core::ConnectionState::Failing {
-            reason: if *needs_credentials {
+            reason: if *no_password {
+                postio_core::FailureReason::NoPassword
+            } else if *needs_credentials {
                 postio_core::FailureReason::Auth
             } else {
                 postio_core::FailureReason::Config
@@ -4169,10 +4173,12 @@ mod tests {
         let auth = super::connection_of(&postio_sync::SyncStatus::Error {
             reason: "the server refused the password".into(),
             needs_credentials: true,
+            no_password: false,
         });
         let config = super::connection_of(&postio_sync::SyncStatus::Error {
             reason: "certificate does not verify".into(),
             needs_credentials: false,
+            no_password: false,
         });
 
         assert_eq!(

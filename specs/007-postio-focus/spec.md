@@ -581,7 +581,7 @@ says the same thing in a word or two:
 |---|---|---|
 | First sync | "12,408 of 18,204 messages, newest first. You can read and search what's here.", with a progress bar | "Syncing 12,408 of 18,204" |
 | Offline | "Everything you do is saved here and syncs when you're back.", with Retry now | "Offline" |
-| Sign-in error | "Can't sign in to \<server\>. The server rejected the password for \<address\>. Mail on this computer is still available.", with Update password… | "Sync failed" |
+| Sign-in error | "Can't sign in to \<server\>. The server rejected the password for \<address\>. Mail on this computer is still available.". With no password in the keyring: "Postio has no password saved for \<address\>. Mail on this computer is still available.", with Update password… | "Sync failed" |
 | An account failing for another reason | The account, and the reason in the sync's own words when it gave them, with Retry now | "Sync failed" |
 
 None of these blocks anything local, and every account that works stays

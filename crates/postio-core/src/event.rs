@@ -50,6 +50,10 @@ pub enum FailureReason {
     /// credential is how an account gets locked; `postio-sync`'s blocked
     /// link holds until the user acts.
     Auth,
+    /// The keyring holds no password for the account, so nothing reached the
+    /// server. Like [`Auth`](Self::Auth) the user supplies one; unlike it,
+    /// nothing was refused.
+    NoPassword,
     /// The network path to the server is broken in a way backoff has given
     /// up on. Recovers on its own when the path does; nothing for the user
     /// to fix in Postio. (Ordinary transient trouble stays

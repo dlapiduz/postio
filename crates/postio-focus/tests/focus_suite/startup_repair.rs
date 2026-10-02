@@ -87,6 +87,14 @@ pub fn an_account_with_no_credential_offers_the_repair() {
              {title:?} / {button:?}"
         );
 
+        assert!(
+            title.contains(&format!(
+                "Postio has no password saved for {}",
+                account.address.address
+            )) && !title.contains("rejected"),
+            "nothing was refused, so the banner must not say so: {title:?}"
+        );
+
         let banner = support::only(&window, "focus-banner");
         let press = support::descendants(&banner)
             .into_iter()

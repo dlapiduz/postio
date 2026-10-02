@@ -887,7 +887,7 @@ pub fn failing_because(reason: postio_core::FailureReason) -> &'static str {
         // Never phrased as "wrong password": an app-specific password, an
         // expired OAuth grant and a revoked one all land here, and only one
         // of those is a password anybody typed.
-        Why::Auth => "sign-in needed",
+        Why::Auth | Why::NoPassword => "sign-in needed",
         // Recovers on its own, so it says what is true rather than asking for
         // anything. A footer demanding action for something the supervisor is
         // already retrying is a footer people learn to ignore.
