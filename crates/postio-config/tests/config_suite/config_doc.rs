@@ -217,6 +217,14 @@ const ENTRIES: &[Entry] = &[
                        with its reason and one key from restored. `false` stops filing new \
                        mail away; what is already filtered stays where it is.",
     },
+    Entry {
+        path: "focus.reading",
+        kind: "string",
+        default: "\"dialog\"",
+        description: "Where Enter opens a message in Postio Focus: `dialog`, over the list, or \
+                       `pane`, beside it. A window narrower than 980 px uses the dialog \
+                       whatever this says. F8 switches it.",
+    },
     // ── [focus.filter] ────────────────────────────────────────────────
     Entry {
         path: "focus.filter.never",
@@ -359,6 +367,7 @@ const NESTED: &[Nested] = &[
 const FOCUS_EXAMPLE: &str = "\
 [focus]
 filtering = true
+reading = \"dialog\"
 
 [focus.filter]
 never = [\"ada@example.com\", \"@example.org\"]
