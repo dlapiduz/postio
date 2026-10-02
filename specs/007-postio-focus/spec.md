@@ -4,34 +4,29 @@
 
 **Created**: 2026-09-26
 
-**Status**: Draft, clarified 2026-09-26 and planned 2026-09-27
-([plan.md](./plan.md)), once `specs/006-email-rendering` had merged. Nothing
-lands on `main` until the maintainer says so.
+**Status**: Clarified and planned ([plan.md](./plan.md)); built on
+`feature/postio-focus`. Nothing lands on `main` until the maintainer says so.
 
-**Input**: User description: "Postio Focus: a second GTK4/libadwaita desktop
-app on the Postio engine. It is a dense, keyboard-first inbox that shows mail
-as it arrived, calls out real actions, holds some mail back into digests on a
-cadence I choose, and hides spam and updates. Build it for **performance and
-consistency first**, and build its UI from **reusable components** shared with
-the classic desktop app." That is the opening of the maintainer's handoff
-(`Design/postio-focus-design/PROMPT.md`), and this spec carries the rest of
-the handoff forward: its priorities, its reuse table, the new engine work,
-its open decisions and its working rules.
+**Input**: The maintainer's handoff (`Design/postio-focus-design/PROMPT.md`):
+a dense, keyboard-first inbox on the Postio engine that shows mail as it
+arrived, calls out real actions, holds some mail back into digests on a
+cadence the user chooses, and hides spam and updates, built for
+**performance and consistency first** and from **reusable components**.
 
 ## Why this exists
 
-Postio promises speed, search and the keyboard (`docs/PRODUCT.md` §1). The
-classic desktop app keeps those promises in three panes: folders, a list and
-a reading pane. That layout shows every message, every day, and the reading
-pane pulls you into mail you did not mean to read. For someone with a lot of
-mail, most of it is noise (spam, promotions, notifications), or mail that
-matters only now and then (newsletters, statements, school updates).
+Postio promises speed, search and the keyboard (`docs/PRODUCT.md` §1). For
+someone with a lot of mail, most of it is noise (spam, promotions,
+notifications) or matters only now and then (newsletters, statements, school
+updates). A layout that shows every message, every day, with a reading pane
+that pulls you into mail you did not mean to read, does not serve them.
 
-Focus is a second desktop app on the same engine, for that person. It drops
-the folder sidebar and the reading pane. Home is a dense inbox, driven from
-the keyboard, that shows mail **as it arrived**: sender, subject and first
-line, verbatim, with no rewritten subjects or scores. It does four things to
-mail and nothing else:
+Focus is Postio's desktop app ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md),
+C27). It has no folder sidebar. Home is a dense inbox, driven from the
+keyboard, that shows mail **as it arrived**: sender, subject and first line,
+verbatim, with no rewritten subjects or scores. A message opens over the list
+and closes back to the same place, or, for those who choose it, beside the
+list (FR-038). Focus does four things to mail and nothing else:
 
 1. It **calls out real actions**: an invitation, a direct question, a to-do.
 2. It **holds some mail back into digests** on a cadence the user chooses.
@@ -39,248 +34,174 @@ mail and nothing else:
    on this machine, and every statement in it cites the mail it came from.
 3. It **hides spam and automated updates**. Each one keeps its reason and is
    one key from being restored.
-4. Later, it **links mail to the user's Obsidian vault**.
+4. It **links mail to the user's Obsidian vault**.
 
 The argument for each of these, and what peers taught, is in the product
 brief (`Design/focus-product-brief.md`). This spec does not repeat it.
 
 Everything Postio already promises still holds: instant, offline, undoable,
 keyboard-first and private. Focus uses the same store, sync, command registry
-and budgets (constitution I–VII).
+and budgets as every Postio app (constitution I–VII).
 
-Focus is the third Linux frontend on the engine, after the classic desktop
-app and the terminal (`specs/005-tui-frontend`), and it follows that spec's
-shape. It runs `postio-host` in its own process and reaches mail only
-through `postio-client` (ADR 0041). Anything it needs from the classic app's
-view layer moves to a shared layer rather than being copied. Two things are
-new:
+Focus is a frontend on the engine in the terminal's shape
+(`specs/005-tui-frontend`): it runs `postio-host` in its own process and
+reaches mail only through `postio-client` (ADR 0041). Two things set it
+apart:
 
-- **What is shared this time is GTK itself.** The message view, the composer,
-  and the small widgets that make up Postio's visual language (keycaps, key
-  hints, chips, action bars) move into a GTK component crate that both desktop
-  apps depend on, so Focus never depends on the classic app.
-- **Focus needs engine work that the terminal did not.** That means
-  invitations, filtering, digests, reminders, a simple built-in detector for
-  mail that needs action, an Obsidian writer and, when the user brings one, a
-  local model for classification and digest summaries. All of it is local,
-  and all of it is built so the classic app could use it too.
+- **The GTK it draws outside its own window lives in `postio-widgets`**: the
+  message view, the composer, the settings window, and the small widgets
+  that make up Postio's visual language (keycaps, key hints, chips, action
+  bars, pickers). That crate depends on no app (ADR 0043).
+- **Focus has engine work of its own**: invitations, filtering, digests,
+  reminders, a simple built-in detector for mail that needs action, an
+  Obsidian writer and, when the user brings one, a local model for
+  classification and digest summaries. All of it is local.
 
 The maintainer ranked the priorities in this order: **performance**, then
 **consistency**, then **reusable components**.
 
 ## Clarifications
 
-### Session 2026-09-26
+The maintainer's decisions on the handoff's open questions and the ones this
+spec raised (2026-09-26 unless dated):
 
-The handoff's six open decisions went to the maintainer, with two more this
-spec raised: which renderer planning waits for, and whether Focus's rules act
-while another app runs. That is more than clarify's usual five questions,
-because the handoff asked for every one to be confirmed rather than decided
-silently. The maintainer gave the last two answers, on the model, unasked.
-
-- Q: Which change is the new message renderer that planning waits for?
-  → A: `specs/006-email-rendering`, on `feature/email-rendering`. Planning
-  starts once it has merged to `main`.
-- Q: What does this branch land as milestone 1? → A: "Don't land anything
-  until I say so. Let's keep it in a branch." Nothing lands on `main` until
-  the maintainer says so. The milestones order the work on
-  `feature/postio-focus`, and none of them is a landing.
-- Q: When another app has the store open, do Focus's filtering, digest
-  holding and reminders act on arriving mail? → A: Only while Focus runs.
-  Mail another app files lands in the inbox as usual. Focus sorts it when it
-  next opens, even if the user saw it in the other app meanwhile.
-- Q: What does a digest show when opened, and what does its inbox row say?
-  → A: The summary first, as drawn in 01, 22 and 23.
-  - The row carries the opening of the summary.
-  - The digest opens on a summary the local model writes on this machine,
-    with numbered references to its messages.
-  - `Tab` switches to the plain list.
-
-  This overrides the handoff's recommendation. FR-172 to FR-175 say how the
-  summary is kept honest.
-- Q: How does the open-email window show a conversation? → A: One message at
-  a time, as drawn in 04: the latest by default, `[`/`]` through the thread,
-  and `j`/`k` through the list. This departs from ADR 0032 on purpose
+- **Landing.** "Don't land anything until I say so. Let's keep it in a
+  branch." The milestones order the work on `feature/postio-focus`; none of
+  them is a landing.
+- **Focus's rules act only while Focus runs.** Filtering, digest holding and
+  reminders act on mail while Focus has the store. Mail another app files
+  lands in the inbox as usual, and Focus sorts it when it next opens, even if
+  the user saw it in the other app meanwhile.
+- **A digest opens on its summary**, as drawn in 01, 22 and 23: the row
+  carries the opening of the summary, the digest opens on a summary the local
+  model writes on this machine with numbered references to its messages, and
+  `Tab` switches to the plain list. FR-172 to FR-175 keep the summary honest.
+- **The open message shows one message at a time**, as drawn in 04: the
+  latest by default, `[`/`]` through the thread, and `j`/`k` through the list
   (FR-037).
-- Q: How are Accept and Decline made safe, given that they send mail? → A:
-  Through the outbox, held for about ten seconds. The toast's Undo or `Ctrl+Z`
-  cancels the reply and nothing is sent. After that it cannot be taken back.
-- Q: How long is filtered mail kept? → A: Archived, and never deleted
-  automatically. Filtered lists all of it, and screen 21's "30 days, then
-  deleted" copy changes.
-- Q: How do Focus's default keys and the classic app's live in
-  `config.toml`? → A: One keymap for all apps. The classic app's and the
-  terminal's defaults change to Focus's (`KEYS.md`), so every app shares one
-  default profile. It is overridable under `[keys]` by command id.
-- Q: How does Focus get its local model? → A: "The local model should be
-  bring your own. I don't want to embed it as part of the app and it needs
-  to be optional."
-  - The user runs a model runtime of their choosing on this machine, and
-    names it in `config.toml`.
-  - Postio embeds, bundles, downloads and starts nothing.
-  - Focus is complete without a model, and every feature that uses one stays
-    off until the user turns it on (FR-165 to FR-169).
-- Q: What marks questions and to-dos when no model is connected? → A: "I
-  think we can plan for a simple embedded classifier for the needs action
-  question if no ai is connected."
-  - A simple detector built into Postio answers whether a message needs
-    action, meaning a question or a to-do, whenever no model is connected.
-  - It is plain code, not a language model, so it sits beside the answer
-    above rather than against it.
-  - The user's model takes over the question when it is connected (FR-104
-    to FR-108).
+- **Accept and Decline go through the outbox**, held for about ten seconds.
+  The toast's Undo or `mod+z` cancels the reply and nothing is sent. After
+  that it cannot be taken back.
+- **Filtered mail is archived and never deleted automatically.** Filtered
+  lists all of it.
+- **One keymap for every app**, the one `KEYS.md` sets out, overridable
+  under `[keys]` in `config.toml` by command id.
+- **The local model is the user's own and optional**: "The local model
+  should be bring your own. I don't want to embed it as part of the app and
+  it needs to be optional." The user runs a model runtime of their choosing
+  on this machine and names it in `config.toml`. Postio embeds, bundles,
+  downloads and starts nothing. Focus is complete without a model, and every
+  feature that uses one stays off until the user turns it on (FR-165 to
+  FR-169).
+- **A built-in detector marks questions and to-dos when no model is
+  connected**: "I think we can plan for a simple embedded classifier for the
+  needs action question if no ai is connected." It is plain code, not a
+  language model. The user's model takes over the question when it is
+  connected (FR-104 to FR-108).
+- **Focus is the one desktop app** (2026-10-02, C27).
 
 ## The inputs, and which one wins
 
 | Input | What it decides |
 |---|---|
-| `Design/postio-focus-design/screens/NN-*.png` | How every screen looks: layout, density, hierarchy, copy, which controls exist. 01–20 are milestone 1. 21–25 (`later-`) come later and must not be designed out |
+| `Design/postio-focus-design/screens/NN-*.png` | How every screen looks: layout, density, hierarchy, copy, which controls exist. 01–20 are the inbox's core; 21–25 are Filtered, the digest summary and its email, the digest rule dialog, and Obsidian capture |
 | `Design/postio-focus-design/SPEC.md` | What each screen does, and the GTK colour and widget mapping |
-| `Design/postio-focus-design/KEYS.md` | The default key bindings, for every app (Clarifications) |
+| `Design/focus-message-dialog/SPEC.md` and `screens/` | The open message's frame, column, rhythm, components and body treatments (FR-039), as amended by C25 and C26 |
+| `Design/postio-focus-design/KEYS.md` | The default key bindings, for every app |
 | `Design/postio-focus-design/source/*.dc.html` | The exact spacing, sizes and copy behind the PNGs. They are not code to port |
 | `Design/focus-product-brief.md` | The why, the principles, the four things Focus does to mail, and how classification works |
-| `Design/postio-focus-design/PROMPT.md` | The maintainer's handoff: priorities, reuse, the renderer wait, the open decisions |
+| `Design/postio-focus-design/PROMPT.md` | The maintainer's handoff: priorities, reuse, the open decisions |
 
 - Every screen is specified here against its PNG, by number, and built
-  against it. Before a screen's work is called done, the running app is
-  compared with its PNG, and every difference is written down with its reason
-  (FR-095).
+  against it. Every difference between the running app and its PNG is
+  written down in [screens.md](./screens.md) with its reason (FR-095).
 - Where `SPEC.md` or the handoff disagrees with a PNG, **the PNG wins on
-  appearance**. Where the constitution, the handoff or the maintainer's
-  clarifications settle a *behaviour*, that wins over a PNG's copy. The table
-  below records each case.
+  appearance**. Where the constitution, the handoff or the maintainer settles
+  a *behaviour*, that wins over a PNG's copy. The table below records each
+  case.
 - The PNGs were rendered without the web fonts. The app uses Adwaita Sans and
   Adwaita Mono, so a comparison is about layout and hierarchy, not glyph
   metrics.
 
-**The design folder is not in the repository yet.** It lives, untracked, in
-the maintainer's checkout. The PNGs were rendered with a real person's first
-name in the sample mail, so they must be re-rendered before they are
-committed to this public repository. One source mockup (`DCompose.dc.html`)
-still carries a real surname in its sample sender. This branch cites the
-folder by path and commits none of it until the maintainer has re-rendered
-and scrubbed it (constitution VI).
+**The design folders are not in the repository.** They live, untracked, in
+the maintainer's checkout: the PNGs carry a real person's first name in the
+sample mail, and one source mockup (`DCompose.dc.html`) a real surname. This
+branch cites them by path and commits none of them until the maintainer has
+re-rendered and scrubbed them (constitution VI).
 
 ### Where the inputs disagree
 
-| # | Screen | What the PNG or design file says | What the other input says | Resolution |
-|---|---|---|---|---|
-| C1 | 04, 23 | The body is the plain-text part ("Plain-text part shown as sent"; 23's footer) | Handoff: the body is rendered, sanitised HTML with remote images blocked, because much mail is HTML only | **Handoff wins.** The body is rendered (FR-033), `v` shows the raw source, and 23's footer copy changes |
-| C2 | 04 | One message at a time: "Latest of 6 in this thread · `[` earlier message" | `SPEC.md`: earlier messages sit above, one line each. The brief: "stacked as sent (ADR 0032)" | **Maintainer: as drawn** (Clarifications). A deliberate departure from ADR 0032 (FR-037) |
-| C3 | 20 | "Rebind anything in ~/.config/postio/keys.toml" (also in `SPEC.md` and `KEYS.md`) | Constitution II and the handoff: `[keys]` in `config.toml`. There is no `keys.toml` | **Constitution wins.** The footer names `[keys]` in `config.toml` |
-| C4 | 21 | "Kept for 30 days, then deleted" | Handoff recommends: archived, never deleted automatically | **Maintainer: archived, never deleted** (Clarifications). 21's header copy changes |
-| C5 | 01–03, 15–19 | The digest row's first line is a written summary ("Summary of 14 messages from 6 senders: rail funding vote, …") | Principle 1, show mail as it is. Handoff decision 1 recommended senders and counts | **Maintainer: as drawn** (Clarifications). It is the one place the list shows text a model wrote (FR-011, FR-124) |
-| C6 | 22, 23 | The digest opens on a model-written summary with numbered references | Same | **Maintainer: as drawn** (Clarifications). The digest opens on its summary when the user has brought a model (milestone 2), and on its plain list otherwise (FR-125, FR-172 to FR-175) |
-| C7 | 05, 06 | A plain-text composer with a "Markdown Ctrl M" toggle | Handoff: reuse the existing composer, not a new plain-text one | **Handoff wins.** The existing composer, in 05's frame. The Markdown toggle is dropped unless the existing composer has an equivalent (the plan checks). "Plain text · N words" stays, saying what will be sent |
-| C8 | 01, 03, 17–19 | Question and To-do markers | Handoff decision 2: they need the model | **Maintainer: a simple built-in detector answers them when no model is connected** (Clarifications), so milestone 1 shows them as drawn (FR-104 to FR-108) |
-| C9 | 01, 03, 04, 25 | "Task in Atlas · due Fri", and Task `t` / Note `n` buttons | Obsidian is a later milestone | Shown only once Obsidian exists (milestone 3) |
-| C10 | 01, 10, 16 | "186 filtered today", "4 digest rules" | Handoff: a count appears only once its feature exists | Shown when the feature exists |
-| C11 | 09 | "Archive everything read, older than a week" shows no key (—) | Constitution II: every command has a key | **Constitution wins.** It gets a key in the one keymap (plan) |
-| C12 | `KEYS.md`, 15 | No key for Delete, but the undo toast covers delete | A verb every app shares. Constitution II | Delete is on the `Delete` key in the one keymap (FR-081). It moves mail to Trash and is undoable |
-| C13 | `KEYS.md` | Flag has no key and rows have no flag mark | With the classic app retired (C27), nothing else could clear a flag another client set | **Maintainer (2026-10-02):** Focus offers Flag and Unflag on `*`, in the row menu and the command bar; rows carry no flag mark; `g *` lists flagged mail |
-| C14 | 11 | Snooze offers "Later today / Tomorrow morning / Monday morning / Next week" | The shared preset table words a similar time "This evening" | One preset table for both apps. Settled with T091: both apps say "Later today", screen 11's wording, and after 6pm both say "Tomorrow evening" rather than naming today for tomorrow's time (ADR 0029) |
-| C15 | — | The digest rules list (`g d`) and the digest window's message list have no screen | — | Designed in the plan with `/ux-architect`. The rules list uses 21's full-view frame, the message list uses 22's dialog frame, and rows are drawn as in 08 |
-| C16 | `README.md` | The PNGs were rendered without the web fonts | The app uses Adwaita Sans and Adwaita Mono | Compare layout, not glyph metrics |
-| C17 | the brief | "No new sync, storage or protocol work. Focus is a front end" | Handoff: "New engine work the spec must cover" | **Handoff wins** (newer and specific). The engine work is local, with no new protocol or backend. The one new outgoing message is an RSVP, sent through the existing outbox |
-| C18 | 01 | `SPEC.md`: "186 filtered (g f)" | PNG: "186 filtered today" | **PNG wins** |
-| C19 | `KEYS.md` | "`⇧X` Select all visible" | Constitution V: select all is a predicate | It selects every conversation in the current view, as a predicate, not just the rows on screen |
-| C20 | `KEYS.md` | Focus's keys: `s` snooze, `d` digest, `h` remind, `l` label, `U` unsubscribe, `R` restore, `g f`/`g d`/`g t`/`g s`, `Ctrl+Z` undo | The classic defaults: `s` flag, `d` delete, `h` previous view, `l` open, `U` mark unread, `R` refresh, `g f` sidebar, `g d` drafts, `g t` sent, `g s` flagged, `u` undo | **Maintainer: one keymap for all apps** (Clarifications). The classic and terminal defaults change to `KEYS.md`'s (FR-081) |
-| C21 | 25, the brief | The task line ends in its link: `- [ ] … 📅 2026-09-30 [✉](postio://message/…)` | The Obsidian Tasks plugin reads its fields from the end of the line, so text after the date hides the date from it (plan research) | **Behaviour wins.** The link goes before the date: `- [ ] … [✉](postio://message/…) 📅 2026-09-30` |
-| C22 | 01–20 | Shifted keys drawn with a glyph: `⇧J ⇧K`, `⇧X`, `⇧A` | Key hints are generated from the registry. The shared hint code refuses the `⇧` glyph (`check-key-hints-are-derived.py`) | **The derived hint wins.** The comparison records the notation difference |
-| C23 | 05 | Recipient suggestions open after three characters ("gra") | The shared completion rule opens them at four (`postio-ui/src/recipients.rs`) | One rule for both apps. Whether it becomes three is a `/ux-architect` call. Until then the comparison records the difference |
-| C24 | 09 | The command bar opens as an overlay, and `/` and `Ctrl K` both open it the same way | — | **Maintainer (2026-09-29):** `ctrl+k` opens the bar in command mode with `>` filled in, and `/` opens it for mail search. The bar opens in place, in the top bar's field, with its results below, rather than as a separate popup |
-| C25 | message dialog `SPEC.md` §2, §4, §5 (2026-10-01) | The dialog's chrome in Barlow, Barlow Condensed and IBM Plex Mono: the subject in Barlow 600 14.5, the 30/34 subject in Barlow Condensed 600, buttons Barlow 500 13.5, keycaps, dates and addresses in Plex Mono | FR-093: Focus's text is Adwaita Sans, and keys, addresses and operators Adwaita Mono | **Maintainer (2026-10-01): the system font for the chrome.** The chrome keeps Adwaita Sans and Adwaita Mono at the handoff's sizes, weights and gaps; no Barlow joins the chrome. The message body stays in Barlow (the app colours treatment, T211) |
-| C26 | message dialog `SPEC.md` §5, §6 (2026-10-01) | The dialog's accent is teal, `#0d7068` light and `#5fc4b5` dark: the action card's fill (8% / 12%), its tag, and the body's links | FR-090, FR-091: Focus's accent is the system's, from libadwaita, everywhere | **Maintainer (2026-10-01): the system accent everywhere.** The dialog follows the GNOME accent like the rest of Focus: the card's fill is libadwaita's `--accent-color` at 8% (light) and 12% (dark), and links and the tag are that accent. The handoff's other values -- surface, ink, hairlines, scrim -- stay (T209) |
-| C27 | — | Two desktop apps on one engine: the classic three-pane app and Focus, each with its own app id and launcher (this spec's opening, US11, Assumptions: Packaging) | Fixes landing twice or in one app only, shared widgets rippling into the classic app, C25 and C26 diverging on purpose, two app ids in one package | **Maintainer (2026-10-02): Focus is the one desktop app.** The classic app (`postio-gtk`, the `postio` binary) is retired, not kept as a mode: it gets no new work until it is removed, and fixes go in Focus or a shared crate ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). What it does that Focus does not, and the order of retirement, are [`classic-parity.md`](classic-parity.md). Removal waits for the maintainer |
+Each row is the decision as it stands. Tasks, code and `screens.md` cite the
+ids.
 
-## The message view waits for the new renderer
-
-Another piece of work is replacing how Postio draws a message body. The
-handoff expected it to follow `Design/conversation-rail-brief.md` and #1603.
-Neither matches `main` as of 2026-09-26:
-
-- There is no such brief on `main`.
-- #1603 (one web process for every reader) is an open, claimed issue.
-
-The work that matches is `specs/006-email-rendering` on
-`feature/email-rendering`: a disconnected reading renderer, with its engine
-chosen by an evaluation. The maintainer confirmed it is the change meant
-(Clarifications). It merged to `main` on 2026-09-27, and the plan designs
-against it as it stands there (research R0, R2).
-
-So:
-
-- This spec describes the message view **by what the user sees** (screen 04),
-  never by today's reader implementation.
-- **`/speckit-plan` for this spec does not start until spec 006 has merged
-  to `main`.** The plan designs the message view against the renderer as it
-  stands after the rewrite, and so it designs the view's move into the shared
-  crate. It never designs against today's `crates/postio-gtk/src/reader/`.
-- Until then, this branch does not touch the reader's code. The same holds
-  for any other part listed under Reusable components (FR-006 to FR-008) that
-  another branch is changing. `/lanes` runs before planning. Known today:
-  `feature/email-rendering` (the reader) and `feature/contacts` (recipient
-  completion and the address book). Also in progress are issues on the
-  list's read paths (#1609, #1612, #1602) and on the reader's web processes
-  (#1603).
-
-"Everything that shows a body" means:
-
-- the open-email dialog (04);
-- the email the digest window opens from a reference (23);
-- opening a message from Filtered (21).
+| # | Screens | Decision |
+|---|---|---|
+| C1 | 04, 23 | The body is drawn from the message's HTML by the reading renderer, sanitised with remote images blocked (FR-033), not from the plain-text part the PNGs show; `v` shows the raw source. Much mail is HTML only |
+| C2 | 04 | One message at a time, the latest by default, `[`/`]` through the thread, as 04 draws it, rather than `SPEC.md`'s stack of earlier messages. A deliberate departure from ADR 0032 (FR-037) |
+| C3 | 20 | Keys are rebound under `[keys]` in `config.toml` (constitution II); there is no `keys.toml`. The key map's footer says so |
+| C4 | 21 | Filtered mail is archived and never deleted automatically; 21's header says "Nothing here is deleted automatically" where the PNG says "Kept for 30 days" |
+| C5 | 01–03, 15–19 | A digest row's first line is the opening of its summary when there is one: the one place the list shows text a model wrote (FR-011, FR-124). Otherwise it is the digest's senders |
+| C6 | 22, 23 | A digest opens on its summary when the user has brought a model, and on its plain list otherwise (FR-125, FR-172 to FR-175) |
+| C7 | 05, 06 | The composer is Postio's one composer, in Focus's frame. There is no Markdown toggle; the subtitle says what will be sent ("Plain text · N words") |
+| C8 | 01, 03, 17–19 | Question and To-do markers come from a built-in detector when no model is connected (FR-104 to FR-108), so they show as drawn without a model |
+| C9 | 01, 03, 04, 25 | Task `t`, Note `n` and "Task in <project> · due <day>" appear only when a vault is configured (`[focus.vault]`) |
+| C10 | 01, 10, 16 | A header count shows only while its feature is in use: "N filtered today" while filtering is on, "N digest rules" while there are rules |
+| C11 | 09 | Every command the bar lists shows its key (constitution II). The mockup's "Archive everything read, older than a week" is not a Postio command |
+| C12 | `KEYS.md`, 15 | Delete is on the `Delete` key in the one keymap (FR-081). It moves mail to Trash and is undoable |
+| C13 | `KEYS.md` | **Maintainer (2026-10-02):** Focus offers Flag and Unflag on `*`, in the row menu and the command bar; rows carry no flag mark; `g *` lists flagged mail. Flags other clients set can be cleared here |
+| C14 | 11 | Snooze and Send later share one preset table (ADR 0029). Both say "Later today", screen 11's wording, and after 6pm "Tomorrow evening" |
+| C15 | — | The digest rules list (`g d`) uses 21's full-view frame; the digest window's message list uses 22's dialog frame, with rows as in 08 |
+| C16 | `README.md` | Compare layout, not glyph metrics: the PNGs were rendered without the web fonts |
+| C17 | the brief | Focus's engine work is local, with no new protocol, backend or sync mode. The one new outgoing message is an RSVP, through the existing outbox |
+| C18 | 01 | The strip says "186 filtered today", the PNG's wording, not `SPEC.md`'s "186 filtered (g f)" |
+| C19 | `KEYS.md` | `X` selects every conversation in the current view as a predicate (constitution V), not just the rows on screen |
+| C20 | `KEYS.md` | One keymap for every app, `KEYS.md`'s, with the keys of commands only another app has moved out of its way (FR-081, [contracts/keymap.md](./contracts/keymap.md)) |
+| C21 | 25, the brief | A task line's `postio://` link goes before the date: `- [ ] … [✉](postio://message/…) 📅 2026-09-30`. The Obsidian Tasks plugin reads its fields from the end of the line |
+| C22 | 01–20 | Key caps are generated from the registry and spelled by the shared hint code: the keymap's spelling (`J`, `X`, `ctrl+k`), shortened in a tight cap to `Del`, `↵` and `⇧` (`hints::short`). A literal glyph in a string is refused by `check-key-hints-are-derived.py`. Each screen's comparison records the notation |
+| C23 | 05 | Recipient suggestions open at four characters (`postio_ui::recipients::MIN_COMPLETION_PREFIX`), where 05 draws three. Whether it becomes three is a `/ux-architect` call |
+| C24 | 09 | **Maintainer (2026-09-29):** `mod+k` opens the command bar in command mode with `>` typed, and `/` opens it for mail search. The bar opens in place, in the top bar's field, with its results below |
+| C25 | message dialog `SPEC.md` §2, §4, §5 | **Maintainer (2026-10-01): the system font for the chrome.** The chrome is Adwaita Sans and Adwaita Mono at the handoff's sizes, weights and gaps; no Barlow, Barlow Condensed or IBM Plex Mono in it (FR-093). A body drawn in app colours is set in Barlow (FR-039) |
+| C26 | message dialog `SPEC.md` §5, §6 | **Maintainer (2026-10-01): the system accent everywhere.** The open message follows the GNOME accent like the rest of Focus: the action card's fill is libadwaita's `--accent-color` at 8% (light) and 12% (dark), and links and the card's tag are that accent. The handoff's surface, ink, hairline and scrim values stand |
+| C27 | — | **Maintainer (2026-10-02): Focus is the one desktop app**, named "Postio" (binary `postio`, app id `dev.postio.Postio`) once the package switches (T253); until then it builds as `postio-focus` with app id `dev.postio.Postio.Focus`. The classic three-pane app (`postio-gtk`, the `postio` binary in `postio-app`) is retired rather than kept as a mode: it keeps building until it is removed and gets no new work ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). What it did and where Focus does it is [`classic-parity.md`](classic-parity.md). Removal waits for the maintainer |
 
 ## Milestones, and landing
 
 **Nothing lands on `main` until the maintainer says so** (Clarifications).
 The work stays on `feature/postio-focus` and is rebased onto `main` as it
-goes, and every commit keeps the other apps green. The milestones are the
-order of work on the branch, not landings:
+goes, and every commit keeps the terminal and macOS green. The milestones
+group the work:
 
-- **Milestone 1**: screens 01–20, and the differentiators that need no
-  model:
-  - Invite markers from the message's calendar part
-  - Question and To-do markers from a simple built-in detector
-  - filtering by headers and structure, with the Filtered view (21)
-  - digest rules by sender (24), each digest opening on its plain list.
-- **Milestone 2, the optional local model the user brings**:
-  - the user's model answering the needs-action question in place of the
-    built-in detector, when it is connected
-  - digest summaries (22, 23), which the digest then opens on
-  - digests by mailing list, by search, and "more like this".
+- **Milestone 1**: screens 01–21 and 24, and the differentiators that need
+  no model: invite markers from the message's calendar part, Question and
+  To-do markers from the built-in detector, filtering by headers and
+  structure with the Filtered view, and digest rules by sender, each digest
+  opening on its plain list.
+- **Milestone 2, the optional local model the user brings**: the model
+  answering the needs-action question in place of the built-in detector,
+  digest summaries (22, 23), and digests by mailing list, by search, and
+  "more like this".
 - **Milestone 3**: Obsidian (25) and `postio://` links.
 
-**Nothing in an earlier milestone may make a later one harder.**
+Without a model or a vault, the surfaces they feed keep their place empty
+rather than drawing something else there: a row keeps its marker line and
+the chip's place, a digest row and window keep the summary's, Filtered's
+reasons have room for a model's, digest rules have room for list, search and
+"more like this" matches, and the needs-action question has one detector
+seam the model answers through.
 
-- Rows keep a place for a marker's second line and for the Obsidian chip.
-- A digest row and the digest window keep a place for the summary.
-- The Filtered reasons have room for reasons a model decides.
-- Digest rules have room for list, search and "more like this" matches.
-- The classification step has a seam where a model's decisions will enter.
-  The needs-action question has a single detector seam, so the user's model
-  can answer it in place of the built-in detector.
+**Before the branch can land** it needs two things only the maintainer can
+give:
 
-A header count appears only once its feature exists: "186 filtered today"
-with filtering, "4 digest rules" with digests, and "Task in Atlas · due Fri"
-with Obsidian.
-
-**Before the branch can land**, it needs two things only the maintainer can
-give. Neither is needed to keep working:
-
-- **A constitution amendment.** The constitution's Scope must name Focus, as
-  version 1.2.0 named the terminal. For milestone 2 it must also allow
-  Focus's optional, user-supplied local model. Today it says v1 has "no AI
-  (deferred to epic E12)",
-  and that work outside the scope belongs on the roadmap, not in a branch.
-  The maintainer chose to build these features on this unlanded branch
-  (Clarifications). The amendment lands with the branch, with the
-  maintainer's approval (FR-009).
-- **The design folder**, re-rendered and scrubbed, so the screens can be
+- **The constitution's one-desktop-app wording.** Version 1.3.0, on this
+  branch, names Focus and allows its optional, user-supplied local model; its
+  Scope still says two desktop apps. The change lands with the branch, with
+  the maintainer's approval (FR-009).
+- **The design folders**, re-rendered and scrubbed, so the screens can be
   committed.
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Work the inbox as it arrived (Priority: P1, milestone 1)
+### User Story 1 - Work the inbox as it arrived (Priority: P1)
 
 Screens 01, 02, 03 and 15.
 
@@ -298,19 +219,20 @@ colour. Digest rows (User Story 10) sit among the conversations. The header
 strip reads "Inbox ▾" with the conversation and unread counts, and a "Has
 action · 7" toggle.
 
-The user moves with `j`/`k`, selects with `x`, extends with `⇧J`/`⇧K`,
-selects everything in the view with `⇧X`, and clears with `Esc`. While
+The user moves with `j`/`k`, selects with `x`, extends with `J`/`K`,
+selects everything in the view with `X`, and clears with `Esc`. While
 anything is selected, a bulk bar at the bottom shows:
 
 - the count;
 - Archive `a`, Snooze `s`, Mark read `r`, Digest these… `d`, Label `l`, Move
-  `m`;
+  `m`, Delete;
 - the selection keys.
 
-Selecting a row never opens it. An archive leaves the list at once, and a
-toast says what happened ("Archived 3 messages · Undo"). `Ctrl+Z` undoes it,
-even after the toast has gone. `!` narrows the inbox to rows with a marker.
-Light and dark follow the system.
+A right-click on a row offers its verbs with their keys. Selecting a row
+never opens it. An archive leaves the list at once, and a toast says what
+happened ("Archived 3 messages · Undo"). `mod+z` undoes it, even after the
+toast has gone. `!` narrows the inbox to rows with a marker. Light and dark
+follow the system.
 
 **Why this priority**: This is the product. Every other story is reached
 from this list.
@@ -323,8 +245,8 @@ widget tree (what a person sees, not what a layer was handed):
 - unread rows are bold, and at most two labels show;
 - the cursor and the selection are distinct, and the bulk bar acts on the
   selection;
-- after each action, the store holds what the classic app would have written
-  for it.
+- after each action, the store holds what the same command writes from any
+  app.
 
 **Acceptance Scenarios**:
 
@@ -336,7 +258,7 @@ widget tree (what a person sees, not what a layer was handed):
    shows exactly those strings: nothing rewritten, summarised or scored.
 3. **Given** three rows selected and the cursor on a fourth, **When** the
    user presses `a`, **Then** the three are archived and the fourth is not;
-   the toast says "Archived 3 messages"; and one `Ctrl+Z` returns all three.
+   the toast says "Archived 3 messages"; and one `mod+z` returns all three.
 4. **Given** the cursor on a row, **When** the user presses `j` or `k`,
    **Then** only the cursor moves: nothing opens and nothing is marked read.
 5. **Given** rows with and without markers, **When** the user presses `!`,
@@ -352,7 +274,7 @@ widget tree (what a person sees, not what a layer was handed):
    open, **Then** it follows at once. The accent appears only on action
    markers, the focus ring and the has-action toggle.
 7. **Given** an inbox of 100,000 conversations, **When** the user scrolls
-   from top to bottom, or presses `⇧X` and archives, **Then** only the
+   from top to bottom, or presses `X` and archives, **Then** only the
    visible window of rows is ever read. The selection is a predicate, and
    each step redraws within the interaction budget.
 8. **Given** a conversation with three labels, **When** it is listed,
@@ -360,33 +282,36 @@ widget tree (what a person sees, not what a layer was handed):
 
 ---
 
-### User Story 2 - Open a message over the list, and come back to the same place (Priority: P1, milestone 1)
+### User Story 2 - Open a message, and come back to the same place (Priority: P1)
 
-Screen 04.
+Screen 04, and the message dialog's handoff.
 
-`Enter` opens the conversation under the cursor in a window over the list,
-the way compose opens. The list stays in place behind it.
+`Enter` opens the conversation under the cursor in a dialog over the list,
+the way compose opens. The list stays in place behind it, dimmed.
 
-- **The header** names the subject and the position ("Message 5 of 312 ·
-  thread of 6"). It has Close (`Esc`) and up and down buttons (`k`/`j`) that
-  step to the previous or next message in the list without closing.
-- **The toolbar** holds every action with its key: Reply `e`, Reply all `E`,
-  Forward `f`, Archive `a`, Snooze `s`, Remind `h`, Label `l` and Move `m`,
-  plus Task `t` and Note `n` once Obsidian exists.
-- **The window shows one message of the conversation**, the latest by
+- **The header** has the step controls (`k`/`j`, each with its key inside),
+  the subject over its position ("Message 5 of 312 · thread of 6"), and the
+  close button. The steps go to the previous or next message in the list
+  without closing.
+- **The action row** holds every action with its key: Reply `e`, Reply all
+  `E`, Forward `f`, Archive `a`, Snooze `s`, Remind `h`, Label `l`, Move `m`
+  and Delete. In a narrow dialog, Label, Move and Delete fold into More `.`.
+- **The dialog shows one message of the conversation**, the latest by
   default. It says "Latest of 6 in this thread", and `[` and `]` step to the
-  older and newer messages. This departs from ADR 0032 on purpose (FR-037).
-- **Under the subject**:
-  - its labels and "+ Label";
-  - a header card: From with name and address, To, Cc, and the date;
-  - an action-marker card with its action, when the message has one, with
-    the triggering sentence highlighted in the body;
-  - the body, as the new renderer draws it;
-  - attachments as cards;
-  - quoted text folded, with a count ("31 quoted lines from v2 folded").
+  older and newer messages (FR-037).
+- **One centred column**, in order:
+  - the subject, its labels and "+ Label";
+  - the sender block: From with name and address, To, Cc, and the date;
+  - an action card with its action, when the message has a marker, with the
+    triggering sentence highlighted in the body;
+  - a quiet line naming the body's treatment, for an HTML body;
+  - the body, as the reading renderer draws it;
+  - attachments as chips;
+  - quoted text folded, with its line count ("31 quoted lines").
 
-`v` shows the raw source. `Esc` closes the window and returns to the same
-row, with the selection kept.
+`v` shows the raw source and `O` switches the body between app colours and
+the original. `Esc` closes the dialog and returns to the same row, with the
+selection kept. A message left open for a second is marked read.
 
 **Why this priority**: Reading is most of what mail is for. Focus's promise
 is that opening a message is deliberate and coming back costs nothing.
@@ -394,8 +319,8 @@ is that opening a message is deliberate and coming back costs nothing.
 **Independent Test**: Open messages from the fixture mailbox by keystroke,
 and assert what the dialog shows:
 
-- the header fields and the marker card;
-- the folded-quote count and the attachment cards;
+- the header fields and the action card;
+- the folded-quote count and the attachment chips;
 - stepping with `j`/`k` and with `[`/`]`.
 
 Close the dialog with `Esc`, and assert that the cursor row and the
@@ -416,13 +341,13 @@ first open.
    position line says so. `]` steps back.
 4. **Given** an HTML-only message with remote images, **When** it is opened,
    **Then** its body is drawn from its HTML, sanitised, with remote images
-   blocked until allowed for that sender. No script runs and no network
-   request is made.
+   blocked until allowed once or always for that sender. No script runs and
+   no network request is made.
 5. **Given** any message, **When** the user presses `v`, **Then** its raw
    source is shown.
 6. **Given** a message with a marker, **When** it is opened, **Then** the
-   marker card sits under the headers with its action and key. For a quoted
-   marker, the triggering sentence is highlighted in the body where it
+   action card sits under the sender block with its action and key. For a
+   quoted marker, the triggering sentence is highlighted in the body where it
    appears.
 7. **Given** the hundredth open in a session, **When** it happens, **Then**
    the dialog opens in one frame, reusing the one message view. Memory does
@@ -430,52 +355,49 @@ first open.
 8. **Given** a quoted reply history, **When** the message is shown, **Then**
    the history is folded with its line count and expands on request.
 9. **Given** attachments or links, **When** the user presses `o`, **Then**
-   they are offered to open, and nothing opens without a deliberate choice.
-   A link's full target is visible first.
+   they are offered to open or save, and nothing opens without a deliberate
+   choice. A link's full target is visible first.
 
 ---
 
-### User Story 3 - Write and reply with the composer Postio already has (Priority: P1, milestone 1)
+### User Story 3 - Write and reply with Postio's composer (Priority: P1)
 
 Screens 05 and 06.
 
 `c` composes. `e`, `E` and `f` reply, reply to all and forward, from the list
-or from the open message. The composer opens as its own window over the app,
-and may be detached to a window of its own. It is the classic app's composer,
-with its rich text, attachments, identities, signatures, drafts, send later
-and outbox, in the frame screen 05 draws:
+or from the open message. The composer opens in the open message's frame, in
+a dialog over the list or in the pane beside it, and may be detached to a
+window of its own. It is Postio's one composer, with its rich text,
+attachments, identities, signatures, drafts, send later and outbox:
 
-- **Header**: Close (`Esc`), with "Draft saved locally 16:12"; Send later ▾;
-  Send (`Ctrl+Enter`).
-- **Fields**: From (the identity), To, Cc and Bcc on demand, Subject, Labels.
-- **Below them**: the body and its attachments.
-- **Footer**: Attach (`Ctrl+⇧A`), Remind if no reply (`Ctrl+H`), Task after
-  sending (`Ctrl+T`, once Obsidian exists), and what will be sent ("Plain
-  text · 58 words").
+- **Header**: Detach; the title ("New message", "Reply", "Reply to all",
+  "Forward") over what will be sent and what has happened to it ("Plain text
+  · 58 words · Draft saved locally 16:12"); close.
+- **Action row**: Send (`mod+Return`), Send later ▾, Attach, and Remind
+  (`mod+h`, "Remind · Tue 29 Sep" once a day is chosen).
+- **One column** below it: From (the identity), To, Cc and Bcc on demand,
+  Subject, Labels; the formatting toolbar; the body; its attachments.
 
-Recipients complete from the address book and from past mail. Each
-suggestion shows how often the user has written to that address ("wrote 42
-times"), lists are marked as lists, and no dropdown appears until the user
-types in a field.
+Recipients complete from the address book and from past mail, ranked by how
+often the user has written to each address. No dropdown appears until the
+user types in a field.
 
 A reply to all is pre-filled:
 
 - recipients from the thread;
 - a "Re:" subject;
 - the thread's labels, marked "from the thread";
-- the quoted text, folded under the draft (`Ctrl+⇧Q` shows it).
+- the quoted text, folded under the draft.
 
 Labels set before sending are applied to the sent message's conversation.
-`Esc` closes the composer and keeps the draft, which reopens in either app.
+`Esc` closes the composer and keeps the draft, which reopens from Drafts.
 
-**Why this priority**: A mail client that cannot reply is a reader. The
-handoff is explicit that this is the existing composer in a new frame, not a
-second composer.
+**Why this priority**: A mail client that cannot reply is a reader.
 
 **Independent Test**: Compose and reply through keystrokes against the mock
 backend, and assert:
 
-- the outgoing bytes are what the classic composer produces for the same
+- the outgoing bytes are what the shared composer produces for the same
   content;
 - chosen labels land on the sent conversation;
 - a remind-if-no-reply set in the composer exists after the send.
@@ -485,17 +407,17 @@ backend, and assert:
 1. **Given** a message open, **When** the user presses `E`, **Then** the
    composer opens with every recipient from the thread, a "Re:" subject, the
    thread's labels and the quote folded. `Esc` returns to where the user was.
-2. **Given** the same content written in Focus and in the classic app,
+2. **Given** the same content written in Focus and in any other Postio app,
    **When** both are sent, **Then** the messages that leave are identical.
 3. **Given** a draft in progress, **When** the user presses `Esc`, **Then**
-   the draft is saved locally, and it opens again from Drafts in either app.
+   the draft is saved locally, and it opens again from Drafts in any app.
 4. **Given** labels chosen before sending, **When** the message is sent,
    **Then** its conversation carries them.
 5. **Given** "Remind if no reply · Tue 29 Sep" set in the composer, **When**
    the message is sent and nobody replies by then, **Then** the conversation
    returns to the top of the inbox marked "No reply since <date>" (see
    User Story 5).
-6. **Given** the user types "gra" in To, **When** suggestions appear,
+6. **Given** the user types "grac" in To, **When** suggestions appear,
    **Then** they come from the address book and from past mail, ranked by how
    often the user wrote to each. Choosing one adds a chip with the name and
    the address.
@@ -504,21 +426,22 @@ backend, and assert:
 
 ---
 
-### User Story 4 - Search, go to and run commands from one bar (Priority: P1, milestone 1)
+### User Story 4 - Search, go to and run commands from one bar (Priority: P1)
 
 Screens 07, 08, 09 and 10.
 
-`/` or `Ctrl+K` opens one bar for search, commands and going places.
+`/` or `mod+k` opens one bar for search, commands and going places.
 
 - **Saved searches** are pinned across its top, with their counts and
-  `Alt+1`–`Alt+4`. `Ctrl+S` saves the current query.
+  `alt+1`–`alt+4`. `mod+s` saves the current query.
 - **Plain English** ("the invoice Ada sent last month") is lowered, on this
   machine, into editable operator chips of Postio's one query language. The
   bar shows the words the user typed and names the chip being edited. `Tab`
-  steps into the chips, and `Ctrl+Backspace` returns to the plain words.
+  steps into the chips, and `mod+BackSpace` returns to the plain words.
 - **Results** are one line each: sender, subject, first line, where the
   conversation lives (`in:Inbox`, `in:Receipts`) and the date. `Enter` opens
-  one over the list.
+  one. A misspelt query offers "Search instead for …" (ADR 0037), and `O`
+  switches the results between relevance and date.
 - **Folders**: `in:` completes folder names and lists a folder's
   conversations, newest first (08). There is no folder sidebar.
 - **Commands and places**: typing a word also lists:
@@ -532,8 +455,8 @@ Screens 07, 08, 09 and 10.
 
 `g o`, or a click on "Inbox ▾", opens a popover listing:
 
-- mailboxes (Inbox, Drafts, Sent, Snoozed, Archive, Filtered), each with its
-  direct key;
+- mailboxes (Inbox, Drafts, Sent, Snoozed, Archive, Filtered, and the Outbox
+  while it holds anything), each with its direct key;
 - folders and labels, with counts.
 
 Typing filters the popover, and `Enter` goes to the chosen place.
@@ -556,9 +479,8 @@ bar are how the user moves (brief, principle 5).
 1. **Given** a synced store, **When** the user types "the invoice Ada sent
    last month", **Then** the chips shown are operators of the one query
    language that together mean "from Ada, about an invoice, received last
-   month". Screen 07 shows `from: ada`, `subject: invoice`,
-   `after: 2026-08-01` and `before: 2026-09-01`. Running the chips returns
-   what typing those operators by hand returns.
+   month". Running the chips returns what typing those operators by hand
+   returns.
 2. **Given** half-typed input such as `is:` or `after:2026-`, **When** it is
    shown, **Then** no error appears and results keep updating.
 3. **Given** three rows selected, **When** the user opens the bar and runs
@@ -566,8 +488,8 @@ bar are how the user moves (brief, principle 5).
 4. **Given** the user types `in:Rec`, **When** Receipts is offered and
    chosen, **Then** Receipts' conversations are listed newest first, with
    the folder's count.
-5. **Given** a saved search pinned at `Alt+2`, **When** the user presses
-   `Alt+2` in the list, **Then** its results are shown.
+5. **Given** a saved search pinned at `alt+2`, **When** the user presses
+   `alt+2` in the list, **Then** its results are shown.
 6. **Given** the folders popover open, **When** the user types "trav" and
    presses `Enter`, **Then** Travel's conversations are shown.
 7. **Given** no network, **When** the user searches, **Then** results come
@@ -579,7 +501,7 @@ bar are how the user moves (brief, principle 5).
 
 ---
 
-### User Story 5 - Snooze, remind, label and move from a picker at the row (Priority: P1, milestone 1)
+### User Story 5 - Snooze, remind, label and move from a picker at the row (Priority: P1)
 
 Screens 11, 12, 13 and 14.
 
@@ -593,7 +515,8 @@ picker acts on the selection when there is one, and names what it acts on
 
 - **Snooze** offers Later today, Tomorrow morning, Monday morning and Next
   week, each with its time. It says the message leaves the inbox and comes
-  back at the top at that time, and that snoozed mail is under `g z`.
+  back at the top at that time, and that snoozed mail is under `g z`, where
+  `B` wakes it.
 - **Remind if no reply** offers Tomorrow, In 2 working days, End of the week
   and In a week. It says that a reply from anyone cancels the reminder, and
   otherwise the thread comes back to the top of the inbox marked "No reply
@@ -602,10 +525,10 @@ picker acts on the selection when there is one, and names what it acts on
   each label's count, toggles a label with `Space`, and offers "Create label"
   for a name that does not exist yet.
 - **Move** filters folders and lists recent destinations first (`1`, `2`).
-  `Enter` moves the mail, it leaves the inbox, and `Ctrl+Z` undoes.
+  `Enter` moves the mail, it leaves the inbox, and `mod+z` undoes.
 
 **Why this priority**: These are the verbs of triage. Remind if no reply is
-the one new verb, and the classic app has the rest.
+Focus's own.
 
 **Independent Test**: Drive each picker by keystroke, against fixture data at
 a fixed clock. Assert the computed times, the store's resulting state and the
@@ -633,19 +556,21 @@ cancels it, and no reply brings the thread back with its marker text.
    confirms, **Then** the label is created and applied. `Space` on an applied
    label removes it, and every change is undoable.
 6. **Given** three rows selected, **When** the user moves them to Receipts,
-   **Then** all three leave the inbox, and one `Ctrl+Z` returns them.
+   **Then** all three leave the inbox, and one `mod+z` returns them.
 7. **Given** a picker open, **When** the user presses `Esc`, **Then**
    nothing changes.
 
 ---
 
-### User Story 6 - Always know what state Postio is in, and never be blocked by it (Priority: P1, milestone 1)
+### User Story 6 - Always know what state Postio is in, and never be blocked by it (Priority: P1)
 
 Screens 16, 17, 18 and 19.
 
 An empty inbox is a quiet, centred "Inbox is empty". Under it are when the
 next digest comes ("Next digest: Weekly · Newsletters, Saturday 16:00") and
-shortcuts to Filtered, Archive and Compose.
+shortcuts to Filtered, Archive and Compose. While the first sync has not
+finished its first pass, the inbox says it is syncing and how far, never
+that it is empty.
 
 First sync, offline and a sign-in error each show as one banner under the
 header strip. The header's sync label, which otherwise reads "Synced 16:09",
@@ -656,8 +581,10 @@ says the same thing in a word or two:
 | First sync | "12,408 of 18,204 messages, newest first. You can read and search what's here.", with a progress bar | "Syncing 12,408 of 18,204" |
 | Offline | "Everything you do is saved here and syncs when you're back.", with Retry now | "Offline" |
 | Sign-in error | "Can't sign in to \<server\>. The server rejected the password for \<address\>. Mail on this computer is still available.", with Update password… | "Sync failed" |
+| An account failing for another reason | The account, and the reason in the sync's own words when it gave them, with Retry now | "Sync failed" |
 
-None of these blocks anything local.
+None of these blocks anything local, and every account that works stays
+listed.
 
 **Why this priority**: Constitution I requires that sync state is visible,
 and that nothing the user does waits on it.
@@ -675,15 +602,14 @@ is queued.
    **Then** everything that has arrived is readable and searchable, and the
    banner shows progress.
 3. **Given** a rejected password, **When** the user chooses Update password…,
-   **Then** the credential flow the classic app uses opens, and mail stays
-   available meanwhile.
+   **Then** the credential dialog opens, and mail stays available meanwhile.
 4. **Given** an empty inbox, **When** it is shown, **Then** it names only
    what exists: the next digest if there are digests, and the filtered count
    if filtering is on.
 
 ---
 
-### User Story 7 - One key map, taught everywhere (Priority: P1, milestone 1)
+### User Story 7 - One key map, taught everywhere (Priority: P1)
 
 Screen 20.
 
@@ -694,21 +620,20 @@ Every action has one key, and the app teaches it:
 - `?` opens the key map.
 
 The key map is grouped: Move and select, Open, Act, Invites, Go and find, In
-search, Digests and filtering, and Obsidian once it exists. `?` or `Esc`
-closes it. Its footer says where to rebind a key, and that every key has a
-visible button.
+search, Digests and filtering, and Obsidian. `?` or `Esc` closes it. Its
+footer says where to rebind a key, and that every key has a visible button.
 
-Postio has one default keymap, the one `KEYS.md` sets out, shared by Focus,
-the classic app and the terminal (Clarifications). A key means one thing
-everywhere:
+Postio has one default keymap, the one `KEYS.md` sets out, shared by every
+app (Clarifications). A key means one thing everywhere:
 
-- undo is `Ctrl+Z` only;
+- undo is `mod+z` only;
 - `D` stops digesting a sender;
 - `U` unsubscribes;
 - `R` restores from Filtered.
 
 All of it comes from the one command registry. Any binding can be changed in
-`config.toml` under `[keys]`, by command id.
+`config.toml` under `[keys]`, by command id, and Settings' Keyboard section
+rebinds it there.
 
 **Why this priority**: Constitution II. A command that is not in the registry
 does not exist, and a key the app does not teach is a key nobody finds.
@@ -732,13 +657,13 @@ button's keycap all show the key the keymap resolves.
    command has the same key in every app that has it.
 4. **Given** the key map open, **When** the user presses `?` or `Esc`,
    **Then** it closes.
-5. **Given** the classic app after this feature, **When** it starts, **Then**
-   its defaults are the one keymap's (`s` snoozes, `Ctrl+Z` undoes), and
-   every command it had still has a key.
+5. **Given** the terminal, **When** it starts, **Then** its defaults are the
+   one keymap's (`s` snoozes, `ctrl+z` undoes), and every command it offers
+   has a key.
 
 ---
 
-### User Story 8 - Answer an invitation from the row (Priority: P2, milestone 1)
+### User Story 8 - Answer an invitation from the row (Priority: P2)
 
 Markers on 01, 03 and 04.
 
@@ -752,7 +677,7 @@ involved. The marker shows:
 
 Pressing `y` queues an acceptance to the organiser through the outbox,
 local-first. For about ten seconds the reply can be cancelled, from the undo
-toast ("Accepted · Undo") or with `Ctrl+Z`. After that it cannot be taken
+toast ("Accepted · Undo") or with `mod+z`. After that it cannot be taken
 back. The row then shows what was answered.
 
 An updated invitation replaces the marker's time. A cancelled one says so
@@ -790,7 +715,7 @@ time zones. Then RSVP against the mock backend, and assert:
 
 ---
 
-### User Story 9 - Spam and updates filtered, each with its reason, none lost (Priority: P2, milestone 1)
+### User Story 9 - Spam and updates filtered, each with its reason, none lost (Priority: P2)
 
 Screen 21, and the counts on 01, 10 and 16.
 
@@ -807,11 +732,12 @@ place Focus acts on its own, and it is bounded.
   - it comes from a sender the user pinned;
   - it belongs to a conversation the user took part in.
 - **When in doubt, mail goes to the inbox.**
-- **In milestone 1, decisions come from the message's own structure and
-  headers.** That means list and bulk headers, automated senders listed as
-  data (never as code), and the server's own spam verdicts. While Focus
-  runs, they are made when the message is filed, so filtered mail is never
-  seen arriving in its inbox.
+- **Decisions come from the message's own structure and headers**, and, when
+  the user has brought one, the model for what those leave undecided. That
+  means list and bulk headers, automated senders listed as data (never as
+  code), and the server's own spam verdicts. While Focus runs, they are made
+  when the message is filed, so filtered mail is never seen arriving in its
+  inbox.
 
 `g f` opens Filtered: everything hidden, newest first, each row with its
 reason ("promotion", "notification · Forge"), and tabs by reason with counts
@@ -843,7 +769,7 @@ and assert the catch-up sorts it the same way.
    arrives, **Then** it is not filtered, whatever its headers say.
 4. **Given** a filtered message, **When** the user presses `R`, **Then** it
    returns to the inbox, and its sender is never filtered again. One
-   `Ctrl+Z` reverses both.
+   `mod+z` reverses both.
 5. **Given** Filtered open, **When** the user presses the Notifications tab's
    number, **Then** only notifications are listed.
 6. **Given** a message whose classification is uncertain, **When** it
@@ -851,13 +777,13 @@ and assert the catch-up sorts it the same way.
 7. **Given** filtered mail older than 30 days, **When** Filtered is opened,
    **Then** that mail is still listed, archived. Filtered mail is never
    deleted automatically.
-8. **Given** a promotion that arrived while the classic app was open,
-   **When** Focus next opens, **Then** it moves from the inbox to Filtered,
-   with its reason, as if Focus had filed it.
+8. **Given** a promotion that arrived while another Postio app had the
+   store, **When** Focus next opens, **Then** it moves from the inbox to
+   Filtered, with its reason, as if Focus had filed it.
 
 ---
 
-### User Story 10 - Digests on a cadence the user chooses (Priority: P2, milestone 1: by sender)
+### User Story 10 - Digests on a cadence the user chooses (Priority: P2)
 
 Screen 24, and the digest rows on 01 and 16. The digest window uses 22's
 frame.
@@ -872,22 +798,22 @@ The dialog previews the recent mail the rule would have caught ("Would have
 caught 9 messages in the last 90 days"), and Create saves the rule.
 
 From then on, that sender's mail is **held**: it skips Focus's inbox, but it
-is never hidden from search, and `g d` shows it. Mail with an invitation
-(and, later, a question or a to-do) still comes straight to the inbox.
+is never hidden from search, and `g d` shows it. Mail with an invitation, a
+question or a to-do still comes straight to the inbox.
 
 When the cadence comes due, **one digest row** appears in the inbox. It
 shows:
 
 - its cadence and name ("Weekly · Newsletters");
 - its count;
-- the opening of its summary ("Summary of 14 messages from 6 senders: …"),
-  or its senders until summaries exist.
+- the opening of its summary ("Summary of 14 messages from 6 senders: …")
+  when there is one, or its senders.
 
-`Enter` opens it as a window over the inbox. In milestone 1 it opens on the
-plain list of its messages. Once summaries exist (User Story 13) it opens on
-the summary, and `Tab` switches to the list. From either, the user can:
+`Enter` opens it as a window over the inbox: on its summary when there is
+one (User Story 13), and `Tab` switches to the plain list; on the plain list
+otherwise. From either, the user can:
 
-- archive the whole digest (`⇧A`);
+- archive the whole digest (`A`);
 - open one message;
 - change the rule and its cadence (`d`);
 - stop digesting a sender (`D`);
@@ -895,7 +821,7 @@ the summary, and `Tab` switches to the list. From either, the user can:
 
 "Digest these…" in the bulk bar makes one rule for the senders of the
 selection. `g d` lists every rule, with its cadence, its next delivery and
-what it holds now. "Match a list or a search instead…" is milestone 2.
+what it holds now. "Match a list or a search instead…" is User Story 14.
 
 **Why this priority**: Mail the user wants weekly should not arrive daily.
 This is the differentiator that most reduces inbox volume without a model.
@@ -919,8 +845,8 @@ fixture mailbox. Assert:
 3. **Given** Focus not running through a due time, **When** Focus next
    opens, **Then** the due digest row is there: nothing held is lost or
    duplicated.
-4. **Given** a digest open, **When** the user presses `⇧A`, **Then** all its
-   messages are archived, and one `Ctrl+Z` restores them.
+4. **Given** a digest open, **When** the user presses `A`, **Then** all its
+   messages are archived, and one `mod+z` restores them.
 5. **Given** `D` on a message in a digest, **When** it is confirmed,
    **Then** that sender stops being digested, and their future mail goes to
    the inbox.
@@ -931,9 +857,9 @@ fixture mailbox. Assert:
 
 ---
 
-### User Story 11 - One store, either desktop app (Priority: P1, milestone 1)
+### User Story 11 - One store, any Postio app (Priority: P1)
 
-The user reads mail in the classic app, closes it, opens Focus, and finds the
+The user reads mail in the terminal, closes it, opens Focus, and finds the
 same mailbox:
 
 - the same folders;
@@ -941,14 +867,14 @@ same mailbox:
 - the draft they left;
 - the same keys, because every app shares one default keymap.
 
-If the classic app or the terminal has the store open, Focus says so in the
-sentence the other apps use, and does not open the store. The reverse holds.
-Digest rules, filter decisions, corrections and reminders made in Focus live
-in the store and configuration that every app shares. They act only while
-Focus runs.
+If another Postio app has the store open, Focus says so in the sentence the
+other apps use, and does not open the store; "Try again" opens it once the
+other app has closed. The reverse holds. Digest rules, filter decisions,
+corrections and reminders made in Focus live in the store and configuration
+that every app shares. They act only while Focus runs.
 
 **Why this priority**: ADR 0041 requires it. Without it, Focus would be a
-second mail client with its own copy of the mailbox.
+mail client with its own copy of the mailbox.
 
 **Independent Test**: Open the store in one app's process and start Focus:
 it refuses with the sentence and leaves the store unchanged. Close the first
@@ -957,30 +883,31 @@ the reverse.
 
 **Acceptance Scenarios**:
 
-1. **Given** the classic app open, **When** Focus starts, **Then** it says
+1. **Given** the terminal open, **When** Focus starts, **Then** it says
    "Postio is already open in another window. Close it to open Postio here."
-   and exits without touching the store. The reverse holds.
+   and does not touch the store. The reverse holds.
 2. **Given** a message archived in Focus, **When** Focus is closed and the
-   classic app opened, **Then** the message is in the archive, not the
-   inbox. The reverse holds.
+   terminal opened, **Then** the message is in the archive, not the inbox.
+   The reverse holds.
 3. **Given** a draft left in either app, **When** the other is opened,
    **Then** the draft is in Drafts and opens for editing.
-4. **Given** filtering on and the classic app open, **When** a promotion
-   arrives, **Then** the classic app shows it in its inbox, because Focus's
+4. **Given** filtering on and the terminal open, **When** a promotion
+   arrives, **Then** the terminal shows it in its inbox, because Focus's
    rules act only while Focus runs. When Focus next opens, the promotion
    moves to Filtered.
 
 ---
 
-### User Story 12 - Questions and to-dos called out, quoted verbatim (Priority: P2, milestone 1; the user's model in milestone 2)
+### User Story 12 - Questions and to-dos called out, quoted verbatim (Priority: P2)
 
 When a message sent directly to the user asks them a question, or asks them
 to do something, its row gets a marker: "Question", or "To-do" with a due
 date if the sentence names one. The marker quotes the triggering sentence
 **verbatim**, never paraphrased, and the open message highlights it where it
-appears. The marker's action is Reply `e` for a question, and Task `t` and
-Snooze `s` for a to-do (Task once Obsidian exists). The user can dismiss a
-wrong marker, and the dismissal is remembered as a correction.
+appears. The marker's action is Reply `e` for a question, and Snooze `s` for
+a to-do, with Task `t` beside it when a vault is configured. The user can
+dismiss a wrong marker (`-`), and the dismissal is remembered as a
+correction.
 
 Two detectors can answer this "needs action" question, and one answers at a
 time (Clarifications):
@@ -997,10 +924,10 @@ time (Clarifications):
 Either way, the quote is a span of the message's own text, so it is verbatim
 by construction.
 
-**Why this priority**: The screens draw these markers in milestone 1, and the
-built-in detector needs no model, so milestone 1 has them. A marker that is
-often wrong is worse than none (brief: "Risks"), so the built-in detector is
-held to a precision bar (SC-013) and errs toward silence.
+**Why this priority**: The screens draw these markers in the core inbox, and
+the built-in detector needs no model. A marker that is often wrong is worse
+than none (brief: "Risks"), so the built-in detector is held to a precision
+bar (SC-013) and errs toward silence.
 
 **Independent Test**: Run a labelled fixture corpus through classification,
 first with no model connected, then with a fake model that returns canned
@@ -1049,37 +976,36 @@ Assert:
 
 ---
 
-### User Story 13 - Read a digest as a summary that cites its mail (Priority: P3, milestone 2)
+### User Story 13 - Read a digest as a summary that cites its mail (Priority: P3)
 
 Screens 22 and 23, and the digest row on 01.
 
 When the user has brought a local model, `Enter` on a digest row opens the
-digest window on its summary. The summary is one reading column, grouped by topic ("Your town · The Evening Ledger ·
-5"). Each statement ends in a numbered reference to the message it came
-from.
+digest window on its summary. The summary is one reading column, grouped by
+topic ("Your town · The Evening Ledger · 5"). Each statement ends in a
+numbered reference to the message it came from.
 
 - `]` and `[` move between references. The focused reference shows its
-  message just below the paragraph ("Local-First Weekly · Issue 112: Sync
-  without servers · Thu 24 Sep"), with "open the full email".
+  message ("Local-First Weekly · Issue 112: Sync without servers"), with
+  "open the full email".
 - `Enter` opens that email in the same window, never a second one:
-  - the header reads "Summary ‹" with `Esc`;
+  - the header reads "Summary" with `Esc`;
   - a banner says where the email was cited ("Cited as 6 in the summary; the
     passage is highlighted");
   - the cited passage is highlighted;
   - `j`/`k` step through the digest's sources;
   - `Esc` returns to the summary, at the same reference.
 - `Tab` switches to the plain list of the messages.
-- `⇧A` archives the whole digest, `d` edits the rule and cadence, `D` stops
+- `A` archives the whole digest, `d` edits the rule and cadence, `D` stops
   digesting the referenced sender, and `U` unsubscribes, only on that key.
 
 The footer says what wrote the summary: "Written on this computer by the
 local model from these 14 messages only. Every statement links to the email
 it came from."
 
-**Why this priority**: The maintainer chose it over the handoff's
-recommendation (Clarifications). It needs the local model, so it is
-milestone 2. It is the one place Focus shows text a model wrote, so it
-carries its own guarantees (FR-172 to FR-175).
+**Why this priority**: It needs the local model. It is the one place Focus
+shows text a model wrote, so it carries its own guarantees (FR-172 to
+FR-175).
 
 **Independent Test**: Open a digest with a fake local model that returns
 canned statements and references, and assert:
@@ -1116,7 +1042,7 @@ canned statements and references, and assert:
 
 ---
 
-### User Story 14 - Digests by list, by search, or like this one (Priority: P3, milestone 2)
+### User Story 14 - Digests by list, by search, or like this one (Priority: P3)
 
 "Match a list or a search instead…" (24) makes a digest rule from a mailing
 list or from a query in the one language, previewed on recent mail before it
@@ -1125,9 +1051,8 @@ the local model, when the user has brought one, checks which mail is alike.
 Without a model, "Digest mail like this" is absent, and list and search rules
 work either way.
 
-**Why this priority**: The list and search rules need no model, but the
-handoff scoped the first milestone to sender rules. "Like this" needs the
-model.
+**Why this priority**: "Like this" needs the model; list and search rules
+widen what sender rules already do.
 
 **Independent Test**: Create each kind of rule against a fixture mailbox,
 and assert that the preview equals what the rule later holds.
@@ -1142,28 +1067,30 @@ and assert that the preview equals what the rule later holds.
 
 ---
 
-### User Story 15 - Capture tasks and notes into Obsidian (Priority: P3, milestone 3)
+### User Story 15 - Capture tasks and notes into Obsidian (Priority: P3)
 
 Screen 25.
 
-`t` on a message opens a capture sheet for a task, and `n` for a note:
+With a vault configured, `t` on a message opens a capture sheet for a task,
+and `n` for a note:
 
-- The task text is the action sentence, verbatim. `Alt+S` swaps in the
+- The task text is the action sentence, verbatim. `alt+s` swaps in the
   subject.
 - The due date comes from the mail when the mail gives one, with quick picks
   beside it.
-- A project is suggested from the vault, with its reason, and `Ctrl+P`
+- A project is suggested from the vault, with its reason, and `mod+p`
   changes it.
 - The preview is the exact markdown line, in the Obsidian Tasks format, with
   a `postio://` link back to the message placed before the date, where the
-  Tasks plugin still reads the date.
+  Tasks plugin still reads the date (C21).
 
-`Ctrl+Enter` appends the line to the vault on this machine. The row then
+`mod+Return` appends the line to the vault on this machine. The row then
 shows "Task in <project> · due <day>". When the task is ticked in Obsidian,
 Postio offers to archive the conversation. Opening the `postio://` link opens
 the conversation in Postio.
 
-**Why this priority**: Milestone 3 (handoff, decision 2).
+**Why this priority**: The last of the four things Focus does to mail, and
+the only one outside the mailbox.
 
 **Independent Test**: Against a temporary vault directory:
 
@@ -1186,8 +1113,12 @@ the conversation in Postio.
 
 ### Edge Cases
 
-- **The other app has the store.** Focus says so in the shared sentence and
-  exits, leaving the store untouched (User Story 11).
+- **Another app has the store.** Focus says so in the shared sentence and
+  leaves the store untouched (User Story 11).
+- **A store from another build.** A store whose schema a recorded migration
+  reaches is migrated in place. Otherwise Focus refuses it with a way
+  forward: "Start a fresh store" sets the old one aside and keeps the
+  accounts and `config.toml` (`docs/notes/2026-10-01-store-migrations-and-starting-over.md`).
 - **A huge inbox.** 100,000 or more conversations scroll, select all and
   archive without loading the mailbox into memory. A bulk action on a
   predicate is one undo unit.
@@ -1198,7 +1129,7 @@ the conversation in Postio.
 - **Mail another app filed.** Focus's rules act only while Focus runs
   (Clarifications). Mail another app filed lands in the inbox there. When
   Focus next opens, it sorts that mail in the background, newest first, so a
-  message the user saw in the classic inbox can then move to Filtered or
+  message the user saw in another app's inbox can then move to Filtered or
   into a digest. Rows the catch-up moves leave the way an archive does. It
   never moves the row under the cursor or a message that is open.
 - **Mail already in the inbox while Focus runs.** Nothing moves a message out
@@ -1207,9 +1138,9 @@ the conversation in Postio.
   - Filtering and holding are decided when mail is filed.
   - Applying filtering to mail that was in the inbox before filtering was
     turned on is a deliberate, previewed, undoable command.
-- **A late decision.** Once a model is in use, a decision made after a
-  message was listed may add a marker. It never moves the message under the
-  cursor, the message that is open, or one the user has acted on.
+- **A late decision.** A model's decision made after a message was listed
+  may add a marker. It never moves the message under the cursor, the message
+  that is open, or one the user has acted on.
 - **The user's model is configured but not running.** Focus works as it
   does without a model, and says so once where a model-backed feature would
   appear. It does not keep retrying. When the model is back, recent mail it
@@ -1245,8 +1176,8 @@ the conversation in Postio.
     instant, never a crash.
   - A digest due at 16:00 is due at 16:00 local time after a change of
     zone.
-- **`Ctrl+Z` while typing.** In a text field or the composer's body,
-  `Ctrl+Z` undoes typing. Everywhere else it undoes the last action.
+- **`mod+z` while typing.** In a text field or the composer's body, `mod+z`
+  undoes typing. Everywhere else it undoes the last action.
 - **Labels.** A label with no colour gets a stable one, never the accent's
   hue. More than two labels show as two pills, and the open message shows
   them all.
@@ -1257,7 +1188,7 @@ the conversation in Postio.
   - a quoted marker sentence;
   - a digest row's senders;
   - a model's summary.
-- **Long text.** At narrower windows, the first line and then the labels
+- **Long text.** At narrower widths, the first line and then the labels
   give way before the sender, subject and time. Nothing wraps into a third
   line, and row heights never change.
 - **No first line.** An image-only or empty message shows no first line,
@@ -1275,8 +1206,8 @@ the conversation in Postio.
 
 **Shape and boundaries**
 
-- **FR-001**: Focus MUST be a desktop application of its own, with its own
-  binary and launcher. It MUST NOT be a mode of the classic app.
+- **FR-001**: Focus MUST be Postio's desktop application, with its own
+  binary, app id and launcher (C27).
 - **FR-002**: Focus MUST run the engine host in its own process and MUST
   reach mail only through the client interface every frontend uses
   (`postio-host`, `postio-client`, ADR 0041).
@@ -1288,37 +1219,41 @@ the conversation in Postio.
   same keyring entries as the other apps, with no import, export or second
   copy. What any app wrote MUST be what Focus presents, and the reverse.
 - **FR-005**: No functionality may be removed from, or degraded in, the
-  classic desktop app, the terminal app or the macOS frontend. Their test
-  suites MUST pass unchanged apart from import paths, and apart from default
-  key bindings, which change to the one keymap (FR-081). A test that has to
-  be weakened to pass is evidence of a regression, not of a refactor.
-- **FR-006**: Behaviour both apps need MUST be expressed once, in the shared
-  toolkit-free layers, and consumed by both. This covers list state,
-  selection, paging, the keymap, key hints, the command bar and finder, date
-  parsing, recipient completion and design tokens (`postio-ui`), and
-  commands and undo (`postio-core`). Focus MUST extend these layers. It MUST
-  NOT duplicate them.
-- **FR-007**: The GTK surfaces both desktop apps need MUST live in a shared
-  GTK component crate that both apps depend on:
-  - the message view, as the new renderer provides it;
+  terminal app or the macOS frontend. Their test suites MUST pass unchanged
+  apart from default key bindings, which follow the one keymap (FR-081). A
+  test that has to be weakened to pass is evidence of a regression, not of a
+  refactor. The classic app is retired (ADR 0043): until it is removed it
+  keeps building and its suites stay green.
+- **FR-006**: Behaviour that needs no toolkit MUST be expressed once, in the
+  shared toolkit-free layers, and consumed from there. This covers list
+  state, selection, paging, the keymap, key hints, the command bar and
+  finder, date parsing, recipient completion, the open message's geometry
+  and design tokens (`postio-ui`), and commands and undo (`postio-core`).
+  Focus MUST extend these layers. It MUST NOT duplicate them.
+- **FR-007**: The GTK that Focus draws outside its own window MUST live in
+  `postio-widgets`, which depends on no app:
+  - the message view, on the reading renderer;
   - the composer;
-  - the keycap, key-hint, chip and action-bar widgets.
+  - the settings window and its presenters;
+  - the keycap, key-hint, chip, action-bar, notice and toast widgets, and the
+    pickers.
 
-  Focus MUST NOT depend on the classic app's crate. The rule for the shared
-  crate (what may live there, what may not, and who depends on it) MUST be an
-  ADR of its own, kept to that rule. It MUST be enforced by a new entry in
-  `scripts/checks/check-crate-boundaries.py`.
-- **FR-008**: The classic app MUST stay green through every step of that
-  move. The move MUST NOT start on a part another branch is changing
-  (see *The message view waits for the new renderer*).
+  Focus MUST NOT depend on the classic app's crates. The rule for
+  `postio-widgets` (what may live there, what may not, and who depends on
+  it) is ADR 0043, enforced by `scripts/checks/check-crate-boundaries.py`.
+- **FR-008**: Code moving out of the classic app's crates MUST go to the
+  lowest layer that can hold it, and the move MUST keep every app that still
+  builds green at every step.
 - **FR-009**: The documents that name Postio's frontends, boundaries and
   keys MUST describe Focus, in this branch, together with the checks that
   enforce them:
-  - the constitution's Scope and Principle VII. Before the branch lands, the
-    Scope must also allow Focus's optional, user-supplied local model, an
-    amendment the maintainer approves (see *Milestones, and landing*);
+  - the constitution's Scope and Principle VII, including the optional,
+    user-supplied local model and one desktop app, amendments the
+    maintainer approves (see *Milestones, and landing*);
   - `docs/PRODUCT.md` §2, §8 and §23, and `docs/keybindings.md`;
   - `docs/ARCHITECTURE.md`.
+- **FR-019**: Focus MUST reopen at the size and maximised state it was
+  closed at, and a second launch MUST raise the window it already has.
 
 **The list**
 
@@ -1335,17 +1270,20 @@ the conversation in Postio.
   - an attachment mark, the conversation's message count and the time;
   - its action marker, when it has one: a dot, the marker's kind and date,
     the quoted sentence or the event time, and the marker's action with its
-    key.
+    key;
+  - in Drafts and the Outbox, a draft's sending state (FR-056).
 - **FR-013**: There MUST be exactly two row heights, one line and two lines,
   each fixed. No row's content may be measured to lay the list out. Focus,
   hover and selection change what a row draws, never its height.
 - **FR-014**: The list MUST be windowed over the paged store and MUST never
-  load a mailbox into memory. Focus MUST reuse the classic list's paging, not
-  a second implementation.
+  load a mailbox into memory. Focus MUST use the shared paging
+  (`postio-ui`'s `ListWindow` and `Paging`), not a second implementation.
 - **FR-015**: The list MUST keep a cursor and a selection that are distinct.
-  Select all (`⇧X`) MUST be a predicate over the current view, not a set of
+  Select all (`X`) MUST be a predicate over the current view, not a set of
   ids. While anything is selected, a bulk bar MUST show the count, the bulk
-  actions with their keys, and the selection keys.
+  actions with their keys, and the selection keys. The mouse MUST reach the
+  same commands: a click moves the cursor, a double-click opens, `ctrl` and
+  `shift` clicks select, and a right-click offers the row's verbs.
 - **FR-016**: Selecting or moving to a row MUST NOT open it or mark it read.
 - **FR-017**: `!` MUST toggle a has-action filter. The toggle carries the
   count, and the strip says how many of how many are showing. The filter
@@ -1356,8 +1294,8 @@ the conversation in Postio.
   - where the user is ("Inbox ▾"), opening the folders popover;
   - its conversation and unread counts;
   - the has-action toggle;
-  - once their features exist, the filtered-today count (`g f`) and the
-    digest-rule count (`g d`).
+  - the filtered-today count (`g f`) while filtering is on, and the
+    digest-rule count (`g d`) while there are rules.
 
   The top bar MUST hold compose, the command-bar field with its keys, the
   sync label, the main menu and close.
@@ -1378,42 +1316,76 @@ the conversation in Postio.
 
 **Opening a message**
 
-- **FR-030**: `Enter` MUST open the conversation in a dialog over the list,
-  in one frame. The dialog MUST reuse one message view for every open,
-  rather than building one per open.
-- **FR-031**: `Esc` MUST close the dialog and return to the same row, with
+- **FR-030**: `Enter` MUST open the conversation over the list, in one
+  frame, in the dialog or, when the user has chosen it, the pane (FR-038).
+  Every open MUST reuse one message view rather than building one per open.
+- **FR-031**: `Esc` MUST close the message and return to the same row, with
   the selection unchanged.
-- **FR-032**: In the dialog, `j`/`k` MUST step to the next and previous
-  message in the list without closing it, and move the list's cursor to
-  match. `[`/`]` MUST step to the older and newer message in the
+- **FR-032**: With a message open, `j`/`k` MUST step to the next and
+  previous message in the list without closing it, and move the list's
+  cursor to match. `[`/`]` MUST step to the older and newer message in the
   conversation. The header MUST say where the user is in both.
-- **FR-033**: The body MUST be drawn by the new message renderer: sanitised,
-  with remote images blocked until allowed per sender, no script, and no
-  network request. It MUST NOT be a plain-text-only view. `v` MUST show the
-  raw source.
+- **FR-033**: The body MUST be drawn by the reading renderer (ADR 0042):
+  sanitised, with remote images blocked until allowed once or always for
+  the sender, no script, and no network request. It MUST NOT be a
+  plain-text-only view. `v` MUST show the raw source.
 - **FR-034**: Quoted history MUST be folded with its line count and MUST
   expand on request. Attachments MUST be listed with name and size.
   Attachments and links MUST open only on a deliberate act, with a link's
-  full target shown first.
-- **FR-035**: A message with a marker MUST show a marker card under its
-  headers, with the marker's action and key. A quoted marker MUST highlight
-  its sentence in the body where it appears.
-- **FR-036**: The dialog's toolbar MUST offer every action on the message,
-  each with its key: reply, reply all, forward, archive, snooze, remind,
-  label and move, plus task and note once Obsidian exists.
-- **FR-037**: The dialog MUST show one message at a time, the latest by
-  default, as screen 04 draws it. This departs from ADR 0032 on purpose. ADR
-  0032 makes a conversation one document in the classic app's reading pane,
-  and it still governs there. Focus opens a message, not a thread, and walks
-  the thread with `[`/`]`. The departure MUST be recorded against ADR 0032.
+  full target shown first. `o` MUST offer the message's links and parts to
+  open, and its attachments to save one at a time or all together; an
+  attachment chip opens the same chooser at its part.
+- **FR-035**: A message with a marker MUST show an action card under its
+  sender block, with the marker's action and key. A quoted marker MUST
+  highlight its sentence in the body where it appears.
+- **FR-036**: The open message's action row MUST offer every action on the
+  message, each with its key: reply, reply all, forward, archive, snooze,
+  remind, label, move and delete, with label, move and delete folding into
+  More (`.`) when the row is too narrow. A to-do's action card MUST offer
+  Task when a vault is configured, and `t` and `n` MUST open the capture
+  sheet from the open message.
+- **FR-037**: The open message MUST show one message at a time, the latest
+  by default, as screen 04 draws it. Focus opens a message, not a thread,
+  and walks the thread with `[`/`]`. This departs from ADR 0032's stacked
+  conversation on purpose, and ADR 0032 records it.
+- **FR-038**: The open message MUST be placeable beside the list instead of
+  over it. `toggle_reading_pane` (`F8`, and a check item in the main menu)
+  switches between the dialog and the pane and writes `[focus] reading`
+  (`"dialog"`, the default, or `"pane"`), so the choice outlives the session.
+  The pane is the same message view as the dialog, `min(820, W - 404)` wide
+  beside a list of at least 404 px. A window narrower than 980 px opens the
+  dialog whatever the setting says. With the pane, the list keeps the
+  keyboard, and the pane follows the cursor only while a message is open;
+  the composer takes the pane's place while it is open.
+- **FR-039**: The open message's frame MUST follow from the window, never
+  from the message: the dialog is `clamp(640, W − 2·max(96, 0.18·W), 820)`
+  wide and the window's height less 80, the list behind dimmed. Everything
+  inside the message shares one centred column, `min(480, dialog − 96)` for
+  a body drawn in **app colours** and `min(640, dialog − 48)` for one drawn
+  on **paper**. Every HTML body is sanitised and classified:
+  - **paper** when, after sanitising, it paints a page background, has a
+    fixed-width layout table of 480 px or more, or an image wider than
+    300 px. It is drawn as sent on a white sheet, never inverted or
+    recoloured, dimmed in dark mode, and zoomed to fit its column down to
+    0.85 before it scrolls sideways;
+  - **app colours** otherwise: the sender's colours, faces and sizes are
+    removed, the body is set in Barlow in the app's ink with links in the
+    accent, and a colour the sender kept survives only at 4.5:1 against the
+    surface.
+
+  A quiet line above an HTML body names its treatment, and `O` switches
+  between the two, remembered for the sender when the user asks.
+  `mod+plus`, `mod+minus` and `mod+0` zoom the body, kept in `[reader]
+  zoom`, and `mod+f` finds in the message without moving the reading
+  position.
 
 **Acting**
 
-- **FR-040**: Archive, delete, snooze, label, move, mark read or unread, and
-  undo MUST go through the same commands and the same undo stack as the
-  classic app. Focus changes the surface, not the behaviour.
+- **FR-040**: Archive, delete, snooze, unsnooze, label, move, flag, mark
+  read or unread, and undo MUST go through the same commands and the same
+  undo stack every Postio app uses.
 - **FR-041**: After archive, delete, move, snooze or label, an undo toast
-  MUST say what happened ("Archived 3 messages · Undo"). `Ctrl+Z` MUST undo
+  MUST say what happened ("Archived 3 messages · Undo"). `mod+z` MUST undo
   the last action, including after the toast has gone. There is no
   single-key undo.
 - **FR-042**: Snooze, remind, label and move MUST be pickers anchored to the
@@ -1425,27 +1397,36 @@ the conversation in Postio.
 
   Label MUST filter as the user types, toggle with `Space`, show which
   labels are applied, and create a label that does not exist. Move MUST
-  filter, list recent destinations first, and undo with `Ctrl+Z`.
+  filter, list recent destinations first, and undo with `mod+z`.
 - **FR-043**: Snooze and remind presets MUST come from one shared preset
-  table, so both apps offer the same times, computed the same way.
+  table, so every picker offers the same times, computed the same way.
 - **FR-044**: Remind if no reply MUST be set from its picker (`h`) or from
-  the composer (`Ctrl+H`). A reply from anyone but the user MUST cancel it.
+  the composer (`mod+h`). A reply from anyone but the user MUST cancel it.
   Otherwise, when it is due, the conversation MUST return to the top of the
   inbox marked "No reply since <date>".
 - **FR-045**: A reminder MUST be local-first, work offline, and survive a
   restart. It MUST fall due even if Focus was not running at the time,
   taking effect when Focus next opens. It MUST be undoable when set or
   cleared.
+- **FR-046**: A message that stays open for the dwell
+  (`postio_ui::dwell::DWELL_TO_READ`, one second), in the dialog or the pane,
+  MUST be marked read; stepping on, closing or `r` before then leaves it
+  unread. `r` in the open message marks it unread again. Marking on dwell
+  is kept off the undo stack.
+- **FR-047**: `*` MUST flag a conversation and unflag a flagged one, from
+  the key, the row menu and the command bar, with Undo (C13). Rows draw no
+  flag mark, and `g *` lists flagged mail. `B` and the row menu MUST wake a
+  snoozed conversation in the Snoozed list and the open message.
 
 **Compose**
 
-- **FR-050**: Compose, reply, reply all and forward MUST use the existing
+- **FR-050**: Compose, reply, reply all and forward MUST use Postio's one
   composer (rich text, attachments, identities, signatures, drafts, send
-  later, the outbox) in the frame of screens 05 and 06: a dialog over the
-  app that may be detached to a window of its own. Focus MUST NOT have a
-  composer of its own.
+  later, the outbox) in the open message's frame: a dialog over the app, or
+  the pane when a message is read beside the list, that may be detached to
+  a window of its own. Focus MUST NOT have a composer of its own.
 - **FR-051**: `Esc` MUST close the composer and keep the draft locally. A
-  draft MUST open in either app.
+  draft MUST open in any app.
 - **FR-052**: Recipient completion MUST draw on the address book and past
   mail, rank by how often the user has written to each address, show that
   count, mark mailing lists, and offer nothing until the user types in a
@@ -1456,10 +1437,19 @@ the conversation in Postio.
   labels filled from the thread, and the quoted text folded under the draft.
 - **FR-055**: Sending MUST be local-first: the message is in the Outbox at
   once, online or not, and leaves at most once (ADR 0021).
+- **FR-056**: A draft that left the composer MUST say its state where it is
+  listed and when it is opened: waiting to send and sending in the Outbox,
+  not sent and not confirmed in Drafts. Opened, it MUST offer what settles
+  it: Cancel send while waiting; Retry send when not sent; Retry send and
+  Mark as sent when not confirmed; and Edit, which takes a waiting send off
+  the queue before anything is edited.
+- **FR-057**: A `mailto:` URI MUST open the composer filled from it.
+- **FR-058**: Selected messages MUST be draggable out of the list to a file
+  manager as `.eml` files, produced lazily.
 
 **Command bar, search and going places**
 
-- **FR-060**: `/` and `Ctrl+K` MUST open one bar that filters search,
+- **FR-060**: `/` and `mod+k` MUST open one bar that filters search,
   commands and places together as the user types. `>` MUST limit it to
   commands. Every command row MUST show its key.
 - **FR-061**: A command run from the bar MUST act on the row or the
@@ -1468,9 +1458,9 @@ the conversation in Postio.
   chips of the one query language (constitution III). It MUST NOT use a
   second language or the network, and MUST NOT need a model. It MUST be
   deterministic. Words it cannot lower MUST stay free text. `Tab` MUST step
-  into the chips, and `Ctrl+Backspace` MUST return to the plain words.
+  into the chips, and `mod+BackSpace` MUST return to the plain words.
 - **FR-063**: Saved searches MUST be pinned across the top of the bar, with
-  counts and `Alt+1`–`Alt+4`. `Ctrl+S` MUST save the current query as a
+  counts and `alt+1`–`alt+4`. `mod+s` MUST save the current query as a
   saved search, the same kind every app reads.
 - **FR-064**: `in:` MUST complete folder names and list a folder's
   conversations newest first. Results MUST be one line each, say where each
@@ -1480,76 +1470,85 @@ the conversation in Postio.
   `g s`, `g z`, `g r`, `g f`), then folders and labels, with counts. Typing
   MUST filter it, and `Enter` MUST go to the chosen place. A mailbox, folder
   or label shown this way MUST have the same rows and actions as the inbox.
+- **FR-066**: A query with a likely misspelling MUST offer "Search instead
+  for “…”" as a row the bar can run (ADR 0037), and `O` MUST switch a result
+  list between relevance and date once a result is chosen.
 
 **States**
 
 - **FR-070**: An empty inbox MUST show a quiet, centred message. It names
   the next digest when there is one, and offers shortcuts to Filtered,
-  Archive and Compose, listing only what exists.
+  Archive and Compose, listing only what exists. While the first sync has
+  not finished its first pass, it MUST say it is syncing and how far, never
+  that the inbox is empty.
 - **FR-071**: First sync, offline and a sign-in error MUST each show as one
   banner under the header strip, with the sync label matching. Each banner
   offers what the state needs: progress, Retry now, or Update password….
 - **FR-072**: No sync state may block anything local. Everything already on
   this machine MUST stay readable, searchable and actionable, and changes
   MUST queue until sync is back.
+- **FR-073**: An account failing for a reason other than its password MUST
+  be named in the banner, with the reason (the sync's own words when it gave
+  them) and Retry now, while every working account's mail stays listed
+  (ADR 0005).
 
 **Keyboard**
 
 - **FR-080**: Every Focus action MUST be a command in the one command
   registry. Its key, its command-bar row, its line in the `?` key map, and
   the keycap on every button that performs it MUST all be generated from
-  that registry. A Focus action that is not in the registry does not exist.
+  that registry. A Focus action that is not in the registry does not exist,
+  and every command Focus is offered MUST reach a handler.
 - **FR-081**: There MUST be one default keymap for every Postio app, and it
   MUST be the one `KEYS.md` sets out (Clarifications).
-  - The classic app's and the terminal's defaults MUST change to it.
   - A command that only another app has MUST keep a key, chosen so that it
     does not collide with the keymap.
   - Every binding MUST be overridable from `[keys]` in `config.toml`, by
     command id. There is no `keys.toml` and no per-app key table.
 - **FR-082**: A key MUST mean one thing across Focus's surfaces, and a
   command MUST have the same key in every app that has it. No key may be
-  bound to two commands in one context. Surfaces only another app has, such
-  as the classic sidebar, keep their own context keys. Undo is `Ctrl+Z`
-  only. Inside a text field, `Ctrl+Z` undoes typing.
+  bound to two commands in one context. Surfaces only another app has keep
+  their own context keys. Undo is `mod+z` only. Inside a text field,
+  `mod+z` undoes typing.
 - **FR-083**: Every command reachable in Focus MUST have a key, a command-bar
-  row and a visible, clickable control. That includes commands `KEYS.md`
-  leaves without a key (C11, C12). The mouse MUST work everywhere and MUST
-  never be required.
+  row and a visible, clickable control. The mouse MUST work everywhere and
+  MUST never be required.
 - **FR-084**: `?` MUST toggle the key map, and `Esc` MUST close it. The key
   map MUST be grouped as screen 20 groups it, and its footer MUST name
   `[keys]` in `config.toml`.
-- **FR-085**: The terminal app MUST follow the one keymap. A terminal
-  delivers `Ctrl+Z` as its suspend signal, so the plan MUST settle how the
-  terminal reaches undo on that key, and what becomes of suspend.
+- **FR-085**: The terminal app MUST follow the one keymap. Raw mode delivers
+  `ctrl+z` as a key, and the terminal binds it to undo; it does not suspend.
 
 **Visual language, appearance and accessibility**
 
-- **FR-090**: Focus MUST use libadwaita's named colours only, with light and
-  dark both following the system through the platform's style manager.
-- **FR-091**: The accent colour MUST be reserved for action markers, the
-  keyboard focus ring and the has-action toggle. Default buttons (Send,
+- **FR-090**: Focus MUST use libadwaita's named colours, with light and
+  dark both following the system through the platform's style manager. The
+  open message's surface, ink, hairlines and scrim are the handoff's values
+  for those roles (C26).
+- **FR-091**: The accent colour MUST be the system's (C26), and MUST be
+  reserved for action markers and the open message's action card, links,
+  the keyboard focus ring and the has-action toggle. Default buttons (Send,
   Create, Add task, Archive all) MUST be plain raised buttons with bold
   labels, not the suggested-action style, so the accent stays reserved.
   Label colours that Postio assigns MUST avoid the accent's hue; a colour
   the user or their server set is drawn as set (Assumptions).
-- **FR-092**: There MUST be one keycap style, one dialog pattern for every
-  window over the app, and one picker pattern (a popover anchored to the
-  row), shared with the classic app wherever the classic app draws the same
-  thing.
-- **FR-093**: Text MUST be set in Adwaita Sans. Keys, addresses and
-  operators MUST be set in Adwaita Mono.
+- **FR-092**: There MUST be one keycap style, one close button, one icon
+  button, one dialog pattern for every surface over the app, and one picker
+  pattern (a popover anchored to the row).
+- **FR-093**: The chrome MUST be set in Adwaita Sans, with keys, addresses,
+  counts and operators in Adwaita Mono (C25). A body drawn in app colours is
+  set in Barlow (FR-039).
 - **FR-094**: Transitions MUST take no more than 100 ms, or be absent, and
   MUST honour reduced motion.
-- **FR-095**: Every screen from 01 to 20 MUST be built against its PNG.
-  Before its work is called done, the running app MUST be compared with the
-  PNG, and every difference MUST be recorded with its reason. Later screens
-  are held to the same rule in their milestone.
+- **FR-095**: Every screen MUST be built against its PNG, and every
+  difference between the running app and the PNG MUST be recorded in
+  `screens.md` with its reason.
 - **FR-096**: Every surface MUST be usable with a screen reader and without
   a mouse. A row MUST announce its sender, subject, first line, unread
   state and marker. A keycap MUST be announced once, as its control's
   shortcut, not read as text.
 
-**Invitations** (milestone 1)
+**Invitations**
 
 - **FR-100**: A message carrying a calendar invitation MUST show an Invite
   marker with the event's date and time in the user's time zone, and Accept
@@ -1557,18 +1556,17 @@ the conversation in Postio.
   calendar part, with no model involved, and MUST be computed when the
   message is filed.
 - **FR-101**: Calendar parsing MUST follow a survey of the Pimalaya family,
-  recorded in the plan, before any parser is written (constitution VII).
+  recorded in research R9 (constitution VII).
 - **FR-102**: Accepting or declining MUST send a reply to the organiser only
   on the user's keypress. The reply goes through the existing outbox,
   local-first. It waits about ten seconds, during which the undo toast and
-  `Ctrl+Z` cancel it and nothing is sent. After that it cannot be undone.
+  `mod+z` cancel it and nothing is sent. After that it cannot be undone.
 - **FR-103**: An updated invitation MUST replace the marker's time. A
   cancelled one MUST say so and offer no Accept. A past one MUST show no
   Accept or Decline. After an answer, the marker MUST show what was
   answered.
 
-**Questions and to-dos** (milestone 1 built in; milestone 2 the user's
-model)
+**Questions and to-dos**
 
 - **FR-104**: A message sent directly to the user that asks them a question,
   or asks them to do something, MUST get a Question or To-do marker. The
@@ -1592,10 +1590,10 @@ model)
   the model.
 - **FR-108**: A dismissed marker MUST be remembered as a correction, and MUST
   never return on that message. Both detectors MUST take dismissals into
-  account. The plan decides how far a dismissal teaches beyond its own
-  message, and records it.
+  account: three dismissals of one kind from one sender stop that kind for
+  that sender (research R10).
 
-**Filtering** (milestone 1: headers and structure)
+**Filtering**
 
 - **FR-110**: While Focus runs, spam, promotions and automated updates
   (notifications, receipts, shipping and social) MUST be archived
@@ -1620,12 +1618,12 @@ model)
 - **FR-117**: Filtered mail MUST be archived, and MUST NOT be deleted
   automatically. Filtered MUST list all of it.
 - **FR-118**: Filtering MUST apply to mail filed after it is turned on.
-  Applying it to mail already in the inbox MUST be a deliberate command that
-  shows what would move, and MUST be one undoable action.
-- **FR-119**: Filtering MUST be on when Focus first opens, and there MUST be
-  a switch to turn it off in `[focus]`.
+  Applying it to mail already in the inbox MUST be a deliberate command
+  (`F`) that shows what would move, and MUST be one undoable action.
+- **FR-119**: Filtering MUST be on when Focus first opens, and
+  `[focus] filtering` MUST turn it off.
 
-**Digests** (milestone 1: by sender)
+**Digests**
 
 - **FR-120**: `d` MUST open "Digest this sender", pre-filled with the
   sender's address. It MUST offer Daily, Weekly or Monthly, a day and a
@@ -1636,23 +1634,21 @@ model)
   Held mail stays filed in the inbox, where the other apps and devices see
   it, and Focus keeps it out of its own inbox. It MUST remain searchable,
   and it MUST be listed under its rule at `g d`.
-- **FR-122**: Mail with an invitation (and, later, a question or a to-do)
-  MUST NOT be held. Mail in a conversation the user took part in MUST NOT be
-  held.
+- **FR-122**: Mail with an invitation, a question or a to-do MUST NOT be
+  held. Mail in a conversation the user took part in MUST NOT be held.
 - **FR-123**: When a digest comes due, exactly one digest row MUST appear in
   the inbox, holding everything the rule held since its last delivery. A
   digest holding nothing MUST make no row. A digest that came due while
   Focus was not running MUST appear when Focus next opens, without loss or
   duplication.
 - **FR-124**: A digest row MUST show its cadence, its name and its count.
-  Once summaries exist (milestone 2), its first line MUST be the opening of
-  its summary, as 01 draws it ("Summary of 14 messages from 6 senders: …").
-  Until then, and whenever no summary could be written, it MUST show the
-  digest's senders instead.
+  When the digest has a summary, its first line MUST be the summary's
+  opening, as 01 draws it ("Summary of 14 messages from 6 senders: …");
+  otherwise it MUST show the digest's senders.
 - **FR-125**: `Enter` on a digest row MUST open the digest window over the
   inbox: on its summary when there is one (FR-172), and on the plain list of
   its messages otherwise. `Tab` switches between the two. From the window:
-  - `⇧A` archives the whole digest as one undoable action;
+  - `A` archives the whole digest as one undoable action;
   - `Enter` opens the focused message, or the referenced email, in the same
     window;
   - `d` edits the rule and its cadence;
@@ -1663,9 +1659,9 @@ model)
   delivery and what it holds now. Every rule MUST be editable and removable
   there. Removing a rule MUST release what it held into the inbox.
 - **FR-127**: Digest rules MUST be expressed in the one query language, so
-  that a sender rule, and later a list or search rule, means what the same
-  query means in search (ADR 0008). A rule's preview MUST be the query run
-  over existing mail.
+  that a sender, list or search rule means what the same query means in
+  search (ADR 0008). A rule's preview MUST be the query run over existing
+  mail.
 
 **Classification**
 
@@ -1728,14 +1724,15 @@ model)
   limited to the inbox and the last 30 days of mail, sent one request at a
   time, in the background. The runtime is the user's own, so Postio bounds
   what it asks of it rather than how it runs. Its progress MUST be visible,
-  not hidden. Digest summaries MUST be written in the background before a
-  digest comes due where possible, and MUST never delay the digest row.
+  not hidden. A digest's summary is written after the digest is delivered,
+  and MUST never delay the digest row, which shows its senders until the
+  summary lands.
 
 **Privacy**
 
 - **FR-150**: Focus MUST make no network request the user did not ask for.
   In particular:
-  - no remote image without per-sender permission;
+  - no remote image without the user's permission, once or for the sender;
   - no read receipt;
   - no link prefetch;
   - no unsubscribe or RSVP without a deliberate keypress;
@@ -1746,19 +1743,30 @@ model)
   only in the encrypted store.
 - **FR-152**: Every fixture, test, screenshot committed to the repository,
   issue and commit MUST use reserved domains and fictional people.
-- **FR-153**: Focus's notifications MUST follow the classic app's settings,
-  and MUST never fire for mail Focus filtered or held.
+- **FR-153**: Focus's notifications for new mail MUST follow `[sync]`'s
+  settings, and MUST never fire for mail Focus filtered or held.
 
 **Configuration**
 
 - **FR-160**: Focus's own settings MUST live in a `[focus]` section of
-  `config.toml`, reloaded live as `[tui]` is. Keys stay under `[keys]`.
+  `config.toml`, reloaded live. Keys stay under `[keys]`.
 - **FR-161**: Digest rules, pinned senders and filtering corrections MUST be
   kept where every app reads them. They MUST be readable and correctable by
   the user, as the other rules and saved searches are.
+- **FR-162**: Settings MUST open over the list (`mod+comma`, and the main
+  menu) in the open message's dialog frame, as the shared settings window
+  (ADR 0031) drawn in Focus's type and accent. It MUST show Accounts,
+  Filters, Composing, Keyboard, Sync & storage (with a per-folder backfill
+  exclusion, ADR 0016), Privacy and Config file, and no key Focus does not
+  honour. Every account verb MUST be reachable from the keyboard. `mod+e`
+  MUST open `config.toml` in the person's editor from anywhere in Focus.
+  Changes to `[keys]`, `[filters]`, `[sync]`, `[focus]`, `[compose]`,
+  `[reader]` and `[storage]` MUST take effect without a restart.
+- **FR-163**: Focus's first run MUST add an account (the form, or OAuth
+  sign-in), then ask how much history to sync, through the shared
+  onboarding presenter.
 
-**Milestone 2, the local model the user brings** (specified now so
-milestone 1 does not design it out)
+**The local model the user brings**
 
 - **FR-165**: The local model MUST be one the user brings: a model and a
   runtime they install, choose and run on this machine (for example Ollama,
@@ -1795,7 +1803,6 @@ milestone 1 does not design it out)
   not code. Postio speaks a documented local interface, and no runtime or
   model is named or special-cased in code (constitution VII: providers are
   data).
-
 - **FR-170**: When connected, the user's model MUST answer the needs-action
   question in place of the built-in detector, under the same rules (FR-104,
   FR-106, FR-108). It MUST return only the fixed schema (FR-132), so its
@@ -1823,7 +1830,7 @@ milestone 1 does not design it out)
   MUST show its senders. Nothing waits on the model: a digest is listable
   and openable before its summary exists.
 
-**Milestone 3, Obsidian and links**
+**Obsidian and links**
 
 - **FR-180**: Obsidian capture MUST write plain markdown into a vault folder
   the user configures, on this machine, with no plugin and no network:
@@ -1868,23 +1875,23 @@ milestone 1 does not design it out)
   remembered. A correction outranks every layer below the guards.
 - **Digest rule**: what to hold and when to deliver it. A name (the
   sender's, unless the user renames it at `g d`); what it matches (senders,
-  and later a list, a query or "like this"); a cadence (daily, weekly,
-  monthly); a day and a time; and its next delivery.
+  a list, a query or "like this"); a cadence (daily, weekly, monthly); a day
+  and a time; and its next delivery.
 - **Digest**: one delivery of a rule. The mail held since the last delivery,
   released as one row when due, and opened on its summary or its list.
-- **Digest summary** (milestone 2): the statements the local model wrote for
-  one digest, grouped by topic. Each statement carries numbered references,
-  each pinned to a passage in one of the digest's messages. It is plain
-  text, written on this machine, and absent until it has been written.
-- **Model provider** (milestone 2): the runtime and model the user brings,
-  as configured. Where it listens on this machine, which model to ask, and
-  which features may use it. It is absent until the user configures it.
+- **Digest summary**: the statements the local model wrote for one digest,
+  grouped by topic. Each statement carries numbered references, each pinned
+  to a passage in one of the digest's messages. It is plain text, written on
+  this machine, and absent until it has been written.
+- **Model provider**: the runtime and model the user brings, as configured.
+  Where it listens on this machine, which model to ask, and which features
+  may use it. It is absent until the user configures it.
 - **Reminder**: "remind me if no reply". The conversation, when it is due,
   and whether a reply from someone else has cancelled it.
 - **Default keymap**: the one default binding for each command id, shared by
   every Postio app, with the user's `[keys]` overrides applied over it.
-- **Obsidian capture** (milestone 3): a task line or a note, the vault file
-  it goes to, its project, and its `postio://` link back to the message.
+- **Obsidian capture**: a task line or a note, the vault file it goes to,
+  its project, and its `postio://` link back to the message.
 
 ## Success Criteria *(mandatory)*
 
@@ -1918,15 +1925,15 @@ milestone 1 does not design it out)
 - **SC-008**: An RSVP leaves only after the user's keypress and after its
   ten-second window, exactly once. Cancelling within the window sends
   nothing.
-- **SC-009**: Every screen from 01 to 20 has been compared with its PNG, and
-  every difference is recorded with its reason.
-- **SC-010**: Once the shared components have moved, the classic app's test
-  suites pass with nothing changed but import paths and default key
-  bindings.
+- **SC-009**: Every screen has been compared with its PNG, and every
+  difference is recorded with its reason.
+- **SC-010**: Moving code into the shared crates changes no behaviour: the
+  suites of every app that still builds pass with nothing changed but
+  import paths and default key bindings.
 - **SC-011**: For a store of 100,000 messages, on one core of the reference
   workstation, with the interface keeping its interaction budget throughout:
-  - milestone 1's filtering, digest and invitation pass finishes in under 5
-    minutes, reading no body beyond calendar parts;
+  - the filtering, digest and invitation pass finishes in under 5 minutes,
+    reading no body beyond calendar parts;
   - the built-in needs-action pass over the inbox and the last 30 days
     finishes in under 1 minute, reading only bodies already on this machine.
 - **SC-012**: Over the maintainer's first month on a real mailbox, fewer
@@ -1937,7 +1944,7 @@ milestone 1 does not design it out)
   misses is reported, not gated. On the maintainer's own mailbox, fewer than
   1 in 10 markers are dismissed as wrong, whichever detector made them,
   measured the same way as SC-012.
-- **SC-014** (milestone 2): On the summary fixture corpus:
+- **SC-014**: On the summary fixture corpus:
   - every shown statement cites at least one of the digest's messages;
   - every cited passage exists byte-exact in its message;
   - no summary renders markup or a live link.
@@ -1945,8 +1952,8 @@ milestone 1 does not design it out)
   context, every command an app offers has a key, and each command has the
   same default key in every app that offers it. This is proven by
   enumerating the one keymap.
-- **SC-016**: With no model configured, every milestone 1 acceptance
-  scenario passes, Question and To-do markers still appear from the built-in
+- **SC-016**: With no model configured, every acceptance scenario that needs
+  no model passes, Question and To-do markers still appear from the built-in
   detector, and Postio opens zero connections to any model runtime. A test
   that fails on any connection attempt proves it. No Postio package contains
   a language model or an inference engine.
@@ -1966,19 +1973,18 @@ milestone 1 does not design it out)
     or falls back (FR-167). Question and To-do markers fall back to the
     built-in detector, which is plain code, not a model.
 
-  This matches ADR 0009 ("Nothing is bundled"), which the model otherwise
-  follows. The constitution's Scope still says v1 has "no AI (deferred to
-  epic E12)". The amendment that reconciles the two lands with the branch,
-  with the maintainer's approval (FR-009).
+  This matches ADR 0009 ("Nothing is bundled") and the constitution's
+  Scope (1.3.0).
 - **The built-in needs-action detector reads English first.** Mail in a
   language it does not handle gets no Question or To-do marker from it,
   rather than a guess. The user's model, when connected, is not limited this
   way.
 - **One inbox across accounts.** This is the brief's proposal. Folders and
-  labels are grouped by account wherever there is more than one account.
+  labels are grouped by account wherever there is more than one account;
+  `account:` narrows a search to one.
 - **Filtering starts on.** It covers mail filed from the first open,
-  applying to mail already in the inbox is a deliberate command, and a
-  `[focus]` switch turns it off. The brief's caution, that auto-archiving
+  applying to mail already in the inbox is a deliberate command, and
+  `[focus] filtering` turns it off. The brief's caution, that auto-archiving
   must be proven on a real mailbox before it is the default, is met by:
   - the guard rules;
   - a reason on every filtered message;
@@ -1987,59 +1993,44 @@ milestone 1 does not design it out)
   - SC-012, measured on the maintainer's own mailbox.
 - **A digest is Focus's view; a filter is a real archive.**
   - Held mail stays filed in the inbox, so the other apps and devices keep
-    seeing it there. `⇧A` in the digest is what archives it, which is why
+    seeing it there. `A` in the digest is what archives it, which is why
     the digest window offers "Archive all".
   - Filtered mail is archived for real, so every app and device sees it
     archived.
   - Both follow from Focus's rules acting only while Focus runs.
 - **Held mail is never out of reach.** It is searchable, listed at `g d`,
   and never held when the user took part in its conversation.
-- **One keymap changes the other apps' defaults** (Clarifications). For
-  example:
-  - `s` snoozes rather than flags;
-  - `d` makes a digest rule rather than deleting, and delete moves to the
-    `Delete` key;
-  - `Ctrl+Z` undoes, and `u` no longer does;
-  - `U` unsubscribes rather than marking unread;
-  - `g d`, `g t`, `g s` and `g f` go where `KEYS.md` sends them.
-
-  Every command either app had keeps a key, including flagging, which Focus
-  itself does not offer. `docs/PRODUCT.md` §8, `docs/keybindings.md` and the
-  design canvas's key hints change with them. There are no installs to
-  migrate (CLAUDE.md, no backwards compatibility).
-- **Flagging is not a Focus verb.** Screens and `KEYS.md` omit it, and "Has
-  action" plays that part. Flags set in the classic app are kept and are
-  searchable (`is:flagged`).
+- **One keymap** (Clarifications). `s` snoozes, `*` flags, `d` makes a
+  digest rule and delete is the `Delete` key, `mod+z` undoes, `U`
+  unsubscribes, and `g d`, `g t`, `g s` and `g f` go where `KEYS.md` sends
+  them. Every command any app offers has a key ([contracts/keymap.md](./contracts/keymap.md)).
 - **Plain-English search is lowered by local rules.** Correspondent names
   become `from:`/`to:`, date phrases become `after:`/`before:`, and phrases
   such as "with attachments" or "unread" become their operators; the rest
-  stays free text. A later milestone may improve the lowering with the
-  user's model, when they have brought one, still producing chips of the one
-  language.
+  stays free text.
 - **Label colours.** A label's stored colour is used when it has one.
   Otherwise the label gets a stable colour from a palette that excludes the
   accent's hue.
-- **Packaging.** Focus ships in the desktop app's package as a second
-  launcher, with its own binary, app id and desktop entry. It shares every
-  library the classic app already carries, and only one of the two runs at a
-  time.
-- **Platforms.** This spec covers Linux and GTK. Focus on macOS, iOS or the
-  terminal is out of scope. It is not designed out, because Focus's logic
-  lives in the toolkit-free layers (FR-006).
-- **The design folder** stays out of the repository until it is re-rendered
-  and scrubbed (see *The inputs, and which one wins*).
+- **Packaging.** Focus is the desktop Flatpak's app. At the package switch
+  (T253) it takes the name "Postio", the binary `postio`, the app id
+  `dev.postio.Postio`, the launcher, the icon and the `mailto:` and
+  `postio:` handlers.
+- **Platforms.** This spec covers Linux and GTK. Focus's design on macOS is
+  outlined in [macos.md](./macos.md); its logic lives in the toolkit-free
+  layers (FR-006), so it is not designed out.
+- **The design folders** stay out of the repository until they are
+  re-rendered and scrubbed (see *The inputs, and which one wins*).
 - **Budgets.** The first-pass numbers (SC-011, FR-141, FR-142) are initial
-  targets. The plan converts them into counts, and nightly measurement
-  refines them.
+  targets, converted into counts and refined by nightly measurement.
 - **Window sizes.** The screens are drawn at 1440×900. Focus also works at a
   laptop's width and at GNOME's minimum window size. As the window narrows,
   the first line and then the labels give way before the sender, subject and
-  time.
+  time; the open message's frame narrows by FR-039's rule.
 
 ## Out of Scope
 
-- A three-pane layout, a folder sidebar or a reading pane. The classic app
-  keeps those.
+- A folder sidebar or a three-pane layout. Reading beside the list is the
+  open message placed in a pane (FR-038), not a third pane.
 - Rewritten subjects, priority scores, summaries or any text Postio wrote in
   a conversation row. The digest summary is the one exception, and it stays
   inside digests (Clarifications).
@@ -2051,4 +2042,4 @@ milestone 1 does not design it out)
   built-in needs-action detector is plain code, not a model.
 - An Obsidian plugin, or editing notes beyond appending captures.
 - A new protocol, backend or sync mode.
-- Focus on macOS, iOS or in the terminal.
+- Focus in the terminal or on iOS.
