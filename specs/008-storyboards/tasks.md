@@ -755,7 +755,7 @@ GTK app.
 **Independent Test**: running the pass on Classic names each command with no
 visible effect. Each one is fixed, filed, or listed with a reason (spec US6).
 
-- [ ] T087 [P] [US6] [TEST] Write coverage-logic tests in
+- [X] T087 [P] [US6] [TEST] Write coverage-logic tests in
   `crates/postio-storyboard/src/coverage.rs`, over synthetic before and after
   observations and frame hashes:
   - `effect` when either one changed;
@@ -763,12 +763,12 @@ visible effect. Each one is fixed, filed, or listed with a reason (spec US6).
   - `listed_gap`;
   - `stale_gap` when a listed gap now has an effect;
   - gap-list parsing per contracts/storyboard-format.md § Gap list.
-- [ ] T088 [US6] Implement `crates/postio-storyboard/src/coverage.rs`, then
+- [X] T088 [US6] Implement `crates/postio-storyboard/src/coverage.rs`, then
   the `every-command` subcommand in `crates/postio-app/examples/storyboard.rs`.
   For each context with a starting state (declared in `list`), and for each
   command bound there, it starts a fresh seeded window, delivers by chain, and
   compares. Add `scripts/storyboards.sh coverage`. T087 goes green.
-- [ ] T089 [US6] Run the coverage pass on Classic. For every `no_effect`:
+- [X] T089 [US6] Run the coverage pass on Classic. For every `no_effect`:
   - a fix under ~10 minutes is made here, in its own commit;
   - anything larger is filed with `scripts/issue-file.sh`, and listed in
     `storyboards/gaps/classic.toml` with `tracked = <issue>`.
