@@ -42,6 +42,10 @@ Design/review/<branch>/bundle/
 └── contests.toml        # written by the implementing session
 ```
 
+With more than one batch, each reviewer writes `verdicts.N.json`, and
+`postio-storyboard verdicts merge <bundle>` folds them into `verdicts.json`
+in batch order before `verdicts check`.
+
 `manifest.json` lists, per batch (one app and one surface, at most 60
 frames), the storyboard files, each changed or new run, and **every step that
 needs a verdict**. These are the steps of changed and new runs. Unchanged runs

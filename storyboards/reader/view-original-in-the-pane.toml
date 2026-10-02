@@ -5,6 +5,7 @@
 # It has to name the focused one. The seeded newsletter (second row) is put in
 # reader view, and the key must bring back the sender's own layout.
 # Pinned: the pane keeps its message and the keyboard stays where it was.
+apps   = ["classic"]   # the reading pane; Focus has none, it opens a dialog
 source = { kind = "issue", ref = "#1398" }
 proof  = "pinned"
 

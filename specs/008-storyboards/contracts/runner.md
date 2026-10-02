@@ -58,7 +58,10 @@ moved or cached intact (research R8).
 ## `scripts/storyboards.sh`
 
 ```text
-scripts/storyboards.sh run     [--app classic|focus|all] [--only <glob>] [--changed] [--variants]
+scripts/storyboards.sh run     [--app classic|focus|all] [--only <glob>] [--variants] [--no-frames]
+                               [--delivery chain|direct] [--calibration]
+scripts/storyboards.sh bundle  --acceptance <file> [--calibration]   # what a reviewer reads
+scripts/storyboards.sh tool    <postio-storyboard arguments>          # the pure tool, built
 scripts/storyboards.sh base    [--app ...]           # run on the merge-base (cached)
 scripts/storyboards.sh page    [--open]              # build Design/review/<branch>/index.html + summary.md
 scripts/storyboards.sh key                           # print the review key for this tree (R13)
@@ -101,6 +104,13 @@ The script calls this. People rarely do.
 | `verdicts check <bundle>/verdicts.json` | Validates the citations and completeness (FR-019) |
 | `page <bundle> --out <dir>` | Writes `index.html` and `summary.md` |
 | `key --tree <git-tree-ids>...` | Prints the review key |
+| `verdicts merge <bundle>` | Folds per-batch `verdicts.N.json` into `verdicts.json` |
+| `sheet --runs <dir> --catalogue <dir> --design-dir <dir> --out <index.html>` | The screen sweep's contact sheet; exits 1 naming any screen that did not render |
+
+Every invocation of the script plays on a compositor of its own
+(`postio-storyboard-<pid>`, 1920×1200), stopped on exit: on the shared one,
+whether a window was the active one depended on who else was running, and
+an inactive window draws in GTK's backdrop style.
 
 ## In the suites (research R14)
 

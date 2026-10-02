@@ -737,7 +737,7 @@ For every task in this phase:
   - 88c1f0f7/63641d47, dialog Delete, and More returning focus.
 
   Run them on the lane, then cherry-pick into `feature/postio-focus`.
-- [ ] T086 [US5] Record the pointer rows as not expressible in
+- [X] T086 [US5] Record the pointer rows as not expressible in
   `catalogue-seed.md`, each with its reason: #1679, 2af808b1, #56 and #40.
   Comment on any `open`-proof storyboard's issue with the red run's failing
   step and check. This is the evidence, and it lives where the issue lives.

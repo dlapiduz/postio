@@ -4,6 +4,7 @@
 # reading pane empty, a plate where the message should be, until a click
 # or a key woke it. Pinned: the pane holds the first row's own conversation
 # and the run fails if the frame was ever blank while it filled.
+apps   = ["classic"]   # the reading pane; Focus has none, it opens a dialog
 source = { kind = "issue", ref = "#601" }
 proof  = "pinned"
 
