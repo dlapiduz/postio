@@ -179,3 +179,59 @@ fn a_key_with_neither_a_character_nor_a_name_is_unhandled() {
     );
     session.shutdown();
 }
+
+#[test]
+fn slash_opens_search_from_the_list() {
+    // Reported not working on macOS. `/` is the whole of `search`'s primary
+    // binding (`golden/linux-bindings.txt` line 31), and it is a bare
+    // character with no name of its own, so the frontend reduces it to
+    // `character: "/"` and nothing else. If this resolves, the fault is on
+    // the Swift side of the seam rather than here.
+    let session = session();
+    assert!(
+        matches!(
+            session.key(Some("/"), None, NONE, UiContext::List, false),
+            KeyOutcomeFfi::Command { .. }
+        ),
+        "`/` resolved to nothing from the list: {:?}",
+        session.key(Some("/"), None, NONE, UiContext::List, false)
+    );
+}
+
+#[test]
+fn slash_is_refused_while_a_field_has_the_keyboard() {
+    // The other half, and the reason the bug is easy to mistake for a dead
+    // key: typing `/` into the search field must type a slash rather than
+    // re-opening search. `in_text_entry` is the caller's answer, and getting
+    // it wrong is the most visible bug this boundary can have.
+    let session = session();
+    assert!(
+        matches!(
+            session.key(Some("/"), None, NONE, UiContext::List, true),
+            KeyOutcomeFfi::Unhandled
+        ),
+        "`/` was swallowed while something was being typed into"
+    );
+}
+
+#[test]
+fn asking_for_a_buttons_key_does_not_resolve_the_keymap_again() {
+    // Found by sampling the running app while stepping through mail: every
+    // move re-rendered the reader's buttons and the toolbar, each asked for
+    // its key for a tooltip, and each ask resolved the whole keymap from the
+    // registry -- about 50 ms of the main thread per move, in a 100 ms
+    // budget. The bindings do not change while a session is open.
+    let session = session();
+    let _ = session.bindings_for("reply".to_owned());
+    let before = postio_core::test_support::keymap_resolutions();
+
+    for command in ["reply", "reply_all", "forward", "archive", "expand_all"] {
+        let _ = session.bindings_for(command.to_owned());
+    }
+
+    assert_eq!(
+        postio_core::test_support::keymap_resolutions() - before,
+        0,
+        "the keymap is resolved once per session, not once per question"
+    );
+}

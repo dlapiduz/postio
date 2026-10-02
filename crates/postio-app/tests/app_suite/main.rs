@@ -35,6 +35,7 @@ mod dwell_wiring;
 mod egress_wiring;
 mod escape_after_finder_closed;
 mod event_fanout;
+mod every_command;
 mod focus_on_launch;
 mod folder_header_count;
 mod glib_main_context;
@@ -49,6 +50,7 @@ mod manual_sync;
 mod navigation_cost;
 mod next_conversation_prepared;
 mod notify_off_the_main_thread;
+mod observe;
 mod onboarding_probe;
 mod one_document_conversation;
 mod opens_from_storage;
@@ -95,6 +97,9 @@ mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
 mod store_in_use_window;
+mod storyboard_catalogue;
+mod storyboard_determinism;
+mod storyboards;
 mod sync_window;
 mod thread_bodies_in_one_crossing;
 mod thread_bulk_keystroke;
@@ -336,6 +341,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "go_to_keystroke::pressing_g_i_shows_the_inbox",
         go_to_keystroke::pressing_g_i_shows_the_inbox as fn(),
+    ),
+    (
+        "storyboard_determinism::two_processes_film_a_storyboard_identically",
+        storyboard_determinism::two_processes_film_a_storyboard_identically as fn(),
+    ),
+    (
+        "storyboard_catalogue::the_catalogue_holds_on_classic",
+        storyboard_catalogue::the_catalogue_holds_on_classic as fn(),
+    ),
+    (
+        "storyboards::a_storyboard_plays_on_classic_and_writes_its_run",
+        storyboards::a_storyboard_plays_on_classic_and_writes_its_run as fn(),
+    ),
+    (
+        "every_command::every_bound_command_shows_or_is_a_listed_gap",
+        every_command::every_bound_command_shows_or_is_a_listed_gap as fn(),
+    ),
+    (
+        "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",
+        observe::the_window_says_where_the_keyboard_cursor_and_notices_are as fn(),
     ),
     (
         "keystroke::pressing_a_archives_the_row_in_the_database",

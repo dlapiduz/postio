@@ -208,8 +208,11 @@ fn sample_draft() -> Draft {
         subject: "Re: Contract".into(),
         body: MessageBody {
             text: Some("sure".into()),
-            html: None,
+            html: Some("<p>sure</p>".into()),
         },
+        // `true` rather than the default, for this file's own reason: a
+        // field set to its default proves nothing about a round trip.
+        rich: true,
         body_markdown: Some("sure".into()),
         labels: vec![LabelId::new(2), LabelId::new(4)],
         // Populated, for the reason `rfc_message_id` is below.

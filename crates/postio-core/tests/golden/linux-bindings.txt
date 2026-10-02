@@ -10,8 +10,8 @@ select_all	X | ctrl+a
 prev_view	Left
 back	Escape
 toggle_result_order	O
-next_in_conversation	]
-prev_in_conversation	[
+next_in_conversation	] | alt+Down
+prev_in_conversation	[ | alt+Up
 toggle_fold	z
 view_original	ctrl+o
 toggle_reader_view	ctrl+shift+o | alt+o
@@ -23,12 +23,12 @@ find_previous	ctrl+shift+g | shift+F3
 zoom_in	ctrl+plus | ctrl+equal | ctrl+KP_Add
 zoom_out	ctrl+minus | ctrl+KP_Subtract
 zoom_reset	ctrl+0 | ctrl+KP_0
-expand_all	O
+expand_all	O | ctrl+shift+e
 toggle_rail	I
-reply	e
-reply_all	E
-forward	f
-archive	a
+reply	e | ctrl+r
+reply_all	E | ctrl+shift+r
+forward	f | ctrl+shift+f
+archive	a | ctrl+shift+a
 archive_thread	A
 delete	Delete
 move	m
@@ -46,16 +46,16 @@ view_source	v
 open_attachment_or_link	o
 dismiss_marker	-
 more_actions	.
-search	/
+search	/ | alt+ctrl+f
 save_search	ctrl+s
 back_to_words	ctrl+BackSpace
-compose	c
-send	ctrl+Return | alt+s | alt+Return
+compose	c | ctrl+n
+send	ctrl+shift+d | ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S
 save_draft	ctrl+s
 discard_draft	ctrl+d
 mark_sent	ctrl+shift+m | alt+m
-retry_send	ctrl+shift+r | alt+r
+retry_send	ctrl+shift+y | alt+r
 cancel_send	ctrl+shift+x | alt+x
 attach_file	ctrl+shift+a | alt+a
 detach_composer	ctrl+shift+o | alt+o

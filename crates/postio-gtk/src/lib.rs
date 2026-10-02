@@ -103,6 +103,7 @@ pub mod shell;
 pub mod sidebar;
 pub mod startup;
 pub mod state;
+pub mod storyboard;
 pub mod style;
 pub mod thread_row;
 // The undo toast is drawn by both desktop apps (ADR 0043).

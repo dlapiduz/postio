@@ -1,0 +1,22 @@
+# Leaving the composer returns the keyboard to the list.
+#
+# After Escape from a composer, or after a send, the keyboard is on the
+# split pane's container rather than on a row: the runner reports region
+# "other" on GtkPaned. A person cannot see that, but the next key is the
+# test, and the list is where the keyboard was when the composer opened
+# (compare #1474 / 6eadd8e2 for search). Open: the check is the intent.
+source = { kind = "issue", ref = "#1751" }
+proof  = "open"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "compose"
+check   = { composer.open = true, keyboard.region = "composer" }
+
+[[step]]
+command = "back"
+check   = { composer.open = false, keyboard.region = "list", cursor.index = 0 }
+expect  = "The composer is gone, the conversation is back, and the keyboard is on the list row it left."

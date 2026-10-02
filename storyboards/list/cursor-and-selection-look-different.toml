@@ -1,0 +1,27 @@
+# The cursor and the selection are two different things and look it (#753, #750).
+#
+# The defect: a selected row and the cursor row were drawn identically, so
+# after `x` on one row and moving down you could not tell which rows an
+# archive would act on. Selection state is checked exactly (one selected,
+# cursor three rows away); the reviewer judges the look on the frame.
+#
+# Not expressible yet: the other half of #753 (the inbox reveals new mail
+# when at the top) needs an `event = "new_mail"` step, which the runner does
+# not support. Recorded in the lane report; add it when `new_mail` lands.
+source = { kind = "issue", ref = "#753" }
+proof  = "pinned"
+design = "01-inbox-reading"
+
+[[step]]
+command = "toggle_selection"
+check   = { keyboard.region = "list", cursor.index = 0, selection.count = 1 }
+expect  = "The first row is selected."
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+check   = { cursor.index = 3, selection.count = 1 }
+expect  = "The cursor ring is on the fourth row and the first row still shows as selected. The two states look clearly different: a selected row is not mistaken for the cursor row."

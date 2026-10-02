@@ -172,6 +172,7 @@ mod gtk_startup_focus;
 mod gtk_store_opening;
 mod gtk_style;
 mod gtk_toast;
+mod gtk_toast_tone_and_undo;
 mod gtk_toggle_rail;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
@@ -186,6 +187,13 @@ mod gtk_window_teardown;
 mod list_contract;
 mod list_model;
 mod no_stray_prints;
+mod row_timestamp_reads_the_clock;
+mod storyboard_chain_delivery;
+mod storyboard_outline;
+mod storyboard_reach;
+mod storyboard_settle;
+mod storyboard_support;
+mod storyboard_typing;
 
 /// Cases held out of a default run, by name. See `app_suite`'s copy for what
 /// this is for; nothing here is held out today.
@@ -194,8 +202,52 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 /// The render deadline for every test that is not about the deadline: the
 /// production bound, scaled by `POSTIO_TEST_PATIENCE`, so a debug build on a
 /// busy runner does not fall back by accident (spec 006 research R6).
+/// The render deadline for tests that assert what a render *shows*.
+///
+/// Not the product's 400 ms. Past its deadline a `BodyView` shows the plain
+/// text instead (FR-023), so a content test given the product deadline is
+/// really asking "does this render finish in 400 ms on this machine right
+/// now" -- a stopwatch, which this project does not ask of a shared runner.
+/// On a loaded CI shard a designed page missed it, and the assertion about
+/// the scroll range met the one-line fallback, 51px tall (2026-10-01). The
+/// deadline itself has its own test, with its own 1 ms deadline
+/// (`body_view::a_render_past_its_deadline_shows_the_plain_text`).
+/// JavaScript for an `<img>`'s state, given an expression that finds it:
+/// `absent`, `loading`, `decoded`, or `broken` -- finished, with no pixels.
+pub(crate) fn image_state_js(find: &str) -> String {
+    format!(
+        "(() => {{ const i = {find}; if (!i) return 'absent'; \
+           if (!i.complete) return 'loading'; \
+           return i.naturalWidth > 0 ? 'decoded' : 'broken'; }})()"
+    )
+}
+
+/// Whether a `postio-cid:` image has decoded, failing at once if it never
+/// will (#1716).
+///
+/// Waiting only for a positive width made a broken image look like a slow
+/// one: on CI the profile test sat out its whole 360 s deadline "waiting for
+/// the cid image to decode", and the log could not say whether the request
+/// failed or never came back. A broken image is final, so it fails here,
+/// naming the scheme request, and the next occurrence says which it was.
+pub(crate) fn cid_image_decoded(state: &str, what: &str) -> bool {
+    match state {
+        "decoded" => true,
+        "broken" => panic!(
+            "{what}: the image finished loading with no pixels -- the postio-cid: \
+             request failed or was refused, so waiting longer cannot help"
+        ),
+        _ => false,
+    }
+}
+
+/// JavaScript that answers `"true"` once the editor page's script has
+/// attached every listener -- the marker `editor.js` sets last (#1716). A
+/// test that types must wait for it, not merely for an editable body.
+pub(crate) const EDITOR_LISTENING: &str = "String(window.postioEditorReady === true)";
+
 pub(crate) fn reader_deadline() -> std::time::Duration {
-    postio_test_support::scaled(postio_gtk::body_view::DEFAULT_RENDER_DEADLINE)
+    postio_test_support::scaled(std::time::Duration::from_secs(30))
 }
 
 const CASES: &[(&str, fn())] = &[
@@ -230,6 +282,82 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text",
         gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text as fn(),
+    ),
+    (
+        "storyboard_outline::the_focused_widgets_bounds_are_drawn_over",
+        storyboard_outline::the_focused_widgets_bounds_are_drawn_over as fn(),
+    ),
+    (
+        "storyboard_outline::the_caption_carries_the_region_name",
+        storyboard_outline::the_caption_carries_the_region_name as fn(),
+    ),
+    (
+        "storyboard_outline::the_plain_frame_is_untouched",
+        storyboard_outline::the_plain_frame_is_untouched as fn(),
+    ),
+    (
+        "storyboard_settle::a_static_window_settles",
+        storyboard_settle::a_static_window_settles as fn(),
+    ),
+    (
+        "storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames",
+        storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames as fn(),
+    ),
+    (
+        "storyboard_settle::an_empty_window_is_blank",
+        storyboard_settle::an_empty_window_is_blank as fn(),
+    ),
+    (
+        "storyboard_settle::a_window_that_never_stops_changing_is_unsettled",
+        storyboard_settle::a_window_that_never_stops_changing_is_unsettled as fn(),
+    ),
+    (
+        "storyboard_reach::a_focused_mapped_list_is_reachable",
+        storyboard_reach::a_focused_mapped_list_is_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::an_unmapped_focus_is_not_reachable",
+        storyboard_reach::an_unmapped_focus_is_not_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable",
+        storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable as fn(),
+    ),
+    (
+        "storyboard_reach::no_focus_widget_is_not_reachable",
+        storyboard_reach::no_focus_widget_is_not_reachable as fn(),
+    ),
+    (
+        "storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry",
+        storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry as fn(),
+    ),
+    (
+        "storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view",
+        storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view as fn(),
+    ),
+    (
+        "storyboard_typing::a_hook_takes_what_no_editable_does",
+        storyboard_typing::a_hook_takes_what_no_editable_does as fn(),
+    ),
+    (
+        "storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into",
+        storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list",
+        storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it",
+        storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered",
+        storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::return_in_a_text_field_activates_it",
+        storyboard_chain_delivery::return_in_a_text_field_activates_it as fn(),
     ),
     (
         "body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once",
@@ -742,6 +870,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer",
         gtk_reading_pane::the_reading_pane_shows_a_message_and_yields_it_to_the_composer as fn(),
+    ),
+    (
+        "row_timestamp_reads_the_clock::a_rows_timestamp_follows_a_frozen_clock",
+        row_timestamp_reads_the_clock::a_rows_timestamp_follows_a_frozen_clock as fn(),
     ),
     (
         "gtk_row::rows_under_one_cascade_read_one_palette",
@@ -1340,6 +1472,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_editor_bridge::an_edit_becomes_the_document_and_undo_walks_typing_runs as fn(),
     ),
     (
+        "gtk_editor_bridge::the_editor_page_says_when_its_script_is_listening",
+        gtk_editor_bridge::the_editor_page_says_when_its_script_is_listening as fn(),
+    ),
+    (
         "gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white",
         gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white as fn(),
     ),
@@ -1591,6 +1727,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_toast::the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo",
         gtk_toast::the_undo_toast_coalesces_and_offers_undo_only_when_there_is_something_to_undo as fn(),
+    ),
+    (
+        "gtk_toast_tone_and_undo::a_toast_says_its_tone_and_whether_it_offers_undo",
+        gtk_toast_tone_and_undo::a_toast_says_its_tone_and_whether_it_offers_undo as fn(),
     ),
     (
         "gtk_unavailable::the_screen_shows_what_it_was_told_and_asks_to_try_again_once",

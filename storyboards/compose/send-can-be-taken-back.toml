@@ -1,0 +1,49 @@
+# A sent message can be taken back while it is still queued (#1481).
+#
+# The decision on #1481 was that the registry promised `u` for a send and
+# could not keep it, so a send is reversible "for a window" through its own
+# affordance rather than the undo stack: the message waits in the Outbox,
+# and opening it cancels the send and hands the draft back (6f4db057). This
+# is that path, pinned. The runner has no network, and `send` only queues,
+# which is what this needs.
+source = { kind = "issue", ref = "#1481" }
+proof  = "pinned"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+
+[[step]]
+type    = "Thanks, looks fine."
+
+[[step]]
+id      = "sent"
+command = "send"
+check   = { composer.open = false }
+expect  = "The composer closes. The Outbox in the sidebar now shows 1."
+
+[[step]]
+command = "focus_sidebar"
+
+[[step]]
+key     = "j"
+[[step]]
+key     = "j"
+[[step]]
+key     = "j"
+[[step]]
+key     = "j"
+check   = { rows.count = 1 }
+expect  = "The Outbox lists the reply, queued and not yet sent."
+
+[[step]]
+command = "cycle_pane"
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "open_message"
+check   = { composer.open = true }
+expect  = "Opening the queued message cancels its send and the composer comes back with the reply; a toast says the send was cancelled and the draft is being edited again."

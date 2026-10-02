@@ -1,0 +1,39 @@
+# J and K walk the messages of an open conversation, and Reply answers the
+# one they stopped on (#1386, #1365).
+#
+# The defect: per-message focus and per-message reply did nothing in the
+# one-document pane. The seven-message long-thread opens on its newest
+# message; K must step back through the thread and `e` must reply to the
+# message focused, not always the newest.
+#
+# Open: in the running app the keyboard never reaches the conversation's
+# own context. `K` is unbound in the list context and dropped from the
+# reader context, so the focus stays on message 7 and the pane never moves.
+source = { kind = "issue", ref = "#1748" }
+proof  = "open"
+seed   = "long-thread"
+
+[[step]]
+id      = "open"
+wait    = { until = { reading.id = "7" } }
+check   = { reading.focused = 6 }
+expect  = "The thread opens on its newest message."
+
+[[step]]
+command = "prev_in_conversation"
+check   = { reading.focused = 5 }
+expect  = "The focus steps back one message and the pane scrolls it into view."
+
+[[step]]
+command = "prev_in_conversation"
+check   = { reading.focused = 4 }
+
+[[step]]
+command = "next_in_conversation"
+check   = { reading.focused = 5 }
+expect  = "J steps forward again."
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "The composer opens as a reply to the message the focus is on (message 6, from Test User), not the newest, and the caret is in the body."

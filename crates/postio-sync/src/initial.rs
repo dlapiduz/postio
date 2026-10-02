@@ -692,9 +692,7 @@ pub(crate) async fn commit_batch_filing(
             let source: Vec<Message> = slice.to_vec();
             postio_storage::transaction(connection, move |connection| async move {
                 let mut written = source;
-                let upsert = MessageRepository::new(&connection)
-                    .upsert_batch(&mut written)
-                    .await?;
+                let upsert = upsert_indexed(&connection, &mut written).await?;
 
                 let threading = ThreadingRepository::new(&connection, account_id);
                 let mut threads = Vec::with_capacity(written.len());
@@ -765,6 +763,34 @@ pub(crate) async fn commit_batch_filing(
         yield_once().await;
     }
 
+    Ok(report)
+}
+
+/// Upsert a write unit's messages, indexing each for search once (#1587).
+///
+/// The search triggers stand aside for the unit and every message's
+/// `search_documents` row is written once at the end, whole, or not at all
+/// when its text has not changed (`postio_index::index::write_documents`).
+/// Each trigger write is an operation on the full-text index, and they were
+/// one per message plus one per address and attachment on insert, and twice
+/// that on a resync, which deletes and rewrites them all -- 65% of a first
+/// sync's header write, sampled live.
+///
+/// Inside the unit's transaction, which is what makes the deferral safe:
+/// nothing else writes while it stands, and a unit that fails rolls it back
+/// with everything else.
+pub(crate) async fn upsert_indexed(
+    connection: &postio_storage::Connection,
+    batch: &mut Vec<Message>,
+) -> postio_storage::Result<postio_storage::repository::UpsertReport> {
+    let deferred = postio_index::index::defer_documents(connection).await?;
+    let report = MessageRepository::new(connection)
+        .upsert_batch(batch)
+        .await?;
+    if deferred {
+        let ids: Vec<_> = batch.iter().map(|message| message.id).collect();
+        postio_index::index::write_documents(connection, &ids).await?;
+    }
     Ok(report)
 }
 

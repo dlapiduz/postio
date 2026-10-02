@@ -67,6 +67,11 @@ pub async fn execute_with_snippets(
     order: ResultOrder,
     snippets: usize,
 ) -> Option<SearchResults> {
+    // Timed here, on the app's clock, rather than trusting the executor's
+    // own figure: this is the whole wait the readout reports, excerpts and
+    // the suggestion's second pass included, and a frozen clock (a
+    // storyboard's) has to read the same in every run.
+    let started = postio_ui::clock::instant();
     let mut results = run(connection, account, query, scope, order).await?;
 
     // A word that found nothing is answered with the word that was meant,
@@ -81,7 +86,7 @@ pub async fn execute_with_snippets(
     if results.total_hits == 0
         && let Some(offer) = results.suggestion.clone()
     {
-        let offered = postio_search::parse(&offer.term, Utc::now().date_naive());
+        let offered = postio_search::parse(&offer.term, postio_ui::clock::now().date_naive());
         if let Some(mut found) = run(connection, account, &offered, scope, order).await
             && found.total_hits > 0
         {
@@ -102,6 +107,7 @@ pub async fn execute_with_snippets(
     // Excerpts point at the word that matched, which after a rewrite is not
     // the one typed.
     snippet_hits(connection, &shown, &mut results, snippets).await;
+    results.elapsed = postio_ui::clock::instant().saturating_duration_since(started);
     Some(results)
 }
 
@@ -129,10 +135,48 @@ async fn run(
             limit: HIT_LIMIT,
             order,
         },
-        Utc::now(),
+        postio_ui::clock::now().with_timezone(&Utc),
     )
     .await
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
+    .ok()
+}
+
+/// What the result set on screen is made of — the refine chips and the scope
+/// counts (#1157).
+///
+/// Beside [`execute`] and for the same reason its module doc gives: which
+/// narrowings are worth offering is a *product* decision, and two frontends
+/// each choosing four chips out of the same measurements would be offering
+/// two different query languages the first time either copy was edited.
+///
+/// A second pass over the index rather than a field on [`SearchResults`],
+/// because it is a different question — the scope counts ask what
+/// *switching* would find, which cannot be measured inside the scope you are
+/// already in — and because a run that only draws a list should not pay for
+/// it.
+///
+/// `None` when the counts could not be taken. The chips are an offer, and an
+/// offer that cannot be made is simply not made.
+pub async fn facets(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    scope: Scope,
+    order: ResultOrder,
+) -> Option<postio_search::facets::Facets> {
+    postio_index::executor::facets(
+        connection,
+        &SearchRequest {
+            account,
+            query,
+            scope,
+            limit: HIT_LIMIT,
+            order,
+        },
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "the facets could not be measured"))
     .ok()
 }
 

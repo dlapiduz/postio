@@ -3082,6 +3082,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-maildir"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d790ef6241fdaefdf2c18035d7e38ceae51a04f0314067e9c65bc934f2a34bb7"
+dependencies = [
+ "gethostname",
+ "log",
+ "mail-parser",
+ "thiserror",
+]
+
+[[package]]
 name = "io-oauth"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4605,6 +4617,7 @@ dependencies = [
  "domain",
  "io-http",
  "io-imap",
+ "io-maildir",
  "io-oauth",
  "io-pim-discovery",
  "io-sasl",
@@ -4656,6 +4669,7 @@ dependencies = [
  "libadwaita",
  "mimalloc",
  "postio-account",
+ "postio-app",
  "postio-client",
  "postio-config",
  "postio-core",
@@ -4669,10 +4683,12 @@ dependencies = [
  "postio-session",
  "postio-smtp",
  "postio-storage",
+ "postio-storyboard",
  "postio-test-support",
  "postio-ui",
  "postio-widgets",
  "serde-xml-rs",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
@@ -4873,6 +4889,8 @@ dependencies = [
 name = "postio-gtk"
 version = "0.4.2"
 dependencies = [
+ "async-channel",
+ "blake3",
  "chrono",
  "gio",
  "glib",
@@ -4891,6 +4909,7 @@ dependencies = [
  "postio-test-support",
  "postio-ui",
  "postio-widgets",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tracing",
@@ -5111,6 +5130,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-storyboard"
+version = "0.4.2"
+dependencies = [
+ "blake3",
+ "postio-config",
+ "postio-core",
+ "postio-ui",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "postio-sync"
 version = "0.4.2"
 dependencies = [
@@ -5196,6 +5230,7 @@ dependencies = [
  "postio-model",
  "postio-search",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]

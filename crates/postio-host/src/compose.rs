@@ -30,6 +30,13 @@ use postio_storage::{BlobStore, Store};
 /// How many recipient suggestions a prefix offers.
 pub const SUGGESTION_LIMIT: u32 = 8;
 
+/// The moment a draft is saved, queued or cancelled at, from the clock seam
+/// rather than the system's, so a storyboard that stops the clock sees the
+/// Outbox dated as of its own day.
+fn now() -> DateTime<Utc> {
+    postio_model::clock::now().with_timezone(&Utc)
+}
+
 /// Autosave: the draft is written, and its upload to the server's Drafts
 /// folder is queued in the same transaction (`DraftRepository::save_and_sync`).
 ///
@@ -39,7 +46,7 @@ pub const SUGGESTION_LIMIT: u32 = 8;
 pub async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
     DraftRepository::new(&connection)
-        .save_and_sync(draft, Utc::now())
+        .save_and_sync(draft, now())
         .await?;
     Ok(())
 }
@@ -47,9 +54,7 @@ pub async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::
 /// Discard: the local row goes now, and the server copy is queued for removal.
 pub async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection)
-        .discard(id, Utc::now())
-        .await?;
+    DraftRepository::new(&connection).discard(id, now()).await?;
     Ok(())
 }
 
@@ -65,10 +70,10 @@ pub async fn queue_send(
     let drafts = DraftRepository::new(&connection);
     match at {
         Some(at) => {
-            drafts.queue_send_at(draft, Utc::now(), at).await?;
+            drafts.queue_send_at(draft, now(), at).await?;
         }
         None => {
-            drafts.queue_send(draft, Utc::now()).await?;
+            drafts.queue_send(draft, now()).await?;
         }
     }
     Ok(())
@@ -305,7 +310,7 @@ pub async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> 
         .map_err(|error| tracing::warn!(%error, "could not open the store to cancel a send"))
         .ok()?;
     let drafts = DraftRepository::new(&connection);
-    match drafts.cancel_send(id, Utc::now()).await {
+    match drafts.cancel_send(id, now()).await {
         Ok(CancelSendOutcome::Cancelled) => drafts
             .get(id)
             .await
@@ -762,20 +767,15 @@ pub fn attach_file(
 
 /// Writes pasted image bytes into `blobs` as an inline part the body can
 /// point at by `cid:`.
+///
+/// The rule is `postio_session::attaching::inline_image`'s, which the macOS
+/// composer calls too: one answer for what an inline picture's `Content-ID`
+/// is, and the same refusal of a non-image or an oversized one, whichever
+/// frontend it was pasted into.
 pub fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> Option<Attachment> {
-    let size = bytes.len() as u64;
-    let blob_id = blobs
-        .put(&bytes)
+    postio_session::attaching::inline_image(blobs, &bytes, mime_type)
         .map_err(|error| tracing::warn!(%error, "could not store the pasted image"))
-        .ok()?;
-
-    let extension = mime_type.strip_prefix("image/").unwrap_or("png");
-    let mut attachment = Attachment::new(MessageId::UNASSIGNED, mime_type, size);
-    attachment.filename = Some(format!("inline-image.{extension}"));
-    attachment.disposition = postio_model::attachment::Disposition::Inline;
-    attachment.content_id = Some(format!("{}@postio.invalid", blob_id.as_str()));
-    attachment.blob_id = Some(blob_id);
-    Some(attachment)
+        .ok()
 }
 
 /// A MIME type for `path` from its first bytes, then its extension, for a

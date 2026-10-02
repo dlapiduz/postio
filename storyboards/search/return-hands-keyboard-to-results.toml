@@ -1,0 +1,21 @@
+# Return from the search field hands the keyboard to the hits (#693).
+#
+# #693 asked for Return or Tab; the search command bar (spec 003) has since
+# given Tab to refining -- the field's footer reads "Return open · Tab
+# refine" -- so Return is the handoff. #1252 is the same handoff flaking on
+# CI; chain delivery passes the key through every controller on the real
+# focus chain, which is what that flake was about.
+source = { kind = "issue", ref = "#693" }
+proof  = "pinned"
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "harbour"
+settle  = { until = { rows.count = { changed = true } } }
+
+[[step]]
+key     = "Return"
+check   = { keyboard.region = "list", keyboard.typing = false, keyboard.reachable = true, cursor.index = 0 }
+expect  = "The keyboard is on the first result, and the search field keeps the query."

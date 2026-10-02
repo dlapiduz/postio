@@ -168,12 +168,22 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
     assert_eq!(dialect, "hello edited", "the surface is not editable");
 
     // ── the cid image resolved locally ────────────────────────────────────
-    settle("the cid image to decode from the blob source", || {
+    let what = "the cid image to decode from the blob source";
+    settle(what, || {
+        let state = eval(
+            &view,
+            &crate::image_state_js("document.getElementById('inline')"),
+        );
+        crate::cid_image_decoded(&state, what)
+    });
+    assert_eq!(
         eval(
             &view,
-            "String(document.getElementById('inline').naturalWidth)",
-        ) == "1"
-    });
+            "String(document.getElementById('inline').naturalWidth)"
+        ),
+        "1",
+        "the cid image decoded at the wrong size"
+    );
 
     // ── a link click edits rather than navigates ──────────────────────────
     editor::seed(

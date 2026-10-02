@@ -1,0 +1,18 @@
+# A draft in the Drafts folder offers Continue, not Reply (#1212, #1444).
+#
+# The defect: the pane offered Reply on an unsent draft, as if it were
+# somebody else's mail, and the draft's own verbs were lost. Opening it
+# should resume writing it.
+source = { kind = "issue", ref = "#1212" }
+proof  = "pinned"
+seed   = "draft-left-over"
+
+[[step]]
+command = "go_to_drafts"
+check   = { cursor.subject = "Notes for Thursday", keyboard.region = "list" }
+expect  = "Drafts lists the left-over draft, Notes for Thursday, under the cursor."
+
+[[step]]
+command = "open_message"
+check   = { composer.open = true }
+expect  = "Opening the draft puts it back in the composer, where it can be finished. It is not shown as received mail with a Reply button."

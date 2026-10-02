@@ -35,6 +35,7 @@ mod loopback;
 mod resync;
 mod resync_interactive_write;
 mod scan_audit;
+mod search_documents;
 mod send;
 mod status;
 mod watch;

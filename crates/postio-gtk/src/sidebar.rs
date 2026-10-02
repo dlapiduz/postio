@@ -25,7 +25,6 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::time::Instant;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -66,25 +65,19 @@ type SearchSelectionHandler = Box<dyn Fn(String)>;
 /// What to call when messages are dropped on a folder.
 type DropHandler = Box<dyn Fn(crate::list_view::Dragged, MailboxId)>;
 
-/// A pinned `[filters]` entry, as the sidebar needs it: a name to show and a
-/// query to hand back when the row is picked.
-///
-/// Not `postio_config::FilterConfig` itself, whose name is a map key rather
-/// than a field: the widget takes a flat list of rows to draw, the same
-/// shape `set_mailboxes` already takes, so the caller carries the config
-/// schema's own key-value split and this stays a plain display value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SavedSearch {
-    /// The `[filters.<key>]` key -- the stable identity a rename, reorder
-    /// or delete acts on (#292). Never shown; [`SavedSearch::name`] is what
-    /// draws.
-    pub key: String,
-    /// What the row shows: the display name the user chose, or `key` if
-    /// they never renamed it.
-    pub name: String,
-    /// The query text this row hands back when activated.
-    pub query: String,
-}
+// A pinned `[filters]` entry, as the sidebar needs it: a name to show and a
+// query to hand back when the row is picked.
+//
+// Moved to `postio-ui` by #1574, for the reason `SyncStatus` and the sidebar
+// helpers below moved: the macOS sidebar draws the same three fields in the
+// same order, and a second spelling of "a saved search" is a second answer to
+// what one is. The name is re-exported so nothing else in this crate had to
+// change, and so every comment naming `SavedSearch` still reads.
+//
+// It is still not `postio_config::FilterConfig`, whose name is a map key
+// rather than a field: the widget takes a flat list of rows to draw, the
+// same shape `set_mailboxes` already takes.
+pub use postio_ui::saved_search::SavedSearch;
 
 /// What a saved search's context menu asked for, and which one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +106,12 @@ type BackfillExclusionHandler = Box<dyn Fn(MailboxId, bool)>;
 // assembly of the sync feed into sentences, not two that drift. The names
 // are re-exported so nothing in this crate had to change, and so every
 // comment that names `SyncStatus` still reads.
+//
+// The drift was not hypothetical. ADR 0019 says anything a frontend
+// interprets will drift, and this line had already done it: one frontend
+// said `idle · imap` while the other said `idle · synced 40s` (#1266). With
+// the whole struct in `postio-ui` the GTK footer has no words of its own
+// left to disagree with.
 pub use postio_ui::status::SyncStatus;
 #[cfg(test)]
 use postio_ui::status::age;
@@ -1730,7 +1729,8 @@ impl Sidebar {
     fn render_status(&self) {
         let imp = self.imp();
         let status = imp.status.borrow().clone();
-        let now = Instant::now();
+        // The seam, so a frozen clock freezes the age too (spec 008).
+        let now = postio_ui::clock::instant();
         let (state, detail) = status.lines(now);
         imp.status_state.set_text(&state);
         imp.status_detail.set_text(&detail);
@@ -2245,6 +2245,7 @@ fn set_class(widget: &impl IsA<gtk::Widget>, class: &str, on: bool) {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+    use std::time::Instant;
 
     use super::*;
     use postio_model::ids::AccountId;

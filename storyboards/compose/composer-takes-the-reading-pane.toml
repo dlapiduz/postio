@@ -1,0 +1,24 @@
+# The composer takes over the reading pane, and Escape gives it back (#1195).
+#
+# The defect: the composer was drawn in a quarter of the window, a corner
+# of the pane, instead of taking the whole reading pane's place. Pinned as far as
+# the observation goes (the occupant is not observed; the frame shows it): it
+# is the pane's occupant, filling it, and leaving brings the conversation
+# back in the same place.
+source = { kind = "issue", ref = "#1195" }
+proof  = "pinned"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+check   = { composer.open = false, reading.id = "12" }
+
+[[step]]
+id      = "compose"
+command = "compose"
+check   = { composer.open = true }
+expect  = "The composer fills the whole reading pane, edge to edge, with the list still beside it. It is not a small box in a corner."
+
+[[step]]
+command = "back"
+check   = { composer.open = false, reading.id = "12" }
+expect  = "The conversation is back in the pane, the same one that was there."

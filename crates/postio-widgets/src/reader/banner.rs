@@ -231,7 +231,12 @@ impl DecodeNotice {
         // One line, so the sentence is shorter than the wrapping one it
         // replaced. What a reader needs is the fact that changes what they
         // do, and the rest was elaboration.
-        notice.set_text("Parts of this message could not be decoded");
+        //
+        // The words themselves are `postio-ui`'s, not this file's: the macOS
+        // reader makes the same claim about the same flag, and a caveat that
+        // was typed out twice is a caveat that can come to say two different
+        // things (#1585).
+        notice.set_text(postio_ui::reader::document::DECODE_CAVEAT);
         DecodeNotice { notice }
     }
 
@@ -279,7 +284,7 @@ impl UnsubscribeBanner {
     /// A banner naming no list, hidden.
     pub fn new() -> Self {
         let notice = NoticeBar::new("mail-unread-symbolic", "postio-unsubscribe-banner");
-        notice.set_action(Some("Unsubscribe"));
+        notice.set_action(Some(postio_ui::unsubscribe::ACTION));
         UnsubscribeBanner { notice }
     }
 
@@ -293,11 +298,12 @@ impl UnsubscribeBanner {
     /// Whether the banner is on screen is the reader's notice slot's to
     /// decide, since #971 shows it for nearly every message and the slot
     /// shows one notice at a time; this only says what it would read.
+    ///
+    /// The sentence is `postio_ui::unsubscribe::summary`'s, so the macOS
+    /// banner says the same thing about the same message (#1585).
     pub fn set_list(&self, list: Option<&str>) {
         match list {
-            Some(list) => self
-                .notice
-                .set_text(&format!("This message is from {list}")),
+            Some(list) => self.notice.set_text(&postio_ui::unsubscribe::summary(list)),
             None => self.notice.set_text(""),
         }
     }

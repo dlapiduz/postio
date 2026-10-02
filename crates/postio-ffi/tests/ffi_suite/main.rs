@@ -16,18 +16,35 @@
 //! checked rather than assumed. A test that grows one has to move back out, or
 //! it will change what its neighbours see.
 
+mod account_repair;
+mod account_switches;
 mod aiming;
+mod command_coverage;
+mod compose;
 mod config;
+mod conversation;
 mod dwell;
+mod facts;
+mod finder;
+mod first_run;
 mod host;
 mod keys;
+mod landing;
 mod list;
+mod notice;
 mod palette;
+mod parts;
+mod provisioning;
+mod rail;
 mod reader;
+mod reader_cost;
 mod registry;
+mod saved_search;
 mod search;
 mod selection;
 mod session;
 mod settings;
 mod store_on_disk;
 mod syncing;
+mod thread_document;
+mod unsubscribe;

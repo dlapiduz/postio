@@ -48,7 +48,6 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use chrono::Local;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -98,7 +97,7 @@ pub fn accessible_label(row: &Row) -> String {
         parts.push(match row.send_at {
             Some(due) => format!(
                 "{word} {}",
-                postio_ui::row::timestamp(due, chrono::Local::now())
+                postio_ui::row::timestamp(due, postio_ui::clock::now())
             ),
             None => word.to_string(),
         });
@@ -126,7 +125,7 @@ pub fn accessible_label(row: &Row) -> String {
             .filter(|subject| !subject.trim().is_empty())
             .unwrap_or_else(|| "no subject".to_string()),
     );
-    parts.push(timestamp(row.received_at, Local::now()));
+    parts.push(timestamp(row.received_at, postio_ui::clock::now()));
     if row.thread_count > 1 {
         parts.push(format!("{} in thread", row.thread_count));
     }
@@ -877,7 +876,7 @@ impl MessageRowView {
         let line = |ink: &Ink, text: &str| {
             let layout = pango::Layout::new(&context);
             layout.set_font_description(Some(&ink.font));
-            layout.set_text(text);
+            layout.set_text(&one_line(text));
             layout
         };
         let row = self.imp().row.borrow().clone();
@@ -891,7 +890,7 @@ impl MessageRowView {
         let time = line(
             &palette.time[tone],
             &row.as_ref()
-                .map(|row| timestamp(row.received_at, Local::now()))
+                .map(|row| timestamp(row.received_at, postio_ui::clock::now()))
                 .unwrap_or_default(),
         );
         let badge = row
@@ -1363,6 +1362,32 @@ struct Summary {
     height: f32,
 }
 
+/// `text` as one line: every run of line breaks, tabs and other control
+/// characters becomes one space. A row lays each role out as a single Pango
+/// line in a slot one line tall, and Pango breaks at a newline whatever the
+/// ellipsizing says, so a header that carries one -- hostile mail puts
+/// `\r\nBcc:` in a subject -- would draw over the role beneath it.
+fn one_line(text: &str) -> std::borrow::Cow<'_, str> {
+    let breaks = |c: char| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}');
+    if !text.contains(breaks) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut gap = false;
+    for c in text.chars() {
+        if breaks(c) {
+            if !gap {
+                out.push(' ');
+            }
+            gap = true;
+        } else {
+            out.push(c);
+            gap = false;
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1376,6 +1401,20 @@ mod tests {
 
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
         EmailAddress::new(name, address)
+    }
+
+    #[test]
+    fn a_line_break_in_a_header_is_drawn_as_a_space() {
+        // A subject carrying an injected header (`Invoice attached\r\nBcc: …`)
+        // drew as three lines on top of each other in one row's slot.
+        assert_eq!(
+            one_line("Invoice attached\r\nBcc: someone\u{2028}end\tok"),
+            "Invoice attached Bcc: someone end ok"
+        );
+        assert!(matches!(
+            one_line("plain"),
+            std::borrow::Cow::Borrowed("plain")
+        ));
     }
 
     #[test]

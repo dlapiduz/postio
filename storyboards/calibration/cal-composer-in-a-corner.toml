@@ -1,0 +1,7 @@
+# must_fail: #1195 stated as the intent. The composer really takes over the
+# reading pane.
+source      = { kind = "issue", ref = "#1195" }
+calibration = "must_fail"
+[[step]]
+command = "compose"
+expect  = "The composer opens as a small panel in a quarter of the window, and the reading pane stays visible beside it."

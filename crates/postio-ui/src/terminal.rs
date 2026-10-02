@@ -230,7 +230,9 @@ mod registry {
     /// (`specs/005-tui-frontend` SC-001, research R4).
     #[test]
     fn a_legacy_terminal_is_shown_the_alternate_it_can_send() {
-        let keymap = postio_core::Keymap::resolve(&Default::default());
+        // Freedesktop named rather than read off the host: on a Mac `mod` is
+        // `cmd`, and the chord this asserts would be a different string.
+        let keymap = postio_core::Keymap::resolve_on(&Default::default(), Platform::Freedesktop);
         let mark_sent = postio_core::CommandId::MarkSent;
         assert_eq!(
             super::deliverable_binding(&keymap, mark_sent, true).as_deref(),

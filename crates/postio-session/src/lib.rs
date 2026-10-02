@@ -41,11 +41,14 @@
 //! left once that line is drawn, and it is smaller than it looks.
 
 pub mod actions;
+pub mod attaching;
 pub mod blocking;
+pub mod checkup;
 pub mod diag;
 pub mod egress;
 pub mod engine;
 pub mod focus;
+pub mod handoff;
 pub mod logging;
 pub mod onboarding;
 pub mod paths;
@@ -54,6 +57,7 @@ pub mod reachability;
 pub mod reading;
 pub mod refresh;
 pub mod search;
+pub mod signin;
 pub mod start_over;
 
 use std::path::Path;

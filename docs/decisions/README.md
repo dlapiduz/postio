@@ -52,6 +52,7 @@ decision stands.
 | [0041](0041-one-app-opens-the-store-at-a-time.md) | One app opens the store at a time; each runs the host inside it | Accepted (2026-09-25), with `specs/005-tui-frontend` |
 | [0042](0042-the-reading-renderer-is-disconnected-and-memory-safe.md) | The reading renderer is disconnected and memory-safe | Accepted (2026-09-27), with `specs/006-email-rendering` |
 | [0043](0043-focus-is-the-one-desktop-app.md) | Focus is the one desktop app, and the GTK it draws lives in `postio-widgets` | Accepted (2026-10-02); the classic app is being retired (`specs/007-postio-focus/classic-parity.md`) |
+| [0044](0044-every-frontend-is-observable-and-storyboarded.md) | Every frontend is observable and storyboarded | Accepted (2026-10-02), with `specs/008-storyboards` |
 
 ## Writing one
 

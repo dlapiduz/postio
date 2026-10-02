@@ -161,7 +161,10 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
 /// The history, so a bump has somewhere to point:
 /// 1 — the original shape (#327).
 /// 2 — `list_id` on `search_documents` and `messages_fts` (48a2f96).
-const METADATA_SCHEMA_VERSION: i64 = 2;
+/// 3 — `search_documents_deferred`, and every trigger standing aside while
+///     it holds a row, so a sync batch indexes each message once
+///     ([`defer_documents`], #1587).
+const METADATA_SCHEMA_VERSION: i64 = 3;
 
 /// The body half's version: `messages_body_fts` over `message_search_bodies`.
 ///
@@ -221,6 +224,7 @@ DROP TRIGGER IF EXISTS trg_search_documents_attachments_ad;
 DROP TRIGGER IF EXISTS trg_search_documents_attachments_au;
 DROP INDEX IF EXISTS search_documents_fts;
 DROP TABLE IF EXISTS search_documents;
+DROP TABLE IF EXISTS search_documents_deferred;
 ";
 
 /// The recorded version of one schema half, `0` when it has never been
@@ -707,6 +711,105 @@ pub async fn clear_account_header_index(connection: &Connection, account_id: i64
         .await? as usize)
 }
 
+/// Stand the search triggers aside until [`write_documents`].
+///
+/// For a sync batch, inside its transaction: the batch then writes its
+/// messages, addresses and attachments with no index work, and
+/// [`write_documents`] indexes each message once, whole. Every trigger write
+/// is an operation on `search_documents_fts`, and the engine's cost is per
+/// operation, not per statement -- batching the writes into fewer statements
+/// was measured and changed nothing. So the only lever is fewer operations.
+///
+/// **Only inside a transaction that ends in [`write_documents`].** The
+/// deferral is a row, and a row outlives the call that wrote it: left
+/// standing, every later write would go unindexed. A transaction that fails
+/// takes the row with it on rollback, which is the other way it ends.
+///
+/// Answers whether there is an index to defer. A store [`ensure_schema`]
+/// has not reached -- a test's, or one opened by something other than a
+/// session -- has no triggers either, so there is nothing to stand aside and
+/// nothing for [`write_documents`] to write.
+pub async fn defer_documents(connection: &Connection) -> postio_storage::Result<bool> {
+    let indexed = sql::exists(
+        connection,
+        "SELECT 1 FROM sqlite_schema
+          WHERE type = 'table' AND name = 'search_documents_deferred'",
+        (),
+    )
+    .await?;
+    if indexed {
+        sql::execute(
+            connection,
+            "INSERT INTO search_documents_deferred (deferred) VALUES (1)
+             ON CONFLICT (deferred) DO NOTHING",
+            (),
+        )
+        .await?;
+    }
+    Ok(indexed)
+}
+
+/// Index `messages` -- each once, from what the tables now say -- and end
+/// the deferral [`defer_documents`] began. Answers how many documents were
+/// written.
+///
+/// A document whose text has not changed is not written at all: the upsert
+/// updates only when one of its columns differs, and an unwritten row is no
+/// index operation. That is what makes a resync of unchanged mail -- which
+/// deletes and rewrites every address it touches -- cost nothing here.
+///
+/// The text is built the way the triggers and the backfill in [`SCHEMA`]
+/// build it, so a document reads the same whichever wrote it.
+pub async fn write_documents(
+    connection: &Connection,
+    messages: &[postio_model::MessageId],
+) -> postio_storage::Result<u64> {
+    // A JSON array of integers, which `json_each` reads: one placeholder
+    // whatever the batch size, so the statement compiles once and is cached.
+    let ids = format!(
+        "[{}]",
+        messages
+            .iter()
+            .map(|message| message.get().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let written = sql::execute(
+        connection,
+        "INSERT INTO search_documents (message_id, subject, sender, recipients, filenames, list_id)
+         SELECT
+             m.id,
+             coalesce(m.subject, ''),
+             coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || a.address, ' ')
+                         FROM recipients r JOIN addresses a ON a.id = r.address_id
+                        WHERE r.message_id = m.id AND r.kind = 'from'), ''),
+             coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || a.address, ' ')
+                         FROM recipients r JOIN addresses a ON a.id = r.address_id
+                        WHERE r.message_id = m.id AND r.kind IN ('to', 'cc', 'bcc')), ''),
+             coalesce((SELECT group_concat(a.filename, ' ')
+                         FROM attachments a
+                        WHERE a.message_id = m.id AND a.filename IS NOT NULL), ''),
+             coalesce(m.list_id, '')
+           FROM messages m
+          WHERE m.id IN (SELECT value FROM json_each(?1))
+         ON CONFLICT (message_id) DO UPDATE SET
+             subject = excluded.subject,
+             sender = excluded.sender,
+             recipients = excluded.recipients,
+             filenames = excluded.filenames,
+             list_id = excluded.list_id
+          WHERE search_documents.subject IS NOT excluded.subject
+             OR search_documents.sender IS NOT excluded.sender
+             OR search_documents.recipients IS NOT excluded.recipients
+             OR search_documents.filenames IS NOT excluded.filenames
+             OR search_documents.list_id IS NOT excluded.list_id",
+        [ids],
+    )
+    .await?;
+    sql::execute(connection, "DELETE FROM search_documents_deferred", ()).await?;
+    Ok(written)
+}
+
 /// Rebuilds the metadata index from `search_documents`.
 ///
 /// Dropped and recreated, which is what "rebuild" means for an index. It was
@@ -800,8 +903,21 @@ CREATE TABLE IF NOT EXISTS message_headers (
 
 CREATE INDEX IF NOT EXISTS idx_message_headers_name ON message_headers (name, message_id);
 
+-- While this holds a row, every trigger below stands aside: a sync batch
+-- is writing, and will write each message's document once, whole, when it
+-- is done (`defer_documents`, `write_documents`). Each trigger write is an
+-- operation on the full-text index -- ~2.3 ms apiece, measured -- and a
+-- message with five addresses and an attachment was eight of them on insert,
+-- and twice that on every resync, which deletes and rewrites its addresses
+-- (#1587). The row lives only inside the batch's own transaction, so no
+-- other writer ever sees it.
+CREATE TABLE IF NOT EXISTS search_documents_deferred (
+    deferred INTEGER PRIMARY KEY CHECK (deferred = 1)
+);
+
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_messages_ai
 AFTER INSERT ON messages
+WHEN NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     INSERT INTO search_documents (message_id, subject, list_id)
     VALUES (new.id, coalesce(new.subject, ''), coalesce(new.list_id, ''))
@@ -810,6 +926,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_messages_au
 AFTER UPDATE OF subject, list_id ON messages
+WHEN NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET subject = coalesce(new.subject, ''), list_id = coalesce(new.list_id, '')
     WHERE message_id = new.id;
@@ -821,7 +938,7 @@ END;
 -- re-aggregating the lot is cheaper than tracking a per-kind delta.
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_recipients_ai
 AFTER INSERT ON recipients
-WHEN new.message_id IS NOT NULL
+WHEN new.message_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET
         sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
@@ -835,7 +952,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_recipients_ad
 AFTER DELETE ON recipients
-WHEN old.message_id IS NOT NULL
+WHEN old.message_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET
         sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
@@ -849,6 +966,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_recipients_au
 AFTER UPDATE ON recipients
+WHEN NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET
         sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
@@ -873,7 +991,7 @@ END;
 -- approach.
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_attachments_ai
 AFTER INSERT ON attachments
-WHEN new.message_id IS NOT NULL
+WHEN new.message_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET
         filenames = (SELECT coalesce(group_concat(filename, ' '), '')
@@ -883,7 +1001,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_attachments_ad
 AFTER DELETE ON attachments
-WHEN old.message_id IS NOT NULL
+WHEN old.message_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET
         filenames = (SELECT coalesce(group_concat(filename, ' '), '')
@@ -893,6 +1011,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_attachments_au
 AFTER UPDATE ON attachments
+WHEN NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET
         filenames = (SELECT coalesce(group_concat(filename, ' '), '')
@@ -1050,6 +1169,137 @@ mod tests {
         assert_eq!(
             matches(&connection, "invoice").await,
             vec![message.id.get()]
+        );
+    }
+
+    /// What `search_documents` holds for `message`, or `None`.
+    async fn document(
+        connection: &Connection,
+        message: i64,
+    ) -> Option<(String, String, String, String)> {
+        sql::first(
+            connection,
+            "SELECT subject, sender, recipients, filenames FROM search_documents
+              WHERE message_id = ?1",
+            [message],
+            |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?)),
+        )
+        .await
+        .expect("a read")
+    }
+
+    /// A synced message with a sender, three recipients and an attachment:
+    /// six writes the triggers would each turn into an index operation.
+    fn addressed(
+        account: &postio_model::Account,
+        mailbox: postio_model::MailboxId,
+        n: u32,
+    ) -> Message {
+        let mut message = Message::new(account.id, mailbox, Utc::now());
+        message.subject = Some(format!("Harbour schedule {n}"));
+        message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
+        message.to = vec![
+            EmailAddress::new(Some("Bo"), "bo@example.org"),
+            EmailAddress::new(None::<String>, "cy@example.net"),
+        ];
+        message.cc = vec![EmailAddress::new(Some("Di"), "di@example.test")];
+        let mut attachment = Attachment::new(message.id, "application/pdf", 1024);
+        attachment.filename = Some(format!("tide-table-{n}.pdf"));
+        message.attachments = vec![attachment];
+        message.server.uid = Some(postio_model::Uid::new(n));
+        message.server.uid_validity = Some(postio_model::UidValidity::new(1));
+        message
+    }
+
+    #[tokio::test]
+    async fn a_deferred_batch_is_indexed_once_per_message_and_completely() {
+        // #1587: every trigger write to `search_documents` is an operation on
+        // its full-text index, ~2.3 ms each, so a message with five addresses
+        // paid seven of them on insert. A sync batch defers the triggers and
+        // writes each message's document once, whole, at the end.
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+        let mut batch: Vec<Message> = (1..=3).map(|n| addressed(&account, mailbox, n)).collect();
+
+        defer_documents(&connection).await.expect("defer");
+        MessageRepository::new(&connection)
+            .upsert_batch(&mut batch)
+            .await
+            .expect("the batch");
+        assert_eq!(
+            document(&connection, batch[0].id.get()).await,
+            None,
+            "deferred: the triggers wrote nothing"
+        );
+
+        let ids: Vec<_> = batch.iter().map(|message| message.id).collect();
+        let written = write_documents(&connection, &ids).await.expect("documents");
+
+        assert_eq!(written, 3, "one document per message");
+        let (subject, sender, recipients, filenames) = document(&connection, batch[1].id.get())
+            .await
+            .expect("a document");
+        assert_eq!(subject, "Harbour schedule 2");
+        assert!(sender.contains("Ada Lovelace") && sender.contains("ada@example.com"));
+        assert!(recipients.contains("bo@example.org") && recipients.contains("di@example.test"));
+        assert_eq!(filenames, "tide-table-2.pdf");
+        assert_eq!(
+            matches(&connection, "tide").await.len(),
+            3,
+            "and searchable"
+        );
+
+        // The deferral ends with the write: the next message, written
+        // outside a batch, is indexed by its triggers as before.
+        let mut later = Message::new(account.id, mailbox, Utc::now());
+        later.subject = Some("Lighthouse".to_owned());
+        MessageRepository::new(&connection)
+            .create(&mut later)
+            .await
+            .expect("create");
+        assert_eq!(
+            matches(&connection, "lighthouse").await,
+            vec![later.id.get()]
+        );
+    }
+
+    #[tokio::test]
+    async fn resyncing_unchanged_mail_writes_no_document() {
+        // A resync rewrites every address and attachment of every message it
+        // touches (`write_update` deletes and reinserts them), and the
+        // triggers turned that into two index operations per address --
+        // per message, per pass, for mail that had not changed (#1719).
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+        let repository = MessageRepository::new(&connection);
+        let mut batch: Vec<Message> = (1..=3).map(|n| addressed(&account, mailbox, n)).collect();
+        defer_documents(&connection).await.expect("defer");
+        repository
+            .upsert_batch(&mut batch)
+            .await
+            .expect("first pass");
+        let ids: Vec<_> = batch.iter().map(|message| message.id).collect();
+        write_documents(&connection, &ids).await.expect("documents");
+
+        let mut again: Vec<Message> = (1..=3).map(|n| addressed(&account, mailbox, n)).collect();
+        again[2].subject = Some("Harbour schedule, revised".to_owned());
+        defer_documents(&connection).await.expect("defer");
+        repository
+            .upsert_batch(&mut again)
+            .await
+            .expect("second pass");
+        let written = write_documents(&connection, &ids).await.expect("documents");
+
+        assert_eq!(written, 1, "only the message whose subject moved");
+        assert_eq!(matches(&connection, "revised").await, vec![ids[2].get()]);
+        assert_eq!(
+            matches(&connection, "ada").await.len(),
+            3,
+            "the rest unchanged"
         );
     }
 

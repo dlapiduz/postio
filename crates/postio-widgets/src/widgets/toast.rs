@@ -24,6 +24,9 @@
 //! closing.
 
 use std::cell::RefCell;
+use std::rc::Rc;
+
+use postio_ui::observe::Tone;
 
 /// How long an undo toast stays on screen before it dismisses itself.
 ///
@@ -48,6 +51,11 @@ pub struct Toast {
     /// the same one the button runs -- one behaviour with two ways in, not
     /// two implementations that have to agree.
     pending_undo: RefCell<Option<std::rc::Rc<dyn Fn()>>>,
+    /// How the toast now showing reads, and whether it offers undo,
+    /// recorded when it was shown rather than read back off its button
+    /// (specs/008-storyboards research R6). Cleared when that toast is
+    /// dismissed, so an observation never reports a toast nobody can see.
+    shown: Rc<RefCell<Option<(adw::Toast, Tone, bool)>>>,
 }
 
 impl Toast {
@@ -57,6 +65,7 @@ impl Toast {
             overlay: adw::ToastOverlay::new(),
             current: RefCell::new(None),
             pending_undo: RefCell::new(None),
+            shown: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -73,6 +82,21 @@ impl Toast {
     /// process, and a display-touching test has to be in one.
     pub fn showing(&self) -> Option<adw::Toast> {
         self.current.borrow().clone()
+    }
+
+    /// How the toast on screen reads, as it was shown: `None` when nothing
+    /// is showing. For a storyboard's `notice.tone`.
+    pub fn tone(&self) -> Option<Tone> {
+        self.shown.borrow().as_ref().map(|(_, tone, _)| *tone)
+    }
+
+    /// Whether the toast on screen offers undo. For a storyboard's
+    /// `notice.undo`.
+    pub fn offers_undo(&self) -> bool {
+        self.shown
+            .borrow()
+            .as_ref()
+            .is_some_and(|(_, _, undo)| *undo)
     }
 
     /// *Archived 12 messages — Undo.* `description` is already user-facing
@@ -100,7 +124,7 @@ impl Toast {
             toast.set_button_label(Some("Undo"));
             toast.set_action_name(Some("win.undo"));
         }
-        self.push(toast);
+        self.push(toast, Tone::Info, undoable);
     }
 
     /// A sentence, with nothing to press.
@@ -111,11 +135,14 @@ impl Toast {
     /// the same reason the plate that says the same sentence carries no key
     /// hint.
     pub fn show_notice(&self, sentence: &str) {
+        // A warning: a notice is a gesture that could not run.
         self.push(
             adw::Toast::builder()
                 .title(sentence)
                 .timeout(TOAST_TIMEOUT)
                 .build(),
+            Tone::Warning,
+            false,
         );
     }
 
@@ -143,7 +170,7 @@ impl Toast {
             let on_undo = std::rc::Rc::clone(&on_undo);
             move |_| on_undo()
         });
-        self.push(toast);
+        self.push(toast, Tone::Info, true);
         // After `push`, which clears whatever the last toast left here.
         *self.pending_undo.borrow_mut() = Some(on_undo);
     }
@@ -171,7 +198,7 @@ impl Toast {
             .title(description)
             .timeout(TOAST_TIMEOUT)
             .build();
-        self.push(toast);
+        self.push(toast, Tone::Success, false);
     }
 
     /// A sentence with one button that runs `on_click`, replacing whatever
@@ -194,7 +221,7 @@ impl Toast {
     }
 
     /// Dismisses whatever is showing and shows `toast` instead.
-    fn push(&self, toast: adw::Toast) {
+    fn push(&self, toast: adw::Toast, tone: Tone, offers_undo: bool) {
         // A new toast replaces the old one's offer too: an undo whose toast
         // is gone is one the person can no longer see, and `u` must not
         // reach back past what is on screen.
@@ -202,6 +229,16 @@ impl Toast {
         if let Some(previous) = self.current.borrow_mut().take() {
             previous.dismiss();
         }
+        *self.shown.borrow_mut() = Some((toast.clone(), tone, offers_undo));
+        toast.connect_dismissed({
+            let shown = Rc::clone(&self.shown);
+            move |gone| {
+                let mut shown = shown.borrow_mut();
+                if shown.as_ref().is_some_and(|(toast, _, _)| toast == gone) {
+                    *shown = None;
+                }
+            }
+        });
         self.overlay.add_toast(toast.clone());
         *self.current.borrow_mut() = Some(toast);
     }

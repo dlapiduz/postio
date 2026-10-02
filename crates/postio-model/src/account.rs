@@ -118,6 +118,13 @@ pub enum Backend {
     /// account's OAuth credential is Google's fixed API endpoint, so it
     /// carries no composition data.
     Gmail,
+    /// A maildir already on this machine (#1278). No server, no credential:
+    /// the whole account is the directory named here.
+    Maildir {
+        /// The tree's root, absolute — `~/mail`, a synchronised Dovecot
+        /// store, whatever the user pointed at.
+        root: String,
+    },
 }
 
 impl Backend {
@@ -127,6 +134,7 @@ impl Backend {
             Self::Imap => "imap",
             Self::Jmap { .. } => "jmap",
             Self::Gmail => "gmail",
+            Self::Maildir { .. } => "maildir",
         }
     }
 }

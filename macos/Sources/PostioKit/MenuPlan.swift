@@ -49,7 +49,7 @@ public enum MenuPlan {
     public static func build(
         commands: [CommandSpecFfi] = PostioRegistry.commands,
         menus: [MenuFfi] = PostioFFI.menus(),
-        binding: (String) -> String?
+        bindings: (String) -> [String]
     ) -> [Menu] {
         menus.compactMap { menu in
             let items =
@@ -59,7 +59,7 @@ public enum MenuPlan {
                     Item(
                         command: spec.id,
                         title: spec.title,
-                        shortcut: binding(spec.id).flatMap(accelerator(from:))
+                        shortcut: accelerator(among: bindings(spec.id))
                     )
                 }
             // A menu with nothing under it draws as an empty pane, which reads
@@ -67,6 +67,26 @@ public enum MenuPlan {
             // be empty on this build.
             return items.isEmpty ? nil : Menu(title: menu.title, items: items, section: menu.section)
         }
+    }
+
+    /// Which of a command's bindings a menu draws.
+    ///
+    /// **The chord, when there is one.** Both keyboard layers are always on —
+    /// `e` replies and so does `⌘R` — but a menu is where a Mac user looks
+    /// for the second, and the shortcut column is shaped for it. The
+    /// mnemonic is not lost: the cheat sheet lists every binding, which is
+    /// what it is for.
+    ///
+    /// Falls back to the primary, so a command with only a mnemonic still
+    /// shows it rather than showing nothing.
+    public static func accelerator(among bindings: [String]) -> String? {
+        // Anything longer than one character and not a sequence: `cmd+r`,
+        // and also `Down`, which is a chord in every sense a menu cares
+        // about — the canvas draws `↓` beside "next thread" and `j` is the
+        // mnemonic under it. A bare letter is the mnemonic layer, and it is
+        // the fallback rather than the choice.
+        let chord = bindings.first { $0.count > 1 && !$0.contains(" ") }
+        return (chord ?? bindings.first).flatMap(accelerator(from:))
     }
 
     /// A binding string as macOS draws it, or `nil` if it cannot be drawn.

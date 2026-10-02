@@ -277,6 +277,114 @@ pub async fn seed_extra_account(
     }
 }
 
+/// Seeds an account whose Inbox holds exactly these conversations, newest
+/// first: `lengths[0]` messages in the newest, and so on. An empty slice is an
+/// account with its folders and no mail.
+///
+/// For a demo or a storyboard that needs a mailbox of a known shape -- thirty
+/// threads to scroll, one long conversation to walk -- rather than the
+/// corpus' mixed handful. Every message has a text body in the store, and
+/// each conversation's later messages alternate between the correspondent and
+/// the account, so a thread reads as an exchange. The newest messages of a
+/// conversation are the unread ones: the last of any of three or more, the
+/// last two of six or more, and the last of a shorter one when the seed says
+/// so.
+///
+/// Deterministic in `seed`, and anchored at the fixed [`anchor`] rather than
+/// the wall clock. Addresses are `example.com`.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn seed_conversations(database: &Store, seed: u64, lengths: &[usize]) -> SeedReport {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let account = seeded_account(&connection).await;
+    let folders = create_folders(&connection, &account).await;
+    let inbox = folders
+        .iter()
+        .find(|mailbox| mailbox.role == MailboxRole::Inbox)
+        .expect("create_folders always creates an Inbox");
+    let mut rng = Rng::new(seed);
+
+    let mut number = 0usize;
+    let mut offset = Duration::zero();
+    let mut message_count = 0;
+    for (index, &length) in lengths.iter().enumerate() {
+        let topic = TOPICS[index % TOPICS.len()];
+        let sender = index % SENDERS.len();
+        let correspondent =
+            EmailAddress::new(Some(SENDERS[sender]), format!("sender{sender}@example.com"));
+        let tail = if length >= 6 { 2 } else { 1 };
+        for position in 0..length {
+            // Oldest first within the conversation, the whole run before the
+            // next conversation's, so sorting by time keeps each one whole.
+            let received_at =
+                anchor() - offset - Duration::minutes(15 * (length - 1 - position) as i64);
+            let mut message = Message::new(account.id, inbox.id, received_at);
+            message.date = Some(received_at);
+            let from_correspondent = position % 2 == 0;
+            let (from, to) = if from_correspondent {
+                (correspondent.clone(), account.address.clone())
+            } else {
+                (account.address.clone(), correspondent.clone())
+            };
+            message.from = vec![from];
+            message.to = vec![to];
+            message.subject = Some(if position == 0 {
+                format!("{topic} ({})", index + 1)
+            } else {
+                format!("Re: {topic} ({})", index + 1)
+            });
+            let text = format!(
+                "Message {} of a conversation about {topic}, from the demo seed.",
+                position + 1
+            );
+            message.preview = Some(text.clone());
+            message.rfc_message_id = Some(RfcMessageId::new(format!(
+                "conversation-{number}@example.invalid"
+            )));
+            message.size = 1_024 + u64::from(rng.below(2_048));
+            let in_tail = position + tail >= length;
+            let unread = in_tail && (length >= 3 || rng.chance(35));
+            let mut flags = FlagSet::new();
+            if !unread {
+                flags.insert(Flag::Seen);
+            }
+            message.flags = flags;
+            message.sync.body_state = BodyState::NotFetched;
+
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("insert a seeded message");
+            write_body(
+                &connection,
+                message.id,
+                &postio_model::MessageBody {
+                    text: Some(text),
+                    html: None,
+                },
+            )
+            .await;
+            record_correspondents(&connection, &message).await;
+            number += 1;
+            message_count += 1;
+        }
+        offset += Duration::minutes(15 * length as i64) + Duration::hours(3);
+    }
+    drop(connection);
+
+    let mut runs = std::collections::VecDeque::from(lengths.to_vec());
+    thread_in_runs(database, account.id, move || runs.pop_front().unwrap_or(1)).await;
+
+    let connection = database.connect().await.expect("a checked-out connection");
+    SeedReport {
+        mailboxes: load_folders(&connection, &account).await,
+        account,
+        message_count,
+    }
+}
+
 /// Seeds `database` with `message_count` synthetic messages, for the paging
 /// and search benchmarks — 100k+ is the range those are meant to exercise.
 ///

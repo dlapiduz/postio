@@ -18,9 +18,10 @@ Postio keeps a complete, encrypted copy of your mail on your own machine,
 with a full-text index built beside it. Opening the app, searching, and
 moving around never wait on the network. Every action — archive, flag, move,
 delete, snooze, undo — lands on that local copy instantly and reaches the
-server in the background. It is a native GTK4/libadwaita application for
-Linux, works fully offline after its first sync, and never sends anything you
-did not ask it to.
+server in the background. It is a native GTK4/libadwaita application on Linux
+and a native SwiftUI/AppKit one on macOS — **two frontends over one Rust
+engine**, not a toolkit ported — works fully offline after its first sync, and
+never sends anything you did not ask it to.
 
 **Postio 0.4.0 is an alpha.** It is more complete than the number suggests,
 but it is early software: expect rough edges, read the
@@ -68,7 +69,10 @@ previewed with its hits highlighted](site/assets/img/search.png)
 ## Install
 
 Postio runs on Linux under Wayland (GTK 4.20 and libadwaita 1.7 or newer;
-the maintainer's machine is Fedora 44). There are three ways in.
+the maintainer's machine is Fedora 44), and on macOS 14 or newer. The Linux
+build is the complete one and has the three ways in below; the macOS build is
+[further down](#macos), is younger, and is honest about what it cannot do
+yet.
 
 ### 1. The Flatpak bundle
 
@@ -138,6 +142,63 @@ builds and runs Postio from the checkout without installing anything.
 `cargo run -p postio-tui` does the same for Postio in a terminal, on the
 same mail as the desktop app, one of them open at a time; see
 [Postio in a terminal](docs/book/src/terminal.md).
+
+### macOS
+
+A native SwiftUI/AppKit application over the same engine, through a UniFFI
+boundary ([ADR 0019](docs/decisions/0019-macos-frontend.md)), on `main`
+since [#1306](https://github.com/dlapiduz/postio/pull/1306). CI builds the
+crates under it on both platforms, and builds the Swift package and runs its
+tests on a Mac. Thirteen of the
+fifteen workspace crates already built and tested on macOS before any porting
+began, which is what made this cheap: the two frontends share the store, the
+protocols, the search index, the keymap and every presentation decision that
+has no toolkit in it.
+
+Needs Xcode (Swift 6) and the pinned Rust toolchain. There is no bundle to
+download yet — it is built from the checkout:
+
+```bash
+scripts/macos-build.sh      # cargo, the bindings, then swift build
+scripts/macos-bundle.sh     # assemble Postio.app
+open macos/build/Postio.app
+```
+
+`scripts/macos-test.sh` runs the Swift tests with the library linked.
+`macos/CLAUDE.md` has the two build loops and the Keychain behaviour of an
+ad-hoc-signed build, which asks again after every rebuild.
+
+**What works:** a first-run wizard that looks an address's servers up and
+signs in before it saves anything, the three-pane shell, the message list over
+the paged store,
+the reading pane with its remote-image blocking and per-sender allow list,
+conversations as one document in one web view with the rail beside them
+(ADR 0032, as GTK draws them),
+search with its query language and the chips that teach it
+— its hit count, refine chips, sort and scope rail included —
+the command palette, the cheat sheet, the menu bar built from the command
+registry, keyboard commands in both layers, compose with rich text,
+attachments and pictures in the body, scheduled send, notifications, a
+settings window with every pane, the message-parts panel — so an
+attachment can be saved, saved
+alongside its siblings, previewed in place or handed to another
+application — saved searches, the account verbs, one-click unsubscribe
+with its activation log in Privacy settings, and repairing an account
+whose credential has expired, by password or by browser, whichever it
+broke by.
+
+**Deliberately not on the Mac:** three commands its design has no place
+for — `detach_composer` (compose is already a window of its own),
+`next_scope` (the sidebar lists every account at once, so there is no account
+strip to cycle), and `darken_message` (a newsletter is drawn on its own light
+paper inside the dark window instead, as canvas 20 draws it). They are absent
+from its menus, palette and cheat sheet rather than drawn and dead.
+
+`crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is what keeps that
+list honest: it sweeps every command in the registry and fails if one
+reaches nothing, is not listed as debt, and is not scoped away from the Mac. The list has gone from
+forty-nine to none, and it may only shrink — a command that gains a handler
+and stays listed fails the sweep just as one that loses a handler does.
 
 ## First run
 
@@ -247,9 +308,10 @@ rebindable; background sync with IDLE, full offline use, and undo.
 
 **Not yet:** filters and rules (designed, not built); AI features (a
 founding idea, deliberately after the fundamentals); Microsoft Graph;
-PGP/S-MIME; phishing and link warnings; vCard import/export. A native macOS
-frontend over the same engine is built and reads mail today, but is not yet
-released. Windows is unscheduled.
+PGP/S-MIME; phishing and link warnings; vCard import/export. The native macOS
+frontend is on `main` and every command in the registry reaches something on
+it, but it is built from the checkout, not packaged or released — see
+[macOS](#macos) for what it does. Windows is unscheduled.
 
 Postio is alpha software. Its test suite is large and its invariants are
 machine-checked, and you should still treat it as early: it has met few

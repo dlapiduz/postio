@@ -40,6 +40,7 @@ pub mod edit;
 pub mod flowed;
 mod hints;
 pub mod markdown;
+pub mod narrow;
 pub mod outgoing;
 pub mod own_text;
 pub mod parse;
@@ -52,6 +53,7 @@ pub mod treatment;
 
 pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline, editor_image_src};
 pub use edit::{EditHistory, EditStep};
+pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, render};
 pub use own_text::own_text;
 pub use parse::parse;

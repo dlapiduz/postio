@@ -1,0 +1,10 @@
+# must_pass: the twin of cal-archive-returns-to-top, with the true expectation.
+source      = { kind = "issue", ref = "#1687" }
+calibration = "must_pass"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "archive"
+expect  = "The archived row is gone and the row below it takes its place under the cursor; a notice offers to undo."

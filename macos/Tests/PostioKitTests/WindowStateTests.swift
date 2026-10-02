@@ -28,6 +28,7 @@ struct WindowStateTests {
             unread: 0,
             total: 0,
             selectable: selectable,
+            lastSyncedAt: nil,
             // Which sidebar section the boundary put it in (#1155). Not what
             // this file is about — `folderToOpen` picks by role and by
             // whether a folder still exists — but the type carries it now.

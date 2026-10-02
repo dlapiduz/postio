@@ -55,6 +55,14 @@ use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
 mod focus;
 
+/// The instant a verb stamps -- a send's queue time, a snooze's wake --
+/// read through the clock seam, so a storyboard that freezes the clock
+/// gets the date the rest of its frames show (specs/008-storyboards).
+/// Unfrozen it is the system clock.
+fn now() -> chrono::DateTime<Utc> {
+    postio_ui::clock::now().with_timezone(&Utc)
+}
+
 /// The commands this module answers.
 ///
 /// Named once so that the registration and the match in [`Actions::act`]
@@ -389,7 +397,7 @@ impl Actions {
                 vec![self.set_label(target, label, *on).await?]
             }
             Command::Snooze { target, until } => {
-                let until = until.unwrap_or_else(|| Utc::now() + DEFAULT_SNOOZE);
+                let until = until.unwrap_or_else(|| now() + DEFAULT_SNOOZE);
                 vec![self.snooze(target, until).await?]
             }
             Command::Unsnooze { target } => vec![self.unsnooze(target).await?],
@@ -557,7 +565,7 @@ impl Actions {
         let mut skipped = 0usize;
         let mut reloaded: BTreeSet<MailboxId> = BTreeSet::new();
         let mut accounts: BTreeSet<postio_model::ids::AccountId> = BTreeSet::new();
-        let at = Utc::now();
+        let at = now();
         let transaction = connection.transaction().await.map_err(store_failure)?;
         {
             let repository = MessageRepository::new(&transaction);
@@ -784,7 +792,7 @@ impl Actions {
             return Err(CommandError::rejected("There is nothing here to move"));
         }
 
-        let at = Utc::now();
+        let at = now();
         let transaction = connection.transaction().await.map_err(store_failure)?;
         let mut count = 0usize;
         let mut inverse = Vec::new();
@@ -905,7 +913,7 @@ impl Actions {
             return Err(CommandError::rejected("Already there"));
         }
 
-        let at = Utc::now();
+        let at = now();
         // The rows and their queue rows are `postio-storage`'s half now
         // (ADR 0028), so that the rules pass writes them the same way a
         // keystroke does. This side opens the transaction and commits it;
@@ -975,7 +983,7 @@ impl Actions {
         kind: UndoKind,
     ) -> Result<Applied, CommandError> {
         let account = rows[0].account_id;
-        let at = Utc::now();
+        let at = now();
         let transaction = connection.transaction().await.map_err(store_failure)?;
         let mut moved: Vec<MessageId> = Vec::new();
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
@@ -1263,7 +1271,7 @@ impl Actions {
         }
 
         let one: FlagSet = std::iter::once(keyword.clone()).collect();
-        let at = Utc::now();
+        let at = now();
         let transaction = connection.transaction().await.map_err(store_failure)?;
         {
             let labels = LabelRepository::new(&transaction);
@@ -1507,7 +1515,7 @@ impl Actions {
         } else {
             Operation::ClearFlags { flags: one }
         };
-        let at = Utc::now();
+        let at = now();
         let transaction = connection.transaction().await.map_err(store_failure)?;
         // Enqueue before writing, as a bulk move does: the predicate is "the
         // rows that disagree", and after the write none of them do.
@@ -1579,7 +1587,7 @@ impl Actions {
             return Err(CommandError::rejected("Already set"));
         }
 
-        let at = Utc::now();
+        let at = now();
         // The rows, their queue entries and the thread recompute are
         // `postio-storage`'s half now (ADR 0028); the siblings it answers are
         // what the repaint below widens to. This side owns the transaction,
@@ -2009,7 +2017,7 @@ impl Actions {
 
         let account = draft.account_id;
         drafts
-            .queue_send(&mut draft, Utc::now())
+            .queue_send(&mut draft, now())
             .await
             .map_err(store_failure)?;
         Ok(Applied {
@@ -2053,7 +2061,7 @@ impl Actions {
         // due timer would later make final an answer nothing sent.
         let transaction = connection.transaction().await.map_err(store_failure)?;
         match DraftRepository::new(&transaction)
-            .cancel_send(draft.id, Utc::now())
+            .cancel_send(draft.id, now())
             .await
             .map_err(store_failure)?
         {

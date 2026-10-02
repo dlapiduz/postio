@@ -154,6 +154,18 @@ pub struct Draft {
     pub subject: String,
     /// Body being composed.
     pub body: MessageBody,
+    /// Whether this is being written as rich text (#1271).
+    ///
+    /// Stored rather than derived from `body.html`. The composer's rule is
+    /// that the switch is on the *document*: turning it off changes what
+    /// will be built and does not throw the marks away, in case it is turned
+    /// back on. A flag derived from "has an HTML part" cannot say "has
+    /// marks, sending plain" -- keeping the marks would turn the switch back
+    /// on by itself.
+    ///
+    /// It decides what leaves: `text/html` plus a `text/plain` alternative
+    /// **always**, against `text/plain` alone, wrapped and flowed.
+    pub rich: bool,
     /// The Markdown the user typed, when the draft was written in the
     /// terminal composer; `None` when a frontend that does not author
     /// Markdown saved it last.
@@ -223,7 +235,7 @@ pub struct Draft {
 impl Draft {
     /// Builds an empty draft for `account_id`.
     pub fn new(account_id: AccountId) -> Self {
-        let now = Utc::now();
+        let now = crate::clock::now().with_timezone(&Utc);
         Self {
             id: DraftId::UNASSIGNED,
             account_id,
@@ -237,6 +249,9 @@ impl Draft {
             bcc: Vec::new(),
             subject: String::new(),
             body: MessageBody::default(),
+            // Plain by default, on both frontends. A composer that opened
+            // rich would decide for the person what shape their mail takes.
+            rich: false,
             body_markdown: None,
             labels: Vec::new(),
             calendar_reply: None,
@@ -350,6 +365,20 @@ mod tests {
     use super::*;
     use crate::account::Signature;
     use crate::ids::IdentityId;
+
+    #[test]
+    fn a_new_draft_is_dated_by_the_clock_seam() {
+        // A reply queued during a storyboard was dated with the real day,
+        // months after the frozen one, and differed between two runs.
+        let _turn = crate::clock::TURN.lock().unwrap_or_else(|e| e.into_inner());
+        let frozen = chrono::Local::now();
+        crate::clock::freeze(frozen);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let draft = Draft::new(AccountId::UNASSIGNED);
+        crate::clock::thaw();
+        assert_eq!(draft.created_at, frozen.with_timezone(&Utc));
+        assert_eq!(draft.updated_at, draft.created_at);
+    }
 
     fn identity(address: &str, signature: Option<&str>) -> Identity {
         let mut identity = Identity::new(

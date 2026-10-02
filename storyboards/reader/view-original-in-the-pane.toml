@@ -1,0 +1,30 @@
+# View original works in the one-document pane (#1398).
+#
+# The defect: Ctrl+O did nothing once the conversation became one document
+# in one pane, because the key named no message and the pane held several.
+# It has to name the focused one. The seeded newsletter (second row) is put in
+# reader view, and the key must bring back the sender's own layout.
+# Pinned: the pane keeps its message and the keyboard stays where it was.
+apps   = ["classic"]   # the reading pane; Focus has none, it opens a dialog
+source = { kind = "issue", ref = "#1398" }
+proof  = "pinned"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+
+[[step]]
+id      = "promo"
+command = "next_message"
+settle  = { until = { reading.id = { changed = true } } }
+check   = { reading.id = "30" }
+
+[[step]]
+id      = "simplified"
+command = "toggle_reader_view"
+check   = { reading.id = { same_as = "promo" } }
+expect  = "The newsletter is redrawn as a plain reading view: the plain-text version, no brand heading or button."
+
+[[step]]
+command = "view_original"
+check   = { reading.id = { same_as = "promo" }, keyboard.region = "list" }
+expect  = "The message is redrawn in the sender's original layout, the heading and the Read issue button back; the pane did not blank, and the same message is still shown."

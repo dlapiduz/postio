@@ -1,0 +1,42 @@
+# Archive acts on the selected messages and no others (#468, #1701, #811, #1300).
+#
+# The defect family: with several accounts, the selection's actions resolved
+# the wrong messages (the cursor row, or another account's row with the same
+# position). Three rows are selected with `x` on the two-accounts seed, then
+# archived; exactly those three leave, the selection clears, and the list
+# does not lose any other row.
+source = { kind = "issue", ref = "#468" }
+proof  = "pinned"
+seed   = "two-accounts"
+design = "01-inbox-reading"
+
+[[step]]
+id      = "first"
+command = "toggle_selection"
+check   = { keyboard.region = "list", selection.count = 1, rows.count = 34 }
+expect  = "The first row is marked as selected, distinct from the cursor."
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 1, selection.count = 1 }
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 2, selection.count = 1 }
+
+[[step]]
+id      = "third"
+command = "toggle_selection"
+check   = { selection.count = 2 }
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "toggle_selection"
+check   = { selection.count = 3, rows.count = 34 }
+expect  = "Three rows are selected: the first, the third and the fourth."
+
+[[step]]
+command = "archive"
+check   = { keyboard.region = "list", selection.count = 0, rows.count = 31, notice.undo = true }
+expect  = "The three selected rows are gone, the other 31 are all still there, and undo is offered."

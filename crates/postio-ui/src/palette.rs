@@ -208,6 +208,9 @@ const ID_PENALTY: i32 = 40;
 pub fn entries(keymap: &Keymap, context: Context, state: Availability, query: &str) -> Vec<Entry> {
     let query = query.trim();
     let mut found: Vec<Entry> = registry::reachable_in(context, state)
+        // Not what this platform has no surface for: see
+        // `postio_core::registry::offered_on`.
+        .filter(|spec| keymap.offers(spec.id))
         .filter_map(|spec| {
             let by_title = score(query, spec.title);
             let by_id = score(query, spec.id.as_str());
@@ -251,6 +254,27 @@ mod tests {
 
     fn defaults() -> Keymap {
         Keymap::resolve(&postio_config::KeyBindings::default())
+    }
+
+    #[test]
+    fn a_command_the_platform_does_not_offer_is_not_in_its_palette() {
+        // Offering Detach composer on a Mac, where compose is already a window,
+        // is a row the user picks and nothing happens (#1571).
+        use postio_config::paths::Platform;
+        for platform in [Platform::Freedesktop, Platform::Apple] {
+            let keymap = Keymap::resolve_on(&postio_config::KeyBindings::default(), platform);
+            let offered = entries(&keymap, Context::Composer, an_account(), "detach")
+                .iter()
+                .any(|entry| entry.id == ActionId::Builtin(CommandId::DetachComposer));
+            assert_eq!(
+                offered,
+                postio_core::registry::offered_on(
+                    ActionId::Builtin(CommandId::DetachComposer),
+                    platform
+                ),
+                "{platform:?}"
+            );
+        }
     }
 
     // -- matching ---------------------------------------------------------
@@ -316,11 +340,13 @@ mod tests {
 
     #[test]
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
-        let listed = entries(&defaults(), Context::List, an_account(), "");
+        let keymap = defaults();
+        let listed = entries(&keymap, Context::List, an_account(), "");
         // Reachable for this app: Focus's own commands are rows of the
         // registry the classic app does not offer.
         let expected: Vec<ActionId> = registry::reachable_in(Context::List, an_account())
             .map(|spec| spec.id)
+            .filter(|id| keymap.offers(*id))
             .collect();
 
         assert_eq!(
@@ -332,7 +358,10 @@ mod tests {
     #[test]
     fn every_registry_command_is_reachable_from_some_context() {
         // In some context of some app: the terminal composer's own commands
-        // are in the terminal's palette only, and Focus's in Focus's.
+        // are in the terminal's palette only, and Focus's in Focus's. Only
+        // what the platform offers: a command scoped away from it is in no
+        // palette there.
+        let keymap = defaults();
         let terminal = Availability {
             frontend: postio_core::Frontend::Terminal,
             ..an_account()
@@ -341,10 +370,10 @@ mod tests {
             frontend: postio_core::Frontend::Focus,
             ..an_account()
         };
-        for spec in registry::all() {
+        for spec in registry::all().filter(|spec| keymap.offers(spec.id)) {
             let reachable = [an_account(), terminal, focus].into_iter().any(|state| {
                 Context::ALL.iter().any(|context| {
-                    entries(&defaults(), *context, state, spec.title)
+                    entries(&keymap, *context, state, spec.title)
                         .iter()
                         .any(|entry| entry.id == spec.id.into())
                 })

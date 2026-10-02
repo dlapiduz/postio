@@ -68,6 +68,7 @@ def build_fixture(
     ai_deps: str = "",
     vault_deps: str = "",
     app_deps: str = "",
+    storyboard_deps: str = "",
     include_gtk: bool = True,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -97,6 +98,8 @@ def build_fixture(
     # Milestone 3: Obsidian capture.
     write_crate(root, "crates", "postio-vault", vault_deps)
     write_crate(root, "crates", "postio-app", app_deps)
+    # The storyboard tool's pure half (specs/008-storyboards).
+    write_crate(root, "crates", "postio-storyboard", storyboard_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
     # (#560) -- so a rule added for a real crate the fixture never grew a
@@ -570,6 +573,26 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-vault", "turso"),
+        )
+
+        check_case(
+            "postio-storyboard gains a direct gtk4 dependency",
+            build_fixture(
+                tmp_path / "storyboard-gtk4",
+                storyboard_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-storyboard", "gtk4"),
+        )
+        check_case(
+            "postio-storyboard reaches turso through another crate",
+            build_fixture(
+                tmp_path / "storyboard-turso",
+                storyboard_deps='helper = { path = "../helper" }\n',
+                helper_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-storyboard", "turso", "helper"),
         )
 
         # 18. And the real workspace is clean today.

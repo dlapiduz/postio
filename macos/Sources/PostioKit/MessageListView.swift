@@ -51,6 +51,13 @@ public struct MessageListView: NSViewRepresentable {
         // reader says which of the three panes it is in.
         table.setAccessibilityLabel(Pane.list.label)
 
+        // Clear, so the pane's own colour shows through. `NSTableView`
+        // otherwise paints `controlBackgroundColor`, which is AppKit's
+        // blue-grey and not on Postio's ramp — the clash `AppSurface`
+        // describes (#1588). The scroll view was already transparent; the
+        // table underneath it was not.
+        table.backgroundColor = .clear
+
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true

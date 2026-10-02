@@ -19,7 +19,6 @@
 # say why on the same line.
 add_member                        # crates/postio-storage/src/repository/contact_groups.rs:95
 advertises_special_use            # crates/postio-account/src/imap/dispatch.rs:215
-back_depth                        # crates/postio-core/src/state.rs:478
 backfill_policy_at                # crates/postio-session/src/lib.rs:92
 backfill_progress                 # crates/postio-runtime/src/engine.rs:595
 by_address                        # crates/postio-storage/src/repository/contacts.rs:99
@@ -32,7 +31,6 @@ extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
 fts_match                         # crates/postio-search/src/query.rs:417
-handler_fn                        # crates/postio-core/src/bridge.rs:144 -- a test bus: suites and shot.rs build one; postio-ffi was its last production caller (T019)
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
 idles                             # crates/postio-sync/src/watch.rs:290
@@ -68,8 +66,6 @@ on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
-plain_forward                     # crates/postio-model/src/reply.rs:221
-plain_quote                       # crates/postio-model/src/reply.rs:213
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
 record_seen                       # crates/postio-model/src/contact.rs:95
 recount                           # crates/postio-storage/src/repository/mailboxes.rs:276
@@ -97,7 +93,6 @@ temporary_directory               # crates/postio-storage/src/blob.rs:145
 text_bytes                        # crates/postio-storage/src/repository/messages.rs:547
 thread_page                       # crates/postio-runtime/src/store/local.rs -- the threaded window under MailStore::list_page; for runtime_suite/thread_store, which measures it on purpose
 timing_out_after_the_payload      # crates/postio-smtp/src/transport.rs:594
-try_next                          # crates/postio-core/src/bridge.rs:328
 untracked                         # crates/postio-core/src/invocation.rs:155
 vanishing_after_the_payload       # crates/postio-smtp/src/transport.rs:583
 vanishing_at                      # crates/postio-smtp/src/transport.rs:572

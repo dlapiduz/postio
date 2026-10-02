@@ -48,7 +48,7 @@ cd ~/src/postio-worktrees/<name>
 # which is what issue-land.sh does to read it back
 printf 'main\n' > "$(git rev-parse --git-dir)/postio-base"   # or see below
 # work tasks.md top to bottom, one commit per task
-scripts/issue-land.sh --detach          # lands the branch; closes nothing
+scripts/issue-land.sh --detach --full-suite   # lands the branch; closes nothing
 ```
 
 `tasks.md` is the queue and `spec.md` is the acceptance — both are in the
@@ -121,6 +121,18 @@ it in `profile.default`'s `default-filter`, and it runs nightly under
 `--profile nightly` (which is also how you run one by hand).
 `check-measurement-tier.py` keeps the two halves honest.
 
+**An interaction is tested as a storyboard, and reviewed before it ships**
+(ADR 0044, `specs/008-storyboards`). A change to how a GTK app behaves under
+the keyboard -- where focus lands, where the cursor goes, what a key does,
+what a screen jumps to -- ships with the storyboard that describes it in
+`storyboards/`, written from the acceptance **before** the code, so its run
+on the base is its red. Then run `/ux-review` before `issue-land.sh`: an
+independent reviewer judges the filmstrips against the design and every
+verdict cites a frame. Landing a GTK change with no current review is
+allowed and is labelled `interactions-unreviewed`. `scripts/storyboards.sh`
+runs it all -- `run`, `base`, `page --open`, `screens`, `coverage` -- on a
+private headless compositor, never your display.
+
 ## Build & test: verify what you touched, nothing more
 
 ```bash
@@ -144,6 +156,15 @@ cheap.** Measured, warm, on this workstation:
 `issue-land.sh` runs the **sanity tier** by default; `--full` adds the
 per-crate integration suites. That default exists because several sessions
 share this machine, so landing had become something you queued for.
+
+**For a new feature or a big change, add `--full-suite`.** It labels the
+pull request `full-suite`, and CI runs the nightly's whole run on it -- every
+integration suite, the measurement tier, coverage, docs -- through
+`.github/workflows/full-suite.yml`. `Full suite on request` is a required
+check, so auto-merge waits for that run and a red one blocks the merge. It
+costs the PR about twenty-five minutes of CI and none of this machine; the
+integration suites otherwise first run on the nightly, after the merge. On
+an open PR: `gh pr edit <n> --add-label full-suite`.
 
 **Land on the default. `--full` needs a specific reason, and "this change is
 about wiring" is not one** (maintainer, 2026-09-03: *"dont run the full gate
@@ -451,6 +472,7 @@ for a stranger who can't ask follow-ups:
 | Work this revealed, if it is less | **just fix it**, here, as its own commit |
 | Something needing a design/architecture call an agent can make | `needs-architecture` — `/ux-architect`'s queue |
 | Something only the maintainer can decide | `needs-maintainer`, plus a comment naming the question and the options |
+| The maintainer rejects an interaction | a storyboard (or a new `expect` in one), `source = { kind = "maintainer" }`, before the branch is reviewed again |
 | A constraint future sessions must respect | a new file under `docs/notes/` (date and title), listed in `docs/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
 
@@ -530,8 +552,10 @@ a kind already built there is a row in that file, not a new job.
 `/issue` (the loop), `/initiative` (several issues on one feature branch),
 `/lanes` (who else is here), `/preflight` (true state of the tree),
 `/add-fixture`, `/ux-architect` (designing any surface, and the
-`needs-architecture` queue), `/gtk-design` (building it), `/product-manager`
-and `/steward` (the two loops that watch the backlog and the execution).
+`needs-architecture` queue), `/gtk-design` (building it), `/ux-review`
+(filming a branch's interactions and having an independent reviewer judge
+them before the maintainer does), `/product-manager` and `/steward` (the two
+loops that watch the backlog and the execution).
 `docs/session-prompts.md` says which to run when.
 
 Product truth: `docs/PRODUCT.md`. Visual truth: the design canvas

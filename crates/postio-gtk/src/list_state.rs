@@ -420,7 +420,9 @@ impl ListStateView {
 
     fn render(&self) {
         let imp = self.imp();
-        let now = Instant::now();
+        // The seam's clock, as the sidebar's "last sync" reads it: the two ages
+        // sit on one screen and must agree, and a frozen clock must freeze both.
+        let now = postio_ui::clock::instant();
         let (status, item_count) = {
             let inputs = imp.inputs.borrow();
             (inputs.0.clone(), inputs.1)

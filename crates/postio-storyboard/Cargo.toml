@@ -1,0 +1,25 @@
+[package]
+name = "postio-storyboard"
+description = "Storyboards: interactions written once, played against every Postio frontend, and reviewed (specs/008-storyboards)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+postio-core = { workspace = true }
+postio-config = { workspace = true }
+postio-ui = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

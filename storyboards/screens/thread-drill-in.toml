@@ -1,0 +1,7 @@
+# The screen `thread-drill-in`, carried over from the old screen sweep's table (FR-030).
+source = { kind = "design", ref = "19-threaded-view" }
+design = "19-threaded-view"
+seed = "long-thread"
+vary = { width = ["wide"] }
+[[step]]
+command = "cycle_pane"
