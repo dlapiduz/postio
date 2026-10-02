@@ -4782,11 +4782,9 @@ mod tests {
         assert_eq!(
             keys_of(Keymap::defaults()),
             vec![
-                // Send's primary moved to `mod+shift+d` when the second
-                // keyboard layer landed; `mod+Return` is its alternate now.
                 // A hint shows the *primary*, which is what a person is
                 // being taught.
-                Some("ctrl+shift+d".to_string()),
+                Some("ctrl+Return".to_string()),
                 Some("ctrl+shift+Return".to_string()),
                 Some("ctrl+s".to_string()),
             ],
@@ -4824,9 +4822,9 @@ mod tests {
         // It has to be `save_draft` that loses it, and that is the point of
         // the fixture: since the second keyboard layer landed, most verbs
         // carry an alternate and *cannot* be left with nothing. Send keeps
-        // `mod+shift+d` when `mod+Return` is taken from it, which is the
-        // honest answer and no longer this case. `save_draft` has one key and
-        // no alternate, so it is the one that can still be emptied.
+        // `alt+s` when `mod+Return` is taken from it, which is the honest
+        // answer and no longer this case. `save_draft` has one key and no
+        // alternate, so it is the one that can still be emptied.
         //
         // An explicit `[keys]` entry outranks a default, so `send` wins the
         // contested key and `save_draft` is what loses it.

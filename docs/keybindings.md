@@ -98,7 +98,7 @@ command from inside a text field.
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `ctrl+BackSpace` | Back to words | Search (Postio Focus) |  | `back_to_words` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+shift+d` or `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
+| `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |

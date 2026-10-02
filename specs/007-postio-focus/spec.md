@@ -163,6 +163,7 @@ ids.
 | C25 | message dialog `SPEC.md` §2, §4, §5 | **Maintainer (2026-10-01): the system font for the chrome.** The chrome is Adwaita Sans and Adwaita Mono at the handoff's sizes, weights and gaps; no Barlow, Barlow Condensed or IBM Plex Mono in it (FR-093). A body drawn in app colours is set in Barlow (FR-039) |
 | C26 | message dialog `SPEC.md` §5, §6 | **Maintainer (2026-10-01): the system accent everywhere.** The open message follows the GNOME accent like the rest of Focus: the action card's fill is libadwaita's `--accent-color` at 8% (light) and 12% (dark), and links and the card's tag are that accent. The handoff's surface, ink, hairline and scrim values stand |
 | C27 | — | **Maintainer (2026-10-02): Focus is the one desktop app**, named "Postio" (binary `postio`, app id `dev.postio.Postio`) once the package switches (T253); until then it builds as `postio-focus` with app id `dev.postio.Postio.Focus`. The classic three-pane app (`postio-gtk`, the `postio` binary in `postio-app`) is retired rather than kept as a mode: it keeps building until it is removed and gets no new work ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). What it did and where Focus does it is [`classic-parity.md`](classic-parity.md). Removal waits for the maintainer |
+| C28 | 05 | Send is `mod+Return`: `ctrl+Return` on Linux, `cmd+Return` (`⌘↩`) on the Mac, drawn `ctrl+↵` on the composer's keycap; `mod+shift+d` is unbound |
 
 ## Milestones, and landing
 

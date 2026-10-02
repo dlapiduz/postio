@@ -51,7 +51,7 @@ search	/ | alt+ctrl+f
 save_search	ctrl+s
 back_to_words	ctrl+BackSpace
 compose	c | ctrl+n
-send	ctrl+shift+d | ctrl+Return | alt+s | alt+Return
+send	ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S
 save_draft	ctrl+s
 discard_draft	ctrl+d
