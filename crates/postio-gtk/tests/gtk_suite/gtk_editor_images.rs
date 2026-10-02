@@ -81,11 +81,16 @@ pub fn inline_images_render_from_the_blob_store_and_remote_ones_never_load() {
 
     // ── the document's image arrives as pixels through postio-cid: ───────
     editor.load(image_paragraph("photo-1@postio.invalid", "the lamp"));
-    settle("the inline image to resolve from the blob source", || {
-        eval_str(
-            editor.widget(),
-            "String(document.images.length === 1 && document.images[0].naturalWidth > 0)",
-        ) == "true"
+    let what = "the inline image to resolve from the blob source";
+    settle(what, || {
+        eval_str(editor.widget(), "String(document.images.length)") == "1"
+            && crate::cid_image_decoded(
+                &eval_str(
+                    editor.widget(),
+                    &crate::image_state_js("document.images[0]"),
+                ),
+                what,
+            )
     });
 
     // ── an inserted image lands at the caret and in the record ───────────

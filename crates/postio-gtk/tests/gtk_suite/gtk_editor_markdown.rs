@@ -86,14 +86,17 @@ fn ready(editor: &Editor) {
     // edits arrives at document end. Typing in between is typing nothing
     // listens to, and the test waited out its deadline for a bold run that
     // was never reported -- twice in a week on CI.
-    settle("the editor's empty page to commit, its script listening", || {
-        eval_str(
-            editor.widget(),
-            "(document.body && document.body.isContentEditable \
+    settle(
+        "the editor's empty page to commit, its script listening",
+        || {
+            eval_str(
+                editor.widget(),
+                "(document.body && document.body.isContentEditable \
               && document.body.textContent === '' \
               && window.postioEditorReady === true) ? 'ready' : ''",
-        ) == "ready"
-    });
+            ) == "ready"
+        },
+    );
     eval_str(
         editor.widget(),
         "(() => { document.body.focus(); \

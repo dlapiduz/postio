@@ -198,6 +198,35 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 /// the scroll range met the one-line fallback, 51px tall (2026-10-01). The
 /// deadline itself has its own test, with its own 1 ms deadline
 /// (`body_view::a_render_past_its_deadline_shows_the_plain_text`).
+/// JavaScript for an `<img>`'s state, given an expression that finds it:
+/// `absent`, `loading`, `decoded`, or `broken` -- finished, with no pixels.
+pub(crate) fn image_state_js(find: &str) -> String {
+    format!(
+        "(() => {{ const i = {find}; if (!i) return 'absent'; \
+           if (!i.complete) return 'loading'; \
+           return i.naturalWidth > 0 ? 'decoded' : 'broken'; }})()"
+    )
+}
+
+/// Whether a `postio-cid:` image has decoded, failing at once if it never
+/// will (#1716).
+///
+/// Waiting only for a positive width made a broken image look like a slow
+/// one: on CI the profile test sat out its whole 360 s deadline "waiting for
+/// the cid image to decode", and the log could not say whether the request
+/// failed or never came back. A broken image is final, so it fails here,
+/// naming the scheme request, and the next occurrence says which it was.
+pub(crate) fn cid_image_decoded(state: &str, what: &str) -> bool {
+    match state {
+        "decoded" => true,
+        "broken" => panic!(
+            "{what}: the image finished loading with no pixels -- the postio-cid: \
+             request failed or was refused, so waiting longer cannot help"
+        ),
+        _ => false,
+    }
+}
+
 /// JavaScript that answers `"true"` once the editor page's script has
 /// attached every listener -- the marker `editor.js` sets last (#1716). A
 /// test that types must wait for it, not merely for an editable body.
