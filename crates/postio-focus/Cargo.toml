@@ -58,6 +58,9 @@ postio-vault.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 url = { workspace = true }
+# `observe`'s app-specific fields are JSON values, and a digest's summary is
+# stored as JSON (US13).
+serde_json.workspace = true
 
 [dev-dependencies]
 # The search index, which sync fills as it files mail: a fixture fills it
@@ -74,8 +77,6 @@ postio-widgets = { workspace = true, features = ["test-hooks"] }
 # back, driven without a connection (US3 scenario 7).
 postio-smtp.workspace = true
 postio-sync.workspace = true
-# A digest's summary, stored as the summariser stores it (US13).
-serde_json.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
 
