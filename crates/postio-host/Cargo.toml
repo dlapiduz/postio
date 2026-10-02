@@ -53,6 +53,7 @@ postio-ai = { workspace = true, features = ["test-support"] }
 async-trait = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-smtp.workspace = true
+postio-account = { workspace = true, features = ["imap", "test-server"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 serde-xml-rs = { workspace = true }
 postio-test-support.workspace = true

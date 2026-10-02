@@ -924,6 +924,34 @@ fn a_crashed_session_hands_back_the_draft_being_written_and_a_clean_one_does_not
 }
 
 #[test]
+fn a_draft_nobody_touched_is_not_recovered_after_a_crash() {
+    // #491 reopens what was mid-edit when the last session died, and an
+    // untouched buffer is not work worth restoring: the composer autosaves an
+    // empty row for the buffer it holds, so recovering it perpetuates itself,
+    // and the client opens on a stale composer at every launch.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Gtk);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    assert_eq!(world.rt.block_on(client.recover_draft(account)), Ok(None));
+
+    // A draft exactly as it opened: no recipient, no subject, no body.
+    world.rt.block_on(async {
+        client
+            .save_draft(1, postio_model::Draft::new(account))
+            .await
+            .expect("saved");
+    });
+
+    // The session never ended, so the next start is a crash -- and finds
+    // nothing worth handing back.
+    assert_eq!(
+        world.rt.block_on(client.recover_draft(account)),
+        Ok(None),
+        "an untouched compose buffer was recovered"
+    );
+}
+
+#[test]
 fn a_file_is_attached_as_the_type_the_frontend_sniffed_and_its_bytes_read_back() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Gtk);
@@ -2157,6 +2185,102 @@ fn a_window_opens_on_an_account_whose_password_the_keyring_has() {
         matches!(route, crate::startup::StartupRoute::Ready(_)),
         "{route:?}"
     );
+}
+
+#[test]
+fn an_empty_password_is_no_password() {
+    use postio_account::secret::{AccountKey, Password, SecretStore};
+    let world = World::new();
+    let secrets = MemorySecretStore::new();
+    world
+        .rt
+        .block_on(secrets.store(
+            &AccountKey::new("test@example.com".to_owned()),
+            &Password::new(""),
+        ))
+        .expect("the credential stores");
+    match world
+        .rt
+        .block_on(crate::startup::route(world.database(), &secrets))
+    {
+        crate::startup::StartupRoute::Onboard(Some(account)) => {
+            assert_eq!(account.address.address, "test@example.com");
+        }
+        other => panic!("an empty password is not one to open with: {other:?}"),
+    }
+}
+
+#[test]
+fn a_locked_keyring_sends_a_window_back_to_onboarding_too() {
+    // Not the same fault as a missing password, and the same dead end: a
+    // credential that cannot be read is one the account does not have.
+    use postio_account::secret::{AccountKey, SecretStore};
+    let world = World::new();
+    let locked = MemorySecretStore::locked();
+    assert!(
+        world
+            .rt
+            .block_on(locked.retrieve(&AccountKey::new("test@example.com".to_owned())))
+            .is_err(),
+        "the double has to refuse, or this test cannot fail"
+    );
+    assert!(matches!(
+        world
+            .rt
+            .block_on(crate::startup::route(world.database(), &locked)),
+        crate::startup::StartupRoute::Onboard(Some(_))
+    ));
+}
+
+#[test]
+fn an_account_marked_for_removal_is_reaped_before_startup_decides_anything() {
+    // #464: "Remove" in the settings panel only marks the row, so something
+    // has to delete it once, at the next launch, before an engine could
+    // otherwise start against it.
+    use postio_storage::repository::AccountRepository;
+    let world = World::new();
+    world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        AccountRepository::new(&connection)
+            .mark_pending_deletion(world.account)
+            .await
+            .expect("marked");
+    });
+
+    assert!(
+        matches!(
+            world.rt.block_on(crate::startup::route(
+                world.database(),
+                &MemorySecretStore::new()
+            )),
+            crate::startup::StartupRoute::Onboard(None)
+        ),
+        "a pending-deletion account is not there to open or to prefill from"
+    );
+    let gone = world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        AccountRepository::new(&connection)
+            .get(world.account)
+            .await
+            .expect("a read")
+            .is_none()
+    });
+    assert!(
+        gone,
+        "the route must actually reap it, not merely skip past it"
+    );
+}
+
+#[test]
+fn a_fresh_installation_has_nothing_to_prefill_with() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime");
+    let database = rt.block_on(test_support::memory());
+    assert!(matches!(
+        rt.block_on(crate::startup::route(&database, &MemorySecretStore::new())),
+        crate::startup::StartupRoute::Onboard(None)
+    ));
 }
 
 /// Ask `read` until it answers `Some`, failing after a while: for work the
