@@ -19,6 +19,7 @@ as `$EDITOR`'s would. `ConfigChanged` gains a `focus` flag
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `filtering` | bool | `true` | FR-119. `false` stops filing new mail into Filtered. What is already filtered stays where it is |
+| `reading` | `"dialog"` \| `"pane"` | `"dialog"` | T232. Where `Return` opens a message: over the list in the dialog, or in a pane beside it. A window narrower than 980 px uses the dialog whatever this says. `toggle_reading_pane` (`F8`) writes it |
 
 Keys this version does not know are kept, as `[tui]` keeps them (`extras`).
 

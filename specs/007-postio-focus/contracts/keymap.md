@@ -118,6 +118,7 @@ bar in place, in the top bar's own field, with the results below it.
 | message surfaces | `-` | `dismiss_marker` | Focus (T118) |
 | `Reader` | `.` | `more_actions`: the open message's More (Label, Move, Delete) | Focus (T206) |
 | `List` | `F` | `sweep_inbox`: shows a count, then acts | Focus (T128) |
+| `List` (and `Reader`, through its fallback) | `F8` | `toggle_reading_pane`: open messages beside the list or over it (`[focus] reading`) | Focus (T232) |
 | `Filtered` | `1` … `7` | `filtered_tab_1` … `filtered_tab_7` | Focus |
 | `Digest` | `]` / `[` | `next_reference` / `prev_reference` | Focus, milestone 2 |
 | `Digest` | `Tab` | `toggle_digest_summary` | Focus, milestone 2 |

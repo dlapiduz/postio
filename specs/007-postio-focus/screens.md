@@ -250,6 +250,112 @@ Pinned by `compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a
 `…the_close_is_the_shared_x` and `…the_dialog_follows_the_message_dialogs_size_rule`,
 with `postio-ui`'s `hints` cases for the compact spelling.
 
+## Reading beside the list (T232)
+
+Decided with `/ux-architect` and `/gtk-design` against the message dialog
+(T205-T214) and the classic app's three panes (`postio-gtk`'s `shell.rs`,
+whose list is canvas 1b's 404 px). Some people read beside their list rather
+than over it, and with the classic app retiring (T229-T231), Focus is where
+they have to be able to.
+
+**The rule: the pane is the message dialog, placed beside the list.** It is
+one message view, `open::OpenMessage`, moved between a dialog and a pane, so
+the two cannot drift: the same 52 px header (steps, the subject over "Message
+5 of 60", the X), the same action row the pane's full width, the same
+centred column, rhythm, components, treatments and render-mode line. Only
+where it is drawn changes, never what a key does.
+
+**Switching.** One registry command, `toggle_reading_pane`, "Read beside the
+list or over it", on `F8` (the key Evolution and Thunderbird give their
+message pane), in the List context, which the Reader context falls back to,
+so it works with a message open too. Focus only. The setting behind it is
+`[focus] reading = "dialog" | "pane"` in `config.toml` (contracts/config.md),
+default `"dialog"`. The command switches the window at once and writes the
+setting through the settings' own path (`toml_edit`, then
+`write_atomically`), so the choice outlives the session. The watcher's
+echo of that write changes nothing. A message that is open moves with the
+switch and stays open. A toast says which way messages now open, and, when
+the window is too narrow for a pane, that they open beside the list once it
+is wider. The main menu carries it too, as a check item, "Read beside the
+list", for the pointer. **The dialog stays the default:** Focus is one thing
+at a time, and the dialog gives the message the window's centre while the
+list stays in sight behind it. The pane is for people who want both at
+once.
+
+**Layout.** Under the top bar, the strip and the banner, which still span
+the window: the list on the left, the pane on the right, a strong hairline
+between them. The bulk bar stays under the list. The geometry is
+`postio_ui::focus_dialog::pane_width`:
+
+- The pane is `min(820, W - 404)`. 820 is the dialog at its widest, so a
+  message reads at the same measure in both places. 404 is the list's floor,
+  canvas 1b's list width.
+- The list takes the rest: 404 at 1024, 460 at 1280, 620 at 1440, 1100 at
+  1920.
+- The pane is never narrower than 576, the app colours column (480) and its
+  inset (96), so the reading column is never squeezed. A pane therefore needs
+  a window at least 980 px wide (`PANE_WINDOW_MIN`).
+- Below 980 a message opens in the dialog, and the setting stays as it is.
+  Crossing the line with a message open moves that message between pane and
+  dialog, still open, at its place in the thread.
+- There is no draggable divider. Like the dialog, the pane's width comes
+  from the window and nothing else. A handle could drag the pane narrower
+  than the column it holds, or wider than the measure, and its position would
+  be one more thing to keep.
+
+Inside the pane, everything follows from its width as it follows from the
+dialog's: the column is `column_width(pane, treatment)` (480, or 640 on paper
+at 820, 572 on paper at 620), and below 760 the action row folds Label, Move
+and Delete into More `.` (at 1024 it does, at 1280 it does not).
+
+**Behaviour.**
+
+| Input | With nothing open | With a message open |
+|---|---|---|
+| `Return`, double-click | opens the cursor's row in the pane | opens the cursor's row |
+| `j`/`k`, the header's steps | move the cursor only (FR-016) | move the cursor, and the pane shows its row |
+| a click on a row | moves the cursor only | moves the cursor, and the pane follows it, as `j`/`k` do |
+| `Escape`, the pane's X | clears the selection (the list's own) | closes find first, then the message: the pane is empty, and the keyboard is in the list, on the row it was on |
+| `a`, `Delete` | act on the cursor's row | act on the open message, and the pane steps past it to the next row; at the end, the previous one; with none left, the pane is empty (T190) |
+| arrows, Page Up/Down, space, Home/End | move in the list | read the message, as in the dialog |
+| `[`/`]`, `O`, `.`, `-`, `v`, `o`, `e`/`E`/`f` | the list's | the open message's, as in the dialog |
+
+The list keeps its scroll and its cursor throughout, and keeps the
+keyboard: the message is beside it, not over it. Keys go to the open
+message's commands because a message is open (`Context::Reader`), not
+because the pane has the focus. **The pane follows the cursor only while a
+message is open, and only `Return` opens one.** Moving the cursor opens
+nothing and marks nothing (FR-016), so `j`/`k` over the list stays triage,
+as cheap as it is beside the dialog: no body is read for a row passed over,
+and no remote image is fetched for a message nobody opened. `Return` means
+the same thing in both modes, so switching changes where a message opens,
+never when.
+
+**The composer takes over the pane** (T221: it takes the place of the open
+message). Reply, Reply all, Forward and `c` put the composer where the
+message was: its header, its action row and its column, computed from the
+pane's width. The list stays beside it. Send or `Escape` hands the pane back
+to the message it answered, or to the empty pane when there was none.
+Below 980 it is the composer's dialog, as before.
+
+**States.**
+
+| State | The pane |
+|---|---|
+| Empty: nothing open | "No message open", over two buttons that each run their command and wear its key: Open `↵` and Read over the list `F8`. Never blank, and never a dead end |
+| Empty: the inbox is empty | No pane. The empty inbox (screen 16) takes the window, as in dialog mode: there is nothing to open beside it. The pane comes back with the first row |
+| Loading, partial body | The header, the subject, the labels and the position are drawn from the row at once. The body says what the dialog's says when headers have synced and the body has not (the reader's partial notice), never a spinner over local data |
+| Offline | The window's banner says so. A body already on disk reads as normal, and one that is not says it is not downloaded yet. Every verb works and is queued (local-first) |
+| Failing | The banner names the reason and its key, and the pane is unchanged |
+| Dense | Focus has one row density. At the list's 404 floor, the subject and snippet ellipsize, while the sender, the time and the focused row's hints keep their room |
+| Narrow (< 980) | No pane: the dialog, as above |
+
+The pane appears only on the inbox's own page. Filtered, the digest rules
+and a digest open their messages as they always have.
+
+**Compared**: screens 34 to 36 (`shot`, pane mode), at 1440x900 and
+1024x768, light and dark. See the table at the top for what each shows.
+
 ## The row menu (T199)
 
 A right-click on a list row opens a menu of the row's verbs, decided as
