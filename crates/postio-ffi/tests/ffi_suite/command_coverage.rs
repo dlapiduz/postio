@@ -45,7 +45,17 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// handler, a window or this boundary, or is scoped away from the Mac by
 /// `postio_core::registry::offered_on`. A new entry here is a regression
 /// with an issue number, not a place to park one.
-const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
+const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
+    // The one keymap's go-to keys and pinned searches (spec 007, offered by
+    // every app), which arrived with the merge of the macOS frontend and
+    // which no Mac surface answers yet.
+    (CommandId::GoToArchive, "specs/007-postio-focus/macos.md"),
+    (CommandId::GoToSnoozed, "specs/007-postio-focus/macos.md"),
+    (CommandId::SavedSearch1, "specs/007-postio-focus/macos.md"),
+    (CommandId::SavedSearch2, "specs/007-postio-focus/macos.md"),
+    (CommandId::SavedSearch3, "specs/007-postio-focus/macos.md"),
+    (CommandId::SavedSearch4, "specs/007-postio-focus/macos.md"),
+];
 
 /// Whether the Mac offers `id` at all. See the module note.
 ///
@@ -54,10 +64,14 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[];
 /// (`Requirement::Terminal`) are in no Mac menu, key or palette, so they owe
 /// it nothing.
 fn offered_on_the_mac(id: CommandId) -> bool {
+    use postio_core::registry::Requirement;
+    let requires = postio_core::registry::get(id).requires;
+    // Not the terminal's own commands, nor Focus's (spec 007): this
+    // boundary is the three-pane frontend's until the Mac builds Focus's
+    // design (specs/007-postio-focus/macos.md).
     postio_core::registry::offered_on(id.into(), postio_config::paths::Platform::Apple)
-        && !postio_core::registry::get(id)
-            .requires
-            .contains(postio_core::registry::Requirement::Terminal)
+        && !requires.contains(Requirement::Terminal)
+        && !requires.contains(Requirement::Focus)
 }
 
 /// The bus the FFI session builds, asked what it answers.

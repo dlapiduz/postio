@@ -87,6 +87,10 @@ The engine is shared, and none of Focus's engine work is GTK:
   guard (`postio_render::theme::guard`), or an equivalent the maintainer
   accepts. Paper needs the white sheet and the fit-to-column zoom down to
   0.85.
+- **Six commands every app is offered.** `go_to_archive`, `go_to_snoozed`
+  and `saved_search_1` to `saved_search_4` reach nothing on the Mac; they
+  are `KNOWN_ORPHANS` in `ffi_suite/command_coverage.rs` until a surface
+  answers them.
 - **Invitations, reminders, the vault and the local model.** The engine does
   these (`postio-calendar`, `postio-ai`, `postio-vault`), and the FFI exports
   none of them.
