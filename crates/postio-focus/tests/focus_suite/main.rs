@@ -375,6 +375,10 @@ const CASES: &[(&str, fn())] = &[
         treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours as fn(),
     ),
     (
+        "treatments::opening_and_stepping_prepare_no_body_on_the_interface_thread",
+        treatments::opening_and_stepping_prepare_no_body_on_the_interface_thread as fn(),
+    ),
+    (
         "treatments::switching_the_treatment_leaves_the_column_where_it_was",
         treatments::switching_the_treatment_leaves_the_column_where_it_was as fn(),
     ),

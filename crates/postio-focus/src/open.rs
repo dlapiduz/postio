@@ -11,6 +11,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use adw::prelude::*;
 use gtk::glib;
@@ -105,6 +107,11 @@ pub struct OpenMessage {
     /// reader's `cid:` images resolve to.
     inline: Inline,
     generation: Rc<Cell<u64>>,
+    /// Raised when the message whose body is being prepared off the
+    /// interface thread is no longer the one on screen (T223): a worker
+    /// still queued for it then does nothing, so `j` held down prepares the
+    /// message it lands on and not every one it passed.
+    preparing: RefCell<Arc<AtomicBool>>,
     open: Rc<Cell<bool>>,
     handler: RefCell<Option<Handler>>,
     /// The conversation's messages, oldest first, once read, and which of
@@ -373,6 +380,7 @@ impl OpenMessage {
             revealed: Cell::new(None),
             inline,
             generation: Rc::default(),
+            preparing: RefCell::default(),
             open,
             handler: RefCell::default(),
             thread: Rc::default(),
@@ -737,6 +745,8 @@ impl OpenMessage {
     fn show_message(&self, message: MessageId) {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
+        let preparing = std::mem::take(&mut *self.preparing.borrow_mut());
+        preparing.store(true, Ordering::Relaxed);
         // The inline-image source reads this same cell.
         self.shown.set(Some(message));
         self.revealed.set(None);
@@ -828,6 +838,7 @@ impl OpenMessage {
         let shown_body = Rc::clone(&self.body);
         let inline = Rc::clone(&self.inline);
         let header_card = Rc::clone(&self.header_card);
+        let preparing = Arc::clone(&self.preparing.borrow());
         shown_parts.borrow_mut().clear();
         inline.borrow_mut().clear();
         glib::spawn_future_local(async move {
@@ -898,8 +909,31 @@ impl OpenMessage {
                             inline.borrow_mut().insert(cid_key(&content_id), found);
                         }
                     }
+                    // Sanitised, classified and treated both ways on a
+                    // worker (T223), under the policy this sender is drawn
+                    // with: the interface thread only hands the result to
+                    // the view. A message nobody is waiting for any more is
+                    // not prepared at all.
+                    let remote = reader.remote_images_for(sender.as_deref());
+                    let prepared = {
+                        let body = body.clone();
+                        let preparing = Arc::clone(&preparing);
+                        gtk::gio::spawn_blocking(move || {
+                            (!preparing.load(Ordering::Relaxed)).then(|| {
+                                postio_ui::reader::document::prepare_treated(&body, remote)
+                            })
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                    };
+                    if current.get() != generation {
+                        return;
+                    }
+                    // The body counts as on screen when the view has it, as
+                    // it did when this was one synchronous step.
                     shown_body.replace(Some(body.clone()));
-                    reader.render(&body, sender.as_deref());
+                    reader.render_prepared(&body, sender.as_deref(), prepared);
                     reader.set_encoding_problems(encoding_problems);
                 }
                 Body::Partial => reader.show_absent(postio_ui::reader::document::Absent::Partial),

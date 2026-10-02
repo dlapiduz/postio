@@ -958,6 +958,19 @@ pub fn body_html_in(
     Rendered::default()
 }
 
+/// A message's plain text as the body a plain-text fallback draws: what
+/// [`body_html`] makes of a body with no HTML part, without counting as a
+/// body sanitised -- there is no sanitiser here, and the fallback is built
+/// for every load on the interface thread, so it must not read as the
+/// preparation T223 keeps off it.
+pub fn plain_text_body_html(text: &str) -> String {
+    if text.trim().is_empty() {
+        String::new()
+    } else {
+        quote::text_to_html(text)
+    }
+}
+
 /// A message whose HTML is over an input cap: its plain-text alternative,
 /// or a line saying there is nothing else to show. Never blank.
 fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
@@ -1030,7 +1043,16 @@ pub fn body_html_treated(
             ..over_cap(body, cap)
         };
     }
-    let trigger = treatment::paper_trigger(&sanitized);
+    treat_sanitized(&sanitized, chosen)
+}
+
+/// What a sanitised HTML body looks like under a treatment: classified, then
+/// drawn in app colours or on paper. The half of [`body_html_treated`] that
+/// is not the sanitiser, split off so [`prepare_treated`] can run the
+/// sanitiser once and treat both ways.
+fn treat_sanitized(sanitized: &sanitize::Sanitized, chosen: Option<Treatment>) -> Rendered {
+    crate::reader::cost::bump(&crate::reader::cost::BODIES_TREATED, 1);
+    let trigger = treatment::paper_trigger(sanitized);
     let classified = if trigger.is_some() {
         Treatment::Paper
     } else {
@@ -1059,7 +1081,7 @@ pub fn body_html_treated(
                         r#"<div class="{ORIGINAL_CLASS}{letter}">{}</div>"#,
                         quote::fold_html_quotes(&sanitized.html)
                     ),
-                    &sanitized,
+                    sanitized,
                 ),
                 treatment::light_only(&sanitized.styles),
             )
@@ -1294,6 +1316,10 @@ pub struct Prepared {
     verdict: bool,
     rendering: Rendering,
     rendered: Rendered,
+    /// The body drawn each way, when prepared for a reader that treats
+    /// ([`prepare_treated`]): the person's `O` is then a choice between two
+    /// finished documents, not work.
+    treated: Option<Box<[Rendered; 2]>>,
 }
 
 impl Prepared {
@@ -1312,6 +1338,70 @@ impl Prepared {
     /// What the sanitiser made of it.
     pub fn rendered(&self) -> &Rendered {
         &self.rendered
+    }
+
+    /// The body as [`body_html_treated`] would draw it under `chosen` (`None`
+    /// is the rule's), if this was prepared by [`prepare_treated`] from
+    /// exactly `body`, under exactly `remote`.
+    pub fn treated_for(
+        &self,
+        body: &MessageBody,
+        remote: RemoteImages,
+        chosen: Option<Treatment>,
+    ) -> Option<&Rendered> {
+        if self.remote != remote || self.body != *body {
+            return None;
+        }
+        let [app, paper] = &**self.treated.as_ref()?;
+        let shown = chosen
+            .or_else(|| app.treated.map(|treated| treated.classified))
+            .unwrap_or(Treatment::AppColours);
+        Some(match shown {
+            Treatment::AppColours => app,
+            Treatment::Paper => paper,
+        })
+    }
+}
+
+/// Render `body` for a reader that draws treatments (Focus), ahead of time:
+/// sanitised once, classified, and drawn both in app colours and on paper,
+/// so opening the message and switching its treatment are both free of the
+/// work (specs/007-postio-focus T223).
+///
+/// For a worker. No reader-view verdict is judged: a treating reader has no
+/// reader view, and the verdict is another html5ever parse.
+pub fn prepare_treated(body: &MessageBody, remote: RemoteImages) -> Prepared {
+    let both = match body.html.as_deref().filter(|html| !html.trim().is_empty()) {
+        None => {
+            let text = body_html_treated(body, remote, None, None);
+            [text.clone(), text]
+        }
+        Some(html) => {
+            crate::reader::cost::bump(&crate::reader::cost::BODIES_SANITISED, 1);
+            let sanitized = sanitize::sanitize_body_in(html, remote, None);
+            match sanitized.over_cap {
+                Some(cap) => {
+                    let capped = Rendered {
+                        treated: Some(Treated::TEXT),
+                        ..over_cap(body, cap)
+                    };
+                    [capped.clone(), capped]
+                }
+                None => [
+                    treat_sanitized(&sanitized, Some(Treatment::AppColours)),
+                    treat_sanitized(&sanitized, Some(Treatment::Paper)),
+                ],
+            }
+        }
+    };
+    Prepared {
+        scope: String::new(),
+        body: body.clone(),
+        remote,
+        verdict: false,
+        rendering: Rendering::Original,
+        rendered: both[0].clone(),
+        treated: Some(Box::new(both)),
     }
 }
 
@@ -1332,6 +1422,7 @@ pub fn prepare_message(body: &MessageBody, remote: RemoteImages) -> Prepared {
         verdict,
         rendering,
         rendered: body_html(body, remote, rendering),
+        treated: None,
     }
 }
 
@@ -1351,6 +1442,7 @@ pub fn prepare(scope: &str, body: &MessageBody, remote: RemoteImages) -> Prepare
         verdict,
         rendering,
         rendered: body_html_in(body, remote, rendering, Some(scope)),
+        treated: None,
     }
 }
 
@@ -3005,6 +3097,38 @@ mod treatment_tests {
     #[test]
     fn plain_text_has_no_line() {
         assert_eq!(render_mode_words(Treated::TEXT, None), None);
+    }
+
+    /// Prepared ahead, every choice reads back exactly what drawing it now
+    /// would have produced -- the rule's, either of the person's, and the
+    /// two bodies with only one treatment to give (T223).
+    #[test]
+    fn a_prepared_body_answers_every_choice_as_drawing_it_would() {
+        let text = MessageBody {
+            text: Some("Hello.\n".to_owned()),
+            html: None,
+        };
+        for body in [html(NEWSLETTER), html(LETTER), text] {
+            let prepared = prepare_treated(&body, RemoteImages::Blocked);
+            for chosen in [None, Some(Treatment::AppColours), Some(Treatment::Paper)] {
+                assert_eq!(
+                    prepared.treated_for(&body, RemoteImages::Blocked, chosen),
+                    Some(&body_html_treated(
+                        &body,
+                        RemoteImages::Blocked,
+                        chosen,
+                        None
+                    )),
+                    "{chosen:?}"
+                );
+            }
+            assert!(
+                prepared
+                    .treated_for(&body, RemoteImages::Allowed, None)
+                    .is_none(),
+                "served under a policy it was not prepared for"
+            );
+        }
     }
 
     #[test]

@@ -173,6 +173,83 @@ pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
     });
 }
 
+/// T223: preparing a body -- sanitising, classifying, the app-colours and
+/// paper rewrites -- is paid off the interface thread, so opening a message
+/// and stepping to the next with `j` cost the keystroke none of it, and `O`
+/// is a choice between two documents already made. Counted on this thread,
+/// which is the interface's: the worker's counts land on its own.
+pub fn opening_and_stepping_prepare_no_body_on_the_interface_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (news, _) = fixture
+            .file(
+                ("Field Notes Weekly", "news@prepared.example.com"),
+                "Issue 49",
+                "The light.",
+                5,
+            )
+            .await;
+        fixture
+            .write_html_body(news, &html_of("html-newsletter-own-page"))
+            .await;
+        let (work, _) = fixture
+            .file(
+                ("Dana Whitfield", "facilities@prepared.example.com"),
+                "Building pass",
+                "Hi everyone.",
+                10,
+            )
+            .await;
+        fixture
+            .write_html_body(work, &html_of("html-work-black-text"))
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        let counts = || {
+            (
+                postio_ui::test_support::bodies_sanitised(),
+                postio_ui::test_support::bodies_treated(),
+                postio_ui::test_support::bulk_judged(),
+            )
+        };
+        let before = counts();
+
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        assert!(
+            crate::settle_until(async || reader.treated().is_some()).await,
+            "the first message was never drawn under a treatment"
+        );
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || {
+                reading.title() == "Building pass"
+                    && reader.test_document().contains("Facilities Coordinator")
+            })
+            .await,
+            "j did not draw the next message"
+        );
+        support::keys(&window, &["O"]);
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            "O did not switch the office mail to paper"
+        );
+        assert_eq!(
+            counts(),
+            before,
+            "a body was sanitised, classified, treated or judged on the interface thread"
+        );
+    });
+}
+
 /// Switching keeps the column where it was: with the body's top in view
 /// there is no place inside it to keep, and the redraw must not scroll the
 /// column to put the body's first line at the top (T213, found in screen

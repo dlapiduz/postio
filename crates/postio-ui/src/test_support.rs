@@ -35,6 +35,13 @@ pub fn bodies_sanitised() -> u64 {
     cost::read(&cost::BODIES_SANITISED)
 }
 
+/// How many message bodies this thread has classified and treated (app
+/// colours or paper) for a reader -- specs/007-postio-focus T223 holds this
+/// at zero on the interface thread.
+pub fn bodies_treated() -> u64 {
+    cost::read(&cost::BODIES_TREATED)
+}
+
 /// How many message bodies this thread has parsed to decide whether they
 /// open in reader view -- a whole html5ever parse each.
 pub fn bulk_judged() -> u64 {

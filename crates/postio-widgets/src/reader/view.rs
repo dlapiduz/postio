@@ -2369,27 +2369,12 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
 /// says so itself, in a quiet line above the body.
 fn fallback_for(place: &Place, flowed: impl Fn(String) -> String) -> postio_render::Fallback {
     use postio_ui::reader::document;
-    let body = MessageBody {
-        text: Some(place.plain.borrow().clone()),
-        html: None,
-    };
+    let plain = document::plain_text_body_html(&place.plain.borrow());
     let treated = place.treated.get().is_some();
     let html = if treated {
-        let drawn = document::body_html_treated(&body, RemoteImages::Blocked, None, None);
-        document::document_for_treated(
-            &drawn.html,
-            "",
-            RemoteImages::Blocked,
-            Treatment::AppColours,
-        )
+        document::document_for_treated(&plain, "", RemoteImages::Blocked, Treatment::AppColours)
     } else {
-        let drawn = document::body_html(&body, RemoteImages::Blocked, Rendering::Original);
-        document::document_for(
-            &drawn.html,
-            "",
-            RemoteImages::Blocked,
-            document::Sheet::Theme,
-        )
+        document::document_for(&plain, "", RemoteImages::Blocked, document::Sheet::Theme)
     };
     postio_render::Fallback {
         document: flowed(html),
@@ -2779,21 +2764,29 @@ fn render_open(
         };
         // What was sanitised off the main thread, when it was for exactly
         // this; the sanitiser here otherwise, as it always was.
-        let drawn = if canvas.place.treatments.get() {
-            postio_ui::reader::document::body_html_treated(
-                &current.body,
-                remote,
-                current.chosen,
-                None,
-            )
-        } else {
-            match current.prepared.as_ref() {
-                Some(prepared) if prepared.serves(&current.body, remote, current.rendering) => {
-                    prepared.rendered().clone()
+        let drawn =
+            if canvas.place.treatments.get() {
+                // Prepared off the main thread, both treatments at once, when
+                // the caller had it done there (T223); here otherwise.
+                match current.prepared.as_ref().and_then(|prepared| {
+                    prepared.treated_for(&current.body, remote, current.chosen)
+                }) {
+                    Some(rendered) => rendered.clone(),
+                    None => postio_ui::reader::document::body_html_treated(
+                        &current.body,
+                        remote,
+                        current.chosen,
+                        None,
+                    ),
                 }
-                _ => body_html(&current.body, remote, current.rendering),
-            }
-        };
+            } else {
+                match current.prepared.as_ref() {
+                    Some(prepared) if prepared.serves(&current.body, remote, current.rendering) => {
+                        prepared.rendered().clone()
+                    }
+                    _ => body_html(&current.body, remote, current.rendering),
+                }
+            };
         (drawn, current.sender.clone(), current.bulk)
     };
     let remembered = open
