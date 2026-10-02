@@ -4010,7 +4010,19 @@ impl Window {
         let shell = imp.shell.get();
         let occupant = shell.map(|shell| shell.reader_occupant());
         let conversation = imp.conversation.get();
-        let view = if self.settings_window().is_some_and(|w| w.is_visible()) {
+        // The store-locked screen replaces the window's content with the
+        // unavailable card; nothing behind it is in front of anybody.
+        let locked = {
+            fn holds_unavailable(widget: &gtk::Widget) -> bool {
+                widget.is::<crate::unavailable::Unavailable>()
+                    || std::iter::successors(widget.first_child(), |w| w.next_sibling())
+                        .any(|child| holds_unavailable(&child))
+            }
+            holds_unavailable(self.upcast_ref())
+        };
+        let view = if locked {
+            View::Locked
+        } else if self.settings_window().is_some_and(|w| w.is_visible()) {
             View::Settings
         } else if imp.orientation.get().is_some_and(|o| o.is_visible()) {
             View::FirstRun
@@ -4070,7 +4082,11 @@ impl Window {
                 WindowState::Closed
             },
             view,
-            scope: Some(format!("{:?}", self.scope())),
+            // What the list's header names, which is what a person reads;
+            // not the scope's internal shape.
+            scope: list
+                .map(|list| list.mailbox_name())
+                .filter(|name| !name.is_empty()),
             keyboard: Keyboard {
                 region,
                 field,

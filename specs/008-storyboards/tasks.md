@@ -509,7 +509,7 @@ US2; quickstart § 5).
   - #1173: two reply bars.
 
   It has six `must_pass` twins with the correct expectation. The lint passes.
-- [ ] T061 [US2] Run `/ux-review --calibrate` on Classic. **The `must_fail`
+- [X] T061 [US2] Run `/ux-review --calibrate` on Classic. **The `must_fail`
   storyboards are the reviewer's red.** Record the hit rate in
   `docs/notes/2026-10-0X-storyboard-capture.md` (or a sibling note). Tune the
   prompt template, not the calibration set, until 12 of 12 are correct. If
@@ -544,7 +544,7 @@ full, and a new storyboard's base run is its red.
 storyboards before and after, and reports the rest as unchanged with a count
 (quickstart § 3).
 
-- [ ] T064 [P] [US4] [TEST] Write comparison tests in
+- [X] T064 [P] [US4] [TEST] Write comparison tests in
   `crates/postio-storyboard/src/compare.rs`:
   - classification as `unchanged`, `changed`, `new`, `removed` or
     `base_unavailable`;
@@ -552,10 +552,10 @@ storyboards before and after, and reports the rest as unchanged with a count
     change is not a change);
   - observation changes named by field path;
   - a seed change reported once, at the top.
-- [ ] T065 [US4] Implement `crates/postio-storyboard/src/compare.rs` and
+- [X] T065 [US4] Implement `crates/postio-storyboard/src/compare.rs` and
   `compare`, plus the page's changed, new and unchanged sections, with base
   and branch side by side. T064 goes green.
-- [ ] T066 [US4] [TEST] Extend `scripts/tests/test-storyboards-sh.sh` for
+- [X] T066 [US4] [TEST] Extend `scripts/tests/test-storyboards-sh.sh` for
   `base`:
   - it creates a detached worktree at the merge-base with the recorded
     `postio-base`;
@@ -565,7 +565,7 @@ storyboards before and after, and reports the rest as unchanged with a count
   - it links `Design/review/<branch>/base/`.
 
   Use a temporary git repository and a stub runner.
-- [ ] T067 [US4] Implement `scripts/storyboards.sh base`, plus `--changed`
+- [X] T067 [US4] Implement `scripts/storyboards.sh base`, plus `--changed`
   selection through `postio-storyboard select`. Put no worktree path into
   anything rustc sees (#1101). T066 goes green. Prove it end to end: on a
   scratch branch that changes only finder spacing in
@@ -588,7 +588,7 @@ override clears it (quickstart § 7).
 
 On this branch:
 
-- [ ] T068 [P] [US3] [TEST] Write parity tests in
+- [X] T068 [P] [US3] [TEST] Write parity tests in
   `crates/postio-storyboard/src/parity.rs`. Over synthetic runs of two apps:
   - equal `shared_eq` observations do not diverge;
   - a differing `cursor.index` diverges;
@@ -596,7 +596,7 @@ On this branch:
     fields;
   - a step skipped for one app is shown as skipped;
   - variants are grouped.
-- [ ] T069 [US3] Implement `crates/postio-storyboard/src/parity.rs`, the
+- [X] T069 [US3] Implement `crates/postio-storyboard/src/parity.rs`, the
   `parity` subcommand, the page's parity section, and
   `scripts/storyboards.sh run --app all`. That runs every runner whose crate
   exists on the branch, and reports a missing one as `app not present`. T068
@@ -606,21 +606,21 @@ On this branch:
 `feature/storyboards-focus` cut from `feature/postio-focus`. **No landing, no
 PR.**
 
-- [ ] T070 [US3] ⟨Focus lane⟩ Cherry-pick T002–T032 onto
+- [X] T070 [US3] ⟨Focus lane⟩ Cherry-pick T002–T032 onto
   `feature/storyboards-focus`. Resolve conflicts against Focus's
   `postio-widgets` `capture.rs`: `texture_with` goes there too.
-- [ ] T071 [US3] ⟨Focus lane⟩ `git mv crates/postio-gtk/src/storyboard
+- [X] T071 [US3] ⟨Focus lane⟩ `git mv crates/postio-gtk/src/storyboard
   crates/postio-widgets/src/storyboard` as a pure move commit. Then a second
   commit: `pub mod storyboard` in `postio-widgets/src/lib.rs`, with
   `postio-gtk` re-exporting it (ADR 0043).
-- [ ] T072 [US3] ⟨Focus lane⟩ [TEST] Update `apply.rs`'s tests for the Focus
+- [X] T072 [US3] ⟨Focus lane⟩ [TEST] Update `apply.rs`'s tests for the Focus
   branch:
   - `provides(App::Focus, toggle_has_action)` is true, and `provides(App::Classic, …)` is false;
   - flag (`*`) is not provided by Focus.
 
   Implement `provides` via `registry::get(id).requires.offered_by(Frontend::…)`
   (research R7).
-- [ ] T073 [US3] ⟨Focus lane⟩ [TEST] Add a `focus_suite` case, `observe.rs`,
+- [X] T073 [US3] ⟨Focus lane⟩ [TEST] Add a `focus_suite` case, `observe.rs`,
   plus its `CASES` row, mirroring T035 for Focus:
   - `j` gives the list region with the cursor moved;
   - `/` gives `overlay = finder` and `region = search` (the bar);
@@ -629,20 +629,20 @@ PR.**
   - `Escape` returns;
   - `d` gives `notice.undo`;
   - `app.focus.bulk` is present.
-- [ ] T074 [US3] ⟨Focus lane⟩ Implement `FocusWindow::observe()` in
+- [X] T074 [US3] ⟨Focus lane⟩ Implement `FocusWindow::observe()` in
   `crates/postio-focus/src/window.rs` per contracts/observation.md § Focus.
   Add a bulk-bar getter in `crates/postio-focus/src/bulk.rs`, plus `tone()`
   and `offers_undo()` on its toast path (`postio-widgets` `toast.rs`). T073
   goes green.
-- [ ] T075 [US3] ⟨Focus lane⟩ Move Focus's `shot` setup into
+- [X] T075 [US3] ⟨Focus lane⟩ Move Focus's `shot` setup into
   `crates/postio-focus/src/demo.rs` behind a `demo` feature, mirroring T037.
   Focus's `shot` tests stay green.
-- [ ] T076 [US3] ⟨Focus lane⟩ [TEST] Add a `focus_suite` case,
+- [X] T076 [US3] ⟨Focus lane⟩ [TEST] Add a `focus_suite` case,
   `storyboards.rs`, plus its `CASES` row, mirroring T039. Then implement
   `crates/postio-focus/src/demo/storyboard.rs` and
   `crates/postio-focus/examples/storyboard.rs`, mirroring T040 and T041, over
   `postio-host` and `postio-client` as Focus's `shot` does.
-- [ ] T077 [US3] ⟨Focus lane⟩ Add Focus overrides to the shared storyboards
+- [X] T077 [US3] ⟨Focus lane⟩ Add Focus overrides to the shared storyboards
   from T047, wherever Focus legitimately differs. For example, `Return` opens
   a dialog, not a pane, and `/` opens the bar. Run
   `scripts/storyboards.sh run --app all`, and check the parity sheet. Any
