@@ -92,9 +92,22 @@ invocation on its own headless compositor:
 | The same with frames off, as the app suite's catalogue case | 3 min 9 s |
 | The screen sweep alone (36 screens, in their variants) | 53 s |
 | The generated pass, every command in every context (119 presses) | 3 min 16 s |
+| Both apps, 176 runs, one runner at a time (Focus lane, quiet machine) | 7 min 31 s |
+| Both apps, sharded four ways (`--jobs 4`, the default on 8 cores) | 2 min 7 s |
+| The Classic catalogue alone, sharded four ways | 67 s |
 
 Frames off saves less than expected because "no frames" still settles every
 step: it means nothing is written, not less waiting, after a live search's
-debounce made the two modes disagree. Focus plays most of the catalogue too,
-so the both-apps figure is measured on the Focus lane; if it passes five
-minutes, the stride (2) is the dial, not the settle rules.
+debounce made the two modes disagree.
+
+One runner at a time missed SC-002 for both apps by half again (7 min 31 s
+against 5), and neither of the dials T101 offered could close it: capture is
+not the cost (frames off saved 23 s of 212), so a wider stride buys little,
+and moving storyboards out of the default run hides them. The cost is waiting
+-- every step settles -- and a lone runner leaves the machine idle while it
+waits. So `run` shards the catalogue across runners side by side, each on a
+headless compositor of its own (`--jobs`, default half the cores, at most
+four). Sharding is only allowed because it changes no frame: 80 of 82 Classic
+runs filmed byte-identical frames sharded and sequential, and the two that
+differed were clock reads that had escaped the seam (the search readout's
+milliseconds and an empty folder's sync age), fixed beside it.

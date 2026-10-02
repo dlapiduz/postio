@@ -850,7 +850,7 @@ screens` reproduces the old contact sheet (quickstart § 8).
 - [X] T100 [P] Add a test in `scripts/tests/` asserting
   `check-no-personal-data.py`'s `tracked_files` includes `storyboards/`
   (FR-027).
-- [ ] T101 Measure SC-002 with:
+- [X] T101 Measure SC-002 with:
   - one storyboard, warm;
   - the whole Classic catalogue at default variants;
   - on the Focus lane, both apps.
@@ -858,10 +858,10 @@ screens` reproduces the old contact sheet (quickstart § 8).
   Record the numbers in the T005 note. If over budget, apply the sampling
   stride or `SLOW` / `POSTIO-MEASUREMENT` per CLAUDE.md, never by loosening
   settle detection.
-- [ ] T102 Run `quickstart.md` §§ 1–10 end to end. Fix anything that does
+- [X] T102 Run `quickstart.md` §§ 1–10 end to end. Fix anything that does
   not hold, or amend the quickstart where it was wrong about the design. Run
   `/speckit-analyze` for consistency across spec, plan and tasks.
-- [ ] T103 Run `/ux-review` on this branch itself. It touches `postio-gtk`, so
+- [X] T103 Run `/ux-review` on this branch itself. It touches `postio-gtk`, so
   the landing warning would otherwise fire. Resolve its verdicts. Then
   `git fetch origin main`, rebase, `scripts/test-sanity.sh`,
   `cargo nextest run -p postio-app --test app_suite storyboards`, and

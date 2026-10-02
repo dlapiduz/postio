@@ -84,7 +84,13 @@ will say *review incomplete*, and you say so too.
 For each `fail`, and each finding of severity `blocker` or `wrong`:
 
 - **Fix it**: commit, re-run only that storyboard
-  (`scripts/storyboards.sh run --only <path>`), re-review only it. Do not
+  (`scripts/storyboards.sh run --only <path>`), re-review only it. To
+  re-review only what moved after a round of fixes, copy the reviewed runs
+  aside first, re-film, and bundle against the copy
+  (`scripts/storyboards.sh tool bundle --base <copy> ...`): the reviewer is
+  asked only about new runs and changed steps. Carry the earlier verdicts for
+  everything else into the new bundle as `verdicts.0.json` -- a frame that
+  did not change keeps the verdict it had -- and `verdicts merge` joins them. Do not
   argue with a frame by changing the storyboard's expectation unless the
   expectation was wrong about the *product* -- and then say so in the commit.
 - **Or contest it**: an entry in `Design/review/<branch>/bundle/contests.toml`
