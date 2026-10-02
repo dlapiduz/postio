@@ -9,7 +9,7 @@
 //! the body scrolls underneath it rather than carrying it away.
 
 use adw::prelude::*;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Utc};
 use postio_model::address::EmailAddress;
 use postio_ui::reader::header::MessageHeader as HeaderLines;
 
@@ -289,7 +289,7 @@ impl MessageHeader {
         subject: Option<&str>,
         date: DateTime<Utc>,
     ) {
-        let lines = HeaderLines::of(from, to, cc, subject, date, Local::now());
+        let lines = HeaderLines::of(from, to, cc, subject, date, postio_ui::clock::now());
 
         self.subject.set_label(&lines.subject);
         self.set_sender_line(&lines.from, &lines.date);
@@ -318,7 +318,14 @@ impl MessageHeader {
     /// The conversation pane's is its newest message's (#1671): the one its
     /// verbs answer.
     pub fn set_recipients(&self, to: &[EmailAddress], cc: &[EmailAddress]) {
-        let lines = HeaderLines::of(&[], to, cc, None, DateTime::<Utc>::UNIX_EPOCH, Local::now());
+        let lines = HeaderLines::of(
+            &[],
+            to,
+            cc,
+            None,
+            DateTime::<Utc>::UNIX_EPOCH,
+            postio_ui::clock::now(),
+        );
         self.draw_recipients(&lines);
     }
 

@@ -1,0 +1,36 @@
+# Typing in the composer body is not eaten by single-key bindings (#602,
+# #73).
+#
+# The defect: `e`, `a` and `j` are bindings in the list, and in the
+# composer body they were still acting as bindings: `e` opened another
+# reply, and later single keys stopped working at random. Typed text must
+# go into the body and nothing else.
+#
+# The runner's editor does not paint typed text in the frame yet, so this
+# pins what the keys did NOT do: no second composer, no archive, no cursor
+# move, the body still holding the keyboard.
+source = { kind = "issue", ref = "#602" }
+proof  = "pinned"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", keyboard.typing = true }
+expect  = "A reply opens with the caret in the body."
+
+[[step]]
+type    = "e a j"
+check   = { composer.open = true, keyboard.field = "body", keyboard.typing = true, cursor.index = 0, selection.count = 0 }
+expect  = "No second composer opened, nothing was archived, and the list cursor did not move: the keys were typed, not run as commands."
+
+[[step]]
+type    = " reply here"
+check   = { composer.open = true, keyboard.field = "body", cursor.index = 0 }
+expect  = "Typing carries on in the same body, still the one composer."
+
+[[step]]
+command = "back"
+check   = { composer.open = false, cursor.index = 0 }
+expect  = "Back on the list, on the same row, which was neither archived nor moved."

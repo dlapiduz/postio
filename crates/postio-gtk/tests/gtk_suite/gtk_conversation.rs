@@ -176,7 +176,7 @@ pub fn one_thread_offers_one_reply_however_long_it_is() {
 ///
 /// The mark itself is drawn into a `snapshot()` and cannot be read back from
 /// a widget tree, so what is asserted is the state the drawing depends on.
-/// `scripts/screens.sh --only conversation` is what puts the pixels beside
+/// `scripts/storyboards.sh screens --only conversation` is what puts the pixels beside
 /// `17-conversation-view.png`.
 pub fn a_row_knows_whether_the_message_is_the_users_own() {
     if adw::init().is_err() || gdk::Display::default().is_none() {

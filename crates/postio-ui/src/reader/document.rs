@@ -243,7 +243,7 @@ pub(crate) const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
 /// A sibling of [`reader_ground`], split out of the same file the same way:
 /// everything before the dark block is the light scheme, and the `:root`
 /// body of it is the set of values a sender's page should be drawn with.
-fn light_tokens() -> &'static str {
+pub(crate) fn light_tokens() -> &'static str {
     let (light, _) = PALETTE
         .split_once(DARK_BLOCK)
         .expect("the generated palette always emits a dark block");

@@ -1,0 +1,6 @@
+# must_pass: the twin of cal-launch-types-into-search.
+source      = { kind = "issue", ref = "#1473" }
+calibration = "must_pass"
+[[step]]
+key    = "j"
+expect = "The list cursor moves down one row; the search field stays empty."

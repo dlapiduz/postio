@@ -32,6 +32,8 @@
 pub mod add_account;
 pub mod commands;
 pub mod compose;
+#[cfg(feature = "demo")]
+pub mod demo;
 pub mod export;
 pub mod feed;
 pub mod frontend;

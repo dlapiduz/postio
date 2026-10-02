@@ -1,0 +1,4 @@
+# The screen `inbox`, carried over from the old screen sweep's table (FR-030).
+source = { kind = "design", ref = "01-inbox-reading" }
+design = "01-inbox-reading"
+

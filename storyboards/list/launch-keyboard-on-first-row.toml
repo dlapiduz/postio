@@ -1,0 +1,13 @@
+# The window opens with the keyboard on the first message (#1473).
+#
+# The defect: the window opened with the keyboard in the search field, so
+# `j`, `a` and `?` typed letters into it. If the keyboard starts anywhere but
+# the list, `j` lands in the search field and the first check fails.
+source = { kind = "issue", ref = "#1473" }
+proof  = "pinned"
+design = "01-inbox-reading"
+
+[[step]]
+key    = "j"
+check  = { keyboard.region = "list", keyboard.typing = false, overlay.kind = "none", cursor.index = 1 }
+expect = "The first key moves the cursor down a row; nothing is typed anywhere."
