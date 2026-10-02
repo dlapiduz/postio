@@ -1,1254 +1,675 @@
 # Research: Postio Focus
 
-Phase 0 for [plan.md](./plan.md). Each section is a decision, why it was taken,
-and what it was chosen over. The tree is `origin/main` at `b76a5f00`
-(2026-09-27), which includes spec 006 (`crates/postio-render`, ADR 0042).
-Paths are repository-relative; line numbers are against that tree.
-External versions were checked on 2026-09-27.
+Phase 0 for [plan.md](./plan.md). Each section is a finding that constrains
+Focus's design and the decision it led to. A rejected alternative is kept
+only where it stops the question being argued again. Paths are
+repository-relative.
 
 ---
 
-## R0. What this plan is built against
+## R0. What Focus is built on
 
-**The renderer has landed.** Spec 006 put message bodies on
-`crates/postio-render`, a Blitz-based engine with no toolkit, no network and
+**The reading renderer.** Message bodies are drawn by `crates/postio-render`
+(spec 006, ADR 0042): a Blitz-based engine with no toolkit, no network and
 no C in its graph. It runs one render thread per reader and returns an
 immutable snapshot: a display list, a `TextIndex`, and link, message, fold and
-anchor boxes (`crates/postio-render/src/lib.rs:31-105`). `BodyView`, a
-`GtkScrollable` in `crates/postio-gtk/src/body_view/`, paints that snapshot as
-tiles and supplies selection, find, links, accessibility and zoom. ADR 0042
-records the rule. ADR 0032's decision stands, but its WebView mechanism is
-superseded. The handoff's condition for planning, a merged renderer, is met.
+anchor boxes. `BodyView`, a `GtkScrollable` in `postio-widgets`, paints that
+snapshot as tiles and supplies selection, find, links, accessibility and
+zoom.
 
-**Who else is in these files** (`/lanes`, 2026-09-27):
-
-- **`feature/contacts`** is 32 commits ahead, held for review since
-  2026-09-24. It edits:
-  - `crates/postio-core/src/{command,registry,context}.rs`;
-  - the reader header (`crates/postio-gtk/src/reader/{message_header,view}.rs`);
-  - `crates/postio-gtk/src/finder.rs`;
-  - `crates/postio-ui/src/{paging,keymap,reader/header}.rs`;
-  - `crates/postio-app/src/{recipients,compose,reading}.rs`;
-  - the contacts tables.
-
-  Every one of these is a file this plan moves or changes. So each move here
-  is a pure `git mv` commit, which keeps rename detection working for
-  whichever branch rebases second. The keymap change is one commit of its
-  own. The branch that lands second rebases.
-- **Stale claims.** The `in-progress` issues on read paths (#1609, #1612,
-  #1602) and on the web processes (#1603, now largely overtaken by 006) have
-  no worktree and no branch.
-
-**The store has no migrations.** The schema is one declared batch, and its
-hash is stamped into `user_version`. A store with any other fingerprint is
-refused, and the user resyncs into a fresh one:
-
-- `crates/postio-storage/src/schema.rs:62-88`;
-- `crates/postio-storage/src/store.rs:458-480`.
-
-Every schema change therefore clears what lives only in the store, snoozes
-and labels included. That decides R14: what the user decides lives in
-`config.toml`, and the store holds only what can be recomputed or re-entered.
-
-`CLAUDE.md` and the constitution both still say "migrations are still
-written". Recorded here for the maintainer, and not changed by this branch.
+**The store migrates where it can, and starts over where it cannot.** A
+schema change comes with a `Migration` from the stamp it replaces
+(`postio_storage::schema::MIGRATIONS`); a store whose stamp no migration
+reaches is refused with a fresh store as the way forward
+(`postio_session::start_over`), which sets the old one aside and keeps the
+accounts and `config.toml`
+(`docs/notes/2026-10-01-store-migrations-and-starting-over.md`). What exists
+only in the store is lost when it starts over. That decides R14: what the
+user decides lives in `config.toml`, and the store holds what can be
+recomputed or re-entered.
 
 ---
 
-## R1. The shared GTK crate is `postio-widgets` (open decision 7)
+## R1. The shared GTK crate is `postio-widgets`
 
-**Decision.** A new crate, `crates/postio-widgets`, holds the GTK widgets and
-presenters that more than one desktop app uses. Both desktop apps depend on
-it, and neither depends on the other.
+**Decision.** `crates/postio-widgets` holds the GTK Focus draws outside its
+own window and the presenters that join it to `postio-client`; it depends on
+no app. The rule, what lives there and the boundary are
+[ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md).
 
-What moves out of `crates/postio-gtk`, in this order, one pure move commit
-and one wiring commit each:
+It holds:
 
-1. **`body_view/`**: `BodyView`, tiles, interaction, find, zoom and
-   accessibility. It already has no `crate::` imports (`body_view/mod.rs`).
-   Its only dependencies are gtk, adw's `StyleManager`, postio-render,
-   postio-ui, `postio_config::ZOOM_STEPS` and `postio_body::Cap`.
-2. **The small widgets Focus uses**: `widgets/{keyhint, keycap, action_bar,
-   button, chip, notice, toast}.rs`, and their rules from `data/shell.css`.
-   `widgets/screen.rs` stays, because it takes the classic `Window`.
-3. **The reader:**
-   - `reader/view.rs` (`Reader`), `message_header.rs`, `banner.rs` and
-     `notices.rs`;
-   - the attachment chips (`parts::Chips`, `parts.rs:1101`).
+- **`body_view/`**: `BodyView`, tiles, interaction, find, zoom and
+  accessibility;
+- **the reader**: `Reader`, its banner, notices and attachment chips. The
+  verb bars `Reader` draws are configuration, and Focus passes none: its
+  open message has its own action row. `Reader::flow_in` makes the view as
+  tall as its document inside an outer scroller (R2);
+- **the composer**, behind a `ComposerHost` trait for the pane or dialog it
+  lives in, the file dialog's parent, the keymap in force and autosave. It
+  still edits in WebKit, because ADR 0039's native editor is decided and not
+  built, so `postio-widgets` carries webkit6 for the composer alone;
+- **the small widgets**: keyhint, keycap, action bar, buttons (the one close
+  button, the one icon button), chip, notice, toast, label pills, the
+  row-anchored pickers and the typed-date entry;
+- **the list model**: a `GListModel` over `postio-ui`'s `ListWindow`,
+  generic over its row type;
+- **the presenters**: composing, reading (the blob source and the remote-image
+  fetcher), configuration, credentials and adding an account, onboarding,
+  settings, export (drag-out), and the editor launcher;
+- **the settings window**, the window-state file and drag-out.
 
-   The verb bars `Reader` draws (`reader/actions.rs:33-55`) become
-   configuration: the classic app passes its three bars, and Focus passes
-   none, because its dialog has its own toolbar. Several parts stay in
-   postio-gtk as the classic reading pane: `conversation.rs`, `reader/rail.rs`,
-   the parts panel and the search preview. `mark_html`
-   (`crates/postio-gtk/src/search.rs:1568`) is plain string code, and moves to
-   postio-ui.
-4. **The composer**: `composer.rs` (4,687 lines), `editor.rs` and
-   `data/editor.js`. They move behind a `ComposerHost` trait that replaces the
-   composer's use of the classic `Window`. Today it uses the window for:
-   - the pane and its occupant (`composer.rs:1888`, `:2443-2465`);
-   - the context (`set_context`) and the command broadcast (`:1929`);
-   - the keymap in force (`:1940`, `:3268`);
-   - the file dialog's parent (`:2152`, `:2208`);
-   - autosave, which returns early outside a classic window (`:2668`).
+**Boundary.** It may depend on gtk4, libadwaita, webkit6, `postio-render`,
+`postio-ui`, `postio-core`, `postio-body`, `postio-config`, `postio-model` and
+`postio-client`. It may not depend on the store engine or the protocol, on
+`postio-host`, `postio-session`, `postio-runtime`, `postio-storage` or
+`postio-sync` (presenters reach mail through `postio-client`), or on any app.
+`check-crate-boundaries.py` enforces it.
 
-   `dispatch` (`:1961`) becomes public. The composer still edits in WebKit,
-   because ADR 0039's native editor is decided and not built, so
-   postio-widgets carries webkit6 for the composer alone.
-5. **The list model adapter**: `MessageList`, a `GListModel` over
-   `ListWindow` (`crates/postio-gtk/src/list.rs:283-376`), generalised over its
-   row type.
-6. **Presenters that would otherwise be written twice:**
-   - the composer's seam wiring over postio-client
-     (`crates/postio-app/src/compose.rs:77-98`);
-   - the reader's wiring (`crates/postio-app/src/reading.rs`: the blob
-     source and the remote-image fetcher);
-   - the config service and watcher glue (`crates/postio-gtk/src/config.rs:111`);
-   - the credential and add-account dialogs, which both apps need for
-     screen 19 and a first run (`crates/postio-app/src/{add_account,settings_credential}.rs`).
+**The checks that scan GTK code** (`check-key-hints-are-derived.py`,
+`check-buttons-have-a-kind.py`, `check-no-dead-css.py`,
+`check-shadows-use-tokens.py`, `check-spacing-literals-ratchet.py`,
+`check-reader-header-has-one-home.py`, `check-blocking-now-sites.py`,
+`check-uncalled-pub-fn.py`) scan `postio-widgets` and `postio-focus`.
 
-**New in postio-widgets**, built for both apps and used first by Focus:
-
-- the four row-anchored pickers and a typed-date entry (R6);
-- label pills;
-- an opt-in recipient chip entry (R15);
-- the `AdwDialog` frame Focus's windows use.
-
-**The crate's rule** is ADR 0043, kept to the rule. It gets a new entry in
-`scripts/checks/check-crate-boundaries.py`:
-
-- **It may depend on** gtk4, libadwaita, webkit6 (for the editor),
-  postio-render, postio-ui, postio-core, postio-body, postio-config,
-  postio-model and postio-client.
-- **It may not depend on:**
-  - rusqlite, libsqlite3-sys, turso, turso_core or io-imap, as postio-gtk
-    may not;
-  - postio-host, postio-session, postio-runtime, postio-storage or
-    postio-sync, because presenters reach mail through postio-client;
-  - postio-gtk, postio-app or postio-focus.
-- **The desktop crates:** postio-gtk gains "not postio-focus", and
-  postio-focus gains "not postio-gtk, not postio-app".
-
-**Checks that must widen with the move.** Several scan `crates/postio-gtk`
-only, so code that moves would escape them:
-
-- `check-key-hints-are-derived.py:39`
-- `check-buttons-have-a-kind.py`
-- `check-no-dead-css.py`: stylesheets under `crates/postio-gtk/data` only.
-- `check-shadows-use-tokens.py`
-- `check-spacing-literals-ratchet.py`: `composer.rs`'s baseline line moves
-  with the file.
-- `check-reader-header-has-one-home.py`
-- `check-blocking-now-sites.py:37`
-- `check-uncalled-pub-fn.py`'s `FRONTENDS` (`:109`), which exempts the
-  composer's 31 `test_*` hooks only inside the frontends.
-
-Each gains postio-widgets and postio-focus.
-
-**Found while reading, and fixed in the move** (each is small, and each hits
-Focus's one-view-reused dialog directly):
-
-- **The detached composer's window never calls `style::track`.** It stays
-  light in dark mode (inferred from `composer.rs:1697` and
-  `window.rs:3524-3530`).
-- **`BodyView` keeps state from the previous message.** Its selection,
-  focused link, toggled folds and darkened flag survive
-  `set_content_from_top`. In single-message mode the darkened key is `""`, so
-  darkening one message darkens the next.
-- **The plain-text fallback is never filled.** `Place.plain` is never written
-  (`reader/view.rs:308`, `:336`, `:1882`), so a render that times out shows
-  only its notice.
-
-**Rationale.** The handoff's reuse table and FR-006/FR-007. The reader,
-composer and widgets are what both apps draw. The reports show `BodyView` is
-ready to move, `Reader` needs only the widgets and `mark_html` beside it, and
-the composer needs one interface.
-
-**Alternatives:**
-
-- *Focus depends on postio-gtk.* Forbidden by the handoff.
-- *postio-gtk becomes the shared crate, and the classic shell moves into
-  postio-app.* A move of every classic file, and a much larger collision with
-  `feature/contacts`.
-- *Copy what Focus needs.* Forbidden by FR-006.
-
-Names considered were `postio-gtk-kit`, `postio-components` and
-`postio-surfaces`. `postio-widgets` says what the crate holds, and greps
-cleanly.
+**One view, reused.** `BodyView` drops a message's selection, focused link
+and toggled folds when the next is set, because the open message reuses one
+view for every message.
 
 ---
 
-## R2. The message view, on the 006 renderer
+## R2. The message view
 
-**Decision.** Focus's open-email dialog hosts the shared `Reader` in
-single-message mode. One `Reader` serves every open. Tests already pin that
-reuse:
+**Decision.** Focus's open message hosts the shared `Reader` in single-message
+mode, and one `Reader` serves every open, in the dialog or the pane.
 
-- `crates/postio-gtk/tests/gtk_suite/gtk_reader.rs:839`, `:1361`, `:1437`;
-- `crates/postio-app/tests/app_suite/reader_spawns_no_web_process.rs:150-200`.
+**Layout.** The open message owns its header and action row. Below them is
+one scrolling column: thread marker, subject, labels, sender block, action
+card, render-mode line, body, attachments and fold line scroll together.
+`BodyView::flow_in` makes the view as tall as its document and reads its
+visible window from the outer scroller's adjustment, so tiling stays
+windowed. The cards are GTK widgets, not HTML chrome in the document, so
+their buttons stay real buttons. The frame, column and treatments are
+[screens.md](./screens.md), "The open message".
 
-**Layout.** The dialog owns its own header (Close, subject and position,
-`k`/`j`) and its toolbar. Inside it, in order:
+**Highlighting a sentence (FR-035, screen 23).** `TextIndex::locate(Excerpt {
+text, offset, source_len })`, in `postio-render` beside `find`, marks a
+character range drawn as the find overlay is, and scrolls to it.
 
-1. `Reader`'s native header card, with a Focus presentation option;
-2. the marker card, in `Reader`'s notice slot;
-3. the body (`BodyView`);
-4. attachment cards;
-5. the quoted-history fold line.
+- The range is found from the stored excerpt, not the stored offsets: the
+  index's text is in laid-out reading order, with whitespace collapsed,
+  `alt` text included and closed folds left out.
+- Matching uses `find`'s folding (case and diacritics), with any run of
+  whitespace matching any other on both sides: blocks and table cells are
+  line breaks and tabs in the index, where a flattened source has spaces.
+- When the excerpt appears more than once, `offset` and `source_len` pick
+  the occurrence nearest its proportional position.
+- **Measured** over the render corpus (69 fixtures, about 1,000 sentences a
+  detector could store): read from what is drawn, 99.5% of sentences are
+  found; read from the text part first, 97.3%. The tiebreak picks the right
+  copy 1,979 times in 1,980; the miss is a line of emoji.
+  `crates/postio-render/tests/excerpt_locate.rs` holds these floors on the
+  nightly profile, and they are measured again when the corpus grows.
 
-**Revised (T183, 2026-09-29).** The dialog is one scrolling column, as
-screen 04 draws it: header card, marker card, body, attachments and fold line
-scroll together. `BodyView::flow_in` makes the view as tall as its document;
-it reads its visible window from the outer scroller's adjustment, so tiling
-stays windowed. A plain-text body has no frame; mail that paints its own page
-keeps a hairline one. The classic reader is unchanged: flow mode is Focus's
-presentation option (`Reader::flow_in`).
+So the marker's writer stores a plain prefix of the sentence, at most 200
+characters, with no ellipsis (which would stop it being found), and
+`source_len` is the length of the own text it was cut from.
 
-The alternatives were both worse:
+**Own text.** `postio_body::own_text(&MessageBody)` is what the detector reads
+and what offsets point into:
 
-- *The cards as HTML chrome in the document*, as the conversation document
-  draws them. Their buttons would become verb-scheme links, and the header
-  card would need a second implementation in the reader's CSS.
-- *`BodyView` inside an outer scroller.* It tiles only its own visible
-  rectangle, through its own adjustments.
-
-**Highlighting a sentence (FR-035; screen 23 in milestone 2).** `BodyView`
-gains a public way to mark a character range of the snapshot's `TextIndex`,
-drawn as the find overlay is (`body_view/interact.rs:189-217`), and to scroll
-to it. `scroll_into_view` (`mod.rs:604`) is `pub(super)` today.
-
-The range is found from the stored excerpt with `TextIndex::find`
-(`crates/postio-render/src/text_index.rs:513`, insensitive to case and
-diacritics). When the excerpt appears more than once, the stored offset picks
-the occurrence nearest its proportional position. Stored offsets can't be
-used directly: the index's text is in laid-out reading order, with whitespace
-collapsed, `alt` text included and closed folds left out.
-
-Rejected: `mark_html` with offsets. It matches terms, and a sentence can span
-inline markup.
-
-**Measured (spike S5, T011, 2026-09-27).** The spike ran over the render
-corpus: 69 fixtures, once the eight invitations had joined, and about 1,000
-sentences a detector could store. Each sentence was read two ways:
-
-| Excerpts read from | As read | Whitespace collapsed | Present at all |
-|---|---|---|---|
-| The text part first, as search reads it | 90.5% | 96.8% | 97.3% |
-| What is drawn: the HTML, flattened, when there is HTML | 92.3% | 98.7% | 99.5% |
-
-Before the invitations joined, the same spike rendered 61 fixtures and found
-91.7, 97.7 and 98.2 for the text part, and 92.8, 98.8 and 99.5 for what is
-drawn. The invitations' plain parts list organisers, guests and links that the
-HTML never draws, and wrap hard. That costs the text-first reading most,
-which is one more reason to read what is drawn.
-
-The plan holds, with three changes:
-
-- **The locator collapses the excerpt's whitespace** (T066). The index writes
-  every run of whitespace as one space, a `<pre>` line break included, and
-  `find` compares whitespace as it is written. Collapsing recovers six points.
-- **The locator matches any whitespace to any other, on both sides.** Blocks
-  and table cells are line breaks and tabs in the index, where a flattened
-  source has spaces. This recovers most of what is left of "present at all".
-- **The detector reads what is drawn** (T115). Text that is never drawn
-  cannot be found: a `<title>`, a hidden preheader, a blocked image's `alt`.
-  A `text/plain` alternative can also say something the HTML does not; read
-  that way, 13 more sentences are lost.
-
-The tiebreak was measured on every body sent twice over, because no sentence
-occurs twice within its own message anywhere in the corpus. It picks the right
-occurrence 1,939 times in 1,940 (text first) and 1,979 times in 1,980 (what is
-drawn). The one miss is a line of emoji.
-
-The test is `crates/postio-render/tests/excerpt_locate.rs`, on the nightly
-profile. Its floors are these numbers rounded down, for each source on its
-own. When the corpus grows, the rates move, so the floors are measured again.
-
-**Built (T066).** The locator is in `postio-render`, beside `find`. The plan
-put it in `postio-ui`, but that crate must not take on the renderer.
-
-- **The API:** `TextIndex::locate(Excerpt { text, offset, source_len })`.
-  `offset` and `source_len` place the excerpt in the text it was read from,
-  for the tiebreak.
-- **How it matches:** it uses `find`'s folding, with whitespace collapsed on
-  both sides. `find` itself keeps its find-in-page behaviour.
-- **What it finds:** on the 61 fixtures of the first run, every sentence that
-  is present at all. That was 98.2% read from the text part and 99.5% read
-  from what is drawn.
-- **Duplicates:** on bodies sent twice over, it picked the right copy every
-  time.
-
-Two rules follow for the marker's writer (T117) and highlight (T073):
-
-- The stored excerpt is a plain prefix of the sentence, at most 200
-  characters, with no ellipsis added. An ellipsis would stop the excerpt from
-  being found.
-- `source_len` is the length of the own text it was cut from.
-
-**Own text (T115).** `postio_body::own_text(&MessageBody)` does this, in order:
-
-1. sanitises the HTML;
-2. drops the quoted stretches, using the same detector the reader folds by;
-3. leaves out text that is hidden inline and `alt` text;
-4. flattens what remains;
+1. it sanitises the HTML;
+2. drops the quoted stretches, with the detector the reader folds by;
+3. leaves out text hidden inline and `alt` text;
+4. flattens what remains, reading what is drawn, not a `text/plain`
+   alternative that may say something else;
 5. splits off the signature.
 
-Two known gaps:
+It also stops at Outlook's "Original Message" line and underscore rule, a
+forward banner, a `From:` over `Sent:` or `Date:` block, "Sent from my", and
+an attribution over unquoted text, and ends at a bare closing line. Text
+hidden by a class in the sender's own stylesheet is not seen.
 
-- Outlook-style history under a From:/Sent: block, with no blockquote, is
-  neither folded by the reader nor left out (`html-white-page-reply`).
-- Text hidden by a class in the sender's own stylesheet is not seen.
+**Quote folds.** Single-message documents give their folds ids (`q0`, `q1`,
+…), and every fold is labelled "N quoted lines", counting lines that hold
+words.
 
-**Quote folds (T067, the document half).** Single-message documents give
-their folds the ids `q0`, `q1` and so on, and every fold, in single and thread
-documents, is labelled "N quoted lines", counting lines that hold words. The
-terminal's fold line still counts its own way, blank quote-marker lines
-included.
+**Raw source (`v`).** `ViewSource` shows the stored raw message
+(`messages.raw_blob_id`). When the raw blob is not local, it is fetched on
+that deliberate key press.
 
-**Quoted history (FR-034).** Single-message documents give their quote folds
-ids and a line count, as thread documents do:
-
-- ids: `crates/postio-ui/src/reader/thread.rs:84-100`;
-- today `crates/postio-body/src/quote.rs:34-112` emits `<details>` with no
-  count.
-
-This is a shared change: the classic single-message reader gains folds that
-open.
-
-**Raw source (`v`, FR-033).** A new `ViewSource` command shows the stored
-raw message (`messages.raw_blob_id`, set with the body at
-`crates/postio-storage/src/repository/messages.rs:1743-1755`). When the raw
-blob is not local, it is fetched on that deliberate key press. The existing
-`view-source` signal shows the decoded body, not RFC 822, and nothing invokes
-it (`reader/view.rs:1961`).
-
-**Images and links** come with the presenter:
-
-- per-sender consent, and the runtime's fetcher on consent
-  (`reader/view.rs:686-757`, `:1899`);
-- links opened only on activation, with the target on hover
-  (`body_view/mod.rs:498-601`).
-
-The remote-image allowlist is loaded once per app and shared by that app's
-readers; today each `Reader` loads its own copy. `o` offers the snapshot's
-`links` and the message's parts in a chooser.
+**Images and links.** Remote images need the sender's consent, once (`i i`)
+or always (`i a`); the remote-image allowlist is loaded once per app and
+shared by its readers, and also keeps each sender's chosen treatment. Links
+open only on activation, with the target shown first. `o` offers the
+snapshot's links and the message's parts in a chooser, which also saves
+attachments.
 
 ---
 
 ## R3. Focus as a frontend: one crate, on the terminal's pattern
 
-**Decision.** One crate, `crates/postio-focus`, holds the binary, the view and
-the presenters. This is the terminal's shape, one crate over `postio-host` and
-`postio-client`, not the classic split into postio-gtk and postio-app. That
-split exists so a store-reading example can live outside a crate that is
-banned from the store engine. Focus reads through the client in-process, so it
-needs no such split.
+**Decision.** One crate, `crates/postio-focus`, holds the binary, the window
+and its rows and dialogs, over `postio-host` and `postio-client`, as the
+terminal is. It reads through the client in-process, so it needs no split
+between a view crate and a store-reading crate.
 
-**Startup.** It follows the desktop, not the terminal:
+**Startup.**
 
-- The store opens on its own thread
-  (`crates/postio-app/src/lib.rs:1109-1165`) behind a window that already
-  exists, saying what it waits for.
-- `Host::start`, then `connect(ClientKind::Focus)`. `ClientKind` gains
-  `Focus` (`crates/postio-client/src/protocol.rs:26-35`).
+- The store opens on its own thread behind a window that already exists,
+  saying what it waits for.
+- `Host::start`, then `connect(ClientKind::Focus)`.
 - If another app holds the store, Focus shows the shared sentence with "Try
-  again", as the desktop does (`lib.rs:1376-1390`). The sentence is
-  `crates/postio-storage/src/error.rs:171-172`.
+  again". A store no migration reaches offers "Start a fresh store" (R0).
+  Every page before the inbox can be closed (its close button, `mod+q`,
+  `mod+w`).
 
 **Events.** There is exactly one reader of `client.events()`, pumped into the
-GTK main context. Clones of the receiver compete for events
-(`crates/postio-host/src/lib.rs:1558-1560`).
+GTK main context: clones of the receiver compete for events.
 
-**The list:**
+**The list.**
 
-- It is built from postio-ui's `ListWindow`, `Paging` and `SelectionState`
-  (`list.rs:75-81` pages of 50, eight cached; `selection.rs`), over the shared
-  adapter (R1).
-- Rows are Focus's own widgets, each one custom `snapshot()`, as
-  `/gtk-design` requires.
-- There are exactly two heights, measured from screen 01: **40 px** for one
-  line (the classic row height) and **72 px** for two. A row's kind, marker
-  or no marker, decides its height; its content never does.
+- It is built from `postio-ui`'s `ListWindow`, `Paging` and `SelectionState`
+  (pages of 50, eight cached), over the shared list model (R1).
+- Rows are Focus's own widgets, each one custom `snapshot()`.
+- There are exactly two heights: **40 px** for one line and **72 px** for
+  two. A row's kind, marker or no marker, decides its height; its content
+  never does.
+- **Measured** (a two-height `gtk::ListView` over 100,000 rows plus 50
+  spliced, headless, at 1440×900): scrolling binds at most 11 rows a frame at
+  40 px a frame and 27 at 800; a jump binds up to 205. GTK estimates the
+  list's height 5% short. So a bind is cheap, a row draws a skeleton while
+  its page lands, and pages are cached.
 
 **Surfaced rows.** Digest deliveries (R13) and fired reminders (R7) are rows
 that are not conversations. There are few of them. Each is spliced into the
 window at the position given by the number of conversations newer than it:
-one bounded count per surfaced row, cached against the list's witness
-(`crates/postio-runtime/src/store/local.rs:77-110`).
+one bounded count per surfaced row, cached against the list's witness. A SQL
+`UNION` of conversations and surfaced rows would touch every place the
+list's membership test appears.
 
-Rejected: a SQL `UNION` of conversations and surfaced rows. It would touch
-every place the list query's membership test appears (R13).
+**Config.** Focus's settings are `[focus]` (contracts/config.md).
+`ConfigChanged` carries a `focus` flag, and Focus runs the shared config
+service and watcher, so every section it follows reloads live.
 
-**Config.** Focus's settings go in a `[focus]` section. `ConfigChanged`
-(`crates/postio-config/src/change.rs:41-62`) gains a `focus` flag. Focus runs
-the shared config service and watcher, so `[keys]` and `[focus]` reload
-live. The terminal has no live reload today (`crates/postio-tui/src/run.rs:82`),
-and it is not in this plan's scope.
-
-**Packaging.** Focus is a second launcher inside the desktop Flatpak:
-
-- app id `dev.postio.Postio.Focus` (a name inside the app's own namespace,
-  which a sandboxed app may own);
-- desktop file `dev.postio.Postio.Focus.desktop`;
-- binary `postio-focus`, built by `flatpak/dev.postio.Postio.json` beside
-  `postio`.
-
-The release workflow's `flatpak` job builds both. There is no separate
-Flatpak: the two apps share every library, and only one runs at a time.
+**Packaging.** Focus is the desktop Flatpak's app. Until the package switch
+(T253) it is a second launcher in it: app id `dev.postio.Postio.Focus`,
+desktop file `dev.postio.Postio.Focus.desktop`, binary `postio-focus`. At the
+switch it takes the name "Postio", the binary `postio`, the app id
+`dev.postio.Postio`, the icon and the `mailto:` handler (ADR 0043). It
+already draws the package's one icon, `dev.postio.Postio`.
 
 **Screens against PNGs.** `cargo run -p postio-focus --example shot -- <png>
-[dark] [WxH] <screen>` renders a named screen from a seeded demo store. The
-store is `postio_storage::seed`, plus Focus's markers, digests and filter
-decisions, written through the host. This is the classic `shot` loop
-(`/gtk-design` §6) applied to the Focus screens.
-
----
-
-**Spike S3 (T009, 2026-09-28): R3 holds.** The spike built a two-height
-`gtk::ListView` over 100,000 rows plus 50 spliced ones, headless, at
-1440×900 (an 862 px viewport), and counted factory setup and bind calls per
-frame.
-
-| What | Binds |
-|---|---|
-| First frames | 205 |
-| Scrolling 40 px a frame | at most 11, 3.2 on average |
-| Scrolling 800 px a frame | at most 27, 15.8 on average |
-| 60 random jumps | 12,175, at most 205 in a frame |
-| 50 jumps into spliced data | 10,250, at most 205 in a frame |
-
-- Over the whole run, 207 row widgets were built. Every one of the 112 jumps
-  bound its target row.
-- GTK estimates the list's height at 5% under its true height.
-
-So design for 205 binds per jump: a cheap bind, a skeleton row while a page
-lands, and a page cache. T041 did.
+<screen>` renders a named screen from a seeded demo store: `postio_storage::seed`
+plus Focus's markers, digests and filter decisions, written through the host.
 
 ---
 
 ## R4. One keymap for every app
 
-**Decision.** `KEYS.md` becomes the registry's defaults, the maintainer's
-answer in the spec's Clarifications. The registry keeps one row per command.
-Defaults change, and a command only another app has gets a key that does not
-collide.
+**Decision.** `KEYS.md` is the registry's defaults. The registry keeps one row
+per command; a command only another app offers keeps a key that does not
+collide. The table is [contracts/keymap.md](./contracts/keymap.md).
 
-**Frontend availability is generalised.** `Availability.terminal: bool`
-becomes `Availability.frontend: Frontend {Classic, Terminal, Focus, Macos}`
-(`crates/postio-core/src/registry.rs:193-230`):
+**Frontend availability.** `Availability.frontend: Frontend {Classic,
+Terminal, Focus, Macos}`:
 
 - `Requirement::Terminal` and `Requirement::Graphical` keep their meaning;
 - `Requirement::Focus` marks commands only Focus offers: invitations,
-  has-action, Filtered, digests and remind.
+  has-action, Filtered, digests, remind, the treatments and the reading pane;
+- `Requirement::ThreePane` means "not Focus": the sidebar, pane cycling, the
+  conversation rail and the parts panel, which the terminal and macOS keep.
 
-**New contexts:** `Picker`, `Digest` and `Filtered`. The open-email dialog is
-`Context::Reader`. Its fallback chain (Reader → Conversation → List → Global,
-`crates/postio-ui/src/keymap.rs:561-589`) is what lets `j`/`k` step the list
-from inside the dialog.
+Each app builds its resolver with `Resolver::from_commands_for(keymap,
+Frontend)`, so a key kept for Focus does nothing elsewhere.
 
-**Collisions, and where each key goes.** Collisions were found from the
-registry on this branch.
+**Contexts.** `Picker`, `Digest`, `Filtered` and `Capture` join the set. The
+open message is `Context::Reader`; its fallback chain (Reader → Conversation
+→ List → Global) is what lets `j`/`k` step the list from inside it.
 
-| Key | Today | After |
-|---|---|---|
-| `s` | Flag | Snooze. Flag moves to `*` |
-| `d` | Delete | Digest rule. Delete moves to `Delete` |
-| `h` | Previous view | Remind if no reply. Previous view moves to `Left` |
-| `l` | Open message (alternate) | Label. The alternate is dropped; Label moves off `L` |
-| `U` | Mark unread | Unsubscribe. Mark unread becomes Toggle read on `r` |
-| `X` | Unsubscribe | Select all; `mod+a` stays as its alternate |
-| `R` | Refresh (alternate) | Restore from Filtered. Refresh keeps `F5` |
-| `u` | Undo | Free. Undo moves to `mod+z` |
-| `J`/`K` in a conversation | Next/previous in conversation | `]`/`[`. `J`/`K` extend the selection in the list |
-| `g f` | Focus the folder list | Filtered. The classic command folds into "Go to folders" (`g o`): the classic app focuses its folder list, and Focus opens its folders popover |
-| `g d` | Drafts | Digest rules. Drafts moves to `g t` |
-| `g t` | Sent | Drafts. Sent moves to `g s` |
-| `g s` | Flagged | Sent. Flagged moves to `g *` |
-| `o` (Search) | Toggle result order | Open attachment or link. Result order moves to `O` (contracts/keymap.md), because `alt+o` is the reader view's |
-| `D` | Darken message | Stop digesting sender. Darken moves to `alt+d` |
-| `A` | Archive thread | Unchanged. In a digest it archives the whole digest: "archive everything this row stands for" |
-| `b`/`B` | Snooze / Unsnooze | `b` is free. Unsnooze keeps `B` |
-| `L` | Add label | Free |
+**The terminal.** Raw mode delivers `ctrl+z` as a key, so under the one
+keymap it is Undo. The terminal never suspended on it.
 
-The enumeration test (SC-015) is the arbiter. A proposed key it rejects is
-changed there, not argued.
-
-**Tests that pin today's keys change in the same commit:**
-
-- `crates/postio-core/tests/core_suite/command_registry.rs:75-164`
-- `registry.rs:2256-2275` and `:2327-2340`
-- `crates/postio-gtk/tests/logic_suite/keymap_defaults.rs:144-175`
-- the golden `linux-bindings.txt`
-- `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`)
-- the terminal's `app.rs` tests that press `s`, `d` and `X`
-- the terminal's parity test (`crates/postio-tui/tests/registry_parity.rs:91-144`)
-
-**The terminal.** Raw mode already delivers `Ctrl+Z` as a key
-(`crates/postio-tui/src/term.rs:184`), and nothing handles it, so under the one
-keymap it is Undo. Spec 005 still claims `Ctrl+Z` suspends the terminal:
-
-- `specs/005-tui-frontend/contracts/tui-surface.md:103-105`;
-- `spec.md:360`;
-- task T028, marked done.
-
-No SIGTSTP code exists. The same commit corrects those three claims.
-
-**Grouping the key map (screen 20).** A table in postio-ui maps command ids to
-Focus's key-map groups. An enumeration test proves every Focus command has a
-group. The table holds no bindings, so the one-binding-table check does not
-apply.
-
-Rejected: a `group` field on every `CommandSpec`. It would edit every row of
-`registry.rs`, the file `feature/contacts` also rewrites.
+**Grouping the key map (screen 20).** A table in `postio-ui` maps command ids
+to Focus's key-map groups, and an enumeration test proves every Focus command
+has one. The table holds no bindings, so the one-binding-table check does not
+apply. A `group` field on every `CommandSpec` was the alternative; the table
+keeps a presentation concern out of the registry's rows.
 
 **Smaller points:**
 
-- `!` needs a punctuation alias (`keymap.rs:196-216`). `[`, `]`, `Delete` and
-  `*` are already named keys.
-- Shifted keys render the way the shared hint code renders them (spec C22).
+- `!` has a punctuation alias in `postio-ui`'s keymap; `[`, `]`, `Delete` and
+  `*` are named keys.
 - The picker keys are registry commands in `Context::Picker`, so they can be
-  rebound and they appear in the key map. They are `1`–`4`, `Tab`, `Space`,
-  `Return` and `Escape`.
+  rebound and they appear in the key map: `1`–`4`, `Tab`, `Space`, `Return`
+  and `Escape`.
+
+The enumeration test (SC-015) is the arbiter: a key it rejects is changed
+there, not argued.
 
 ---
 
 ## R5. The command bar
 
-**Decision.** The bar is postio-ui's finder (`crates/postio-ui/src/finder.rs`)
-with a new blended mode. Typed text yields three groups, shown in the order
-screen 09 draws them:
-
-- commands, from `palette::entries`;
-- places: mailboxes, folders, labels and saved searches;
-- one "Search mail for …" row.
-
-Each group is ranked within itself. `>` narrows to commands, which is the
-finder's existing prefix. The classic finder keeps its unblended modes ("never
-blended", `finder.rs:43-44`) unless `/ux-architect` adopts the blend there.
+**Decision.** The bar is `postio_ui::finder::blend(text, places, keymap,
+context, availability)`: typed text yields, in the order screen 09 draws
+them, the commands it matches (from `palette::entries`), places (mailboxes,
+folders, labels and saved searches, each with the key that goes there), and
+one "Search mail for …" row. Each group is ranked within itself, and `>`
+narrows to commands. A command acts on `finder::Held { scope, selection,
+cursor }`: the rows marked when the bar opened, else the cursor's row.
 
 **Plain English, lowered locally.**
-`postio_search::natural::lower(text, today, names)` is new, pure and
+`postio_search::natural::lower(text, today, names)` is pure and
 deterministic:
 
-- A correspondent's name, looked up through a closure the caller supplies over
-  the address book, becomes `from:` after "from" or "by", or before "sent" or
-  "wrote". After "to", it becomes `to:`.
+- A name is a correspondent only when the caller's address book knows it, or
+  when it is an address; the longest run of up to three words is tried first.
+  It becomes `from:` after "from" or "by" or before "sent" or "wrote", and
+  `to:` after "to".
 - A date phrase becomes an `after:`/`before:` pair: last month, yesterday,
   this week, "since Monday", "in August".
-- "with attachment(s)" becomes `has:attachment`; "unread" and "flagged" become
-  `is:` operators; "in <folder>" becomes `in:`.
-- Stop words are dropped, and every other word stays free text.
+- "With attachment(s)" becomes `has:attach`; "unread" and "flagged" become
+  `is:` operators.
+- "In" becomes `in:` only before a mailbox's role ("in archive", "in spam").
+  A folder name stays free text, because `in:` naming a folder that does not
+  exist selects nothing and a wrong guess would hide every result; the bar's
+  `in:` completion is how a folder gets named.
+- A bare name, month or weekday stays free text: with no word marking it as
+  a sender or a date, it is as likely to be a subject. Stop words are dropped.
 
-The output is tokens of the one language, shown as chips through
-`postio_ui::search::chips`. The chips are the query (constitution III).
-Screen 07 lowers "invoice" to `subject:`. The rules leave it free text, which
-already searches subjects; the comparison records the difference.
+The output is tokens of the one language, shown as chips; the chips are the
+query (constitution III). "Invoice" stays free text, which already searches
+subjects.
 
 **Saved searches** are the `[filters]` entries with `pinned = true`, in their
-`order` (`crates/postio-config/src/filters.rs:20-47`). Four registry commands
-bind them to `Alt+1`–`Alt+4`; nothing binds Alt+N today. `Ctrl+S` is the
-existing `SaveSearch`.
+`order`, bound to `alt+1`–`alt+4` by four registry commands. `mod+s` is
+`SaveSearch`.
 
-**`in:` completion** uses the finder's existing folder data
-(`crates/postio-gtk/src/finder.rs:245-268`, moving to postio-ui). A command
-acts on the aim the bar opened over; the finder already carries it.
-
-**Built (T085).** The blend is `postio_ui::finder::blend(text, places, keymap,
-context, availability)`. It is not one of the classic finder's `MODES`, so the
-classic finder is untouched.
-
-- **Places** are ranked, and each carries the key that goes there.
-- **The aim** a command acts on is `finder::Held { scope, selection, cursor }`:
-  the rows marked when the bar opened, else the cursor's row.
-- **Row counts** are not capped here; how many rows to draw is T086's.
-
-**Built (T084).** `natural::lower` refines three of the rules above:
-
-- A name is a name only when the caller's address book knows it, or when it
-  is an address. The longest run of up to three words is tried first.
-- "With attachments" becomes `has:attach`, the language's own spelling.
-- "In" becomes `in:` only before a mailbox's role ("in archive", "in spam").
-  "In Receipts" stays free text, because `in:` naming a folder that does not
-  exist selects nothing, and a wrong guess would hide every result. The bar's
-  `in:` completion is how a folder gets named.
-
-A bare name, month or weekday stays free text as well: with no word marking it
-as a sender or a date, it is as likely to be a subject.
+**`in:` completion** uses the finder's folder data. A misspelling is
+answered with "Search instead for …" (ADR 0037), and `O` switches the results
+between relevance and date.
 
 ---
 
 ## R6. Pickers and dates
 
-**Decision.** postio-widgets gains four popovers anchored to the row
-(snooze, remind, label and move) and a shared date entry.
+**Decision.** `postio-widgets` has four popovers anchored to the row (snooze,
+remind, label and move) and a shared date entry.
 
-**Presets** come from one table in `crates/postio-ui/src/schedule.rs`, computed
-against the clock and the local zone. They reuse `at_local_time`, which is
-safe across daylight-saving changes (`schedule.rs:19-24`). The table gains:
+**Presets** come from one table in `postio-ui/src/schedule.rs`, computed
+against the clock and the local zone with `at_local_time`, which is safe
+across daylight-saving changes. When two pickers mean the same moment (this
+evening, tomorrow morning, Monday morning), they call the same function, so
+Snooze and Send later say "Later today", and "Tomorrow evening" after 6pm
+(C14).
 
 | Picker | Presets |
 |---|---|
 | Snooze | Later today 18:00, Tomorrow morning 08:00, Monday morning 08:00, Next week 08:00 |
 | Remind | Tomorrow 09:00, In 2 working days 09:00, End of the week (Friday 09:00), In a week 09:00 |
 
-The existing schedule-send preset "This evening" and Snooze's "Later today"
-become one wording for both apps (spec C14; ADR 0029). `/ux-architect`
-chooses it.
+"In 2 working days" counts Monday to Friday, starting the day after today.
+"End of the week" is the first Friday 09:00 still ahead, with the five-minute
+lead "Later today" has. The presets step whole days as 24-hour durations, so
+near midnight in a daylight-saving week one can land on the wrong day
+(#1700).
 
-**Built (T037).** When two pickers mean the same moment (this evening, tomorrow
-morning, Monday morning), they call the same function. `schedule_presets` is
-rewritten over those functions and returns what it returned before.
+**Typed dates.** `postio_search::date::parse_when<Tz: TimeZone>(text, now:
+DateTime<Tz>) -> Option<DateTime<Tz>>` looks forward and understands a time
+of day: "tue 9am", "thu 2pm", "tomorrow 8", "in 2 days", "oct 3 14:00". It is
+generic over the zone so its tests run in a zone with daylight saving. A day
+with no time is 08:00; a bare number is an hour on the 24-hour clock; a
+numeric date is month first; a time the clocks skip is pushed forward by the
+gap, and one they repeat is its first occurrence still ahead. The picker
+shows the instant it read, so a misreading shows before it is used. The
+query parser's `parse_date`, which resolves only past dates with no time,
+is a different function for a different job.
 
-C14 is not settled yet. A test holds "Later today" and "This evening" to one
-instant at every time of day, so the choice is a change of words; T091 makes
-it.
+**Snooze takes the chosen time**: `Command::Snooze` carries `until`.
 
-Remind's presets:
-
-- "In 2 working days" counts Monday to Friday, starting the day after today.
-- "End of the week" is the first Friday 09:00 still ahead, with the same
-  five-minute lead "This evening" has.
-
-The presets step whole days as 24-hour durations, as `main`'s do. Near
-midnight in a daylight-saving week, that lands on the wrong day (#1700).
-
-**Typed dates.** `postio_search::date::parse_when(text, now) ->
-Option<DateTime<Local>>` is new and public. It looks forward and understands a
-time of day: "tue 9am", "thu 2pm", "tomorrow 8", "in 2 days", "oct 3 14:00".
-The existing `parse_date` (`crates/postio-search/src/date.rs:24`, crate-private)
-resolves only past dates with no time, for queries, and it stays as it is. The
-detector's due dates (R10) use `parse_when` too.
-
-**Built (T036).** The function is generic over the zone:
-`parse_when<Tz: TimeZone>(text, now: DateTime<Tz>) -> Option<DateTime<Tz>>`.
-That lets its tests run in a zone with daylight saving, whatever zone the
-machine is in. Its rules:
-
-- A day with no time is 08:00.
-- A bare number is an hour on the 24-hour clock.
-- A numeric date is month first.
-- A time the clocks skip is pushed forward by the gap. A time they repeat is
-  its first occurrence still ahead.
-
-The picker shows the instant it read, so a misreading shows before it is used
-(T091).
-
-**Snooze takes the chosen time.** `Command::Snooze` gains `until`. Today
-`Actions::snooze` always uses three hours (`crates/postio-session/src/actions.rs:84-92`).
-
-**Label and Move:**
-
-- Label is the existing `AddLabel`, which adds or removes
-  (`crates/postio-core/src/command.rs:534-547`). `Space` toggles, and a name
-  that doesn't exist is created through the host.
-- Move is the existing `Move`. Its "Recent" list is the last few destinations,
-  kept by the host in the `settings` table. Losing it on a resync is harmless.
-
-The classic app keeps its finder-based label and move, and its fixed snooze,
-until `/ux-architect` adopts the pickers there.
+**Label and Move.** Label is `AddLabel`, which adds or removes; `Space`
+toggles, and a name that does not exist is created through the host. Move is
+`Move`; its "Recent" list is the last few destinations, kept by the host in
+the `settings` table (`focus.move_recent`).
 
 ---
 
 ## R7. Snooze comes back at the top; reminders
 
-**Decision: snooze.** `messages.sort_at` becomes the list's sort key. It
-equals `received_at` at insert, and it is set to the wake time when a snooze
-wakes (`crates/postio-storage/src/repository/messages.rs:1236`). It replaces
-`received_at` in the list's order, its seek marks and its indexes
-(`crates/postio-storage/src/schema.rs:693-731`). A woken snooze then comes
-back at the top in every app, as screen 11 says; today it returns to its old
-place.
+**Snooze.** `messages.sort_at` is the list's sort key. It equals
+`received_at` at insert and becomes the wake time when a snooze wakes, so a
+woken snooze comes back at the top in every app, as screen 11 says.
 
-**The cheaper alternative the maintainer may choose.** Leave snooze returning
-in place, and change screen 11's copy to "comes back to the inbox at that
-time". This is the plan's riskiest change to a shared hot path. Spike S6
-measures it against the list's counting tests before anything depends on it.
-
-**Spike S6 (T012, 2026-09-27): do it.** The spike moved the folder and
-conversation lists to `sort_at` on a commit it then reverted.
-
-- **What moved:** the folder thread window, its cursor and `NOT EXISTS`, the
-  rows for changed messages, the page boundaries, the unified count's keys and
-  the partners' keys, the account window's representative and a thread's
-  `last_at`, the flat folder list, and the indexes `idx_messages_list` and
+- **What sorts by it:** the folder and conversation lists, Focus's window
+  and its cursor, their seek marks, and the indexes `idx_messages_list` and
   `idx_messages_thread_mailbox`.
-- **Its size:** 3 source files and about 20 places. Across 13 files, including
-  tests, it was +88/−64.
+- **What stays on `received_at`:** the query views (Account, Flagged,
+  Snoozed, Outbox, the flat Unified read, Thread) and search.
+- **Drafts keep rising:** `write_update` keeps `sort_at` at least
+  `received_at`, so a re-saved draft still rises in Drafts.
+- **Raw test inserts must name the column**, which is `NOT NULL`.
 
-What it showed:
+Measured before it was adopted, the list's counting tests stayed green
+unchanged, which is why returning in place with changed copy was not chosen.
 
-- **The counting tests stayed green unchanged:** all of
-  `list_statement_count.rs`, the rows-for test at `threads.rs:340`, and the
-  no-sort and no-scan plan tests. The runtime suite passed as before.
-- **Raw inserts must name the column.** 70 of 467 storage tests first failed
-  on `NOT NULL`, all from 16 raw `INSERT INTO messages` in test files.
-- **A plan test names the column it seeks.** One expected `received_at`, and
-  the plan still seeks, now on `sort_at`.
-- **Drafts problem, not covered by any existing test.** A draft's row takes
-  `received_at` from `updated_at` on every save. With `write_update` leaving
-  `sort_at` alone, a re-saved draft stopped rising in Drafts. A probe showed it.
-
-So T093 does it, on three conditions:
-
-1. **Scope it as the spike did.** The folder and conversation lists move. The
-   query views (Account, Flagged, Snoozed, Outbox, the flat Unified read,
-   Thread) and search stay on `received_at`.
-2. **`write_update` keeps `sort_at` at least `received_at`,** so drafts still
-   rise, with a test.
-3. **Raw test inserts name the column.**
-
-T093 also moves Focus's own window, which the spike predates: its `ORDER BY`,
-cursor and `focus_at` in `focus_arm`, and the shared `representative_filter`.
-
-**Decision: reminders.** A `reminders` table records the conversation,
-`set_at`, `due_at`, `fired_at` and `cancelled_at`.
+**Reminders.** A `reminders` table records the conversation, the anchor
+message, `set_at`, `due_at`, `fired_at`, `cancelled_at` and `settled_at`.
 
 - **Set** by `Command::Remind{target, at}`, from the picker or from the
   draft's `remind_at` when it is sent.
-- **Cancelled** by the Focus filing pass (R8), when a message from someone
+- **Cancelled** by Focus's filing pass (R8), when a message from someone
   other than the user arrives in the conversation.
-- **Fired** on the engine's five-second tick, the one that wakes snoozes
-  (`crates/postio-runtime/src/engine.rs:1229`).
+- **Fired** on the engine's five-second tick, the one that wakes snoozes.
 
 A fired reminder is a surfaced row (R3) at the top of Focus's inbox, marked
 "No reply since <date>". While it stands, Focus's inbox scope leaves out that
-conversation's ordinary row, so nothing is listed twice. For undo,
-`UndoKind::Remind` carries its inverse, `Unremind`, following the snooze
-template in `crates/postio-core/src/undo.rs:45-74`.
+conversation's ordinary row, so nothing is listed twice. `UndoKind::Remind`
+carries its inverse.
 
 ---
 
 ## R8. Classification: where, when, and in what crate
 
-**Decision.** A new crate, `crates/postio-classify`, computes one
-fixed-schema answer per message. It works in layers, and an earlier layer's
-decision stands:
+**Decision.** `crates/postio-classify` computes one fixed-schema answer per
+message, in layers where an earlier layer's decision stands: guards,
+corrections, rules and the built-in detector, then the user's model. It has
+no send path; its boundary bans the mail transports, sync, the runtime,
+`io-imap`, `io-http` and every network crate. The output schema is in
+[data-model.md](./data-model.md) and the interface in
+[contracts/engine.md](./contracts/engine.md).
 
-1. guards;
-2. corrections;
-3. rules and the built-in detector;
-4. the model, in milestone 2.
+**Only while Focus runs.** At startup Focus calls `Host::enable_focus`, which
+installs:
 
-```text
-Outcome {
-    filter:  Option<Reason { kind, source }>,
-    hold:    Option<DigestRuleName>,
-    markers: Vec<MarkerCandidate { kind, span, excerpt, when }>,
-}
-```
-
-It has no send path. Its boundary rule bans:
-
-- postio-smtp, io-smtp, postio-account, postio-sync, postio-runtime,
-  postio-transport, io-imap and io-http;
-- every network crate the postio-render rule bans.
-
-It returns only this schema, as ADR 0009 requires.
-
-**Only while Focus runs** (the spec's Clarifications). At startup,
-postio-focus switches the host into a Focus mode, which installs three things:
-
-1. **A filing pass for new mail.** `commit_batch`
-   (`crates/postio-sync/src/initial.rs:630-713`) calls an optional
-   `FilingPass` inside its transaction.
-   - It runs only for incremental passes, the ones that emit
-     `Event::NewMail`. First syncs never auto-filter (FR-118), and filtering
-     years of inbox at first sync is the failure it would otherwise produce.
-   - It runs the guards and header rules, writes filter decisions and holds,
-     and archives filtered mail through the storage verbs that take the
-     caller's transaction (`crates/postio-storage/src/actions.rs:1-35`). It
-     enqueues the server move.
-   - Its cost per new message is counted and bounded.
-2. **A body-stage task.** It follows `spawn_body_indexer`
-   (`crates/postio-session/src/lib.rs:1108-1160`): it subscribes to
+1. **A filing pass** for new mail, run inside an incremental pass's write
+   unit (`resync::incremental`), and for servers with no MODSEQ inside the
+   enumeration pass that inserted the rows. It runs the guards and header
+   rules, writes filter decisions and holds, and archives filtered mail with
+   its server move, in its own savepoint, so a failure rolls back only what
+   it wrote. **First syncs never auto-filter**: filtering years of inbox at a
+   first sync is the failure it would otherwise produce (FR-118).
+2. **A body-stage task** on the `spawn_body_indexer` pattern: it follows
    `BodyLoaded`, debounces, and runs invitations (R9) and the needs-action
-   detector (R10) over bodies that have arrived. At Focus's start it catches
-   up over rows with no classification record: newest first, on one core, at
+   question (R10) over bodies that have arrived. At Focus's start it catches
+   up over rows with no classification record, newest first, on one core, at
    background priority (FR-141).
-3. **A due timer** for digest deliveries and reminders, on the engine's
-   five-second tick.
+3. **A due timer** for digest deliveries, reminders and RSVP windows, on the
+   engine's five-second tick.
 
-When the classic app or the terminal runs, the host has no Focus mode, and
-none of this happens.
+When another app runs, the host has no Focus mode, and none of this happens.
+Classifying in the frontend was the alternative; filing happens in the host.
 
 **Headers Focus needs before the body.** At filing, only the envelope,
-`References` and `List-Id` are known
-(`crates/postio-account/src/imap/fetch.rs:213-248`). Every other header
-arrives with the body (`crates/postio-index/src/index.rs:565`).
-
-ADR 0025 rejects a header allowlist at header-sync time, and names the way
-out: "A header that genuinely must be matchable before the body arrives earns
-a dedicated operator, a column, and its own `HEADER.FIELDS` fetch"
-(`docs/decisions/0025-arbitrary-headers-are-indexed-rows.md:275-296`).
-Focus takes that path for `List-Unsubscribe`, `Precedence` and
-`Auto-Submitted`:
+`References` and `List-Id` are known; every other header arrives with the
+body. ADR 0025 names the way out for a header that must be matchable before
+the body: a dedicated operator, a column, and its own `HEADER.FIELDS` fetch.
+Focus takes it for `List-Unsubscribe`, `Precedence` and `Auto-Submitted`:
 
 - **Fetched** only on incremental syncs, in a `HEADER.FIELDS` item of their
-  own in the same FETCH (T104). The `REFERENCES` and `LIST-ID` parsers each
-  read a block with exactly one field in it. ADR 0025's objection was the
-  cost to every first sync, and a first sync pays nothing here.
-- **Stored** as two columns, `messages.unsubscribe_offered` and
-  `messages.automation`. For older mail they are filled from the body's own
-  headers when it arrives.
-- **Searchable** through dedicated operators, `is:bulk` and `is:automated`,
-  so search can ask the same question (constitution III).
-- **The other backends:** Gmail reads the fields from the metadata it
+  own in the same FETCH, so a first sync pays nothing (ADR 0025's objection
+  was the cost to every first sync). Gmail reads them from the metadata it
   already fetches. JMAP learns them from the body, because io-jmap 0.3 cannot
-  ask for a single header (T104).
+  ask for a single header.
+- **Stored** as `messages.unsubscribe_offered` and `messages.automation`, and
+  filled from the body's own headers for older mail.
+- **Searchable** as `is:bulk` and `is:automated` (constitution III).
 
 **Guards.** Each is one seek or one lookup:
 
 | Guard | How it is answered |
 |---|---|
-| The user wrote to the sender | A `correspondents(address_id, sent_count, last_sent_at)` row, maintained at local send (`crates/postio-sync/src/send.rs:525-575`) and when Sent syncs. Without it, a seek on `idx_recipients_address` with kind in (to, cc, bcc) joined to Sent (`schema.rs:562-574`, `:738`). The same row gives completion its "wrote N times" (R15) |
+| The user wrote to the sender | A `correspondents` row, maintained at local send and when Sent syncs. The same row gives completion its "wrote N times" (R15) |
 | The user took part in the conversation | `EXISTS` over `idx_messages_thread_mailbox` with the Sent mailbox |
-| The user's own domain | The identities' domains, held in memory |
-| A pinned sender | `[focus.filter]` in config |
+| The user's own domain | Every account's and identity's addresses, read in one statement |
+| A pinned or restored sender | `[focus.filter] never` |
 
-**Automated senders are data** (constitution VII). A TOML table ships with
-Postio: patterns on local part and domain, each with a reason and a source
-name. The user's corrections override it. None of it is a constant in code.
+A message with no From address or no `thread_id` is guarded and never
+filtered.
 
-**The server's own verdict.** `$Junk` in a message's flags
-(`crates/postio-model/src/flag.rs:41-44`) gives the reason "spam".
+**Automated senders are data** (constitution VII):
+`crates/postio-classify/data/senders.toml`, patterns on local part and domain,
+each with a reason and a source name, validated by `build.rs`. The user's
+corrections override it.
 
-**Rejected:**
-
-- *Classifying in the frontend.* Filing happens in the host.
-- *Fetching the whole header block at header sync.* That is ADR 0025's
-  rejected allowlist.
-- *Filtering at first sync.* It would archive years of inbox.
+**The server's own verdict.** `$Junk` in a message's flags gives the reason
+"spam".
 
 ---
 
 ## R9. Invitations
 
-**Decision.** A new crate, `crates/postio-calendar`, is a pure leaf that wraps
-**calcard** behind a thin adapter, with default features off.
+**Decision.** `crates/postio-calendar` is a pure leaf that wraps **calcard**
+(pinned, default features off) behind a thin adapter:
 
-- `parse(text/calendar bytes) -> Invitation`. The invitation holds the UID,
-  SEQUENCE and DTSTAMP, the method, summary, start and end with their zones
-  resolved, location, organiser and attendees, and a summary of the
-  recurrence.
-- `reply(invitation, attendee, partstat) -> ics bytes`, with `METHOD:REPLY`.
+- `parse(text/calendar bytes) -> Invitation`: UID, SEQUENCE and DTSTAMP, the
+  method, summary, start and end with their zones resolved, location,
+  organiser and attendees, and the recurrence;
+- `reply(invitation, attendee, answer) -> ics bytes`, a `METHOD:REPLY` with
+  only the answering attendee;
+- `supersedes(newer, older)`: the same UID and occurrence, then SEQUENCE,
+  then DTSTAMP; false when it cannot tell.
 
-Above the adapter sits a small RFC 5546 layer:
+A REQUEST that supersedes replaces the marker, a CANCEL matching the UID
+removes its actions, and an event already over has none.
 
-- A REQUEST with a higher SEQUENCE replaces the marker, as does one with the
-  same SEQUENCE and a later DTSTAMP.
-- A CANCEL matching the UID removes the marker's actions.
-- An event already over has no actions.
+**Why calcard.** Pimalaya was surveyed first (constitution VII). Its
+`ical-rs` resolves zones only from the calendar's own `VTIMEZONE`, so a TZID
+sent without one does not resolve, and it has no iTIP semantics; calcard maps
+Windows and Exchange zone names to IANA, types `METHOD` and `PARTSTAT`, and
+runs in production inside a mail server. calcard read all nine corpus
+invitations (Outlook, Google, Apple, Zoom and Thunderbird styles; Windows
+zones, a zone with no `VTIMEZONE`, an update, a cancellation, a weekly rule
+with EXDATEs across a DST change) with the right instants. `ical-rs` is
+surveyed again before the branch lands.
 
-**Pimalaya first** (constitution VII), surveyed 2026-09-27.
-
-- **Pimalaya's `ical-rs` 0.5.1** (2026-09-02, MIT OR Apache-2.0):
-  - parses, and expands recurrence;
-  - resolves zones from the calendar's own `VTIMEZONE`;
-  - but has no IANA or Windows fallback: a TZID sent without its `VTIMEZONE`
-    does not resolve;
-  - has no iTIP semantics;
-  - shipped five breaking releases in its first four weeks.
-- **calcard 0.3.14** (Stalwart, 2026-09-15, Apache-2.0 OR MIT):
-  - its lenient parser runs in production inside a mail server;
-  - it maps Windows and Exchange zone names to IANA;
-  - it types `METHOD` and `PARTSTAT`, and has a builder and a writer.
-- **Others:** `icalendar` has no `VTIMEZONE` model. `ical` is archived.
-  `caldata` enforces the spec too strictly for real mail.
-
-calcard is chosen behind the adapter, and ical-rs is surveyed again before the
-branch lands. Caveats:
-
-- Pin the version, and expect 0.4.0 to move to jiff (already in `Cargo.lock`).
-- 0.3.14 pulls chrono-tz and mail-builder 1.x, where Postio has 0.5.0.
-  Spike S1 checks the graph against `check-dependency-policy.py`.
-
-**Spike S1 (T007, 2026-09-27): calcard holds.** Eight invitations joined the
-corpus through `/add-fixture`, in the styles of Outlook, Google, Apple, Zoom
-and Thunderbird, beside the one already there.
-
-calcard 0.3.14 (default features off, pinned `=0.3.14`) read all nine with the
-right instants and zone:
-
-| Fixture | Style, and what makes it hard | Zone |
-|---|---|---|
-| `invite-windows-zone` | Outlook: a Windows zone name with its `VTIMEZONE`, base64 | Europe/Berlin |
-| `invite-cancel` | Outlook: `METHOD:CANCEL`, same UID, SEQUENCE 1 | Europe/Berlin |
-| `invite-iana-zone` | Google: an IANA zone, an `ATTENDEE` inside the `VALARM` | America/New_York |
-| `invite-update-sequence` | Google: an update, SEQUENCE 1, a later DTSTAMP | America/New_York |
-| `invite-quoted-printable` | Apple: quoted-printable, after the clocks go back | Europe/London |
-| `invite-utc-times` | Zoom: UTC times, no `VTIMEZONE`, a stray TZID | UTC |
-| `invite-weekly-exdate` | Thunderbird: a weekly rule, two EXDATEs, across a DST change | America/Chicago |
-| `invite-zone-without-vtimezone` | a TZID with no `VTIMEZONE` | Asia/Kolkata |
-| `calendar-invite` (already there) | | Europe/Stockholm |
-
-- **Recurrence:** the weekly rule expands to exactly ten dates, skips both
-  EXDATEs, and its UTC time moves an hour at the DST change.
-- **The alarm stays apart:** a `VALARM`'s `ATTENDEE` and UID stay out of the
-  event.
-- **Matching fields:** the update and the cancellation carry the UID and
-  SEQUENCE they are matched by.
-- **The dependency graph:**
-  - New crates: calcard, ahash, chrono-tz, mail-builder 1.0.0, phf 0.12.1 and
-    phf_shared 0.12.1.
-  - Duplicated crates went from 52 to 55 (mail-builder, phf, phf_shared).
-    `deny.toml` treats duplicates as warnings.
-  - Every new crate is MIT or Apache-2.0, and `check-dependency-policy.py`
-    passes.
-
-So ical-rs was not tried. It is still surveyed again before the branch
-lands.
-
-**Built (T107, T111):**
-
-- **The adapter:** its types are in data-model.md.
-- **`outgoing::build` gains a fifth argument,** `calendar:
-  Option<CalendarPart>`, where `CalendarPart` is `{ method, ics }`.
-  - The part goes last in the `multipart/alternative`, inside the
-    `multipart/mixed` when there are attachments.
-  - With `None`, the output is byte-identical to before. That was checked on
-    ten kinds of draft, with the date and boundaries normalised.
-- **`build_draft` is unchanged:** an RSVP is queued, never filed as a draft.
-
-**The calendar part.** At filing it is only an attachment row, and its
-`method=` parameter is dropped (`crates/postio-account/src/backend/message.rs:334-344`).
-The body backfill fetches `text/calendar` parts under 256 KiB together with
-the text parts (`crates/postio-sync/src/backfill.rs:1509`). Invitations
-therefore appear when the body does, and nothing is fetched just to classify.
+**The calendar part.** At filing it is only an attachment row. The body
+backfill fetches `text/calendar` parts of 256 KiB or less with the text
+parts, so invitations appear when the body does, and nothing is fetched just
+to classify.
 
 **RSVP.** `Command::Rsvp{message, answer}`:
 
 - builds a reply to the organiser from the identity that matches an
   `ATTENDEE`; with no match there is no Accept or Decline;
-- the reply has a text part and a `text/calendar; method=REPLY` part, which
-  `outgoing::build` gains (`crates/postio-model/src/outgoing.rs:88`,
-  `:320-340`);
-- queues it with `queue_send_at(now + 10 s)`
-  (`crates/postio-storage/src/repository/drafts.rs:330`);
+- gives it a text part and a `text/calendar; method=REPLY` part, through
+  `outgoing::build`'s `calendar: Option<CalendarPart { method, ics }>`, which
+  goes last in the `multipart/alternative` (with `None`, the output is
+  byte-identical to a message without it);
+- queues it with a not-before time ten seconds ahead; an RSVP is never filed
+  as a draft;
 - records the pending answer.
 
-**The ten-second window:**
-
-- While the reply is `Queued`, the toast's Undo and `Ctrl+Z` issue
-  `CancelSend` (`drafts.rs:469`).
-- Once the drainer has taken it, the result is `AlreadyInFlight` and the
-  answer stands.
-- The window lasts ten to fifteen seconds, because the drainer polls every
-  five (`crates/postio-runtime/src/engine.rs:823`).
-- The host's undo stack holds an entry for the window that expires with it.
-  After that, `Ctrl+Z` reaches the action beneath instead of answering "too
-  late", which is the concern `registry.rs:51-70` raises about putting sends
-  on the stack.
-
-This is the first real implementation of `Recovery::Window`, which today is
-only metadata.
+**The ten-second window.** While the reply is queued, the toast's Undo and
+`mod+z` issue `CancelSend`. Once the drainer has taken it, the answer stands.
+The window lasts ten to fifteen seconds, because the drainer polls every five.
+The host's undo stack holds an entry for the window that expires with it, so
+after it `mod+z` reaches the action beneath. This is `Recovery::Window`.
 
 ---
 
 ## R10. The built-in needs-action detector
 
-**Decision.** The detector is rules in postio-classify. It reads the newest
-message's own text: postio-body's extraction with quoted history and the
-signature removed, the same boundaries the reader folds.
+**Decision.** The detector is rules in `postio-classify`, over the newest
+message's own text (R2).
 
 **It considers only** mail sent directly to the user, with their address in
-`To`, and ignores anything that is:
+`To`, and ignores list and bulk mail (`List-Id`, `List-Unsubscribe`,
+`is:bulk`), automated mail (`is:automated`, the senders table), `$Junk`, mail
+from the user, and mail in Junk, Sent, Drafts, Outbox or Trash. An unknown
+header fact counts as no evidence either way.
 
-- list or bulk mail (`List-Id`, `is:bulk`);
-- automated (`is:automated`, or the automated-senders table);
-- from the user.
-
-**What it marks.** Sentences are split first, and clauses are split at `;` and
-`—`.
+**What it marks.** Sentences are split, and clauses at `;` and `—`.
 
 - **A Question** ends in `?` and addresses the reader: in the second person,
-  or with an interrogative opening whose subject is "you".
-  - A sentence ending in `?` is a Question even when it asks the reader to
-    act. So "Can you approve these by Friday so finance can close the
-    quarter?" is a Question (US12 scenario 1), not a dated To-do.
-  - A Question carries no due date.
+  or with an interrogative opening whose subject is "you". A sentence ending
+  in `?` is a Question even when it asks the reader to act, and carries no
+  due date.
 - **A To-do** asks the reader to act: "please", "can/could/would you", "let me
   know", "I need you to" followed by a verb, or an imperative opening.
 - **A deadline phrase** ("by Friday", "by Monday, 28 September") becomes a due
-  date through `parse_when` (R6).
+  date through `parse_when` (R6), read in the local zone from the Date header
+  (else `received_at`). "End of day" and "today" are 18:00 that day, "end of
+  the week" Friday 18:00, "end of the month" its last day at 18:00. "Until" is
+  not a deadline, and "on Monday" says when, not by when.
 
 At most one marker is made per message: the first To-do with a deadline, else
 the first Question, else the first To-do.
 
-**Precision over recall.** Pleasantries and rhetorical questions ("How are
-you?", "Hope you're well?") are excluded, and when two rules disagree nothing
-is marked. It reads English first (spec, Assumptions).
+**Precision over recall.** It does not mark pleasantries and rhetorical
+questions, boilerplate that reads as a request ("Let me know if you have any
+questions"), an ask put to somebody else by name, "Check out …", a "please"
+inside a signature, or text addressed to an assistant. A greeting in front of
+an imperative does not hide it. When two rules disagree, nothing is marked.
+It reads English first.
 
-**The gate** is a labelled dataset: `crates/postio-classify/tests/data/needs_action.toml`,
-one data file of invented items with reserved domains and fictional names. It
-is not `.eml` fixtures, because an item is a message's own text and its
-headers' facts, not a whole message. It requires precision of at least 0.9
-(SC-013); recall is reported but not gated. Spike S4 measures rules alone.
-Only if they miss the bar does the detector gain a small compiled-in table of
-weights, which FR-165 allows because it needs no inference engine.
+**The gate.** `crates/postio-classify/tests/data/needs_action.toml`, invented
+items with reserved domains, requires precision of at least 0.9 (SC-013);
+recall is reported. On its 201 items (44 questions, 35 to-dos, 122 with no
+ask) the rules reach precision 0.985 and recall 0.823 with no table of
+weights, a marker counting as right only when its kind and its quoted
+sentence both match. The rules and the dataset share authors, so that is a
+best case. Most misses are questions with no "you", which the second-person
+rule declines by design.
 
-**Spike S4 (T010, 2026-09-27): rules alone clear the bar, just.** The dataset
-has 201 items: 44 questions, 35 to-dos, and 122 with no ask. The prototype is
-test-only (`crates/postio-classify/tests/needs_action_spike.rs`).
+**Instructions aimed at a machine.** The `untrusted-instructions` corpus
+fixture (category `prompt-injection`, ADR 0009 Q4) holds one honest question
+followed by instruction-shaped and tool-shaped text. Neither detector marks
+such a message, and the outcome holds none of its words.
 
-| Rules | Markers made | Right | Precision | Recall | Due dates right |
-|---|---|---|---|---|---|
-| This section's, as written | 79 | 63 | 0.797 | 0.797 | 16 of 17 |
-| With four general fixes | 71 | 64 | **0.901** | 0.810 | 16 of 17 |
+**How markers are written.**
 
-The four fixes, which the detector keeps:
-
-- Boilerplate that reads as a request is not one: "Let me know if you have
-  any questions".
-- An ask put to somebody else by name is not the reader's.
-- Text addressed to an assistant is not an ask.
-- A greeting in front of an imperative does not hide it: "Hi Ada, please …".
-
-The dataset and the rules have one author, so 0.901 is a best case. T116
-builds the rules with these fixes and keeps the table of weights ready, adding
-it only if T116's gate fails. What still goes wrong:
-
-- pleasantries no phrase list knows ("How's the new job treating you?");
-- "Check out this article", read as an imperative;
-- a signature with no closing line before it;
-- an ask after a name and a dash;
-- an undated question chosen over a dated ask in the same message;
-- most misses: questions with no "you" in them, which the second-person rule
-  declines by design.
-
-**Built (T116, T119).** The detector's rules clear the gate with no table of
-weights. "Right" is strict: both the marker's kind and its quoted sentence
-must match the label.
-
-| Kind | Labelled | Made | Right | Precision | Recall |
-|---|---|---|---|---|---|
-| All | 79 | 66 | 65 | **0.985** | 0.823 |
-| Question | 44 | 32 | 32 | 1.000 | 0.727 |
-| To-do | 35 | 34 | 33 | 0.971 | 0.943 |
-
-- **Due dates:** 17 of 18 right. The miss is "by then", which refers back to
-  an earlier sentence.
-- **What pushed it past the spike's 0.901:** general rules for the failures
-  listed above. They cover small talk no phrase list knows, "Check out …", a
-  "please" inside a signature, an ask after a name and a dash, and an undated
-  question chosen over a dated need. No dataset item is special-cased, and no
-  label was changed.
-- **The one wrong marker** marks a genuine to-do where the label prefers a
-  question with no "you", which the second-person rule declines by design.
-- **Still a best case.** The rules and the dataset now share readers.
-
-**The gate on real own text (T117).** Switched to `postio_body::own_text`, the
-gate first fell to 0.889 (64 of 72). There were eight false markers: five from
-earlier mail quoted without `>` markers, and three from signatures with no
-separator. `own_text` now stops at:
-
-- Outlook's "Original Message" line and underscore rule;
-- a forward banner;
-- a `From:` over `Sent:` or `Date:` block;
-- "Sent from my";
-- an attribution over unquoted text.
-
-It also drops an attribution sitting over a `>` quote, and ends the message at
-a bare closing line. Precision is back to 0.985 (65 of 66) and recall to 0.823.
-
-**How markers are written (T117, T110):**
-
+- The detector returns offsets into the own text; whoever writes the marker
+  cuts the excerpt (at most 200 characters) from the own text by them.
 - A detector's marker is never overwritten when the message is classified
   again.
 - A question or to-do in held mail releases a hold still waiting, never a
   delivered one.
 - Every message carrying the same invitation UID and occurrence shows the
-  newest word, decided by `supersedes`, in whatever order the messages were
-  read. A marker already showing that word is left alone, so an answer
-  survives.
-
-**How due dates are read.**
-- The date is read in the local zone from the Date header, falling back to
-  `received_at`.
-- A day with no time is 08:00, as `parse_when` reads it.
-- "End of day" and "today" are 18:00 that day. "End of the week" is Friday
-  18:00. "End of the month" is its last day at 18:00.
-- "Until" is not a deadline, and "on Monday" says when, not by when.
-
-**Instructions aimed at a machine.** The corpus fixture ADR 0009 Q4 names is
-`untrusted-instructions`, in a new `prompt-injection` category. It holds one
-honest question followed by instruction-shaped and tool-shaped text. Neither
-detector marks such a message. The outcome is inert data holding none of the
-message's words.
-
-**What it stores.** Offsets into the extracted text, and an excerpt of the
-sentence capped at 200 characters. The detector returns only the offsets
-(data-model.md, "Classification output"). Whoever writes the marker cuts the
-excerpt from the own text. Dismissals are stored per message. Three
-dismissals of the same kind for one sender stop that kind for that sender, and
-that stop is written to config as a correction (FR-108).
+  newest word, decided by `supersedes`; a marker already showing it is left
+  alone, so an answer survives.
+- Dismissals are stored per message. Three dismissals of one kind for one
+  sender stop that kind for that sender, written to `[focus.filter]
+  stop_markers` (FR-108).
 
 ---
 
-## R11. Colour and type, for two apps with one widget set
+## R11. Colour and type
 
-**Decision.** The shared widget CSS reads `--postio-*` variables, and each app
-defines them.
+**Decision.** The shared widget CSS reads `--postio-*` variables, and Focus
+defines them from libadwaita's own (accent, view, window and card
+backgrounds, borders, dim labels), so the system accent and the light and
+dark schemes arrive through `AdwStyleManager`. Metrics (spacing, radii, chip
+sizes) are shared tokens; no hex value is retyped (ARCHITECTURE §10). The
+open message adds the handoff's surface, ink, hairline and scrim values for
+those roles, scoped to `.focus-open`, and the accent's soft fill (C26).
 
-- **The classic app** keeps defining them from its tokens: `tokens.css`,
-  generated from the design system, with its steel accent over libadwaita's
-  (`crates/postio-gtk/data/tokens.css:153`, `:247`, `:281`, `:300`).
-- **Focus** defines the colour variables from libadwaita's own: accent, view,
-  window and card backgrounds, borders and dim labels. The system accent and
-  light and dark then arrive through `AdwStyleManager`, as Focus's GTK mapping
-  asks (libadwaita 1.6's accent API is inside the `v1_7` features already
-  enabled).
-- **Metrics tokens** are shared: spacing, radii and chip sizes.
+**Type.** The chrome is Adwaita Sans and Adwaita Mono (C25). The renderer
+keeps its bundled fonts for message bodies, and a body in app colours is set
+in Barlow.
 
-Type: Focus uses the system's Adwaita Sans and Adwaita Mono. The renderer
-keeps its bundled fonts for message bodies.
+**Label colours.** `postio_ui::label_colour::label_colour(name, stored,
+accent_hue)`:
 
-**Rejected:**
-
-- *Focus loads the classic `tokens.css`.* The steel accent is not the system's,
-  and screens 01–03 use the system's.
-- *Retyping hex values.* ARCHITECTURE §10 forbids it.
-
-**Label colours (T042).** The function is
-`postio_ui::label_colour::label_colour(name, stored, accent_hue)`.
-
-- A label with a stored colour, set by the user or by their server, is drawn
-  in it.
-- Any other label gets one of twelve hues, chosen by a hash of its name, so it
-  has the same colour in both apps.
-- A hue within 30° of the accent steps round the wheel to the nearest hue
-  outside that band. Only those labels move when the accent changes.
-
-FR-091 covers the colours Postio chooses. A colour someone chose is drawn as
-they chose it, even inside the band.
+- a label with a stored colour, set by the user or by their server, is drawn
+  in it, even near the accent;
+- any other label gets one of twelve hues, chosen by a hash of its name;
+- a hue within 30° of the accent steps round the wheel to the nearest hue
+  outside that band, so only those labels move when the accent changes.
 
 ---
 
 ## R12. Filtering and the Filtered view
 
 **Decision.** Reasons form a fixed vocabulary: spam, promotion, notification,
-receipt, shipping and social. Each has an optional source, such as the sender's
-name or the list's, and records the layer that decided it: header, sender
-table, server verdict, correction or, in milestone 2, the model.
+receipt, shipping and social. Each has an optional source, such as the
+sender's name or the list's, and records the layer that decided it: header,
+sender table, server verdict or model.
 
-**The view.** Filtered is a list scope over filter decisions joined to their
-archived messages, newest first. It counts by reason for the tabs.
+**The filing pass** (`postio_sync::FocusFiling`) gives a message its reason in
+this order:
 
-**Restore (`R`)** is one undoable unit. It:
+1. the server's `$Junk`: spam, from the server layer;
+2. the automated-senders table: the table's own reason;
+3. the headers: `Auto-Submitted` is a notification; `Precedence: bulk` or
+   `junk` is a promotion; `List-Unsubscribe` without `List-Id` is a
+   promotion.
 
-- moves the message back to the inbox with the existing `Move`;
-- deletes the decision;
-- adds the sender to `[focus.filter] keep` in `config.toml`.
+Everything else stays in the inbox, discussion lists included (`List-Id` with
+`Precedence: list`). Only mail arriving in the inbox is filed away. A hold
+beats a filter: held mail is never also filed away, and the first matching
+rule holds it. An invitation is never held, and is filtered only by `$Junk`.
+A domain in `[focus.filter] never` (`@example.com`) matches that exact domain,
+not its subdomains. A message no rule acts on costs no reads: the store's
+facts are asked only when a rule would file something away.
 
-Its inverse archives again, restores the decision and removes the config
-entry.
+**The view.** Filtered is a list scope over standing filter decisions joined
+to their archived messages, newest first, counted by reason for the tabs.
+
+**Restore (`R`)** is one undoable unit: it moves the message back to the
+inbox, marks the decision `restored_at`, and adds the sender to
+`[focus.filter] never`. Its inverse archives again, clears `restored_at` and
+removes the sender from `never` unless another restore from that sender still
+stands.
 
 **Other rules:**
 
 - **"Filtered today"** counts decisions since local midnight.
-- **The sweep** runs the header rules over the current inbox. It shows the
-  count first, then archives as one undo unit.
+- **The sweep** (`F`) runs the header rules over the current inbox, shows
+  the count first, then archives as one undo unit.
 - **Automatic filtering is not on the user's undo stack**, because the user
   did not do it. Its undo is `R`.
-- **Filtered mail is archived and never deleted** (Clarifications).
-
-**Built (T102, T122, T123, T127, T133).** The filing pass is
-`postio_sync::FocusFiling`. It gives a message its reason in this order:
-
-1. The server's `$Junk`: spam, from the server layer.
-2. The automated-senders table: the table's own reason.
-3. The headers:
-   - `Auto-Submitted` is a notification;
-   - `Precedence: bulk` or `junk` is a promotion;
-   - `List-Unsubscribe` without `List-Id` is a promotion.
-
-Everything else stays in the inbox, discussion lists included (`List-Id`
-with `Precedence: list`). Only mail arriving in the inbox is filed away.
-
-The lane chose defaults where the spec was silent:
-
-- **A hold beats a filter.** Held mail is never also filed away, and the first
-  matching rule holds it.
-- **An invitation** is never held, and is filtered only by the server's
-  `$Junk`.
-- **A domain in `[focus.filter] never`** (`@example.com`) matches that exact
-  domain, not its subdomains.
-- **A message no rule acts on costs no reads.** The store's facts are asked
-  only when a rule would file something away.
-- **Catching up on open (T127)** sorts inbox mail past `focus.filed_through`
-  that has no filing record, newest first. The row under any app's cursor
-  stays where it is, and is recorded as seen. Focus's first-ever open only
-  sets the mark (FR-118).
+- **Filtered mail is archived and never deleted.**
+- **Catching up on open** sorts inbox mail past `focus.filed_through` that
+  has no filing record, newest first. The row under any app's cursor stays
+  where it is and is recorded as seen. Focus's first-ever open only sets the
+  mark (FR-118).
 
 ---
 
-## R13. Digests by sender
+## R13. Digests
 
 **Decision.** Rules live in `config.toml` as `[[focus.digests]]`, each with a
-name, a query, a cadence, a day and a time. A sender rule's query is
+name, a list of queries, a cadence, a day and a time. A sender rule's query is
 `from:<address>`, in the one language (ADR 0008).
 
-**Matching at filing.** A rule is matched in memory by a matcher for the part
-of the language that rules use:
+**Matching at filing.** `postio_search::matcher::Matcher::new(&ParsedQuery)`
+matches the part of the language rules use (`from:`, `list:`, `to:`,
+`subject:`, `filename:`) in memory, and returns `Unsupported` for anything
+else, so a rule the filing pass cannot answer is refused when saved. ADR
+0008's differential test holds it equal to the executor over the corpus
+(`crates/postio-index/tests/index_suite/digest_matcher.rs`). The executor's
+`from:<address>` also finds mail sent to that address (#1699), and the matcher
+deliberately agrees with it, so a fix changes both in one commit.
 
-- `from:` in milestone 1;
-- `list:` in milestone 2.
+**Holding.** `digest_holds` records the message, its rule, when it was held,
+and its delivery (none yet). Focus's inbox scope leaves out held messages
+until their delivery is archived or they are released. That scope's
+membership test is applied everywhere the list's is: the window, the
+representative's `NOT EXISTS`, the slice, the counts, the boundaries, the
+rows for changed messages and the unified count. Focus's header counts come
+from counts over the same scope, not from the per-mailbox triggers, which
+count held mail.
 
-ADR 0008's differential test holds that matcher equal to the executor over the
-corpus (ADR 0008, Q1). The general matcher on `feature/rules` is not on `main`,
-and this plan does not wait for it.
+**Delivery.** At a rule's due time, the timer creates a `digest_deliveries`
+row and attaches everything held since the last delivery; a delivery with
+nothing in it is not created. Each open delivery is one surfaced row (R3). A
+due time missed while Focus was closed delivers once, at its next start.
 
-**Holding.** A `digest_holds` table records the message, its rule, when it was
-held, and the delivery it belongs to (none yet). Focus's inbox scope leaves
-held messages out until their delivery is archived or they are released.
-That scope's membership test must change everywhere the list's membership test
-(`MEMBER`) appears:
+**Actions.** `A` archives the delivery's messages as one undo unit. `D`
+removes the sender from the rule in config, and that sender's future mail
+goes to the inbox. Removing a rule releases what it held.
 
-- the window, the representative's `NOT EXISTS`, and the slice;
-- the folder count, the boundaries and the rows for changed messages;
-- the unified count.
-
-These are in `crates/postio-storage/src/repository/threads.rs:291`,
-`:297-307`, `:1220` and `:1443`. Focus's header counts come from counts over
-the same scope, not from the per-mailbox triggers, because those count held
-mail.
-
-**Delivery:**
-
-- At a rule's due time, the timer creates a `digest_deliveries` row and
-  attaches everything held since the last delivery. A delivery with nothing
-  in it is not created.
-- Each open delivery shows as one surfaced row in the inbox (R3).
-- A due time missed while Focus was closed delivers once, at its next start.
-
-**The digest's actions:**
-
-- `⇧A` archives the delivery's messages as one undo unit.
-- `D` removes the sender from the rule in config; that sender's future mail
-  goes to the inbox.
-- Removing a rule releases what it held.
-
-**Preview (screen 24):** the rule's query through the executor over the last
-90 days, counted, with its first four rows.
-
-**`g d`:** the rules list, a full view in screen 21's frame (spec C15),
-designed with `/ux-architect` before its task.
-
-**Built (T131).** The matcher is `postio_search::matcher::Matcher::new(&ParsedQuery)`,
-which returns `Unsupported` for anything beyond `from:` and `list:`.
-`crates/postio-index/tests/index_suite/digest_matcher.rs` holds it equal to
-the executor on 35 queries over the corpus.
-
-The executor has a bug: `from:<address>` also finds mail *sent to* that
-address (#1699). The matcher deliberately repeats it, because ADR 0008 makes
-agreement the first test. So a fix for #1699 changes both in one commit.
+**Preview (screen 24):** the rule's queries through the executor over the
+last 90 days, counted, with the first four rows.
 
 ---
 
 ## R14. Store and config: what lives where
 
-A schema change makes the user resync into a fresh store (R0). What the user
-decides lives in `config.toml`. The store holds what can be recomputed or
-re-entered.
+What the user decides lives in `config.toml`, which no store change touches.
+The store holds what can be recomputed or re-entered, and what is lost when a
+store starts over (R0) is short-lived.
 
 **Store:**
 
@@ -1256,135 +677,101 @@ re-entered.
 - `markers`;
 - `filter_decisions`;
 - `digest_holds` and `digest_deliveries`;
-- `reminders`, which are lost on a resync, as snoozes are;
+- `reminders`, which are lost when a store starts over, as snoozes are;
 - `correspondents`;
 - `focus_classified`: what the catch-up has done, by stage and classifier
   version;
-- `egress_log.subsystem` gains `'model'` in milestone 2.
+- the `settings` keys `focus.move_recent` and `focus.filed_through`;
+- `egress_log.subsystem` includes `'model'`.
 
 **Config:**
 
-- `[focus]`: `filtering`;
-- `[focus.filter]`: the `keep` and `pinned` senders;
+- `[focus]`: `filtering` and `reading`;
+- `[focus.filter]`: `never` and `stop_markers`;
 - `[[focus.digests]]`;
-- the marker kinds stopped per sender;
-- `[focus.model]` in milestone 2, and `[focus.vault]` in milestone 3.
+- `[focus.model]` and `[focus.vault]`.
 
-The list reads markers with one extra batched statement per page, on the
-pattern of `participants_for` (`threads.rs:1561`), and only for Focus scopes.
-The classic list's statement counts do not change. The full shapes are in
-[data-model.md](./data-model.md).
+The list reads markers with one extra batched statement per page, for Focus
+scopes only. The full shapes are in [data-model.md](./data-model.md).
 
 ---
 
-## R15. Compose in a dialog
+## R15. Compose in Focus's frame
 
-**Decision.** A `DialogHost` implements `ComposerHost` (R1):
+**Decision.** Focus's composer host implements `ComposerHost` (R1): the
+context is Composer while it is open, the dialog (or the window it is
+detached to) is the parent of file dialogs, autosave is on, and the window's
+resolver serves keys. Its frame is [screens.md](./screens.md), "The
+composer".
 
-- the context is Composer while the dialog is open;
-- the dialog is the parent of file dialogs;
-- autosave is on;
-- the window's resolver serves keys.
-
-**The draft gains two fields,** `labels` and `remind_at`
-(`crates/postio-model/src/draft.rs:122-197`). When the draft is sent, the host
+**The draft carries `labels` and `remind_at`.** When it is sent, the host
 applies the labels to the Sent copy's conversation and creates the reminder.
 
-**Recipient chips** are an opt-in presentation of the shared composer's fields
-(spec FR-052). Focus turns them on. Whether the classic app does is a
-`/ux-architect` call.
+**Recipient chips** are a presentation of the shared composer's fields, which
+Focus turns on.
 
-**"wrote N times"** is `correspondents.sent_count` (R8), carried in the
-`RecipientDirectory` rows (`crates/postio-client/src/protocol.rs:600`).
-Completion ranks by it, one rule for both apps: sent count, then last seen,
-then times seen. Today it ranks by the store's order, and `times_seen` counts
-any header, not letters written (`crates/postio-sync/src/contacts.rs:36-62`).
-
-**Built (T076).** The rule is `postio_ui::recipients::suggest`, over
-`Correspondent { contact, sent_count }` rows, which `RecipientDirectory` now
+**Completion ranking** is `postio_ui::recipients::suggest`, over
+`Correspondent { contact, sent_count }` rows that `RecipientDirectory`
 carries. The order:
 
-1. sent count;
+1. sent count (`correspondents.sent_count`, R8);
 2. ADR 0007 Q6's band: contacts the user made or imported before those seen
    only in mail;
 3. last seen;
 4. times seen.
 
-ADR 0007 decided the band and nothing here overrules it. While every count is
-0, the order is the store's. The classic composer still calls its own
-`Directory::suggest`, and the terminal ranks in the host's SQL. Both move to
-the one rule after T024 moves the composer.
+While every count is 0, the order is the store's. Suggestions open at four
+characters (C23). A suggestion row does not show the count yet, because the
+composer's `RecipientCandidate` carries only the address.
 
-**Unchanged or dropped:**
-
-- The Markdown toggle on screen 05 is dropped (spec C7).
-- "Send later" is the existing schedule path (`composer.rs:1461`, `:3154-3193`).
+**Send later** is the existing schedule path. There is no Markdown toggle
+(C7).
 
 ---
 
-## R16. Milestones 2 and 3, designed so milestone 1 leaves room
+## R16. The local model and Obsidian
 
-**postio-ai**, the crate ADR 0009 named, is a client for the user's local
-runtime.
+**`postio-ai`**, the crate ADR 0009 named, is a client for the user's local
+runtime:
 
-- **Interface:** the OpenAI-compatible chat completions both runtimes serve,
-  Ollama at `127.0.0.1:11434/v1` and llama.cpp's server at
-  `127.0.0.1:8080/v1`. Requests use
-  `response_format: {type: "json_schema", json_schema: {name, schema}}`.
-- **Schemas** stay flat, and responses are validated on the client.
-- **Safety:** endpoints must be loopback addresses or local sockets. Every
-  call goes to the egress log. The crate has no send path, which the boundary
+- **Interface:** the OpenAI-compatible chat completions both Ollama
+  (`127.0.0.1:11434/v1`) and llama.cpp's server (`127.0.0.1:8080/v1`) serve,
+  with `response_format: {type: "json_schema", …}`. Each question's schema is
+  flat and checked again on the client.
+- **Transport:** `io-http` over std sockets; loopback needs no TLS. It can
+  connect only through a `ModelEndpoint`, which can only be built from a
+  loopback address or a local socket, so `localhost` is never looked up.
+- **Safety:** message text is fenced, and no tools are offered. After a
+  failure the runtime is left alone for 60 s. Every call is recorded in the
+  egress log under `model`. The crate has no send path, which the boundary
   check enforces.
-- **Role:** it implements postio-classify's model layer and the digest
-  summariser.
-
-**The digest summary** is made of statements, each with references, and each
-reference carries a message and an excerpt.
-
-- A reference must resolve in its message when the summary is written (a byte
-  search of the extracted text) and when it is shown (`TextIndex::find`).
-- A statement whose reference does not resolve is dropped.
-- The summary is plain text.
-
-**Built (T151 to T155).**
-
-- **The client.** `crates/postio-ai` is `io-http` over std sockets; loopback
-  needs no TLS. It can connect only through a `ModelEndpoint`, and one of
-  those can only be built from a loopback address or a local socket, so
-  `localhost` is never looked up. Each question's schema is flat and checked
-  again on the client. The message text is fenced, and no tools are
-  offered. After a failure, the runtime is left alone for 60 s. Every call
-  is recorded in the egress log under `model`.
 - **The needs-action question.** `ModelLayer` answers
   `Result<Option<_>, Unavailable>`, and `Unavailable` hands the question to
   the built-in detector. A quote that is not verbatim in the text is dropped.
-- **Summaries.** A statement stays only if its excerpt is found byte for
-  byte in the own text, when it is written and again when it is read. The
-  summary is stored with the delivery, and it is written after the delivery
-  rather than before its due time (a deviation from FR-142). The row shows
-  its senders until the summary lands, so nothing waits.
+- **Summaries.** A summary is statements, each with references, each
+  reference a message and an excerpt. A statement stays only if its excerpt is
+  found byte for byte in the own text, when it is written and again when it is
+  read (`TextIndex::find`). The summary is plain text, stored with the
+  delivery, and written after the delivery; the row shows its senders until it
+  lands, so nothing waits.
 - **"More like this".** Postio builds the candidate queries (the list, the
-  sender, the sender's domain), and the model answers with one number.
-  A saved rule is therefore never text the model wrote (FR-132).
-- **Rules.** The matcher also reads `to:`, `subject:` and `filename:`, and
-  ADR 0008's differential test covers 18 more queries. Saving a rule the
-  filing pass cannot answer is refused with a sentence.
+  sender, the sender's domain), and the model answers with one number, so a
+  saved rule is never text the model wrote (FR-132).
 
-**postio-vault** writes Obsidian Tasks lines:
+**`postio-vault`** writes Obsidian Tasks lines:
 `- [ ] <text> [✉](postio://message/<id>) 📅 YYYY-MM-DD`.
 
 - The link goes before the date: the Tasks plugin reads its fields from the
   end of the line, and allows only tags and block ids after them (Tasks
   8.4.0, `DefaultTaskSerializer`).
 - 📅 is U+1F4C5. A finished task reads back as `- [x] … ✅ YYYY-MM-DD`.
+- A project is suggested from the subject's words; a capture is appended to
+  the end of its note.
 
 **`postio://`** is registered in Focus's desktop file as
-`x-scheme-handler/postio`.
-
-- The classic app already sets `HANDLES_OPEN` for `mailto:`
-  (`crates/postio-gtk/src/app.rs:130`).
-- A `postio:` URI arrives as a GFile whose `uri()` carries it.
-- It navigates and never acts, because any page or app can fire one.
+`x-scheme-handler/postio`. A `postio:` URI arrives through `HANDLES_OPEN` as a
+GFile whose `uri()` carries it, as `mailto:` does. It navigates and never
+acts, because any page or app can fire one.
 
 ---
 
@@ -1392,14 +779,16 @@ reference carries a message and an excerpt.
 
 **Fast (`--lib`):**
 
-- postio-classify: rules, the detector, and guards over fixtures;
-- postio-calendar: invitation fixtures;
-- postio-search: `natural` and `parse_when`;
-- postio-ui: key-map groups, presets, splice positions and label colours.
+- `postio-classify`: rules, the detector, and guards over fixtures;
+- `postio-calendar`: invitation fixtures;
+- `postio-search`: `natural` and `parse_when`;
+- `postio-ui`: key-map groups, presets, splice positions, label colours,
+  `focus_dialog`, `focus_row`, `focus_state` and `dwell`.
 
-**Counting** (`crates/postio-storage/src/test_support/counting.rs`):
+**Counting** (`postio_storage::test_support::counting`):
 
-- a Focus scope page is one statement, plus one for markers, with no scans;
+- a Focus scope page is a bounded number of statements, plus one for
+  markers, with no scans;
 - the filing pass's statements per new message are bounded;
 - the Focus counts are counted.
 
@@ -1409,29 +798,31 @@ reference carries a message and an excerpt.
 
 - enumeration across frontends (SC-015);
 - Focus parity: every Focus command has a key, a command-bar row and a
-  visible control. The pattern is `crates/postio-tui/tests/registry_parity.rs`.
+  visible control, and every command Focus is offered reaches a handler
+  (`registry_parity`).
 
 **Integration:** `crates/postio-focus/tests/focus_suite/` is one binary on the
-`app_suite` custom harness, with `CASES`, `IGNORED` and the list contract, on
-the headless compositor. Each user story's acceptance scenarios are cases that
-assert on the widget tree.
+custom harness, with `CASES`, `IGNORED` and the list contract, on the headless
+compositor. Each user story's acceptance scenarios are cases that assert on
+the widget tree, and keys and clicks are delivered through GTK's own
+controllers, never by calling a handler.
 
-**Screens:** `shot` renders every screen from 01 to 20 from the demo store, in
-light and dark. Each comparison with its PNG is recorded in
-`specs/007-postio-focus/screens.md`, with its differences and their reasons.
+**Screens:** `shot` renders each screen from the demo store, in light and
+dark; [screens.md](./screens.md) records each comparison.
 
-**Nightly:** SC-011's first pass, at 100,000 messages, under a
-`POSTIO-MEASUREMENT:` marker in `.config/nextest.toml`.
+**Nightly:** SC-011's first pass, at 100,000 messages, and the excerpt
+locator's floors, under `POSTIO-MEASUREMENT:` markers in
+`.config/nextest.toml`.
 
 ---
 
-## R18. Risks, and the spikes that settle them first
+## R18. What the spikes settled
 
-| Spike | Question | Decides |
-|---|---|---|
-| S1 | calcard on invitation fixtures (Outlook, Google, Apple, Zoom; zones; updates; cancellations; recurrence), its graph and its licence | calcard, or ical-rs behind the same adapter |
-| S2 | The promoted headers' bytes per new message, on a real account | R8's header promotion |
-| S3 | A two-height `GtkListView` with spliced rows at 100,000 conversations: scrolling, jumping, rows built per frame | R3's list |
-| S4 | The detector's precision on the labelled corpus, rules alone | R10's rules, or rules with a small table of weights |
-| S5 | Highlighting by excerpt across the render corpus | R2's highlight |
-| S6 | `sort_at` against the list's counting tests | R7's snooze, or its cheaper alternative |
+| Spike | Settled |
+|---|---|
+| S1 | calcard reads the corpus invitations, its graph passes the dependency policy (R9) |
+| S2 | Not run: the promoted headers' bytes per new message on a real account (R8) |
+| S3 | A two-height list with spliced rows holds at 100,000 conversations, binding at most 205 rows a jump (R3) |
+| S4 | Rules alone clear the detector's precision bar; no table of weights (R10) |
+| S5 | Highlighting by excerpt finds 99.5% of sentences read from what is drawn (R2) |
+| S6 | `sort_at` leaves the list's counting tests unchanged (R7) |
