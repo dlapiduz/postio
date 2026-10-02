@@ -135,10 +135,14 @@ pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() 
             "E opened no composer over the list"
         );
         let dialog = window.compose_dialog().expect("the compose dialog");
+        // The message dialog's size rule, from the window (T221).
         assert_eq!(
             (dialog.content_width(), dialog.content_height()),
-            (980, 820),
-            "screen 06's frame"
+            (
+                postio_ui::focus_dialog::dialog_width(window.width()),
+                postio_ui::focus_dialog::dialog_height(window.height())
+            ),
+            "the message dialog's frame"
         );
         assert!(
             crate::settle_until(async || {

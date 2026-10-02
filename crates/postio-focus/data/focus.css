@@ -838,37 +838,142 @@ popover.focus-row-menu-popover separator.focus-row-menu-rule {
   background-color: var(--postio-selected-strong-bg);
 }
 
-/* ── The compose dialog (screens 05 and 06) ─────────────────────────────
-   The classic app's composer in Focus's frame. Its own classes are dressed
-   by the classic stylesheet, which Focus does not load, so the fields are
-   restated here, scoped to the dialog: hairline rows, flat entries, dim
-   labels -- and no accent underline on the focused row (FR-091). */
+/* ── The compose dialog (T221; screens.md, "The composer") ─────────────
+   The message dialog's family: its surface and palette (focus-colours.css),
+   its 52px header bar, its 44px action row between hairlines, its keycaps,
+   and one centred column for the fields and the body. The composer is the
+   classic app's; its own classes are dressed by the classic stylesheet,
+   which Focus does not load, so the fields are restated here, scoped to the
+   dialog: hairline rows, flat entries, muted names -- and no accent
+   underline on the focused row (FR-091). */
+.focus-compose-surface,
 .focus-compose .postio-composer {
   background-color: var(--postio-surface);
+  color: var(--postio-ink);
 }
 
-.focus-compose-header {
-  min-height: 50px;
-  padding: 0 var(--postio-space-3);
-  border-bottom: 1px solid var(--postio-hairline);
+/* The body's ground and palette, read by the editor from these probes as
+   the open message's body reads them (T203, T211). */
+.focus-compose .postio-flow-ground {
+  color: var(--postio-surface);
 }
 
-.focus-compose-title {
-  font-weight: bold;
+.focus-compose .postio-flow-ink {
+  color: var(--postio-ink);
 }
 
-.focus-compose-saved {
-  font-size: 0.85em;
+.focus-compose .postio-flow-ink-secondary {
+  color: var(--postio-ink-secondary);
+}
+
+.focus-compose .postio-flow-dim {
   color: var(--postio-dim);
 }
 
+.focus-compose .postio-flow-accent {
+  color: var(--postio-accent);
+}
+
+.focus-compose .postio-flow-hairline {
+  color: var(--postio-hairline);
+}
+
+.focus-compose .postio-flow-hairline-strong {
+  color: var(--postio-hairline-strong);
+}
+
+/* A key inside the dialog: the message dialog's cap. */
+.focus-compose .postio-keyhint {
+  min-height: 16px;
+  min-width: 8px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--postio-radius-md);
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+  font-size: var(--postio-text-meta);
+  font-weight: normal;
+  color: var(--postio-dim);
+}
+
+/* The header bar, 52px: Detach at the left, the title and what will be
+   sent centred, the X at the right. */
+.focus-compose-header {
+  min-height: 52px;
+  padding: 0 12px;
+}
+
+.focus-compose-header button {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--postio-ink-secondary);
+}
+
+button.focus-compose-close,
+button.focus-compose-detach {
+  padding: 0;
+}
+
+.focus-compose-title {
+  font-weight: 600;
+  font-size: 0.9886rem;
+  color: var(--postio-ink);
+}
+
+.focus-compose-subtitle {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-dim);
+}
+
+/* The action row, 44px between two hairlines: the message dialog's verbs'
+   look, and Send the one raised button among them. */
+.focus-compose-actions {
+  min-height: 44px;
+  padding: 0 12px;
+  box-shadow: inset 0 1px var(--postio-hairline), inset 0 -1px var(--postio-hairline);
+}
+
+.focus-compose-actions button.postio-button-regular {
+  min-height: 30px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-family: var(--postio-font-body);
+  font-size: var(--postio-text-reading);
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+.focus-compose-actions button.postio-button-ghost {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.focus-compose-actions button.postio-button-ghost:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-compose-actions button.postio-button-primary {
+  padding: 0 10px;
+  margin-right: 6px;
+  font-weight: bold;
+}
+
+/* The fields: the sender block's grid, a hairline under each row, the
+   names muted in one column, the values in ink. */
+.focus-compose .postio-compose-fields {
+  margin-top: 8px;
+}
+
 .focus-compose .postio-compose-row {
-  min-height: 42px;
-  padding: 0 var(--postio-space-6);
+  min-height: 40px;
+  padding: 0;
   box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
 .focus-compose .postio-compose-label {
+  font-size: var(--postio-text-body);
   color: var(--postio-dim);
 }
 
@@ -879,24 +984,20 @@ popover.focus-row-menu-popover separator.focus-row-menu-rule {
   box-shadow: none;
   outline: none;
   padding: 0;
+  color: var(--postio-ink);
 }
 
+/* The formatting toolbar: the shared icon buttons, at the column's edge. */
 .focus-compose .postio-compose-toolbar {
-  padding: var(--postio-space-1) var(--postio-space-6);
-  box-shadow: inset 0 -1px var(--postio-hairline);
+  padding: 8px 0 4px 0;
+  box-shadow: none;
 }
 
 .focus-compose .postio-compose-warning,
 .focus-compose .postio-compose-tracking-notice {
-  padding: var(--postio-space-1) var(--postio-space-6);
-  font-size: 0.85em;
+  padding: 4px 0;
+  font-size: var(--postio-text-small);
   color: var(--postio-ink-secondary);
-}
-
-.focus-compose-footer {
-  min-height: 42px;
-  padding: 0 var(--postio-space-3);
-  border-top: 1px solid var(--postio-hairline);
 }
 
 .focus-compose-label-chip {

@@ -149,9 +149,11 @@ mod tests {
     /// accent probe, an invisible widget whose colour is read to hand a body
     /// in app colours its link colour -- links in the accent are the
     /// handoff's (SPEC section 7) and the system's accent the maintainer's
-    /// (spec C26).
+    /// (spec C26). The composer's is the same probe, for the links written
+    /// in its body (T221).
     fn reserved(rule: &str) -> bool {
         rule == ".focus-open .postio-flow-accent { color }"
+            || rule == ".focus-compose .postio-flow-accent { color }"
             || rule.contains(":focus")
             || rule.starts_with(".focus-list > row:selected ")
             || rule.starts_with(".focus-filtered-list > row:selected ")

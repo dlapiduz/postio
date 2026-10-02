@@ -12,10 +12,15 @@ use std::cell::{Cell, RefCell};
 use adw::prelude::*;
 use gtk::{gio, glib};
 use postio_core::{CommandId, Keymap};
+use postio_ui::focus_dialog;
 use postio_ui::keymap::KeyContext;
 use postio_widgets::composer::{Composer, ComposerHost};
 
 use crate::window::FocusWindow;
+
+/// The window size the dialog is fitted to before it knows its window's:
+/// the window's own default, as the open message's is.
+pub const WINDOW: (i32, i32) = (1440, 900);
 
 /// Who hears a command the window hands the composer.
 type CommandHandler = Box<dyn Fn(CommandId)>;
@@ -25,6 +30,10 @@ pub struct DialogHost {
     pub(super) window: glib::WeakRef<FocusWindow>,
     pub(super) dialog: adw::Dialog,
     pub(super) slot: gtk::Box,
+    /// What holds the fields and the body to the column's width.
+    column: adw::Clamp,
+    /// Whether the dialog follows its window's resizes yet.
+    following: Cell<bool>,
     /// Who hears the commands the window dispatches to the composer.
     commands: RefCell<Vec<CommandHandler>>,
     /// Whether the dialog is over the window: between taking the pane and
@@ -33,11 +42,18 @@ pub struct DialogHost {
 }
 
 impl DialogHost {
-    pub fn new(window: &FocusWindow, dialog: adw::Dialog, slot: gtk::Box) -> Self {
+    pub fn new(
+        window: &FocusWindow,
+        dialog: adw::Dialog,
+        slot: gtk::Box,
+        column: adw::Clamp,
+    ) -> Self {
         DialogHost {
             window: window.downgrade(),
             dialog,
             slot,
+            column,
+            following: Cell::new(false),
             commands: RefCell::default(),
             showing: Cell::new(false),
         }
@@ -53,6 +69,57 @@ impl DialogHost {
     /// Whether the dialog is over the window.
     pub fn showing(&self) -> bool {
         self.showing.get()
+    }
+
+    /// Size the dialog for a window `width` by `height`: the message
+    /// dialog's rule (T205), so the two are one size over one window, and
+    /// the column inside it hers.
+    fn fit(dialog: &adw::Dialog, column: &adw::Clamp, width: i32, height: i32) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        let wide = focus_dialog::dialog_width(width);
+        if dialog.content_width() != wide {
+            dialog.set_content_width(wide);
+        }
+        let tall = focus_dialog::dialog_height(height);
+        if dialog.content_height() != tall {
+            dialog.set_content_height(tall);
+        }
+        let measure =
+            focus_dialog::column_width(wide, postio_body::treatment::Treatment::AppColours);
+        if column.maximum_size() != measure {
+            column.set_maximum_size(measure);
+            column.set_tightening_threshold(measure);
+        }
+    }
+
+    /// Fit the dialog to `window` now, and again whenever it is resized:
+    /// its surface's `layout` says when, maximised and tiled sizes
+    /// included, as the open message follows it.
+    fn follow(&self, window: &FocusWindow) {
+        let (width, height) = match (window.width(), window.height()) {
+            (width, height) if width > 0 && height > 0 => (width, height),
+            _ => window.default_size(),
+        };
+        Self::fit(&self.dialog, &self.column, width, height);
+        if self.following.get() {
+            return;
+        }
+        let Some(surface) = window.surface() else {
+            return;
+        };
+        self.following.set(true);
+        let dialog = self.dialog.downgrade();
+        let column = self.column.downgrade();
+        let window = window.downgrade();
+        surface.connect_layout(move |_, _, _| {
+            if let (Some(dialog), Some(column), Some(window)) =
+                (dialog.upgrade(), column.upgrade(), window.upgrade())
+            {
+                Self::fit(&dialog, &column, window.width(), window.height());
+            }
+        });
     }
 }
 
@@ -82,6 +149,7 @@ impl ComposerHost for DialogHost {
             return;
         }
         if let Some(window) = self.window.upgrade() {
+            self.follow(&window);
             self.dialog.present(Some(&window));
         }
         crate::a11y::teach_shortcuts(&self.dialog);

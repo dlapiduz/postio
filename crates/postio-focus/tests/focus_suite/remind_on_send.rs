@@ -1,5 +1,5 @@
 //! "Remind if no reply", set in the composer (US3 scenario 5, T096): `mod+h`
-//! in the composer opens the remind picker at its footer, the footer says
+//! in the composer opens the remind picker at its action row, the row says
 //! the time chosen, and sending the message sets that reminder on the
 //! conversation it is filed into. What the reminder does when it falls due
 //! is US5's, proven by `surfaced.rs` and the host's due timer.
@@ -56,21 +56,22 @@ pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
         let composer = window.composer().expect("the composer");
         composer.test_set_to("Lena Park <lena@example.org>, ");
         composer.test_set_subject("Harbor API draft v3");
-        let footer = || {
+        // The composer's verbs are its action row (T221).
+        let verbs = || {
             support::texts(&support::only(
                 &window.compose_dialog().expect("the dialog"),
-                "focus-compose-footer",
+                "focus-compose-actions",
             ))
         };
         assert!(
-            crate::settle_until(async || footer().iter().any(|text| text == "Attach")).await,
-            "the footer never drew: {:?}",
-            footer()
+            crate::settle_until(async || verbs().iter().any(|text| text == "Attach")).await,
+            "the action row never drew: {:?}",
+            verbs()
         );
         assert!(
-            footer().iter().any(|text| text == "Remind if no reply"),
-            "the footer offers the reminder: {:?}",
-            footer()
+            verbs().iter().any(|text| text == "Remind"),
+            "the action row offers the reminder: {:?}",
+            verbs()
         );
 
         // mod+h: the remind picker, and `1` for its first preset.
@@ -90,11 +91,11 @@ pub fn mod_h_in_the_composer_sets_a_reminder_that_sending_keeps() {
         let (_, due) = postio_ui::schedule::remind_presets(chrono::Local::now())[0];
         support::press(&window, "1", gtk::gdk::ModifierType::empty());
         assert!(!picker.is_open(), "choosing closed the picker");
-        let said = format!("Remind if no reply \u{b7} {}", due.format("%a %-d %b"));
+        let said = format!("Remind \u{b7} {}", due.format("%a %-d %b"));
         assert!(
-            crate::settle_until(async || footer().contains(&said)).await,
-            "the footer does not say the reminder: {:?}",
-            footer()
+            crate::settle_until(async || verbs().contains(&said)).await,
+            "the action row does not say the reminder: {:?}",
+            verbs()
         );
         assert!(
             window.compose_dialog().is_some(),

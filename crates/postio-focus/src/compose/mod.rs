@@ -18,16 +18,14 @@ use gtk::glib;
 use postio_client::Client;
 use postio_core::{CommandId, Keymap};
 use postio_model::ids::AccountId;
+use postio_ui::focus_dialog;
 use postio_widgets::composer::Composer;
 use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 
-pub use frame::{remind_words, saved_at, summary, title};
+pub use frame::{remind_meaning, remind_words, saved_at, subtitle, summary, title};
 pub use seams::Current;
 
 use crate::window::FocusWindow;
-
-/// The size screens 05 and 06 draw the dialog at.
-pub const SIZE: (i32, i32) = (980, 820);
 
 /// The dialog's name, so the window can tell it from another dialog.
 pub const NAME: &str = "focus-compose";
@@ -38,7 +36,7 @@ pub struct Compose {
     frame: Rc<frame::Frame>,
     host: Rc<host::DialogHost>,
     resume: seams::Resume,
-    /// "Remind if no reply", opened at the footer by `mod+h` or a click
+    /// "Remind if no reply", opened at the action row by `mod+h` or a click
     /// (US3 scenario 5): the remind picker the row uses, choosing for the
     /// draft instead of for a conversation.
     remind: Rc<WhenPicker>,
@@ -65,21 +63,37 @@ impl Compose {
         let frame = frame::Frame::new(&composer, &keymap);
         composer.add_field_row(&frame.labels_row);
 
+        // The body draws on the dialog's surface, in its ink, from the
+        // column's edge (T221), as the open message's body does.
+        composer.flow_in_column();
+
+        // One column for the fields, the toolbar and the body: the message
+        // dialog's app colours column, centred (T207, T221).
         let slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
         slot.set_vexpand(true);
+        let column = adw::Clamp::builder()
+            .child(&slot)
+            .maximum_size(focus_dialog::COLUMN_APP_COLOURS)
+            .tightening_threshold(focus_dialog::COLUMN_APP_COLOURS)
+            .vexpand(true)
+            .build();
+        column.add_css_class("focus-compose-column");
         let layout = adw::ToolbarView::new();
+        layout.add_css_class("focus-compose-surface");
         layout.add_top_bar(&frame.header);
-        layout.set_content(Some(&slot));
-        layout.add_bottom_bar(&frame.footer);
+        layout.add_top_bar(&frame.actions);
+        layout.set_content(Some(&column));
+        // The message dialog's size rule (T205), fitted to the window as it
+        // is presented and as it is resized (`host`).
         let dialog = adw::Dialog::builder()
-            .content_width(SIZE.0)
-            .content_height(SIZE.1)
+            .content_width(focus_dialog::dialog_width(host::WINDOW.0))
+            .content_height(focus_dialog::dialog_height(host::WINDOW.1))
             .child(&layout)
             .build();
         dialog.set_widget_name(NAME);
         dialog.add_css_class("focus-compose");
 
-        let host = Rc::new(host::DialogHost::new(window, dialog.clone(), slot));
+        let host = Rc::new(host::DialogHost::new(window, dialog.clone(), slot, column));
         composer.mount_on(Rc::clone(&host) as Rc<dyn postio_widgets::composer::ComposerHost>);
         // The dialog's own ways out -- Escape reaching it, a click outside
         // -- mean what `Esc` means: close, keeping the draft.
@@ -112,13 +126,13 @@ impl Compose {
         compose
     }
 
-    /// The remind picker at the footer, while it is open.
+    /// The remind picker at the action row, while it is open.
     pub fn open_picker(&self) -> Option<Rc<Picker>> {
         let picker = self.remind.picker();
         picker.is_open().then(|| Rc::clone(picker))
     }
 
-    /// Open the remind picker at the footer's control, naming the draft.
+    /// Open the remind picker at its verb in the action row, naming the draft.
     fn open_remind(&self) {
         let subject = self.composer.draft().subject;
         let target = if subject.trim().is_empty() {

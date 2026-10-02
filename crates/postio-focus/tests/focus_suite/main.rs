@@ -31,6 +31,7 @@ mod chrome;
 mod close_buttons;
 mod colours;
 mod compose;
+mod compose_layout;
 mod corrections;
 mod cursor;
 mod desktop;
@@ -89,6 +90,35 @@ mod window_controls;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own",
+        compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own
+            as fn(),
+    ),
+    (
+        "compose_layout::send_is_the_one_primary_and_nothing_wears_the_accent",
+        compose_layout::send_is_the_one_primary_and_nothing_wears_the_accent as fn(),
+    ),
+    (
+        "compose_layout::the_keycaps_are_short",
+        compose_layout::the_keycaps_are_short as fn(),
+    ),
+    (
+        "compose_layout::the_field_rows_share_their_edges",
+        compose_layout::the_field_rows_share_their_edges as fn(),
+    ),
+    (
+        "compose_layout::the_editor_is_drawn_on_the_dialogs_surface",
+        compose_layout::the_editor_is_drawn_on_the_dialogs_surface as fn(),
+    ),
+    (
+        "compose_layout::the_close_is_the_shared_x",
+        compose_layout::the_close_is_the_shared_x as fn(),
+    ),
+    (
+        "compose_layout::the_dialog_follows_the_message_dialogs_size_rule",
+        compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
+    ),
     (
         "bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search",
         bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search as fn(),

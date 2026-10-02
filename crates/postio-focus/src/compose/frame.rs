@@ -1,9 +1,13 @@
-//! The frame screens 05 and 06 draw around the composer: the header with
-//! Close, the heading and Send; the Labels row; and the footer.
+//! The frame around the composer, the message dialog's family (T221;
+//! screens.md, "The composer"): a header bar of Detach, the title with
+//! what will be sent under it, and the shared X; an action row of the
+//! composer's verbs, Send first where Reply sits in the message dialog's;
+//! and the Labels row.
 //!
 //! The composer inside it is the classic app's, whole (FR-050): every
 //! control here calls one of its verbs, and every key a control shows is
-//! read from the keymap in force (constitution II).
+//! read from the keymap in force (constitution II), compacted as the
+//! message dialog's are (`hints::short`).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -14,10 +18,11 @@ use chrono::{DateTime, Local, Utc};
 use gtk::{gio, glib};
 use postio_core::{CommandId, Keymap};
 use postio_model::{Draft, DraftKind, Label, LabelId};
+use postio_ui::focus_dialog;
 use postio_ui::hints;
 use postio_widgets::composer::Composer;
 use postio_widgets::widgets::keyhint;
-use postio_widgets::widgets::space::{S2, S3, S4};
+use postio_widgets::widgets::space::{S2, S4};
 use postio_widgets::widgets::{Kind, Size};
 
 /// What the header calls a composition (contracts/focus-surface.md,
@@ -31,7 +36,7 @@ pub fn title(kind: DraftKind) -> &'static str {
     }
 }
 
-/// What the footer says will be sent: "Plain text · 58 words", or "Rich
+/// What the subtitle says will be sent: "Plain text · 58 words", or "Rich
 /// text" once the body carries structure the text part cannot (the
 /// composer sends an HTML part only then).
 pub fn summary(draft: &Draft) -> String {
@@ -55,6 +60,17 @@ pub fn summary(draft: &Draft) -> String {
     format!("{kind} \u{b7} {words}")
 }
 
+/// The header's subtitle: what will be sent, then what has happened to the
+/// draft, when anything has -- "Plain text · 58 words · Draft saved locally
+/// 16:12" -- as the message dialog's says "Message 5 of 60 · thread of 6".
+pub fn subtitle(summary: &str, note: &str) -> String {
+    if note.is_empty() {
+        summary.to_owned()
+    } else {
+        format!("{summary} \u{b7} {note}")
+    }
+}
+
 /// "Draft saved locally 16:12", for a save that landed at `at`.
 pub fn saved_at(at: DateTime<Utc>) -> String {
     format!(
@@ -63,10 +79,25 @@ pub fn saved_at(at: DateTime<Utc>) -> String {
     )
 }
 
-/// What the footer's reminder control says: "Remind if no reply", and the
-/// day once one is chosen ("Remind if no reply · Tue 29 Sep"), in the
-/// person's own time zone.
+/// What the reminder verb says: "Remind", as the message dialog's action
+/// row names the same command, and the day once one is chosen ("Remind ·
+/// Tue 29 Sep"), in the person's own time zone. The whole of it -- "if no
+/// reply" -- is the verb's tooltip and accessible name ([`remind_meaning`]),
+/// the palette's title and the picker's heading; the row has room for the
+/// day, not for both (T221).
 pub fn remind_words(at: Option<DateTime<Utc>>) -> String {
+    match at {
+        Some(at) => format!(
+            "Remind \u{b7} {}",
+            at.with_timezone(&Local).format("%a %-d %b")
+        ),
+        None => "Remind".to_owned(),
+    }
+}
+
+/// What the reminder verb means, said in full: "Remind if no reply", and
+/// the day once one is chosen.
+pub fn remind_meaning(at: Option<DateTime<Utc>>) -> String {
     match at {
         Some(at) => format!(
             "Remind if no reply \u{b7} {}",
@@ -91,11 +122,18 @@ fn composer_key(keymap: &Keymap, command: CommandId) -> Option<String> {
 /// The frame's widgets.
 pub struct Frame {
     pub header: gtk::CenterBox,
-    pub footer: gtk::Box,
+    /// The composer's verbs, under the header, as the message dialog's
+    /// action row is under its.
+    pub actions: gtk::Box,
     pub labels_row: gtk::Box,
     close: gtk::Button,
     title: gtk::Label,
-    saved: gtk::Label,
+    /// What will be sent, and what happened to the draft.
+    subtitle: gtk::Label,
+    /// "Plain text · 58 words", as the draft stands.
+    summary: RefCell<String>,
+    /// "Draft saved locally 16:12", or what opening the draft did.
+    note: RefCell<String>,
     detach: gtk::Button,
     send_later: gtk::Button,
     /// Send later's menu, hung on its button and rebuilt each time it opens.
@@ -109,7 +147,6 @@ pub struct Frame {
     /// The key the reminder control shows, and the time it says.
     remind_key: RefCell<Option<String>>,
     remind_at: Cell<Option<DateTime<Utc>>>,
-    words: gtk::Label,
     /// The labels whose names the Labels row can draw, by id.
     known: RefCell<HashMap<LabelId, Label>>,
     /// Whether the labels drawn are the thread's, untouched (screen 06).
@@ -119,28 +156,54 @@ pub struct Frame {
 impl Frame {
     /// The frame around `composer`, its keys read from `keymap`.
     pub fn new(composer: &Composer, keymap: &Keymap) -> Rc<Self> {
+        // The header bar: the message dialog's anatomy (T206), Detach where
+        // its steps are, the title centred, the shared X at the right
+        // (T192). No verb reaches the title from either side.
         let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-compose-close");
         let title = gtk::Label::new(Some(title(DraftKind::New)));
         title.add_css_class("focus-compose-title");
         title.set_accessible_role(gtk::AccessibleRole::Heading);
-        let saved = gtk::Label::new(None);
-        saved.add_css_class("focus-compose-saved");
-        saved.set_accessible_role(gtk::AccessibleRole::Status);
+        title.set_ellipsize(pango::EllipsizeMode::End);
+        let subtitle = gtk::Label::new(None);
+        subtitle.add_css_class("focus-compose-subtitle");
+        subtitle.set_accessible_role(gtk::AccessibleRole::Status);
+        subtitle.set_ellipsize(pango::EllipsizeMode::End);
         let heading = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        heading.add_css_class("focus-compose-heading");
         heading.append(&title);
-        heading.append(&saved);
+        heading.append(&subtitle);
 
         let detach = postio_widgets::widgets::icon_button(
             "window-new-symbolic",
             "Write in a window of its own",
         );
-        // A button with a menu hung on it rather than a `GtkMenuButton`,
-        // whose own nodes the button sheet never reaches: it draws as every
-        // other button here does.
+        detach.add_css_class("focus-compose-detach");
+
+        for widget in [
+            detach.upcast_ref::<gtk::Widget>(),
+            heading.upcast_ref(),
+            close.upcast_ref(),
+        ] {
+            widget.set_valign(gtk::Align::Center);
+        }
+        let header = gtk::CenterBox::new();
+        header.add_css_class("focus-compose-header");
+        header.set_start_widget(Some(&detach));
+        header.set_center_widget(Some(&heading));
+        header.set_end_widget(Some(&close));
+
+        // The action row: Send, the one primary (a plain raised button in
+        // Focus, FR-091), then the quiet verbs the message dialog's row
+        // draws. A button with a menu hung on it rather than a
+        // `GtkMenuButton`, whose own nodes the button sheet never reaches:
+        // Send later draws as every other verb here does.
+        let send = gtk::Button::new();
+        postio_widgets::widgets::button::style(&send, Kind::Primary, Size::Regular);
+        send.add_css_class("focus-compose-send");
         let send_later = gtk::Button::new();
-        postio_widgets::widgets::button::style(&send_later, Kind::Ghost, Size::Small);
-        send_later.set_child(Some(&gtk::Label::new(Some("Send later"))));
+        postio_widgets::widgets::button::style(&send_later, Kind::Ghost, Size::Regular);
+        send_later.add_css_class("focus-compose-send-later");
         let send_later_menu = gtk::PopoverMenu::from_model(None::<&gio::MenuModel>);
         send_later_menu.set_parent(&send_later);
         send_later_menu.set_has_arrow(false);
@@ -148,36 +211,19 @@ impl Frame {
             let menu = send_later_menu.clone();
             move |_| menu.unparent()
         });
-        send_later.add_css_class("focus-compose-send-later");
-        let send = gtk::Button::new();
-        postio_widgets::widgets::button::style(&send, Kind::Primary, Size::Small);
-        send.add_css_class("focus-compose-send");
-        let trailing = gtk::Box::new(gtk::Orientation::Horizontal, S2);
-        // Each as tall as its own words, not as the tallest beside it.
-        for widget in [
-            detach.upcast_ref::<gtk::Widget>(),
-            send_later.upcast_ref(),
-            send.upcast_ref(),
-        ] {
-            widget.set_valign(gtk::Align::Center);
+        let attach = gtk::Button::new();
+        postio_widgets::widgets::button::style(&attach, Kind::Ghost, Size::Regular);
+        attach.add_css_class("focus-compose-attach");
+        let remind = gtk::Button::new();
+        postio_widgets::widgets::button::style(&remind, Kind::Ghost, Size::Regular);
+        remind.add_css_class("focus-compose-remind");
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        actions.add_css_class("focus-compose-actions");
+        for button in [&send, &send_later, &attach, &remind] {
+            // Each as tall as its own words, not as the row.
+            button.set_valign(gtk::Align::Center);
+            actions.append(button);
         }
-        trailing.append(&detach);
-        trailing.append(&send_later);
-        trailing.append(&send);
-
-        for widget in [
-            close.upcast_ref::<gtk::Widget>(),
-            heading.upcast_ref(),
-            trailing.upcast_ref(),
-        ] {
-            widget.set_valign(gtk::Align::Center);
-        }
-        let header = gtk::CenterBox::new();
-        header.add_css_class("focus-compose-header");
-        // Close is the X at the right end, after the verbs (T192).
-        trailing.append(&close);
-        header.set_center_widget(Some(&heading));
-        header.set_end_widget(Some(&trailing));
 
         // The Labels row, drawn the way the composer draws its own rows.
         let labels_row = gtk::Box::new(gtk::Orientation::Horizontal, S4);
@@ -198,33 +244,15 @@ impl Frame {
         labels_row.append(&labels);
         labels_row.append(&from_thread);
 
-        let attach = gtk::Button::new();
-        postio_widgets::widgets::button::style(&attach, Kind::Ghost, Size::Small);
-        attach.add_css_class("focus-compose-attach");
-        let remind = gtk::Button::new();
-        postio_widgets::widgets::button::style(&remind, Kind::Ghost, Size::Small);
-        remind.add_css_class("focus-compose-remind");
-        let words = gtk::Label::new(None);
-        words.add_css_class("dim-label");
-        words.add_css_class("focus-compose-words");
-        words.set_hexpand(true);
-        words.set_xalign(1.0);
-        let footer = gtk::Box::new(gtk::Orientation::Horizontal, S3);
-        footer.add_css_class("focus-compose-footer");
-        // Each is as tall as its own words, not the footer's.
-        attach.set_valign(gtk::Align::Center);
-        remind.set_valign(gtk::Align::Center);
-        footer.append(&attach);
-        footer.append(&remind);
-        footer.append(&words);
-
         let frame = Rc::new(Frame {
             header,
-            footer,
+            actions,
             labels_row,
             close,
             title,
-            saved,
+            subtitle,
+            summary: RefCell::default(),
+            note: RefCell::default(),
             detach,
             send_later,
             send_later_menu,
@@ -235,7 +263,6 @@ impl Frame {
             remind,
             remind_key: RefCell::default(),
             remind_at: Cell::default(),
-            words,
             known: RefCell::default(),
             thread_labels: Cell::new(false),
         });
@@ -293,7 +320,7 @@ impl Frame {
         self.send_later
             .insert_action_group("focus-send-later", Some(&actions));
 
-        // What the header and the footer say follows the draft.
+        // What the header and the verbs say follows the draft.
         let frame = Rc::downgrade(self);
         composer.connect_changed(move |draft| {
             if let Some(frame) = frame.upgrade() {
@@ -305,65 +332,80 @@ impl Frame {
         composer.connect_opened(move || {
             if let (Some(frame), Some(composer)) = (frame.upgrade(), weak.upgrade()) {
                 frame.thread_labels.set(false);
-                frame.saved.set_text("");
+                frame.note.replace(String::new());
                 frame.follow(&composer.draft());
                 frame.draw_labels(&composer);
             }
         });
     }
 
-    /// Redraw the keycaps from `keymap`.
+    /// Redraw the keycaps from `keymap`, compacted as the message dialog's
+    /// are (`hints::short`: `ctrl+⇧+↵`, not `ctrl+shift+Return`).
     pub fn set_keymap(&self, keymap: &Keymap) {
-        let key = |command| hints::key(keymap, command);
-        self.send.set_child(Some(&keyhint::labelled(
-            "Send",
-            key(CommandId::Send).as_deref(),
-        )));
+        let key = |command| hints::key(keymap, command).map(|key| hints::short(&key));
+        self.send
+            .set_child(Some(&labelled("Send", key(CommandId::Send).as_deref())));
         // Send later opens a menu: its words and key like the others, then
-        // the arrow that says so (screen 05).
-        let later = gtk::Box::new(gtk::Orientation::Horizontal, S2);
-        later.append(&keyhint::labelled(
-            "Send later",
-            key(CommandId::ScheduleSend).as_deref(),
-        ));
-        let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
-        arrow.set_accessible_role(gtk::AccessibleRole::Presentation);
-        later.append(&arrow);
+        // the arrow that says so.
+        let later = labelled("Send later", key(CommandId::ScheduleSend).as_deref());
+        if let Some(later) = later.downcast_ref::<gtk::Box>() {
+            let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
+            arrow.set_accessible_role(gtk::AccessibleRole::Presentation);
+            later.append(&arrow);
+        }
         self.send_later.set_child(Some(&later));
-        self.attach.set_child(Some(&keyhint::labelled(
+        self.attach.set_child(Some(&labelled(
             "Attach",
             key(CommandId::AttachFile).as_deref(),
         )));
-        self.remind_key
-            .replace(composer_key(keymap, CommandId::RemindIfNoReply));
+        self.remind_key.replace(
+            composer_key(keymap, CommandId::RemindIfNoReply).map(|key| hints::short(&key)),
+        );
         self.draw_remind(self.remind_at.get());
+        self.detach
+            .set_tooltip_text(Some(&match key(CommandId::DetachComposer) {
+                Some(key) => format!("Write in a window of its own ({key})"),
+                None => "Write in a window of its own".to_owned(),
+            }));
     }
 
     /// The reminder control, saying `at` when one is chosen.
     fn draw_remind(&self, at: Option<DateTime<Utc>>) {
         self.remind_at.set(at);
-        self.remind.set_child(Some(&keyhint::labelled(
+        self.remind.set_child(Some(&labelled(
             &remind_words(at),
             self.remind_key.borrow().as_deref(),
         )));
+        let meaning = remind_meaning(at);
+        self.remind.set_tooltip_text(Some(&meaning));
+        self.remind
+            .update_property(&[gtk::accessible::Property::Label(&meaning)]);
     }
 
-    /// The heading and the footer, for `draft` as it stands.
+    /// The heading and the verbs, for `draft` as it stands.
     fn follow(&self, draft: &Draft) {
         self.title.set_text(title(draft.kind));
-        self.words.set_text(&summary(draft));
+        self.summary.replace(summary(draft));
+        self.draw_subtitle();
         self.draw_remind(draft.remind_at);
     }
 
     /// A save landed at `at`.
     pub fn saved(&self, at: DateTime<Utc>) {
-        self.saved.set_text(&saved_at(at));
+        self.note.replace(saved_at(at));
+        self.draw_subtitle();
     }
 
     /// Say `note` under the heading: what happened to the draft as it
     /// opened.
     pub fn note(&self, note: &str) {
-        self.saved.set_text(note);
+        self.note.replace(note.to_owned());
+        self.draw_subtitle();
+    }
+
+    fn draw_subtitle(&self) {
+        self.subtitle
+            .set_text(&subtitle(&self.summary.borrow(), &self.note.borrow()));
     }
 
     /// Open the Send later menu, as its key does.
@@ -459,13 +501,24 @@ impl Frame {
     }
 }
 
+/// A verb's words and its cap, the cap the message dialog's gap from them
+/// (`focus_dialog::KEYCAP_GAP`).
+fn labelled(text: &str, key: Option<&str>) -> gtk::Widget {
+    let widget = keyhint::labelled(text, key);
+    if let Some(row) = widget.downcast_ref::<gtk::Box>() {
+        row.set_spacing(focus_dialog::KEYCAP_GAP);
+    }
+    widget
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use postio_model::AccountId;
 
     #[test]
-    fn the_footer_counts_the_words_that_will_be_sent_and_says_which_kind() {
+    fn the_subtitle_counts_the_words_that_will_be_sent_and_says_which_kind() {
         let mut draft = Draft::new(AccountId::UNASSIGNED);
         assert_eq!(summary(&draft), "Plain text \u{b7} 0 words");
         draft.body.text = Some("Hi Ada,\n\nThe sheet is attached.".to_owned());
@@ -481,6 +534,33 @@ mod tests {
         let mut draft = Draft::new(AccountId::UNASSIGNED);
         draft.body.text = Some("Looks good.\n\n-- \nAda Norwood\nExample Corp".to_owned());
         assert_eq!(summary(&draft), "Plain text \u{b7} 2 words");
+    }
+
+    #[test]
+    fn the_subtitle_says_what_will_be_sent_then_what_happened() {
+        assert_eq!(
+            subtitle("Plain text \u{b7} 0 words", ""),
+            "Plain text \u{b7} 0 words"
+        );
+        assert_eq!(
+            subtitle("Plain text \u{b7} 58 words", "Draft saved locally 16:12"),
+            "Plain text \u{b7} 58 words \u{b7} Draft saved locally 16:12"
+        );
+    }
+
+    #[test]
+    fn remind_is_the_message_dialogs_word_and_says_its_day() {
+        assert_eq!(remind_words(None), "Remind");
+        assert_eq!(remind_meaning(None), "Remind if no reply");
+        let at = Local
+            .with_ymd_and_hms(2026, 9, 29, 9, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(remind_words(Some(at)), "Remind \u{b7} Tue 29 Sep");
+        assert_eq!(
+            remind_meaning(Some(at)),
+            "Remind if no reply \u{b7} Tue 29 Sep"
+        );
     }
 
     #[test]

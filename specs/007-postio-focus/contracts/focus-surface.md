@@ -127,9 +127,9 @@ dialog's with the composer's verbs (T221; screens.md, "The composer").
     "Plain text · 58 words · Draft saved locally 16:12" under it in mono.
   - Right: the shared close X (T192).
 - **Action row (44 px, hairlines above and below).** Send `ctrl+↵`, the one
-  primary (raised, bold); Send later `ctrl+⇧+↵` ▾; Attach `ctrl+⇧+a`; "Remind
-  if no reply · Tue 29 Sep" `ctrl+h`; Task after sending `ctrl+t`
-  (milestone 3).
+  primary (raised, bold); Send later `ctrl+⇧+↵` ▾; Attach `ctrl+⇧+a`;
+  "Remind · Tue 29 Sep" `ctrl+h` (its tooltip "Remind if no reply"); Task
+  after sending `ctrl+t` (milestone 3).
 - **One column,** `min(480, dialog − 96)`, centred, for everything below.
 - **Fields,** 40 px each, one label column:
   - **To:** recipient chips (name, address in mono, ×). On the right,

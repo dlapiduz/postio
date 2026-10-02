@@ -5,7 +5,7 @@
 //! now call the one implementation, `postio_widgets::present::compose`
 //! (`shared` below; specs/007-postio-focus T022). What is Focus's own is its
 //! dialog's chrome: [`resume`]'s and [`autosave`]'s notes go to the frame's
-//! footer rather than a toast or a status line, and [`reply_source`]
+//! subtitle rather than a toast or a status line, and [`reply_source`]
 //! additionally reads the thread's labels and draws them (R15), which
 //! [`label_names`] fills in the names of when a resumed draft opens knowing
 //! only their ids. A composer's seam is one slot, not a signal several
@@ -67,7 +67,7 @@ pub fn wire(
     resume(composer, client, last_id, frame)
 }
 
-/// Autosave, with the frame's "Saved at HH:MM" footer stamped from
+/// Autosave, with the frame's "Draft saved locally HH:MM" subtitle stamped from
 /// [`shared::install_autosave`]'s own hook.
 fn autosave(
     composer: &Composer,
@@ -86,7 +86,7 @@ fn autosave(
 /// A draft left in Drafts -- by Focus or by the classic app -- opens in the
 /// composer for editing (US3 scenario 3, US11 scenario 3), through
 /// [`shared::install_resume`]; the note it hands back becomes the frame's
-/// footer rather than the classic app's toast or status line.
+/// subtitle rather than the classic app's toast or status line.
 fn resume(
     composer: &Composer,
     client: &Client,

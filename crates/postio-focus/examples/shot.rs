@@ -29,6 +29,7 @@
 //! | `29` | The same office mail switched to the original with `O`: on paper (handoff screen 12) |
 //! | `30` | A long newsletter with no page of its own, opened: in app colours (T218) |
 //! | `31` | The same newsletter past its render deadline: the plain-text fallback (T218) |
+//! | `32` | A new message with an attachment and "Remind if no reply" chosen (T221's states) |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -225,6 +226,10 @@ const SCREENS: &[(&str, &str)] = &[
     ),
     ("30", "a long newsletter opened, in app colours"),
     ("31", "the same newsletter fallen back to its plain text"),
+    (
+        "32",
+        "a new message with an attachment and a reminder chosen",
+    ),
 ];
 
 /// How long to wait for the store's rows to reach the screen.
@@ -591,7 +596,7 @@ fn render(args: &[String]) -> Result<String, String> {
     } else {
         runtime.block_on(demo())
     };
-    if matches!(request.screen.as_str(), "05" | "06") {
+    if matches!(request.screen.as_str(), "05" | "06" | "32") {
         runtime.block_on(compose_demo(&database, account));
     }
     if matches!(request.screen.as_str(), "27" | "28" | "29" | "30" | "31") {
@@ -1081,6 +1086,32 @@ fn stage(
             }) {
                 return Err("the reply's labels and quote never showed".into());
             }
+            // The editing surface paints in its own process, and restyles
+            // to the dialog's palette once it is on screen: give it the
+            // frames to draw the quote.
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
+        }
+        "32" => {
+            pick_three();
+            window.act(CommandId::Compose);
+            let composer = composing(window)?;
+            composer.test_set_to("Ada Moreno <ada@example.com>, ");
+            composer.test_set_subject("Q4 headcount numbers");
+            composer.test_set_body("Hi Ada, the numbers are attached. Two roles move.");
+            // A file of its own, kept for the life of the shot.
+            let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+            let sheet = folder.path().join("Q4-headcount.pdf");
+            std::fs::write(&sheet, vec![b'x'; 182_000]).map_err(|error| error.to_string())?;
+            composer.test_attach_path(&sheet);
+            std::mem::forget(folder);
+            if !settle_until(|| composer.test_attachment_count() == 1) {
+                return Err("the attachment never landed".into());
+            }
+            let due = Local::now() + chrono::Duration::days(3);
+            composer.set_remind_at(Some(due.with_timezone(&Utc)));
+            let typed = Instant::now();
+            settle_until(|| typed.elapsed() > Duration::from_millis(500));
         }
         "25" => {
             pick_three();

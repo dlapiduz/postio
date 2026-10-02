@@ -164,8 +164,12 @@ Pressing Reply in the message dialog puts Send where Reply was.
   shared close X (T192). Nothing else: no verb reaches the title from either
   side, at any width.
 - **Action row, 44px between two hairlines: the composer's verbs.** Send
-  `ctrl+↵`, Send later `ctrl+⇧+↵` with its ▾, Attach `ctrl+⇧+a`, Remind if no
-  reply `ctrl+h` (and its day once chosen). Send first, where Reply sits in
+  `ctrl+↵`, Send later `ctrl+⇧+↵` with its ▾, Attach `ctrl+⇧+a`, Remind
+  `ctrl+h`, and "Remind · Tue 29 Sep" once a day is chosen. "Remind" is the
+  message dialog's word for the same command; "if no reply" is its tooltip
+  and accessible name, the palette's title and the picker's heading. The row
+  has room for the day or for the long words, not both: at 1024 the long
+  form with a day ran the row to 685px and widened the dialog past its rule. Send first, where Reply sits in
   the message dialog's row. Send is the dialog's one primary button -- in
   Focus a plain raised button with a bold label (FR-091: no button wears
   the accent or `suggested-action`) -- and the others are the message
@@ -196,9 +200,10 @@ Pressing Reply in the message dialog puts Send where Reply was.
   (the sender block's column gap). Every row runs the column's full width.
 - **Formatting toolbar.** The composer's own icon buttons, the shared
   26px ghost (T202), in one row under the fields, its first button at the
-  column's left edge. The paperclip is hidden in Focus: Attach is a verb in
-  the action row with its key on it, and one control for one verb is the
-  rule. The classic composer keeps it.
+  column's left edge. The paperclip, and the attachments' "Attach another"
+  hint, are hidden in Focus: Attach is a verb in the action row with its key
+  on it, and one control for one verb is the rule. The classic composer
+  keeps both.
 - **Editor: on the dialog's surface.** The editing document reads its
   ground, ink, secondary ink, muted ink, accent and hairlines from probes
   styled with the dialog's own roles, exactly as the open message's body
@@ -216,12 +221,12 @@ Pressing Reply in the message dialog puts Send where Reply was.
 |---|---|
 | Empty (new message) | "New message", "Plain text · 0 words"; the caret in To; an empty editor on the dialog's surface. Send is live: sending with no recipient is refused by the composer with its reason, as before |
 | Reply, reply all, forward | The title names it; recipients as chips; "Re:" on the subject; the thread's labels with "from the thread"; the caret above the quote, folded to one "▸ Quoted message" line in the dialog's muted ink on a hairline rule. The subtitle counts what will be sent, the quote included |
-| Attachments | Cards under the editor, in the column, as the message dialog draws its attachments |
+| Attachments | The composer's list under the editor, in the column: "Attachments", then each file's name, its size and its remove button (shot 30) |
 | Invalid recipient | The composer's warning line under the editor, in the column ("Grac in To does not look like an address"); Send stays live and asks before sending |
 | Sending | Not a state of the dialog: Send writes the Outbox and closes it at once (local-first); the list's toast says what happened |
 | Offline | The same composer: Send queues in the Outbox (FR-055) and the window's banner says it is offline. Nothing greys out or waits |
 | A send that failed, reopened from Drafts | The subtitle says "Not sent — {reason}" in place of the saved time |
-| Narrow (1024 x 768) | 655 x 688; the column stays 480; the four verbs fit the action row with their caps |
+| Narrow (1024 x 768) | 655 x 688; the column stays 480; the four verbs fit the action row with their caps, a reminder's day included |
 
 Pinned by `compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own`,
 `…send_is_the_one_primary_and_nothing_wears_the_accent`,

@@ -81,8 +81,9 @@
  * own, light and dark, so the reading surface is the same paper in every
  * theme. They are here, as the dialog's values of the same roles every
  * Focus rule already reads, so no widget names a colour; `.focus-open` is
- * the dialog's content, and every rule inside it picks these up. The window
- * behind keeps libadwaita's.
+ * the dialog's content, and every rule inside it picks these up. The
+ * composer is the same dialog's family (T221), and wears them too. The
+ * window behind keeps libadwaita's.
  *
  * The accent is not among them (spec C26): the handoff's teal gave way to
  * the system's, as everywhere else in Focus. The dialog keeps the roles
@@ -101,7 +102,8 @@
   --postio-scrim: rgb(0 0 0 / 20%);
 }
 
-.focus-open {
+.focus-open,
+.focus-compose {
   --postio-surface: #fdfdfb;
   --postio-ink: #1c2321;
   --postio-ink-secondary: #4a5350;
@@ -118,7 +120,8 @@
     --postio-scrim: rgb(0 0 0 / 45%);
   }
 
-  .focus-open {
+  .focus-open,
+  .focus-compose {
     --postio-surface: #1c2120;
     --postio-ink: #e7ecea;
     --postio-ink-secondary: #b7c0bc;
