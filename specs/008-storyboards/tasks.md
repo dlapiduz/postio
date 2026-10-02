@@ -376,7 +376,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
   - temp `XDG_*` directories;
   - `GTK_A11Y=test`;
   - `GSK_RENDERER` per T005's finding.
-- [ ] T042 [US1] [TEST] Add an `app_suite` case, `storyboard_determinism.rs`,
+- [X] T042 [US1] [TEST] Add an `app_suite` case, `storyboard_determinism.rs`,
   plus its `CASES` row. It runs the same fixture storyboard twice in two
   re-exec'd processes, through the example binary, and asserts that the
   `run.json` values are equal apart from `commit`, and the frame hashes are
