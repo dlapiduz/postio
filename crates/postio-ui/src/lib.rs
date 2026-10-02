@@ -25,6 +25,7 @@ pub mod keymap;
 pub mod list;
 pub mod list_state;
 pub mod notify;
+pub mod observe;
 pub mod onboarding;
 pub mod paging;
 pub mod palette;
