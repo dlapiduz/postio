@@ -455,8 +455,8 @@ Screens 07, 08, 09 and 10.
 
 `g o`, or a click on "Inbox ▾", opens a popover listing:
 
-- mailboxes (Inbox, Drafts, Sent, Snoozed, Archive, Filtered, and the Outbox
-  while it holds anything), each with its direct key;
+- mailboxes (Inbox, Drafts, Sent, Archive, Snoozed, Flagged, Filtered, and
+  the Outbox while it holds anything), each with its direct key;
 - folders and labels, with counts.
 
 Typing filters the popover, and `Enter` goes to the chosen place.
@@ -1467,7 +1467,7 @@ the only one outside the mailbox.
   conversation lives, and open over the list on `Enter`.
 - **FR-065**: `g o`, or a click on the place name in the header strip, MUST
   open a popover listing mailboxes with their direct keys (`g i`, `g t`,
-  `g s`, `g z`, `g r`, `g f`), then folders and labels, with counts. Typing
+  `g s`, `g r`, `g z`, `g *`, `g f`), then folders and labels, with counts. Typing
   MUST filter it, and `Enter` MUST go to the chosen place. A mailbox, folder
   or label shown this way MUST have the same rows and actions as the inbox.
 - **FR-066**: A query with a likely misspelling MUST offer "Search instead
