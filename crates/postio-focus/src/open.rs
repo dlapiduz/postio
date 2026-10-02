@@ -287,7 +287,9 @@ impl OpenMessage {
             row.set_spacing(0);
         }
         tighten_keycaps(&toolbar.widget());
-        let send_bar = ActionBar::new(SEND_TOOLBAR, "focus-open-toolbar");
+        // Its own class: the received row stays the one `focus-open-toolbar`,
+        // and the sheet dresses both alike.
+        let send_bar = ActionBar::new(SEND_TOOLBAR, "focus-open-send-toolbar");
         if let Some(row) = send_bar.widget().downcast_ref::<gtk::Box>() {
             row.set_spacing(0);
         }
