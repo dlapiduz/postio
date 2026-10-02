@@ -65,7 +65,7 @@ DOCS='^(docs/|README\.md$|\.github/workflows/ci\.yml$)'
 # `macos/**` except its prose, and the scripts that build, test and bundle the
 # application -- `ffi-bindgen.sh` among them, because the Swift compiles
 # against what it writes.
-MACOS='^(macos/(Sources|Tests|Resources)/|macos/Package\.swift$|macos/\.gitignore$|scripts/(macos-[a-z]*|ffi-bindgen)\.sh$)'
+MACOS='^(macos/(Sources|Tests|Resources)/|macos/Package\.swift$|macos/\.gitignore$|scripts/(macos-[a-z]*|ffi-bindgen)\.sh$|scripts/tests/test-ffi-bindgen\.py$)'
 # What is Rust-shaped by name. A path matching neither list is unknown, and
 # unknown builds everything -- the direction that costs minutes, not merges.
 RUST='^(crates/|Cargo\.(toml|lock)$|\.cargo/|rust-toolchain\.toml$|\.config/|fuzz/|deny\.toml$|\.github/(workflows/ci\.yml$|actions/)|scripts/)'

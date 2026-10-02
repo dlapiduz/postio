@@ -114,6 +114,11 @@ def main() -> int:
     for script in ("macos-build.sh", "macos-test.sh", "macos-bundle.sh", "ffi-bindgen.sh"):
         case(f"a macOS build script: {script}", "pull_request", [f"scripts/{script}"],
              "no", "no", "yes")
+    # test-ffi-bindgen.py runs in the macOS job, which builds postio-ffi
+    # anyway, rather than among the tooling self-tests, where that build was
+    # 15 of the job's 16 minutes. So a change to it has to start the macOS job.
+    case("the bindings generator's self-test", "pull_request",
+         ["scripts/tests/test-ffi-bindgen.py"], "no", "no", "yes")
     # The boundary crate is where the two halves meet: its Rust is tested on a
     # cheap Linux runner (ADR 0019 Q7) and its bindings are what the Swift
     # links against, so it obliges both.
