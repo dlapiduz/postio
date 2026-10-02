@@ -6,7 +6,7 @@
 //! which keystroke, on this machine, with this mailbox, took 40 ms. This can:
 //!
 //! ```text
-//! POSTIO_LOG=postio_gtk::jank=debug cargo run -p postio-app
+//! POSTIO_LOG=postio_widgets::jank=debug cargo run -p postio-focus
 //! ```
 //!
 //! Two kinds of stall, because they are caught in different places:
@@ -137,7 +137,7 @@ fn report(kind: Kind, took: Duration) {
     }
 }
 
-/// Watch `widget`'s frames and the main loop, if `postio_gtk::jank` is
+/// Watch `widget`'s frames and the main loop, if `postio_widgets::jank` is
 /// enabled at debug.
 pub fn install<W: IsA<gtk::Widget>>(widget: &W) {
     if !tracing::enabled!(tracing::Level::DEBUG) {

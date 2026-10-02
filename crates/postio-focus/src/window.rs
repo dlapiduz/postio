@@ -225,6 +225,9 @@ mod imp {
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
         /// Where `config.toml` is: what `Ctrl+S` writes a saved search to.
         pub config_path: RefCell<Option<std::path::PathBuf>>,
+        /// The start being measured, from `startup::time` until the frame
+        /// with mail in it closes it.
+        pub timeline: RefCell<Option<postio_widgets::startup::Timeline>>,
         /// The digest rules list, built the first time `g d` opens it.
         pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,
         /// The digest rule dialog, built the first time `d` opens it.
@@ -343,6 +346,7 @@ mod imp {
                 rule_dialog: RefCell::default(),
                 rules_view: RefCell::default(),
                 config_path: RefCell::default(),
+                timeline: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
                 capture: RefCell::default(),
@@ -1470,6 +1474,8 @@ impl FocusWindow {
     /// Run the command `id` means here: the cursor and the selection are the
     /// window's own, and a verb on mail goes to the host aimed at them.
     pub fn act(&self, id: CommandId) {
+        // A stall after this is blamed on it (`postio_widgets::jank`).
+        postio_widgets::jank::note_action(id);
         // The rules list takes the list's keys for its own rows; a verb on
         // mail has nothing under it there.
         if self.rules().is_some() && self.rules_act(id) {
@@ -2991,6 +2997,16 @@ impl FocusWindow {
             }
         }
         senders
+    }
+
+    /// Measure this window's start on `timeline` (`startup::time`).
+    pub fn set_timeline(&self, timeline: postio_widgets::startup::Timeline) {
+        self.imp().timeline.replace(Some(timeline));
+    }
+
+    /// The start being measured, if one is.
+    pub fn timeline(&self) -> Option<postio_widgets::startup::Timeline> {
+        self.imp().timeline.borrow().clone()
     }
 
     /// Where `config.toml` is, for the corrections the window writes itself.

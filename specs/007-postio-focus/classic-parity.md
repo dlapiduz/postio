@@ -229,10 +229,13 @@ The skills `/gtk-design`, `/issue`, `/initiative` and `/steward` name
   the classic app and Postio Focus") and its boundary paragraph change with
   the amendment that lands with this branch, and that amendment needs the
   maintainer (FR-009).
-- **Benchmarks link the classic app.** `postio-bench`'s `list_scroll`,
-  `composer_open` and `conversation_rows` use `postio-gtk` types, and the
-  release workflow compares the terminal's binary size with `postio`'s. T250
-  and T254 port or retire them.
+- **Two benchmarks still link the classic app.** `postio-bench`'s
+  `conversation_rows` (the classic thread row) goes with it.
+  `action_round_trip` times `postio_gtk::feed::Feed` applying an archive's
+  events; Focus's list has its own `Feed`, and the bench is ported to it or
+  retired at T256. `list_scroll` and `composer_open` time Focus's row and
+  composer. The release workflow's size comparison (`postio-tui` against
+  `postio`) follows T254.
 - **Other lanes on this branch.** T232 (the reading pane) is changing
   `window.rs` and `open.rs`. T236, T237 and T240 touch the same files and
   should rebase onto it.

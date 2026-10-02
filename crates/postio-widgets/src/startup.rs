@@ -355,7 +355,12 @@ fn millis(d: Duration) -> String {
 /// Deliberately strict: only `1` counts, so `POSTIO_STARTUP_EXIT=0` in a shell
 /// profile does not quit the application out from under someone.
 pub fn enabled(var: &str) -> bool {
-    std::env::var(var).is_ok_and(|v| v == "1")
+    switched_on(std::env::var(var).ok().as_deref())
+}
+
+/// Whether a variable's value, if it is set, switches its trace on.
+fn switched_on(value: Option<&str>) -> bool {
+    value == Some("1")
 }
 
 #[cfg(test)]
@@ -601,22 +606,11 @@ mod tests {
 
     #[test]
     fn only_one_switches_a_trace_on() {
-        // SAFETY: single-threaded test, and the variable is read nowhere else
-        // in this process.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("POSTIO_TEST_SWITCH", "0")
-        };
-        assert!(!enabled("POSTIO_TEST_SWITCH"));
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("POSTIO_TEST_SWITCH", "1")
-        };
-        assert!(enabled("POSTIO_TEST_SWITCH"));
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::remove_var("POSTIO_TEST_SWITCH")
-        };
-        assert!(!enabled("POSTIO_TEST_SWITCH"));
+        // Read from the value, not by setting the variable: setting one is
+        // `unsafe`, which this crate forbids.
+        assert!(!switched_on(None));
+        assert!(!switched_on(Some("0")));
+        assert!(!switched_on(Some("true")));
+        assert!(switched_on(Some("1")));
     }
 }

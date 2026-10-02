@@ -1,22 +1,22 @@
-//! What a scroll frame costs in the message list.
+//! What a scroll frame costs in Focus's list.
 //!
-//! docs/PRODUCT.md §18 gives an ordinary interaction 16ms, and scrolling the list is
-//! the interaction that happens most. `postio_gtk::row` draws a row in one
-//! `snapshot()` precisely to stay inside that; this bench is what says
-//! whether it does.
+//! docs/PRODUCT.md §18 gives an ordinary interaction 16ms, and scrolling the
+//! list is the interaction that happens most. Focus's row
+//! (`postio_focus::list::RowWidget`) draws itself in one `snapshot()` to stay
+//! inside that; this bench is what says whether it does.
 //!
 //! # What is measured, and what is not
 //!
-//! One iteration is **a screenful of rows rebound and laid out** — exactly
-//! the work a `GtkListView` does when you scroll a page: for each recycled
-//! row widget, hand it a different message, re-ellipsize the subject and the
-//! snippet against the column width, and measure the height that comes out.
-//! That is the part Postio wrote, and the part a regression would land in.
+//! One iteration is **a screenful of rows rebound and drawn**: the work a
+//! `GtkListView` does when you scroll a page. For each recycled row widget,
+//! hand it a different conversation and build its render nodes -- the
+//! subject and sender laid out and ellipsized against the column. That is
+//! the part Postio wrote, and the part a regression would land in.
 //!
-//! Rasterising the resulting render nodes is deliberately *not* in the loop.
-//! That happens on the GPU, off this thread, and a criterion bench on a
-//! shared runner cannot attribute it — timing it would produce a number that
-//! moved with the machine rather than with the code.
+//! Rasterising the render nodes is deliberately *not* in the loop. That
+//! happens on the GPU, off this thread, and a criterion bench on a shared
+//! runner cannot attribute it -- timing it would produce a number that moved
+//! with the machine rather than with the code.
 //!
 //! # Running
 //!
@@ -29,10 +29,8 @@
 //! budget.
 
 #![allow(missing_docs)]
-// `criterion_group!` expands to a `pub fn`, and the workspace lint floor now
-// reaches bench targets -- the old per-crate `#![warn(missing_docs)]` in
-// `lib.rs` never did. A bench is not public API, so documenting a
-// macro-generated item would be ceremony rather than information.
+// `criterion_group!` expands to a `pub fn`, and the workspace lint floor
+// reaches bench targets. A bench is not public API.
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -41,64 +39,70 @@ use chrono::{TimeZone, Utc};
 use criterion::{Criterion, criterion_group, criterion_main};
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_config::Density;
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
-use postio_gtk::list::Row;
-use postio_gtk::row::MessageRowView;
-use postio_gtk::{fonts, style};
+use postio_focus::list::{FocusRow, RowObject, RowWidget};
 use postio_model::address::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
+use postio_model::listing::{MessageSummary, ThreadSummary};
+use postio_widgets::list_model::ModelRow;
 
-/// The list's width in canvas 1b.
-const WIDTH: i32 = 404;
+/// The list's width in a Focus window at its default size.
+const WIDTH: i32 = 960;
 
-/// Rows on screen at the airiest density in a 700px window — the most a
-/// single scroll frame has to rebind.
-const SCREENFUL: i64 = 16;
+/// Rows on screen in a 700px window at Focus's 40px row: the most a single
+/// scroll frame has to rebind.
+const SCREENFUL: i64 = 18;
 
-/// A row with the length of text real mail has: a long subject that has to
-/// be ellipsized is the expensive case, and the common one.
-fn message(id: i64) -> Row {
-    Row {
-        id: MessageId::new(id),
-        thread: Some(ThreadId::new(id)),
-        from: Some(EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")),
-        subject: Some(format!(
-            "[PATCH v{id} 2/7] sched: fix EEVDF lag accounting on the idle path"
-        )),
-        preview: Some(format!(
-            "Peter, Vincent — the lag decay was applied twice for run {id}, once in…"
-        )),
-        received_at: Utc.timestamp_opt(1_700_000_000 - id, 0).unwrap(),
-        seen: id % 3 == 0,
+/// A conversation with the length of text real mail has: a long subject
+/// that has to be ellipsized is the expensive case, and the common one.
+fn conversation(id: i64) -> FocusRow {
+    let at = Utc.timestamp_opt(1_700_000_000 - id, 0).unwrap();
+    let from = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");
+    let subject = format!("[PATCH v{id} 2/7] sched: fix EEVDF lag accounting on the idle path");
+    FocusRow::conversation(ThreadSummary {
+        id: Some(ThreadId::new(id)),
+        representative: MessageSummary {
+            id: MessageId::new(id),
+            thread: Some(ThreadId::new(id)),
+            from: Some(from.clone()),
+            subject: Some(subject.clone()),
+            preview: Some(format!(
+                "Peter, Vincent -- the lag decay was applied twice for run {id}, once in..."
+            )),
+            received_at: at,
+            seen: id % 3 == 0,
+            flagged: false,
+            answered: false,
+            send_state: None,
+            send_at: None,
+            has_attachments: id % 4 == 0,
+            thread_count: (id % 9) as u32 + 1,
+        },
+        subject: Some(subject),
+        participants: vec![from],
+        message_count: (id % 9) as u32 + 1,
+        unread_count: u32::from(id % 3 != 0),
         flagged: false,
-        answered: false,
-        send_state: None,
-        send_at: None,
         has_attachments: id % 4 == 0,
-        thread_count: (id % 9) as u32 + 1,
-        participants: Vec::new(),
-    }
+        last_at: at,
+        marker: None,
+        copies: Vec::new(),
+    })
 }
 
-/// One recycled row widget in a window, so the cascade resolves the way it
-/// does in the application.
-fn mounted() -> Option<MessageRowView> {
+/// One recycled row widget in a window under Focus's stylesheet, so the
+/// cascade resolves the way it does in the application.
+fn mounted() -> Option<RowWidget> {
     if adw::init().is_err() {
         return None;
     }
     let display = gdk::Display::default()?;
-    // The fonts have to be installed before the first widget, or a
-    // `PangoContext` caches the fallback family for the process — and this
-    // bench would then be timing the wrong typeface.
-    fonts::install().ok()?;
-    style::install(&display);
+    postio_focus::style::install(&display);
 
-    let row = MessageRowView::new();
+    let row = RowWidget::default();
     let window = gtk::Window::new();
-    style::track(&window);
     window.set_child(Some(&row));
-    window.set_default_size(WIDTH, 200);
+    window.set_default_size(WIDTH, 40);
     window.present();
     for _ in 0..200 {
         gtk::glib::MainContext::default().iteration(false);
@@ -106,11 +110,16 @@ fn mounted() -> Option<MessageRowView> {
     Some(row)
 }
 
-/// Rebind and lay out a screenful, the way scrolling a page does.
-fn scroll_a_screenful(row: &MessageRowView, from: i64) {
+/// Rebind and draw a screenful, the way scrolling a page does.
+fn scroll_a_screenful(row: &RowWidget, objects: &[RowObject], from: i64) {
+    let width = f64::from(row.width().max(WIDTH));
+    let height = f64::from(row.height().max(40));
     for index in 0..SCREENFUL {
-        row.set_row(Some(message(from + index)));
-        black_box(row.measured_height(WIDTH));
+        let object = &objects[((from + index) as usize) % objects.len()];
+        row.bind(object);
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(row)).snapshot(&snapshot, width, height);
+        black_box(snapshot.to_node());
     }
 }
 
@@ -119,29 +128,29 @@ fn bench_message_list_scroll(c: &mut Criterion) {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     };
+    // Many more rows than a screen, so a frame never rebinds what it drew.
+    let objects: Vec<RowObject> = (1..=SCREENFUL * 20)
+        .map(|id| {
+            let object = RowObject::placeholder();
+            object.set_item(conversation(id));
+            object
+        })
+        .collect();
 
-    for (name, density) in [
-        ("airy", Density::Airy),
-        ("comfortable", Density::Comfortable),
-        ("compact", Density::Compact),
-    ] {
-        row.set_density(density);
-        let mut from = 0;
-        c.bench_function(&format!("message-list scroll frame ({name})"), |b| {
-            b.iter(|| {
-                from += SCREENFUL;
-                scroll_a_screenful(&row, from);
-            })
-        });
-    }
+    let mut from = 0;
+    c.bench_function("focus list scroll frame", |b| {
+        b.iter(|| {
+            from += SCREENFUL;
+            scroll_a_screenful(&row, &objects, from);
+        })
+    });
 
     // Criterion reports; this fails. A bench that only reports is a bench
     // nobody notices regressing, which is why `postio-core`'s own budget
     // benches assert as well as measure.
-    row.set_density(Density::Airy);
-    scroll_a_screenful(&row, 0); // warm the fonts and the palette
+    scroll_a_screenful(&row, &objects, 0); // warm the fonts and the palette
     let start = Instant::now();
-    scroll_a_screenful(&row, SCREENFUL);
+    scroll_a_screenful(&row, &objects, SCREENFUL);
     let measured = start.elapsed();
     if let Err(exceeded) = check_budget(measured, INTERACTION_BUDGET) {
         panic!("a scroll frame is over budget: {exceeded:?}");

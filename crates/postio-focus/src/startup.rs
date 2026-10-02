@@ -23,6 +23,7 @@ use postio_core::SharedState;
 use postio_host::{FocusHandle, FocusSetup, Host};
 use postio_session::Refusal;
 use postio_ui::list_state::Waiting;
+use postio_widgets::startup::{Phase, Timeline};
 
 use crate::window::FocusWindow;
 
@@ -186,6 +187,10 @@ pub fn adopt_at(
     config: &postio_config::Config,
     config_path: Option<&std::path::Path>,
 ) -> Session {
+    let timeline = window.timeline();
+    if let Some(timeline) = &timeline {
+        timeline.mark(Phase::Account);
+    }
     // Focus's corrections (stop markers, never-filter, digest rules) are
     // written to this file: the host has to know where it is.
     let focus = host.enable_focus(setup(config.focus.clone(), config_path));
@@ -237,6 +242,11 @@ pub fn adopt_at(
         state.clone(),
         postio_core::Keymap::resolve(&config.keys),
     );
+    // The inbox is fed; the frame after this is the one with mail in it.
+    if let Some(timeline) = &timeline {
+        timeline.mark(Phase::Feeds);
+        postio_widgets::startup::report_usable(window, timeline);
+    }
     Session {
         host,
         client,
@@ -387,6 +397,9 @@ pub fn open(
         }
         match answer {
             Ok(host) => {
+                if let Some(timeline) = window.timeline() {
+                    timeline.mark(Phase::Store);
+                }
                 let session = adopt_at(&window, host, &config, opener.config_path());
                 opened(session);
             }
@@ -458,6 +471,18 @@ fn start_over(window: &FocusWindow, opener: &Opener, open_fresh: Rc<dyn Fn()>) {
             }
         }
     });
+}
+
+/// Measure `window`'s start on `timeline`, against the 500 ms budget: the
+/// window exists now, and its first frame is the shell. [`open`] marks the
+/// store, [`adopt_at`] the inbox it feeds, and the frame after that closes
+/// the timeline (`postio_widgets::startup::report_usable`, which also reads
+/// `POSTIO_STARTUP_TRACE` and `POSTIO_STARTUP_EXIT`).
+pub fn time(window: &FocusWindow, timeline: Timeline) {
+    timeline.mark(Phase::Window);
+    let shell = timeline.clone();
+    postio_widgets::startup::on_first_frame(window, move || shell.mark(Phase::Shell));
+    window.set_timeline(timeline);
 }
 
 /// Run `then` once, after `widget`'s first frame has been drawn: "once the

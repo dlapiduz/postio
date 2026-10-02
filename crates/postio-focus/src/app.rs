@@ -47,6 +47,8 @@ pub fn application() -> adw::Application {
 
 /// The whole program: open the store, show the inbox, run until closed.
 pub fn run() -> glib::ExitCode {
+    // The budget is measured from process start (`postio_widgets::startup`).
+    let timeline = postio_widgets::startup::Timeline::start();
     let config_path = postio_config::paths::config_path().ok();
     // Before anything else can have anything to say: a store that will not
     // open and a keyring that will not answer both happen before there is
@@ -88,6 +90,7 @@ pub fn run() -> glib::ExitCode {
         );
         return glib::ExitCode::FAILURE;
     }
+    timeline.mark(postio_widgets::startup::Phase::Init);
 
     let session: Rc<RefCell<Option<Session>>> = Rc::default();
     let application = application();
@@ -100,6 +103,9 @@ pub fn run() -> glib::ExitCode {
                 return;
             }
             let window = FocusWindow::new(Some(application));
+            startup::time(&window, timeline.clone());
+            // Nothing unless `postio_widgets::jank` is enabled at debug.
+            postio_widgets::jank::install(&window);
             window.present();
             let progress = early
                 .borrow_mut()

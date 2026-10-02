@@ -27,6 +27,7 @@ mod body_view_resets;
 mod capture;
 mod drag_out;
 mod harness;
+mod jank;
 mod list_contract;
 mod list_model_generic;
 mod pickers;
@@ -49,6 +50,10 @@ mod widgets_css;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "jank::a_blocked_main_loop_is_reported_with_the_action_before_it",
+        jank::a_blocked_main_loop_is_reported_with_the_action_before_it as fn(),
+    ),
     (
         "drag_out::nothing_is_written_until_the_drop_asks",
         drag_out::nothing_is_written_until_the_drop_asks as fn(),

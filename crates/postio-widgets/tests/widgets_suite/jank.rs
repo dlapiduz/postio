@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use postio_gtk::jank;
+use postio_widgets::jank;
 
 use postio_test_support::logs::Captured;
 

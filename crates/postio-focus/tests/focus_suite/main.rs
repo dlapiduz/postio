@@ -81,6 +81,7 @@ mod settings;
 mod settings_wiring;
 mod shot;
 mod starts_offline;
+mod startup_timeline;
 mod state;
 mod store_in_use;
 mod store_unavailable;
@@ -784,6 +785,10 @@ const CASES: &[(&str, fn())] = &[
         "store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone",
         store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone
             as fn(),
+    ),
+    (
+        "startup_timeline::the_timeline_reaches_the_frame_with_mail_in_it",
+        startup_timeline::the_timeline_reaches_the_frame_with_mail_in_it as fn(),
     ),
     (
         "store_unavailable::the_close_button_closes_the_window_when_the_store_will_not_open",

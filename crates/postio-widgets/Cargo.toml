@@ -53,9 +53,10 @@ postio-ui.workspace = true
 # (the plain-text fallback, T218).
 postio-widgets = { path = ".", features = ["test-hooks"] }
 postio-model = { workspace = true, features = ["test-corpus"] }
-postio-test-support.workspace = true
+postio-test-support = { workspace = true, features = ["logs"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing-subscriber = { workspace = true }
 
 # The shared crate's GTK suite: the custom harness of postio-gtk's gtk_suite
 # and postio-app's app_suite, for their reasons -- GTK initializes on exactly

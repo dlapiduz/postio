@@ -164,6 +164,7 @@ postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
 postio-runtime = { path = "crates/postio-runtime" }
 postio-gtk     = { path = "crates/postio-gtk" }
+postio-focus   = { path = "crates/postio-focus" }
 postio-test-support = { path = "crates/postio-test-support" }
 postio-client = { path = "crates/postio-client" }
 postio-host    = { path = "crates/postio-host" }

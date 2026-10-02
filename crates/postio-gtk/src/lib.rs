@@ -81,7 +81,8 @@ pub mod feed;
 pub mod finder;
 pub mod fonts;
 pub mod header;
-pub mod jank;
+// The instruments moved where Focus records with them too (ADR 0043).
+pub use postio_widgets::jank;
 pub mod keymap;
 pub mod list;
 pub mod list_state;
@@ -104,7 +105,7 @@ pub use postio_ui::selection;
 pub use postio_widgets::settings;
 pub mod shell;
 pub mod sidebar;
-pub mod startup;
+pub use postio_widgets::startup;
 pub mod state;
 pub mod storyboard;
 pub mod style;
