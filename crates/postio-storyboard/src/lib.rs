@@ -12,9 +12,13 @@
 //! `data-model.md`.
 
 pub mod apply;
+pub mod bundle;
 pub mod check;
 pub mod format;
 pub mod key;
 pub mod lint;
 pub mod page;
 pub mod run;
+
+#[cfg(test)]
+mod fixtures;

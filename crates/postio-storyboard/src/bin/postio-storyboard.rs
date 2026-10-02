@@ -7,12 +7,14 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use postio_storyboard::{key, lint, page};
+use postio_storyboard::{bundle, key, lint, page};
 
 const USAGE: &str = "\
 usage:
   postio-storyboard lint <storyboards-dir>
   postio-storyboard key --tree <path=id>...
+  postio-storyboard bundle --runs <dir> [--base <dir> [--base-sha <sha>]] --acceptance <file>
+                           --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
   postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]";
 
 fn main() -> ExitCode {
@@ -21,6 +23,7 @@ fn main() -> ExitCode {
         Some("lint") => lint_command(&args[1..]),
         Some("page") => page_command(&args[1..]),
         Some("key") => key_command(&args[1..]),
+        Some("bundle") => bundle_command(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -34,6 +37,65 @@ fn flag(args: &[String], name: &str) -> Option<String> {
         .position(|arg| arg == name)
         .and_then(|i| args.get(i + 1))
         .cloned()
+}
+
+/// Every value after `--name`, for a flag that may repeat.
+fn flags(args: &[String], name: &str) -> Vec<String> {
+    args.iter()
+        .enumerate()
+        .filter(|(i, arg)| *i > 0 && args[i - 1] == name && !arg.starts_with("--"))
+        .map(|(_, arg)| arg.clone())
+        .collect()
+}
+
+fn bundle_command(args: &[String]) -> ExitCode {
+    let (Some(runs), Some(acceptance), Some(catalogue), Some(out)) = (
+        flag(args, "--runs"),
+        flag(args, "--acceptance"),
+        flag(args, "--catalogue"),
+        flag(args, "--out"),
+    ) else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let base = flag(args, "--base").map(PathBuf::from);
+    let design_dirs: Vec<PathBuf> = flags(args, "--design-dir")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    let inputs = bundle::Inputs {
+        runs: &PathBuf::from(&runs),
+        base: base.as_deref(),
+        base_sha: flag(args, "--base-sha"),
+        acceptance: &PathBuf::from(&acceptance),
+        catalogue: &PathBuf::from(&catalogue),
+        design_dirs: &design_dirs,
+        out: &PathBuf::from(&out),
+    };
+    match bundle::build(&inputs, &bundle::all_new) {
+        Ok(manifest) => {
+            let steps: usize = manifest.batches.iter().map(|b| b.steps.len()).sum();
+            println!(
+                "{out}: {} batch(es), {steps} step(s) to review, {} unchanged run(s)",
+                manifest.batches.len(),
+                manifest.unchanged
+            );
+            for name in &manifest.design_missing {
+                eprintln!(
+                    "postio-storyboard bundle: no design screen `{name}` in any --design-dir"
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error @ bundle::BundleError::ForbiddenDesign(_)) => {
+            eprintln!("postio-storyboard bundle: {error}");
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("postio-storyboard bundle: {error}");
+            ExitCode::from(2)
+        }
+    }
 }
 
 fn lint_command(args: &[String]) -> ExitCode {
