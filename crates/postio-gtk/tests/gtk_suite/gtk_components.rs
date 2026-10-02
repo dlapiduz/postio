@@ -259,45 +259,6 @@ pub fn every_primary_button_is_the_same_kind() {
     window.destroy();
 }
 
-/// Every settings pane keeps one rhythm: a section heading sits one `S6`
-/// below what came before it, or flush at the top. The panes had been
-/// written with 18, 20 and 22, so three panes of one window had three.
-pub fn every_settings_heading_keeps_one_rhythm() {
-    let Some(window) = window() else {
-        return;
-    };
-    let panel = postio_gtk::settings::SettingsPanel::new();
-    window.set_child(Some(&panel));
-    window.present();
-    pump();
-    // Panes are built the first time they are shown.
-    for section in postio_gtk::settings::Section::ALL {
-        panel.show_section(section);
-        pump();
-    }
-
-    let allowed = [0, widgets::space::S6];
-    let mut seen = 0;
-    for widget in descendants(panel.upcast_ref()) {
-        // The sidebar's group headings belong to the list's header func,
-        // not to a pane's column.
-        if !widget.has_css_class("postio-kicker")
-            || widget.has_css_class("postio-settings-nav-heading")
-        {
-            continue;
-        }
-        seen += 1;
-        let label = widget.downcast_ref::<gtk::Label>().unwrap().label();
-        assert!(
-            allowed.contains(&widget.margin_top()),
-            "`{label}` sits {}px below its neighbour; the rhythm is {allowed:?}",
-            widget.margin_top()
-        );
-    }
-    assert!(seen >= 8, "found only {seen} section headings");
-    window.destroy();
-}
-
 /// A type role resolves to its size in GTK: text set in
 /// `var(--postio-text-title)` is the same width as text set in the literal
 /// it names. A role that did not resolve would fall back to the inherited

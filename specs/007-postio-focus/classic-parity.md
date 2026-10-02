@@ -26,9 +26,10 @@ The terminal is out of scope. It keeps every command it has, including the
 three-pane ones (`Requirement::ThreePane` is "not Focus", so it covers the
 terminal and macOS too).
 
-**Count:** 52 capabilities. 33 are covered. 8 have a
-gap, each closed by a task among T237–T248. 11 are dropped. Flagging, once a
-twelfth, is decided: Flag stays, on `*` (C13, T257).
+**Count:** 52 capabilities. 40 are covered, 11 are dropped, and 1 has a gap
+(row 32, T261). Rows 48 and 18 carry a smaller gap each (T262, T263), found
+when T252 ported the classic suites. Flagging, once a twelfth, is decided:
+Flag stays, on `*` (C13, T257).
 
 ## The table
 
@@ -77,7 +78,7 @@ twelfth, is decided: Flag stays, on `*` (C13, T257).
 | 29 | Find in the message | `FindInMessage` | **Covered by** `reading_key` (`mod+f`, `mod+g`, `mod+shift+g`; T203) |
 | 30 | View source | the reader | **Covered by** `v` (`source.rs`, `focus_suite::view_source`) |
 | 31 | Remote images blocked; allowed once, or always for this sender | `postio-widgets::reader::banner` (shared); `ShowImages`, `AlwaysShowImages` | **Covered by** the shared banner and `i i` / `i a`, answered by `FocusWindow::act`; `focus_suite::remote_images` proves the block, that Show fetches once and nothing is asked before, and that Always holds for the sender's next message and for no one else |
-| 32 | Unsubscribe on deliberate activation | the reader's notice | **Covered by** the reader's notice and the digest window (`Unsubscribe`, `window.rs`) |
+| 32 | Unsubscribe on deliberate activation | the reader's notice | **Gap, T261.** The digest window answers `U` (`Unsubscribe`, `window.rs`). The open message never offers the reader's unsubscribe notice (`Reader::set_unsubscribe` is not called) and `act` does not answer `Unsubscribe` (`focus_suite::unsubscribe`, held out) |
 | 33 | Reading a message marks it read, after a short dwell | `list_view.rs` and `reading.rs` (`MarkReadOnDwell`; `dwell_wiring`) | **Covered by** the open message's read clock (`open.rs`, `postio_ui::dwell`): open for the dwell, in the dialog or the pane, it is marked read; `r` marks it unread again (T237; `focus_suite::read_on_dwell`) |
 | 34 | A body that did not decode cleanly says so | `postio-widgets::reader` (`decode_notice`) | **Covered by** the shared reader's notices, which Focus's open message mounts |
 | 35 | Desktop notifications for new mail | `postio-app::notifications` | **Covered by** Focus's notifier (`startup.rs`, `host.focus_notification`), following `[sync]` |
@@ -113,7 +114,7 @@ twelfth, is decided: Flag stays, on `*` (C13, T257).
 | # | Capability | Where in the classic app | Verdict |
 |---|---|---|---|
 | 47 | First run: the account form, OAuth, then how much history to sync | `postio-app::onboarding` (`Status::SyncWindow`, `write_sync_window`; `sync_window`) | The form and sign-in are **covered by** Focus's first run (`window.rs`, `postio_widgets::present::onboarding`; `focus_suite::first_run`). The sync-window step is **covered by** `Presenter::ask_sync_window`, which both apps' first runs use (`focus_suite::first_run`) |
-| 48 | Adding another account; updating a credential | `add_account.rs`, `settings_credential.rs` | **Covered by** `AddAccount` and `UpdateCredential` in `FocusWindow::act`, and by the sign-in banner's button |
+| 48 | Adding another account; updating a credential | `add_account.rs`, `settings_credential.rs` | **Covered by** `AddAccount` and `UpdateCredential` in `FocusWindow::act`, and by the sign-in banner's button. **Gap, T262:** an account with no stored credential gets "can't sync" with Retry now, not the credential form the classic app's startup repair opened (`focus_suite::startup_repair`, held out) |
 | 49 | The settings window. Accounts: edit, test the connection, token expiry, enable or disable, remove, rebuild the index, set the default, map mailbox roles, weights. Also Filters, Composing, Appearance, Keyboard, Sync and storage, Privacy (the remote-image allow list, the unsubscribe log, the read-receipt count, the connection log) and the config file | `postio-gtk::settings`, `widgets/`; `postio-app::settings_*`, `sidebar_backfill.rs`; `ToggleAccountEnabled`, `RemoveAccount`, `RebuildAccountIndex`, `SetDefaultAccount`, `MapMailboxRole` | **Covered by** the shared settings window in a dialog (T233, T234): `mod+comma` and the main menu's Settings open it (`FocusWindow::act`). Every section but Appearance (rows 18, 19), with the classic app's wiring ported (`settings_wiring.rs`). The account verbs are reached from each row's menu and its detail view, and from the keyboard (T258): with the keyboard on an account row, `Return`, `Delete` (undone by `mod+z`), `r`, `m` and `M` (which opens the account's roles) act on that row, and the command bar lists them (with Settings shut they open it to pick a row). |
 | 50 | Excluding a folder from backfill (ADR 0016) | `sidebar.rs` (`connect_backfill_exclusion_changed`) | **Covered by** Sync & storage's "Back up locally", a check per folder (T234; `settings::a_folder_left_out_of_backfill_is_written_and_shown`) |
 | 51 | Edit configuration (`mod+e` opens `config.toml` in the person's editor) | `postio-gtk::config`; `EditConfig` | **Covered by** `FocusWindow::act` through `postio_widgets::editor`, the launcher both apps share (T235; `settings::mod_e_opens_config_toml_in_the_persons_editor`) |
@@ -146,6 +147,10 @@ retired". They are copied here so the table can be read alone.
 - **T246** Window size remembered.
 - **T247** Allowing remote images, proven in Focus.
 - **T248** A failing account named, with its reason and a retry.
+- **T261** Unsubscribe in the open message.
+- **T262** A missing credential offers the credential form.
+- **T263** Rows grow with the text scale.
+- **T264** A destroyed window frees its composer.
 
 ## The retirement, in order
 
@@ -250,17 +255,92 @@ gives it a test.
 | `postio_ui::test_support` | `document_bytes`, `documents_built`, `pages_requested`, `redraws_waited_out`, `snapshot_counts`; uncalled: `largest_document` |
 | `postio_ui::observe` | all of it but `Tone`, which `postio_widgets::widgets::toast` uses. Its other users are the classic window and `postio-storyboard`, which only `postio-app` depends on (see the questions) |
 
+## What only the classic suites proved (T252)
+
+Every case in `postio-app/tests` and `postio-gtk/tests` was sorted three
+ways. **Ported**: it proved host, engine, renderer or startup behaviour, and
+now runs against Focus or the crate that owns the behaviour. **Moved**: it
+tested a shared crate and only sat in a classic suite; it moved to that
+crate's suite. **Goes**: it proves a classic surface (three panes, the
+sidebar, the classic list, the rail, the finder, classic-only commands, PLATE
+tokens) or is covered elsewhere, and is deleted with the classic app in T256.
+Ported cases' classic originals stay until then; moved cases left the classic
+suites.
+
+**Ported to `postio-host`** (display-free):
+
+| Classic case | Now |
+|---|---|
+| `e2e.rs`, `app_suite::attach_account` | `tests/e2e.rs`: a loopback IMAP server's first sync is listed, a flag and an archive reach its copy, a delivery reaches the list; an account added to a running host syncs |
+| `oauth_signin.rs` | `tests/oauth_signin.rs` |
+| `backend_choice.rs` | `tests/backend_choice.rs` |
+| `reclaim_wiring` (2), `reclaim_pages` (2) | `tests/reclaim.rs`, through `Host::start_idle_passes` |
+| `search_index` (3 of 5) | `tests/search_index.rs`; one was already covered by the host's own tests, and one is Focus's (`idle_passes`) |
+| `postio-app`'s `startup_route` unit tests (4 uncovered), `recover_empty_draft` | `src/tests.rs` |
+
+**Ported to `focus_suite`:**
+
+| Classic case | Now |
+|---|---|
+| `e2e.rs`, the window half | `e2e`: `a` reaches the server's Archive, a delivery grows the list |
+| `reader_spawns_no_web_process` | `reader_spawns_no_web_process`; a move costs one or two snapshots in Focus, which draws a placeholder between bodies |
+| `hostile_mail` | `hostile_mail` |
+| `notify_off_the_main_thread` | `notify_off_the_main_thread` |
+| `autosave_off_the_main_thread` (2), `compose_recipients` (no connections) | `compose_counts` |
+| `startup_reads` | `startup_reads`: no statement on the main thread, the same connections at 1,000 and 10,000 messages (five; the classic ceiling was four). Its scan half was the classic list's query and goes |
+| `startup_behind_the_window` (2) | `startup_behind_the_window` |
+| `search_index`, idle passes after the first frame | `idle_passes` |
+| `startup_repair` | `startup_repair`, held out: gap T262 |
+| `gtk_accessibility.rs` | `a11y_sweep`: every Focus surface has roles and names, and 200% text stays usable; rows growing with the type is held out (T263) |
+| `window_teardown`, `gtk_window_teardown` | `window_teardown`; a mounted composer outliving its window is held out (T264) |
+| `second_activate_wiring` | `desktop::a_second_activate_has_one_window_and_starts_sync_once` |
+| `unsubscribe_wiring` | `unsubscribe`: the digest's `U` is logged and listed; the open message's notice is held out (T261) |
+| `gtk_store_opening` (2 of 3) | `store_opening`; the third ("a key for mail says why it cannot run yet") goes, since Focus's wait plate says it |
+| `large_folder_open` | `visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages` |
+| `gtk_list_reload` (2) | `list_reload` |
+| `add_account_wiring` (the key over a running window) | `add_account_running` |
+| `compose_detach`, `composer_warm` | `compose_detach` |
+| `startup_timeline` (T250) | `startup_timeline` |
+
+**Moved to the crate that owns the code:**
+
+- `postio-session`: `correlation`, `event_fanout`, and `postio-app::onboarding`'s
+  unit tests of `postio_session::onboarding` (`tests/onboarding.rs`).
+- `postio-storage`: `glib_main_context`.
+- `postio-ui`'s `ui_suite`: `keymap_defaults`, `keymap_live`, `reader_tokens`.
+- `postio-widgets`' `widgets_suite`: `list_model` (rewritten over the generic
+  model), `list_recycling`, `body_view*`, `reader_*` (anchor, fallback, fonts,
+  notices, scroll, teardown), `reader_corpus` (the corpus hardening and the
+  counters from `gtk_reader.rs`), `one_allowlist`, `first_frame`, `jank`, the
+  small widgets (`small_widgets`, `checkrow`, `segmented`, `toast`,
+  `toast_tone_and_undo`, `components`), `composer_*`, `editor_*`,
+  `editable_dialect`, `onboarding*` and `settings_*` (accounts, account
+  detail, filters, frame, keys, privacy, sync). The composer cases run in a
+  minimal `ComposerHost` (`support_compose.rs`) rather than the classic window.
+
+**Goes with the classic app (T256):** the rest of `app_suite` and
+`gtk_suite`, and `logic_suite`'s `desktop_entry` and
+`gtk_extension_commands`. They are classic surfaces (rows 1, 3, 6, 7, 12, 18,
+19, 25, 27, 38 and 41 of the table) or covered by the Focus cases the table
+names: the classic list, rows, feeds, sidebar, scopes, panes, rail,
+conversation, finder, search panel, cheat sheet, orientation, parts, reading
+pane and its dwell, classic keystroke wiring, density and theme, the
+composer's classic window joins (`gtk_composer_{header, reply, action_row,
+detach, many, keymap, detached_scheme}`), `gtk_settings` and the classic
+window's settings key context (`gtk_settings_accounts_keys`,
+`gtk_settings_keys_context`, partly covered by
+`settings_wiring::the_account_verbs_have_keys_on_the_focused_row`),
+`onboarding_probe` (the classic onboarding window), the remaining
+`gtk_reader.rs` thread-document cases, and the `postio-gtk`/`postio-app` unit
+tests of their own modules. The storyboard runner's cases wait on question 3.
+
 ## Risks
 
 - **Some shared code is only exercised by the classic app.** It is listed,
   with what happens to each item, under "Shared code only the classic app
   calls" below (T251).
-- **`app_suite` proves things Focus relies on.** Examples are the reader
-  spawning no web process, hostile mail, reclaiming disk on open, startup
-  repair, the event fan-out, notifications off the main thread, and `e2e.rs`
-  against a real IMAP server. These are host and renderer behaviour, not
-  classic surfaces. Deleting `app_suite` without T252 would remove the only
-  proof of them at the composition root.
+- **`app_suite` proved things Focus relies on.** Where each case went is
+  under "What only the classic suites proved" below (T252).
 - **The registry names the classic app.** `Frontend::Classic` is the default
   in `Availability::open`, which many tests call, and `Requirement::ThreePane`
   means "not Focus", so the terminal and macOS rely on it. Removal renames or

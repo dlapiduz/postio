@@ -1,4 +1,6 @@
-//! The reader's notices never move the message under them.
+//! The conversation pane puts the body where the single reader does (#1671):
+//! the one case of the reader-notices family that needs the classic
+//! conversation pane; the rest live in postio-widgets' `reader_notices`.
 //!
 //! A message can carry several notices -- remote images held back, reader
 //! view, a decode caveat, the list it came from -- and each was a bar of its
@@ -20,12 +22,11 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::conversation::ConversationView;
 use postio_gtk::list::Row as ListRow;
-use postio_gtk::reader::{Absent, Reader, RemoteImageAllowList};
+use postio_gtk::reader::{Reader, RemoteImageAllowList};
 use postio_gtk::{fonts, style};
 use postio_model::address::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
 use postio_model::message::MessageBody;
-use postio_model::test_corpus;
 
 fn reader_in_a_window() -> Option<(gtk::Window, Reader, tempfile::TempDir)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
@@ -67,145 +68,11 @@ fn body_top(reader: &Reader) -> f32 {
         .y()
 }
 
-fn header(reader: &Reader) {
-    reader.set_message_header(
-        &[EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")],
-        &[EmailAddress::new(Some("Grace Hopper"), "grace@example.com")],
-        &[],
-        Some("Figures"),
-        Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap(),
-    );
-}
-
 fn plain(text: &str) -> MessageBody {
     MessageBody {
         text: Some(text.to_owned()),
         html: None,
     }
-}
-
-pub fn the_body_starts_at_the_same_place_whatever_the_notices() {
-    let Some((window, reader, _dir)) = reader_in_a_window() else {
-        return;
-    };
-    let mut tops = Vec::new();
-
-    // Nothing to say about it.
-    header(&reader);
-    reader.render(&plain("a plain message"), Some("ada@example.com"));
-    lay_out();
-    tops.push(("no notice", body_top(&reader)));
-
-    // The list it came from.
-    header(&reader);
-    reader.render(&plain("a list message"), Some("ada@example.com"));
-    reader.set_unsubscribe(Some("list.example.com"));
-    lay_out();
-    tops.push(("one notice", body_top(&reader)));
-
-    // Images held back, a decode caveat, and the list: three at once.
-    header(&reader);
-    reader.render(
-        &MessageBody {
-            text: None,
-            html: Some(
-                "<p>Figures attached.</p><img src=\"https://images.invalid/chart.png\">".to_owned(),
-            ),
-        },
-        Some("ada@example.com"),
-    );
-    reader.set_encoding_problems(true);
-    reader.set_unsubscribe(Some("list.example.com"));
-    lay_out();
-    assert!(
-        reader.banner_visible() || reader.shows_encoding_problems(),
-        "the third message raised no notice at all, so this proves nothing"
-    );
-    tops.push(("three notices", body_top(&reader)));
-
-    // And a message still waiting for its body.
-    header(&reader);
-    reader.show_absent(Absent::Partial);
-    lay_out();
-    tops.push(("the waiting plate", body_top(&reader)));
-
-    let first = tops[0].1;
-    assert!(
-        tops.iter().all(|(_, top)| (*top - first).abs() < 0.5),
-        "the body's first line moved between messages: {tops:?}"
-    );
-
-    window.close();
-}
-
-pub fn a_waiting_plate_carries_no_notice_from_the_message_before() {
-    let Some((window, reader, _dir)) = reader_in_a_window() else {
-        return;
-    };
-
-    // A newsletter: reader view, a decode caveat and the list, all raised.
-    let newsletter = test_corpus::load("html-newsletter");
-    let parsed = postio_model::mime::parse(newsletter.bytes());
-    reader.render(&parsed.body, Some("weekly@news.example.org"));
-    reader.set_encoding_problems(true);
-    reader.set_unsubscribe(Some("newsletter.example.com"));
-    lay_out();
-    assert!(
-        reader.reader_notice_visible()
-            || reader.shows_encoding_problems()
-            || reader.unsubscribe_banner_visible(),
-        "the newsletter raised no notice, so the plate below proves nothing"
-    );
-
-    // The next message has no body yet. None of that was about it.
-    reader.show_absent(Absent::Partial);
-    lay_out();
-    let left = [
-        ("reader view", reader.reader_notice_visible()),
-        ("decode caveat", reader.shows_encoding_problems()),
-        ("unsubscribe", reader.unsubscribe_banner_visible()),
-        ("remote images", reader.banner_visible()),
-    ];
-    let still: Vec<&str> = left
-        .iter()
-        .filter(|(_, shown)| *shown)
-        .map(|(name, _)| *name)
-        .collect();
-    assert!(
-        still.is_empty(),
-        "the waiting plate kept the previous message's notices: {still:?}"
-    );
-
-    window.close();
-}
-
-pub fn the_body_starts_at_the_same_place_whoever_the_message_went_to() {
-    let Some((window, reader, _dir)) = reader_in_a_window() else {
-        return;
-    };
-    let date = Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
-    let ada = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");
-    let grace = EmailAddress::new(Some("Grace Hopper"), "grace@example.com");
-    let bob = EmailAddress::new(None::<&str>, "bob@example.com");
-    let mut tops = Vec::new();
-    for (case, to, cc) in [
-        ("to one", vec![grace.clone()], vec![]),
-        ("to nobody", vec![], vec![]),
-        ("to one, cc one", vec![grace.clone()], vec![bob.clone()]),
-        ("cc only", vec![], vec![bob.clone()]),
-    ] {
-        reader.set_message_header(std::slice::from_ref(&ada), &to, &cc, Some("Figures"), date);
-        reader.render(&plain(case), Some("ada@example.com"));
-        lay_out();
-        tops.push((case, body_top(&reader)));
-    }
-    let first = tops[0].1;
-    assert!(
-        tops.iter().all(|(_, top)| (*top - first).abs() < 0.5),
-        "the header grew or shrank with the recipients, and the body with it: {tops:?}"
-    );
-
-    window.close();
 }
 
 /// Where the body's top edge is in a conversation pane, in the pane's own

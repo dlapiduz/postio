@@ -23,7 +23,21 @@
 //! when several cases fail at once, trust the first.
 
 mod a11y;
+mod a11y_sweep;
+mod add_account_running;
+mod compose_detach;
+mod list_reload;
+mod store_opening;
+mod unsubscribe;
+mod window_teardown;
 mod across_apps;
+mod startup_repair;
+mod startup_reads;
+mod startup_behind_the_window;
+mod notify_off_the_main_thread;
+mod idle_passes;
+mod e2e;
+mod compose_counts;
 mod bar;
 mod buttons;
 mod capture;
@@ -44,6 +58,7 @@ mod empty;
 mod filtered;
 mod first_run;
 mod harness;
+mod hostile_mail;
 mod has_action;
 mod icon_buttons;
 mod invitations;
@@ -65,6 +80,7 @@ mod pickers;
 mod places;
 mod pointer_pairs;
 mod read_on_dwell;
+mod reader_spawns_no_web_process;
 mod reader_zoom;
 mod reading_pane;
 mod registry_parity;
@@ -99,9 +115,154 @@ mod window_state;
 /// the case needs. A name here still runs when asked for explicitly, and still
 /// appears in `--list`, exactly as an ignored libtest case does. Say in a
 /// comment beside the name which issue or task takes it back.
-const IGNORED: &[&str] = &[]; // nothing held out
+const IGNORED: &[&str] = &[
+    // GAP: Focus's rows are a fixed 40 and 72 pixels (`list::row::ONE_LINE`,
+    // `TWO_LINES`), so at 200% text they stay the same height while the type
+    // grows into them. The classic list's rows grew with the type.
+    "a11y_sweep::at_200_percent_text_rows_grow_with_the_type",
+    // GAP: Focus's open message never calls `Reader::set_unsubscribe` and
+    // `act` has no arm for `CommandId::Unsubscribe`, so the reader's notice is
+    // never offered and `U` there is unanswered; only a digest answers it.
+    "unsubscribe::the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lists_it",
+    // GAP: a mounted composer is not freed with its window: suspected cycle
+    // between `Composer` and the `DialogHost` it is mounted on (the host owns
+    // the dialog that holds the composer).
+    "window_teardown::a_destroyed_window_releases_its_composer",
+    // GAP: an account with no credential in the keyring syncs into a
+    // "<name> can't sync" banner whose only button is "Retry now", not the
+    // sign-in banner's "Update password...": retrying cannot help, and the
+    // repair is reachable only through Settings. Held out until the banner
+    // offers the credential form for a missing credential.
+    "startup_repair::an_account_with_no_credential_offers_the_repair",
+];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "compose_counts::autosave_writes_off_the_main_thread_and_keeps_one_row",
+        compose_counts::autosave_writes_off_the_main_thread_and_keeps_one_row as fn(),
+    ),
+    (
+        "compose_counts::opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread",
+        compose_counts::opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread as fn(),
+    ),
+    (
+        "compose_counts::typing_a_recipient_opens_no_connections_and_still_completes",
+        compose_counts::typing_a_recipient_opens_no_connections_and_still_completes as fn(),
+    ),
+    (
+        "e2e::a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list",
+        e2e::a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list as fn(),
+    ),
+    (
+        "idle_passes::the_idle_passes_wait_for_the_first_frame",
+        idle_passes::the_idle_passes_wait_for_the_first_frame as fn(),
+    ),
+    (
+        "notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread",
+        notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread as fn(),
+    ),
+    (
+        "startup_behind_the_window::the_store_opens_behind_a_window_that_is_already_up",
+        startup_behind_the_window::the_store_opens_behind_a_window_that_is_already_up as fn(),
+    ),
+    (
+        "startup_behind_the_window::the_store_starts_opening_before_there_is_a_window",
+        startup_behind_the_window::the_store_starts_opening_before_there_is_a_window as fn(),
+    ),
+    (
+        "startup_reads::opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is",
+        startup_reads::opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is as fn(),
+    ),
+    (
+        "startup_repair::an_account_with_no_credential_offers_the_repair",
+        startup_repair::an_account_with_no_credential_offers_the_repair as fn(),
+    ),
+    (
+        "a11y_sweep::every_widget_in_focus_s_surfaces_has_a_role_and_a_name",
+        a11y_sweep::every_widget_in_focus_s_surfaces_has_a_role_and_a_name as fn(),
+    ),
+    (
+        "a11y_sweep::at_200_percent_text_the_window_stays_usable",
+        a11y_sweep::at_200_percent_text_the_window_stays_usable as fn(),
+    ),
+    (
+        "a11y_sweep::at_200_percent_text_rows_grow_with_the_type",
+        a11y_sweep::at_200_percent_text_rows_grow_with_the_type as fn(),
+    ),
+    (
+        "window_teardown::a_window_startup_wired_and_used_still_frees_when_destroyed",
+        window_teardown::a_window_startup_wired_and_used_still_frees_when_destroyed as fn(),
+    ),
+    (
+        "window_teardown::dropping_a_window_without_destroying_it_is_not_enough",
+        window_teardown::dropping_a_window_without_destroying_it_is_not_enough as fn(),
+    ),
+    (
+        "window_teardown::a_destroyed_window_releases_its_composer",
+        window_teardown::a_destroyed_window_releases_its_composer as fn(),
+    ),
+    (
+        "desktop::a_second_activate_has_one_window_and_starts_sync_once",
+        desktop::a_second_activate_has_one_window_and_starts_sync_once as fn(),
+    ),
+    (
+        "unsubscribe::u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it",
+        unsubscribe::u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it as fn(),
+    ),
+    (
+        "unsubscribe::the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lists_it",
+        unsubscribe::the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lists_it
+            as fn(),
+    ),
+    (
+        "store_opening::a_start_past_its_budget_says_what_it_is_waiting_on",
+        store_opening::a_start_past_its_budget_says_what_it_is_waiting_on as fn(),
+    ),
+    (
+        "store_opening::an_ordinary_start_draws_nothing_that_is_then_removed",
+        store_opening::an_ordinary_start_draws_nothing_that_is_then_removed as fn(),
+    ),
+    (
+        "visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages",
+        visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages as fn(),
+    ),
+    (
+        "list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
+        list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone as fn(),
+    ),
+    (
+        "list_reload::a_reordering_sync_leaves_the_cursor_on_the_same_message",
+        list_reload::a_reordering_sync_leaves_the_cursor_on_the_same_message as fn(),
+    ),
+    (
+        "add_account_running::the_add_account_key_opens_a_blank_form_over_the_running_window",
+        add_account_running::the_add_account_key_opens_a_blank_form_over_the_running_window as fn(),
+    ),
+    (
+        "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus",
+        compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus as fn(),
+    ),
+    (
+        "compose_detach::the_detach_command_moves_the_open_composer_to_a_window_and_back",
+        compose_detach::the_detach_command_moves_the_open_composer_to_a_window_and_back as fn(),
+    ),
+    (
+        "compose_detach::the_window_warms_its_editing_surface_without_being_asked_to_compose",
+        compose_detach::the_window_warms_its_editing_surface_without_being_asked_to_compose as fn(),
+    ),
+    (
+        "compose_detach::a_warm_ask_made_before_the_composer_is_mounted_still_warms_it",
+        compose_detach::a_warm_ask_made_before_the_composer_is_mounted_still_warms_it as fn(),
+    ),
+    (
+        "hostile_mail::each_hostile_message_opens_and_the_app_keeps_answering",
+        hostile_mail::each_hostile_message_opens_and_the_app_keeps_answering as fn(),
+    ),
+    (
+        "reader_spawns_no_web_process::ten_conversations_start_no_web_process_and_hold_what_one_holds",
+        reader_spawns_no_web_process::ten_conversations_start_no_web_process_and_hold_what_one_holds
+            as fn(),
+    ),
     (
         "compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own",
         compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own

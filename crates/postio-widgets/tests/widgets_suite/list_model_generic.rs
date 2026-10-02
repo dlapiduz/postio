@@ -20,8 +20,18 @@ use postio_widgets::list_model::{ModelRow, PAGE_SIZE, PageSource, Windowed, Wind
 /// A row that is not the classic app's: a note with an id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Note {
-    id: MessageId,
-    text: String,
+    pub(crate) id: MessageId,
+    pub(crate) text: String,
+}
+
+impl Note {
+    /// A note with an id and a text.
+    pub(crate) fn numbered(id: i64, text: &str) -> Self {
+        Note {
+            id: MessageId::new(id),
+            text: text.to_owned(),
+        }
+    }
 }
 
 mod note_imp {
@@ -38,7 +48,13 @@ mod note_imp {
         type Type = super::NoteRow;
     }
 
-    impl ObjectImpl for NoteRow {}
+    impl ObjectImpl for NoteRow {
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: std::sync::OnceLock<Vec<glib::subclass::Signal>> =
+                std::sync::OnceLock::new();
+            SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("changed").build()])
+        }
+    }
 
     #[derive(Default)]
     pub struct NoteList {
@@ -83,6 +99,21 @@ glib::wrapper! {
     pub struct NoteList(ObjectSubclass<note_imp::NoteList>) @implements gio::ListModel;
 }
 
+impl NoteRow {
+    /// Call `on_change` when the row's contents changed.
+    pub(crate) fn connect_changed(
+        &self,
+        on_change: impl Fn(&Self) + 'static,
+    ) -> glib::SignalHandlerId {
+        self.connect_local("changed", false, move |values| {
+            if let Some(row) = values.first().and_then(|value| value.get::<Self>().ok()) {
+                on_change(&row);
+            }
+            None
+        })
+    }
+}
+
 impl ListRow for NoteRow {
     fn thread(&self) -> Option<ThreadId> {
         None
@@ -118,7 +149,10 @@ impl ModelRow for NoteRow {
     }
 
     fn fill(&self, data: Note) {
-        self.imp().note.replace(Some(data));
+        let before = self.imp().note.replace(Some(data.clone()));
+        if before.as_ref() != Some(&data) {
+            self.emit_by_name::<()>("changed", &[]);
+        }
     }
 
     fn id_of(data: &Note) -> MessageId {

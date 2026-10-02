@@ -4842,6 +4842,7 @@ name = "postio-focus"
 version = "0.4.2"
 dependencies = [
  "async-channel",
+ "async-trait",
  "chrono",
  "gio",
  "glib",

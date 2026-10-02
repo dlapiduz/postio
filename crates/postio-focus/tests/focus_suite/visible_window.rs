@@ -109,3 +109,97 @@ pub fn a_row_whose_page_has_not_landed_draws_a_skeleton() {
         );
     });
 }
+
+/// #1534: opening a folder costs a screen's worth of pages, whatever it
+/// holds, and switching folders faster than the store answers does not leave
+/// the list asking forever.
+///
+/// The list keeps `CACHE_PAGES` resident, so a working set wider than that
+/// evicts itself and every evicted position is asked for again: the cache is
+/// what turns whatever asks widely into an unbounded loop instead of a slow
+/// open. Counted at the client -- every page read is one round trip -- rather
+/// than timed, which is the same number on any machine.
+pub fn opening_and_switching_large_folders_asks_a_bounded_number_of_pages() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        // Twelve thousand messages leaves the biggest folder far past the
+        // eight pages the cache holds, and seeds in a few seconds.
+        let fixture = Fixture::large(12_000).await;
+        let (window, client) = fixture.open().await;
+        let pane = window.pane().expect("the inbox is showing");
+        assert!(
+            pane.feed().total() > 2_000,
+            "the fixture needs a folder far past the cache, got {} rows",
+            pane.feed().total()
+        );
+        let patience = || {
+            crate::settle_for(postio_test_support::scaled(
+                std::time::Duration::from_millis(1_000),
+            ))
+        };
+        patience().await;
+        let budget = CACHE_PAGES as u64;
+        let opened = client.counts().of("Page");
+        assert!(
+            opened <= budget,
+            "opening a {}-row folder read {opened} pages, and only {budget} fit \
+             in the cache: at least {} were evicted and asked for again",
+            pane.feed().total(),
+            opened.saturating_sub(budget)
+        );
+
+        // Moving through it: the rows the cursor lands on are on screen.
+        let before = client.counts().of("Page");
+        support::keys(&window, &["j", "j", "j", "j", "j"]);
+        patience().await;
+        let walked = client.counts().of("Page") - before;
+        assert!(
+            walked <= 1,
+            "five j presses near the top of the folder read {walked} pages"
+        );
+
+        // Switching while it is still loading: each switch resets the window,
+        // so replies for the folder just left arrive into one that has moved
+        // on. No settling between: that is the gesture.
+        support::keys(&window, &["g", "o"]);
+        let places = window.places().expect("g o opened the folders popover");
+        assert!(
+            crate::settle_until(async || places.names().len() >= 2).await,
+            "the popover listed no folders: {:?}",
+            places.names()
+        );
+        let names = places.names();
+        let before = client.counts().of("Page");
+        for name in names.iter().cycle().take(8) {
+            if !places.is_open() {
+                places.open();
+            }
+            places.set_filter(name);
+            places.activate();
+            crate::settle();
+        }
+        patience().await;
+        let churned = client.counts().of("Page") - before;
+        let switch_budget = 8 * budget;
+        assert!(
+            churned <= switch_budget,
+            "switching folders eight times read {churned} pages, past the \
+             {switch_budget} eight screenfuls cost: the list did not settle"
+        );
+        // The folder the last switch left may be an empty one; the way back
+        // to the inbox shows the list still knows where it is.
+        support::keys(&window, &["g", "i"]);
+        assert!(
+            crate::settle_until(async || window.place_name() == "Inbox"
+                && window
+                    .pane()
+                    .is_some_and(|pane| !pane.rows_on_screen().is_empty()))
+            .await,
+            "after switching the list shows nothing: the app lost track of \
+             which folder it is on (place {:?})",
+            window.place_name()
+        );
+    });
+}

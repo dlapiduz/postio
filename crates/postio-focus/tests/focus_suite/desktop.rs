@@ -209,3 +209,57 @@ pub fn a_mailto_link_that_arrives_before_the_store_waits_for_it() {
         shows_the_mailto(&window).await;
     });
 }
+
+/// A second launch of the single-instance application is an `activate` on the
+/// primary process, and `app::run`'s handler answers it by raising the window
+/// it already has -- building nothing, adopting no second store, starting no
+/// second sync. `run` owns the process's main loop and cannot be driven from
+/// a suite, so this holds the parts it stands on: the window Focus builds
+/// for its application *is* the application's active window (what the guard
+/// reads), presenting it again leaves one window, and a second
+/// `start_syncing` is a no-op rather than a second set of engines.
+pub fn a_second_activate_has_one_window_and_starts_sync_once() {
+    use adw::prelude::*;
+    crate::gtk_case(async {
+        if !crate::support::display() {
+            return;
+        }
+        let application = postio_focus::app::application();
+        let _ = application.register(gtk::gio::Cancellable::NONE);
+        // No account: starting sync here dials nothing.
+        let none = crate::support::NoAccount::new().await;
+        let host = none.host_signing_in_to(postio_account::backend::MockBackend::default());
+        let window = postio_focus::window::FocusWindow::new(Some(&application));
+        window.present();
+        let session =
+            postio_focus::startup::adopt(&window, host, &postio_config::Config::default());
+        crate::settle();
+
+        // The guard `run`'s activate handler reads.
+        let active = application.active_window();
+        assert_eq!(
+            active.as_ref().map(|active| active.as_ptr()),
+            Some(window.upcast_ref::<gtk::Window>().as_ptr()),
+            "the application does not know Focus's window as its active one, so a \
+             second launch would build another"
+        );
+        // A second activate presents it again.
+        window.present();
+        crate::settle();
+        let focus_windows = || {
+            let toplevels = gtk::Window::toplevels();
+            (0..toplevels.n_items())
+                .filter_map(|item| toplevels.item(item))
+                .filter(|object| object.is::<postio_focus::window::FocusWindow>())
+                .count()
+        };
+        assert_eq!(focus_windows(), 1, "a second activate left two windows");
+
+        assert!(!session.syncing(), "nothing has started sync yet");
+        session.start_syncing();
+        assert!(session.syncing(), "the first start brings sync up");
+        session.start_syncing();
+        assert!(session.syncing(), "a second start leaves it up");
+        crate::support::keep(session);
+    });
+}

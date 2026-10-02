@@ -60,6 +60,10 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+# The in-process IMAP server on loopback, which `e2e` points an account at;
+# and the trait a counting keyring implements.
+async-trait.workspace = true
+postio-account = { workspace = true, features = ["test-server"] }
 # The search index, which sync fills as it files mail: a fixture fills it
 # the same way, so the command bar has something to find.
 postio-index.workspace = true
