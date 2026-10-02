@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use postio_core::CommandId;
-use postio_core::registry::{self, Requirement};
+use postio_core::registry::{self, Frontend};
 use serde::{Deserialize, Serialize};
 
 use crate::format::{Apps, Input, Storyboard};
@@ -38,25 +38,25 @@ impl std::fmt::Display for App {
     }
 }
 
-/// Whether `app` exists on this branch at all. Focus and macOS are built on
-/// other branches; here they are named in the vocabulary and nothing more.
-/// The Focus lane changes this, and `provides`, where its code lands
-/// (research R7).
+/// Whether `app` exists on this branch at all. macOS is built elsewhere and
+/// is named in the vocabulary and nothing more (research R7).
 pub fn present(app: App) -> bool {
-    matches!(app, App::Classic | App::Terminal)
+    matches!(app, App::Classic | App::Focus | App::Terminal)
 }
 
-/// Whether `app` offers `command`, by what the registry says it requires: the
-/// desktop does not offer what only the terminal's composer has, and the
-/// terminal does not offer what is about drawing pixels. A command the
+/// Whether `app` offers `command`, by what the registry says its frontend
+/// is offered (`requires.offered_by`): the desktop does not offer what only
+/// the terminal's composer has, Focus has no panes to cycle and Classic has
+/// no has-action toggle. A command the
 /// registry offers but the app never wired still counts as provided; that gap
 /// is what the generated pass is for.
 pub fn provides(app: App, command: CommandId) -> bool {
     let requires = registry::get(command).requires;
     match app {
-        App::Classic => !requires.contains(Requirement::Terminal),
-        App::Terminal => !requires.contains(Requirement::Graphical),
-        App::Focus | App::Macos => false,
+        App::Classic => requires.offered_by(Frontend::Classic),
+        App::Focus => requires.offered_by(Frontend::Focus),
+        App::Terminal => requires.offered_by(Frontend::Terminal),
+        App::Macos => false,
     }
 }
 
@@ -254,6 +254,8 @@ pub fn variants(
 mod tests {
     use std::path::Path;
 
+    use postio_core::registry::Requirement;
+
     use super::*;
     use crate::format::parse;
 
@@ -291,31 +293,59 @@ mod tests {
             let graphical = spec.requires.contains(Requirement::Graphical);
             assert_eq!(
                 provides(App::Classic, spec.id),
-                !terminal,
+                spec.requires.offered_by(Frontend::Classic),
+                "{}",
+                spec.id.as_str()
+            );
+            assert_eq!(
+                provides(App::Focus, spec.id),
+                spec.requires.offered_by(Frontend::Focus),
                 "{}",
                 spec.id.as_str()
             );
             assert_eq!(
                 provides(App::Terminal, spec.id),
-                !graphical,
+                spec.requires.offered_by(Frontend::Terminal),
                 "{}",
                 spec.id.as_str()
             );
-            assert!(!provides(App::Focus, spec.id));
+            // The registry's own answer never contradicts the coarse one.
+            if terminal {
+                assert!(!provides(App::Classic, spec.id));
+            }
+            if graphical {
+                assert!(!provides(App::Terminal, spec.id));
+            }
             assert!(!provides(App::Macos, spec.id));
         }
     }
 
     #[test]
-    fn shared_commands_apply_to_classic_and_focus_is_not_on_this_branch() {
+    fn focus_provides_what_only_focus_has_and_not_the_panes() {
+        assert!(provides(App::Focus, CommandId::ToggleHasAction));
+        assert!(!provides(App::Classic, CommandId::ToggleHasAction));
+        // Three panes are the classic app's alone (classic-parity.md row 1).
+        assert!(!provides(App::Focus, CommandId::CyclePane));
+        assert!(provides(App::Classic, CommandId::CyclePane));
+        // Flag is every app's since C13.
+        assert!(provides(App::Focus, CommandId::Flag));
+    }
+
+    #[test]
+    fn shared_commands_apply_to_classic_and_focus() {
         let board = board("", &["next_message", "back"]).unwrap();
         assert_eq!(
             applies(&board, App::Classic, &info(App::Classic)),
             Applicability::Applies
         );
-        let focus = applies(&board, App::Focus, &info(App::Focus));
-        let Applicability::NotApplicable(reasons) = focus else {
-            panic!("focus is not present on this branch: {focus:?}");
+        assert_eq!(
+            applies(&board, App::Focus, &info(App::Focus)),
+            Applicability::Applies
+        );
+        // Macos is the one still not built.
+        let macos = applies(&board, App::Macos, &info(App::Macos));
+        let Applicability::NotApplicable(reasons) = macos else {
+            panic!("macos is not present on this branch: {macos:?}");
         };
         assert_eq!(reasons, vec![Reason::NotPresentOnBranch]);
         assert_eq!(reasons[0].to_string(), "not present on this branch");
@@ -346,7 +376,7 @@ mod tests {
             "{error}"
         );
         // Naming an app that is not built here cannot be checked, so loads.
-        assert!(board("apps = [\"focus\"]\n", &[command]).is_ok());
+        assert!(board("apps = [\"macos\"]\n", &[command]).is_ok());
         // A step the app skips does not need the command.
         let text = format!(
             "apps = [\"classic\"]\n{HEAD}[[step]]\ncommand = \"{command}\"\n[app.classic.step.1]\nskip = {{ reason = \"terminal only\" }}\n"
