@@ -78,7 +78,7 @@ twelfth, is decided: Flag stays, on `*` (C13, T257).
 | 30 | View source | the reader | **Covered by** `v` (`source.rs`, `focus_suite::view_source`) |
 | 31 | Remote images blocked; allowed once, or always for this sender | `postio-widgets::reader::banner` (shared); `ShowImages`, `AlwaysShowImages` | **Covered by** the shared banner and `i i` / `i a`, answered by `FocusWindow::act`; `focus_suite::remote_images` proves the block, that Show fetches once and nothing is asked before, and that Always holds for the sender's next message and for no one else |
 | 32 | Unsubscribe on deliberate activation | the reader's notice | **Covered by** the reader's notice and the digest window (`Unsubscribe`, `window.rs`) |
-| 33 | Reading a message marks it read, after a short dwell | `list_view.rs` and `reading.rs` (`MarkReadOnDwell`; `dwell_wiring`) | **Gap → T237.** Focus never sends `MarkReadOnDwell`: a message opened and read stays unread until `r`. FR-016 covers only moving the cursor |
+| 33 | Reading a message marks it read, after a short dwell | `list_view.rs` and `reading.rs` (`MarkReadOnDwell`; `dwell_wiring`) | **Covered by** the open message's read clock (`open.rs`, `postio_ui::dwell`): open for the dwell, in the dialog or the pane, it is marked read; `r` marks it unread again (T237; `focus_suite::read_on_dwell`) |
 | 34 | A body that did not decode cleanly says so | `postio-widgets::reader` (`decode_notice`) | **Covered by** the shared reader's notices, which Focus's open message mounts |
 | 35 | Desktop notifications for new mail | `postio-app::notifications` | **Covered by** Focus's notifier (`startup.rs`, `host.focus_notification`), following `[sync]` |
 

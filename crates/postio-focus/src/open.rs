@@ -61,6 +61,10 @@ const FOLDED: [CommandId; 3] = [CommandId::AddLabel, CommandId::Move, CommandId:
 /// What a control in the dialog asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
 
+/// What the window is told when a message has been open long enough to
+/// count as read.
+type ReadHandler = Rc<dyn Fn(MessageId)>;
+
 /// Where the dialog is in the list: the row's place and how many there are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -156,6 +160,12 @@ pub struct OpenMessage {
     body: Rc<RefCell<Option<MessageBody>>>,
     /// Whether a to-do's card offers Task: once a vault is configured.
     capture: Cell<bool>,
+    /// The read clock (T237): started when a message is shown, cancelled
+    /// when another is, when it closes, or when the person sets its read
+    /// state themselves.
+    dwell: RefCell<Option<glib::SourceId>>,
+    /// Who is told when the clock runs out.
+    read: RefCell<Option<ReadHandler>>,
 }
 
 impl OpenMessage {
@@ -422,6 +432,8 @@ impl OpenMessage {
             card: RefCell::default(),
             body: Rc::default(),
             capture: Cell::new(false),
+            dwell: RefCell::default(),
+            read: RefCell::default(),
         });
 
         let weak = Rc::downgrade(&page);
@@ -450,6 +462,7 @@ impl OpenMessage {
                     && page.slot.borrow().is_none()
                     && page.open.replace(false)
                 {
+                    page.cancel_dwell();
                     page.tell_changed();
                 }
             }
@@ -948,7 +961,54 @@ impl OpenMessage {
         // its top: the view is put there now, and the new document's first
         // snapshot starts there too.
         self.reader.view().scroll_to_edge(false);
+        self.arm_dwell(message);
         self.load(message, generation);
+    }
+
+    /// Run `read` with a message that has stayed open for the dwell
+    /// (screens.md, "Reading marks it read").
+    pub fn connect_read(&self, read: impl Fn(MessageId) + 'static) {
+        self.read.replace(Some(Rc::new(read)));
+    }
+
+    /// Start the read clock on `message`, the one now shown, stopping any
+    /// other. The delay and the rule are `postio_ui::dwell`'s, shared with
+    /// the classic app; only the timer is this toolkit's.
+    fn arm_dwell(&self, message: MessageId) {
+        self.cancel_dwell();
+        if !self.open.get() {
+            return;
+        }
+        let postio_ui::dwell::Arm::Start { after, .. } =
+            postio_ui::dwell::on_cursor(Some(message.get()))
+        else {
+            return;
+        };
+        let page = self.this.borrow().clone();
+        let source = glib::timeout_add_local_once(after, move || {
+            let Some(page) = page.upgrade() else {
+                return;
+            };
+            // Fired: the id is spent, and removing it again would warn.
+            let _ = page.dwell.borrow_mut().take();
+            if !page.open.get() || page.shown.get() != Some(message) {
+                return;
+            }
+            let read = page.read.borrow().clone();
+            if let Some(read) = read {
+                read(message);
+            }
+        });
+        self.dwell.replace(Some(source));
+    }
+
+    /// Stop the read clock without starting another: the message closed, or
+    /// the person set its read state themselves, which the clock must not
+    /// overrule.
+    pub fn cancel_dwell(&self) {
+        if let Some(source) = self.dwell.borrow_mut().take() {
+            source.remove();
+        }
     }
 
     /// Read the conversation's messages, so `[` and `]` can step through
@@ -1226,6 +1286,7 @@ impl OpenMessage {
     /// Close the message: the dialog, or the pane's message, which leaves the
     /// pane empty. The list has not moved.
     pub fn close(&self) {
+        self.cancel_dwell();
         if !self.in_pane() {
             self.dialog.close();
         }

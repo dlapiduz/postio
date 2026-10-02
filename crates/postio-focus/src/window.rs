@@ -1109,6 +1109,12 @@ impl FocusWindow {
             // `Return` on the row already open beside the list: it is open.
             Ok(CommandId::OpenMessage) if reading.in_pane() => self.open_message(),
             Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(None),
+            // Read or unread, set by the person: the read clock stops, so
+            // a message kept unread stays unread while it is open (T237).
+            Ok(CommandId::ToggleRead) => {
+                reading.cancel_dwell();
+                self.act(CommandId::ToggleRead);
+            }
             // Screen 04's toolbar verbs and the Invite card's answers, for
             // the message on screen (US3, US8).
             Ok(
@@ -3623,6 +3629,13 @@ impl FocusWindow {
                     #[weak(rename_to = window)]
                     self,
                     move |id| window.act(id)
+                ));
+                // Open for the dwell, it counts as read (T237): the host
+                // marks it without an undo entry, as the classic app does.
+                reading.connect_read(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |message| window.post(Command::MarkReadOnDwell { message })
                 ));
                 reading.set_capture(self.imp().focus_config.borrow().vault.is_some());
                 // The zoom `[reader]` says (T235).

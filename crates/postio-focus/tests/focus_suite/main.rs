@@ -64,6 +64,7 @@ mod open_reading;
 mod pickers;
 mod places;
 mod pointer_pairs;
+mod read_on_dwell;
 mod reader_zoom;
 mod reading_pane;
 mod registry_parity;
@@ -604,6 +605,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_reading::the_steps_carry_their_keys_inside_and_stay_compact",
         open_reading::the_steps_carry_their_keys_inside_and_stay_compact as fn(),
+    ),
+    (
+        "read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read",
+        read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read as fn(),
+    ),
+    (
+        "read_on_dwell::stepping_the_pane_past_a_message_leaves_it_unread",
+        read_on_dwell::stepping_the_pane_past_a_message_leaves_it_unread as fn(),
+    ),
+    (
+        "read_on_dwell::a_message_closed_before_the_dwell_stays_unread",
+        read_on_dwell::a_message_closed_before_the_dwell_stays_unread as fn(),
+    ),
+    (
+        "read_on_dwell::r_in_the_open_message_marks_it_unread_again",
+        read_on_dwell::r_in_the_open_message_marks_it_unread_again as fn(),
     ),
     (
         "reading_pane::f8_and_the_setting_switch_between_the_dialog_and_the_pane",

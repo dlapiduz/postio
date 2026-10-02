@@ -386,6 +386,50 @@ Pinned by `reading_pane::f8_and_the_setting_switch_between_the_dialog_and_the_pa
 `focus_dialog` pane cases, `focus_state::empty_pane` and
 `focus_row::row_columns`, and `postio-config`'s `set_reading`.
 
+## Reading marks it read (T237)
+
+Decided with `/ux-architect`. Unread is only worth anything while it means
+"you have not looked at this", and a rule that marks too eagerly destroys it
+the first time somebody walks a mailbox.
+
+**The rule: a message counts as read once it has stayed open for the dwell.**
+Open means shown as the open message, in the dialog or in the pane beside the
+list; the dwell is `postio_ui::dwell::DWELL_TO_READ` (one second), the classic
+app's number and arming rule, so the two apps cannot disagree about how long
+is long enough. The clock starts when a message is shown and is cancelled
+when another is shown, when the message closes, and when `r` is pressed for
+it. When it runs out, Focus sends `MarkReadOnDwell` for the message the clock
+was started for: the store is written, the row repaints without its bold.
+
+- **Not at open.** In the pane, with a message open, `j`/`k` step the pane
+  through the list, and in either host `[`/`]` step the thread. Marking at
+  open would mark everything a person stepped past to find the one they
+  wanted. A held `j` repeats every 30 ms or so and rests nowhere, so it marks
+  nothing; the message the pane rests on is marked.
+- **The cursor marks nothing (FR-016).** Moving the cursor with nothing open
+  opens nothing, so it starts no clock.
+- **One message at a time.** The clock marks the message on screen, not the
+  conversation: a thread's earlier messages are marked as `[` shows each.
+- **The body does not hold the clock.** The header, the subject and the
+  sender are on screen at once from the row, and a body read from the store
+  lands within the dwell; one not yet downloaded still showed who wrote and
+  about what.
+- **The way back is `r`, not `u`.** `MarkReadOnDwell` is the one dispatch
+  kept off the undo stack (`Command::MarkReadOnDwell`, #71): reading a
+  mailbox makes one per message, and recording them would bury the archive
+  `u` should bring back. `r` (Mark read or unread) works in the open message,
+  in the dialog and the pane, and marks it unread; pressing it cancels a clock
+  still running, so the person's choice wins and the message stays as they
+  left it while it is open. `r` itself is undoable, as everywhere.
+- **Local-first.** The mark is a store write and an enqueued flag change, as
+  every verb is; nothing waits on the server, offline or not.
+
+Pinned by `read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read`,
+`…stepping_the_pane_past_a_message_leaves_it_unread`,
+`…a_message_closed_before_the_dwell_stays_unread` and
+`…r_in_the_open_message_marks_it_unread_again`, with `postio-ui`'s `dwell`
+cases.
+
 ## The row menu (T199)
 
 A right-click on a list row opens a menu of the row's verbs, decided as
