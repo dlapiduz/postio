@@ -918,6 +918,29 @@ pub async fn every_command(gaps: &[postio_storyboard::coverage::Gap]) -> Vec<Con
             };
             let before_frame = settle::settle(window.upcast_ref(), &settings);
             let before = window.observe();
+            // Typing wins: with the keyboard in a text field, a command bound
+            // to a bare key is a letter, not a command, and that is right.
+            let (keymap, _) = Keymap::from_commands(&window.keymap_in_force());
+            let bare = window
+                .key_context()
+                .chain()
+                .iter()
+                .find_map(|layer| keymap.binding_for(*layer, &command))
+                .and_then(|binding| binding.chords().first().cloned())
+                .is_some_and(|chord| {
+                    let shown = chord.to_string();
+                    shown.chars().count() == 1
+                        || shown.starts_with("shift+") && shown.chars().count() == 7
+                });
+            if before.keyboard.typing && bare {
+                coverage.presses.push(Press {
+                    command: command.clone(),
+                    context: (*context).to_owned(),
+                    effect: Effect::Typing,
+                });
+                window.destroy();
+                continue;
+            }
             let outcome = deliver_input(
                 &window,
                 &Input::Command(command.clone()),
@@ -936,6 +959,11 @@ pub async fn every_command(gaps: &[postio_storyboard::coverage::Gap]) -> Vec<Con
                         gaps,
                     )
                 }
+                Ok((StepOutcome::Dropped, _)) => Press {
+                    command: command.clone(),
+                    context: (*context).to_owned(),
+                    effect: Effect::Dropped,
+                },
                 _ => Press {
                     command: command.clone(),
                     context: (*context).to_owned(),
