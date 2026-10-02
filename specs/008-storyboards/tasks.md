@@ -344,7 +344,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
   `draft-left-over` to `crates/postio-app/src/demo.rs`, through
   `postio_storage::seed` helpers, so the catalogue seed's rows have the mail
   they need. Keep it deterministic: no `Utc::now()`.
-- [ ] T039 [US1] [TEST] Add an `app_suite` case, `storyboards.rs`, plus its
+- [X] T039 [US1] [TEST] Add an `app_suite` case, `storyboards.rs`, plus its
   `CASES` row. It runs a two-step fixture storyboard, held in the test as a
   string (`select_next`, then `archive`), through
   `postio_app::demo::storyboard::run`, and asserts:
@@ -356,7 +356,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
     `unbound in <context>`.
 
   Red: no runner exists.
-- [ ] T040 [US1] Implement the runner core in
+- [X] T040 [US1] Implement the runner core in
   `crates/postio-app/src/demo/storyboard.rs`:
   1. Load and check applicability through `postio-storyboard`.
   2. Build the seeded window as `shot` does.
