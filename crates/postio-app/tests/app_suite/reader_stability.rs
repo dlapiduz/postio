@@ -134,8 +134,19 @@ fn drawing(document: &str, names: &[&str]) -> Option<String> {
 }
 
 /// Turn the loop for `duration`, calling `each` on every turn.
-async fn watch_for(duration: std::time::Duration, mut each: impl FnMut()) {
-    let until = std::time::Instant::now() + postio_test_support::scaled(duration);
+///
+/// Scaled by `POSTIO_TEST_PATIENCE`: how long to *look* may stretch on a
+/// loaded machine. A delay that is itself the thing under test may not --
+/// see [`watch_exactly`].
+async fn watch_for(duration: std::time::Duration, each: impl FnMut()) {
+    watch_exactly(postio_test_support::scaled(duration), each).await;
+}
+
+/// [`watch_for`] for exactly `duration`, never scaled: for a delay the app
+/// is measured against, such as how soon a body lands, which the patience
+/// multiplier would stretch past the app's own unscaled grace.
+async fn watch_exactly(duration: std::time::Duration, mut each: impl FnMut()) {
+    let until = std::time::Instant::now() + duration;
     while std::time::Instant::now() < until {
         settle();
         each();
@@ -444,7 +455,7 @@ pub fn a_body_that_lands_quickly_never_shows_the_waiting_plate() {
         // well inside the time it takes to notice a plate at all.
         window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
         let mut plates = 0;
-        watch_for(std::time::Duration::from_millis(40), || {
+        watch_exactly(std::time::Duration::from_millis(40), || {
             if window.reader().absent().is_some() {
                 plates += 1;
             }
