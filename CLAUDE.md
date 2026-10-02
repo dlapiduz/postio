@@ -48,7 +48,7 @@ cd ~/src/postio-worktrees/<name>
 # which is what issue-land.sh does to read it back
 printf 'main\n' > "$(git rev-parse --git-dir)/postio-base"   # or see below
 # work tasks.md top to bottom, one commit per task
-scripts/issue-land.sh --detach          # lands the branch; closes nothing
+scripts/issue-land.sh --detach --full-suite   # lands the branch; closes nothing
 ```
 
 `tasks.md` is the queue and `spec.md` is the acceptance — both are in the
@@ -144,6 +144,15 @@ cheap.** Measured, warm, on this workstation:
 `issue-land.sh` runs the **sanity tier** by default; `--full` adds the
 per-crate integration suites. That default exists because several sessions
 share this machine, so landing had become something you queued for.
+
+**For a new feature or a big change, add `--full-suite`.** It labels the
+pull request `full-suite`, and CI runs the nightly's whole run on it -- every
+integration suite, the measurement tier, coverage, docs -- through
+`.github/workflows/full-suite.yml`. `Full suite on request` is a required
+check, so auto-merge waits for that run and a red one blocks the merge. It
+costs the PR about twenty-five minutes of CI and none of this machine; the
+integration suites otherwise first run on the nightly, after the merge. On
+an open PR: `gh pr edit <n> --add-label full-suite`.
 
 **Land on the default. `--full` needs a specific reason, and "this change is
 about wiring" is not one** (maintainer, 2026-09-03: *"dont run the full gate

@@ -14,6 +14,7 @@
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
 #   scripts/issue-land.sh --full                # integration suites too, not just units
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
+#   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
 #   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
@@ -240,7 +241,7 @@ ORIGINAL_ARGS=("$@")
 # the twentieth.
 GATE_BUDGET_SECONDS=240
 
-MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0; FULL_SUITE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
@@ -250,6 +251,7 @@ while [ $# -gt 0 ]; do
         --full)       FULL=1;       shift ;;
         --wait)       WAIT=1;       shift ;;
         --refs-only)  REFS_ONLY=1;  shift ;;
+        --full-suite) FULL_SUITE=1; shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -1042,6 +1044,20 @@ BODY
 fi
 URL=$(gh pr view --json url -q .url)
 echo "$URL"
+
+# `--full-suite`: the nightly's whole run on this pull request, for a new
+# feature or a big change (.github/workflows/full-suite.yml). The label is
+# what asks, and `Full suite on request` -- a required check -- then passes
+# only if that run does, so auto-merge waits for it. Added here, with this
+# session's own token: a label the workflow token adds triggers nothing.
+if [ "$FULL_SUITE" = 1 ]; then
+    if gh pr edit "$URL" --add-label full-suite >/dev/null; then
+        echo "full suite requested: labelled full-suite; CI runs the nightly on this PR."
+    else
+        echo "warning: could not label the PR full-suite; add it by hand:" >&2
+        echo "    gh pr edit $URL --add-label full-suite" >&2
+    fi
+fi
 
 # After `pr view` rather than as a `pr create --label`, so it applies to a PR
 # that already existed too. Loud on failure: the entire point of the label is
