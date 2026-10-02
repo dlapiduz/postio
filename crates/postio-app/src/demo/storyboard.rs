@@ -177,6 +177,9 @@ async fn acting(window: &Window, options: &DemoOptions) -> Option<Acting> {
     .ok()?;
     let report = super::seed_store(&database, options).await;
     let account = report.account.id;
+    // Opening a store builds its search index; a seeded one has to be told,
+    // or every search storyboard searches nothing.
+    postio_session::ensure_search_index(&database).await.ok()?;
 
     let state = SharedState::default();
     let bus = actions::wire(
