@@ -103,6 +103,12 @@ url = { workspace = true }
 name = "shot"
 required-features = ["demo"]
 
+# The storyboard runner (specs/008-storyboards); `scripts/storyboards.sh run`
+# builds it.
+[[example]]
+name = "storyboard"
+required-features = ["demo"]
+
 # The consolidated app suite: same custom harness as postio-gtk's
 # gtk_suite, same reasons -- see tests/app_suite/main.rs. #329.
 [[test]]
