@@ -3,9 +3,9 @@
 //! Every app shares one keymap (spec 007, Clarifications), and a command only
 //! another app offers keeps its key there. Focus binds only the commands it
 //! offers (`Resolver::from_commands_for(.., Frontend::Focus)`, T029), so a
-//! key the keymap keeps for the classic app -- `*` flags there -- does what
-//! an unbound key does here, rather than reaching a command Focus would
-//! refuse as "not wired up".
+//! key the keymap keeps for the classic app -- `p` opens its parts panel --
+//! does what an unbound key does here, rather than reaching a command Focus
+//! would refuse as "not wired up".
 
 use postio_core::{Frontend, Keymap};
 use postio_ui::keymap::Resolver;
@@ -47,8 +47,13 @@ mod tests {
         );
         assert_eq!(
             press(&mut resolver, "*", KeyContext::List),
+            Outcome::Command("flag".into()),
+            "* flags in Focus too, with no mark on the row (C13, T257)"
+        );
+        assert_eq!(
+            press(&mut resolver, "p", KeyContext::Reader),
             Outcome::Unhandled,
-            "* flags in the three-pane apps, and Focus offers no flag verb (C13)"
+            "p opens the three-pane apps' parts panel; Focus has none"
         );
     }
 
