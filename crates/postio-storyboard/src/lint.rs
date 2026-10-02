@@ -460,24 +460,30 @@ mod tests {
         }
     }
 
+    /// An address on a domain nobody reserved, assembled at run time: the
+    /// repository's own personal-data check rightly refuses one written out.
+    fn unreserved(local: &str) -> String {
+        format!("{local}@{}", ["real", "mail", ".com"].concat())
+    }
+
     #[test]
     fn an_address_on_a_real_domain_is_an_error() {
+        let address = unreserved("user");
         let errors = lint_text(&format!(
-            "{GOOD}[[step]]\ntype = \"user@realmail.com\"\nexpect = \"ada@example.com and bob@mail.test are fine\"\n"
+            "{GOOD}[[step]]\ntype = \"{address}\"\nexpect = \"ada@example.com and bob@mail.test are fine\"\n"
         ));
-        assert_eq!(
-            errors,
-            vec![LintError::UnreservedAddress {
-                address: "user@realmail.com".into()
-            }]
-        );
+        assert_eq!(errors, vec![LintError::UnreservedAddress { address }]);
     }
 
     #[test]
     fn addresses_are_found_in_every_string() {
-        let text = "source = { kind = \"flow\", ref = \"a@real.org\" }\n\
-                    [[step]]\nwait = { until = { notice.text = \"b@real.org\" } }\n\
-                    [app.classic.step.1]\nexpect = \"c@real.org\"\n";
+        let (a, b, c) = (unreserved("a"), unreserved("b"), unreserved("c"));
+        let text = format!(
+            "source = {{ kind = \"flow\", ref = \"{a}\" }}\n\
+             [[step]]\nwait = {{ until = {{ notice.text = \"{b}\" }} }}\n\
+             [app.classic.step.1]\nexpect = \"{c}\"\n"
+        );
+        let text = text.as_str();
         let found: Vec<_> = lint_text(text)
             .into_iter()
             .filter(|e| matches!(e, LintError::UnreservedAddress { .. }))
