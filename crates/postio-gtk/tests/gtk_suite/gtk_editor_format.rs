@@ -45,8 +45,11 @@ fn eval_str(view: &webkit6::WebView, script: &str) -> String {
 /// that is leaving.
 fn load_synced(editor: &Editor, document: Document, expected_text: &str) {
     editor.load(document);
-    settle("the page swap to commit", || {
+    // The script too, not only the text (#1716): a gesture that lands
+    // before the editor script is listening is never reported.
+    settle("the page swap to commit, its script listening", || {
         eval_str(editor.widget(), "document.body.textContent") == expected_text
+            && eval_str(editor.widget(), crate::EDITOR_LISTENING) == "true"
     });
 }
 

@@ -198,6 +198,11 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 /// the scroll range met the one-line fallback, 51px tall (2026-10-01). The
 /// deadline itself has its own test, with its own 1 ms deadline
 /// (`body_view::a_render_past_its_deadline_shows_the_plain_text`).
+/// JavaScript that answers `"true"` once the editor page's script has
+/// attached every listener -- the marker `editor.js` sets last (#1716). A
+/// test that types must wait for it, not merely for an editable body.
+pub(crate) const EDITOR_LISTENING: &str = "String(window.postioEditorReady === true)";
+
 pub(crate) fn reader_deadline() -> std::time::Duration {
     postio_test_support::scaled(std::time::Duration::from_secs(30))
 }
@@ -1306,6 +1311,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_editor_bridge::an_edit_becomes_the_document_and_undo_walks_typing_runs",
         gtk_editor_bridge::an_edit_becomes_the_document_and_undo_walks_typing_runs as fn(),
+    ),
+    (
+        "gtk_editor_bridge::the_editor_page_says_when_its_script_is_listening",
+        gtk_editor_bridge::the_editor_page_says_when_its_script_is_listening as fn(),
     ),
     (
         "gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white",
