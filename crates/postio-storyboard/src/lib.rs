@@ -20,6 +20,7 @@ pub mod lint;
 pub mod page;
 pub mod prompt;
 pub mod run;
+pub mod verdicts;
 
 #[cfg(test)]
 mod fixtures;

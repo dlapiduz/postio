@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use postio_storyboard::{bundle, key, lint, page, prompt};
+use postio_storyboard::{bundle, key, lint, page, prompt, verdicts};
 
 const USAGE: &str = "\
 usage:
@@ -16,6 +16,7 @@ usage:
   postio-storyboard bundle --runs <dir> [--base <dir> [--base-sha <sha>]] --acceptance <file>
                            --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
   postio-storyboard prompt <bundle> (--list | --batch <n>)
+  postio-storyboard verdicts check <bundle>
   postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]";
 
 fn main() -> ExitCode {
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
         Some("key") => key_command(&args[1..]),
         Some("bundle") => bundle_command(&args[1..]),
         Some("prompt") => prompt_command(&args[1..]),
+        Some("verdicts") => verdicts_command(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -132,6 +134,33 @@ fn prompt_command(args: &[String]) -> ExitCode {
     eprintln!("template blake3 {}", prompt::template_hash());
     print!("{text}");
     ExitCode::SUCCESS
+}
+
+fn verdicts_command(args: &[String]) -> ExitCode {
+    let (Some("check"), Some(bundle_dir)) = (args.first().map(String::as_str), args.get(1)) else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    match verdicts::check(&PathBuf::from(bundle_dir)) {
+        Ok(review) => {
+            println!(
+                "verdicts: complete ({} verdict(s), {} finding(s))",
+                review.verdicts.len(),
+                review.findings.len()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(rejections) => {
+            for rejection in &rejections {
+                eprintln!("verdicts: {rejection}");
+            }
+            eprintln!(
+                "verdicts: review incomplete, {} problem(s)",
+                rejections.len()
+            );
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn lint_command(args: &[String]) -> ExitCode {
