@@ -54,6 +54,7 @@ pub mod reachability;
 pub mod reading;
 pub mod refresh;
 pub mod search;
+pub mod start_over;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -539,8 +540,59 @@ pub enum Opening {
 pub async fn open_store_reporting(
     store_key: &postio_storage::key::StoreKey,
     report: &dyn Fn(Opening),
-) -> Result<(Store, BlobStore), String> {
+) -> Result<(Store, BlobStore), Refusal> {
     open_store_at_reporting(paths::store_path(), store_key, report).await
+}
+
+/// Why the store did not open, and what would get past it.
+///
+/// The sentence alone was not enough to draw the screen with: "Try again"
+/// is the way forward from a store another Postio has open and a dead end
+/// for a store whose schema no migration reaches, which the same file will
+/// refuse every time. So the refusal says which.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// What happened, as a sentence for a person.
+    pub sentence: String,
+    /// What gets past it.
+    pub remedy: Remedy,
+}
+
+/// The way forward from a [`Refusal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Remedy {
+    /// Something that can pass: another Postio holding the store, a locked
+    /// keyring, a full disk. Trying again is the way forward.
+    TryAgain,
+    /// A store written at a schema this build cannot carry forward. Trying
+    /// again meets the same file; starting the store over
+    /// ([`start_over::start_over_at`] on `store`) is the way forward.
+    StartOver {
+        /// The store to set aside.
+        store: std::path::PathBuf,
+    },
+}
+
+impl Refusal {
+    /// A refusal trying again may get past.
+    pub fn try_again(sentence: impl Into<String>) -> Self {
+        Refusal {
+            sentence: sentence.into(),
+            remedy: Remedy::TryAgain,
+        }
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.sentence)
+    }
+}
+
+impl From<Refusal> for String {
+    fn from(refusal: Refusal) -> String {
+        refusal.sentence
+    }
 }
 
 /// [`open_store`], over a store at a path the caller chooses.
@@ -558,7 +610,9 @@ pub async fn open_store_at(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Store, BlobStore), String> {
-    open_store_at_reporting(path, store_key, &|_| {}).await
+    open_store_at_reporting(path, store_key, &|_| {})
+        .await
+        .map_err(String::from)
 }
 
 /// [`open_store_at`], saying what it is doing — see [`open_store_reporting`].
@@ -566,7 +620,7 @@ pub async fn open_store_at_reporting(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
     report: &dyn Fn(Opening),
-) -> Result<(Store, BlobStore), String> {
+) -> Result<(Store, BlobStore), Refusal> {
     // The database subkey. BLAKE3-derived from the master key, so the
     // database, the blob contents and the blob ids are cryptographically
     // separated without three keyring entries (ADR 0014 Q3). #301 takes the
@@ -574,13 +628,14 @@ pub async fn open_store_at_reporting(
     let database_key = store_key.derive(postio_storage::key::Purpose::Database);
     let path = path.into();
 
-    // There is no migration step before this any more. A plaintext store
-    // could not be opened at all, so ADR 0014 Q4's one-off rewrote it first;
-    // every store this build creates is encrypted from its first page, and a
-    // store the old engine wrote cannot be read at all -- it is rebuilt by
-    // resyncing (`specs/004-turso-store`).
+    // A store an earlier build of this engine wrote is migrated in place
+    // inside `open` (`postio_storage::schema::MIGRATIONS`), saying so first.
+    // One no step reaches is refused with `Remedy::StartOver`; a store the
+    // old engine wrote cannot be read at all (`specs/004-turso-store`).
     report(Opening::Store);
-    let database = match Store::open(&path, &database_key).await {
+    let database = match Store::open_reporting(&path, &database_key, || report(Opening::Migrating))
+        .await
+    {
         Ok(database) => database,
         // A wrong key is its own sentence. `Error::WrongStoreKey` says the
         // store belongs to another installation and is *intact*, where
@@ -591,14 +646,23 @@ pub async fn open_store_at_reporting(
         // screen reading "…its local store. the local store will not open".
         Err(error @ postio_storage::Error::WrongStoreKey) => {
             tracing::error!(path = %path.display(), "the store will not decrypt with this key");
-            return Err(error.to_string());
+            return Err(Refusal::try_again(error.to_string()));
         }
         // Another Postio -- the desktop app or the terminal -- has it open.
         // Its own sentence says what to do, so nothing goes in front of it
         // either.
         Err(error @ postio_storage::Error::InUse) => {
             tracing::warn!(path = %path.display(), "the store is open in another process");
-            return Err(error.to_string());
+            return Err(Refusal::try_again(error.to_string()));
+        }
+        // A schema no migration leads from: the same file is refused every
+        // time, so the way forward is starting over, never a retry.
+        Err(error @ postio_storage::Error::SchemaFromAnotherBuild { found, expected }) => {
+            tracing::error!(path = %path.display(), found, expected, "the store's schema cannot be carried forward");
+            return Err(Refusal {
+                sentence: error.to_string(),
+                remedy: Remedy::StartOver { store: path },
+            });
         }
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store: {error}");
@@ -606,7 +670,9 @@ pub async fn open_store_at_reporting(
             // because the caller is what puts it on screen (#404). A window
             // that will not open and does not say why is the one thing worse
             // than a window that will not open.
-            return Err(format!("Postio could not open its local store: {error}"));
+            return Err(Refusal::try_again(format!(
+                "Postio could not open its local store: {error}"
+            )));
         }
     };
     // Beside the database, not inside it: bodies and attachments are
@@ -618,10 +684,10 @@ pub async fn open_store_at_reporting(
         Ok(blobs) => blobs,
         Err(error) => {
             tracing::error!(%error, "cannot open the blob store: {error}");
-            return Err(format!(
+            return Err(Refusal::try_again(format!(
                 "Postio could not open the store that holds message bodies \
                  and attachments: {error}"
-            ));
+            )));
         }
     };
     report(Opening::Indexing);

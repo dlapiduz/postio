@@ -49,7 +49,14 @@ pub fn open(
     secrets: Arc<dyn postio_account::secret::SecretStore>,
 ) -> Result<Host, String> {
     let say_so = saying(|line: &str| eprintln!("{line}"));
-    Host::open(config_path, secrets, &say_so).map_err(|sentence| format!("postio-tui: {sentence}"))
+    Host::open(config_path, secrets, &say_so).map_err(|refusal| match refusal.remedy {
+        // Trying again meets the same file: name the way forward instead.
+        postio_session::Remedy::StartOver { .. } => format!(
+            "postio-tui: {refusal}\npostio-tui: `postio-store reset` sets it aside and \
+             starts a fresh store, keeping your accounts and config.toml"
+        ),
+        postio_session::Remedy::TryAgain => format!("postio-tui: {refusal}"),
+    })
 }
 
 /// Say each wait to `write` as a line, unless it reads the same as the one

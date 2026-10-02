@@ -352,19 +352,38 @@ impl Host {
     /// `report` hears each wait before it starts -- the keyring, then the
     /// store's own stages -- so a frontend can say what it is waiting on.
     /// Blocks the calling thread for all of it. `Err` is a sentence for a
-    /// person: a keyring that will not answer, or a store that will not open
-    /// -- among them [`postio_storage::Error::InUse`], another Postio having
-    /// it open.
+    /// person and the way past it: a keyring that will not answer, or a
+    /// store that will not open -- among them [`postio_storage::Error::InUse`],
+    /// another Postio having it open, which trying again gets past, and a
+    /// schema no migration reaches, which only starting over does.
     pub fn open(
         config_path: Option<&std::path::Path>,
         secrets: Arc<dyn postio_account::secret::SecretStore>,
         report: &dyn Fn(postio_ui::list_state::Waiting),
-    ) -> Result<Host, String> {
+    ) -> Result<Host, postio_session::Refusal> {
+        Host::open_at(
+            config_path,
+            &postio_session::paths::store_path(),
+            secrets,
+            report,
+        )
+    }
+
+    /// [`Host::open`], over the store at `store` rather than this
+    /// installation's: for a suite that needs a store per case, which a
+    /// process-wide `POSTIO_STORE` cannot give it.
+    pub fn open_at(
+        config_path: Option<&std::path::Path>,
+        store: &std::path::Path,
+        secrets: Arc<dyn postio_account::secret::SecretStore>,
+        report: &dyn Fn(postio_ui::list_state::Waiting),
+    ) -> Result<Host, postio_session::Refusal> {
+        use postio_session::Refusal;
         use postio_ui::list_state::Waiting;
 
         report(Waiting::Keyring);
         let key = postio_session::store_key_blocking(secrets.as_ref())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| Refusal::try_again(error.to_string()))?;
         let (database, blobs) = {
             // Its own runtime, dropped before the host's exists: opening the
             // store is async, and nothing else is running yet to host it.
@@ -373,15 +392,21 @@ impl Host {
                 .enable_all()
                 .build()
                 .map_err(|error| {
-                    format!("Postio could not start the worker that opens its store: {error}")
+                    Refusal::try_again(format!(
+                        "Postio could not start the worker that opens its store: {error}"
+                    ))
                 })?;
-            runtime.block_on(postio_session::open_store_reporting(&key, &|stage| {
-                report(match stage {
-                    postio_session::Opening::Store => Waiting::Store,
-                    postio_session::Opening::Migrating => Waiting::Migrating,
-                    postio_session::Opening::Indexing => Waiting::Indexing,
-                })
-            }))?
+            runtime.block_on(postio_session::open_store_at_reporting(
+                store,
+                &key,
+                &|stage| {
+                    report(match stage {
+                        postio_session::Opening::Store => Waiting::Store,
+                        postio_session::Opening::Migrating => Waiting::Migrating,
+                        postio_session::Opening::Indexing => Waiting::Indexing,
+                    })
+                },
+            ))?
         };
 
         let sync_config = config_path
@@ -401,7 +426,8 @@ impl Host {
                 .with_watch(postio_session::watch_policy(&sync_config))
                 .with_storage_ceiling(storage_ceiling)
                 .with_secrets(secrets)
-        })?;
+        })
+        .map_err(Refusal::try_again)?;
         // Which folders' arrivals are worth a notification.
         host.notify_with(sync_config);
         *host.inner.config_path.lock().expect("never poisoned") =

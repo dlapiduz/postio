@@ -1157,7 +1157,12 @@ fn open_the_store_on_a_thread(
                 postio_session::Opening::Indexing => Waiting::Indexing,
             }));
         };
-        let opened = runtime.block_on(postio_session::open_store_reporting(&key, &report));
+        // The classic window draws the sentence with "Try again" whatever
+        // the remedy; Focus's draws starting over for a schema no migration
+        // reaches.
+        let opened = runtime
+            .block_on(postio_session::open_store_reporting(&key, &report))
+            .map_err(String::from);
         let _ = sender.send_blocking(Progress::Done(opened));
     });
     receiver

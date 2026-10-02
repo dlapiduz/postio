@@ -24,6 +24,7 @@
 #   scripts/run-isolated.sh HEAD --focus    # run Postio Focus instead (spec 007)
 #   scripts/run-isolated.sh HEAD --focus --shot  # render Focus's screen 01 to a PNG
 #   scripts/run-isolated.sh HEAD --focus --install-desktop  # also give Focus its dock icon (see below)
+#   scripts/run-isolated.sh HEAD --reset-store  # set the scratch store aside, start a fresh one
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
 # The store lives under $ROOT/state and persists between runs, so a synced
@@ -50,6 +51,7 @@ SHOT=0
 PROVISION=0
 FOCUS=0
 INSTALL_DESKTOP=0
+RESET_STORE=0
 for arg in "$@"; do
     case "$arg" in
         --inspect) INSPECT=1 ;;
@@ -57,6 +59,7 @@ for arg in "$@"; do
         --provision) PROVISION=1 ;;
         --focus) FOCUS=1 ;;
         --install-desktop) INSTALL_DESKTOP=1 ;;
+        --reset-store) RESET_STORE=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -121,6 +124,17 @@ if [ "$PROVISION" = 1 ]; then
         exit 2
     fi
     exec cargo run --release -p postio-session --bin postio-provision
+fi
+
+# A scratch store an earlier build wrote at a schema this one cannot carry
+# forward: set it aside (state/data/postio/set-aside/<when>/, not deleted)
+# and start a fresh one with the accounts carried across. config.toml and the
+# keyring are untouched; the next run syncs the mail again. `postio-store
+# status` says first whether this is needed -- a store a migration reaches
+# is carried forward on open, and needs nothing.
+if [ "$RESET_STORE" = 1 ]; then
+    cargo run --release -p postio-session --bin postio-store -- status
+    exec cargo run --release -p postio-session --bin postio-store -- reset
 fi
 
 # Postio Focus (spec 007) is a second app on the same store: the same
