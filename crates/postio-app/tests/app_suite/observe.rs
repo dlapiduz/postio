@@ -125,6 +125,11 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert!(!seen.keyboard.typing);
         assert_eq!(seen.cursor.index, Some(1));
         assert!(seen.cursor.id.is_some());
+        assert_eq!(
+            seen.scope.as_deref(),
+            Some("Inbox"),
+            "the scope is the folder the list header names"
+        );
         assert_eq!(seen.overlay.kind, Overlay::None);
         assert_eq!(seen.back_depth, None, "Classic has no back stack");
         assert!(
@@ -160,5 +165,10 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         // default: the row that took the archived one's place is open in it.
         assert_eq!(seen.view, View::Conversation, "{seen:#?}");
         assert!(seen.reading.id.is_some(), "the pane names what it shows");
+
+        // The store-locked screen replaces the shell: the view says so.
+        postio_app::demo::show_locked(&window);
+        while glib::MainContext::default().iteration(false) {}
+        assert_eq!(window.observe().view, View::Locked);
     });
 }
