@@ -34,12 +34,17 @@ import Testing
         ("archive_thread", "", "A"),
         ("compose", "⌘N", "c"),
         ("search", "⌥⌘F", "/"),
-        ("next_in_conversation", "⌥↓", "J"),
-        ("prev_in_conversation", "⌥↑", "K"),
+        // `]` and `[` since the one keymap every app shares
+        // (specs/007-postio-focus contracts/keymap.md); `J`/`K` extend the
+        // list's selection.
+        ("next_in_conversation", "⌥↓", "]"),
+        ("prev_in_conversation", "⌥↑", "["),
         ("next_message", "↓", "j"),
         ("prev_message", "↑", "k"),
         ("expand_all", "⇧⌘E", "O"),
-        ("undo", "⌘Z", "u"),
+        // No mnemonic: the one keymap made `mod+z` Undo's only key, the
+        // undo every other application has taught.
+        ("undo", "⌘Z", ""),
         ("settings", "⌘,", ""),
     ]
 
