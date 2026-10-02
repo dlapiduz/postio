@@ -81,24 +81,24 @@ blake3 in the header and `bundle` to the tree key and base above.
   "reviewer": { "agent": "ux-reviewer", "model": "…", "template": "<blake3>" },
   "verdicts": [
     {
-      "storyboard": "archive-walks-down",
-      "step": "archive",
+      "storyboard": "reply-from-the-reader",
+      "step": "reply",
       "app": "classic",
       "variant": "default",
-      "frame": "runs/classic/archive-walks-down/default/02.outlined.png",
+      "frame": "runs/classic/reply-from-the-reader/default/02.outlined.png",
       "verdict": "fail",
       "severity": "wrong",
-      "says": "After archiving, the list scrolls back to the top and the cursor lands on the first row, so the next `a` archives a message the person never looked at.",
-      "rule": "ux-architect §2 — a verb leaves the person where they were"
+      "says": "The reply opens with the keyboard in the To field, which is already filled in, so the first thing typed goes into the address instead of the message.",
+      "rule": "ux-architect -- focus lands where the person will type next"
     }
   ],
   "findings": [
     {
-      "storyboard": "archive-walks-down",
-      "step": "archive",
+      "storyboard": "reply-from-the-reader",
+      "step": "reply",
       "app": "classic",
       "variant": "scheme=dark",
-      "frame": "runs/classic/archive-walks-down/scheme=dark/02.outlined.png",
+      "frame": "runs/classic/reply-from-the-reader/scheme=dark/02.outlined.png",
       "severity": "polish",
       "says": "The undo toast's button has less contrast than the canvas's.",
       "rule": "canvas 07-dark"
