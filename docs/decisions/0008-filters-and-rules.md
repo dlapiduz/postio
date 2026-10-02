@@ -1,15 +1,15 @@
 # ADR 0008 — Filters and rules: one language, two evaluators
 
-- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14 — the rules
-  engine designed here is not on `main`, see the note under the built table
+- **Status:** Accepted (2026-08-24). Saved searches and `header:` are
+  built, and so is the matcher for the part of the language digest rules use
+  (spec 007); the rules engine itself is on `feature/rules`, not on `main`
 - **Date:** 2026-08-24
 - **Issue:** [#5 Filters and rules engine](https://github.com/dlapiduz/postio/issues/5)
 - **Related:** `docs/ARCHITECTURE.md` §6 (one matching language), §4 (selection
   is a predicate), [ADR 0005](0005-multiple-accounts.md)
 - **Decision:** the query language stays the only way to say *which messages*,
   and gains a **second evaluator** — an in-memory matcher in `postio-search`
-  beside the SQL executor in `postio-index` (FTS5 then, `USING fts` now),
-  held to agreement by a
+  beside the SQL executor in `postio-index`, held to agreement by a
   differential test. Rules live in a new **ordered `[[rules]]` array**, not in
   `[filters]`, because a map has no order and the issue requires one. A rule
   fires **when every fact it needs exists**, which is not always on arrival.
@@ -22,22 +22,13 @@
 |---|---|
 | Query parser, `Field`, `Filter`, `Clause`, `ParsedQuery` | Built (`postio-search`) |
 | Negation with a leading `-`, on operators and free text | Built |
-| Execution of a parsed query as SQL plus a full-text `MATCH` (FTS5 when measured; `USING fts` now) | Built (`postio-index/src/executor.rs`) |
-| `[filters.<name>] { query, pinned }` | Built (`config/src/filters.rs`), **no runtime reads it** |
+| Execution of a parsed query as SQL plus a full-text match over a `USING fts` index | Built (`postio-index/src/executor.rs`) |
+| `[filters.<name>] { query, pinned }` | Built (`config/src/filters.rs`): pinned entries are saved searches, on `alt+1`–`alt+4` and in the command bar |
 | `postio-config` deliberately keeping the query as *text* | Built, and the idiom this ADR extends |
-| Sidebar rendering of pinned filters | Built since — a pinned `[filters]` entry is a saved-search row in the sidebar (`crates/postio-gtk/src/config.rs`, `sidebar.rs`) |
-| Any rules engine | Absent — still, on `main`; see the note below |
-| `OR` in the query language | **Absent** — tokens are implicitly ANDed; still true on `main` |
-| `body:` and `header:` operators | `header:` built since (`Field::Header`, ADR 0025; `Filter::Header` in `crates/postio-index/src/executor.rs`). `body:` is not an operator: free text reaches bodies through `messages_body_fts` over `message_search_bodies` |
-
-> **Status 2026-09-14:** the rules engine this ADR designs — the matcher,
-> `OR`, `postio-model::rule`, `[[rules]]` in `postio-config`, the rules pass
-> in sync — is not on `main`. The work exists on the unmerged
-> `origin/feature/rules` branch;
-> [ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md) and
-> [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md) extend the
-> design and are in the same position. What did land is the language growth
-> the search bar needed on its own: `header:`, by ADR 0025.
+| The matcher (Q1), for `from:`, `to:`, `subject:`, `filename:` and `list:`, each possibly negated | Built (`postio_search::matcher`) for spec 007's digest rules, held equal to the executor by `postio-index`'s `digest_matcher` differential test |
+| The rules engine: `[[rules]]`, `postio-model::rule`, the rules pass in sync | On `feature/rules`, not on `main`; [ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md) and [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md) extend it there |
+| `OR` in the query language | Not built: tokens are implicitly ANDed. A digest rule for several senders is a list of queries, any of which holds |
+| `body:` and `header:` operators | `header:` built (`Field::Header`, ADR 0025). `body:` is not an operator: free text reaches bodies through the body index |
 
 ---
 
@@ -46,7 +37,7 @@
 This is the question the issue does not ask and everything else depends on.
 
 `postio-index` executes a `ParsedQuery` by compiling it to SQL and a full-text
-`MATCH` (FTS5's then; a `USING fts` index's now). A rule on arrival has no row
+match. A rule on arrival has no row
 to run SQL against — the sync pass is
 holding a `Message` it has just parsed and is deciding what to do with it
 before it is committed anywhere a query could see.
@@ -55,8 +46,8 @@ So there are two evaluators, and this is a decision rather than an accident:
 
 | | Runs | Input | Lives in |
 |---|---|---|---|
-| Executor | search bar, sidebar filters, dry-run | the database | `postio-index` |
-| **Matcher** | rules, on arrival | one `Message` in memory | **`postio-search`** |
+| Executor | search bar, saved searches, dry-run | the database | `postio-index` |
+| **Matcher** | rules and digest rules, on arrival | one `Message` in memory | **`postio-search`** |
 
 `postio-search` is pure — `postio-model` and `chrono`, no SQL, no toolkit — and
 a matcher is exactly that shape: `ParsedQuery` in, `&Message` in, `bool` out.
@@ -69,7 +60,9 @@ that disagree is the worst outcome available here — worse than not having
 rules — because a dry-run would show one answer and the rule would do another.
 So: index the whole corpus, run every query in a fixture list through both
 paths, and assert the result sets are identical. That test is the reason this
-design is safe, and it is the first thing to write.
+design is safe. It is `postio-index`'s `digest_matcher`, and where the
+executor has a bug (`from:` also matching recipients, #1699) the matcher
+repeats it on purpose, so a fix changes both in one commit.
 
 ---
 
@@ -78,15 +71,15 @@ design is safe, and it is the first thing to write.
 Rules need conditions the search bar does not have yet. Each one is added to
 *the* language, never to a rules-only dialect.
 
-| Needed | Today | Add |
-|---|---|---|
-| `from`, `to`, `subject`, `list`, `has:attach`, `is:`, size, date | present | — |
-| **`header:`** arbitrary header match | absent | `header:x-mailer=…`, one `Field` row |
-| **`body:`** | absent | one `Field` row; see Q3 for what it costs |
-| **`or`** | **absent** — tokens are implicitly ANDed | see below |
-| `not` | present as `-` | — |
+| Needed | State |
+|---|---|
+| `from`, `to`, `subject`, `list`, `has:attach`, `is:`, size, date | present |
+| **`header:`** arbitrary header match (`header:x-mailer=…`) | present (ADR 0025) |
+| **`body:`** | one `Field` row when rules need it; see Q3 for what it costs |
+| **`or`** | not built — see below |
+| `not` | present as `-` |
 
-**`OR` is the one that is not one row.** Today `ParsedQuery` is a flat
+**`OR` is the one that is not one row.** `ParsedQuery` is a flat
 `Vec<Token>` conjoined implicitly, and `Clause` carries a `negated` flag. That
 is the right shape for a search bar rendering chips, and it cannot express
 `from:ada OR from:grace`.
@@ -95,8 +88,8 @@ Decision: **add `OR` as an explicit infix keyword with `AND` binding tighter,
 and parentheses for grouping** — `from:ada OR (from:grace has:attach)`. The
 flat token vector stays the *lexical* form (the chips do not change), and
 `ParsedQuery` gains a derived boolean tree that both evaluators consume. A
-query with no `OR` produces a tree identical in meaning to today's conjunction,
-so nothing that works now changes.
+query with no `OR` produces a tree identical in meaning to the conjunction,
+so nothing that works without it changes.
 
 This is worth doing carefully and worth doing once. `ARCHITECTURE.md` §6's
 whole claim is that the same string means the same thing in the search bar, the
@@ -131,12 +124,10 @@ A parsed query's fact requirement is computable from its fields —
   settings panel's validity line, which `postio-config` already has for
   `rejected_secrets`.
 
-> **Extended by [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md)
-> (2026-09-06).** The derivation above reads the *query* only, which was the
-> whole question while every action was a local mutation. `forward:` needs a
-> body to *carry out*, so a stage is now the later of what the query needs and
-> what the actions need, and a rule stages as a whole — its actions never split
-> across the two points.
+**A stage is the later of what the query needs and what the actions need**
+([ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md)): `forward:`
+needs a body to carry out, and a rule stages as a whole — its actions never
+split across the two points.
 
 ---
 
@@ -166,18 +157,17 @@ enabled = false              # dry-run it first
 ```
 
 And **`[filters]` keeps its existing job**: named saved queries, `pinned = true`
-putting one in the sidebar. That is a *view*, not a rule, and conflating them
-would mean every sidebar shortcut had to think about actions and ordering.
+making one a saved search the app offers on a key. That is a *view*, not a rule, and conflating them
+would mean every saved search had to think about actions and ordering.
 A rule may name a filter (`filter = "needs-reply"`) so a query the user already
 tuned is not written twice.
 
-This supersedes the fourth row of `ARCHITECTURE.md` §6's table, which reads
-"a filter / rule — a saved search plus actions". The relationship is right; the
-spelling is `[[rules]]` referencing `[filters]`, not `[filters]` growing an
-`actions` key.
+A rule is a saved search plus actions, spelled `[[rules]]` referencing
+`[filters]` (`ARCHITECTURE.md` §6), not `[filters]` growing an `actions`
+key.
 
-**Config keeps everything as text.** `postio-config` does not parse the query
-today, on purpose, and it does not parse the action either — `"move:Receipts"`
+**Config keeps everything as text.** `postio-config` does not parse the query,
+on purpose, and it does not parse the action either — `"move:Receipts"`
 is a string to it. `postio-model::rule` parses both into typed forms. That is
 what keeps `postio-config`'s dependency list at four crates and none of them
 domain.
@@ -207,6 +197,9 @@ archive          trash          forward:<address>          stop
   - it never forwards a message that a rule already forwarded (a Postio-set
     header, checked on arrival);
   - it refuses a target that is an address of any configured account;
+    the target is a literal, never interpolated from the message, so nothing
+    a sender controls can choose where mail goes
+    ([ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md) Q2);
   - it is rate-capped per hour, and hitting the cap raises `Attention` rather
     than dropping the mail.
   A forwarded message appears in Sent like any other, because the send goes
@@ -217,26 +210,15 @@ archive          trash          forward:<address>          stop
   a forward of nothing, and it waits for the backfill lane rather than
   fetching for itself.
 
-> **Restated by [ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md)
-> (2026-09-04), because #481 transcribed the second guard inverted.** The guard
-> above is the one that stands: a target anywhere *except* an address of a
-> configured account. #481's body has it the other way round — own accounts
-> only — and that is corrected rather than honoured. ADR 0028 Q2 adds the
-> sentence that makes the exfiltration worry it was aimed at go away: **the
-> target is a literal**, never interpolated from the message, so nothing a
-> sender controls can choose where mail goes. Guards one and three are loop and
-> volume guards and not security guards; reading them as security guards is how
-> they get either weakened carelessly or defended past their purpose.
->
-> The last paragraph of this Q — *"there is no rules-only mutation path"* — is
-> also load-bearing and was read as reassurance. ADR 0028 Q1 is what makes it
-> true: the mutating half of the verbs moves into `postio-storage`, and the
-> rules pass and the command bus call the same implementation.
+Guards one and three are loop and volume guards, not security guards; the
+literal target is what answers exfiltration.
 
 **Every action is local-first, exactly like a keystroke** (`ARCHITECTURE.md`
 §1): a store write, enqueue the remote operation, emit the event. There is no
 rules-only mutation path, which means rules inherit offline behaviour,
-reconciliation and event flow for free.
+reconciliation and event flow for free. ADR 0028 Q1 is what makes it true:
+the rules pass and the command bus call the same implementation in
+`postio-storage`.
 
 ---
 
@@ -272,8 +254,8 @@ Both fall out of Q1, which is the payoff for having one language.
   the set and then applies the actions to it.
 - **It is one undo unit.** `Selection::Everything { except }` means applying a
   rule to a 100k mailbox is a predicate the store resolves, not 100k ids the
-  frontend built (§4), and the `UndoStack` coalescing that already makes twelve
-  archives one `u` makes this one `u` too. A bulk rule application that could
+  frontend built (§4), and the `UndoStack` coalescing that makes twelve
+  archives one undo makes this one undo too. A bulk rule application that could
   not be undone would be the most destructive command in the application.
 
 ---
@@ -303,14 +285,11 @@ impossible: "from any of these three people".
 
 ## Consequences
 
-- `postio-search` gains a boolean tree, `OR`, `header:`, `body:`, and a
-  matcher. It stays pure.
+- `postio-search` gains a boolean tree, `OR` and `body:`, beside `header:`
+  and the matcher. It stays pure.
 - `postio-model` gains `rule` — the typed action vocabulary.
 - `postio-config` gains `[[rules]]` and one validation note; its dependency
   list does not change.
 - `postio-sync` gains a rules pass in `initial` and `resync`, beside the
   contacts pass that already runs there and for the same reason.
-- `ARCHITECTURE.md` §6's table row for filters/rules needs updating to
-  `[[rules]]`.
-- The differential test between the two evaluators is the gate on all of it,
-  and belongs in CI from the first commit rather than at the end.
+- The differential test between the two evaluators is the gate on all of it.
