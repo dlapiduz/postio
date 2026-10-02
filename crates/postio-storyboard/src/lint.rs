@@ -117,7 +117,12 @@ pub fn lint(storyboard: &Storyboard) -> Vec<LintError> {
 
     match &storyboard.source {
         None => errors.push(LintError::MissingSource),
-        Some(source) if source.kind == SourceKind::Issue && storyboard.proof.is_none() => {
+        // Calibration tests the reviewer, not a defect: no red to prove.
+        Some(source)
+            if source.kind == SourceKind::Issue
+                && storyboard.proof.is_none()
+                && storyboard.calibration.is_none() =>
+        {
             errors.push(LintError::MissingProof);
         }
         Some(_) => {}
@@ -403,6 +408,14 @@ mod tests {
     #[test]
     fn a_missing_source_is_an_error() {
         assert!(lint_text("seed = \"small\"\n").contains(&LintError::MissingSource));
+    }
+
+    #[test]
+    fn a_calibration_storyboard_needs_no_proof() {
+        // Calibration tests the reviewer, not a defect: there is no red to
+        // prove, so `proof` does not apply.
+        let text = "source = { kind = \"issue\", ref = \"#1\" }\ncalibration = \"must_fail\"\n";
+        assert_eq!(lint_at(text, "calibration/cal-walk.toml"), vec![]);
     }
 
     #[test]

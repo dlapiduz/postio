@@ -163,6 +163,12 @@ def main() -> int:
         expect("calibration", "escape-leaves-search.toml" in call, call)
         expect("calibration", "calibration/" not in call and "gaps/" not in call, call)
 
+        print("case: --calibration plays only the calibration set")
+        run(ctx, "run", "--app", "classic", "--calibration")
+        call = next((l for l in log_lines(ctx) if l.startswith("runner run")), "")
+        expect("calibration-only", "calibration/archive-returns-to-top.toml" in call, call)
+        expect("calibration-only", "list/" not in call and "search/" not in call, call)
+
         print("case: exit codes pass through as 0, 1, 2")
         for code in ("1", "2"):
             result = run(ctx, "run", "--app", "classic", RUNNER_EXIT=code)

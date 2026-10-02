@@ -484,7 +484,7 @@ US2; quickstart § 5).
   git tree ids, in sorted order. Then add `scripts/storyboards.sh key`, which
   computes the trees per research R13 (`git rev-parse HEAD:<crate>` for the
   app's crates, plus `HEAD:storyboards`).
-- [ ] T058 [P] [US2] Write `.claude/agents/ux-reviewer.md`: model `opus`;
+- [X] T058 [P] [US2] Write `.claude/agents/ux-reviewer.md`: model `opus`;
   tools Read, Glob, Grep and Write. Its body says that its whole instruction
   is the prompt it is given, and that it writes only `verdicts.json` in the
   bundle.

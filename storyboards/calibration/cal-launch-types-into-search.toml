@@ -1,0 +1,6 @@
+# must_fail: #1473 stated as the intent. `j` really moves the list cursor.
+source      = { kind = "issue", ref = "#1473" }
+calibration = "must_fail"
+[[step]]
+key    = "j"
+expect = "The letter j appears in the search field at the top, and the list cursor does not move."
