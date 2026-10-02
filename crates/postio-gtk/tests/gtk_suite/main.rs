@@ -184,6 +184,8 @@ mod gtk_window_open_message;
 mod gtk_window_run_search;
 mod gtk_window_state;
 mod gtk_window_teardown;
+mod storyboard_chain_delivery;
+mod storyboard_support;
 mod list_contract;
 mod list_model;
 mod no_stray_prints;
@@ -232,6 +234,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text",
         gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list",
+        storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it",
+        storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered",
+        storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered as fn(),
     ),
     (
         "body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once",
