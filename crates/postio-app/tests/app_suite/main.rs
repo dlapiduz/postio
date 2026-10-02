@@ -97,6 +97,7 @@ mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
 mod store_in_use_window;
+mod storyboard_catalogue;
 mod storyboard_determinism;
 mod storyboards;
 mod sync_window;
@@ -342,8 +343,8 @@ const CASES: &[(&str, fn())] = &[
         storyboard_determinism::two_processes_film_a_storyboard_identically as fn(),
     ),
     (
-        "storyboards::the_catalogue_holds_on_classic",
-        storyboards::the_catalogue_holds_on_classic as fn(),
+        "storyboard_catalogue::the_catalogue_holds_on_classic",
+        storyboard_catalogue::the_catalogue_holds_on_classic as fn(),
     ),
     (
         "storyboards::a_storyboard_plays_on_classic_and_writes_its_run",

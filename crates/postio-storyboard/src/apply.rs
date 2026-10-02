@@ -199,7 +199,10 @@ pub fn default_variant(
             ignored.push(axis.clone());
             continue;
         };
-        if supported.first().is_some_and(|default| asked.contains(default)) {
+        if supported
+            .first()
+            .is_some_and(|default| asked.contains(default))
+        {
             continue;
         }
         match asked.iter().find(|value| supported.contains(value)) {

@@ -1411,7 +1411,10 @@ mod tests {
             one_line("Invoice attached\r\nBcc: someone\u{2028}end\tok"),
             "Invoice attached Bcc: someone end ok"
         );
-        assert!(matches!(one_line("plain"), std::borrow::Cow::Borrowed("plain")));
+        assert!(matches!(
+            one_line("plain"),
+            std::borrow::Cow::Borrowed("plain")
+        ));
     }
 
     #[test]

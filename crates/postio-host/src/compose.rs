@@ -53,9 +53,7 @@ pub async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::
 /// Discard: the local row goes now, and the server copy is queued for removal.
 pub async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection)
-        .discard(id, now())
-        .await?;
+    DraftRepository::new(&connection).discard(id, now()).await?;
     Ok(())
 }
 

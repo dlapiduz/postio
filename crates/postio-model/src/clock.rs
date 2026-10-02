@@ -62,9 +62,9 @@ pub fn thaw() {
 
 #[cfg(test)]
 mod tests {
+    use super::TURN;
     use super::*;
     use chrono::{Duration, TimeZone};
-    use super::TURN;
 
     #[test]
     fn unfrozen_it_is_the_system_clock() {
