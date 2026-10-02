@@ -10,6 +10,11 @@
 //! first (screen 08). A half-typed operator is a partial, never an error:
 //! the bar draws no error at all.
 //!
+//! A result set can be switched between relevance and date: a row says which
+//! it is in, and `O` (`ToggleResultOrder`) switches it once an arrow has
+//! chosen a row -- before that, typing wins and `O` is a letter, so it never
+//! collides with the open message's `O` (`SwitchTreatment`, Reader context).
+//!
 //! Everything here is local. Nothing typed leaves the machine.
 
 use std::cell::{Cell, RefCell};
@@ -68,6 +73,11 @@ enum Row {
     Place(Destination, String),
     /// "Search mail for …": the results are already the search's.
     Search,
+    /// "Search instead for “word”": the word typed, which found nothing and
+    /// was answered with another (ADR 0037); runs it quoted, exactly.
+    Instead(String),
+    /// The order the results are in, and what running it switches to.
+    Order,
 }
 
 /// What a run of the bar asks for.
@@ -119,13 +129,23 @@ pub struct Bar {
     editing: Cell<Option<usize>>,
     /// The chips shown now, in order.
     shown_chips: RefCell<Vec<String>>,
+    /// Which order a search's results come back in; kept across queries
+    /// while the bar is up, and relevance each time it opens.
+    order: Cell<postio_search::ResultOrder>,
+    /// Whether the arrows have chosen a row since the rows were last drawn:
+    /// what lets `O` mean "switch the order" rather than the letter, which
+    /// typing always wins.
+    stepped: Cell<bool>,
 }
 
 impl Bar {
     /// The commands the bar has a control for beyond its command rows: a
     /// pill for each saved search, and a row for each message found.
     pub fn controls() -> Vec<CommandId> {
-        SAVED.into_iter().chain([CommandId::OpenMessage]).collect()
+        SAVED
+            .into_iter()
+            .chain([CommandId::OpenMessage, CommandId::ToggleResultOrder])
+            .collect()
     }
 
     /// A closed bar, reading through `client`, its keys from `keymap`.
@@ -231,6 +251,8 @@ impl Bar {
             words: RefCell::default(),
             editing: Cell::new(None),
             shown_chips: RefCell::default(),
+            order: Cell::default(),
+            stepped: Cell::new(false),
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
@@ -387,6 +409,7 @@ impl Bar {
         self.places_known.set(false);
         self.words.replace(None);
         self.editing.set(None);
+        self.order.set(postio_search::ResultOrder::Relevance);
         self.over.set_visible(true);
         self.show_field(false);
         self.entry.set_text("");
@@ -444,9 +467,33 @@ impl Bar {
             gtk::gdk::Key::Down => self.step(1),
             gtk::gdk::Key::Up => self.step(-1),
             gtk::gdk::Key::Tab if state.is_empty() => return self.next_chip(),
+            // Typing wins: with no result chosen, the order key is a letter
+            // for the entry. Once an arrow has chosen one, it is the key.
+            _ if self.stepped.get() && self.is_order_key(key, state) => self.toggle_order(),
             _ => return false,
         }
         true
+    }
+
+    /// Whether `key` is the keymap's key for switching the results' order.
+    fn is_order_key(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
+        let keymap = self.keymap.borrow();
+        let Some(bound) = keymap
+            .binding(CommandId::ToggleResultOrder)
+            .and_then(|binding| binding.parse::<postio_ui::keymap::Chord>().ok())
+        else {
+            return false;
+        };
+        postio_widgets::keys::chord(key, state) == Some(bound)
+    }
+
+    /// Switch the results between relevance and date, and ask again.
+    fn toggle_order(&self) {
+        self.order.set(match self.order.get() {
+            postio_search::ResultOrder::Relevance => postio_search::ResultOrder::Newest,
+            postio_search::ResultOrder::Newest => postio_search::ResultOrder::Relevance,
+        });
+        self.search_typed();
     }
 
     /// The bar's input, where the words are typed.
@@ -764,13 +811,14 @@ impl Bar {
         let current = Rc::clone(&self.generation);
         let folders = Rc::clone(&self.folders);
         let digesting = self.digesting.get();
+        let order = self.order.get();
         let weak = self.self_weak();
         glib::spawn_future_local(async move {
             let search = client.search_hits(
                 AccountScope::Unified,
                 parsed,
                 postio_search::facets::Scope::AllMail,
-                postio_search::ResultOrder::Relevance,
+                order,
                 0,
             );
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
@@ -807,6 +855,31 @@ impl Bar {
                 if rows.len() == 1 { "" } else { "es" }
             ));
             bar.heading.set_visible(true);
+            // The list is for another word than the box holds, and says so
+            // (ADR 0037); the typed word is one row away, quoted, which is
+            // how the query language says "this word, exactly".
+            if let Some(instead) = &results.instead {
+                bar.append_heading(&format!("Showing results for {}", instead.term));
+                bar.append_row(
+                    Row::Instead(instead.typed.clone()),
+                    &format!("Search instead for \u{201c}{}\u{201d}", instead.typed),
+                    Some("exactly as typed"),
+                    None,
+                );
+            }
+            if !rows.is_empty() {
+                let (now, other) = match order {
+                    postio_search::ResultOrder::Relevance => ("relevance", "date"),
+                    postio_search::ResultOrder::Newest => ("date", "relevance"),
+                };
+                let key = postio_ui::hints::key(&bar.keymap.borrow(), CommandId::ToggleResultOrder);
+                bar.append_row(
+                    Row::Order,
+                    &format!("Sorted by {now}"),
+                    Some(&format!("switch to {other}")),
+                    key.as_deref(),
+                );
+            }
             // Held mail says where it waits, not the folder it is filed in.
             let held = if digesting {
                 let ids = rows.iter().map(|hit| hit.message_id).collect();
@@ -1000,6 +1073,7 @@ impl Bar {
     }
 
     fn clear_rows(&self) {
+        self.stepped.set(false);
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
@@ -1119,6 +1193,7 @@ impl Bar {
         }
         if let Some(row) = self.list.row_at_index(at) {
             self.list.select_row(Some(&row));
+            self.stepped.set(true);
         }
     }
 
@@ -1139,6 +1214,15 @@ impl Bar {
             Row::Heading => return,
             Row::Search => {
                 self.search_typed();
+                return;
+            }
+            Row::Instead(typed) => {
+                self.set_text(&format!("\"{typed}\""));
+                self.search_typed();
+                return;
+            }
+            Row::Order => {
+                self.toggle_order();
                 return;
             }
             Row::Message { message, subject } => BarAction::Open { message, subject },

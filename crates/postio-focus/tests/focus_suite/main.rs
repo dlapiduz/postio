@@ -384,6 +384,14 @@ const CASES: &[(&str, fn())] = &[
         bar::tab_steps_into_the_chips_and_ctrl_s_saves_the_query as fn(),
     ),
     (
+        "bar::a_misspelled_word_says_what_it_found_and_offers_the_typed_one",
+        bar::a_misspelled_word_says_what_it_found_and_offers_the_typed_one as fn(),
+    ),
+    (
+        "bar::o_reorders_the_results_once_a_row_is_chosen",
+        bar::o_reorders_the_results_once_a_row_is_chosen as fn(),
+    ),
+    (
         "state::a_failing_account_is_named_and_the_others_mail_stays_listed",
         state::a_failing_account_is_named_and_the_others_mail_stays_listed as fn(),
     ),

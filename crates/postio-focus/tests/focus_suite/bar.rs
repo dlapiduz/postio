@@ -604,3 +604,159 @@ pub fn the_bar_opens_in_the_top_bars_field() {
         );
     });
 }
+
+/// T241, ADR 0037: a word that found nothing lists the mail for the word
+/// that was meant, and the bar says so, with a row that searches for the
+/// typed word exactly. Ported from the classic app's `search_instead`.
+pub fn a_misspelled_word_says_what_it_found_and_offers_the_typed_one() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Quarterly planning",
+                "Numbers.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        type_in(&bar, "qarterly").await;
+        bar.run_search();
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Quarterly planning"]).await,
+            "the word that was meant was not searched: {:?}",
+            bar.result_subjects()
+        );
+        let said = bar.texts();
+        assert!(
+            said.iter()
+                .any(|line| line == "Showing results for quarterly"),
+            "the bar did not say which word it searched: {said:?}"
+        );
+        let offer = "Search instead for \u{201c}qarterly\u{201d}";
+        assert!(
+            said.iter().any(|line| line == offer),
+            "no row offers the typed word: {said:?}"
+        );
+        support::click_row_saying(&window, bar.widget(), offer);
+        assert_eq!(
+            bar.typed(),
+            "\"qarterly\"",
+            "the typed word is asked for exactly: quoted, which is never rewritten"
+        );
+        assert!(
+            crate::settle_until(async || {
+                let said = bar.texts();
+                bar.result_subjects().is_empty()
+                    && !said
+                        .iter()
+                        .any(|line| line.starts_with("Showing results for"))
+            })
+            .await,
+            "the exact word still lists the rewritten mail: {:?}",
+            bar.texts()
+        );
+    });
+}
+
+/// T241: `O` switches results between relevance and date, once a result is
+/// under the arrows; before that it is a capital O being typed, and a row
+/// says the same to a mouse.
+pub fn o_reorders_the_results_once_a_row_is_chosen() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        // The ranker's two properties (postio-ffi `disagreeing`): twenty
+        // messages that do not match, and hours rather than days between
+        // the two that do.
+        for at in 0..20 {
+            fixture
+                .file(
+                    ("Ada Moreno", "ada@example.com"),
+                    &format!("Entirely unrelated {at}"),
+                    "Nothing here.",
+                    2000 + at,
+                )
+                .await;
+        }
+        let (dense, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Report", "Report.", 600)
+            .await;
+        fixture
+            .write_body(dense, "report report report report report")
+            .await;
+        let (glancing, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "One report",
+                "One report among other things.",
+                300,
+            )
+            .await;
+        fixture
+            .write_body(glancing, "One report among other things entirely")
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        let _ = crate::settle_until(async || support::subjects(&window).len() >= 20).await;
+        let bar = open_bar(&window);
+        type_in(&bar, "report").await;
+        bar.run_search();
+        let relevance = vec!["Report".to_owned(), "One report".to_owned()];
+        let by_date = vec!["One report".to_owned(), "Report".to_owned()];
+        assert!(
+            crate::settle_until(async || bar.result_subjects().len() == 2).await,
+            "no results: {:?}",
+            bar.result_subjects()
+        );
+        let first = bar.result_subjects();
+        assert_eq!(first, relevance, "relevance puts the denser match first");
+        // Typing wins: `O` before any row is chosen is a letter, left for
+        // the entry to take, and it reorders nothing.
+        assert!(
+            !support::deliver(&window, "O"),
+            "O was claimed while nothing was chosen: it is a letter then"
+        );
+        assert_eq!(bar.result_subjects(), first, "a typed O reordered the rows");
+        let before = bar.result_subjects();
+        support::press(&window, "Down", gtk::gdk::ModifierType::empty());
+        assert!(
+            support::deliver(&window, "O"),
+            "O was not taken with a result chosen"
+        );
+        assert!(
+            crate::settle_until(async || {
+                let now = bar.result_subjects();
+                now.len() == 2 && now != before
+            })
+            .await,
+            "O did not reorder the rows: {:?}",
+            bar.result_subjects()
+        );
+        assert_eq!(bar.typed(), "report", "O was typed as well");
+        assert_eq!(bar.result_subjects(), by_date, "newest first");
+        assert!(
+            bar.texts().iter().any(|line| line == "Sorted by date"),
+            "the bar does not say its order: {:?}",
+            bar.texts()
+        );
+        // The mouse has the same switch: the row that says the order.
+        support::click_row_saying(&window, bar.widget(), "Sorted by date");
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == relevance).await,
+            "the order row did not switch back: {:?}",
+            bar.result_subjects()
+        );
+    });
+}
