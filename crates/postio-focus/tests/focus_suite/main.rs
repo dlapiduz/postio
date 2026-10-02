@@ -24,20 +24,8 @@
 
 mod a11y;
 mod a11y_sweep;
-mod add_account_running;
-mod compose_detach;
-mod list_reload;
-mod store_opening;
-mod unsubscribe;
-mod window_teardown;
 mod across_apps;
-mod startup_repair;
-mod startup_reads;
-mod startup_behind_the_window;
-mod notify_off_the_main_thread;
-mod idle_passes;
-mod e2e;
-mod compose_counts;
+mod add_account_running;
 mod bar;
 mod buttons;
 mod capture;
@@ -46,6 +34,8 @@ mod close_buttons;
 mod colours;
 mod commands;
 mod compose;
+mod compose_counts;
+mod compose_detach;
 mod compose_layout;
 mod corrections;
 mod cursor;
@@ -54,19 +44,23 @@ mod digest;
 mod digest_summary;
 mod drafts;
 mod drag_out;
+mod e2e;
 mod empty;
 mod filtered;
 mod first_run;
 mod harness;
-mod hostile_mail;
 mod has_action;
+mod hostile_mail;
 mod icon_buttons;
+mod idle_passes;
 mod invitations;
 mod keymap;
 mod list_contract;
+mod list_reload;
 mod marked_rows;
 mod marker_card;
 mod motion;
+mod notify_off_the_main_thread;
 mod offline_send;
 mod one_composer;
 mod one_keymap;
@@ -97,18 +91,24 @@ mod settings;
 mod settings_wiring;
 mod shot;
 mod starts_offline;
+mod startup_behind_the_window;
+mod startup_reads;
+mod startup_repair;
 mod startup_timeline;
 mod state;
 mod store_in_use;
+mod store_opening;
 mod store_unavailable;
 mod support;
 mod surfaced;
 mod treatments;
 mod undo;
+mod unsubscribe;
 mod view_source;
 mod visible_window;
 mod window_controls;
 mod window_state;
+mod window_teardown;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
 /// `#[ignore]`, which means one thing here: this machine may not have what
@@ -120,20 +120,10 @@ const IGNORED: &[&str] = &[
     // `TWO_LINES`), so at 200% text they stay the same height while the type
     // grows into them. The classic list's rows grew with the type.
     "a11y_sweep::at_200_percent_text_rows_grow_with_the_type",
-    // GAP: Focus's open message never calls `Reader::set_unsubscribe` and
-    // `act` has no arm for `CommandId::Unsubscribe`, so the reader's notice is
-    // never offered and `U` there is unanswered; only a digest answers it.
-    "unsubscribe::the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lists_it",
     // GAP: a mounted composer is not freed with its window: suspected cycle
     // between `Composer` and the `DialogHost` it is mounted on (the host owns
     // the dialog that holds the composer).
     "window_teardown::a_destroyed_window_releases_its_composer",
-    // GAP: an account with no credential in the keyring syncs into a
-    // "<name> can't sync" banner whose only button is "Retry now", not the
-    // sign-in banner's "Update password...": retrying cannot help, and the
-    // repair is reachable only through Settings. Held out until the banner
-    // offers the credential form for a missing credential.
-    "startup_repair::an_account_with_no_credential_offers_the_repair",
 ];
 
 const CASES: &[(&str, fn())] = &[
@@ -159,7 +149,8 @@ const CASES: &[(&str, fn())] = &[
     ),
     (
         "notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread",
-        notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread as fn(),
+        notify_off_the_main_thread::a_new_mail_notification_reads_nothing_on_the_main_thread
+            as fn(),
     ),
     (
         "startup_behind_the_window::the_store_opens_behind_a_window_that_is_already_up",
@@ -224,7 +215,8 @@ const CASES: &[(&str, fn())] = &[
     ),
     (
         "visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages",
-        visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages as fn(),
+        visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages
+            as fn(),
     ),
     (
         "list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
@@ -236,7 +228,8 @@ const CASES: &[(&str, fn())] = &[
     ),
     (
         "add_account_running::the_add_account_key_opens_a_blank_form_over_the_running_window",
-        add_account_running::the_add_account_key_opens_a_blank_form_over_the_running_window as fn(),
+        add_account_running::the_add_account_key_opens_a_blank_form_over_the_running_window
+            as fn(),
     ),
     (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus",
@@ -248,7 +241,8 @@ const CASES: &[(&str, fn())] = &[
     ),
     (
         "compose_detach::the_window_warms_its_editing_surface_without_being_asked_to_compose",
-        compose_detach::the_window_warms_its_editing_surface_without_being_asked_to_compose as fn(),
+        compose_detach::the_window_warms_its_editing_surface_without_being_asked_to_compose
+            as fn(),
     ),
     (
         "compose_detach::a_warm_ask_made_before_the_composer_is_mounted_still_warms_it",

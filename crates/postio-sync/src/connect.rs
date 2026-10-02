@@ -344,7 +344,7 @@ impl Supervisor {
     /// and anything else is left alone — a refused `MOVE` is the operation's
     /// problem, not the connection's.
     pub fn observe(&mut self, error: &BackendError, now: DateTime<Utc>) -> Option<Link> {
-        if error.is_authentication_failure() {
+        if error.needs_a_password() {
             return self.block(Blocker::Authentication(error.to_string()));
         }
         if !error.is_transient() || !self.link.is_online() {
@@ -417,7 +417,7 @@ impl Supervisor {
                 // backoff step.
                 self.transition(Link::Online { since: now })
             }
-            Err(error) if error.is_authentication_failure() => {
+            Err(error) if error.needs_a_password() => {
                 self.block(Blocker::Authentication(error.to_string()))
             }
             Err(error) if !error.is_transient() => {
@@ -571,6 +571,23 @@ mod tests {
         assert!(Blocker::Authentication("nope".into()).needs_credentials());
         assert!(!Blocker::Unrecoverable("nope".into()).needs_credentials());
         assert_eq!(Blocker::Unrecoverable("why".into()).reason(), "why");
+    }
+
+    #[test]
+    fn a_missing_credential_blocks_the_link_for_a_password() {
+        let mut state = Supervisor::new(ReconnectPolicy::default());
+        let missing = postio_account::backend::BackendError::Secret(
+            postio_account::secret::SecretError::NotFound {
+                account: "ada@example.com".to_owned(),
+            },
+        );
+
+        let moved = state.observe(&missing, at(0));
+
+        let Some(Link::Blocked(blocker)) = moved else {
+            panic!("a missing password must block the link, not retry it: {moved:?}")
+        };
+        assert!(blocker.needs_credentials(), "so the user is asked for one");
     }
 
     #[test]

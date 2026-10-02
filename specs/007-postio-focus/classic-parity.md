@@ -26,9 +26,8 @@ The terminal is out of scope. It keeps every command it has, including the
 three-pane ones (`Requirement::ThreePane` is "not Focus", so it covers the
 terminal and macOS too).
 
-**Count:** 52 capabilities. 40 are covered, 11 are dropped, and 1 has a gap
-(row 32, T261). Rows 48 and 18 carry a smaller gap each (T262, T263), found
-when T252 ported the classic suites. Flagging, once a twelfth, is decided:
+**Count:** 52 capabilities. 41 are covered and 11 are dropped. Row 18 carries
+a smaller gap (T263), found when T252 ported the classic suites. Flagging, once a twelfth, is decided:
 Flag stays, on `*` (C13, T257).
 
 ## The table
@@ -78,7 +77,7 @@ Flag stays, on `*` (C13, T257).
 | 29 | Find in the message | `FindInMessage` | **Covered by** `reading_key` (`mod+f`, `mod+g`, `mod+shift+g`; T203) |
 | 30 | View source | the reader | **Covered by** `v` (`source.rs`, `focus_suite::view_source`) |
 | 31 | Remote images blocked; allowed once, or always for this sender | `postio-widgets::reader::banner` (shared); `ShowImages`, `AlwaysShowImages` | **Covered by** the shared banner and `i i` / `i a`, answered by `FocusWindow::act`; `focus_suite::remote_images` proves the block, that Show fetches once and nothing is asked before, and that Always holds for the sender's next message and for no one else |
-| 32 | Unsubscribe on deliberate activation | the reader's notice | **Gap, T261.** The digest window answers `U` (`Unsubscribe`, `window.rs`). The open message never offers the reader's unsubscribe notice (`Reader::set_unsubscribe` is not called) and `act` does not answer `Unsubscribe` (`focus_suite::unsubscribe`, held out) |
+| 32 | Unsubscribe on deliberate activation | the reader's notice | **Covered by** the open message's notice, in the dialog and the pane (`Reader::set_unsubscribe` from `postio_ui::unsubscribe::offer`), whose button (or `U`) logs the activation under the message's account through `FocusWindow::unsubscribe`; the digest answers `U` the same way (`focus_suite::unsubscribe`, T261) |
 | 33 | Reading a message marks it read, after a short dwell | `list_view.rs` and `reading.rs` (`MarkReadOnDwell`; `dwell_wiring`) | **Covered by** the open message's read clock (`open.rs`, `postio_ui::dwell`): open for the dwell, in the dialog or the pane, it is marked read; `r` marks it unread again (T237; `focus_suite::read_on_dwell`) |
 | 34 | A body that did not decode cleanly says so | `postio-widgets::reader` (`decode_notice`) | **Covered by** the shared reader's notices, which Focus's open message mounts |
 | 35 | Desktop notifications for new mail | `postio-app::notifications` | **Covered by** Focus's notifier (`startup.rs`, `host.focus_notification`), following `[sync]` |
@@ -114,7 +113,7 @@ Flag stays, on `*` (C13, T257).
 | # | Capability | Where in the classic app | Verdict |
 |---|---|---|---|
 | 47 | First run: the account form, OAuth, then how much history to sync | `postio-app::onboarding` (`Status::SyncWindow`, `write_sync_window`; `sync_window`) | The form and sign-in are **covered by** Focus's first run (`window.rs`, `postio_widgets::present::onboarding`; `focus_suite::first_run`). The sync-window step is **covered by** `Presenter::ask_sync_window`, which both apps' first runs use (`focus_suite::first_run`) |
-| 48 | Adding another account; updating a credential | `add_account.rs`, `settings_credential.rs` | **Covered by** `AddAccount` and `UpdateCredential` in `FocusWindow::act`, and by the sign-in banner's button. **Gap, T262:** an account with no stored credential gets "can't sync" with Retry now, not the credential form the classic app's startup repair opened (`focus_suite::startup_repair`, held out) |
+| 48 | Adding another account; updating a credential | `add_account.rs`, `settings_credential.rs` | **Covered by** `AddAccount` and `UpdateCredential` in `FocusWindow::act`, and by the sign-in banner's button, which an account with no stored credential gets too: the sync blocks on a missing password (`BackendError::needs_a_password`) and the banner opens the credential form (`focus_suite::startup_repair`, T262) |
 | 49 | The settings window. Accounts: edit, test the connection, token expiry, enable or disable, remove, rebuild the index, set the default, map mailbox roles, weights. Also Filters, Composing, Appearance, Keyboard, Sync and storage, Privacy (the remote-image allow list, the unsubscribe log, the read-receipt count, the connection log) and the config file | `postio-gtk::settings`, `widgets/`; `postio-app::settings_*`, `sidebar_backfill.rs`; `ToggleAccountEnabled`, `RemoveAccount`, `RebuildAccountIndex`, `SetDefaultAccount`, `MapMailboxRole` | **Covered by** the shared settings window in a dialog (T233, T234): `mod+comma` and the main menu's Settings open it (`FocusWindow::act`). Every section but Appearance (rows 18, 19), with the classic app's wiring ported (`settings_wiring.rs`). The account verbs are reached from each row's menu and its detail view, and from the keyboard (T258): with the keyboard on an account row, `Return`, `Delete` (undone by `mod+z`), `r`, `m` and `M` (which opens the account's roles) act on that row, and the command bar lists them (with Settings shut they open it to pick a row). |
 | 50 | Excluding a folder from backfill (ADR 0016) | `sidebar.rs` (`connect_backfill_exclusion_changed`) | **Covered by** Sync & storage's "Back up locally", a check per folder (T234; `settings::a_folder_left_out_of_backfill_is_written_and_shown`) |
 | 51 | Edit configuration (`mod+e` opens `config.toml` in the person's editor) | `postio-gtk::config`; `EditConfig` | **Covered by** `FocusWindow::act` through `postio_widgets::editor`, the launcher both apps share (T235; `settings::mod_e_opens_config_toml_in_the_persons_editor`) |
@@ -290,11 +289,11 @@ suites.
 | `startup_reads` | `startup_reads`: no statement on the main thread, the same connections at 1,000 and 10,000 messages (five; the classic ceiling was four). Its scan half was the classic list's query and goes |
 | `startup_behind_the_window` (2) | `startup_behind_the_window` |
 | `search_index`, idle passes after the first frame | `idle_passes` |
-| `startup_repair` | `startup_repair`, held out: gap T262 |
+| `startup_repair` | `startup_repair` (T262) |
 | `gtk_accessibility.rs` | `a11y_sweep`: every Focus surface has roles and names, and 200% text stays usable; rows growing with the type is held out (T263) |
 | `window_teardown`, `gtk_window_teardown` | `window_teardown`; a mounted composer outliving its window is held out (T264) |
 | `second_activate_wiring` | `desktop::a_second_activate_has_one_window_and_starts_sync_once` |
-| `unsubscribe_wiring` | `unsubscribe`: the digest's `U` is logged and listed; the open message's notice is held out (T261) |
+| `unsubscribe_wiring` | `unsubscribe`: the digest's `U` is logged and listed; the open message's notice is logged and listed too (T261) |
 | `gtk_store_opening` (2 of 3) | `store_opening`; the third ("a key for mail says why it cannot run yet") goes, since Focus's wait plate says it |
 | `large_folder_open` | `visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages` |
 | `gtk_list_reload` (2) | `list_reload` |
