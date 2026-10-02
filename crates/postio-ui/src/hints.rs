@@ -83,7 +83,8 @@ pub fn shortcut(key: &str) -> String {
                 match piece {
                     "ctrl" | "control" | "mod" => "Control",
                     "alt" => "Alt",
-                    "shift" => "Shift",
+                    // A tight cap's spelling ([`short`]), named in full.
+                    "shift" | "\u{21e7}" => "Shift",
                     "super" | "meta" | "cmd" => "Meta",
                     other => other,
                 }
@@ -92,8 +93,8 @@ pub fn shortcut(key: &str) -> String {
             continue;
         }
         let name = match piece {
-            "Return" => "Enter".to_owned(),
-            // A tight cap's spelling ([`short`]), named in full.
+            // A tight cap's spellings ([`short`]), named in full.
+            "Return" | "\u{21b5}" => "Enter".to_owned(),
             "Del" => "Delete".to_owned(),
             letter
                 if letter.chars().count() == 1
@@ -111,15 +112,26 @@ pub fn shortcut(key: &str) -> String {
 }
 
 /// `key`, as a cap in a tight row spells it: `Delete` is `Del`, as the
-/// message dialog's action row draws it (the handoff's SPEC section 2).
-/// What is pressed, and what a screen reader hears ([`shortcut`]), keeps the
-/// binding's own name; only the cap is shorter.
+/// message dialog's action row draws it (the handoff's SPEC section 2), and
+/// `Return` and `shift` are the glyphs Focus's hint lines and the classic
+/// rail already draw, `↵` and `⇧`, so the composer's `ctrl+shift+Return` is
+/// `ctrl+⇧+↵` (T221). Everything else -- `ctrl`, `alt`, the `+` between
+/// them -- keeps the keymap's spelling. What is pressed, and what a screen
+/// reader hears ([`shortcut`]), keeps the binding's own names; only the cap
+/// is shorter.
 pub fn short(key: &str) -> String {
-    match key.rsplit_once('+') {
-        Some((modifiers, "Delete")) => format!("{modifiers}+Del"),
-        _ if key == "Delete" => "Del".to_owned(),
-        _ => key.to_owned(),
+    if key.contains(' ') {
+        return key.to_owned();
     }
+    key.split('+')
+        .map(|piece| match piece {
+            "Delete" => "Del",
+            "Return" => "\u{21b5}",
+            "shift" => "\u{21e7}",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// Just the key for `command`, for a control that draws its own label.
@@ -192,10 +204,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_tight_cap_spells_delete_del_and_nothing_else_differently() {
+    fn a_tight_cap_compacts_delete_return_and_shift_and_nothing_else() {
         assert_eq!(short("Delete"), "Del");
-        assert_eq!(short("shift+Delete"), "shift+Del");
-        for key in ["e", "E", "Escape", "ctrl+Return", "g i", "."] {
+        assert_eq!(short("shift+Delete"), "\u{21e7}+Del");
+        // The composer's caps (T221): `ctrl+shift+Return` was the widest
+        // thing in its bar.
+        assert_eq!(short("ctrl+Return"), "ctrl+\u{21b5}");
+        assert_eq!(short("ctrl+shift+Return"), "ctrl+\u{21e7}+\u{21b5}");
+        assert_eq!(short("ctrl+shift+a"), "ctrl+\u{21e7}+a");
+        assert_eq!(short("Return"), "\u{21b5}");
+        for key in ["e", "E", "Escape", "ctrl+h", "g i", ".", "alt+s"] {
             assert_eq!(short(key), key);
         }
         assert_eq!(
@@ -203,11 +221,18 @@ mod tests {
             "Delete",
             "a screen reader hears the name"
         );
-        assert_eq!(
-            shortcut(&short("Delete")),
-            "Delete",
-            "a cap read back for its shortcut is named in full"
-        );
+        for (key, heard) in [
+            ("Delete", "Delete"),
+            ("ctrl+Return", "Control+Enter"),
+            ("ctrl+shift+Return", "Control+Shift+Enter"),
+            ("ctrl+shift+a", "Control+Shift+a"),
+        ] {
+            assert_eq!(
+                shortcut(&short(key)),
+                heard,
+                "a cap read back for its shortcut is named in full"
+            );
+        }
     }
 
     fn rebound(command: CommandId, key: &str) -> Keymap {
