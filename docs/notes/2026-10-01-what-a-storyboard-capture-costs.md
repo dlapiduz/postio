@@ -42,3 +42,39 @@ pixels. It ran on the private headless compositor
 - **The second default run was twice as slow** while three other builds
   shared the machine. Timings here are a floor under contention, not a
   promise.
+
+## Calibration (T061)
+
+The first calibration of the reviewer, 2026-10-02: template blake3
+`1c2f8a26…`, a fresh Opus reviewer given only the generated prompt, over the
+twelve storyboards in `storyboards/calibration/` (34 steps).
+
+| | Result |
+|---|---|
+| `must_fail` storyboards failed | 6 of 6 |
+| `must_pass` storyboards passed | 5 of 6 |
+| Verdicts that cite a frame | 34 of 34 (`verdicts check` clean) |
+
+**The one miss was the app, not the reviewer.** In `cal-archive-offers-undo`
+the frame really showed no archive and no notice: pressing `a` as the first
+key after the window opened moved the cursor and archived nothing, while the
+identical step in `cal-archive-says-nothing`, in another process, archived and
+said so. The reviewer described the frame correctly and noticed the two runs
+disagreed. Filed as #1745; the two archive calibration storyboards now move
+the cursor once first, so the reviewer's ground truth does not race.
+
+**What it found beyond the expectations**, which is the part a machine check
+cannot do (findings, not verdicts):
+
+- `a` (Archive) on a conversation row said "Archived 8 messages" while the
+  cheat sheet lists a separate `A` (Archive thread): the two verbs read as
+  one.
+- A search's header said "10 results" while its scope said "All mail 11".
+- The search bar said "still syncing" while the status line one step
+  earlier said "idle · imap".
+- Opened from search, the reader's actions are labelled text buttons; opened
+  from the inbox, they are icons.
+- The cheat sheet runs off the bottom of the window with nothing to say there
+  is more, and the keyboard stays on the list behind it.
+- The composer footer's last hint is cut off ("Escape keeps the…"), and
+  Schedule… is live with no recipient.

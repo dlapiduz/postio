@@ -148,6 +148,9 @@ run_command() {
         *)   apps="$APP" ;;
     esac
     mkdir -p "$RUNS"
+    # The key the runs belong to, so the page's summary can name it and a
+    # landing can tell it is current (research R13).
+    KEY=$(APP="$APP" review_key 2>/dev/null | tail -1)
     for app in $apps; do
         crate=$(runner_crate "$app")
         if [ ! -d "$ROOT/crates/$crate" ]; then
@@ -163,6 +166,7 @@ run_command() {
         [ -x "$bin" ] || { echo "storyboards.sh: no runner at $bin" >&2; exit 2; }
         # The headless compositor, never the maintainer's display.
         scripts/test-headless.sh "$bin" run "${files[@]}" --out "$RUNS" \
+            --tree-key "$KEY" --commit "$(git rev-parse HEAD 2>/dev/null)" \
             ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
         code=$?
         if [ "$code" -gt "$status" ]; then
@@ -206,8 +210,10 @@ page_command() {
     fi
     local out="$REVIEW/index.html"
     [ "$CALIBRATION" = 0 ] || out="$REVIEW/calibration/index.html"
+    local key
+    key=$(review_key 2>/dev/null | tail -1)
     "$bin" page --runs "$RUNS" --prefix "$(realpath --relative-to="$(dirname "$out")" "$RUNS")" \
-        --out "$out" --title "$BRANCH" ${review[@]+"${review[@]}"} || exit 2
+        --out "$out" --title "$BRANCH" --key "$key" ${review[@]+"${review[@]}"} || exit 2
     if [ "$OPEN" = 1 ]; then
         xdg-open "$out" >/dev/null 2>&1 &
     fi
@@ -217,7 +223,7 @@ page_command() {
 # on -- the app's crates and the catalogue -- at HEAD. A rebase that does not
 # touch them keeps the key; a commit sha would not survive one. A crate not
 # on this branch is keyed as absent, so adding it changes the key.
-key_command() {
+review_key() {
     local bin paths path id trees=()
     case "$APP" in
         classic) paths="crates/postio-gtk crates/postio-app crates/postio-ui" ;;
@@ -231,6 +237,10 @@ key_command() {
     done
     bin=$(tool)
     "$bin" key "${trees[@]}"
+}
+
+key_command() {
+    review_key
 }
 
 case "$COMMAND" in

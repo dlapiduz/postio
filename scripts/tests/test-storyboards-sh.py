@@ -146,10 +146,10 @@ def main() -> int:
         print("case: run --only selects by path and builds once")
         result = run(ctx, "run", "--app", "classic", "--only", "list/*")
         lines = log_lines(ctx)
-        builds = [l for l in lines if l.startswith("cargo build")]
+        builds = [l for l in lines if l.startswith("cargo build") and "--example storyboard" in l]
         runner_calls = [l for l in lines if l.startswith("runner run")]
         expect("only", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
-        expect("only", len(builds) == 1, f"one build, saw {builds}")
+        expect("only", len(builds) == 1, f"the runner is built once, saw {builds}")
         expect("only", len(runner_calls) == 1, f"one runner call, saw {runner_calls}")
         call = runner_calls[0] if runner_calls else ""
         expect("only", "list/archive-walks-down.toml" in call, call)

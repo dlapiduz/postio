@@ -2,6 +2,10 @@
 # notice.
 source      = { kind = "flow", ref = "ux-architect §2" }
 calibration = "must_fail"
+# One move first: an archive pressed as the very first key can be lost
+# (#1745), and calibration needs ground truth that does not race.
+[[step]]
+command = "next_message"
 [[step]]
 command = "archive"
 expect  = "Archiving shows nothing at all: no notice, no toast, no way to undo from the screen."
