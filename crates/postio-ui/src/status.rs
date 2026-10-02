@@ -459,7 +459,7 @@ impl SyncTracker {
         let converted = to_instant(
             latest,
             crate::clock::now().with_timezone(&Utc),
-            Instant::now(),
+            crate::clock::instant(),
         );
         if converted.is_some() && self.status.last_sync.is_none() {
             self.status.last_sync = converted;
