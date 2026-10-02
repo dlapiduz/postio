@@ -11,7 +11,7 @@
 use adw::prelude::*;
 use postio_account::backend::MockBackend;
 use postio_model::TransportSecurity;
-use postio_widgets::onboarding::{Onboarding, Server, Settings, Status};
+use postio_widgets::onboarding::{Onboarding, Server, Settings, Status, SyncWindow};
 
 use crate::support::{self, NoAccount};
 
@@ -60,6 +60,19 @@ fn add_through(form: &Onboarding, name: &str, address: &str, password: &str) {
     form.submit();
 }
 
+/// What a person does at the history step once the account is saved: waits for
+/// it to show, then presses its `Start sync` button, as the form is left with.
+async fn start_sync(window: &postio_focus::window::FocusWindow, form: &Onboarding) {
+    assert!(
+        crate::settle_until(async || matches!(form.status(), Status::SyncWindow)).await,
+        "the form never asked how much history to sync: {:?}",
+        form.status()
+    );
+    crate::settle();
+    let start = support::button_labelled(window, "Start sync");
+    support::click(window, &start, 1);
+}
+
 /// A window over a store with no account, its host proving any account
 /// added against `backend` rather than a real network.
 async fn opened(backend: MockBackend) -> (postio_focus::window::FocusWindow, MockBackend) {
@@ -98,7 +111,7 @@ pub fn first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox(
             "grace@example.test",
             "an app password",
         );
-
+        start_sync(&window, &form).await;
         assert!(
             crate::settle_until(async || window.add_account_dialog().is_none()).await,
             "the wizard stayed open after the save: {:?}",
@@ -123,6 +136,73 @@ pub fn first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox(
         assert!(
             crate::settle_until(async || backend.calls() > calls_before_save + 1).await,
             "the new account's sync never started"
+        );
+    });
+}
+
+/// T243: the history step (row 47, #876). Saving the account on a first run
+/// does not close the form: it asks how much to sync, and pressing `Start sync`
+/// writes the choice to `config.toml` and brings the account up.
+pub fn the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, backend) = opened(MockBackend::new()).await;
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_some()).await,
+            "an empty store opened no add-account form"
+        );
+        let dialog = window.add_account_dialog().expect("the wizard");
+        let form = form_in(dialog.upcast_ref()).expect("the account form in the dialog");
+        let calls_before_save = backend.calls();
+        add_through(
+            &form,
+            "Grace Okafor",
+            "grace@example.test",
+            "an app password",
+        );
+        assert!(
+            crate::settle_until(async || matches!(form.status(), Status::SyncWindow)).await,
+            "the saved account was not followed by the history step: {:?}",
+            form.status()
+        );
+        crate::settle();
+        assert!(
+            window.add_account_dialog().is_some(),
+            "the form closed before the history was chosen"
+        );
+        // Nothing is synced until the choice is made, and the choice is not
+        // written before it is.
+        let config_path = postio_config::paths::config_path().expect("a config path");
+        assert!(
+            !config_path.exists(),
+            "the history was written before it was chosen"
+        );
+        assert_eq!(
+            backend.calls(),
+            calls_before_save + 1,
+            "the account's sync started before the history was chosen"
+        );
+
+        form.test_select_sync_window(SyncWindow::LastMonth);
+        let start = support::button_labelled(&window, "Start sync");
+        support::click(&window, &start, 1);
+
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_none()).await,
+            "Start sync left the form open"
+        );
+        let written = std::fs::read_to_string(&config_path).expect("config.toml was written");
+        let config = postio_config::Config::from_toml_str(&written).expect("it still parses");
+        assert_eq!(
+            config.sync.initial_sync_messages,
+            SyncWindow::LastMonth.message_count(),
+            "the chosen history did not reach [sync].initial_sync_messages: {written}"
+        );
+        assert!(
+            crate::settle_until(async || backend.calls() > calls_before_save + 1).await,
+            "the account's sync never started once the history was chosen"
         );
     });
 }
@@ -180,6 +260,7 @@ pub fn compose_with_no_account_says_so_and_offers_to_add_one() {
             "grace@example.test",
             "an app password",
         );
+        start_sync(&window, &form).await;
         assert!(
             crate::settle_until(async || window.add_account_dialog().is_none()).await,
             "the wizard stayed open after the save: {:?}",
@@ -375,6 +456,7 @@ pub fn the_list_keys_work_while_the_first_sync_fills_the_inbox() {
             "grace@example.test",
             "an app password",
         );
+        start_sync(&window, &form).await;
         assert!(
             crate::settle_until(async || window.add_account_dialog().is_none()).await,
             "the wizard stayed open after the save: {:?}",
@@ -427,6 +509,7 @@ async fn sign_in(window: &postio_focus::window::FocusWindow) {
         "grace@example.test",
         "an app password",
     );
+    start_sync(window, &form).await;
     assert!(
         crate::settle_until(async || window.add_account_dialog().is_none()).await,
         "the wizard stayed open after the save: {:?}",

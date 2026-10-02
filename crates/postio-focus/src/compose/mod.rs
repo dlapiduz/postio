@@ -36,6 +36,8 @@ pub struct Compose {
     frame: Rc<frame::Frame>,
     host: Rc<host::DialogHost>,
     resume: seams::Resume,
+    /// The account a new message is written from.
+    account: AccountId,
     /// "Remind if no reply", opened at the action row by `mod+h` or a click
     /// (US3 scenario 5): the remind picker the row uses, choosing for the
     /// draft instead of for a conversation.
@@ -115,6 +117,7 @@ impl Compose {
             frame,
             host,
             resume,
+            account,
             remind,
         });
         let weak = Rc::downgrade(&compose);
@@ -167,6 +170,17 @@ impl Compose {
     /// Open the draft behind the Drafts row `message` for editing.
     pub fn open_draft(&self, message: postio_model::MessageId) {
         (self.resume)(message);
+    }
+
+    /// A new message from a `mailto:` link: its recipients, subject and body
+    /// filled in. The composer's rule holds: one composition at a time, so a
+    /// link arriving mid-composition puts the keyboard back in the draft
+    /// already open rather than replacing what was typed.
+    pub fn open_mailto(&self, mailto: postio_model::mailto::Mailto) {
+        if self.composer.is_open() {
+            tracing::info!("a mailto link arrived while a composition was open; kept the open one");
+        }
+        self.composer.open(mailto.into_draft(self.account));
     }
 
     /// Take `keymap` as the keys in force.

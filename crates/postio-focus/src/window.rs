@@ -42,6 +42,9 @@ const START_OVER: &str = "This version of Postio can\u{2019}t read the store an 
      not yet sent stay in the old store, which is set aside, not deleted.";
 
 /// The window's pages, by name.
+/// What a window with nothing saved opens at.
+const DEFAULT_GEOMETRY: postio_widgets::state::Geometry =
+    postio_widgets::state::Geometry::new(1440, 900);
 const BLANK: &str = "blank";
 const OPENING: &str = "opening";
 const UNAVAILABLE: &str = "unavailable";
@@ -213,6 +216,8 @@ mod imp {
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         /// A `postio://` link that arrived before the store was open.
         pub pending_link: RefCell<Option<String>>,
+        /// A `mailto:` link that arrived before the composer was mounted.
+        pub pending_mailto: RefCell<Option<postio_model::mailto::Mailto>>,
         /// The move picker, built the first time `m` opens it.
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
         /// The composer, in its dialog (US3), once an account is known.
@@ -292,6 +297,7 @@ mod imp {
                 labels: RefCell::default(),
                 moves: RefCell::default(),
                 pending_link: RefCell::default(),
+                pending_mailto: RefCell::default(),
                 compose: RefCell::default(),
                 warm: Cell::default(),
                 answering: Cell::default(),
@@ -339,13 +345,34 @@ glib::wrapper! {
 
 impl FocusWindow {
     /// A window, for `application` when there is one.
+    ///
+    /// It opens at the size and maximised state it was closed at, from
+    /// `$XDG_STATE_HOME/postio/window.ini`; a file that is missing or cannot
+    /// be read means 1440 by 900 (row 10, T246).
     pub fn new(application: Option<&adw::Application>) -> Self {
+        let saved = postio_widgets::state::Geometry::load(DEFAULT_GEOMETRY);
         glib::Object::builder()
             .property("application", application)
             .property("title", "Postio Focus")
-            .property("default-width", 1440)
-            .property("default-height", 900)
+            .property("default-width", saved.width)
+            .property("default-height", saved.height)
+            .property("maximized", saved.maximized)
             .build()
+    }
+
+    /// Remember this window's size and maximised state for the next start.
+    /// Best-effort: a state file that cannot be written is one line in the
+    /// log and nothing more.
+    fn save_geometry(&self) {
+        let (width, height) = self.default_size();
+        let saved = postio_widgets::state::Geometry {
+            width,
+            height,
+            maximized: self.is_maximized(),
+        };
+        if let Err(error) = saved.save() {
+            tracing::warn!(%error, "cannot save the window's size");
+        }
     }
 
     fn build(&self) {
@@ -402,6 +429,10 @@ impl FocusWindow {
         self.set_content(Some(imp.toast.overlay()));
 
         self.drop_focus_that_leaves();
+        self.connect_close_request(|window| {
+            window.save_geometry();
+            glib::Propagation::Proceed
+        });
 
         // Capture, not bubble: a single-key binding has to be seen before the
         // focused widget consumes it, and whether it should is the
@@ -1101,7 +1132,10 @@ impl FocusWindow {
         if self.imp().warm.get() {
             compose.warm();
         }
-        self.imp().compose.replace(Some(compose));
+        self.imp().compose.replace(Some(Rc::clone(&compose)));
+        if let Some(mailto) = self.imp().pending_mailto.take() {
+            compose.open_mailto(mailto);
+        }
     }
 
     /// Refresh which accounts are enabled, mount the composer for the
@@ -1177,10 +1211,16 @@ impl FocusWindow {
     /// them -- and brings every account's connection up, the order the
     /// classic app's own first run brings a window up over a new account.
     ///
+    /// With no account at all this is the first run: once the account is
+    /// saved the form asks how much history to sync (#876, T243) before the
+    /// connection comes up, as the classic first run does. An account added
+    /// to a window that has one joins a window already syncing.
+    ///
     /// A second call while the form is already open reuses it rather than
     /// stacking a second wizard over the first.
     fn open_add_account(&self) {
         let imp = self.imp();
+        let first_run = imp.accounts.borrow().is_empty();
         if imp.adding_account.borrow().is_some() {
             return;
         }
@@ -1188,10 +1228,10 @@ impl FocusWindow {
             return;
         };
         let open_link = postio_widgets::present::onboarding::open_in_browser(self);
-        let dialog = postio_widgets::present::onboarding::add_account(self, &client, open_link, {
+        let saved = {
             let window = self.downgrade();
             let client = client.clone();
-            move |_submission| {
+            move |_submission: &postio_widgets::onboarding::Submission| {
                 let Some(window) = window.upgrade() else {
                     return;
                 };
@@ -1200,7 +1240,14 @@ impl FocusWindow {
                     start();
                 }
             }
-        });
+        };
+        let dialog = if first_run {
+            postio_widgets::present::onboarding::add_account_asking_history(
+                self, &client, open_link, saved,
+            )
+        } else {
+            postio_widgets::present::onboarding::add_account(self, &client, open_link, saved)
+        };
         dialog.connect_closed(glib::clone!(
             #[weak(rename_to = window)]
             self,
@@ -3138,6 +3185,11 @@ impl FocusWindow {
     /// with a sentence. A link that arrives before the store is open waits
     /// for it.
     pub fn open_link(&self, uri: &str) {
+        // The desktop hands over every scheme the entry registers: a
+        // `mailto:` link starts a message (row 46, T244).
+        if let Some(mailto) = postio_model::mailto::Mailto::parse(uri) {
+            return self.open_mailto(mailto);
+        }
         let Some(message) = postio_ui::links::message(uri) else {
             self.imp().toast.show_notice(postio_ui::links::UNKNOWN);
             self.follow_toast();
@@ -3165,6 +3217,18 @@ impl FocusWindow {
                 }
             }
         ));
+    }
+
+    /// A `mailto:` link: a new message with its recipients, subject and body
+    /// filled in, in the composer's dialog. A link that arrives before the
+    /// composer is mounted -- a cold launch from a browser -- waits for it.
+    fn open_mailto(&self, mailto: postio_model::mailto::Mailto) {
+        match self.compose() {
+            Some(compose) => compose.open_mailto(mailto),
+            None => {
+                self.imp().pending_mailto.replace(Some(mailto));
+            }
+        }
     }
 
     /// The open-email dialog, built the first time anything opens.

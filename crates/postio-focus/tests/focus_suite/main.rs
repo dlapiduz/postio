@@ -83,6 +83,7 @@ mod undo;
 mod view_source;
 mod visible_window;
 mod window_controls;
+mod window_state;
 
 /// Cases held out of a default run, by name -- the table-driven spelling of
 /// `#[ignore]`, which means one thing here: this machine may not have what
@@ -189,6 +190,10 @@ const CASES: &[(&str, fn())] = &[
         "first_run::first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox",
         first_run::first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox
             as fn(),
+    ),
+    (
+        "first_run::the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved",
+        first_run::the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved as fn(),
     ),
     (
         "first_run::compose_with_no_account_says_so_and_offers_to_add_one",
@@ -326,6 +331,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "rule_query::digest_mail_like_this_present_with_a_message_says_so_with_no_model",
         rule_query::digest_mail_like_this_present_with_a_message_says_so_with_no_model as fn(),
+    ),
+    (
+        "desktop::a_mailto_link_opens_a_composer_with_its_fields_filled",
+        desktop::a_mailto_link_opens_a_composer_with_its_fields_filled as fn(),
+    ),
+    (
+        "desktop::a_mailto_link_that_arrives_before_the_store_waits_for_it",
+        desktop::a_mailto_link_that_arrives_before_the_store_waits_for_it as fn(),
+    ),
+    (
+        "window_state::a_restarted_window_opens_at_the_size_it_was_closed_at",
+        window_state::a_restarted_window_opens_at_the_size_it_was_closed_at as fn(),
+    ),
+    (
+        "window_state::a_state_file_that_cannot_be_read_opens_at_the_default",
+        window_state::a_state_file_that_cannot_be_read_opens_at_the_default as fn(),
     ),
     (
         "desktop::focus_shows_the_postio_icon",

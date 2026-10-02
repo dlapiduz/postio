@@ -137,3 +137,75 @@ pub fn a_postio_link_opens_its_message_and_an_unknown_one_is_refused() {
         );
     });
 }
+
+/// What the composer a `mailto:` link opened shows: the To chip, the
+/// subject entry and the body text, as a person reads them.
+async fn shows_the_mailto(window: &postio_focus::window::FocusWindow) {
+    assert!(
+        crate::settle_until(async || window.compose_dialog().is_some()).await,
+        "a mailto: link opened no composer"
+    );
+    let dialog = window.compose_dialog().expect("the compose dialog");
+    assert!(
+        crate::settle_until(async || {
+            crate::compose::field(&dialog, "To").as_deref() == Some("ada@example.com")
+        })
+        .await,
+        "the link's recipient is not in To: {:?}",
+        crate::compose::field(&dialog, "To")
+    );
+    assert_eq!(
+        crate::compose::field(&dialog, "Subject").as_deref(),
+        Some("Lunch on Friday"),
+        "the link's subject"
+    );
+    let composer = window.composer().expect("the composer");
+    let body = || composer.test_body_eval("document.body.innerText");
+    assert!(
+        crate::settle_until(async || body().contains("Noon at the usual place?")).await,
+        "the link's body is not in the editor: {:?}",
+        body()
+    );
+}
+
+/// `mailto:` (row 46, T244): a link the desktop hands Focus opens a composer
+/// with To, Subject and the body filled in.
+pub fn a_mailto_link_opens_a_composer_with_its_fields_filled() {
+    crate::gtk_case(async {
+        if !crate::support::display() {
+            return;
+        }
+        let fixture = crate::support::Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        let (window, _client) = fixture.open().await;
+        window.open_link(
+            "mailto:ada@example.com?subject=Lunch%20on%20Friday&body=Noon%20at%20the%20usual%20place%3F",
+        );
+        shows_the_mailto(&window).await;
+    });
+}
+
+/// The same link on a cold launch -- a browser's click starts the app --
+/// arrives before the store is open and waits for it, as a `postio://` link
+/// does.
+pub fn a_mailto_link_that_arrives_before_the_store_waits_for_it() {
+    crate::gtk_case(async {
+        if !crate::support::display() {
+            return;
+        }
+        let fixture = crate::support::Fixture::empty().await;
+        let window = postio_focus::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        window.open_link(
+            "mailto:ada@example.com?subject=Lunch%20on%20Friday&body=Noon%20at%20the%20usual%20place%3F",
+        );
+        crate::support::keep(postio_focus::startup::adopt(
+            &window,
+            fixture.host(),
+            &postio_config::Config::default(),
+        ));
+        shows_the_mailto(&window).await;
+    });
+}
