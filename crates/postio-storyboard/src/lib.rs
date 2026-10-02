@@ -10,3 +10,6 @@
 //!
 //! The file format is `contracts/storyboard-format.md`; the records are
 //! `data-model.md`.
+
+pub mod apply;
+pub mod format;
