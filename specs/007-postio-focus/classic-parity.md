@@ -62,7 +62,7 @@ twelfth, is decided: Flag stays, on `*` (C13, T257).
 | 19 | Theme override (`[ui] theme`: light, dark or system) | `postio-gtk::style` | **Dropped**, because Focus follows the system's scheme and accent (FR-090, C26). Maintainer: no |
 | 20 | Row context menu | `list_view.rs` | **Covered by** `row_menu.rs` |
 | 21 | Dragging messages onto a folder | `sidebar.rs` (`connect_dropped`), `autoscroll.rs` | **Covered by** the move picker (`m`): Focus has no folder list to drop onto (row 1) |
-| 22 | Dragging messages out as `.eml` files | `postio-gtk::drag_out`, `postio-app::export` (`drag_out_wiring`) | **Gap → T245** |
+| 22 | Dragging messages out as `.eml` files | `postio-gtk::drag_out`, `postio-app::export` (`drag_out_wiring`) | **Covered by** `postio_widgets::drag_out` and `present::export`, offered by Focus's rows (T245, `focus_suite::drag_out`) |
 | 23 | Empty, offline and failing list states | `postio-gtk::list_state` | **Covered by** `empty.rs` and `postio_ui::focus_state` (`InboxSaying`: empty, syncing, offline, failed; T220) |
 | 24 | A unified view names an account it cannot reach, and the reason | `list_state.rs` (`derive_aggregate`), ADR 0005 Q10 (`degraded_unified`) | **Covered by T248.** A refused password is the sign-in banner; any other failure names the account and the reason (the sync's words when it gave them, else the kind of failure) with Retry now, and every account's mail stays listed |
 

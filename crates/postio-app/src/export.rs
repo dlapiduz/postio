@@ -57,11 +57,13 @@ pub fn install_for(
     runtime: tokio::runtime::Handle,
     client: Client,
 ) {
-    window.list().connect_export(postio_widgets::present::export::materialiser(
-        runtime,
-        client,
-        crate::paths::export_dir,
-    ));
+    window
+        .list()
+        .connect_export(postio_widgets::present::export::materialiser(
+            runtime,
+            client,
+            crate::paths::export_dir,
+        ));
 }
 
 /// [`install_for`] on the composition root's runtime.

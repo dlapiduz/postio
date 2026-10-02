@@ -199,7 +199,11 @@ fn focus_row(
     row.grab_focus();
     crate::settle();
     assert_eq!(
-        window.settings().expect("Settings").panel().focused_account(),
+        window
+            .settings()
+            .expect("Settings")
+            .panel()
+            .focused_account(),
         Some(account),
         "the keyboard is on the account's row"
     );

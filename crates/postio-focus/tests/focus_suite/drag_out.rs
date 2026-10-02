@@ -63,11 +63,7 @@ fn position(window: &postio_focus::window::FocusWindow, message: postio_model::M
 fn dropped(offer: &gdk::ContentProvider) -> Vec<std::path::PathBuf> {
     let stream = gio::MemoryOutputStream::new_resizable();
     glib::MainContext::default()
-        .block_on(offer.write_mime_type_future(
-            "text/uri-list",
-            &stream,
-            glib::Priority::DEFAULT,
-        ))
+        .block_on(offer.write_mime_type_future("text/uri-list", &stream, glib::Priority::DEFAULT))
         .expect("the drop is served");
     stream.close(gio::Cancellable::NONE).expect("it closes");
     let uris = stream.steal_as_bytes();

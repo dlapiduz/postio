@@ -7,9 +7,9 @@
 //! written until a drop somewhere asks, so picking mail up and putting it
 //! back writes nothing.
 
+use adw::subclass::prelude::ObjectSubclassIsExt;
 use gtk::gdk;
 use gtk::prelude::*;
-use adw::subclass::prelude::ObjectSubclassIsExt;
 use postio_core::Selection;
 use postio_widgets::drag_out::LazyFiles;
 

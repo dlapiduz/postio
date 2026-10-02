@@ -60,4 +60,3 @@ fn scroll_check() {
         "the message list does not scroll under a drag"
     );
 }
-

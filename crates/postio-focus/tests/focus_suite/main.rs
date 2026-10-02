@@ -38,8 +38,8 @@ mod cursor;
 mod desktop;
 mod digest;
 mod digest_summary;
-mod drag_out;
 mod drafts;
+mod drag_out;
 mod empty;
 mod filtered;
 mod first_run;
@@ -1020,7 +1020,8 @@ const CASES: &[(&str, fn())] = &[
     ),
     (
         "drag_out::a_dragged_selection_is_every_selected_message_and_nothing_is_written_early",
-        drag_out::a_dragged_selection_is_every_selected_message_and_nothing_is_written_early as fn(),
+        drag_out::a_dragged_selection_is_every_selected_message_and_nothing_is_written_early
+            as fn(),
     ),
     (
         "drag_out::a_select_all_drag_offers_no_files",
