@@ -59,7 +59,7 @@ fi
 # are here because they cannot change what `cargo test` produces -- they are
 # picked up by `MACOS` below instead, which is the saving #666 is after: a
 # Swift-only change should not run the whole workspace suite.
-NOT_RUST='^(docs/|Design/|\.claude/|macos/|README\.md$|CLAUDE\.md$|[^/]*\.md$|\.gitmessage$|\.gitignore$|LICENSE|mise\.toml$|\.github/workflows/(hooks|pages|audit|bench|fuzz|mutants|nightly|release)\.yml$|scripts/(tests/|checks/|macos-[a-z]*\.sh$|ffi-bindgen\.sh$|issue-[a-z-]*\.sh$|test-(fast|sanity|headless|with-flake-retry)\.sh$|wait-for-checks\.sh$|full-suite-crates\.sh$|ci-(changes|tooling-needed)\.sh$|coverage\.sh$|coverage-floors\.json$|check\.sh$|cross-check\.sh$|fuzz(-seed)?\.sh$|mutants\.sh$|release-bump\.py$|report-advisory-failure\.sh$|run-isolated\.sh$|install-local\.sh$|lib/((ready-labels|require-gh)\.sh|ffi-closure\.py)$))'
+NOT_RUST='^(docs/|Design/|\.claude/|macos/|README\.md$|CLAUDE\.md$|[^/]*\.md$|\.gitmessage$|\.gitignore$|LICENSE|mise\.toml$|\.github/workflows/(hooks|pages|audit|bench|fuzz|mutants|nightly|release|full-suite)\.yml$|scripts/(tests/|checks/|macos-[a-z]*\.sh$|ffi-bindgen\.sh$|issue-[a-z-]*\.sh$|test-(fast|sanity|headless|with-flake-retry)\.sh$|wait-for-checks\.sh$|full-suite-crates\.sh$|ci-(changes|tooling-needed)\.sh$|coverage\.sh$|coverage-floors\.json$|check\.sh$|cross-check\.sh$|fuzz(-seed)?\.sh$|mutants\.sh$|release-bump\.py$|report-advisory-failure\.sh$|run-isolated\.sh$|install-local\.sh$|lib/((ready-labels|require-gh)\.sh|ffi-closure\.py)$))'
 DOCS='^(docs/|README\.md$|\.github/workflows/ci\.yml$)'
 # What obliges the macOS runner, beyond everything that obliges a Rust build.
 # `macos/**` except its prose, and the scripts that build, test and bundle the
