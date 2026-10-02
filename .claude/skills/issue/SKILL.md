@@ -194,6 +194,12 @@ integration suites to confirm at the end. If a rule is hard to prove without
 linking the application, that is usually a sign it wants to be a function in a
 leaf crate rather than something buried in a widget.
 
+**An interaction issue starts with its storyboard.** If the issue changes how
+a GTK app behaves under the keyboard, write the storyboard in `storyboards/`
+from the acceptance first -- not from what you build -- and see it red on the
+base (`scripts/storyboards.sh base`). Before landing, run `/ux-review`; the
+landing labels an unreviewed interaction change (ADR 0044).
+
 Still true, and not negotiable: **TDD** — write the failing test, watch it
 fail, make it pass, move on. The red run at the start is the proof the test
 can fail; never re-break working code after going green to test the test.

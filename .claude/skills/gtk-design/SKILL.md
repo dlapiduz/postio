@@ -185,6 +185,13 @@ a black rectangle, because another process composites it.
 Then compare against the artboard in `Design/Mail Client.dc.html` and name
 the differences.
 
+**A sequence, not just a screen.** `shot` is one picture; how a screen
+behaves under the keyboard is a storyboard (`storyboards/`, ADR 0044). Run
+`scripts/storyboards.sh run --only '<surface>/*'` to film one with the
+keyboard's place outlined on every frame, and `scripts/storyboards.sh
+screens` for every screen beside its canvas artboard (the old screen sweep).
+`/ux-review` is the review of both, by an agent that did not build it.
+
 Check every screen in **light, dark, and high contrast**, and at the narrow
 breakpoint. Dark is not an afterthought here: it follows canvas 3c, where steel
 goes light-on-dark and hairlines *lift* rather than darken.
