@@ -6,19 +6,9 @@ verbatim in `crates/postio-storage/tests/schemas/<stamp>.sql`. A store whose
 stamp no migration leads from is refused with `Remedy::StartOver`, and no
 surface offers "Try again" for it.
 
-## What happened
-
-`feature/postio-focus` was rebased onto `main`, which brought three indexes
-(`idx_messages_body_state`, `idx_messages_body_problems`,
-`idx_operation_queue_state`). `HEAD` changed, so its fingerprint changed, and
-every store the branch had written was refused at open with
-`SchemaFromAnotherBuild`. Focus drew that sentence under "Try again" -- which
-re-read the same file and was refused again, forever. There was no way out
-but deleting the store by hand, and no way to close the window either (T216).
-
-The store was not unversioned: `user_version` already held an FNV-1a hash of
-`HEAD`, checked at every open since 2026-09-17. It only ever answered
-"equal or not". There was nothing that said what to do when not.
+The stamp is `user_version`, an FNV-1a hash of `HEAD`, checked at every open.
+"Try again" against a store no step reaches would re-read the same file and be
+refused again, forever, which is why no surface offers it.
 
 ## The decision: migrate, and start over only where no migration can exist
 
@@ -28,8 +18,6 @@ already records, so no second version number has to be remembered and the
 stamps on every store already written stay meaningful. `Store::open` runs
 the chain from the found stamp to `FINGERPRINT`, each statement idempotent
 (`IF NOT EXISTS`), and stamps after: a store cut off midway runs them again.
-The first step is the rebase's three indexes, from `3f95ddb1` (the branch at
-355ac0cd) to `d8c1e5df`.
 
 Two tests hold it. `schema::tests::a_schema_change_comes_with_the_migration_that_reaches_it`
 fails the moment `HEAD` changes without a step reaching the new stamp, and
@@ -65,12 +53,10 @@ store). `postio-tui` names the command in its refusal.
 
 ## Rejected
 
-- **Reset only, no migrations.** `HEAD` is one `CREATE` file and the
-  first answer was "there are no migrations, resync". That throws away the
-  local-only state every time an index is added, which is the commonest
-  schema change there is. CLAUDE.md's "no backwards compatibility" licenses
-  not arguing about old shapes; it says in the same paragraph "still write
-  the migration".
+- **Reset only, no migrations.** That throws away the local-only state every
+  time an index is added, which is the commonest schema change there is.
+  CLAUDE.md's "no backwards compatibility" licenses not arguing about old
+  shapes; it says in the same paragraph "still write the migration".
 - **Diffing the live schema against `HEAD` and reconciling automatically.**
   It handles new tables and indexes for free, but a column needs its
   definition parsed out of a `CREATE TABLE` with comments and `CHECK`s, and a
