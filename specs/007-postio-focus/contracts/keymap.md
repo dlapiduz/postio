@@ -13,7 +13,7 @@ Legend:
 - **Focus**: `Requirement::Focus`, offered only by Focus.
 - **Three-pane**: `Requirement::ThreePane`, offered by the apps with a
   sidebar and panes (classic, terminal, macOS) and not by Focus. It covers:
-  - flag, the sidebar toggle, pane cycling and the parts panel (T029);
+  - the sidebar toggle, pane cycling and the parts panel (T029);
   - the conversation rail, and the folder-list, parts-panel and account-list
     keys (T166). `update_credential` stays with Focus, because its sign-in
     banner uses it.
@@ -61,7 +61,7 @@ it.
 | `v` | `view_source` | Focus | **New.** The raw RFC 822 message (R2). Focus-only for now: the other apps adopt it with a source view of their own, and its key is reserved for them |
 | `o` | `open_attachment_or_link` | Focus | **New.** A chooser over the message's links and parts |
 | `?` | `cheat_sheet` | All | Unchanged. Focus's key map (screen 20) |
-| `*` | `flag` | Three-pane | Was `s`. Focus offers no flag verb (spec C13) |
+| `*` | `flag` | All | Was `s`. Toggles the flag; in Focus the row carries no mark (spec C13) |
 | `Left` | `prev_view` | All | Was `h` (with `Left` as its alternate) |
 | `alt+d` | `darken_message` | All graphical | Was `D` |
 

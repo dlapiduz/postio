@@ -38,7 +38,6 @@ const NOT_YET: &[&str] = &[
     "zoom_reset",
     "expand_all",
     "move",
-    "unsnooze",
     "stop_digesting_sender",
     "view_source",
     "open_attachment_or_link",
@@ -139,5 +138,54 @@ pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
             "in NOT_YET but whole now; take them out: {listed_but_whole:?}"
         );
         assert!(!NOT_YET.is_empty(), "NOT_YET empties story by story");
+    });
+}
+
+/// Commands that are answered, but not by running them here: `Quit` closes
+/// the window the case is standing in.
+const NOT_RUN: &[CommandId] = &[
+    CommandId::Quit,
+    // Answered by the Settings lane's arm (its own test), which this branch
+    // does not carry yet.
+    CommandId::Settings,
+];
+
+/// A command Focus offers with its key, bar row and control must also reach
+/// an arm of `FocusWindow::act`: the three above are all things to look at,
+/// and `g s` passed them while pressing it did nothing (T236). Each command
+/// outside `NOT_YET` is run, and none may fall through to "no Focus surface
+/// answers this command yet".
+pub fn every_offered_command_that_is_whole_reaches_a_handler() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        let mut unanswered = Vec::new();
+        for spec in registry::all().filter(|spec| spec.requires.offered_by(Frontend::Focus)) {
+            let id: CommandId = spec.id;
+            if NOT_YET.contains(&id.as_str()) || NOT_RUN.contains(&id) {
+                continue;
+            }
+            window.take_unanswered();
+            window.act(id);
+            crate::settle();
+            unanswered.extend(window.take_unanswered());
+            // Whatever it opened -- a picker, the bar, the folders -- is
+            // closed before the next.
+            window.act(CommandId::Back);
+            window.act(CommandId::Back);
+            window.take_unanswered();
+            crate::settle();
+        }
+        assert!(
+            unanswered.is_empty(),
+            "Focus offers these commands and `FocusWindow::act` has no arm for them:\n  {}",
+            unanswered
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
     });
 }

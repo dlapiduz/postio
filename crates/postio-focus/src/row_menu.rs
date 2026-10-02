@@ -45,12 +45,14 @@ const GROUPS: &[&[Verb]] = &[
     &[
         verb(CommandId::Archive, "Archive", "focus-row-menu-archive"),
         verb(CommandId::Snooze, "Snooze\u{2026}", "focus-row-menu-snooze"),
+        verb(CommandId::Unsnooze, "Unsnooze", "focus-row-menu-unsnooze"),
         verb(
             CommandId::RemindIfNoReply,
             "Remind if no reply\u{2026}",
             "focus-row-menu-remind",
         ),
         verb(CommandId::ToggleRead, "Mark read", "focus-row-menu-read"),
+        verb(CommandId::Flag, "Flag", "focus-row-menu-flag"),
     ],
     &[
         verb(CommandId::AddLabel, "Label\u{2026}", "focus-row-menu-label"),
@@ -72,6 +74,18 @@ const ONE_MESSAGE: &[CommandId] = &[
     CommandId::ReplyAll,
     CommandId::Forward,
 ];
+
+/// What the row under the menu is, for the verbs that word or show
+/// themselves by it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Facts {
+    /// Whether the conversation has unread mail.
+    pub unread: bool,
+    /// Whether it is flagged.
+    pub flagged: bool,
+    /// Whether the list is the Snoozed one, where Unsnooze applies.
+    pub snoozed: bool,
+}
 
 /// What a press asks the window to run.
 type Handler = Rc<dyn Fn(CommandId)>;
@@ -190,13 +204,13 @@ impl RowMenu {
     ///
     /// `selected` is how the selection it will act on is named ("3
     /// selected"), or `None` when it acts on the row alone; `unread` says
-    /// how to word the read verb for that one row.
+    /// how to word the read and flag verbs for that one row.
     pub fn open(
         &self,
         parent: &impl IsA<gtk::Widget>,
         at: &gdk::Rectangle,
         selected: Option<&str>,
-        unread: bool,
+        facts: Facts,
     ) {
         let parent = parent.as_ref();
         if self.popover.parent().as_ref() != Some(parent) {
@@ -216,12 +230,14 @@ impl RowMenu {
         self.heading.set_text(selected.unwrap_or_default());
         self.heading.set_visible(selected.is_some());
         for (command, button, _) in &self.items {
-            if *command == CommandId::ToggleRead {
-                let words = if selected.is_some() || unread {
-                    "Mark read"
-                } else {
-                    "Mark unread"
-                };
+            let words = match *command {
+                CommandId::ToggleRead if selected.is_some() || facts.unread => Some("Mark read"),
+                CommandId::ToggleRead => Some("Mark unread"),
+                CommandId::Flag if selected.is_none() && facts.flagged => Some("Unflag"),
+                CommandId::Flag => Some("Flag"),
+                _ => None,
+            };
+            if let Some(words) = words {
                 if let Some(label) = button
                     .child()
                     .and_then(|row| row.first_child())
@@ -231,7 +247,10 @@ impl RowMenu {
                 }
                 button.update_property(&[gtk::accessible::Property::Label(words)]);
             }
-            button.set_visible(selected.is_none() || !ONE_MESSAGE.contains(command));
+            button.set_visible(
+                (selected.is_none() || !ONE_MESSAGE.contains(command))
+                    && (*command != CommandId::Unsnooze || facts.snoozed),
+            );
         }
         // A group's rule shows when something above it and in it does.
         let shown = |items: &[(CommandId, gtk::Button, gtk::Label)]| {

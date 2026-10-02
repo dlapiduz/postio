@@ -13,7 +13,7 @@ use crate::support::{self, Fixture};
 
 /// Right-click the `index`th row on screen as GTK would run it: the list's
 /// secondary-button gesture, pressed at the row's middle.
-fn right_click(window: &postio_focus::window::FocusWindow, index: usize) {
+pub(crate) fn right_click(window: &postio_focus::window::FocusWindow, index: usize) {
     let pane = window.pane().expect("the inbox");
     let view = pane.view().clone();
     let rows = pane.rows_on_screen();
@@ -37,7 +37,7 @@ fn right_click(window: &postio_focus::window::FocusWindow, index: usize) {
 }
 
 /// The menu, up and drawn.
-async fn menu_shown(window: &postio_focus::window::FocusWindow) -> gtk::Popover {
+pub(crate) async fn menu_shown(window: &postio_focus::window::FocusWindow) -> gtk::Popover {
     assert!(
         crate::settle_until(async || window
             .row_menu()
@@ -49,7 +49,7 @@ async fn menu_shown(window: &postio_focus::window::FocusWindow) -> gtk::Popover 
 }
 
 /// Press the menu's verb that wears `class`.
-fn choose(menu: &gtk::Popover, class: &str) {
+pub(crate) fn choose(menu: &gtk::Popover, class: &str) {
     support::only(menu, class)
         .downcast::<gtk::Button>()
         .expect("a button")

@@ -194,7 +194,7 @@ const CONTRACT: &[Row] = &[
     row("view_source", "v", Focus),
     row("open_attachment_or_link", "o", Focus),
     row("cheat_sheet", "?", All),
-    row("flag", "*", ThreePane),
+    row("flag", "*", All),
     row("prev_view", "Left", All),
     row("darken_message", "alt+d", Graphical),
     // -- Going places: Global, and the surfaces that go ------------------
@@ -383,14 +383,13 @@ fn the_registry_holds_the_contracts_keys() {
 }
 
 /// "All" is every app that has the surface (the contract's legend), and
-/// Focus has no folder sidebar, no panes to cycle, no parts panel and no
-/// flags: one list, with mail opened in dialogs, and "Has action" where
-/// flags would be (spec, Assumptions). The commands that work on those are
-/// the other three apps', and their keys stay free in Focus.
+/// Focus has no folder sidebar, no panes to cycle and no parts panel: one
+/// list, with mail opened in dialogs. The commands that work on those are
+/// the other three apps', and their keys stay free in Focus. Flag is not
+/// among them: Focus offers it on `*` with no mark on the row (spec C13).
 #[test]
 fn focus_offers_nothing_that_works_on_a_surface_it_does_not_have() {
     for command in [
-        CommandId::Flag,
         CommandId::ToggleSidebar,
         CommandId::CyclePane,
         CommandId::CyclePaneBack,

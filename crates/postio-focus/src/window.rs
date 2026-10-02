@@ -189,6 +189,10 @@ mod imp {
         /// Whether the open row menu is for its row alone, outside the
         /// selection: a verb then lets the selection go first (T199).
         pub row_menu_alone: Cell<bool>,
+        /// Commands `act` had no arm for, since a test last took them: the
+        /// seam `registry_parity` reads to prove every offered command is
+        /// answered.
+        pub unanswered: RefCell<Vec<CommandId>>,
         /// The remind picker, built the first time `h` opens it.
         pub remind: RefCell<Option<Rc<WhenPicker>>>,
         /// The label picker, built the first time `l` opens it.
@@ -283,6 +287,7 @@ mod imp {
                 snooze: RefCell::default(),
                 row_menu: RefCell::default(),
                 row_menu_alone: Cell::new(false),
+                unanswered: RefCell::default(),
                 remind: RefCell::default(),
                 labels: RefCell::default(),
                 moves: RefCell::default(),
@@ -984,7 +989,13 @@ impl FocusWindow {
             ) => self.act(id),
             // The message on screen goes away, and the dialog goes on to
             // the next one (T190).
-            Ok(id @ (CommandId::Archive | CommandId::Delete)) => {
+            // So does waking one, from the Snoozed list it is leaving (T238).
+            Ok(id @ (CommandId::Archive | CommandId::Delete | CommandId::Unsnooze))
+                if id != CommandId::Unsnooze
+                    || self.pane().is_some_and(|pane| {
+                        matches!(pane.feed().scope(), Some(ListScope::Snoozed(_)))
+                    }) =>
+            {
                 let gone = self
                     .pane()
                     .zip(self.cursor_row())
@@ -1429,7 +1440,18 @@ impl FocusWindow {
                 }
             }
             // `g t`: the Drafts folder, where Enter opens a draft to edit.
-            CommandId::GoToDrafts => self.go_to_drafts(),
+            CommandId::GoToDrafts => self.go_to_role(postio_model::MailboxRole::Drafts),
+            // The rest of the go-to keys (T236): a folder by its role, a
+            // view by its scope.
+            CommandId::GoToSent => self.go_to_role(postio_model::MailboxRole::Sent),
+            CommandId::GoToArchive => self.go_to_role(postio_model::MailboxRole::Archive),
+            CommandId::GoToSnoozed => self.go_to_view(postio_model::MailboxRole::Snoozed),
+            CommandId::GoToFlagged => self.go_to_view(postio_model::MailboxRole::Flagged),
+            // Flag toggles on `*`; Unsnooze wakes a snoozed row on `B`
+            // (T257, T238). Both are the host's, aimed like Archive.
+            // A Focus row is a whole conversation, so `A` is `a` here.
+            CommandId::ArchiveThread => self.act(CommandId::Archive),
+            CommandId::Flag | CommandId::Unsnooze => self.send(Command::default_for(id)),
             // The capture sheet (US15), from the row or the open message.
             CommandId::CaptureTask => self.open_capture(crate::capture::Mode::Task),
             CommandId::CaptureNote => self.open_capture(crate::capture::Mode::Note),
@@ -1447,8 +1469,16 @@ impl FocusWindow {
             // Focus's first run (T171), and what `c` offers with no
             // account (T172).
             CommandId::AddAccount => self.open_add_account(),
-            _ => tracing::debug!(command = %id, "no Focus surface answers this command yet"),
+            _ => {
+                tracing::debug!(command = %id, "no Focus surface answers this command yet");
+                self.imp().unanswered.borrow_mut().push(id);
+            }
         }
+    }
+
+    /// The commands `act` has had no arm for since this was last called.
+    pub fn take_unanswered(&self) -> Vec<CommandId> {
+        std::mem::take(&mut *self.imp().unanswered.borrow_mut())
     }
 
     /// How many rows the list has.
@@ -2042,8 +2072,10 @@ impl FocusWindow {
         }
     }
 
-    /// `g t`: list the Drafts folder of the account Focus writes from.
-    fn go_to_drafts(&self) {
+    /// `g t`, `g s`, `g r`: list the folder of `role` in the account Focus
+    /// writes from -- the first with one. A role, not a name: what a provider
+    /// calls its sent mail does not matter.
+    fn go_to_role(&self, role: postio_model::MailboxRole) {
         let Some(client) = self.imp().client.borrow().clone() else {
             return;
         };
@@ -2056,19 +2088,40 @@ impl FocusWindow {
                 let Ok(folders) = client.mailboxes(account).await else {
                     continue;
                 };
-                if let Some(drafts) = folders
-                    .iter()
-                    .find(|folder| folder.role == postio_model::MailboxRole::Drafts)
+                if let Some(folder) = folders.iter().find(|folder| folder.role == role)
                     && let Some(window) = window.upgrade()
                 {
                     window.go_to(
-                        postio_ui::finder::Destination::Mailbox(drafts.id),
-                        &crate::places::place_name(drafts),
+                        postio_ui::finder::Destination::Mailbox(folder.id),
+                        &crate::places::place_name(folder),
                     );
                     return;
                 }
             }
         });
+    }
+
+    /// `g z`, `g *`: list a view -- Snoozed or Flagged -- which is a scope
+    /// over mail filed elsewhere, not a folder with an id of its own. Of the
+    /// first account Focus writes from, as the folders above are.
+    fn go_to_view(&self, role: postio_model::MailboxRole) {
+        let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
+            return;
+        };
+        let Some(account) = self.imp().accounts.borrow().first().copied() else {
+            return;
+        };
+        let (scope, name) = match role {
+            postio_model::MailboxRole::Snoozed => (ListScope::Snoozed(account), "Snoozed"),
+            _ => (ListScope::Flagged(account), "Flagged"),
+        };
+        self.imp().at_inbox.set(false);
+        self.imp().has_action.set(false);
+        self.clear_selection();
+        pane.feed().list().set_single_heading(None);
+        pane.feed().open(scope);
+        chrome.set_place(name);
+        self.show_counts();
     }
 
     /// Say the counts the host last gave: the strip's, the toggle's, and
@@ -3499,6 +3552,7 @@ impl FocusWindow {
         );
         commands.extend(crate::open::OpenMessage::controls());
         commands.extend(crate::places::Places::controls());
+        commands.extend(crate::row_menu::RowMenu::commands());
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
         commands.extend(crate::digest::DigestWindow::controls());
@@ -3561,7 +3615,11 @@ impl FocusWindow {
             pane.view(),
             &at,
             summary.as_deref(),
-            conversation.summary.unread_count > 0,
+            crate::row_menu::Facts {
+                unread: conversation.summary.unread_count > 0,
+                flagged: conversation.summary.flagged,
+                snoozed: matches!(pane.feed().scope(), Some(ListScope::Snoozed(_))),
+            },
         );
     }
 

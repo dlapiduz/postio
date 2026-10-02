@@ -757,6 +757,22 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
+    /// The messages of a thread that are asleep, which [`Self::messages`]
+    /// leaves out: what waking a snoozed conversation has to reach.
+    pub async fn snoozed_messages(&self, id: ThreadId) -> Result<Vec<MessageListRow>> {
+        sql::all(
+            self.connection,
+            &format!(
+                "SELECT {LIST_COLUMNS} FROM messages
+                  WHERE messages.thread_id = ?1 AND messages.snoozed_until IS NOT NULL
+                  ORDER BY messages.received_at ASC, messages.id ASC"
+            ),
+            [id.get()],
+            read_list_row,
+        )
+        .await
+    }
+
     /// The SQL [`ThreadRepository::messages`] runs, for `EXPLAIN QUERY PLAN`.
     pub fn explain_messages(&self, order: ThreadOrder) -> String {
         let direction = match order {

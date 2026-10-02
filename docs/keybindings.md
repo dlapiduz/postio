@@ -79,7 +79,7 @@ command from inside a text field.
 | `A` | Archive thread | List, conversation, reader, digest | Undoable | `archive_thread` |
 | `Delete` | Delete | List, conversation, reader | Undoable | `delete` |
 | `m` | Move to… | List, conversation, reader | Undoable | `move` |
-| `*` | Flag | List, conversation, reader (not Postio Focus) | Undoable | `flag` |
+| `*` | Flag | List, conversation, reader | Undoable | `flag` |
 | `r` | Mark read or unread | List, conversation, reader | Undoable | `toggle_read` |
 | `s` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |

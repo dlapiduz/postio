@@ -267,8 +267,9 @@ the two places those verbs already live:
 - **One command each.** A verb hands its `CommandId` to the window's one
   `act`, the path its key takes; the menu implements nothing. Its words are
   the toolbar's and the bulk bar's, an ellipsis where a picker follows; the
-  read verb says which way it goes for the one row. Flag is not offered:
-  Focus answers no flag command yet.
+  read verb says which way it goes for the one row. Flag says Unflag on a
+  flagged row (and Flag over a selection), and Unsnooze shows only in the
+  Snoozed list.
 - **The cursor goes to the row**, as a click's does, so a picker the verb
   opens hangs from that row.
 - **Inside the selection** the menu is for the selection: its heading says

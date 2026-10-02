@@ -26,7 +26,7 @@ The terminal is out of scope. It keeps every command it has, including the
 three-pane ones (`Requirement::ThreePane` is "not Focus", so it covers the
 terminal and macOS too).
 
-**Count:** 52 capabilities. 21 are covered. 19 have a gap, closed by T233–T248;
+**Count:** 52 capabilities. 24 are covered. 16 have a gap, closed by T233–T248;
 four of those are already partly covered. 12 are dropped, and one of them
 (flagging) is decided: Flag stays, on `*` (C13).
 
@@ -40,7 +40,7 @@ four of those are already partly covered. 12 are dropped, and one of them
 | 2 | Folder list with counts, special-use folders first, ordinary folders after, per account | `postio-gtk::sidebar`; `NextFolder`, `PrevFolder` | **Covered by** the folders popover (`g o`, "Inbox ▾"; `places.rs`): mailboxes, folders and labels with counts, filtered by typing. Also by `in:` in the command bar (screen 08) |
 | 3 | Expanding and collapsing nested folders and accounts, remembered across restarts | `sidebar.rs` (`set_collapsed`), `state.rs`; `ToggleFolder` | **Dropped**, because it only exists in a sidebar (row 1). The popover is flat and filtered by typing. Maintainer: no |
 | 4 | Sync status at the sidebar's foot (`idle · imap`, "last sync 12s") | `sidebar.rs` (`set_status`) | **Covered by** the top bar's sync label and the one banner (`postio_ui::focus_state`, `chrome.rs`) |
-| 5 | Go-to keys: Inbox `g i`, Drafts `g d`, Sent `g s`, Archive `g r`, Snoozed `g z`, Flagged `g *` | `window.rs` (`Command::default_for`) | **Gap → T236.** Inbox and Drafts work. Sent, Archive, Snoozed and Flagged show their keys in the folders popover but nothing happens when they are pressed: `FocusWindow::act` has no arm for them. `registry_parity` passes them, because it checks for a key, a bar row and a control, but not for an answer |
+| 5 | Go-to keys: Inbox `g i`, Drafts `g d`, Sent `g s`, Archive `g r`, Snoozed `g z`, Flagged `g *` | `window.rs` (`Command::default_for`) | **Covered by** `FocusWindow::act`: Sent and Archive by folder role, Snoozed and Flagged as view scopes; `registry_parity` runs every offered command and fails on one `act` does not answer (T236) |
 | 6 | Scope: one account or all of them (`g a`, the sidebar's account rows) | `sidebar.rs` (`set_scope`); `NextScope` | **Dropped**, because Focus is one inbox across accounts (spec Assumptions). `account:` in the command bar narrows to one account in a search. Maintainer: no |
 | 7 | Previous view (`Left`) | `PrevView` | **Dropped**, because Focus has no view history: `Esc` leaves every view and `g i` goes home (screen 21's footer). Maintainer: no |
 | 8 | Command palette and query bar as one box | `postio-gtk::finder`, `palette.rs` | **Covered by** the command bar (`/` and `ctrl+k`, C24; `bar.rs`) |
@@ -56,8 +56,8 @@ four of those are already partly covered. 12 are dropped, and one of them
 | 13 | Windowed list over the paged store, one row per thread | `postio-gtk::list`, `list_view.rs`, `row.rs` | **Covered by** Focus's list (`list/`, over `postio-widgets::list_model`) |
 | 14 | Cursor separate from selection; extend, toggle and select all as a predicate | `list_view.rs` | **Covered by** `window.rs` (cursor, `x`, `J`/`K`, select all as a predicate, C19) and `bulk.rs` |
 | 15 | Archive, delete, mark read or unread, move, label, snooze, with undo | `Command::default_for`, `list_view.rs` | **Covered by** `FocusWindow::act`, the pickers (`move_picker.rs`, `label_picker.rs`, `when.rs`) and the undo toast |
-| 16 | Unsnooze (`B`) | `list_view.rs` (`Command::Unsnooze`) | **Gap → T238.** Focus lists the Snoozed mailbox but nothing answers `Unsnooze` there |
-| 17 | Flag (`*`), and the Flagged view | `Flag` (three-pane only), `row.rs`'s flag mark | **Gap → T257.** Focus offers Flag on `*` with no mark on the row; `g *` lists flagged mail (C13) |
+| 16 | Unsnooze (`B`) | `list_view.rs` (`Command::Unsnooze`) | **Covered by** `B` and the row menu in the Snoozed list and the open message, with an undo toast (T238) |
+| 17 | Flag (`*`), and the Flagged view | `Flag` (three-pane only), `row.rs`'s flag mark | **Covered by** `*` (Flag, Unflag on a flagged row) from the key, the row menu and the command bar, with Undo; no flag mark on the row; `g *` lists flagged mail (T257, C13) |
 | 18 | Row density (`[ui] density`), hover actions, sender avatars | `list_view.rs` (`set_density`), `row.rs`; `[ui]` | **Dropped**, because Focus's row is one fixed design (40 px, or 72 px with a marker, `contracts/focus-surface.md`, "Rows"), and the spec's handoff ranks consistency above preference. Maintainer: no |
 | 19 | Theme override (`[ui] theme`: light, dark or system) | `postio-gtk::style` | **Dropped**, because Focus follows the system's scheme and accent (FR-090, C26). Maintainer: no |
 | 20 | Row context menu | `list_view.rs` | **Covered by** `row_menu.rs` |

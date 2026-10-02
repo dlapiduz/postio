@@ -930,9 +930,9 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        // Focus offers no flag verb: "Has action" plays that part there
-        // (spec C13), and the key stays for the other apps.
-        requires: THREE_PANE_MAIL,
+        // Every app offers it, Focus on `*` with no mark on the row (spec
+        // C13): a flag another client set has to be clearable from here.
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleRead,

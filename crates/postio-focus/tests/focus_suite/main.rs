@@ -30,6 +30,7 @@ mod capture;
 mod chrome;
 mod close_buttons;
 mod colours;
+mod commands;
 mod compose;
 mod compose_layout;
 mod corrections;
@@ -695,6 +696,42 @@ const CASES: &[(&str, fn())] = &[
     (
         "reload::a_saved_focus_section_reaches_the_empty_inbox",
         reload::a_saved_focus_section_reaches_the_empty_inbox as fn(),
+    ),
+    (
+        "commands::g_s_and_g_r_list_sent_and_archive",
+        commands::g_s_and_g_r_list_sent_and_archive as fn(),
+    ),
+    (
+        "commands::g_z_lists_snoozed_and_g_star_lists_flagged",
+        commands::g_z_lists_snoozed_and_g_star_lists_flagged as fn(),
+    ),
+    (
+        "commands::b_unsnoozes_the_row_and_undo_puts_it_back",
+        commands::b_unsnoozes_the_row_and_undo_puts_it_back as fn(),
+    ),
+    (
+        "commands::the_row_menu_unsnoozes",
+        commands::the_row_menu_unsnoozes as fn(),
+    ),
+    (
+        "commands::b_in_the_open_message_unsnoozes_it",
+        commands::b_in_the_open_message_unsnoozes_it as fn(),
+    ),
+    (
+        "commands::star_flags_the_row_and_undo_clears_it",
+        commands::star_flags_the_row_and_undo_clears_it as fn(),
+    ),
+    (
+        "commands::the_row_menu_flags_and_unflags",
+        commands::the_row_menu_flags_and_unflags as fn(),
+    ),
+    (
+        "commands::capital_a_archives_the_conversation",
+        commands::capital_a_archives_the_conversation as fn(),
+    ),
+    (
+        "registry_parity::every_offered_command_that_is_whole_reaches_a_handler",
+        registry_parity::every_offered_command_that_is_whole_reaches_a_handler as fn(),
     ),
     (
         "registry_parity::every_focus_command_has_a_key_a_bar_row_and_a_control",

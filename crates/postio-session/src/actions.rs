@@ -1151,7 +1151,31 @@ impl Actions {
     /// at once for a selection spanning several.
     async fn unsnooze(&self, target: &MessageTarget) -> Result<Applied, CommandError> {
         let (connection, _permit) = self.connect().await?;
-        let rows = match self.aim(&connection, target).await? {
+        // A conversation row in the Snoozed list stands for the messages
+        // that are asleep, which a thread's visible members leave out.
+        let threads = match self.state.read(|app| app.resolve(target)) {
+            Some(Resolved::Thread(thread)) => Some(vec![thread]),
+            Some(Resolved::Threads(threads)) => Some(threads),
+            _ => None,
+        };
+        let aimed = match threads {
+            Some(threads) => {
+                let mut ids = Vec::new();
+                for thread in threads {
+                    let asleep = ThreadRepository::new(&connection)
+                        .snoozed_messages(thread)
+                        .await
+                        .map_err(store_failure)?;
+                    ids.extend(asleep.into_iter().map(|row| row.id));
+                }
+                if ids.is_empty() {
+                    return Err(CommandError::rejected("Nothing there is snoozed"));
+                }
+                Aim::Rows(self.rows(&connection, ids).await?)
+            }
+            None => self.aim(&connection, target).await?,
+        };
+        let rows = match aimed {
             Aim::Rows(rows) => rows,
             Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to unsnooze"));
