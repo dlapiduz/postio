@@ -73,13 +73,9 @@ pub fn run() -> glib::ExitCode {
     // One keyring for the installation, read on the opening thread.
     let secrets: Arc<dyn postio_account::secret::SecretStore> =
         Arc::new(postio_account::secret::KeyringSecretStore::default());
-    let open_again: Rc<dyn Fn() -> async_channel::Receiver<startup::Progress>> = {
-        let config_path = config_path.clone();
-        let secrets = Arc::clone(&secrets);
-        Rc::new(move || startup::open_on_a_thread(config_path.clone(), Arc::clone(&secrets)))
-    };
+    let opener = startup::Opener::new(config_path.clone(), secrets);
     // Before GTK: the open overlaps the whole of GTK's own start.
-    let early = RefCell::new(Some(open_again()));
+    let early = RefCell::new(Some(opener.open_on_a_thread()));
 
     if adw::init().is_err() {
         // Name what GTK was given: an empty pair is a terminal outside the
@@ -105,7 +101,10 @@ pub fn run() -> glib::ExitCode {
             }
             let window = FocusWindow::new(Some(application));
             window.present();
-            let progress = early.borrow_mut().take().unwrap_or_else(|| open_again());
+            let progress = early
+                .borrow_mut()
+                .take()
+                .unwrap_or_else(|| opener.open_on_a_thread());
             let opened: Rc<dyn Fn(Session)> = {
                 let session = Rc::clone(&session);
                 let window = window.downgrade();
@@ -138,8 +137,7 @@ pub fn run() -> glib::ExitCode {
                 &window,
                 progress,
                 Rc::clone(&config),
-                config_path.clone(),
-                Rc::clone(&open_again),
+                opener.clone(),
                 opened,
             );
         }

@@ -74,6 +74,7 @@ mod shot;
 mod starts_offline;
 mod state;
 mod store_in_use;
+mod store_unavailable;
 mod support;
 mod surfaced;
 mod treatments;
@@ -635,6 +636,24 @@ const CASES: &[(&str, fn())] = &[
     (
         "store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone",
         store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone
+            as fn(),
+    ),
+    (
+        "store_unavailable::the_close_button_closes_the_window_when_the_store_will_not_open",
+        store_unavailable::the_close_button_closes_the_window_when_the_store_will_not_open
+            as fn(),
+    ),
+    (
+        "store_unavailable::ctrl_q_closes_the_window_when_the_store_will_not_open",
+        store_unavailable::ctrl_q_closes_the_window_when_the_store_will_not_open as fn(),
+    ),
+    (
+        "store_unavailable::ctrl_w_closes_the_window_when_the_store_will_not_open",
+        store_unavailable::ctrl_w_closes_the_window_when_the_store_will_not_open as fn(),
+    ),
+    (
+        "store_unavailable::a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account",
+        store_unavailable::a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account
             as fn(),
     ),
     (

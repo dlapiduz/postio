@@ -32,6 +32,15 @@ use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 /// Where a chosen link or part is opened.
 type Launcher = Rc<dyn Fn(&str)>;
 
+/// What the page offering a fresh store says (T215): what happened, why
+/// trying again would not help, what a fresh store keeps and what it does
+/// not, and that the old one is set aside rather than deleted.
+const START_OVER: &str = "This version of Postio can\u{2019}t read the store an earlier \
+     build wrote, and no update carries it forward, so trying again won\u{2019}t help. \
+     A fresh store keeps your accounts and settings and syncs your mail again from the \
+     server. Snoozes, reminders, Focus\u{2019}s filing history, and drafts or changes \
+     not yet sent stay in the old store, which is set aside, not deleted.";
+
 /// The window's pages, by name.
 const BLANK: &str = "blank";
 const OPENING: &str = "opening";
@@ -82,6 +91,10 @@ mod imp {
         pub opening: adw::StatusPage,
         pub unavailable: adw::StatusPage,
         pub retry: gtk::Button,
+        /// The bar over every page before the inbox's own: the window's
+        /// close button, with nothing to act on yet (T216). The inbox's top
+        /// bar takes over once there is mail.
+        pub bar_before_mail: gtk::WindowHandle,
         pub inbox: gtk::Box,
         /// The undo toast, and the overlay it appears over: the shared one
         /// both desktop apps say "Archived 3 messages" with.
@@ -97,8 +110,12 @@ mod imp {
         /// When the wait began, for the threshold below which nothing is
         /// said.
         pub waiting_since: Cell<Option<std::time::Instant>>,
-        /// What "Try again" does on the page that says why there is no mail.
+        /// What the one button on the page that says why there is no mail
+        /// does: try again, or start a fresh store (T215).
         pub on_retry: RefCell<Option<Rc<dyn Fn()>>>,
+        /// The sentence that page says, as given: the page shows it as
+        /// escaped markup.
+        pub refusal: RefCell<String>,
         /// The keymap in force, as every surface's key hints read it.
         pub keymap: RefCell<Keymap>,
         /// Keys to commands, for Focus's commands alone (`crate::keys`).
@@ -224,6 +241,7 @@ mod imp {
                 opening: adw::StatusPage::new(),
                 unavailable: adw::StatusPage::new(),
                 retry: gtk::Button::with_label("Try again"),
+                bar_before_mail: gtk::WindowHandle::new(),
                 inbox: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 toast: postio_widgets::widgets::toast::Toast::new(),
                 on_screen: RefCell::default(),
@@ -233,6 +251,7 @@ mod imp {
                 waiting: Cell::default(),
                 waiting_since: Cell::default(),
                 on_retry: RefCell::default(),
+                refusal: RefCell::default(),
                 keymap: RefCell::new(Keymap::defaults().clone()),
                 resolver: RefCell::default(),
                 picked: SelectionState::new(),
@@ -351,7 +370,29 @@ impl FocusWindow {
         imp.pages.add_named(&imp.unavailable, Some(UNAVAILABLE));
         imp.pages.add_named(&imp.inbox, Some(INBOX));
         imp.pages.set_visible_child_name(BLANK);
-        imp.stage.set_child(Some(&imp.pages));
+
+        // Before there is mail there is still a window to close: the same
+        // close button the inbox's top bar ends with, in the same bar, and
+        // the same Quit it runs (T216). Until this, nothing before the inbox
+        // drew one, and the page saying the store would not open was a
+        // window nobody could close.
+        let close = postio_widgets::widgets::close_button();
+        close.add_css_class("focus-close");
+        close.add_css_class("circular");
+        close.connect_clicked(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| window.act(CommandId::Quit)
+        ));
+        let bar = gtk::CenterBox::new();
+        bar.add_css_class("focus-top-bar");
+        bar.set_end_widget(Some(&close));
+        imp.bar_before_mail.set_child(Some(&bar));
+        let before_mail = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        before_mail.append(&imp.bar_before_mail);
+        imp.pages.set_vexpand(true);
+        before_mail.append(&imp.pages);
+        imp.stage.set_child(Some(&before_mail));
         imp.toast.overlay().set_child(Some(&imp.stage));
         self.set_content(Some(imp.toast.overlay()));
 
@@ -602,6 +643,21 @@ impl FocusWindow {
         self.imp().keymap.borrow().clone()
     }
 
+    /// A key while there is no inbox yet -- the store is opening, or would
+    /// not open: Quit, which is all there is to do, from the keymap the
+    /// inbox will use (T216). The rest are the page's own, its button's
+    /// Return among them.
+    fn key_before_mail(&self, chord: &postio_ui::keymap::Chord) -> glib::Propagation {
+        let (mut resolver, _) = crate::keys::resolver(&self.keymap());
+        match resolver.press(chord, KeyContext::List, false, std::time::Instant::now()) {
+            Outcome::Command(id) if id.parse::<CommandId>() == Ok(CommandId::Quit) => {
+                self.act(CommandId::Quit);
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Proceed,
+        }
+    }
+
     /// Deliver one key press to the resolver, and act on what it means.
     ///
     /// Public because it is the whole keyboard path in one call: the
@@ -643,6 +699,9 @@ impl FocusWindow {
         let Some(chord) = postio_widgets::keys::chord(key, state) else {
             return glib::Propagation::Proceed;
         };
+        if self.imp().resolver.borrow().is_none() {
+            return self.key_before_mail(&chord);
+        }
         let typing = gtk::prelude::GtkWindowExt::focus(self)
             .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
             || self.composer_body_has_keyboard();
@@ -1673,26 +1732,56 @@ impl FocusWindow {
     /// There is no mail to show, and `reason` says why -- among them another
     /// Postio having the store open. "Try again" runs `retry`.
     pub fn show_unavailable(&self, reason: &str, retry: impl Fn() + 'static) {
+        self.show_refusal(
+            "Postio can\u{2019}t open your mail",
+            reason,
+            "Try again",
+            Rc::new(retry),
+        );
+    }
+
+    /// The store was written at a schema no migration carries forward, so
+    /// trying again would meet the same file (T215): say so, say what a
+    /// fresh store keeps and what stays behind before it is chosen, and
+    /// offer it. "Start a fresh store" runs `start_over`.
+    pub fn show_start_over(&self, start_over: impl Fn() + 'static) {
+        self.show_refusal(
+            "Your mail store is from another version of Postio",
+            START_OVER,
+            "Start a fresh store",
+            Rc::new(start_over),
+        );
+    }
+
+    /// Say a fresh store is being started, with the button that started it
+    /// held until the store opens or says why not.
+    pub fn show_starting_over(&self) {
+        let imp = self.imp();
+        imp.retry.set_label("Starting a fresh store\u{2026}");
+        imp.retry.set_sensitive(false);
+    }
+
+    fn show_refusal(&self, title: &str, reason: &str, action: &str, run: Rc<dyn Fn()>) {
         let imp = self.imp();
         imp.waiting.set(None);
         imp.waiting_since.set(None);
+        imp.unavailable.set_title(title);
         imp.unavailable
-            .set_title("Postio can\u{2019}t open your mail");
-        imp.unavailable.set_description(Some(reason));
-        imp.on_retry.replace(Some(Rc::new(retry)));
+            .set_description(Some(&glib::markup_escape_text(reason)));
+        imp.refusal.replace(reason.to_owned());
+        imp.retry.set_label(action);
+        imp.retry.set_sensitive(true);
+        imp.on_retry.replace(Some(run));
         imp.pages.set_visible_child_name(UNAVAILABLE);
+        imp.retry.grab_focus();
     }
 
     /// The sentence the window shows when it has no mail, if it is showing
     /// one.
     pub fn unavailable_reason(&self) -> Option<String> {
         let imp = self.imp();
-        (imp.pages.visible_child_name().as_deref() == Some(UNAVAILABLE)).then(|| {
-            imp.unavailable
-                .description()
-                .unwrap_or_default()
-                .to_string()
-        })
+        (imp.pages.visible_child_name().as_deref() == Some(UNAVAILABLE))
+            .then(|| imp.refusal.borrow().clone())
     }
 
     /// Press "Try again", as a click does.
@@ -1709,6 +1798,11 @@ impl FocusWindow {
     pub fn show_inbox(&self, client: Client, state: SharedState, keymap: Keymap) {
         self.imp().state.replace(Some(state));
         let imp = self.imp();
+        // The inbox's own top bar has the close button from here on: out of
+        // the tree, not hidden, so the window has one close button.
+        if let Some(holder) = imp.bar_before_mail.parent().and_downcast::<gtk::Box>() {
+            holder.remove(&imp.bar_before_mail);
+        }
         imp.waiting.set(None);
         imp.waiting_since.set(None);
         let chrome = Chrome::new(&keymap);
@@ -3717,6 +3811,13 @@ impl FocusWindow {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Say `sentence` in a toast: something that happened, with nothing
+    /// to undo.
+    pub fn say(&self, sentence: &str) {
+        self.imp().toast.show_notice(sentence);
+        self.follow_toast();
     }
 
     /// Keep track of the toast just shown until it goes.

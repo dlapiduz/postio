@@ -218,6 +218,7 @@ const SCREENS: &[(&str, &str)] = &[
         "26",
         "the row menu, right-clicked on a row outside the selection",
     ),
+    ("30", "a store no migration reaches, offering a fresh store"),
     ("27", "a newsletter opened, on paper"),
     ("28", "office mail opened, in app colours"),
     (
@@ -584,6 +585,27 @@ fn render(args: &[String]) -> Result<String, String> {
     } else {
         adw::ColorScheme::ForceLight
     });
+
+    // Screen 30 is before there is a store at all: the page a store no
+    // migration reaches leaves the window on (T215, T216).
+    if request.screen == "30" {
+        let window = FocusWindow::new(None);
+        window.set_default_size(request.size.0, request.size.1);
+        window.present();
+        window.show_start_over(|| {});
+        let shown = Instant::now();
+        settle_until(|| window.is_mapped() && shown.elapsed() > Duration::from_millis(300));
+        let outcome = postio_widgets::capture::png(&window, std::path::Path::new(&request.path))
+            .map_err(|error| error.to_string());
+        window.destroy();
+        manager.set_color_scheme(adw::ColorScheme::Default);
+        settings.set_gtk_enable_animations(animated);
+        let written = outcome?;
+        return Ok(format!(
+            "{}x{} -> {}",
+            written.width, written.height, request.path
+        ));
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

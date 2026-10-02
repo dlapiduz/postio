@@ -21,6 +21,7 @@ use postio_client::Client;
 use postio_client::protocol::ClientKind;
 use postio_core::SharedState;
 use postio_host::{FocusHandle, FocusSetup, Host};
+use postio_session::Refusal;
 use postio_ui::list_state::Waiting;
 
 use crate::window::FocusWindow;
@@ -216,53 +217,131 @@ pub fn adopt_at(
 pub enum Progress {
     /// What the store is being waited on for now.
     Stage(Waiting),
-    /// The host over the open store, or the sentence saying why there is
-    /// none.
-    Done(Result<Host, String>),
+    /// The host over the open store, or why there is none and what gets
+    /// past it.
+    Done(Result<Host, Refusal>),
 }
 
-/// Read the keyring and open the store on a thread of its own, reporting as
-/// it goes. A thread, not the main loop: a keyring prompt can hold it for
-/// half a minute, and the window has to go on drawing meanwhile.
+/// How Focus opens its store: under which `config.toml`, where the store
+/// is, and the keyring its key is in. Opening again and starting over are
+/// both done through it, so neither can reach a different store.
+#[derive(Clone)]
+pub struct Opener {
+    config_path: Option<PathBuf>,
+    store: PathBuf,
+    secrets: Arc<dyn postio_account::secret::SecretStore>,
+}
+
+impl Opener {
+    /// This installation's store, under the `config.toml` at `config_path`.
+    pub fn new(
+        config_path: Option<PathBuf>,
+        secrets: Arc<dyn postio_account::secret::SecretStore>,
+    ) -> Self {
+        Opener::at(config_path, postio_session::paths::store_path(), secrets)
+    }
+
+    /// The store at `store`: a suite's, one per case.
+    pub fn at(
+        config_path: Option<PathBuf>,
+        store: PathBuf,
+        secrets: Arc<dyn postio_account::secret::SecretStore>,
+    ) -> Self {
+        Opener {
+            config_path,
+            store,
+            secrets,
+        }
+    }
+
+    /// The `config.toml` this store is opened under.
+    pub fn config_path(&self) -> Option<&std::path::Path> {
+        self.config_path.as_deref()
+    }
+
+    /// Read the keyring and open the store on a thread of its own,
+    /// reporting as it goes. A thread, not the main loop: a keyring prompt
+    /// can hold it for half a minute, and the window has to go on drawing
+    /// meanwhile.
+    pub fn open_on_a_thread(&self) -> async_channel::Receiver<Progress> {
+        // Unbounded: a bounded sender would block this thread on a main loop
+        // that is busy drawing.
+        let (sender, receiver) = async_channel::unbounded();
+        let opener = self.clone();
+        std::thread::spawn(move || {
+            let report = |waiting| {
+                let _ = sender.send_blocking(Progress::Stage(waiting));
+            };
+            let opened = Host::open_at(
+                opener.config_path.as_deref(),
+                &opener.store,
+                opener.secrets,
+                &report,
+            );
+            let _ = sender.send_blocking(Progress::Done(opened));
+        });
+        receiver
+    }
+
+    /// Set the store aside and start a fresh one in its place, carrying the
+    /// accounts across (`postio_session::start_over`), on a thread of its
+    /// own for the same reason the open is. Answers where the old one went,
+    /// or the sentence saying why it could not be done.
+    pub fn start_over_on_a_thread(
+        &self,
+    ) -> async_channel::Receiver<Result<postio_session::start_over::StartedOver, String>> {
+        let (sender, receiver) = async_channel::bounded(1);
+        let opener = self.clone();
+        std::thread::spawn(move || {
+            let started = postio_session::store_key_blocking(opener.secrets.as_ref())
+                .map_err(|error| error.to_string())
+                .and_then(|key| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| {
+                            format!("Postio could not start the worker that starts the store over: {error}")
+                        })?
+                        .block_on(postio_session::start_over::start_over_at(&opener.store, &key))
+                });
+            let _ = sender.send_blocking(started);
+        });
+        receiver
+    }
+}
+
+/// [`Opener::open_on_a_thread`] for this installation's store.
 pub fn open_on_a_thread(
     config_path: Option<PathBuf>,
     secrets: Arc<dyn postio_account::secret::SecretStore>,
 ) -> async_channel::Receiver<Progress> {
-    // Unbounded: a bounded sender would block this thread on a main loop
-    // that is busy drawing.
-    let (sender, receiver) = async_channel::unbounded();
-    std::thread::spawn(move || {
-        let report = |waiting| {
-            let _ = sender.send_blocking(Progress::Stage(waiting));
-        };
-        let opened = Host::open(config_path.as_deref(), secrets, &report);
-        let _ = sender.send_blocking(Progress::Done(opened));
-    });
-    receiver
+    Opener::new(config_path, secrets).open_on_a_thread()
 }
 
 /// Open the store behind `window`, which is already on screen, and show the
-/// inbox once it is open -- or the sentence for why not, with "Try again".
+/// inbox once it is open -- or the sentence for why not, with the way past
+/// it: "Try again" for what can pass, starting over for a store no
+/// migration reaches.
 ///
-/// `progress` is an open already under way (`open_on_a_thread`), started
-/// before GTK was; `open_again` starts another, for the retry. `opened` is
-/// called with the session once there is one.
+/// `progress` is an open already under way (`Opener::open_on_a_thread`),
+/// started before GTK was; `opener` starts another, for the retry, and
+/// starts the store over. `opened` is called with the session once there
+/// is one.
 pub fn open(
     window: &FocusWindow,
     progress: async_channel::Receiver<Progress>,
     config: Rc<postio_config::Config>,
-    config_path: Option<PathBuf>,
-    open_again: Rc<dyn Fn() -> async_channel::Receiver<Progress>>,
+    opener: Opener,
     opened: Rc<dyn Fn(Session)>,
 ) {
     let window = window.clone();
     glib::spawn_future_local(async move {
-        let mut answer = Err(
+        let mut answer = Err(Refusal::try_again(
             // The thread went away without answering: a bug rather than a
             // condition, but the screen still says something a person can
             // act on.
-            "Postio stopped opening its local store before it answered.".to_owned(),
-        );
+            "Postio stopped opening its local store before it answered.",
+        ));
         while let Ok(said) = progress.recv().await {
             match said {
                 Progress::Stage(waiting) => window.set_waiting_on(waiting),
@@ -274,30 +353,74 @@ pub fn open(
         }
         match answer {
             Ok(host) => {
-                let session = adopt_at(&window, host, &config, config_path.as_deref());
+                let session = adopt_at(&window, host, &config, opener.config_path());
                 opened(session);
             }
-            Err(reason) => {
-                tracing::error!(reason, "the store did not open");
+            Err(refusal) => {
+                tracing::error!(reason = %refusal, "the store did not open");
                 let retry = {
                     let window = window.downgrade();
                     let config = Rc::clone(&config);
-                    let open_again = Rc::clone(&open_again);
+                    let opener = opener.clone();
                     let opened = Rc::clone(&opened);
                     move || {
                         if let Some(window) = window.upgrade() {
                             open(
                                 &window,
-                                open_again(),
+                                opener.open_on_a_thread(),
                                 Rc::clone(&config),
-                                config_path.clone(),
-                                Rc::clone(&open_again),
+                                opener.clone(),
                                 Rc::clone(&opened),
                             );
                         }
                     }
                 };
-                window.show_unavailable(&reason, retry);
+                match refusal.remedy {
+                    postio_session::Remedy::TryAgain => {
+                        window.show_unavailable(&refusal.sentence, retry);
+                    }
+                    // Trying again would meet the same file (T215).
+                    postio_session::Remedy::StartOver { .. } => {
+                        let page = window.downgrade();
+                        window.show_start_over(move || {
+                            if let Some(window) = page.upgrade() {
+                                start_over(&window, &opener, Rc::new(retry.clone()));
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Set the store aside and start a fresh one (`Opener::start_over_on_a_thread`),
+/// then open it as `reopen` does: what "Start a fresh store" runs. A start
+/// over that could not be done says why, with "Try again" -- which opens the
+/// store again and, if it is still the old one, offers this again.
+fn start_over(window: &FocusWindow, opener: &Opener, reopen: Rc<dyn Fn()>) {
+    window.show_starting_over();
+    let started = opener.start_over_on_a_thread();
+    let window = window.downgrade();
+    glib::spawn_future_local(async move {
+        let answer = started.recv().await.unwrap_or_else(|_| {
+            Err("Postio stopped starting a fresh store before it answered.".to_owned())
+        });
+        let Some(window) = window.upgrade() else {
+            return;
+        };
+        match answer {
+            Ok(started) => {
+                tracing::info!(accounts = started.accounts, "the store was started over");
+                reopen();
+                window.say(&format!(
+                    "Started a fresh store. The old one is in {}",
+                    started.set_aside.display()
+                ));
+            }
+            Err(sentence) => {
+                tracing::error!(reason = %sentence, "the store could not be started over");
+                window.show_unavailable(&sentence, move || reopen());
             }
         }
     });

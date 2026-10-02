@@ -98,17 +98,12 @@ fn open_focus(hex: &str) {
         let window = postio_focus::window::FocusWindow::new(None);
         window.present();
         let opened: Rc<std::cell::RefCell<Option<postio_focus::startup::Session>>> = Rc::default();
-        let secrets = keyring(hex);
-        let open_again: Rc<dyn Fn() -> async_channel::Receiver<postio_focus::startup::Progress>> = {
-            let secrets = Arc::clone(&secrets);
-            Rc::new(move || postio_focus::startup::open_on_a_thread(None, Arc::clone(&secrets)))
-        };
+        let opener = postio_focus::startup::Opener::new(None, keyring(hex));
         postio_focus::startup::open(
             &window,
-            open_again(),
+            opener.open_on_a_thread(),
             Rc::new(postio_config::Config::default()),
-            None,
-            Rc::clone(&open_again),
+            opener,
             {
                 let opened = Rc::clone(&opened);
                 Rc::new(move |session| {
