@@ -730,6 +730,10 @@ const CASES: &[(&str, fn())] = &[
         commands::capital_a_archives_the_conversation as fn(),
     ),
     (
+        "commands::g_z_and_g_star_span_every_account",
+        commands::g_z_and_g_star_span_every_account as fn(),
+    ),
+    (
         "registry_parity::every_offered_command_that_is_whole_reaches_a_handler",
         registry_parity::every_offered_command_that_is_whole_reaches_a_handler as fn(),
     ),

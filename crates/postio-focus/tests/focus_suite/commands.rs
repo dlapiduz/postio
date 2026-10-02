@@ -354,8 +354,7 @@ pub fn the_row_menu_flags_and_unflags() {
             .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
             .await;
         let (window, _client) = fixture.open().await;
-        crate::row_menu::right_click(&window, 0);
-        let menu = crate::row_menu::menu_shown(&window).await;
+        let menu = right_clicked(&window).await;
         let said = support::texts(&menu);
         let at = said
             .iter()
@@ -374,8 +373,7 @@ pub fn the_row_menu_flags_and_unflags() {
 
         assert!(
             crate::settle_until(async || {
-                crate::row_menu::right_click(&window, 0);
-                let menu = crate::row_menu::menu_shown(&window).await;
+                let menu = right_clicked(&window).await;
                 support::texts(&menu).iter().any(|text| text == "Unflag")
             })
             .await,
@@ -411,5 +409,42 @@ pub fn capital_a_archives_the_conversation() {
             "`A` left the conversation in the inbox: {:?}",
             support::subjects(&window)
         );
+    });
+}
+
+/// Focus is one inbox across accounts, so `g z` and `g *` list every
+/// account's snoozed and flagged mail, not the first account's.
+pub fn g_z_and_g_star_span_every_account() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (first_snoozed, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "First asleep", "x", 50)
+            .await;
+        let (first_flagged, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "First starred", "x", 40)
+            .await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "First plain", "x", 5)
+            .await;
+        let (second, second_inbox) = fixture.second_account().await;
+        let second_snoozed = fixture
+            .file_as(second.id, second_inbox, "Second asleep", 30)
+            .await;
+        let second_flagged = fixture
+            .file_as(second.id, second_inbox, "Second starred", 20)
+            .await;
+        snooze(&fixture, first_snoozed).await;
+        snooze(&fixture, second_snoozed).await;
+        let (window, client) = fixture.open().await;
+        flag(&client, first_flagged).await;
+        flag(&client, second_flagged).await;
+
+        support::keys(&window, &["g", "z"]);
+        showing(&window, "Snoozed", &["Second asleep", "First asleep"]).await;
+        support::keys(&window, &["g", "asterisk"]);
+        showing(&window, "Flagged", &["Second starred", "First starred"]).await;
     });
 }

@@ -2351,6 +2351,19 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
         // (spec 007).
         // The has-action filter too: nothing reads either flat -- both list
         // conversations -- and a flat read of it is its inbox's messages.
+        // Focus's two views over every account: the per-account views' own
+        // predicates, with the account a membership test against the enabled
+        // ones, which `idx_messages_account_*` seeks once per account.
+        ListScope::Focus(postio_model::FocusScope::Flagged) => (
+            "messages.account_id IN (SELECT id FROM accounts
+                 WHERE enabled = 1 AND pending_deletion = 0) AND messages.flagged = 1",
+            NOT_YET_DUE,
+        ),
+        ListScope::Focus(postio_model::FocusScope::Snoozed) => (
+            "messages.account_id IN (SELECT id FROM accounts
+                 WHERE enabled = 1 AND pending_deletion = 0)",
+            STILL_SNOOZED,
+        ),
         ListScope::Focus(_) => {
             focus = format!(
                 "messages.mailbox_id IN (

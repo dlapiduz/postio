@@ -76,6 +76,13 @@ pub enum FocusScope {
     /// (spec 007 FR-017). Read from the markers rather than by walking the
     /// inbox, since they are few and it is not.
     HasAction,
+    /// Everything snoozed, in every enabled account, wherever it is filed:
+    /// `g z`. Messages, newest first, as the per-account
+    /// [`ListScope::Snoozed`] lists them, over every account at once.
+    Snoozed,
+    /// Everything flagged, in every enabled account, wherever it is filed:
+    /// `g *`. As [`FocusScope::Snoozed`] is to [`ListScope::Snoozed`].
+    Flagged,
 }
 
 impl ListScope {
@@ -193,6 +200,13 @@ impl ListScope {
             // Focus's inbox is the same inboxes, and it never inserts either:
             // Focus may hold an arrival for a digest or file it away before it
             // is ever a row, and only the store knows which.
+            // Focus's two views over every account are membership questions
+            // like the per-account ones, and so are never inserted into; no
+            // account's change is somebody else's.
+            ListScope::Focus(FocusScope::Snoozed | FocusScope::Flagged) => match arrival {
+                MessagesRemoved | MessageListChanged | MessagesChanged => Reload,
+                NewMail => Ignore,
+            },
             ListScope::Unified | ListScope::Focus(_) => match arrival {
                 NewMail | MessagesRemoved | MessageListChanged if inbox == Some(false) => Ignore,
                 NewMail | MessagesRemoved | MessageListChanged => Reload,

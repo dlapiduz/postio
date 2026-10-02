@@ -168,7 +168,11 @@ pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope
         | ListScope::Snoozed(_)
         | ListScope::Outbox(_)
         | ListScope::Thread(_)
-        | ListScope::Focus(postio_model::FocusScope::HasAction) => None,
+        | ListScope::Focus(
+            postio_model::FocusScope::HasAction
+            | postio_model::FocusScope::Snoozed
+            | postio_model::FocusScope::Flagged,
+        ) => None,
     }
 }
 

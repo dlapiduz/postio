@@ -993,7 +993,10 @@ impl FocusWindow {
             Ok(id @ (CommandId::Archive | CommandId::Delete | CommandId::Unsnooze))
                 if id != CommandId::Unsnooze
                     || self.pane().is_some_and(|pane| {
-                        matches!(pane.feed().scope(), Some(ListScope::Snoozed(_)))
+                        matches!(
+                            pane.feed().scope(),
+                            Some(ListScope::Focus(FocusScope::Snoozed))
+                        )
                     }) =>
             {
                 let gone = self
@@ -2102,18 +2105,17 @@ impl FocusWindow {
     }
 
     /// `g z`, `g *`: list a view -- Snoozed or Flagged -- which is a scope
-    /// over mail filed elsewhere, not a folder with an id of its own. Of the
-    /// first account Focus writes from, as the folders above are.
+    /// over mail filed elsewhere, not a folder with an id of its own. Of every
+    /// enabled account, as Focus's inbox is.
     fn go_to_view(&self, role: postio_model::MailboxRole) {
         let (Some(pane), Some(chrome)) = (self.pane(), self.chrome()) else {
             return;
         };
-        let Some(account) = self.imp().accounts.borrow().first().copied() else {
-            return;
-        };
         let (scope, name) = match role {
-            postio_model::MailboxRole::Snoozed => (ListScope::Snoozed(account), "Snoozed"),
-            _ => (ListScope::Flagged(account), "Flagged"),
+            postio_model::MailboxRole::Snoozed => {
+                (ListScope::Focus(FocusScope::Snoozed), "Snoozed")
+            }
+            _ => (ListScope::Focus(FocusScope::Flagged), "Flagged"),
         };
         self.imp().at_inbox.set(false);
         self.imp().has_action.set(false);
@@ -3618,7 +3620,10 @@ impl FocusWindow {
             crate::row_menu::Facts {
                 unread: conversation.summary.unread_count > 0,
                 flagged: conversation.summary.flagged,
-                snoozed: matches!(pane.feed().scope(), Some(ListScope::Snoozed(_))),
+                snoozed: matches!(
+                    pane.feed().scope(),
+                    Some(ListScope::Focus(FocusScope::Snoozed))
+                ),
             },
         );
     }

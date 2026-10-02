@@ -515,10 +515,14 @@ impl LocalStore {
     /// part of the conversation it belongs to.
     async fn lists_conversations(&self, scope: ListScope) -> Result<bool, StoreError> {
         let ListScope::Mailbox(mailbox) = scope else {
-            return Ok(matches!(
-                scope,
-                ListScope::Account(_) | ListScope::Unified | ListScope::Focus(_)
-            ));
+            return Ok(match scope {
+                // Messages, like the per-account views they span.
+                ListScope::Focus(FocusScope::Snoozed | FocusScope::Flagged) => false,
+                _ => matches!(
+                    scope,
+                    ListScope::Account(_) | ListScope::Unified | ListScope::Focus(_)
+                ),
+            });
         };
         self.read(move |connection| async move {
             let folder = MailboxRepository::new(&connection)
