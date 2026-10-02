@@ -4,8 +4,9 @@
 //! `postio_widgets::present::onboarding` joins it to the store's host, which
 //! probes, proves and writes (ADR 0041, specs/007-postio-focus T165). What is
 //! left here is the classic app's own: the form replacing an empty window
-//! rather than floating over one, the sync-window step after the account is
-//! saved, and bringing the window up over the new account once it is.
+//! rather than floating over one, and bringing the window up over the new
+//! account once its history is chosen. The sync-window step itself is the
+//! presenter's (`Presenter::ask_sync_window`), run by Focus's first run too.
 //!
 //! # Nothing here blocks the UI
 //!
@@ -35,7 +36,6 @@ use crate::Wiring;
 pub(crate) use postio_session::onboarding::configured;
 #[cfg(test)]
 use postio_session::onboarding::persist;
-use postio_session::onboarding::write_sync_window;
 #[cfg(test)]
 use postio_session::onboarding::{connection_settings, probe_options, status_for};
 
@@ -168,7 +168,8 @@ pub fn install_for(
     // would show mail and answer no key, which is the shape of bug
     // `postio-bl2` is named for.
     //
-    // Held back from the save itself by the sync-window step (#876): the
+    // Held back from the save itself by the sync-window step (#876, run by
+    // `Presenter::ask_sync_window`): the
     // account and its credential are already written by the time that step
     // shows, so `Status::Saved` is real, but the window this closure swaps
     // to should not appear until the user has chosen how far back to sync.
@@ -181,20 +182,7 @@ pub fn install_for(
             open();
         }
     };
-    screen.connect_start_sync(move |window| {
-        if let Err(error) = write_sync_window(window) {
-            tracing::warn!(%error, "could not save the chosen sync window");
-        }
-        finish();
-    });
-    presenter.connect_saved({
-        let screen = screen.downgrade();
-        move |_| {
-            if let Some(screen) = screen.upgrade() {
-                screen.set_status(Status::SyncWindow);
-            }
-        }
-    });
+    presenter.ask_sync_window(move |_| finish());
 }
 
 /// How the classic app opens a browser sign-in's consent link: through

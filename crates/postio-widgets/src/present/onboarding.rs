@@ -11,8 +11,9 @@
 //! # What it does not do
 //!
 //! Start the new account's sync. It asks the host to save and wait
-//! ([`AfterSave::Wait`]): the classic first run starts the sync once the
-//! person has chosen how far back to go, the add-account dialog brings the
+//! ([`AfterSave::Wait`]): a first run asks how far back to go
+//! ([`Presenter::ask_sync_window`], which both apps' first runs use) and
+//! starts the sync once that is chosen, the add-account dialog brings the
 //! account into a window that is already running, and a credential update is
 //! over an account whose sync is running already. Each is its app's to do,
 //! from [`Presenter::connect_saved`].
@@ -130,6 +131,43 @@ impl Presenter {
     /// row, both. Never on a refused proof or a failed write.
     pub fn connect_saved(&self, handler: impl Fn(&Submission) + 'static) {
         self.inner.saved.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Once an account is written, ask how much history to sync before
+    /// anything else happens (#876): the form moves to its last step, and
+    /// `chosen` runs when `Start sync` is pressed, after the choice has
+    /// been written to `[sync].initial_sync_messages` in `config.toml`.
+    ///
+    /// A failed write is logged and `chosen` still runs: the default is what
+    /// a fresh install already has, so it costs the size picked, not the
+    /// account. Replaces what [`Presenter::connect_saved`] handlers would
+    /// otherwise see first, so an app that asks registers this instead of
+    /// acting on the save.
+    pub fn ask_sync_window(&self, chosen: impl Fn(&Submission) + 'static) {
+        let Some(screen) = self.screen() else {
+            return;
+        };
+        let saved: Rc<RefCell<Option<Submission>>> = Rc::default();
+        screen.connect_start_sync({
+            let saved = saved.clone();
+            move |window| {
+                if let Err(error) = postio_ui::onboarding::write_sync_window(window) {
+                    tracing::warn!(%error, "could not save the chosen sync window");
+                }
+                if let Some(submission) = saved.borrow().as_ref() {
+                    chosen(submission);
+                }
+            }
+        });
+        self.connect_saved({
+            let screen = screen.downgrade();
+            move |submission| {
+                saved.replace(Some(submission.clone()));
+                if let Some(screen) = screen.upgrade() {
+                    screen.set_status(Status::SyncWindow);
+                }
+            }
+        });
     }
 
     /// The form was left: stop the probe it started.
@@ -351,6 +389,49 @@ pub fn add_account(
                 dialog.close();
             }
             on_saved(submission);
+        }
+    });
+    dialog.present(Some(parent));
+    dialog
+}
+
+/// [`add_account`] for a first run: after the account is written the
+/// dialog asks how much history to sync, and `on_saved` runs once that is
+/// chosen -- or when the dialog is closed at that step, since the account
+/// is already saved by then and must still come up.
+pub fn add_account_asking_history(
+    parent: &impl IsA<gtk::Widget>,
+    client: &Client,
+    open_link: impl Fn(&str) + 'static,
+    on_saved: impl Fn(&Submission) + 'static,
+) -> adw::Dialog {
+    let screen = Onboarding::new();
+    screen.focus_name();
+    let presenter = Presenter::drive(&screen, client, open_link);
+    let dialog = dialog(&screen, "Add account", &presenter);
+    let on_saved = Rc::new(on_saved);
+    let waiting: Rc<RefCell<Option<Submission>>> = Rc::default();
+    presenter.connect_saved({
+        let waiting = waiting.clone();
+        move |submission| {
+            waiting.replace(Some(submission.clone()));
+        }
+    });
+    presenter.ask_sync_window({
+        let dialog = dialog.downgrade();
+        let on_saved = on_saved.clone();
+        let waiting = waiting.clone();
+        move |submission| {
+            waiting.take();
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
+            on_saved(submission);
+        }
+    });
+    dialog.connect_closed(move |_| {
+        if let Some(submission) = waiting.take() {
+            on_saved(&submission);
         }
     });
     dialog.present(Some(parent));
