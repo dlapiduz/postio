@@ -45,6 +45,17 @@ fn clock_utc() -> chrono::DateTime<chrono::Utc> {
     postio_ui::clock::now().to_utc()
 }
 
+/// The conversation lengths of the `thirty-threads` seed: thirty-six threads,
+/// mostly single messages, some exchanges, one of five.
+const THIRTY_THREADS: &[usize] = &[
+    1, 2, 1, 1, 3, 1, 1, 2, 1, 1, 1, 4, 1, 2, 1, 1, 1, 3, 1, 1, 2, 1, 1, 1, 5, 1, 1, 2, 1, 1, 1, 3,
+    1, 1, 2, 1,
+];
+
+/// The one conversation of the `long-thread` seed: seven messages, the last
+/// two unread.
+const LONG_THREAD: &[usize] = &[7];
+
 /// A condition of the store, named neutrally so more than one application can
 /// answer to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,18 +70,27 @@ pub enum Seed {
     FirstRun,
     /// A message queued to send and not yet sent.
     Outbox,
+    /// A draft saved and never sent or queued.
+    DraftLeftOver,
+    /// One conversation of seven messages, the last two unread.
+    LongThread,
+    /// Thirty-six conversations in the Inbox.
+    ThirtyThreads,
     /// A backfill in flight, with the size of the account's mail beside it.
     Backfilling,
 }
 
 impl Seed {
     /// Every seed, in the order the research table lists them.
-    pub const ALL: [Seed; 6] = [
+    pub const ALL: [Seed; 9] = [
         Seed::Small,
         Seed::Empty,
         Seed::FirstRun,
         Seed::TwoAccounts,
         Seed::Outbox,
+        Seed::DraftLeftOver,
+        Seed::LongThread,
+        Seed::ThirtyThreads,
         Seed::Backfilling,
     ];
 
@@ -82,6 +102,9 @@ impl Seed {
             Seed::TwoAccounts => "two-accounts",
             Seed::FirstRun => "first-run",
             Seed::Outbox => "outbox",
+            Seed::DraftLeftOver => "draft-left-over",
+            Seed::LongThread => "long-thread",
+            Seed::ThirtyThreads => "thirty-threads",
             Seed::Backfilling => "backfilling",
         }
     }
@@ -94,13 +117,17 @@ impl Seed {
     /// Whether this seed decides what mail the store holds, rather than
     /// adding to it. Exactly one base applies to a store.
     fn is_base(self) -> bool {
-        matches!(self, Seed::Small | Seed::Empty)
+        matches!(
+            self,
+            Seed::Small | Seed::Empty | Seed::LongThread | Seed::ThirtyThreads
+        )
     }
 }
 
 /// Which seeds a window is built from.
 ///
-/// At most one is a *base* (`small`, `empty`) and the rest are added on top of it, which is how
+/// At most one is a *base* (`small`, `empty`, `long-thread`,
+/// `thirty-threads`) and the rest are added on top of it, which is how
 /// `shot demo accounts outbox` has always combined. With no base, `small`.
 #[derive(Clone, Debug, Default)]
 pub struct DemoOptions {
@@ -312,6 +339,12 @@ pub fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
 pub async fn seed_store(database: &postio_storage::Store, options: &DemoOptions) -> SeedReport {
     let report = match options.base() {
         Seed::Empty => postio_storage::seed::seed_conversations(database, 11, &[]).await,
+        Seed::ThirtyThreads => {
+            postio_storage::seed::seed_conversations(database, 11, THIRTY_THREADS).await
+        }
+        Seed::LongThread => {
+            postio_storage::seed::seed_conversations(database, 11, LONG_THREAD).await
+        }
         _ => postio_storage::seed::seed_small_with_bodies(database, 11).await,
     };
     let account = report.account.id;
@@ -368,6 +401,22 @@ pub async fn seed_store(database: &postio_storage::Store, options: &DemoOptions)
             .expect("the send queues");
     }
 
+    // An unsent draft already in the store at launch: saved and never queued,
+    // so it is a draft someone walked away from rather than a message on its
+    // way out. The sidebar's Drafts row and its count are read back out of the
+    // store, as the Outbox's are.
+    if options.has(Seed::DraftLeftOver) {
+        let connection = database.connect().await.expect("a connection");
+        let drafts = postio_storage::repository::DraftRepository::new(&connection);
+        let mut draft = postio_model::Draft::new(account);
+        draft.subject = "Notes for Thursday".to_owned();
+        draft.to = vec![postio_model::EmailAddress::new(
+            Some("Nadia Okafor"),
+            "nadia@example.org",
+        )];
+        draft.body.text = Some("Agenda so far: the index rebuild, then the release.".to_owned());
+        drafts.save(&mut draft).await.expect("the draft saves");
+    }
     report
 }
 
@@ -985,6 +1034,7 @@ pub fn settle(window: &impl IsA<gtk::Widget>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postio_storage::repository::{DraftRepository, ThreadListQuery, ThreadRepository};
 
     async fn seeded(seeds: &[Seed]) -> (postio_storage::Store, SeedReport) {
         let database = postio_storage::test_support::memory().await;
@@ -995,9 +1045,68 @@ mod tests {
         (database, report)
     }
 
+    async fn threads(
+        database: &postio_storage::Store,
+        account: AccountId,
+    ) -> Vec<postio_storage::repository::ThreadListRow> {
+        let connection = database.connect().await.expect("a connection");
+        let mut query = ThreadListQuery::account(account);
+        query.limit = 500;
+        ThreadRepository::new(&connection)
+            .page(&query)
+            .await
+            .expect("the thread list")
+    }
+
     #[tokio::test]
-    async fn the_small_seed_has_mail_and_the_empty_seed_none() {
-        let (_, report) = seeded(&[Seed::Small]).await;
+    async fn thirty_threads_holds_at_least_thirty_conversations() {
+        let (database, report) = seeded(&[Seed::ThirtyThreads]).await;
+        let rows = threads(&database, report.account.id).await;
+        assert!(rows.len() >= 30, "{} threads", rows.len());
+        assert!(rows.iter().any(|row| row.unread_count > 0));
+        assert!(rows.iter().any(|row| row.message_count > 1));
+    }
+
+    #[tokio::test]
+    async fn long_thread_is_one_conversation_of_six_or_more_with_some_unread() {
+        let (database, report) = seeded(&[Seed::LongThread]).await;
+        let rows = threads(&database, report.account.id).await;
+        assert_eq!(rows.len(), 1, "one conversation");
+        assert!(rows[0].message_count >= 6, "{}", rows[0].message_count);
+        assert!(rows[0].unread_count > 0);
+        assert!(rows[0].unread_count < rows[0].message_count, "some read");
+    }
+
+    #[tokio::test]
+    async fn draft_left_over_is_saved_and_never_queued() {
+        let (database, report) = seeded(&[Seed::DraftLeftOver]).await;
+        let connection = database.connect().await.expect("a connection");
+        let drafts = DraftRepository::new(&connection)
+            .list_for_account(report.account.id)
+            .await
+            .expect("the drafts");
+        assert_eq!(drafts.len(), 1);
+        assert!(
+            DraftRepository::new(&connection)
+                .by_state(postio_model::DraftState::Queued)
+                .await
+                .expect("the queued sends")
+                .is_empty(),
+            "an unsent draft is not on its way out"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_small_seed_has_no_leftover_draft_and_the_empty_seed_no_mail() {
+        let (database, report) = seeded(&[Seed::Small]).await;
+        let connection = database.connect().await.expect("a connection");
+        assert!(
+            DraftRepository::new(&connection)
+                .list_for_account(report.account.id)
+                .await
+                .expect("the drafts")
+                .is_empty()
+        );
         assert!(report.message_count > 0);
 
         let (_, report) = seeded(&[Seed::Empty]).await;
