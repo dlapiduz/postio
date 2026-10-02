@@ -177,3 +177,16 @@ async fn a_word_that_found_mail_is_shown_as_typed() {
     let results = run(&database, account, "quarterly").await;
     assert_eq!(results.instead, None);
 }
+
+#[tokio::test]
+async fn a_search_is_timed_on_the_app_clock() {
+    // The readout says "11 hits · 2 ms"; timed on the system's clock it
+    // read 2 ms in one storyboard run and 3 ms in the next, so the same
+    // build filmed two different frames. On a frozen clock no time passes.
+    let (database, account) = store().await;
+    postio_ui::clock::freeze(chrono::Local::now());
+    let results = run(&database, account, "quarterly").await;
+    postio_ui::clock::thaw();
+    assert_eq!(results.total_hits, 2);
+    assert_eq!(results.elapsed, std::time::Duration::ZERO);
+}
