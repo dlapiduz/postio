@@ -62,7 +62,7 @@ pub struct Verdict {
     #[serde(default)]
     pub storyboard: String,
     /// Its step, by id or index.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "step_name")]
     pub step: String,
     /// The app.
     #[serde(default)]
@@ -96,7 +96,7 @@ pub struct Finding {
     #[serde(default)]
     pub storyboard: String,
     /// Its step, by id or index.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "step_name")]
     pub step: String,
     /// The app.
     #[serde(default)]
@@ -432,6 +432,21 @@ pub fn merge(bundle: &Path) -> Result<usize, String> {
     Ok(batches.len())
 }
 
+/// A step as the reviewer wrote it: its id, or its index as a string or a
+/// bare number, which is how the prompt lists an unnamed step.
+fn step_name<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Step {
+        Name(String),
+        Index(u64),
+    }
+    Ok(match Step::deserialize(deserializer)? {
+        Step::Name(name) => name,
+        Step::Index(index) => index.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +513,16 @@ mod tests {
         let (dir, _) = bundled();
         let review: Review = serde_json::from_value(value).expect("schema");
         errors(&review, &dir.path().join("bundle"))
+    }
+
+    #[test]
+    fn a_step_written_as_a_number_is_its_index() {
+        // The prompt lists steps as `archive-walks-down / 2 / classic`, and
+        // a reviewer that writes `"step": 2` means step 2.
+        let mut value = complete();
+        value["verdicts"][1]["step"] = json!(1);
+        let review: Review = serde_json::from_value(value).expect("a number is a step");
+        assert_eq!(review.verdicts[1].step, "1");
     }
 
     #[test]
