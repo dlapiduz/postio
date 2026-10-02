@@ -1033,7 +1033,7 @@ impl Onboarding {
             &[("Login name", &imp.login, false)],
         ];
         for row in rows {
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, crate::widgets::space::S3);
             for &(label, entry, is_port) in row {
                 entry.set_hexpand(!is_port);
                 if is_port {
