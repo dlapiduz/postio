@@ -488,7 +488,7 @@ US2; quickstart § 5).
   tools Read, Glob, Grep and Write. Its body says that its whole instruction
   is the prompt it is given, and that it writes only `verdicts.json` in the
   bundle.
-- [ ] T059 [US2] Write `.claude/skills/ux-review/SKILL.md`, following
+- [X] T059 [US2] Write `.claude/skills/ux-review/SKILL.md`, following
   contracts/review.md § Who does what. It covers:
   - running and checking the base;
   - building the bundle;
@@ -499,7 +499,7 @@ US2; quickstart § 5).
   - building the page;
   - recording maintainer rejections as storyboards (FR-024);
   - `--calibrate`.
-- [ ] T060 [P] [US2] Write the calibration set, `storyboards/calibration/`.
+- [X] T060 [P] [US2] Write the calibration set, `storyboards/calibration/`.
   It has six `must_fail` storyboards, each a past defect stated as intent:
   - #1687: the cursor returns to the top;
   - #1473: typing `j` puts a "j" in search;
@@ -514,14 +514,14 @@ US2; quickstart § 5).
   `docs/notes/2026-10-0X-storyboard-capture.md` (or a sibling note). Tune the
   prompt template, not the calibration set, until 12 of 12 are correct. If
   the template changes, re-run.
-- [ ] T062 [US2] [TEST] Extend `scripts/tests/test-issue-land*.sh`, or the
+- [X] T062 [US2] [TEST] Extend `scripts/tests/test-issue-land*.sh`, or the
   script's existing self-test, so that with a stubbed `gh`:
   - a branch touching `crates/postio-gtk` with no current `summary.md` gets
     the `> [!WARNING]` block naming `/ux-review` and the label
     `interactions-unreviewed`, and the landing still proceeds;
   - with a current `summary.md`, the summary is in the body;
   - on an existing PR whose key changed, the summary is posted as a comment.
-- [ ] T063 [US2] Implement this in `scripts/issue-land.sh`, beside
+- [X] T063 [US2] Implement this in `scripts/issue-land.sh`, beside
   `VERIFY_NOTE` and `VERIFY_LABEL` (`issue-land.sh:1031-1056`), per research
   R13. Create the `interactions-unreviewed` label with `gh label create` if it
   is missing, and say so loudly if that fails. T062 goes green.
