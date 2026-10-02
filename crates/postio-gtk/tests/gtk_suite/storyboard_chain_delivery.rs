@@ -124,3 +124,39 @@ pub fn a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered() {
     assert_eq!(delivery, Delivery::Dropped);
     assert_eq!(seen.get(), 0, "the window saw a key aimed at nothing");
 }
+
+/// `Return` in a text field activates it, as GTK's own binding does.
+///
+/// That binding is a class shortcut on `GtkText`, not a key controller on
+/// the chain, so walking controllers alone never reaches it -- and `Return`
+/// in the search field is how every search is run. The mirror is exact and
+/// only that: the field's `activate`, once, when nothing on the chain
+/// claimed the key first.
+pub fn return_in_a_text_field_activates_it() {
+    if !display() {
+        return;
+    }
+    let window = adw::Window::new();
+    let entry = gtk::Entry::new();
+    window.set_content(Some(&entry));
+    window.set_default_size(300, 80);
+    let activated = Rc::new(Cell::new(0));
+    let counted = activated.clone();
+    entry.connect_activate(move |_| counted.set(counted.get() + 1));
+    let window: gtk::Window = window.upcast();
+    show(&window);
+    entry.grab_focus();
+    assert!(until(|| GtkWindowExt::focus(&window).is_some()));
+
+    let delivery = press(&window, &chord("Return")).expect("a key");
+
+    assert!(
+        matches!(&delivery, Delivery::Delivered { .. }),
+        "Return in a focused field was {delivery:?}"
+    );
+    assert_eq!(activated.get(), 1, "the field was activated once");
+
+    // A letter is not Return: it is not mirrored into an activation.
+    let _ = press(&window, &chord("j")).expect("a key");
+    assert_eq!(activated.get(), 1, "only Return activates");
+}

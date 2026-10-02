@@ -154,8 +154,37 @@ pub fn deliver(window: &gtk::Window, key: gdk::Key, state: gdk::ModifierType) ->
         .or_else(|| first(gtk::PropagationPhase::Bubble, chain.iter().collect()));
     match stopped {
         Some(stopped_at) => Delivery::Delivered { stopped_at },
-        None => Delivery::Dropped,
+        None => activate_text(&target, key, state).unwrap_or(Delivery::Dropped),
     }
+}
+
+/// GTK's own `Return` binding on a text field, mirrored.
+///
+/// `GtkText` activates on `Return` through a class shortcut, not a key
+/// controller on the chain, so the walk above never reaches it -- and
+/// `Return` in the search field is how a search is run. When nothing on the
+/// chain claimed a plain `Return` and the keyboard is on a `GtkText`, this
+/// does what that binding does: the field's `activate`, once. It mirrors
+/// that one binding and no other; the rest of GTK's built-ins stay outside
+/// what chain delivery can see (research R3), which is what
+/// `routing = "real"` is for.
+fn activate_text(
+    target: &gtk::Widget,
+    key: gdk::Key,
+    state: gdk::ModifierType,
+) -> Option<Delivery> {
+    let enter = matches!(
+        key,
+        gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::ISO_Enter
+    );
+    if !enter || !state.is_empty() {
+        return None;
+    }
+    let text = target.downcast_ref::<gtk::Text>()?;
+    text.emit_by_name::<()>("activate", &[]);
+    Some(Delivery::Delivered {
+        stopped_at: "GtkText (activate)".to_owned(),
+    })
 }
 
 /// What became of typed text.

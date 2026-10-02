@@ -184,16 +184,16 @@ mod gtk_window_open_message;
 mod gtk_window_run_search;
 mod gtk_window_state;
 mod gtk_window_teardown;
+mod list_contract;
+mod list_model;
+mod no_stray_prints;
+mod row_timestamp_reads_the_clock;
 mod storyboard_chain_delivery;
 mod storyboard_outline;
 mod storyboard_reach;
 mod storyboard_settle;
 mod storyboard_support;
 mod storyboard_typing;
-mod list_contract;
-mod list_model;
-mod no_stray_prints;
-mod row_timestamp_reads_the_clock;
 
 /// Cases held out of a default run, by name. See `app_suite`'s copy for what
 /// this is for; nothing here is held out today.
@@ -310,6 +310,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered",
         storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::return_in_a_text_field_activates_it",
+        storyboard_chain_delivery::return_in_a_text_field_activates_it as fn(),
     ),
     (
         "body_view_zoom::a_pinch_snaps_to_a_step_and_renders_once",
