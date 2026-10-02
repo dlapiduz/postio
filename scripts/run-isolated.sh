@@ -21,9 +21,12 @@
 #   scripts/run-isolated.sh HEAD --inspect  # with the GTK Inspector attached
 #   scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
-#   scripts/run-isolated.sh HEAD --focus    # run Postio Focus instead (spec 007)
+#   scripts/run-isolated.sh HEAD --focus    # run Focus, the `postio` binary, instead (spec 007)
 #   scripts/run-isolated.sh HEAD --focus --shot  # render Focus's screen 01 to a PNG
 #   scripts/run-isolated.sh HEAD --focus --install-desktop  # also give Focus its dock icon (see below)
+#
+# Without --focus it builds the retired classic app, `postio-classic`, until
+# it is removed (spec 007 T256); making Focus the default is T254.
 #   scripts/run-isolated.sh HEAD --reset-store  # set the scratch store aside, start a fresh one
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
@@ -159,9 +162,9 @@ if [ "$FOCUS" = 1 ]; then
         DATA="${HOME}/.local/share"
         APPS="$DATA/applications"
         ICONS="$DATA/icons/hicolor"
-        ID=dev.postio.Postio.Focus
+        ID=dev.postio.Postio
         mkdir -p "$APPS" "$ICONS/scalable/apps" "$ICONS/symbolic/apps"
-        sed "s|^Exec=.*|Exec=$TARGET/release/postio-focus %U|" \
+        sed "s|^Exec=.*|Exec=$TARGET/release/postio %U|" \
             "$TREE/crates/postio-focus/data/$ID.desktop" > "$APPS/$ID.desktop"
         install -m644 "$TREE/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg" \
             "$ICONS/scalable/apps/dev.postio.Postio.svg"
@@ -174,9 +177,9 @@ if [ "$FOCUS" = 1 ]; then
     fi
     # --- end --install-desktop ---------------------------------------------
     echo "building Postio Focus (first run compiles GTK deps; later runs are incremental)…"
-    cargo build --release -p postio-focus
+    cargo build --release -p postio-focus --bin postio
     echo "running — Ctrl-C to stop"
-    exec "$TARGET/release/postio-focus"
+    exec "$TARGET/release/postio"
 fi
 
 if [ "$SHOT" = 1 ]; then
@@ -187,6 +190,6 @@ if [ "$SHOT" = 1 ]; then
 fi
 
 echo "building (first run compiles GTK deps; later runs are incremental)…"
-cargo build --release -p postio-app
+cargo build --release -p postio-app --bin postio-classic
 echo "running — Ctrl-C to stop"
-exec "$TARGET/release/postio"
+exec "$TARGET/release/postio-classic"

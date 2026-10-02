@@ -15,8 +15,10 @@ repository.workspace = true
 [lib]
 path = "src/lib.rs"
 
+# Focus is Postio (spec 007, C27; ADR 0043): what lands on PATH, and what
+# the desktop entry's `Exec` names, is `postio`. The crate keeps its name.
 [[bin]]
-name = "postio-focus"
+name = "postio"
 path = "src/main.rs"
 
 [dependencies]

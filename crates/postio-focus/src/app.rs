@@ -16,31 +16,35 @@ use gtk::{gio, glib};
 use crate::startup::{self, Session};
 use crate::window::FocusWindow;
 
-/// Focus's application id: a name inside the desktop app's own namespace,
-/// which a sandboxed app may own (research R3).
-pub const APP_ID: &str = "dev.postio.Postio.Focus";
+/// Postio's application id: the D-Bus name a second launch finds the first
+/// by, the desktop entry's basename and the Wayland `app_id` a window is
+/// matched to that entry by. Focus is Postio (spec 007, C27; ADR 0043), so it
+/// is the id the desktop package has always had. Nothing on disk is keyed by
+/// it outside a sandbox: config, state and the store live under `postio` in
+/// the XDG directories, so the switch moved none of them.
+pub const APP_ID: &str = "dev.postio.Postio";
 
-/// The icon Focus is drawn with: the package's one icon, `dev.postio.Postio`,
-/// which the Flatpak installs and the desktop entry's `Icon=` names. Focus is
-/// a second launcher in the desktop package with no art of its own (spec 007,
-/// research R3), so the window's default icon, the desktop entry and the
-/// binary's bundled theme all use this name.
+/// The icon Postio is drawn with, which the Flatpak installs and the
+/// desktop entry's `Icon=` names: the window's default icon, the desktop
+/// entry and the binary's bundled theme all use this name.
 pub const ICON_NAME: &str = "dev.postio.Postio";
 
 /// Focus's application, as `run` starts it.
 pub fn application() -> adw::Application {
     // Tell the compositor which application this is: GNOME matches a
     // window to its desktop entry by the Wayland `app_id`, which GDK takes
-    // from the program name -- the binary's, `postio-focus`, unless it is
-    // set. Focus's entry is `dev.postio.Postio.Focus.desktop`, and its
-    // `StartupWMClass` names the same id (postio-gtk's `app.rs` has the
-    // history).
+    // from the program name -- the binary's, `postio`, unless it is set.
+    // The entry is `dev.postio.Postio.desktop`, and its `StartupWMClass`
+    // names the same id. Reported against the 0.4.2 Flatpak: with the
+    // binary's name instead, a session looked for `postio.desktop`, found
+    // nothing, and drew a generic icon under a generic name.
     glib::set_prgname(Some(APP_ID));
     adw::Application::builder()
         .application_id(APP_ID)
-        // The desktop entry registers `x-scheme-handler/postio` with `%U`,
-        // so a `postio://` link clicked elsewhere arrives as a file to
-        // open; without this flag GApplication drops it (T159).
+        // The desktop entry registers `x-scheme-handler/mailto` and
+        // `x-scheme-handler/postio` with `%U`, so a link clicked elsewhere
+        // arrives as a file to open; without this flag GApplication drops
+        // it (T159, T244).
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build()
 }
@@ -62,7 +66,7 @@ pub fn run() -> glib::ExitCode {
     // Held for the life of the process: dropping it stops the watch, and
     // `[logging]` exists to retune a running Postio.
     let _log_watch = config_path.as_deref().and_then(|path| logging.watch(path));
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio-focus starting");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio starting");
 
     let config = Rc::new(
         config_path

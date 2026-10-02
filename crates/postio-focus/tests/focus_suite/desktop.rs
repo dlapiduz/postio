@@ -2,11 +2,11 @@
 //! compositor, and the `postio://` links it opens.
 
 /// GNOME matches a window to its desktop entry by the Wayland `app_id`,
-/// which GDK takes from `g_get_prgname()` -- the *binary* name,
-/// `postio-focus`, unless the application says otherwise. Focus's entry is
-/// `dev.postio.Postio.Focus.desktop`, with `StartupWMClass` to match, so a
-/// Focus that never set its name would be drawn with a generic icon under a
-/// generic name. The classic app's `desktop_entry.rs` holds the same line.
+/// which GDK takes from `g_get_prgname()` -- the *binary* name, `postio`,
+/// unless the application says otherwise. The entry is
+/// `dev.postio.Postio.desktop`, with `StartupWMClass` to match, so a Postio
+/// that never set its name would be drawn with a generic icon under a
+/// generic name.
 pub fn focus_says_which_application_it_is() {
     let _application = postio_focus::app::application();
     let reported = gtk::glib::prgname();
@@ -15,18 +15,19 @@ pub fn focus_says_which_application_it_is() {
         Some(postio_focus::app::APP_ID),
         "Focus's windows would tell the compositor they are {reported:?}"
     );
-    // The entry registers `x-scheme-handler/postio` with `%U`: a link
+    // The entry registers `x-scheme-handler/mailto` and
+    // `x-scheme-handler/postio` with `%U`: a link
     // clicked elsewhere arrives as a file to open, which GApplication drops
     // unless the application says it takes them.
     assert!(
         gtk::prelude::ApplicationExt::flags(&_application)
             .contains(gtk::gio::ApplicationFlags::HANDLES_OPEN),
-        "Focus would drop every postio:// link it was handed"
+        "Postio would drop every mailto: and postio:// link it was handed"
     );
 }
 
 /// T217: a running Focus is drawn with the Postio icon. The dock matches the
-/// window to `dev.postio.Postio.Focus.desktop`, whose `Icon=` names the
+/// window to `dev.postio.Postio.desktop`, whose `Icon=` names the
 /// package's one icon; a window with no icon of its own (an AdwWindow's
 /// switcher entry, a compositor without the entry) asks the theme for the
 /// same name, so the theme must be able to answer from the binary.

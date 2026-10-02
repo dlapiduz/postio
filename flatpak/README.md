@@ -3,15 +3,14 @@
 `dev.postio.Postio.json` builds Postio against the GNOME 50 runtime. It is
 the manifest a Flathub submission would use as-is.
 
-The same package carries Postio Focus (`specs/007-postio-focus`), as a
-second launcher rather than a second Flatpak: the manifest builds
-`postio-focus` beside `postio` and installs its desktop entry,
-`dev.postio.Postio.Focus.desktop`, which also registers `postio://` links.
-The two apps share every library and only one runs at a time, so a package
-of its own would only have been a second copy. The metainfo is the desktop
-app's, naming both launchers. `packaging.rs` in `postio-focus`'s tests holds
-the manifest, the entry, the metainfo and the release's check of the bundle
-to one another.
+The app it builds is Focus (`specs/007-postio-focus`, decision C27): the
+`postio-focus` crate's `postio` binary, under the app id `dev.postio.Postio`,
+with one desktop entry, `dev.postio.Postio.desktop`, which registers both
+`mailto:` and `postio://` links, and the metainfo beside it. The retired
+three-pane app (`postio-app`'s `postio-classic`) is no longer in the
+package; it builds from source until it is removed. `packaging.rs` in
+`postio-focus`'s tests holds the manifest, the entry, the metainfo and the
+release's check of the bundle to one another.
 
 `dev.postio.PostioTui.json` builds the terminal frontend, `postio-tui`,
 against the plain freedesktop runtime: no GTK and no WebKit, which is most of
@@ -77,7 +76,6 @@ one has no such test yet, so regenerate it right before building.
 ```bash
 flatpak-builder --user --install --force-clean flatpak/build-dir flatpak/dev.postio.Postio.json
 flatpak run dev.postio.Postio
-flatpak run --command=postio-focus dev.postio.Postio
 
 flatpak-builder --user --install --force-clean flatpak/build-dir-tui flatpak/dev.postio.PostioTui.json
 flatpak run dev.postio.PostioTui

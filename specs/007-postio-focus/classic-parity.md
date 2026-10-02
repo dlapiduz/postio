@@ -106,7 +106,7 @@ Flag stays, on `*` (C13, T257).
 | 43 | Rich-text composer: Cc and Bcc, identities, recipient completion, attachments, inline images, detach, send later, autosaved drafts | `postio-widgets::composer` (shared); `postio-app::compose` | **Covered by** Focus's composer dialog (`compose/`, T221) over the same composer and `present::compose` |
 | 44 | Signatures: per account, placed above or below the quote | `[compose]`; Settings' Composing section | Inserting a signature is **covered by** the shared composer (`compose/seams.rs`). Editing one, and making it the default, are **covered by** Settings' account detail (T233, T234; `settings::a_signature_made_in_settings_signs_the_next_message`); placement by Composing, applied live (T235) |
 | 45 | Sending states: cancel a queued send, retry a stopped one, settle an unconfirmed one (mark sent or retry) | `row.rs` (unconfirmed mark), the reader's `Verbs::STANDARD`; `CancelSend`, `RetrySend`, `MarkSent` (`unconfirmed_send`, ADR 0021) | **Covered by** the row's state word and the open message's send verbs (`focus_dialog::send_verbs`): Cancel send, Retry send, Mark as sent and Edit, in the dialog or the pane; the Outbox in `g o` (T239; `focus_suite::sending_states`) |
-| 46 | `mailto:` links open a composer | `postio-app` (`mailto_uri`), the desktop entry's `MimeType` | **Covered by** `FocusWindow::open_link`, which takes a `mailto:` URI through `postio_model::mailto` into the composer (`focus_suite::desktop`). The desktop entry's `MimeType` still moves with T253, and `packaging.rs` still asserts it leaves `mailto:` to the classic app until then |
+| 46 | `mailto:` links open a composer | `postio-app` (`mailto_uri`), the desktop entry's `MimeType` | **Covered by** `FocusWindow::open_link`, which takes a `mailto:` URI through `postio_model::mailto` into the composer (`focus_suite::desktop`). The desktop entry's `MimeType` claims `mailto:` since T253 (`packaging::postio_handles_mailto_and_postio_links`) |
 
 ### Accounts, settings and configuration
 
@@ -174,8 +174,8 @@ building and gets no new work.
 4. **Switch the package to Focus (T253).** Focus takes the app id
    `dev.postio.Postio`, the launcher, the icon, the metainfo and `mailto:`,
    and the classic binary leaves the Flatpak. It still builds from source
-   until removal. Focus's name and binary name wait for the maintainer (see
-   below).
+   until removal, as `postio-classic` under `dev.postio.Postio.Classic`.
+   Focus is named Postio, its binary `postio` (the maintainer, 2026-10-02).
 5. **Point CI and the developer scripts at Focus (T254).**
 6. **Rewrite the docs for one app (T255).**
 7. **Remove `postio-gtk` and the `postio` binary (T256).** This step **waits

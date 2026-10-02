@@ -114,7 +114,7 @@ fi
 "$here/scripts/install-shims.sh"
 
 echo "Building postio (release) — the first build takes a while..."
-cargo build --release --package postio-app --bin postio \
+cargo build --release --package postio-focus --bin postio \
     --manifest-path "$here/Cargo.toml"
 
 # Respect a redirected target dir; cargo names the default one otherwise.

@@ -37,8 +37,8 @@ pub fn the_window_opens_and_wears_the_design() {
     // ── the icon the shell will draw ──────────────────────────────────────
     let theme = gtk::IconTheme::for_display(&display);
     assert!(
-        theme.has_icon(app::APP_ID),
-        "the bundled icon should resolve by application ID; \
+        theme.has_icon(app::ICON_NAME),
+        "the bundled icon should resolve by name; \
          search path is {:?}",
         theme.resource_path()
     );

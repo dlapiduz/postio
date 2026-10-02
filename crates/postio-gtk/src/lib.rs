@@ -57,7 +57,7 @@
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! adw::init()?;
 //! postio_gtk::fonts::install()?;
-//! let app = adw::Application::builder().application_id("dev.postio.Postio").build();
+//! let app = adw::Application::builder().application_id(postio_gtk::app::APP_ID).build();
 //! postio_gtk::style::install_for_application(&app);
 //! # Ok(())
 //! # }

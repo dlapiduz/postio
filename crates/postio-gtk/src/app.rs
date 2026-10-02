@@ -25,14 +25,21 @@ use crate::startup::{self, Phase, Timeline};
 use crate::window::Window;
 use crate::{fonts, resources, style};
 
-/// The application ID: the D-Bus name, the desktop entry's basename, the
-/// Wayland `app_id` the compositor matches a window to its entry by, and the
-/// name of the bundled icon. All four have to agree.
-pub const APP_ID: &str = "dev.postio.Postio";
+/// The application ID: the D-Bus name and the Wayland `app_id`.
+///
+/// The classic app is retired (ADR 0043). Since the package switched to
+/// Focus (spec 007, T253), `dev.postio.Postio` is Focus's: this one keeps a
+/// name of its own, so a source build of it neither raises a running Postio
+/// nor is raised by one, until it is removed (T256). It has no desktop entry.
+pub const APP_ID: &str = "dev.postio.Postio.Classic";
 
-/// The name of the binary that lands on `PATH`, as the desktop entry's `Exec`
-/// spells it. The crate is `postio-gtk`; what a user types is `postio`.
-pub const BINARY: &str = "postio";
+/// The name of the binary cargo builds. `postio` is Focus's; this one is
+/// built from source only, and nothing installs it.
+pub const BINARY: &str = "postio-classic";
+
+/// The icon the window is drawn with: the package's one icon, which is
+/// Postio's and bundled here too.
+pub const ICON_NAME: &str = "dev.postio.Postio";
 
 /// Run Postio. This is `main`.
 pub fn run() -> glib::ExitCode {
@@ -206,7 +213,7 @@ fn install_actions(app: &adw::Application, window: &Window) {
 pub fn install_icons(display: &gdk::Display) {
     resources::register();
     gtk::IconTheme::for_display(display).add_resource_path(resources::ICONS);
-    gtk::Window::set_default_icon_name(APP_ID);
+    gtk::Window::set_default_icon_name(ICON_NAME);
 }
 
 /// Mark the moment the compositor first shows the window.

@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>dev.postio.Postio</id>
   <name>Postio</name>
-  <summary>Local-first, keyboard-first email</summary>
+  <summary>A dense, keyboard-first inbox for a lot of email</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <developer id="dev.postio">
@@ -11,60 +11,37 @@
   <description>
     <p>
       Postio is a local-first email client for IMAP, Gmail and JMAP
-      accounts. Mail is stored on your machine in an encrypted store with
-      its own full-text index, searched instantly offline, and read the way
-      a native GNOME application should feel: fast, keyboard-first, and
-      quiet about what it sends over the network. Several accounts share one
-      unified inbox; every action lands locally first and reaches the server
-      in the background, so it works the same offline.
+      accounts, built for someone who gets a lot of mail. Its home is one
+      dense inbox, driven from the keyboard, that shows mail as it arrived:
+      sender, subject and first line, with nothing rewritten.
     </p>
     <p>
-      Nothing leaves this machine that you did not ask for: remote images
-      and read receipts stay off until you allow them, and there is no
-      telemetry.
+      It does four things to that mail and nothing else. It calls out
+      invitations, direct questions and to-dos. It holds newsletters back
+      into digests on a cadence you choose, summarised on this machine when
+      you bring a local model. It files spam and automated updates away,
+      each with its reason and one key from being restored. And it links
+      mail to your Obsidian vault as tasks and notes.
     </p>
     <p>
-      Postio Focus comes with it, a second launcher on the same mail: one
-      dense inbox that calls out invitations, questions and to-dos, holds
-      newsletters back into digests on a cadence you choose, and files
-      spam and automated updates away, each with its reason.
+      Mail is stored on your machine in an encrypted store with its own
+      full-text index, searched instantly offline. Every action lands
+      locally first and reaches the server in the background. Nothing
+      leaves this machine that you did not ask for: remote images and read
+      receipts stay off until you allow them, and there is no telemetry.
     </p>
   </description>
   <launchable type="desktop-id">dev.postio.Postio.desktop</launchable>
-  <launchable type="desktop-id">dev.postio.Postio.Focus.desktop</launchable>
   <url type="homepage">https://dlapiduz.github.io/postio/</url>
   <url type="help">https://dlapiduz.github.io/postio/docs/</url>
   <url type="bugtracker">https://github.com/dlapiduz/postio/issues</url>
   <url type="vcs-browser">https://github.com/dlapiduz/postio</url>
   <content_rating type="oars-1.1"/>
-  <!-- The same renders the landing page shows, served from it. They are
-       fixture mail on reserved domains, drawn by the `shot` example in
-       postio-app over a seeded store; regenerate them with the app.
-       (Spelled without the flag on purpose: XML forbids a double hyphen
-       inside a comment, and writing the command out in full here is what
-       made this file unparseable for three releases.) -->
-  <screenshots>
-    <screenshot type="default">
-      <image>https://dlapiduz.github.io/postio/assets/img/conversation.png</image>
-      <caption>Reading a conversation: folders, the message list and the thread, driven from the keyboard</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://dlapiduz.github.io/postio/assets/img/search.png</image>
-      <caption>Search with scope and refinement panels, and a matched message previewed with its hits highlighted</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://dlapiduz.github.io/postio/assets/img/bulk-select.png</image>
-      <caption>Three messages selected, with the list header turned into the action bar</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://dlapiduz.github.io/postio/assets/img/compose.png</image>
-      <caption>Replying inside the reading pane, with the quoted message folded under the reply</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://dlapiduz.github.io/postio/assets/img/inbox-dark.png</image>
-      <caption>The same inbox in the dark theme</caption>
-    </screenshot>
-  </screenshots>
+  <!-- No screenshots until the landing page carries renders of this app.
+       Those it had were the retired three-pane app's, and a store page
+       showing a layout the package does not contain is worse than none.
+       They come back with the site's images, drawn by Focus's own shot
+       example (specs/007-postio-focus T255). -->
   <releases>
     <release version="0.4.2" date="2026-09-20" type="development">
       <description>
@@ -119,6 +96,5 @@
   </categories>
   <provides>
     <binary>postio</binary>
-    <binary>postio-focus</binary>
   </provides>
 </component>

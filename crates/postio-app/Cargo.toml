@@ -8,9 +8,11 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
-# What lands on PATH — and what the desktop entry's `Exec` names — is `postio`.
+# The classic app, retired (ADR 0043): `postio` is Focus's binary since the
+# package switched to it (spec 007, T253). This one builds from source under
+# a name of its own until it is removed (T256), and nothing installs it.
 [[bin]]
-name = "postio"
+name = "postio-classic"
 path = "src/main.rs"
 
 [features]

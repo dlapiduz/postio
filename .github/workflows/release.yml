@@ -239,18 +239,17 @@ jobs:
             --install-deps-from=flathub \
             --repo=repo build-dir "$MANIFEST"
 
-      # The bundle carries two apps: the desktop app, and Postio Focus as a
-      # second launcher (specs/007-postio-focus research R3). A manifest that
-      # stops building either one still builds, so look inside before
-      # publishing rather than finding out from a user. `packaging.rs` in
-      # postio-focus's tests holds this list to the manifest.
-      - name: Check the build carries both apps
+      # The bundle carries Postio, which is Focus (specs/007-postio-focus
+      # C27): its binary, its one desktop entry and its metainfo. A manifest
+      # that stops installing one of them still builds, so look inside
+      # before publishing rather than finding out from a user. `packaging.rs`
+      # in postio-focus's tests holds this list to the manifest.
+      - name: Check the build carries the app
         run: |
           for path in \
             files/bin/postio \
-            files/bin/postio-focus \
             files/share/applications/dev.postio.Postio.desktop \
-            files/share/applications/dev.postio.Postio.Focus.desktop
+            files/share/metainfo/dev.postio.Postio.metainfo.xml
           do
             test -e "build-dir/$path" || { echo "::error::the build has no $path"; exit 1; }
           done
@@ -563,7 +562,7 @@ jobs:
 
       - name: Is the terminal binary under half the desktop one?
         run: |
-          cargo build --release -p postio-app --bin postio
+          cargo build --release -p postio-focus --bin postio
           tar --zstd -xf "assets/postio-tui-${VERSION}-linux-x86_64.tar.zst"
           scripts/measure-package-size.sh binaries \
             "postio-tui-${VERSION}-linux-x86_64/postio-tui" -- target/release/postio
