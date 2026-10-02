@@ -290,7 +290,7 @@ suites.
 | `startup_behind_the_window` (2) | `startup_behind_the_window` |
 | `search_index`, idle passes after the first frame | `idle_passes` |
 | `startup_repair` | `startup_repair` (T262) |
-| `gtk_accessibility.rs` | `a11y_sweep`: every Focus surface has roles and names, and 200% text stays usable; rows growing with the type is held out (T263) |
+| `gtk_accessibility.rs` | `a11y_sweep`: every Focus surface has roles and names, and 200% text stays usable; rows grow with the type (T263) |
 | `window_teardown`, `gtk_window_teardown` | `window_teardown`; a mounted composer outliving its window is held out (T264) |
 | `second_activate_wiring` | `desktop::a_second_activate_has_one_window_and_starts_sync_once` |
 | `unsubscribe_wiring` | `unsubscribe`: the digest's `U` is logged and listed; the open message's notice is logged and listed too (T261) |

@@ -493,9 +493,38 @@ impl RowWidget {
     /// The row's height, fixed by its kind (FR-013).
     pub fn height(&self) -> i32 {
         match self.imp().item.borrow().as_ref() {
-            Some(item) if item.two_lines() => TWO_LINES,
-            _ => ONE_LINE,
+            Some(item) if item.two_lines() => self.scaled(TWO_LINES as f32).round() as i32,
+            _ => self.one_line().round() as i32,
         }
+    }
+
+    /// How much bigger than 100% the text is: `gtk-xft-dpi` over
+    /// the 96 dpi that `ONE_LINE` and `TWO_LINES` are drawn for. Never below
+    /// 1, so a small-text setting does not shrink a row under its target
+    /// (PRODUCT.md section 20: rows grow with the type).
+    fn text_scale(&self) -> f32 {
+        // `gtk-xft-dpi` is 1024ths of a dot per inch; unset (-1) is 96.
+        let dpi = self.settings().gtk_xft_dpi();
+        if dpi <= 0 {
+            return 1.0;
+        }
+        (dpi as f32 / 1024.0 / 96.0).max(1.0)
+    }
+
+    fn scaled(&self, pixels: f32) -> f32 {
+        pixels * self.text_scale()
+    }
+
+    fn one_line(&self) -> f32 {
+        self.scaled(ONE_LINE as f32)
+    }
+
+    fn first_line(&self) -> f32 {
+        self.scaled(FIRST_LINE)
+    }
+
+    fn second_line(&self) -> f32 {
+        self.scaled(SECOND_LINE)
     }
 
     /// A layout of `text` in the row's font, `bold` or not, `scale` of its
@@ -554,9 +583,9 @@ impl RowWidget {
         let width = self.width() as f32;
         let two_lines = summary.marker.is_some();
         let middle = if two_lines {
-            FIRST_LINE
+            self.first_line()
         } else {
-            ONE_LINE as f32 / 2.0
+            self.one_line() / 2.0
         };
         let bold = summary.has_unread();
         let mut drawn = Drawn {
@@ -760,7 +789,12 @@ impl RowWidget {
         let width = self.width() as f32;
         drawn.accent = Some(palette.accent);
 
-        let dot = graphene::Rect::new(GUTTER_CENTRE - DOT / 2.0, FIRST_LINE - DOT / 2.0, DOT, DOT);
+        let dot = graphene::Rect::new(
+            GUTTER_CENTRE - DOT / 2.0,
+            self.first_line() - DOT / 2.0,
+            DOT,
+            DOT,
+        );
         snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
         snapshot.append_color(&palette.accent, &dot);
         snapshot.pop();
@@ -788,7 +822,7 @@ impl RowWidget {
             right -= button;
             let frame = graphene::Rect::new(
                 right,
-                SECOND_LINE - ACTION_HEIGHT / 2.0,
+                self.second_line() - ACTION_HEIGHT / 2.0,
                 button,
                 ACTION_HEIGHT,
             );
@@ -797,7 +831,7 @@ impl RowWidget {
                 (*words).to_owned(),
                 [
                     right,
-                    SECOND_LINE - ACTION_HEIGHT / 2.0,
+                    self.second_line() - ACTION_HEIGHT / 2.0,
                     button,
                     ACTION_HEIGHT,
                 ],
@@ -811,7 +845,7 @@ impl RowWidget {
                 snapshot,
                 &label,
                 right + ACTION_PAD,
-                SECOND_LINE,
+                self.second_line(),
                 label_width as f32,
                 &palette.ink,
             );
@@ -821,7 +855,7 @@ impl RowWidget {
                 let (_, cap_height) = cap.pixel_size();
                 let frame = graphene::Rect::new(
                     x,
-                    SECOND_LINE - (cap_height as f32 + 2.0) / 2.0,
+                    self.second_line() - (cap_height as f32 + 2.0) / 2.0,
                     boxed,
                     cap_height as f32 + 2.0,
                 );
@@ -834,7 +868,7 @@ impl RowWidget {
                     snapshot,
                     &cap,
                     x + KEYCAP_PAD,
-                    SECOND_LINE,
+                    self.second_line(),
                     boxed,
                     &palette.dim,
                 );
@@ -851,7 +885,7 @@ impl RowWidget {
                 snapshot,
                 &layout,
                 right,
-                SECOND_LINE,
+                self.second_line(),
                 status_width as f32,
                 &palette.dim,
             );
@@ -867,7 +901,7 @@ impl RowWidget {
         let boxed = chip_width as f32 + 12.0;
         let frame = graphene::Rect::new(
             x,
-            SECOND_LINE - (chip_height as f32 + 4.0) / 2.0,
+            self.second_line() - (chip_height as f32 + 4.0) / 2.0,
             boxed,
             chip_height as f32 + 4.0,
         );
@@ -880,7 +914,7 @@ impl RowWidget {
             snapshot,
             &chip,
             x + 6.0,
-            SECOND_LINE,
+            self.second_line(),
             chip_width as f32,
             &palette.accent,
         );
@@ -892,7 +926,7 @@ impl RowWidget {
                 snapshot,
                 &layout,
                 x,
-                SECOND_LINE,
+                self.second_line(),
                 (right - x).max(0.0),
                 &palette.accent,
             ) + 10.0;
@@ -910,7 +944,7 @@ impl RowWidget {
                 snapshot,
                 &layout,
                 x,
-                SECOND_LINE,
+                self.second_line(),
                 right - x,
                 &palette.accent,
             );
@@ -939,7 +973,7 @@ impl RowWidget {
     fn draw_digest(&self, snapshot: &gtk::Snapshot, digest: &super::item::Digest) {
         let palette = Palette::of(self);
         let width = self.width() as f32;
-        let middle = ONE_LINE as f32 / 2.0;
+        let middle = self.one_line() / 2.0;
         let mut drawn = Drawn {
             bold: true,
             picked: self.is_picked(),
@@ -1055,7 +1089,7 @@ impl RowWidget {
     fn draw_skeleton(&self, snapshot: &gtk::Snapshot) {
         let mut shade = self.color();
         shade.set_alpha(shade.alpha() * 0.08);
-        let middle = ONE_LINE as f32 / 2.0;
+        let middle = self.one_line() / 2.0;
         let columns = postio_ui::focus_row::row_columns(self.width() as f32);
         let room = (self.width() as f32 - columns.subject_x - TRAILING).max(0.0);
         for (x, width) in [

@@ -116,10 +116,6 @@ mod window_teardown;
 /// appears in `--list`, exactly as an ignored libtest case does. Say in a
 /// comment beside the name which issue or task takes it back.
 const IGNORED: &[&str] = &[
-    // GAP: Focus's rows are a fixed 40 and 72 pixels (`list::row::ONE_LINE`,
-    // `TWO_LINES`), so at 200% text they stay the same height while the type
-    // grows into them. The classic list's rows grew with the type.
-    "a11y_sweep::at_200_percent_text_rows_grow_with_the_type",
     // GAP: a mounted composer is not freed with its window: suspected cycle
     // between `Composer` and the `DialogHost` it is mounted on (the host owns
     // the dialog that holds the composer).
