@@ -21,6 +21,13 @@ path = "src/lib.rs"
 name = "postio"
 path = "src/main.rs"
 
+[features]
+# Seeded, fed windows for the tools that photograph or drive Focus
+# (`postio_focus::demo`, the `shot` and `storyboard` examples). Off by
+# default: the seeds and the in-memory store are test-support code and must
+# not reach a normal build.
+demo = ["dep:postio-index", "dep:postio-storage", "postio-storage/test-support", "dep:tempfile"]
+
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 # The store opens on a thread of its own, and its progress and its answer
@@ -62,7 +69,13 @@ postio-widgets.workspace = true
 # The vault's task and note, which the capture sheet previews exactly as
 # the host will append them (US15); the host does the writing.
 postio-vault.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+# The demo store's search index; only the `demo` feature builds it.
+postio-index = { workspace = true, optional = true }
+# The demo's store; only the `demo` feature builds it.
+postio-storage = { workspace = true, optional = true }
+# The demo's blob directory; only the `demo` feature builds it.
+tempfile = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tracing = { workspace = true }
 url = { workspace = true }
 # `observe`'s app-specific fields are JSON values, and a digest's summary is
@@ -90,10 +103,17 @@ postio-smtp.workspace = true
 postio-sync.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
+# The suite drives the shot and the storyboard runner, which sit behind `demo`.
+postio-focus = { path = ".", features = ["demo"] }
 
 # Focus's GTK suite: the custom harness of postio-app's app_suite, for its
 # reasons -- GTK initializes on exactly one thread per process (#41), and
 # libtest runs tests on a pool. See tests/focus_suite/main.rs.
+# Needs the seeded store and the demo module, which are behind `demo`.
+[[example]]
+name = "shot"
+required-features = ["demo"]
+
 [[test]]
 name = "focus_suite"
 path = "tests/focus_suite/main.rs"

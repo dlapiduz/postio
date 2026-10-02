@@ -16,6 +16,8 @@ pub mod capture;
 pub mod chooser;
 pub mod chrome;
 pub mod compose;
+#[cfg(feature = "demo")]
+pub mod demo;
 pub mod digest;
 pub mod drag;
 pub mod empty;
