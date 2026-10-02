@@ -1025,6 +1025,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_settings_account_detail::an_account_with_signatures_and_no_default_opens_on_none",
+        gtk_settings_account_detail::an_account_with_signatures_and_no_default_opens_on_none
+            as fn(),
+    ),
+    (
         "gtk_settings_account_detail::an_account_with_no_signatures_gets_no_picker_at_all",
         gtk_settings_account_detail::an_account_with_no_signatures_gets_no_picker_at_all as fn(),
     ),

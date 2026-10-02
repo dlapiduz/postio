@@ -1854,10 +1854,11 @@ impl SettingsPanel {
         // prompt to make one would point at a flow that does not exist.
         {
             let picker = imp.account_detail_signature.get().expect("built above");
-            let names: Vec<&str> = account
-                .signatures
-                .iter()
-                .map(|signature| signature.name.as_str())
+            // "None" leads the list: an account can have signatures and
+            // prefer none of them, and drawing the first as chosen would
+            // say a default exists that does not (T259).
+            let names: Vec<&str> = std::iter::once("None")
+                .chain(account.signatures.iter().map(|s| s.name.as_str()))
                 .collect();
             picker.set_model(Some(&gtk::StringList::new(&names)));
             *imp.account_detail_signature_ids.borrow_mut() =
@@ -1865,7 +1866,7 @@ impl SettingsPanel {
             let selected = account
                 .default_signature_id
                 .and_then(|id| account.signatures.iter().position(|s| s.id == id))
-                .unwrap_or(0);
+                .map_or(0, |at| at + 1);
             picker.set_selected(selected as u32);
             imp.account_detail_signature_row
                 .get()
@@ -2058,7 +2059,7 @@ impl SettingsPanel {
                     .imp()
                     .account_detail_signature_ids
                     .borrow()
-                    .get(picker.selected() as usize)
+                    .get((picker.selected() as usize).wrapping_sub(1))
                     .copied();
                 panel.commit_account_edit(AccountEdit::DefaultSignature(chosen));
             }

@@ -204,13 +204,54 @@ pub fn the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default(
         .collect();
     assert_eq!(
         names,
-        vec!["Work".to_owned(), "Brief".to_owned()],
-        "the picker lists the account's signatures by name, in its own order"
+        vec!["None".to_owned(), "Work".to_owned(), "Brief".to_owned()],
+        "the picker lists \"None\" and then the account's signatures by name, in its own order"
     );
     assert_eq!(
         picker.selected(),
-        0,
+        1,
         "and opens on the one the account already calls its default"
+    );
+    drop(window);
+}
+
+/// T259: no default means the picker says "None", not the first signature.
+pub fn an_account_with_signatures_and_no_default_opens_on_none() {
+    let Some((window, panel)) = new_panel() else {
+        return;
+    };
+    let mut account = an_account_with_signatures(1);
+    account.default_signature_id = None;
+    panel.set_accounts(vec![account]);
+    pump();
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let recorder = std::rc::Rc::clone(&seen);
+    panel.connect_account_edited(move |id, edit| recorder.borrow_mut().push((id, edit)));
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    let picker = signature_picker(&panel);
+    let model = picker.model().expect("a model");
+    let shown = model
+        .item(picker.selected())
+        .and_then(|o| o.downcast::<gtk::StringObject>().ok())
+        .map(|s| s.string().to_string());
+    assert_eq!(
+        shown.as_deref(),
+        Some("None"),
+        "no default is drawn as None, not as the first signature"
+    );
+    assert!(seen.borrow().is_empty(), "opening writes nothing");
+
+    picker.set_selected(1);
+    pump();
+    assert_eq!(
+        *seen.borrow(),
+        vec![(
+            AccountId::new(1),
+            AccountEdit::DefaultSignature(Some(postio_model::ids::SignatureId::new(7)))
+        )],
+        "choosing is the only thing that sets it"
     );
     drop(window);
 }
@@ -255,8 +296,8 @@ pub fn choosing_a_signature_reports_the_account_and_the_choice() {
     let recorder = std::rc::Rc::clone(&seen);
     panel.connect_account_edited(move |id, edit| recorder.borrow_mut().push((id, edit)));
 
-    // The second entry: "Brief", which is not the current default.
-    signature_picker(&panel).set_selected(1);
+    // The third entry: "Brief" (after "None" and "Work"), not the current default.
+    signature_picker(&panel).set_selected(2);
     pump();
 
     assert_eq!(

@@ -183,9 +183,12 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
             picker.is_visible(),
             "the account has two signatures and the picker is hidden"
         );
-        // Index 1 is "Brief" -- deliberately not the first, so the selection
-        // genuinely moves and the notification genuinely fires.
-        picker.set_selected(1);
+        // The account has no default, so the picker opens on "None" (index 0);
+        // index 2 is "Brief" -- not the first signature, so the choice is
+        // unambiguous.
+        assert_eq!(picker.selected(), 0, "no default opens on None");
+        assert_eq!(read_default_signature(&database, seeded_id).await, None);
+        picker.set_selected(2);
 
         assert!(
             settle_until(async || read_default_signature(&database, seeded_id).await == Some(brief)).await,
