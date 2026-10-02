@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use postio_core::{ConfigService, Event};
-use postio_gtk::keymap::{KeyContext, Outcome, Resolver};
+use postio_ui::keymap::{KeyContext, Outcome, Resolver};
 use tempfile::TempDir;
 
 fn write(directory: &Path, body: &str) -> std::path::PathBuf {
@@ -21,7 +21,7 @@ fn write(directory: &Path, body: &str) -> std::path::PathBuf {
 }
 
 fn press(resolver: &mut Resolver, keys: &str, context: KeyContext) -> Outcome {
-    let binding: postio_gtk::keymap::Binding = keys
+    let binding: postio_ui::keymap::Binding = keys
         .parse()
         .unwrap_or_else(|error| panic!("{keys}: {error}"));
     let now = std::time::Instant::now();

@@ -13,14 +13,12 @@
 //! down, and a decision about an engine's behaviour should have a measurement
 //! under it.
 //!
-//! Deliberately not `#[tokio::test]`, and deliberately not inside
-//! `gtk_case`: the whole claim is that there is *no runtime anywhere*, and
-//! either of those would supply one and make the case pass for the wrong
-//! reason.
+//! Deliberately not `#[tokio::test]`: the whole claim is that there is *no
+//! runtime anywhere*, and that would supply one and make the case pass for the
+//! wrong reason.
 
-use gtk::glib;
-
-pub fn a_store_opens_and_reads_on_the_main_context_with_no_runtime() {
+#[test]
+fn a_store_opens_and_reads_on_the_main_context_with_no_runtime() {
     assert!(
         tokio::runtime::Handle::try_current().is_err(),
         "this case is about a thread with no runtime on it, and there is one \

@@ -19,7 +19,9 @@
 mod backfill_policy;
 mod body_index_pass;
 mod cid_scoping;
+mod correlation;
 mod drag_reclaim;
+mod event_fanout;
 mod header_index_pass;
 mod header_repair;
 mod inline_images;

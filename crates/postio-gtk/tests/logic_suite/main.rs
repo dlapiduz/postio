@@ -26,6 +26,3 @@
 
 mod desktop_entry;
 mod gtk_extension_commands;
-mod keymap_defaults;
-mod keymap_live;
-mod reader_tokens;

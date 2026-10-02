@@ -2,7 +2,7 @@
 //!
 //! The path a key travels is: the command registry in `postio-core` holds the
 //! defaults as data, `postio_core::Keymap::resolve` lays `[keys]` over them,
-//! and `postio_gtk::keymap::Keymap::from_commands` turns the result into
+//! and `postio_ui::keymap::Keymap::from_commands` turns the result into
 //! something a key press can be matched against. Each of those has its own
 //! tests; what is checked here is that the three of them together produce the
 //! bindings the design canvas draws.
@@ -13,7 +13,7 @@ use postio_config::KeyBindings;
 use postio_config::keys::{binding_problem, expand_mod};
 use postio_config::paths::Platform;
 use postio_core::{CommandId, Context};
-use postio_gtk::keymap::{Binding, KeyContext, Keymap, Outcome, Resolver};
+use postio_ui::keymap::{Binding, KeyContext, Keymap, Outcome, Resolver};
 
 /// The whole default set, resolved with no user overrides.
 fn defaults() -> (Keymap, Vec<String>) {
