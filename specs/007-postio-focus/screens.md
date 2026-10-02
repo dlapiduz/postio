@@ -284,7 +284,8 @@ once.
 
 **Layout.** Under the top bar, the strip and the banner, which still span
 the window: the list on the left, the pane on the right, a strong hairline
-between them. The bulk bar stays under the list. The geometry is
+between them. The bulk bar stays at the window's foot, under both: its
+verbs need the window's width, not the list's. The geometry is
 `postio_ui::focus_dialog::pane_width`:
 
 - The pane is `min(820, W - 404)`. 820 is the dialog at its widest, so a
@@ -342,19 +343,43 @@ Below 980 it is the composer's dialog, as before.
 
 | State | The pane |
 |---|---|
-| Empty: nothing open | "No message open", "Messages open here, beside the list.", and two shortcuts that each run their command and wear its key: `↵` open, `F8` read over the list. The empty inbox's own page draws it (`focus_state::empty_pane`), so Focus has one empty pattern. Never blank, and never a dead end |
+| Empty: nothing open | "No message open", "Messages open here, beside the list.", and two shortcuts that each run their command and wear its key: `↵` open, `F8` read over the list. The empty inbox's own page draws it (`focus_state::empty_pane`), so Focus has one empty pattern, without the inbox's tray: the page is about a message, and no icon every desktop draws is an envelope. Never blank, and never a dead end |
 | Empty: the inbox is empty | No pane. The empty inbox (screen 16) takes the window, as in dialog mode: there is nothing to open beside it. The pane comes back with the first row |
 | Loading, partial body | The header, the subject, the labels and the position are drawn from the row at once. The body says what the dialog's says when headers have synced and the body has not (the reader's partial notice), never a spinner over local data |
 | Offline | The window's banner says so. A body already on disk reads as normal, and one that is not says it is not downloaded yet. Every verb works and is queued (local-first) |
 | Failing | The banner names the reason and its key, and the pane is unchanged |
-| Dense | Focus has one row density. At the list's 404 floor, the subject and snippet ellipsize, while the sender, the time and the focused row's hints keep their room |
+| Dense | Focus has one row density. A row narrower than the inbox's gives up its sender's column first, from 222 to no less than 120, so the subject keeps 260 for itself, its pills and the time (`focus_row::row_columns`); once the sender's column has narrowed, a marked row's second line starts under the sender, so the chip, the date and the answers keep the row's width. At 620 (1440) nothing moves; at 460 and 404 the sender is 120 and the subject starts at 188 |
 | Narrow (< 980) | No pane: the dialog, as above |
 
 The pane appears only on the inbox's own page. Filtered, the digest rules
 and a digest open their messages as they always have.
 
-**Compared**: screens 34 to 36 (`shot`, pane mode), at 1440x900 and
-1024x768, light and dark. See the table at the top for what each shows.
+**Compared (2026-10-02)**: screens 34 (a message open beside the list, the
+handoff's sample as screen 04), 35 (the pane with nothing open) and 36 (Reply
+all in the pane), at 1440x900 and 1024x768, light and dark. At 1440 the list
+is 620 and the pane 820, the message exactly as screen 04's dialog draws it:
+the 52px header, the full action row, the 480 column, the rhythm and the
+card. At 1024 the list is 404 and the pane 620, the action row folded into
+More `.`, the column still 480; the list's rows narrow their sender column
+and keep their markers' answers clear of the quote. The composer in the
+pane is screen 06's: Send first, the fields and the body on one 480
+column. The pane's ground is the list's surface with a strong hairline
+between them, and the message and the composer paint their own. What
+differs from the dialog: nothing behind is dimmed, since nothing is
+behind; the bulk bar stays at the window's foot, under both.
+
+Pinned by `reading_pane::f8_and_the_setting_switch_between_the_dialog_and_the_pane`,
+`…return_shows_the_message_beside_the_list_and_keeps_its_cursor`,
+`…j_and_k_step_the_pane_with_the_cursor`,
+`…escape_and_the_x_return_the_keyboard_to_the_list`,
+`…a_click_moves_the_cursor_and_the_open_pane_follows_it`,
+`…archiving_steps_the_pane_past_the_message`,
+`…a_window_under_980_opens_the_dialog_instead`,
+`…the_panes_column_follows_column_width_for_its_width`,
+`…the_composer_takes_over_the_pane` and
+`…the_main_menus_check_item_is_the_pointers_f8`, with `postio-ui`'s
+`focus_dialog` pane cases, `focus_state::empty_pane` and
+`focus_row::row_columns`, and `postio-config`'s `set_reading`.
 
 ## The row menu (T199)
 

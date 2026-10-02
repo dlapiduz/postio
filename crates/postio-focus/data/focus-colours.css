@@ -103,7 +103,8 @@
 }
 
 .focus-open,
-.focus-compose {
+.focus-compose,
+.focus-compose-surface {
   --postio-surface: #fdfdfb;
   --postio-ink: #1c2321;
   --postio-ink-secondary: #4a5350;
@@ -121,7 +122,8 @@
   }
 
   .focus-open,
-  .focus-compose {
+  .focus-compose,
+  .focus-compose-surface {
     --postio-surface: #1c2120;
     --postio-ink: #e7ecea;
     --postio-ink-secondary: #b7c0bc;

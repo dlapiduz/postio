@@ -2039,8 +2039,8 @@ impl FocusWindow {
         }
         imp.stage.add_overlay(bar.widget());
         list_or_empty.set_vexpand(true);
-        // The list, its bulk bar under it, and the reading pane beside them
-        // (T232): hidden until the person reads beside the list.
+        // The list, and the reading pane beside it (T232): hidden until the
+        // person reads beside the list.
         let list_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         list_column.set_hexpand(true);
         list_column.append(&list_or_empty);
@@ -2065,7 +2065,9 @@ impl FocusWindow {
             self,
             move |id| window.act(id)
         ));
-        list_column.append(bulk.widget());
+        // At the window's foot, under the list and the pane alike: its verbs
+        // want the window's width, not the list's.
+        imp.inbox.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
         imp.picked.connect_changed(glib::clone!(
             #[weak(rename_to = window)]
@@ -4183,12 +4185,12 @@ impl FocusWindow {
                 .map(|top| (top, row.height()))
         }) {
             Some((top, height)) => gdk::Rectangle::new(
-                crate::list::row::SUBJECT_X as i32,
+                crate::list::row::subject_x(view.width()) as i32,
                 top.y() as i32,
                 1,
                 height,
             ),
-            None => gdk::Rectangle::new(crate::list::row::SUBJECT_X as i32, 0, 1, 1),
+            None => gdk::Rectangle::new(crate::list::row::subject_x(view.width()) as i32, 0, 1, 1),
         };
         Some((view, rect))
     }

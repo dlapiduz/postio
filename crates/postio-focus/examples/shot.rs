@@ -232,7 +232,16 @@ const SCREENS: &[(&str, &str)] = &[
         "32",
         "a new message with an attachment and a reminder chosen",
     ),
+    (
+        "34",
+        "a message opened beside the inbox, in the reading pane",
+    ),
+    ("35", "the reading pane with nothing open"),
+    ("36", "reply to all in the reading pane, beside the inbox"),
 ];
+
+/// The screens drawn with messages opening beside the list (T232).
+const PANE_SCREENS: &[&str] = &["34", "35", "36"];
 
 /// How long to wait for the store's rows to reach the screen.
 const PATIENCE: Duration = Duration::from_secs(20);
@@ -619,7 +628,7 @@ fn render(args: &[String]) -> Result<String, String> {
     } else {
         runtime.block_on(demo())
     };
-    if matches!(request.screen.as_str(), "05" | "06" | "32") {
+    if matches!(request.screen.as_str(), "05" | "06" | "32" | "36") {
         runtime.block_on(compose_demo(&database, account));
     }
     if matches!(request.screen.as_str(), "27" | "28" | "29" | "30" | "31") {
@@ -645,12 +654,21 @@ fn render(args: &[String]) -> Result<String, String> {
         .then(demo_vault)
         .transpose()
         .map_err(|error| format!("no vault: {error}"))?;
+    let base = if PANE_SCREENS.contains(&request.screen.as_str()) {
+        CONFIG.replacen(
+            "filtering = true\n",
+            "filtering = true\nreading = \"pane\"\n",
+            1,
+        )
+    } else {
+        CONFIG.to_owned()
+    };
     let text = match &vault {
         Some(vault) => format!(
-            "{CONFIG}\n[focus.vault]\npath = \"{}\"\nprojects = \"Projects\"\n",
+            "{base}\n[focus.vault]\npath = \"{}\"\nprojects = \"Projects\"\n",
             vault.path().display()
         ),
-        None => CONFIG.to_owned(),
+        None => base,
     };
     let config = postio_config::Config::from_toml_str(&text)
         .map_err(|error| format!("the demo's config: {error}"))?;
@@ -841,6 +859,61 @@ fn stage(
             }) {
                 return Err("the opened message never drew with its sentence lit".into());
             }
+        }
+        "34" => {
+            pick_three();
+            pane.cursor().set_selected(OPENED as u32 + 1);
+            window.act(CommandId::OpenMessage);
+            let Some(reading) = window.reading() else {
+                return Err("Enter opened nothing".into());
+            };
+            if !settle_until(|| {
+                reading.in_pane()
+                    && reading.view().is_mapped()
+                    && reading.view().width() > 0
+                    && reading.body_text().contains("freeze it Thursday")
+                    && !reading.reader().view().highlight_rects().is_empty()
+                    && reading.reader().view().tiles_settled()
+            }) {
+                return Err("the message never drew in the reading pane".into());
+            }
+        }
+        "35" => {
+            pick_three();
+            if !settle_until(|| {
+                window.reading_pane().is_some_and(|pane| {
+                    pane.is_mapped()
+                        && pane.width() > 0
+                        && shown_with_class(&pane, "focus-empty-heading")
+                })
+            }) {
+                return Err("the reading pane never showed".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
+        }
+        "36" => {
+            pick_three();
+            pane.cursor().set_selected(HARBOR);
+            window.act(CommandId::OpenMessage);
+            window.act(CommandId::ReplyAll);
+            if !settle_until(|| {
+                window
+                    .reading_pane()
+                    .is_some_and(|pane| shown_with_class(&pane, "focus-compose-labels"))
+            }) {
+                return Err("the reply never took the reading pane over".into());
+            }
+            let composer = window.composer().ok_or("no composer")?;
+            if !settle_until(|| {
+                composer
+                    .test_body_eval("document.querySelector('details.postio-quote') ? 'y' : 'n'")
+                    == "y"
+            }) {
+                return Err("the reply's quote never showed".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
         }
         "27" | "28" | "29" | "30" | "31" => {
             pick_three();

@@ -421,6 +421,57 @@ mod marker_tests {
     }
 }
 
+/// Where a list row's columns stand in a row `width` pixels wide
+/// (focus-surface.md, Rows; T232 for the narrow list beside a reading
+/// pane).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RowColumns {
+    /// Where the sender's column starts.
+    pub sender_x: f32,
+    /// How wide the sender's column is.
+    pub sender_width: f32,
+    /// Where the subject starts.
+    pub subject_x: f32,
+    /// Where a marked row's second line starts: under the subject, or,
+    /// once the sender's column has had to narrow, under the sender, so the
+    /// marker's chip, date and answers keep the row's width.
+    pub marker_x: f32,
+}
+
+/// The sender's column at its widest, from screen 01.
+pub const SENDER_WIDTH: f32 = 222.0;
+/// The narrowest the sender's column gets: a name, ellipsized.
+pub const SENDER_MIN: f32 = 120.0;
+/// Where the sender's column starts, after the gutter.
+pub const SENDER_X: f32 = 56.0;
+/// The room the subject's column keeps before the sender's gives any up:
+/// a subject, a pill and the trailing time and count.
+pub const SUBJECT_ROOM: f32 = 260.0;
+/// The gap between the two columns, and between things on a line.
+pub const COLUMN_GAP: f32 = 12.0;
+/// The room a row's right edge keeps.
+pub const ROW_TRAILING: f32 = 24.0;
+
+/// The columns of a row `width` pixels wide: the screen's at the inbox's
+/// width, the sender's column narrowing (to [`SENDER_MIN`]) only when the
+/// subject's would otherwise have less than [`SUBJECT_ROOM`] -- the list
+/// beside a reading pane, 404 px at its narrowest.
+pub fn row_columns(width: f32) -> RowColumns {
+    let spare = width - SENDER_X - COLUMN_GAP - SUBJECT_ROOM - ROW_TRAILING;
+    let sender_width = spare.clamp(SENDER_MIN, SENDER_WIDTH);
+    let subject_x = SENDER_X + sender_width + COLUMN_GAP;
+    RowColumns {
+        sender_x: SENDER_X,
+        sender_width,
+        subject_x,
+        marker_x: if sender_width < SENDER_WIDTH {
+            SENDER_X
+        } else {
+            subject_x
+        },
+    }
+}
+
 /// The header strip's counts: `312 · 41 unread`, or the conversations alone
 /// while nothing is unread.
 pub fn strip_counts(conversations: u32, unread: u32) -> String {
@@ -525,5 +576,37 @@ mod strip_tests {
             ),
             "Rail funding vote, CRDT libraries"
         );
+    }
+
+    #[test]
+    fn a_wide_row_keeps_the_screens_columns() {
+        for width in [620.0, 1100.0, 1440.0] {
+            let columns = row_columns(width);
+            assert_eq!(columns.sender_width, 222.0, "{width}");
+            assert_eq!(columns.subject_x, 290.0, "{width}");
+            assert_eq!(columns.marker_x, 290.0, "{width}");
+        }
+    }
+
+    #[test]
+    fn a_narrow_row_gives_the_senders_column_up_first() {
+        // 460: the list beside an 820 pane in a 1280 window.
+        let columns = row_columns(460.0);
+        assert_eq!(columns.sender_width, 120.0);
+        assert_eq!(columns.subject_x, 188.0);
+        // The subject keeps what is left, and the marker line the row.
+        assert_eq!(columns.marker_x, SENDER_X);
+        // Just short of the screen's columns, the sender gives up only what
+        // the subject needs.
+        let columns = row_columns(560.0);
+        assert_eq!(columns.sender_width, 560.0 - 56.0 - 12.0 - 260.0 - 24.0);
+        assert_eq!(columns.marker_x, SENDER_X);
+    }
+
+    #[test]
+    fn the_sender_never_narrows_past_its_floor() {
+        let columns = row_columns(404.0);
+        assert_eq!(columns.sender_width, SENDER_MIN);
+        assert_eq!(columns.subject_x, SENDER_X + SENDER_MIN + COLUMN_GAP);
     }
 }

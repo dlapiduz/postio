@@ -829,7 +829,11 @@ mod tests {
         assert_eq!(
             said.shortcuts,
             vec![
-                (Some("\u{21b5}".to_owned()), "open".to_owned(), CommandId::OpenMessage),
+                (
+                    Some("\u{21b5}".to_owned()),
+                    "open".to_owned(),
+                    CommandId::OpenMessage
+                ),
                 (
                     Some("F8".to_owned()),
                     "read over the list".to_owned(),

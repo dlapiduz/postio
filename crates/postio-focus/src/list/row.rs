@@ -99,15 +99,16 @@ pub const ONE_LINE: i32 = 40;
 /// A two-line row's height: a conversation with a marker.
 pub const TWO_LINES: i32 = 72;
 
-/// Where the sender column starts, and how wide it is (focus-surface.md).
-const SENDER_X: f32 = 56.0;
-const SENDER_WIDTH: f32 = 222.0;
-/// Where the subject column starts.
-pub const SUBJECT_X: f32 = 290.0;
 /// The space the right edge keeps.
-const TRAILING: f32 = 24.0;
+const TRAILING: f32 = postio_ui::focus_row::ROW_TRAILING;
 /// The gap between two things on the line.
-const GAP: f32 = 12.0;
+const GAP: f32 = postio_ui::focus_row::COLUMN_GAP;
+
+/// Where the subject column starts in a row `width` pixels wide: the
+/// sender's column narrows in a list beside the reading pane (T232).
+pub fn subject_x(width: i32) -> f32 {
+    postio_ui::focus_row::row_columns(width as f32).subject_x
+}
 /// A label pill's height, its dot, and the room around its name.
 const PILL_HEIGHT: f32 = 20.0;
 const PILL_DOT: f32 = 6.0;
@@ -637,20 +638,21 @@ impl RowWidget {
             .as_ref()
             .map(|from| from.display().to_owned())
             .unwrap_or_default();
+        let columns = postio_ui::focus_row::row_columns(width);
         let sender_layout = self.layout(&sender, bold, 1.0);
         self.put(
             snapshot,
             &sender_layout,
-            SENDER_X,
+            columns.sender_x,
             middle,
-            SENDER_WIDTH.min(end - SENDER_X),
+            columns.sender_width.min(end - columns.sender_x),
             &palette.ink,
         );
         drawn.texts.push(sender);
 
         let subject = summary.representative.subject.clone().unwrap_or_default();
         let subject_layout = self.layout(&subject, bold, 1.0);
-        let mut x = SUBJECT_X;
+        let mut x = columns.subject_x;
         x += self.put(snapshot, &subject_layout, x, middle, end - x, &palette.ink);
         drawn.texts.push(subject);
 
@@ -829,8 +831,9 @@ impl RowWidget {
             drawn.texts.push(status.to_owned());
         }
 
-        // The chip, the date and the quote, left to right, in the accent.
-        let mut x = SUBJECT_X;
+        // The chip, the date and the quote, left to right, in the accent:
+        // under the subject, or under the sender in a narrow list (T232).
+        let mut x = postio_ui::focus_row::row_columns(width).marker_x;
         let chip = self.layout(line.chip, true, 0.85);
         let (chip_width, chip_height) = chip.pixel_size();
         let boxed = chip_width as f32 + 12.0;
@@ -964,19 +967,20 @@ impl RowWidget {
         let end = trailing - GAP;
 
         let title = postio_ui::focus_row::digest_title(digest.cadence);
+        let columns = postio_ui::focus_row::row_columns(width);
         let title_layout = self.layout(&title, true, 1.0);
         self.put(
             snapshot,
             &title_layout,
-            SENDER_X,
+            columns.sender_x,
             middle,
-            SENDER_WIDTH.min(end - SENDER_X),
+            columns.sender_width.min(end - columns.sender_x),
             &palette.ink,
         );
         drawn.texts.push(title);
         let subject = postio_ui::focus_row::digest_subject(&digest.rule, digest.count);
         let subject_layout = self.layout(&subject, true, 1.0);
-        let mut x = SUBJECT_X;
+        let mut x = columns.subject_x;
         x += self.put(snapshot, &subject_layout, x, middle, end - x, &palette.ink);
         drawn.texts.push(subject);
         let senders: Vec<String> = digest
@@ -1024,8 +1028,12 @@ impl RowWidget {
         let mut shade = self.color();
         shade.set_alpha(shade.alpha() * 0.08);
         let middle = ONE_LINE as f32 / 2.0;
-        let room = (self.width() as f32 - SUBJECT_X - TRAILING).max(0.0);
-        for (x, width) in [(SENDER_X, SENDER_WIDTH * 0.6), (SUBJECT_X, room * 0.45)] {
+        let columns = postio_ui::focus_row::row_columns(self.width() as f32);
+        let room = (self.width() as f32 - columns.subject_x - TRAILING).max(0.0);
+        for (x, width) in [
+            (columns.sender_x, columns.sender_width * 0.6),
+            (columns.subject_x, room * 0.45),
+        ] {
             snapshot.append_color(&shade, &graphene::Rect::new(x, middle - 5.0, width, 10.0));
         }
     }

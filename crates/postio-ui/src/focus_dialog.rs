@@ -207,8 +207,15 @@ mod tests {
         // The list takes the rest, never less than its floor.
         for window in [980, 1024, 1180, 1280, 1440, 1920] {
             let pane = pane_width(window).expect("room for a pane");
-            assert!(window - pane >= LIST_MIN, "{window}: list {}", window - pane);
-            assert!((PANE_MIN..=PANE_MAX).contains(&pane), "{window}: pane {pane}");
+            assert!(
+                window - pane >= LIST_MIN,
+                "{window}: list {}",
+                window - pane
+            );
+            assert!(
+                (PANE_MIN..=PANE_MAX).contains(&pane),
+                "{window}: pane {pane}"
+            );
         }
     }
 

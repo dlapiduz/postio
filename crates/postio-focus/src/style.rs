@@ -154,6 +154,7 @@ mod tests {
     fn reserved(rule: &str) -> bool {
         rule == ".focus-open .postio-flow-accent { color }"
             || rule == ".focus-compose .postio-flow-accent { color }"
+            || rule == ".focus-compose-surface .postio-flow-accent { color }"
             || rule.contains(":focus")
             || rule.starts_with(".focus-list > row:selected ")
             || rule.starts_with(".focus-filtered-list > row:selected ")

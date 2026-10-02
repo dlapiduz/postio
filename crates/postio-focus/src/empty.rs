@@ -22,6 +22,7 @@ type Handler = Rc<dyn Fn(CommandId)>;
 /// The empty page.
 pub struct EmptyInbox {
     root: gtk::Box,
+    tray: gtk::Image,
     heading: gtk::Label,
     detail: gtk::Label,
     next_digest: gtk::Label,
@@ -63,12 +64,20 @@ impl EmptyInbox {
         root.append(&shortcuts);
         Rc::new(EmptyInbox {
             root,
+            tray,
             heading,
             detail,
             next_digest,
             shortcuts,
             handler: RefCell::default(),
         })
+    }
+
+    /// Draw the page without its tray: the reading pane's page is about a
+    /// message, not the inbox, and the icon themes draw no envelope every
+    /// desktop has (T232).
+    pub fn hide_picture(&self) {
+        self.tray.set_visible(false);
     }
 
     /// The page, to place where the list goes.

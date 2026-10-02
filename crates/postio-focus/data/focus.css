@@ -336,6 +336,15 @@ floating-sheet > dimming {
   color: var(--postio-ink);
 }
 
+/* The reading pane beside the list (T232; screens.md, "Reading beside the
+   list"): a strong hairline between the two. The open message and the
+   composer paint their own surface in it; with neither, the pane is the
+   list's surface. */
+.focus-reading-pane {
+  border-left: 1px solid var(--postio-hairline-strong);
+  background-color: var(--postio-surface);
+}
+
 /* The body is drawn on the same role: the reader reads its ground from this
    probe's colour, so the two are one token (T203). */
 .focus-open .postio-flow-ground {
@@ -856,43 +865,52 @@ popover.focus-row-menu-popover separator.focus-row-menu-rule {
    dialog: hairline rows, flat entries, muted names -- and no accent
    underline on the focused row (FR-091). */
 .focus-compose-surface,
-.focus-compose .postio-composer {
+.focus-compose .postio-composer,
+.focus-compose-surface .postio-composer {
   background-color: var(--postio-surface);
   color: var(--postio-ink);
 }
 
 /* The body's ground and palette, read by the editor from these probes as
    the open message's body reads them (T203, T211). */
-.focus-compose .postio-flow-ground {
+.focus-compose .postio-flow-ground,
+.focus-compose-surface .postio-flow-ground {
   color: var(--postio-surface);
 }
 
-.focus-compose .postio-flow-ink {
+.focus-compose .postio-flow-ink,
+.focus-compose-surface .postio-flow-ink {
   color: var(--postio-ink);
 }
 
-.focus-compose .postio-flow-ink-secondary {
+.focus-compose .postio-flow-ink-secondary,
+.focus-compose-surface .postio-flow-ink-secondary {
   color: var(--postio-ink-secondary);
 }
 
-.focus-compose .postio-flow-dim {
+.focus-compose .postio-flow-dim,
+.focus-compose-surface .postio-flow-dim {
   color: var(--postio-dim);
 }
 
-.focus-compose .postio-flow-accent {
+.focus-compose .postio-flow-accent,
+.focus-compose-surface .postio-flow-accent {
   color: var(--postio-accent);
 }
 
-.focus-compose .postio-flow-hairline {
+.focus-compose .postio-flow-hairline,
+.focus-compose-surface .postio-flow-hairline {
   color: var(--postio-hairline);
 }
 
-.focus-compose .postio-flow-hairline-strong {
+.focus-compose .postio-flow-hairline-strong,
+.focus-compose-surface .postio-flow-hairline-strong {
   color: var(--postio-hairline-strong);
 }
 
 /* A key inside the dialog: the message dialog's cap. */
-.focus-compose .postio-keyhint {
+.focus-compose .postio-keyhint,
+.focus-compose-surface .postio-keyhint {
   min-height: 16px;
   min-width: 8px;
   padding: 0 4px;
@@ -971,23 +989,28 @@ button.focus-compose-detach {
 
 /* The fields: the sender block's grid, a hairline under each row, the
    names muted in one column, the values in ink. */
-.focus-compose .postio-compose-fields {
+.focus-compose .postio-compose-fields,
+.focus-compose-surface .postio-compose-fields {
   margin-top: 8px;
 }
 
-.focus-compose .postio-compose-row {
+.focus-compose .postio-compose-row,
+.focus-compose-surface .postio-compose-row {
   min-height: 40px;
   padding: 0;
   box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
-.focus-compose .postio-compose-label {
+.focus-compose .postio-compose-label,
+.focus-compose-surface .postio-compose-label {
   font-size: var(--postio-text-body);
   color: var(--postio-dim);
 }
 
 .focus-compose .postio-compose-field,
-.focus-compose .postio-compose-field:focus {
+.focus-compose .postio-compose-field:focus,
+.focus-compose-surface .postio-compose-field,
+.focus-compose-surface .postio-compose-field:focus {
   background: none;
   border: none;
   box-shadow: none;
@@ -997,13 +1020,16 @@ button.focus-compose-detach {
 }
 
 /* The formatting toolbar: the shared icon buttons, at the column's edge. */
-.focus-compose .postio-compose-toolbar {
+.focus-compose .postio-compose-toolbar,
+.focus-compose-surface .postio-compose-toolbar {
   padding: 8px 0 4px 0;
   box-shadow: none;
 }
 
 .focus-compose .postio-compose-warning,
-.focus-compose .postio-compose-tracking-notice {
+.focus-compose .postio-compose-tracking-notice,
+.focus-compose-surface .postio-compose-warning,
+.focus-compose-surface .postio-compose-tracking-notice {
   padding: 4px 0;
   font-size: var(--postio-text-small);
   color: var(--postio-ink-secondary);
