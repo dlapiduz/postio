@@ -1,0 +1,13 @@
+# must_fail: #1474 stated as the intent. Escape really restores the folder.
+source      = { kind = "issue", ref = "#1474" }
+calibration = "must_fail"
+[[step]]
+command = "search"
+[[step]]
+type    = "harbour"
+settle  = { until = { rows.count = { changed = true } } }
+[[step]]
+key     = "Return"
+[[step]]
+command = "back"
+expect  = "After Escape the list still shows only the search's hits, headed by the result count."

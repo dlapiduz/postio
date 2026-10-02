@@ -14,6 +14,7 @@
 # Usage
 # -----
 #   scripts/storyboards.sh run   [--app classic|focus|all] [--only <glob>] [--no-frames] [--delivery chain|direct]
+#                                [--calibration]   # play only the reviewer's calibration set
 #   scripts/storyboards.sh lint                    # load and lint the whole catalogue
 #   scripts/storyboards.sh page  [--open]          # Design/review/<branch>/index.html from the runs
 #   scripts/storyboards.sh key   [--app classic|focus|all]   # the review key for HEAD's tree
@@ -37,7 +38,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -46,6 +47,7 @@ shift
 APP=classic
 ONLY=""
 OPEN=0
+CALIBRATION=0
 RUNNER_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -54,6 +56,7 @@ while [ $# -gt 0 ]; do
         --no-frames) RUNNER_ARGS+=(--no-frames); shift ;;
         --delivery)  RUNNER_ARGS+=(--delivery "${2:?--delivery needs chain or direct}"); shift 2 ;;
         --open)      OPEN=1; shift ;;
+        --calibration) CALIBRATION=1; shift ;;
         -h|--help)   usage; exit 0 ;;
         *) echo "storyboards.sh: unknown argument '$1' -- try --help" >&2; exit 2 ;;
     esac
@@ -62,6 +65,11 @@ done
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)
 REVIEW="$ROOT/Design/review/${BRANCH//\//-}"
 RUNS="$REVIEW/runs"
+# The calibration set is the reviewer's test, not the branch's: its runs
+# live apart, so a page about the branch never shows them.
+if [ "$CALIBRATION" = 1 ]; then
+    RUNS="$REVIEW/calibration/runs"
+fi
 
 target_dir() {
     if [ -n "${CARGO_TARGET_DIR:-}" ]; then
@@ -94,11 +102,18 @@ runner_crate() {
     esac
 }
 
-# Every storyboard a run plays: not calibration, not gap lists.
+# Every storyboard a run plays: not calibration, not gap lists -- or, with
+# --calibration, only the calibration set the reviewer is measured on.
 selected() {
     local file relative
-    find "$CATALOGUE" -name '*.toml' -not -path "$CATALOGUE/calibration/*" \
-        -not -path "$CATALOGUE/gaps/*" | sort | while read -r file; do
+    {
+        if [ "$CALIBRATION" = 1 ]; then
+            find "$CATALOGUE/calibration" -name '*.toml'
+        else
+            find "$CATALOGUE" -name '*.toml' -not -path "$CATALOGUE/calibration/*" \
+                -not -path "$CATALOGUE/gaps/*"
+        fi
+    } | sort | while read -r file; do
         relative="${file#"$CATALOGUE"/}"
         relative="${relative%.toml}"
         # shellcheck disable=SC2053 -- a glob, deliberately

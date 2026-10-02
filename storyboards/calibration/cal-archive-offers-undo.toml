@@ -1,0 +1,6 @@
+# must_pass: the twin of cal-archive-says-nothing.
+source      = { kind = "flow", ref = "ux-architect §2" }
+calibration = "must_pass"
+[[step]]
+command = "archive"
+expect  = "A notice at the bottom says the message was archived and offers Undo."

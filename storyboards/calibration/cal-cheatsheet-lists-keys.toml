@@ -1,0 +1,6 @@
+# must_pass: the twin of cal-cheatsheet-is-empty.
+source      = { kind = "flow", ref = "ux-architect §2" }
+calibration = "must_pass"
+[[step]]
+command = "cheat_sheet"
+expect  = "Pressing ? shows the keys that work here, each with what it does."

@@ -1,0 +1,7 @@
+# must_fail: an empty cheat sheet stated as the intent. `?` really lists the
+# keys for where the person is.
+source      = { kind = "flow", ref = "ux-architect §2" }
+calibration = "must_fail"
+[[step]]
+command = "cheat_sheet"
+expect  = "Pressing ? opens an empty panel with no keys listed in it."
