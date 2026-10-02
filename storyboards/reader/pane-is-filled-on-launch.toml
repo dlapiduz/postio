@@ -1,0 +1,19 @@
+# The reading pane is filled for the selected row at launch (#601, #1414).
+#
+# The defect: the app opened with the cursor on the first row and the
+# reading pane empty, a plate where the message should be, until a click
+# or a key woke it. Pinned: the pane holds the first row's own conversation
+# and the run fails if the frame was ever blank while it filled.
+source = { kind = "issue", ref = "#601" }
+proof  = "pinned"
+
+[[step]]
+id      = "launch"
+wait    = { until = { reading.id = "12" } }
+check   = { cursor.index = 0, cursor.id = "12", reading.id = "12" }
+expect  = "The first row is selected and its message is already showing in the pane, not an empty plate."
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 1, reading.id = "30" }
+expect  = "Moving the cursor fills the pane with the next message at once."

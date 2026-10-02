@@ -1,0 +1,23 @@
+# A one-message thread shows one Reply bar, and `e` opens one composer
+# (#1173, #822).
+#
+# The defect: a single message drew a per-message Reply row and the
+# conversation's own bar, both bound to `e`, so the key was ambiguous and
+# the pane showed the same buttons twice.
+source = { kind = "issue", ref = "#1173" }
+proof  = "pinned"
+
+[[step]]
+wait    = { until = { reading.id = "12" } }
+
+[[step]]
+id      = "newsletter"
+command = "next_message"
+settle  = { until = { reading.id = { changed = true } } }
+check   = { reading.id = "30" }
+expect  = "The newsletter is a single-message thread. The pane shows exactly one reply bar, in the header; the message card below has none of its own."
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "Exactly one composer opens, as a reply to the newsletter."
