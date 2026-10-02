@@ -217,7 +217,7 @@ pub fn texture_within(
 /// A widget with no allocation or no renderer is the same [`Error`] it is
 /// there.
 pub fn texture_now(widget: &impl IsA<gtk::Widget>) -> Result<gdk::Texture, Error> {
-    render_now(widget.as_ref(), None)
+    render_now(widget.as_ref(), None::<fn(&gtk::Snapshot)>)
 }
 
 /// [`texture_now`] with `overlay` drawn over the widget's own picture.
@@ -229,12 +229,12 @@ pub fn texture_with(
     widget: &impl IsA<gtk::Widget>,
     overlay: impl FnOnce(&gtk::Snapshot),
 ) -> Result<gdk::Texture, Error> {
-    render_now(widget.as_ref(), Some(Box::new(overlay)))
+    render_now(widget.as_ref(), Some(overlay))
 }
 
-fn render_now(
+fn render_now<F: FnOnce(&gtk::Snapshot)>(
     widget: &gtk::Widget,
-    overlay: Option<Box<dyn FnOnce(&gtk::Snapshot) + '_>>,
+    overlay: Option<F>,
 ) -> Result<gdk::Texture, Error> {
     let never_drawable = || Error::NeverDrawable {
         waited: Duration::ZERO,

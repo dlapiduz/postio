@@ -179,6 +179,7 @@ mod gtk_window_run_search;
 mod gtk_window_state;
 mod gtk_window_teardown;
 mod storyboard_chain_delivery;
+mod storyboard_outline;
 mod storyboard_reach;
 mod storyboard_settle;
 mod storyboard_support;
@@ -244,6 +245,18 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "storyboard_outline::the_focused_widgets_bounds_are_drawn_over",
+        storyboard_outline::the_focused_widgets_bounds_are_drawn_over as fn(),
+    ),
+    (
+        "storyboard_outline::the_caption_carries_the_region_name",
+        storyboard_outline::the_caption_carries_the_region_name as fn(),
+    ),
+    (
+        "storyboard_outline::the_plain_frame_is_untouched",
+        storyboard_outline::the_plain_frame_is_untouched as fn(),
+    ),
     (
         "storyboard_settle::a_static_window_settles",
         storyboard_settle::a_static_window_settles as fn(),

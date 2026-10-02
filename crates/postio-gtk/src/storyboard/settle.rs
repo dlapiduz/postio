@@ -76,10 +76,10 @@ fn frame(texture: gdk::Texture) -> Frame {
     let mut downloader = gdk::TextureDownloader::new(&texture);
     downloader.set_format(gdk::MemoryFormat::R8g8b8a8Premultiplied);
     let (bytes, _stride) = downloader.download_bytes();
-    let blank = match bytes.chunks_exact(4).next() {
-        None => true,
-        Some(first) => bytes.chunks_exact(4).all(|pixel| pixel == first),
-    };
+    let (pixels, _) = bytes.as_chunks::<4>();
+    let blank = pixels
+        .first()
+        .is_none_or(|first| pixels.iter().all(|p| p == first));
     Frame {
         hash: blake3::hash(&bytes).to_hex().to_string(),
         texture,
@@ -126,7 +126,7 @@ impl Sampling {
             return;
         }
         self.ticks += 1;
-        if self.ticks % self.settings.stride.max(1) != 0 {
+        if !self.ticks.is_multiple_of(self.settings.stride.max(1)) {
             return;
         }
         // A window with no allocation yet is not a blank one: it has had no
