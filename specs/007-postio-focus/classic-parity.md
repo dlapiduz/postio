@@ -202,15 +202,59 @@ The skills `/gtk-design`, `/issue`, `/initiative` and `/steward` name
 `postio-gtk` and `app_suite` too, and so does
 `.claude/hooks/test-guard-shared-tree.py`.
 
+## Shared code only the classic app calls (T251)
+
+The `pub` items of `postio-ui` and `postio-widgets` whose only callers
+outside their crate are `postio-gtk` and `postio-app`. They were found by
+name across every crate's `src`, `tests`, `benches` and `examples`, then
+checked by hand. A generic method name (`new`, `set_*`) that Focus also calls
+on another type can hide one, so T256 confirms each with the compiler as it
+deletes. **Goes** means it is deleted with the classic app in T256, with its
+classic-only tests. **Stays** names the caller that keeps it, which also
+gives it a test.
+
+**Stays, though the plan expected otherwise:**
+
+- `ComposerHost`: Focus's `compose::host::DialogHost` implements it, and
+  `focus_suite::one_composer` has a second implementation. The classic
+  `WindowHost` goes. `ComposerHost::composing` and `::adopt` have empty
+  bodies in Focus and go with the classic one, with `COMPOSING_CLASS` and
+  `Composer::present_surface`.
+- The composer's detach seam (`toggle_detached`, `detached_window`,
+  `is_detached`, `ComposerHost::{restore, remove, parent}`): Focus's frame
+  dispatches `DetachComposer` into it.
+- `postio_ui::settings`: Focus's settings dialog, the terminal and macOS.
+- `postio_ui::reader::rail` (`Rail`, `rows`, `presentation`): macOS
+  (`postio-ffi/src/rail.rs`). Only its `NARROW_BELOW`, `LENGTH_THRESHOLD` and
+  `UNMOUNT_BELOW` go.
+- `postio_ui::selection::{extend_over, select_only}` and
+  `status::Trackers::note_last_sync`: the terminal.
+- `postio_widgets::{startup, jank}`: Focus (T250).
+
+**Goes with the classic app (T256):**
+
+| Crate and module | Items |
+|---|---|
+| `postio_widgets::reader` (`Reader`) | `Verbs::STANDARD` (Focus uses `Verbs::NONE`) and the verb tables only it reaches; `connect_current_message` with `CurrentMessageHandler`, and `BodyView::{connect_current_message, current_message}` (the rail's marks); `connect_message_action` and `BodyView::connect_message_verb` (the per-message reply bars); `scroll_to_message`, `render_thread`, `offer_prepared`, `connect_parts_requested`, `request_parts`, `set_actions_visible`, `darken_title`, `connect_unsubscribe_activated`, `set_unsubscribe`, `zoom_indicator`; the test hooks only classic suites call (`click_*`, `banner_always_allow_label`, `unsubscribe_banner_*`, `reader_notice_visible`, `shows_encoding_problems`, `toggle_reader_view_for`, `view_original_for`, `visible_verbs`, `set_notices_visible`, `actions_visible`, `actions_widget`, `is_reader_view`, `document_for_test`, `test_press`); uncalled anywhere: `would_render_thread`, `forget_originals`, `remember_treatment` |
+| `postio_widgets::reader::message_header` | `set_identity_visible`; test hooks (`cc_revealed`, `cc_toggle_visible`, `date_label`, `identity_visible`, `sender_label`, `subject_label`, `to_visible`); uncalled: `add_before_date`, `add_before_sender`, `set_recipients`, `set_subject`, `set_subject_visible` |
+| `postio_widgets::body_view` | test hooks only classic suites call (`drag_select`, `evict_tiles`, `focused_link_target`, `release_renders`, `toggle_darken`, `click_select`, `selection_rects`, `find::find_rects`, `zoom::pinching`). They stay if T252 moves the `body_view*` cases that call them |
+| `postio_widgets::composer` | the `test_*` hooks only classic suites call; `editor::editing_view`; `web_process::take_death`; uncalled: `editor::format_state`, `web_process::{deaths, last_death}`. The hooks stay with any `gtk_composer_*` case T252 moves |
+| `postio_widgets::present::compose` | `install_reply_source` |
+| `postio_widgets::onboarding`, `settings` | the `test_*` hooks only classic suites call, `footer_text`, `footer_target_text`, `read_receipt_count_label`, `set_list_viewport_height`, `set_row_height_probe`; uncalled: `settings::BODY_HEIGHT`. Hooks stay with any case T252 moves |
+| `postio_widgets::widgets` | the whole of `nav_row` (`nav_row`, `nav_name`, `nav_count`), `chip` (`chip_button`, `filter_chip`) and `screen` (`under_window_chrome`, `showing_in`); `toast::offers_undo`; `NoticeBar::set_icon`; uncalled: `NoticeBar::set_action_sensitive`, `render_mode::press_switch` |
+| `postio_widgets` (other) | `state::{open_for_writing, state_dir}`; `list_model::emissions`; `drag_out::Materialise`; `style::ICONS`; uncalled: `style::WIDGETS_CSS_URL`, `startup::{start_at, within_budget}` outside tests |
+| `postio_ui::list_state` | `derive_aggregate` and its helper `is_current`, `derive_opening` |
+| `postio_ui::keymap` | `Keymap::apply_commands`, `Chord::keysym_name`, `trigger_for_command` |
+| `postio_ui::reader` | `document::prepare_message`, `document::LICENSES`, `rail::{NARROW_BELOW, LENGTH_THRESHOLD, UNMOUNT_BELOW}`; uncalled: `document::DOCUMENT_BASE_URI`, `cost::note_waited_out` |
+| `postio_ui::search`, `status`, `focus_dialog`, `sidebar` | `search::{NOTHING_MATCHED, NOTHING_TO_NARROW}`, `SyncStatus::refresh_interval`; uncalled: `search::{with_reindexing, with_unreachable}`, `status::detail_in_full`, `focus_dialog::PANE_WINDOW_MIN`, `sidebar::{ancestors_of, attention_for}` |
+| `postio_ui::test_support` | `document_bytes`, `documents_built`, `pages_requested`, `redraws_waited_out`, `snapshot_counts`; uncalled: `largest_document` |
+| `postio_ui::observe` | all of it but `Tone`, which `postio_widgets::widgets::toast` uses. Its other users are the classic window and `postio-storyboard`, which only `postio-app` depends on (see the questions) |
+
 ## Risks
 
-- **Some shared code is only exercised by the classic app.** Examples are the
-  reader's conversation and rail seams (`Reader::connect_current_message`,
-  the per-message reply bars), `Verbs::STANDARD`, `postio_ui::list_state`'s
-  aggregate rule, `postio_ui::settings` (until T234), and the
-  `ComposerHost` that `postio-gtk::composer` implements. With the classic app
-  gone these become untested or dead, and `check-uncalled-pub-fn.py` will say
-  so late. T251 lists them first.
+- **Some shared code is only exercised by the classic app.** It is listed,
+  with what happens to each item, under "Shared code only the classic app
+  calls" below (T251).
 - **`app_suite` proves things Focus relies on.** Examples are the reader
   spawning no web process, hostile mail, reclaiming disk on open, startup
   repair, the event fan-out, notifications off the main thread, and `e2e.rs`
@@ -245,3 +289,8 @@ The skills `/gtk-design`, `/issue`, `/initiative` and `/steward` name
 1. **Removal (T256)** waits for your word, once T233–T255 are done.
 2. **The constitution amendment** for one desktop app, with the branch's
    existing amendment.
+3. **The storyboard runner (spec 008).** It drives the classic window only
+   (`postio_gtk::storyboard`, `postio_app::demo`, `postio-storyboard`,
+   `postio_ui::observe`), with 19 `gtk_suite` and 5 `app_suite` cases.
+   Either it is rebuilt over Focus's window in `postio-widgets`, and its
+   cases move with it, or it is deleted with the classic app in T256.
