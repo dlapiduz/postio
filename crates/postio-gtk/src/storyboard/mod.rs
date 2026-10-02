@@ -7,5 +7,6 @@
 //! Classic or Focus.
 
 pub mod deliver;
+pub mod outline;
 pub mod reach;
 pub mod settle;
