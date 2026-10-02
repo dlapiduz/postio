@@ -22,6 +22,8 @@ check   = { keyboard.region = "search" }
 
 [[step]]
 type    = "tide"
+settle  = { until = { rows.count = { changed = true } } }
+check   = { rows.count = { changed = true } }
 
 [[step]]
 command = "back"

@@ -345,6 +345,10 @@ const CASES: &[(&str, fn())] = &[
         storyboard_determinism::two_processes_film_a_storyboard_identically as fn(),
     ),
     (
+        "storyboards::the_catalogue_holds_on_classic",
+        storyboards::the_catalogue_holds_on_classic as fn(),
+    ),
+    (
         "storyboards::a_storyboard_plays_on_classic_and_writes_its_run",
         storyboards::a_storyboard_plays_on_classic_and_writes_its_run as fn(),
     ),

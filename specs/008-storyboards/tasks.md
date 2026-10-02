@@ -407,7 +407,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
   `crates/postio-storyboard/templates/page.html`: self-contained, light and
   dark, no external fetches. Add `page` to `scripts/storyboards.sh`. T045
   goes green.
-- [ ] T047 [P] [US1] Write the first catalogue storyboards, from the
+- [X] T047 [P] [US1] Write the first catalogue storyboards, from the
   catalogue seed rows #1687, #1474/#1011, 6eadd8e2, #1473 and #693/#1252:
   - `storyboards/list/archive-walks-down.toml` (`proof = "pinned"`);
   - `storyboards/search/escape-leaves-search.toml` (`pinned`);
@@ -419,7 +419,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
 
   Run each. The `pinned` ones pass with exact checks. The `open` one is
   observed red, and its failing step is noted on #1252 in a comment.
-- [ ] T048 [US1] Add `postio-storyboard`'s
+- [X] T048 [US1] Add `postio-storyboard`'s
   `the_catalogue_loads_and_lints` (T014) to the sanity tier. It already runs
   under `--lib`, so this is a check of `scripts/test-sanity.sh`'s crate list,
   and adds the crate there if the list is explicit.
