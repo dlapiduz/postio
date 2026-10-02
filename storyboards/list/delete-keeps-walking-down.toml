@@ -1,0 +1,35 @@
+# Repeated delete works down the list, one row per press (#1687).
+#
+# The defect: after one delete the list scrolled to the top and the cursor
+# went elsewhere, so a second `d` deleted a message nobody had looked at.
+# Rapid `d d d` is how people clear a list, so each press must act on the row
+# the cursor was on, and the cursor must stay at the same index (the next
+# row slid into it). Pinned on the thirty-six-thread seed so there is always a
+# row below.
+source = { kind = "issue", ref = "#1687" }
+proof  = "pinned"
+seed   = "thirty-threads"
+design = "06-mouse-parity-undo"
+
+[[step]]
+id      = "down"
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 1 }
+
+[[step]]
+id      = "start"
+command = "next_message"
+check   = { cursor.index = 2, rows.count = 36 }
+
+[[step]]
+command = "delete"
+check   = { keyboard.region = "list", cursor.index = 2, rows.count = 35 }
+
+[[step]]
+command = "delete"
+check   = { keyboard.region = "list", cursor.index = 2, rows.count = 34 }
+
+[[step]]
+command = "delete"
+check   = { keyboard.region = "list", cursor.index = 2, rows.count = 33, notice.undo = true }
+expect  = "Three rows are gone, one per press, and the cursor still sits on the third row. The list never scrolled to the top."

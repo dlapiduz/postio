@@ -1,0 +1,30 @@
+# Keys pressed in quick succession each move one step (#1609).
+#
+# The defect: a burst of `j` presses was coalesced or dropped while the list
+# redrew, so five presses moved the cursor by fewer than five rows. No waits
+# between the steps: the runner presses them back to back, and the last
+# check pins the exact row.
+source = { kind = "issue", ref = "#1609" }
+proof  = "pinned"
+seed   = "thirty-threads"
+design = "01-inbox-reading"
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 5 }
+expect  = "Five presses, five rows: the cursor is on the sixth message."
+
+[[step]]
+command = "prev_message"
+[[step]]
+command = "prev_message"
+check   = { keyboard.region = "list", cursor.index = 3 }
+expect  = "Two presses back, two rows up."
