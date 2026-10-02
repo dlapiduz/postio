@@ -418,11 +418,9 @@ impl Places {
                 }
                 // The Outbox, while anything waits in it (T239): a view over
                 // Drafts, so it has no mailbox row of its own to be listed by.
+                let outbox = postio_model::ListScope::Outbox(account.id);
                 // POSTIO-GLIB-SAFE: as above.
-                let waiting = client
-                    .list_count(postio_model::ListScope::Outbox(account.id))
-                    .await
-                    .unwrap_or(0);
+                let waiting = client.list_count(outbox).await.unwrap_or(0);
                 if waiting > 0 {
                     found.push(Entry {
                         section: Section::Mailboxes,
