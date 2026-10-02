@@ -106,6 +106,34 @@ fn after_abandon_the_next_request_goes_to_a_fresh_thread() {
     );
 }
 
+/// A newer request does not queue behind a render already superseded
+/// (specs/007-postio-focus T218). The reader's deadline runs from the
+/// moment it asks, so a request that waited for a stale render to finish
+/// spent its budget on a layout nobody would see: Focus asks twice as a
+/// message opens -- once at the column it had, again at the column the
+/// body's treatment gives it -- and stepping with `j` asks once per key,
+/// so an ordinary newsletter fell back to plain text on a busy machine.
+#[test]
+fn a_newer_request_does_not_wait_for_a_superseded_render() {
+    let renderer = Renderer::new(fonts());
+    let held = Resources::new();
+    let release = held.hold_lookup();
+    let stale = renderer.request(request(1, held));
+    release.wait_until_held(PATIENCE);
+    // Generation 1 is inside its render, and stays there: the next request
+    // is answered while it is.
+    let next = renderer
+        .request(request(2, Resources::new()))
+        .recv_timeout(PATIENCE / 4)
+        .expect("the newer request waited for the superseded render");
+    assert_eq!(next.generation, 2);
+    release.release();
+    assert!(
+        stale.recv_timeout(PATIENCE).is_err(),
+        "a superseded render was delivered"
+    );
+}
+
 /// A message the sanitizer found over an input cap falls back without the
 /// engine ever parsing it: its lookup would panic, and does not run.
 #[test]

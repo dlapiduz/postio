@@ -33,6 +33,17 @@ const RENDERER_CSS: &str = ".postio-body { overflow-x: visible !important; \
 
 /// Lay out and record `request`'s document, drawing with `fonts`.
 pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
+    render_unless(request, fonts, &|| false).expect("a render that is never stale finishes")
+}
+
+/// [`render`], giving up between passes once `stale` says nobody will see
+/// the result: a layout cannot be interrupted, but a superseded render
+/// need not start another (T218).
+pub(crate) fn render_unless(
+    request: &RenderRequest,
+    fonts: &FontSet,
+    stale: &dyn Fn() -> bool,
+) -> Option<RenderedDocument> {
     let scale = request.viewport.hidpi_scale;
     let mut zoom = request.viewport.zoom;
     let mut doc = lay_out(request, fonts, None, zoom);
@@ -43,6 +54,9 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     let plan = crate::present::plan(&doc, request);
     let mut style_passes = 1;
     if !plan.is_empty() {
+        if stale() {
+            return None;
+        }
         let second = lay_out(request, fonts, Some(&plan), zoom);
         // The same markup parses to the same nodes; if it somehow did not,
         // the marks would land on the wrong ones, so keep the first layout.
@@ -59,6 +73,9 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     // Ctrl+plus still means "larger" on a fitted sheet.
     let fit = paper_fit(&doc);
     if fit < 1.0 {
+        if stale() {
+            return None;
+        }
         zoom *= fit;
         let plan = (!plan.is_empty()).then_some(&plan);
         doc = lay_out(request, fonts, plan, zoom);
@@ -76,6 +93,9 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
         (f64::from(size.width) * scale * zoom).ceil() as u32,
         (f64::from(size.height) * scale * zoom).ceil() as u32,
     );
+    if stale() {
+        return None;
+    }
     let mut display_list = anyrender::Scene::new();
     blitz_paint::paint_scene(
         &mut display_list,
@@ -126,7 +146,7 @@ pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     };
     zoom_geometry(&mut document, zoom);
     document.low_res = low_res(&document);
-    document
+    Some(document)
 }
 
 /// The least a paper body is scaled to fit its column (the handoff's

@@ -6,9 +6,11 @@
 //!   disconnects.
 //! - A render runs inside `catch_unwind`. After a panic the document is
 //!   dropped, never reused, and the plain-text fallback is delivered.
-//! - There is no way to stop a running render. `abandon` detaches the
+//! - There is no way to interrupt a layout. `abandon` detaches the
 //!   thread running it: the next request goes to a fresh thread, and the
-//!   old one finishes, delivers nothing, and exits.
+//!   old one finishes, delivers nothing, and exits. A newer request does
+//!   the same to a render it supersedes, and a superseded render stops at
+//!   the next pass it would have started.
 
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -86,9 +88,18 @@ impl Renderer {
         self.generations
             .latest
             .fetch_max(request.generation, Ordering::AcqRel);
+        let generation = request.generation;
         let (reply, result) = mpsc::channel();
         let job = Job { request, reply };
         let mut worker = self.worker.lock().expect("the worker is never poisoned");
+        // A render still running for an older generation is one nobody will
+        // see: queueing behind it would spend this request's deadline on it
+        // (T218). The thread is left to notice it is stale and stop, and a
+        // fresh one takes this request at once.
+        let running = worker.running.load(Ordering::Acquire);
+        if running != 0 && running < generation {
+            *worker = spawn(self.fonts.clone(), self.generations.clone());
+        }
         if let Err(mpsc::SendError(job)) = worker.jobs.send(job) {
             // The thread is gone (it cannot be: panics are caught). A new
             // one takes the job rather than losing it.
@@ -153,21 +164,26 @@ fn spawn(fonts: FontSet, generations: Arc<Generations>) -> Worker {
                     continue;
                 }
                 busy.store(generation, Ordering::Release);
-                let rendered =
-                    std::panic::catch_unwind(AssertUnwindSafe(|| crate::render(&request, &fonts)));
+                let stale = || !generations.wanted(generation);
+                let rendered = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    crate::render::render_unless(&request, &fonts, &stale)
+                }));
                 busy.store(0, Ordering::Release);
                 // After a panic the document went with the unwind; it is
                 // never reused.
-                let document = rendered.unwrap_or_else(|_| {
-                    fallback(
+                let document = match rendered {
+                    Ok(Some(document)) => document,
+                    // Superseded part way: nothing to deliver.
+                    Ok(None) => continue,
+                    Err(_) => fallback(
                         &fonts,
                         &request.plain_text,
                         &request.theme,
                         request.viewport,
                         FallbackReason::Panicked,
                         generation,
-                    )
-                });
+                    ),
+                };
                 if generations.wanted(generation) {
                     let _ = reply.send(document);
                 }
