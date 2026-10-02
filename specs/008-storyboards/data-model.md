@@ -98,7 +98,7 @@ pass and never a failure.
   | `scheme` | `light`, `dark` | both |
   | `contrast` | `normal`, `high` | both |
   | `width` | `wide` (1600×900), `normal` (1280×800), `narrow` (900×700) | both |
-  | `density` | `compact`, `cozy`, `comfortable` | Classic |
+  | `density` | `airy`, `comfortable`, `compact` | Classic |
   | `text` | `100`, `200` | both |
   | `treatment` | `app`, `paper` | Focus, and Classic once spec 007's treatment lands on `main` |
 
