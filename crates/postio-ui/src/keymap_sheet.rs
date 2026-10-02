@@ -348,7 +348,11 @@ mod tests {
             .find(|row| row.action == CommandId::Archive.into())
             .expect("archive is in the key map");
         assert_eq!(archive.title, "Archive");
-        assert_eq!(archive.keys, ["a"]);
+        // The mnemonic, then the menu chord the second keyboard layer gave
+        // it.
+        let chord =
+            postio_config::keys::expand_mod("mod+shift+a", postio_config::paths::Platform::host());
+        assert_eq!(archive.keys, ["a".to_owned(), chord]);
     }
 
     #[test]
@@ -362,7 +366,11 @@ mod tests {
             .flat_map(|(_, rows)| rows)
             .find(|row| row.action == CommandId::Archive.into())
             .expect("archive is in the key map");
-        assert_eq!(archive.keys, ["w"]);
+        // The file replaces the primary; the registry's alternates are not
+        // the file's to replace.
+        let chord =
+            postio_config::keys::expand_mod("mod+shift+a", postio_config::paths::Platform::host());
+        assert_eq!(archive.keys, ["w".to_owned(), chord]);
     }
 
     #[test]

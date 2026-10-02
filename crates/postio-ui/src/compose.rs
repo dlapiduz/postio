@@ -144,8 +144,10 @@ mod editor_script_tests {
 
     #[test]
     fn the_gtk_copy_of_the_bridge_has_not_drifted_from_this_one() {
-        let gtk =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../postio-gtk/data/editor.js");
+        // The GTK copy is postio-widgets' since the composer moved there
+        // (ADR 0043).
+        let gtk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../postio-widgets/src/composer/editor.js");
         let theirs = std::fs::read_to_string(&gtk)
             .unwrap_or_else(|error| panic!("reading {}: {error}", gtk.display()));
         assert_eq!(
