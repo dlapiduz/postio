@@ -204,6 +204,69 @@ button.postio-button-secondary:hover {
   color: var(--postio-ink);
 }
 
+/* ── Settings, re-dressed for Focus (T234; FR-091, C26) ───────────────
+   The shared panel marks its current section, a checked box, a key being
+   rebound and the file's state in the classic app's accent. Focus keeps the
+   accent for markers, the focus ring and the has-action toggle: the current
+   section is the neutral selection a selected row wears, a checked box is
+   filled with the ink, and what is wrong with the file is the error colour.
+   The keycap roles the classic tokens define are spelt out here too. */
+.postio-settings-tag {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-tag.invalid {
+  border: 1px solid var(--postio-error);
+  color: var(--postio-error);
+}
+
+.postio-settings-nav-row:selected {
+  border-left: 3px solid var(--postio-hairline-strong);
+  background-color: var(--postio-selected-bg);
+}
+
+.postio-settings-nav-row:selected label,
+.postio-settings-nav-row:selected .postio-settings-nav-icon {
+  color: var(--postio-ink);
+}
+
+.postio-settings-footer-dot {
+  background-color: var(--postio-ink-secondary);
+}
+
+button.postio-settings-keys-binding {
+  border-color: var(--postio-hairline-strong);
+  color: var(--postio-ink);
+}
+
+button.postio-settings-keys-binding:hover {
+  border-color: var(--postio-hairline-strong);
+  color: var(--postio-ink);
+  background-color: var(--postio-hover-bg);
+}
+
+button.postio-settings-keys-binding.postio-settings-keys-capturing {
+  border-color: var(--postio-ink);
+  color: var(--postio-ink);
+}
+
+.postio-check check:hover {
+  border-color: var(--postio-ink-secondary);
+}
+
+.postio-check check:checked {
+  border-color: var(--postio-ink);
+  background-color: var(--postio-ink);
+}
+
+.postio-settings-account-default {
+  color: var(--postio-ink);
+}
+
+.postio-settings-account-warning {
+  color: var(--postio-error);
+}
+
 /* ── Day headings (32 px) ───────────────────────────────────────────── */
 /* GTK's own header node carries libadwaita's list spacing; Focus's heading
    is its whole height, flush with the rows. */

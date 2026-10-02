@@ -986,6 +986,14 @@ const CASES: &[(&str, fn())] = &[
         "settings_wiring::privacy_counts_the_receipts_asked_for",
         settings_wiring::privacy_counts_the_receipts_asked_for as fn(),
     ),
+    (
+        "close_buttons::settings_has_the_same_x_at_the_right",
+        close_buttons::settings_has_the_same_x_at_the_right as fn(),
+    ),
+    (
+        "icon_buttons::the_settings_icon_buttons_keep_their_own_shape",
+        icon_buttons::the_settings_icon_buttons_keep_their_own_shape as fn(),
+    ),
 ];
 
 use gtk::glib;

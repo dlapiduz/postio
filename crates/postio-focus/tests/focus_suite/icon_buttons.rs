@@ -162,3 +162,39 @@ pub fn the_digests_icon_buttons_keep_their_own_shape() {
         assert_icon_buttons_keep_their_shape("the digest", &dialog);
     });
 }
+
+/// Settings (T234): its header's X, and the icon buttons its panes draw --
+/// a saved search's reorder and delete.
+pub fn the_settings_icon_buttons_keep_their_own_shape() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _directory, _path) = crate::settings::one_message_under(
+            "[filters.receipts]\nquery = \"in:Receipts\"\npinned = true\n",
+        )
+        .await;
+        support::deliver_with(&window, "comma", gtk::gdk::ModifierType::CONTROL_MASK);
+        let dialog = crate::settings::settings_shown(&window)
+            .await
+            .expect("Settings opened");
+        laid_out(&dialog).await;
+        assert_icon_buttons_keep_their_shape("Settings", &dialog);
+        let filters = crate::settings::section_rows(&dialog)
+            .into_iter()
+            .find(|(name, _)| name == "Filters")
+            .map(|(_, row)| row)
+            .expect("Filters is listed");
+        support::click(&window, &filters, 1);
+        assert!(
+            crate::settle_until(async || support::with_class(&dialog, "postio-icon-button")
+                .iter()
+                .filter(|button| button.is_mapped() && button.width() > 0)
+                .count()
+                > 1)
+            .await,
+            "the saved search's own icon buttons are drawn"
+        );
+        assert_icon_buttons_keep_their_shape("Settings' Filters", &dialog);
+    });
+}

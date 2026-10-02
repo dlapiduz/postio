@@ -147,3 +147,24 @@ pub fn the_digest_has_the_same_x_at_the_right() {
         assert_one_close_at_the_right("the digest", &dialog);
     });
 }
+
+pub fn settings_has_the_same_x_at_the_right() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _directory, _path) =
+            crate::settings::one_message_under("").await;
+        support::deliver_with(&window, "comma", gtk::gdk::ModifierType::CONTROL_MASK);
+        let dialog = crate::settings::settings_shown(&window)
+            .await
+            .expect("Settings opened");
+        assert!(
+            crate::settle_until(async || support::with_class(&dialog, "postio-close-button")
+                .first()
+                .is_some_and(|close| close.width() > 0))
+            .await
+        );
+        assert_one_close_at_the_right("Settings", &dialog);
+    });
+}
