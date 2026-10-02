@@ -234,7 +234,7 @@ fn play(args: &[String]) -> ExitCode {
         // Each variant the storyboard asks for and Classic supports, with
         // --variants; otherwise the one variant the flags named (or none).
         let variants = if args.iter().any(|arg| arg == "--variants") {
-            postio_storyboard::apply::variants(&board, &runner_info())
+            postio_app::demo::storyboard::variants_for(&board)
         } else {
             (vec![options.variant.clone()], Vec::new())
         };
@@ -320,20 +320,18 @@ fn every_command(args: &[String]) -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
-    let gaps = match flag(args, "--gaps") {
-        Some(path) => match postio_storyboard::coverage::load_gaps(&PathBuf::from(path)) {
-            Ok(gaps) => gaps,
-            Err(error) => {
-                eprintln!("storyboard: {error}");
-                return ExitCode::from(2);
-            }
-        },
-        None => Vec::new(),
-    };
+    let gaps = flag(args, "--gaps").map(PathBuf::from).unwrap_or_default();
     if let Err(code) = start_gtk() {
         return code;
     }
-    let all = postio_app::demo::on_runtime(postio_app::demo::storyboard::every_command(&gaps));
+    let all = match postio_app::demo::on_runtime(postio_app::demo::storyboard::every_command(&gaps))
+    {
+        Ok(all) => all,
+        Err(error) => {
+            eprintln!("storyboard: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let presses: Vec<_> = all.iter().flat_map(|c| c.presses.iter().cloned()).collect();
     let counts = postio_storyboard::coverage::tally(&presses);
     for coverage in &all {

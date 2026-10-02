@@ -41,7 +41,7 @@ pub fn show(window: &gtk::Window) {
 
 /// Turn the main loop for `span`, whatever happens.
 pub fn run_for(span: Duration) {
-    let end = Instant::now() + span;
+    let end = Instant::now() + postio_test_support::scaled(span);
     let context = gtk::glib::MainContext::default();
     let heartbeat = gtk::glib::timeout_add_local(Duration::from_millis(5), || {
         gtk::glib::ControlFlow::Continue
