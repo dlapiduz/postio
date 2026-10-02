@@ -432,7 +432,14 @@ impl ListStateView {
             let content = describe(state, now);
 
             imp.icon.set_icon_name(Some(content.icon));
-            for class in ["inbox-zero", "offline", "failing", "no-matches", "opening"] {
+            for class in [
+                "inbox-zero",
+                "offline",
+                "failing",
+                "no-matches",
+                "opening",
+                "syncing",
+            ] {
                 imp.icon.remove_css_class(class);
             }
             imp.icon.add_css_class(content.icon_class);
