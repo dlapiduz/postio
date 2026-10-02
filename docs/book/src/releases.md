@@ -5,6 +5,6 @@ Every tagged release publishes a Flatpak bundle on the
 below are the same text the release carries; `docs/releases/` in the
 repository is where they are written.
 
-## 0.4.0
+## 0.4.2
 
-{{#include ../../releases/0.4.0.md}}
+{{#include ../../releases/0.4.2.md}}
