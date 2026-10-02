@@ -281,7 +281,7 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::Back,
         C::CyclePane,
         C::CyclePaneBack,
-        C::FocusSidebar,
+        C::GoToFolders,
         C::Settings,
         C::ToggleSidebar,
         C::ScrollReaderDown,

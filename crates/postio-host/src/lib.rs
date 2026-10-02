@@ -1546,7 +1546,12 @@ impl Inner {
                     session_url: session_url.clone(),
                 })
             }
-            postio_model::account::Backend::Imap | postio_model::account::Backend::Gmail => None,
+            // A Gmail-REST repair re-proves through OAuth like any other
+            // Gmail account; a maildir has no server to prove anything
+            // against at all.
+            postio_model::account::Backend::Imap
+            | postio_model::account::Backend::Gmail
+            | postio_model::account::Backend::Maildir { .. } => None,
         };
         let oauth = account
             .oauth

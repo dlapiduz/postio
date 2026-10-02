@@ -3,7 +3,7 @@
 //! smallest one that shows it, so a new upstream version that drops or
 //! breaks a patch fails here rather than in somebody's inbox.
 
-mod support;
+use crate::support;
 
 use anyrender::ImageRenderer;
 use blitz_dom::{BaseDocument, DocumentConfig};

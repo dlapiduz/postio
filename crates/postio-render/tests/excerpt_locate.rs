@@ -73,6 +73,9 @@
 //! selectors, so the count's offsets drift, and that is the plan's one
 //! "miss" above. Its floors are these numbers rounded down.
 
+// The render suite's shared fonts and requests: this is a binary of its
+// own, so the nightly can run it apart (`POSTIO-MEASUREMENT`).
+#[path = "render_suite/support/mod.rs"]
 mod support;
 
 use std::collections::BTreeMap;

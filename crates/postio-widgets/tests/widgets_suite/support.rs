@@ -71,6 +71,7 @@ pub fn conversation(scope: &str, body: &str) -> Content {
         styles: "",
         recipients: "",
         cc: "",
+        sheet: document::Sheet::Theme,
         body: &folded,
     };
     let mut content = content("plain-text-simple");

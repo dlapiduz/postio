@@ -217,7 +217,9 @@ impl Toast {
             .button_label(button_label)
             .build();
         toast.connect_button_clicked(move |_| on_click());
-        self.push(toast);
+        // A warning, as `show_notice`'s: a gesture that could not run. The
+        // button fixes what was missing; it is no undo.
+        self.push(toast, Tone::Warning, false);
     }
 
     /// Dismisses whatever is showing and shows `toast` instead.

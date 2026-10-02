@@ -1,6 +1,6 @@
 //! How each message is presented in each theme (spec FR-013, research R10).
 
-use crate::support::{DARK, LIGHT, render, request, request_for};
+use crate::support::{self, DARK, LIGHT, render, request, request_for};
 use postio_render::Presentation;
 
 fn presentation(name: &str, theme: postio_render::Theme) -> Presentation {

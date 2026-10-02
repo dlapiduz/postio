@@ -8,15 +8,13 @@
 //! painted behind it, and the raster's pixels -- not what the document
 //! asked for.
 
-mod support;
-
+use crate::support::{DARK, LIGHT, render, request_for};
 use postio_body::RemoteImages;
 use postio_body::treatment::Treatment;
 use postio_model::test_corpus;
 use postio_render::theme::{contrast, relative_luminance};
 use postio_render::{Presentation, RenderedDocument, Rgb, Theme};
 use postio_ui::reader::document;
-use support::{DARK, LIGHT, render, request_for};
 
 /// A fixture drawn under `chosen` (or the rule's choice), in `theme`, in a
 /// column `width` CSS pixels wide.
