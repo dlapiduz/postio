@@ -24,49 +24,22 @@
 
 ---
 
-## What the tree does today
+## Why it needs deciding
 
-Three facts, all of them load-bearing, and none of them obvious from reading
-`send.rs`'s reassuring module docs alone.
+Three facts about a naive send path make it duplicate, or lose track:
 
-**Every attempt is a different message.** `outgoing::assemble` calls
-`generate_message_id` on every build (`crates/postio-model/src/outgoing.rs`),
-and there is a test asserting exactly that —
-`each_build_gets_a_fresh_message_id`. `Drainer::resolve` calls
-`send::resolve`, and therefore `outgoing::build`, on *every* drain attempt. So
-the second delivery of a retried send is not a duplicate any receiving system
-can recognise. It is a second, distinct message that happens to say the same
-thing. Whatever else this ADR decides, the current retry path is the worst
-available shape: it can duplicate, and it has deliberately destroyed the one
-piece of evidence that would let anyone downstream notice.
+- **A retry that rebuilds the message mints a new `Message-ID`**, so a second
+  delivery is a distinct message nobody downstream can recognise as a
+  duplicate.
+- **A connection that drops during `DATA` looks transient.** A payload
+  written and then a lost reply to the terminating `.` is indistinguishable,
+  by error kind alone, from a connection that died before `MAIL FROM`.
+- **The durable fact that stops a resend must not sit behind network work.**
+  If it is the deletion of the draft at the end of filing the Sent copy, an
+  IMAP `APPEND` of the whole message sits in the crash window.
 
-**A dropped connection during `DATA` retries.** `SmtpError::Disconnected` is
-`is_transient() == true` (`crates/postio-smtp/src/error.rs`), so
-`outcome_from_smtp_error` returns `Outcome::Retry`, so the drainer defers and
-sends again — up to `RetryPolicy::max_attempts`, eight, spanning about twenty
-minutes. `send_message` writes the payload and reads the server's reply to the
-terminating `.` inside one `self.data(...)` call, so a connection that dies
-between those two events is reported the same way as one that died before
-`MAIL FROM`. Those two cases are not the same case.
-
-**The crash window contains a network round trip.** `send.rs`'s own docs call
-the crash window "vanishingly narrow". It is not. The durable fact that stops
-a resend is the *deletion of the draft row*, because `send::resolve` treats a
-missing draft as `Obsolete`. That deletion is the second-to-last line of
-`file_sent_copy`, and between SMTP acceptance and it sit: `session.quit()`, an
-IMAP `APPEND` of the whole message to the Sent mailbox, a blob write, a
-`messages.create`, threading, and a body write. On a slow link the `APPEND`
-alone is seconds. The window is not narrow, it is the largest single piece of
-network work in the whole send path — and #423 means real messages now travel
-through it.
-
-Fourth, and it is the user-facing half of the same problem: **`DraftState`
-has five variants and production code sets exactly two.** `Editing` and
-`Queued` are written; `Sending`, `Sent` and `Failed` appear only in tests. A
-send that fails permanently marks its queue row failed, emits one
-`Event::Error` toast that scrolls away, and leaves the draft sitting in
-`Queued` forever — a message the user believes they sent, that will never be
-retried, in a state whose name says it is about to be.
+And the user has to be told: a send that fails permanently must leave a draft
+in a state that says so, not a `Queued` draft that will never be retried.
 
 ## The three windows
 
@@ -74,7 +47,7 @@ retried, in a state whose name says it is about to be.
 |---|---|---|
 | Before the payload is submitted — connect, auth, `MAIL FROM`, `RCPT TO` | Yes. The server has nothing. | Already closed. Retry is correct and safe. |
 | Between submitting the payload and reading the final reply | **No. Not by any means SMTP offers.** | Not closable. Must be *decided*. |
-| Between the final reply and the local record of it | Yes, if the record is written first. | Closable, and currently wide open. |
+| Between the final reply and the local record of it | Yes, if the record is written first. | Closable: Decision 2. |
 
 The middle one is the whole difficulty. SMTP has no message-level identity the
 way `UIDPLUS` gives IMAP `APPEND` a confirmable one; there is no idempotency
@@ -135,13 +108,11 @@ existing rule that nothing past acceptance may become `Failed` or `Retry`
 stands. What changes is that its progress is no longer what the guarantee
 rests on.
 
-This also fixes a live hazard in undo-send. `Operation::Send` has no inverse;
-undoing a send is a *cancel against the queue* (`operation.rs`), and today
-nothing stops that cancel landing on a row whose SMTP transaction is already
-open — cancelling a message that is being delivered, and telling the user it
-was recalled. With mark 1 in place, the cancel is refused the moment the draft
-leaves `Queued`, and `Recovery::Undo` on `CommandId::Send` becomes an honest
-claim about a window that actually has an end.
+It also gives undo-send an end. `Operation::Send` has no inverse; undoing a
+send is a *cancel against the queue* (`operation.rs`). With mark 1 in place,
+the cancel is refused the moment the draft leaves `Queued`, so it can never
+land on a row whose SMTP transaction is open, and `Recovery::Window` on
+`CommandId::Send` is a claim about a window that actually has an end.
 
 ## Decision 3 — an indeterminate submission is reported, not retried
 
@@ -160,10 +131,9 @@ the payload has begun being written, false for the same failures before it.
 predicate *before* `is_transient`, because a dropped connection is transient in
 general and indeterminate here specifically.
 
-`Outcome` gains a fifth variant, `Uncertain { reason }`. This is an
-architectural addition and worth naming as one: the drain vocabulary has been
-four answers since it was written, `DrainReport::failed` means *did not
-happen*, and the runtime turns it straight into `Event::Error`. An interrupted
+`Outcome` has a fifth variant, `Uncertain { reason }`. `DrainReport::failed`
+means *did not happen*, and the runtime turns it straight into
+`Event::Error`. An interrupted
 send may well have happened, so it must not travel as a failure and must not
 travel as a success. `Uncertain` settles the queue row — done, with the reason
 recorded, no further attempts — and surfaces separately in `DrainReport` and
@@ -212,7 +182,7 @@ A send that silently doubled is the same failure wearing the opposite mask.
 A dialog before every send, or a "are you sure it didn't go?" prompt on
 recovery, would interrupt thousands of ordinary sends to protect against a rare
 one — the exact anti-pattern the command registry's `Recovery` policy exists to
-prevent, and `Send` already carries `Recovery::Undo` for the window that is
+prevent, and `Send` already carries `Recovery::Window` for the window that is
 genuinely reversible. Postio has one modal dialog in the entire app and this is
 not the second.
 
@@ -229,31 +199,27 @@ standing, which is where Decision 3 puts it.
 
 ## What the user sees
 
-`DraftState` gains `Unconfirmed`, and the four states that exist stop being
-decorative. Every one of these is reachable from a list and from the composer;
-none of them is a toast alone, because a toast is not a place a message can be
-found again ten minutes later.
+`DraftState` has `Editing`, `Queued`, `Sending`, `Sent`, `Failed` and
+`Unconfirmed`, and every one is set by production code. Each is reachable
+from a list and from the open message; none of them is a toast alone,
+because a toast is not a place a message can be found again ten minutes
+later.
 
-**Which list, amended.** This originally said "the Drafts list", and that was
-true when it was written: every state lived in Drafts, including the ones on
-their way. `specs/003-outbox-and-reserved-mailboxes` split them —
-`Queued` and `Sending` are in the **Outbox**, and Drafts holds what you are
-writing, what failed and what cannot be confirmed. The reason is the failure
-[#1491](https://github.com/dlapiduz/postio/issues/1491) reports: a message you
-have just sent sitting in the folder that means *unfinished*, in a row that
-said only "Draft" and so rendered all five states identically.
+What is on its way is in the **Outbox** (a view over the Drafts folder,
+`specs/003-outbox-and-reserved-mailboxes`); Drafts holds what you are
+writing, what did not go and what cannot be confirmed — a message you have
+just sent does not sit in the folder that means *unfinished* (#1491). A row
+says its state in one word (`postio_ui::row::send_state_word`), and in Focus
+the open message's action row offers the verbs that settle it
+(`postio_ui::focus_dialog::send_verbs`).
 
-Nothing else here changes. The state machine, the boundary Decision 3 draws,
-the copy and the verbs are all as decided; only the folder each state is
-found in has moved, and the "Where" column below says which.
-
-| State | Where | Copy | What the user can do |
+| State | Where | Row word | What the user can do |
 |---|---|---|---|
-| `Queued` | **Outbox** | "Sending when you're back online." — or nothing at all while a drain is due; a queued send that leaves within a second should not announce itself. | `u` cancels, within the undo-send window |
-| `Sending` | **Outbox** | "Sending…" | Nothing. The cancel is refused, and says why. |
-| `Sent` | Sent | The ordinary "Sent" toast. The draft row is gone; the message is in Sent. | — |
-| `Failed` | Drafts | The server's own reason, named: "The server rejected grace@example.net — 550 mailbox unavailable." Never "something went wrong". | `Enter` opens it, editable again; `ctrl+Return` sends again; `d` discards |
-| `Unconfirmed` | Drafts | "Not confirmed — the connection dropped while this was being sent. It may have arrived. Checking your Sent folder." | `Enter` opens it; **Mark as sent**; `ctrl+Return` sends again, saying plainly that it may arrive twice; `d` discards |
+| `Queued` | **Outbox** | "Waiting to send" | Cancel send (`mod+shift+x`), or undo (`mod+z`) within the undo-send window; Edit takes it off the queue |
+| `Sending` | **Outbox** | "Sending" | Nothing. A cancel is refused, and says why, and a retry would risk a second copy. |
+| `Sent` | Sent | — | The ordinary "Sent" toast. The draft row is gone; the message is in Sent. |
+| `Failed` | Drafts | "Not sent" | Retry send (`mod+shift+y`); Edit; Discard. The draft carries the server's own reason, named: "The server rejected grace@example.net — 550 mailbox unavailable." Never "something went wrong". |
+| `Unconfirmed` | Drafts | "Not confirmed" | Retry send, saying plainly that it may arrive twice; **Mark as sent** (`mod+shift+m`); Edit; Discard. "The connection dropped while this was being sent. It may have arrived. Checking your Sent folder." |
 
 `Failed` may say "nothing was delivered" and mean it, because every failure
 that reaches it — auth, sender or recipient rejection, message rejection,
@@ -262,17 +228,17 @@ side of the boundary Decision 3 draws. That is the concrete user-facing payoff
 of splitting the predicate: without it, `Failed` would have to hedge on every
 send.
 
-**Mark as sent** is a new command in the registry, palette-only (ten commands
-already carry no default binding), `Recovery::Undo`, available wherever a
-draft is. It exists because the user who checks with the recipient and learns
+**Mark as sent** is a registry command with its own key (`mod+shift+m`) and
+no undo: it settles a claim about the world rather than changing it, so the
+correction for a wrong answer is to send again, a real act. It exists
+because the user who checks with the recipient and learns
 it did arrive otherwise has only two exits — discard, which throws the message
 away, or send again, which duplicates it. An `Unconfirmed` draft with no honest
 way out is a dead end, and nothing in Postio is a dead end.
 
 Editing an `Unconfirmed` draft returns it to `Editing` and clears the reserved
-`Message-ID`, per Decision 1. That is a deliberate act with a consequence, and
-it is the same act #433 is deciding for `Queued` drafts; whatever that issue
-settles must not make `Sending` editable, which is the one state where an edit
+`Message-ID`, per Decision 1. Editing a `Queued` draft takes it off the queue
+first (#433). `Sending` is never editable: it is the one state where an edit
 would change bytes already on the wire.
 
 ## Vocabulary
@@ -280,37 +246,23 @@ would change bytes already on the wire.
 **"Unconfirmed"**, not "uncertain", "unknown" or "maybe sent". It names what is
 missing — a confirmation — rather than describing a mood, and it is the word
 that stays true when the confirmation arrives and the state resolves itself.
-It is a new word in the product's vocabulary, decided here rather than
-silently, and it belongs beside the ones `/ux-architect` §2 already fixes; a
-second spelling of it anywhere is a bug in the design, not the code.
+It belongs beside the words `/ux-architect` §2 fixes; a second spelling of
+it anywhere is a bug in the design, not the code.
 
 ## Consequences
 
-- **`postio-smtp` learns where its payload stopped.** The new predicate needs
-  `data` to know whether the payload had begun being written when the
-  transport failed. This is the only change outside `postio-sync` /
-  `postio-storage` / `postio-model`, and it is the one that everything else
-  depends on.
-- **A schema change**: `drafts.rfc_message_id`, and a `CHECK` widened for
-  `'unconfirmed'`. The migrations test asserting the table list is unaffected.
-  *(ADR 0038: there are no migrations to test any more. Both are declared in
-  `crates/postio-storage/src/schema.rs`'s `HEAD`; the equivalent check is
-  `schema.rs`'s `declared()` and the test beside it, which read the object
-  list off `HEAD` — and a widened `CHECK` does not change that list either.)*
-- **A fifth drain outcome**, which every `match` over `Outcome` must answer,
-  and a new field on `DrainReport` and `DrainSummary`.
-- **`send.rs`'s module docs are wrong and must be rewritten.** "A known gap …
-  vanishingly narrow" understates what is there by an IMAP round trip, and
-  that sentence is why the gap survived being read.
-- **`each_build_gets_a_fresh_message_id` inverts**: the invariant becomes that
-  two builds of the same queued draft get the *same* id, and that an edit
-  changes it.
-- **The undo-send window gets a real end**, and `Recovery::Undo` on `Send`
-  stops being a claim nothing enforces.
-- **Testing this needs a backend that can die mid-`DATA`.** The `MailBackend`
-  mock does not model a transport that accepts a payload and then vanishes, and
-  the corpus does not help. The two acceptance tests #461 asks for both need
-  that fixture; it is the largest piece of work this decision creates.
+- **`postio-smtp` knows where its payload stopped.** `data` tracks whether
+  the payload had begun being written when the transport failed, which is
+  what `submission_is_indeterminate` reads.
+- **The schema:** `drafts.rfc_message_id`, and `drafts.state`'s `CHECK`
+  includes `'unconfirmed'`.
+- **A fifth drain outcome**, which every `match` over `Outcome` answers, and
+  a field for it on `DrainReport` and `DrainSummary`.
+- **Two builds of the same queued draft get the same `Message-ID`**, and an
+  edit changes it (`a_reserved_message_id_survives_every_rebuild`).
+- **Tested with a transport that dies mid-`DATA`.** `postio-smtp`'s
+  `ScriptedConnector::vanishing_after_the_payload`, and the sync suite's
+  `an_unconfirmed_send_resolves_when_its_message_turns_up`.
 
 ## What would falsify this
 
