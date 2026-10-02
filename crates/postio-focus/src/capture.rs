@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use chrono::{Datelike, Local, NaiveDate, Weekday};
+use chrono::{Datelike, NaiveDate, Weekday};
 use gtk::glib;
 use postio_client::Client;
 use postio_client::protocol::VaultPicture;
@@ -536,7 +536,7 @@ impl CaptureSheet {
         while let Some(child) = self.picks.first_child() {
             self.picks.remove(&child);
         }
-        let today = Local::now().date_naive();
+        let today = postio_ui::clock::now().date_naive();
         let mut days = vec![today];
         for weekday in [Weekday::Mon, Weekday::Wed, Weekday::Fri] {
             days.push(next(today, weekday));

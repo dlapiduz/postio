@@ -1124,8 +1124,12 @@ impl OpenMessage {
     /// its date, its sentence, and the actions that answer it with their
     /// keys -- or what is true instead.
     fn marker_card(&self, marker: &postio_model::listing::MarkerSummary) -> gtk::Box {
-        let line = postio_ui::focus_row::marker_line(marker, chrono::Utc::now(), &chrono::Local)
-            .capturing(self.capture.get());
+        let line = postio_ui::focus_row::marker_line(
+            marker,
+            postio_ui::clock::now().to_utc(),
+            &chrono::Local,
+        )
+        .capturing(self.capture.get());
         let card = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         card.add_css_class("focus-marker-card");
         card.set_margin_top(rhythm::SENDER_TO_CARD);

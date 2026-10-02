@@ -422,7 +422,10 @@ impl RowWidget {
             .borrow()
             .as_ref()
             .is_some_and(|capture| capture.get());
-        Some(marker_line(marker, chrono::Utc::now(), &chrono::Local).capturing(capture))
+        Some(
+            marker_line(marker, postio_ui::clock::now().to_utc(), &chrono::Local)
+                .capturing(capture),
+        )
     }
 
     /// What the row drew in its last snapshot.
@@ -582,7 +585,7 @@ impl RowWidget {
 
         // The trailing column first, from the right edge in, so the middle
         // knows how much room it has: the time, the count, the attachment.
-        let time = postio_ui::row::timestamp(summary.last_at, chrono::Local::now());
+        let time = postio_ui::row::timestamp(summary.last_at, postio_ui::clock::now());
         let time_layout = self.layout(&time, bold, 1.0);
         let (time_width, _) = time_layout.pixel_size();
         let mut trailing = width - TRAILING - time_width as f32;
@@ -726,7 +729,8 @@ impl RowWidget {
             .borrow()
             .as_ref()
             .is_some_and(|capture| capture.get());
-        let line = marker_line(marker, chrono::Utc::now(), &chrono::Local).capturing(capture);
+        let line = marker_line(marker, postio_ui::clock::now().to_utc(), &chrono::Local)
+            .capturing(capture);
         let width = self.width() as f32;
         drawn.accent = Some(palette.accent);
 
@@ -923,7 +927,7 @@ impl RowWidget {
             &palette.dim,
         );
 
-        let time = postio_ui::row::timestamp(digest.at, chrono::Local::now());
+        let time = postio_ui::row::timestamp(digest.at, postio_ui::clock::now());
         let time_layout = self.layout(&time, true, 1.0);
         let (time_width, _) = time_layout.pixel_size();
         let mut trailing = width - TRAILING - time_width as f32;
@@ -1060,7 +1064,7 @@ pub fn spoken(item: &FocusRow) -> String {
         parts.push("unread".to_owned());
     }
     if let Some(marker) = &summary.marker {
-        let line = marker_line(marker, chrono::Utc::now(), &chrono::Local);
+        let line = marker_line(marker, postio_ui::clock::now().to_utc(), &chrono::Local);
         let mut said = line.chip.to_owned();
         if let Some(date) = &line.date {
             said.push(' ');

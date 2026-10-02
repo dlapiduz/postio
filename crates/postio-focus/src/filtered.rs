@@ -492,7 +492,7 @@ impl FilteredView {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
-        let now = chrono::Local::now();
+        let now = postio_ui::clock::now();
         let today = now.date_naive();
         let restore_key = postio_ui::hints::key(&self.keymap.borrow(), CommandId::RestoreFiltered);
         let rows = self.rows.borrow();

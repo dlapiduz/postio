@@ -843,7 +843,7 @@ impl FocusWindow {
                 .map(|from| from.display().to_owned())
                 .unwrap_or_default(),
             subject: representative.subject.clone().unwrap_or_default(),
-            when: postio_ui::row::timestamp(summary.last_at, chrono::Local::now()),
+            when: postio_ui::row::timestamp(summary.last_at, postio_ui::clock::now()),
             sentence: marker.and_then(|marker| marker.excerpt.clone()),
             due: marker.and_then(|marker| match marker.when {
                 Some(postio_model::listing::MarkerWhen::Due(at))
@@ -2050,7 +2050,7 @@ impl FocusWindow {
                     &imp.focus_config.borrow(),
                     counts.filtered_today,
                     &self.keymap(),
-                    &chrono::Local::now(),
+                    &postio_ui::clock::now(),
                 ));
                 stack.set_visible_child_name(EMPTY);
             }
@@ -2898,7 +2898,7 @@ impl FocusWindow {
         if let Event::SyncProgress { done, total, .. } = event
             && done >= total
         {
-            imp.last_synced.set(Some(chrono::Utc::now()));
+            imp.last_synced.set(Some(postio_ui::clock::now().to_utc()));
         }
         self.show_state();
     }
@@ -3396,7 +3396,7 @@ impl FocusWindow {
                 &everything,
                 0,
                 &self.keymap(),
-                &chrono::Local::now(),
+                &postio_ui::clock::now(),
             )
             .shortcuts
             .into_iter()
@@ -3633,7 +3633,7 @@ impl FocusWindow {
             &anchor,
             Some(&rect),
             &self.picker_target(),
-            chrono::Local::now(),
+            postio_ui::clock::now(),
         );
     }
 

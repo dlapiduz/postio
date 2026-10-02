@@ -102,7 +102,7 @@ impl HeaderCard {
         cc: &[EmailAddress],
         date: DateTime<Utc>,
     ) {
-        self.set_at(from, to, cc, date, Local::now());
+        self.set_at(from, to, cc, date, postio_ui::clock::now());
     }
 
     fn set_at(

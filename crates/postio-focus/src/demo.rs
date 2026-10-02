@@ -491,14 +491,15 @@ pub async fn compose_demo(database: &Store, account: AccountId) {
         .expect("its body");
 }
 
-/// 16:09 today, local: when the references were drawn.
+/// 16:09 today, local, by the interface's clock: when the references were
+/// drawn, and a fixed instant once a storyboard has frozen the clock.
 pub fn today() -> DateTime<Utc> {
-    Local::now()
+    postio_ui::clock::now()
         .date_naive()
         .and_hms_opt(16, 9, 0)
         .and_then(|at| Local.from_local_datetime(&at).single())
         .map(|at| at.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now)
+        .unwrap_or_else(|| postio_ui::clock::now().to_utc())
 }
 
 /// Say the inbox last synced at `at`, as a completed pass would.

@@ -616,7 +616,7 @@ impl RuleDialog {
         let queries = self.queries.borrow().clone();
         let client = self.client.clone();
         let weak = self.me.borrow().clone();
-        let since = chrono::Utc::now() - chrono::Duration::days(PREVIEW_DAYS);
+        let since = postio_ui::clock::now().to_utc() - chrono::Duration::days(PREVIEW_DAYS);
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: as `create`'s.
             let read = client.digest_preview(queries, since).await;
@@ -635,7 +635,7 @@ impl RuleDialog {
             };
             this.preview_heading
                 .set_text(&digest::preview_heading(preview.count));
-            let now = chrono::Local::now();
+            let now = postio_ui::clock::now();
             for row in &preview.first {
                 let line = gtk::Box::new(gtk::Orientation::Horizontal, S2);
                 line.add_css_class("focus-rule-preview-row");

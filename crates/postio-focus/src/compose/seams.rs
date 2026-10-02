@@ -77,7 +77,7 @@ fn autosave(
     let frame = Rc::downgrade(frame);
     let on_saved: shared::OnSaved = Rc::new(move |_id| {
         if let Some(frame) = frame.upgrade() {
-            frame.saved(chrono::Utc::now());
+            frame.saved(postio_ui::clock::now().to_utc());
         }
     });
     shared::install_autosave(composer, client, Some(on_saved))

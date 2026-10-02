@@ -101,7 +101,7 @@ impl DayHeading {
             self.imp().label.set_text(&single);
             return;
         }
-        let today = chrono::Local::now().date_naive();
+        let today = postio_ui::clock::now().date_naive();
         let said = row
             .day()
             .map(|day| postio_ui::focus_row::day_heading(day, today))
