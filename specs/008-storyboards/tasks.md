@@ -53,13 +53,13 @@
 **Purpose**: the crate, the catalogue directory, and the boundary rule exist
 before anything uses them.
 
-- [ ] T001 Confirm the worktree setup:
+- [X] T001 Confirm the worktree setup:
   - `~/src/postio-worktrees/storyboards` is on `feature/storyboards`;
   - `$(git rev-parse --git-dir)/postio-base` reads `main`;
   - `scripts/install-nextest.sh` and `scripts/install-shims.sh` have run.
 
   `git fetch origin main` and rebase if `main` has moved.
-- [ ] T002 Create the crate `crates/postio-storyboard`:
+- [X] T002 Create the crate `crates/postio-storyboard`:
   - **`Cargo.toml`**: `edition.workspace`, and the dependencies `postio-core`,
     `postio-config`, `postio-ui`, `serde`, `toml`, `serde_json` and `blake3`,
     all with `workspace = true`;
@@ -68,13 +68,13 @@ before anything uses them.
 
   Add `"crates/postio-storyboard"` to `members` in the root `Cargo.toml`.
   `cargo check -p postio-storyboard` passes.
-- [ ] T003 [TEST] Give `postio-storyboard` a `RULES` row in
+- [X] T003 [TEST] Give `postio-storyboard` a `RULES` row in
   `scripts/checks/check-crate-boundaries.py`, banning `gtk4`, `libadwaita`,
   `turso`, `rusqlite`, `tokio` and `webkit6`. Add a case to the script's
   self-test (`scripts/tests/`) that fails when `gtk4` is added to the crate.
   See it red against a scratch `Cargo.toml` in the test's temp dir, then
   green.
-- [ ] T004 [P] Create `storyboards/`, laid out per
+- [X] T004 [P] Create `storyboards/`, laid out per
   `contracts/storyboard-format.md` § Layout:
   - one directory per surface, plus `flows/`, `screens/`, `calibration/` and
     `gaps/`, each holding a `.gitkeep`;
@@ -92,7 +92,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 
 ### Measure first: these decide two numbers the rest depends on
 
-- [ ] T005 Measure the capture cost and renderer determinism, with a
+- [X] T005 Measure the capture cost and renderer determinism, with a
   throwaway example `crates/postio-app/examples/capture_probe.rs`:
   - seed `seed_small` through `feed_the_window`, as `shot` does;
   - time 200 `capture::texture_within` calls on a settled 1280×800 window;

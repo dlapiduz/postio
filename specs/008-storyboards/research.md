@@ -62,7 +62,8 @@ already are.
 `Keymap`), `postio-config` (`expand_mod`), `postio-ui` (`Observation`,
 chords), `serde`, `toml`, `serde_json` and `blake3`. All of these are already
 workspace dependencies. A `RULES` row in `check-crate-boundaries.py` bans
-gtk4, the database engines and tokio from it. The script only demands rows for
+gtk4 and the database engines from it. Tokio is not banned: `postio-core`,
+whose registry R7 needs, already depends on it. The script only demands rows for
 listed crates, so the row is added deliberately.
 
 **Rejected.**
@@ -208,9 +209,10 @@ needs one new public function in `capture.rs`,
   an outline that moves with focus would otherwise count as a visual change.
 - The outlined frame is the one the reviewer and the maintainer look at.
 
-**The open number is how much a capture costs.** `capture.rs` documents none.
-If sampling every tick would exceed SC-002, the runner samples every *n*th
-tick and records *n*. The first Foundational task measures this.
+**Measured (T005).** One capture of a 1280×800 window costs about 25 ms
+median and 37 ms p95, which is more than a frame. Sampling therefore takes
+every **second** tick (stride 2), and the stride is recorded in every run.
+The numbers are in `docs/notes/2026-10-01-what-a-storyboard-capture-costs.md`.
 
 **Rejected.**
 - *A fixed sleep per step, as `shot` does* (`shot.rs:1282, 1319, 1370`). A
@@ -234,7 +236,7 @@ same way `focus_suite` does (focus: `focus_suite/main.rs`,
 | **Animations** | `gtk::Settings::set_gtk_enable_animations(false)`. Focus's `shot` already does this (focus: `shot.rs:569`). Nothing on `main` sets it. |
 | **Fonts** | `fonts::install()` adds the embedded faces (`fonts.rs:54`). The runner also sets `FONTCONFIG_FILE` to a config holding only those faces. Otherwise a system font update would change every frame. |
 | **Geometry** | The variant's size goes through `set_default_size`. The runner refuses a clamped size and reports it, the same way `shot` does (`size_mismatch`, `shot.rs:934`). |
-| **Renderer** | The headless compositor's default. The first Foundational task proves that two runs give byte-identical frames (SC-003). If they do not, the runner pins `GSK_RENDERER=cairo` and records that in the run. |
+| **Renderer** | **`GSK_RENDERER=cairo`, pinned and recorded in each run.** Measured at T005: the default renderer repeats itself within one process but gives different bytes in two, and cairo gives the same bytes in both. The cost is that a defect living only in the GL path does not show in a storyboard. |
 | **Seed** | Deterministic by construction (`seed_small(&db, n)`, with a seeded `recency`). Wall-clock leaks such as `queue_send(.., Utc::now())` and "last sync 12s" read the clock seam instead. |
 
 **Rejected.**
