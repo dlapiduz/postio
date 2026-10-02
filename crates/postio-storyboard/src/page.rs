@@ -141,7 +141,7 @@ pub fn load_review(bundle: &Path, frame_prefix: &str) -> Result<Reviewed, String
 
 /// The page with a review's verdicts, as HTML.
 pub fn render_reviewed(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> String {
-    render_with(header, strips, Some(reviewed))
+    render_with(header, strips, Some(reviewed), None)
 }
 
 /// The summary a pull request carries, as text with no images
@@ -251,10 +251,54 @@ pub fn summary(header: &Header, strips: &[Filmstrip], reviewed: &Reviewed) -> St
 
 /// The page, as HTML.
 pub fn render(header: &Header, strips: &[Filmstrip]) -> String {
-    render_with(header, strips, None)
+    render_with(header, strips, None, None)
 }
 
-fn render_with(header: &Header, strips: &[Filmstrip], reviewed: Option<&Reviewed>) -> String {
+/// Base versus branch, for the page: the comparisons, and the path from the
+/// page to the base runs (`base/`), so a changed step's base frame can sit
+/// beside the branch's.
+#[derive(Debug, Clone)]
+pub struct Compared {
+    /// Every storyboard's comparison, by run directory.
+    pub comparisons: Vec<crate::compare::Comparison>,
+    /// From the page to the base runs' root, `/`-separated.
+    pub base_prefix: String,
+    /// From the page to the branch runs' root -- what a strip's `dir` starts
+    /// with -- so a strip can be matched to its comparison.
+    pub runs_prefix: String,
+}
+
+/// The page with the review (if any) and the base comparison: changed and new
+/// storyboards in full, a changed step's base frame beside the branch's, and
+/// unchanged storyboards counted rather than shown (spec US4).
+pub fn render_compared(
+    header: &Header,
+    strips: &[Filmstrip],
+    reviewed: Option<&Reviewed>,
+    compared: &Compared,
+) -> String {
+    render_with(header, strips, reviewed, Some(compared))
+}
+
+fn comparison_for<'a>(
+    compared: Option<&'a Compared>,
+    strip: &Filmstrip,
+) -> Option<&'a crate::compare::Comparison> {
+    let compared = compared?;
+    let relative = strip
+        .dir
+        .strip_prefix(&compared.runs_prefix)
+        .unwrap_or(&strip.dir)
+        .trim_start_matches('/');
+    compared.comparisons.iter().find(|c| c.run == relative)
+}
+
+fn render_with(
+    header: &Header,
+    strips: &[Filmstrip],
+    reviewed: Option<&Reviewed>,
+    compared: Option<&Compared>,
+) -> String {
     let mut body = String::new();
     let title = if header.title.is_empty() {
         "Storyboards"
@@ -307,15 +351,44 @@ fn render_with(header: &Header, strips: &[Filmstrip], reviewed: Option<&Reviewed
     }
     let _ = writeln!(body, "</div>");
 
+    let mut unchanged = Vec::new();
     for strip in strips {
-        section(&mut body, strip, reviewed);
+        let comparison = comparison_for(compared, strip);
+        if comparison.is_some_and(|c| c.kind == crate::compare::Kind::Unchanged) {
+            unchanged.push(strip.run.storyboard.name.as_str());
+            continue;
+        }
+        section(&mut body, strip, reviewed, comparison, compared);
+    }
+    if !unchanged.is_empty() {
+        let _ = writeln!(
+            body,
+            "<p class=\"meta\">{} unchanged against the base: {}</p>",
+            unchanged.len(),
+            escape(&unchanged.join(", "))
+        );
+    }
+    if let Some(compared) = compared
+        && compared.comparisons.iter().any(|c| c.seed_changed)
+    {
+        let _ = writeln!(
+            body,
+            "<p class=\"reason\">The seed differs between base and branch, so every \
+             storyboard on it reads as changed.</p>"
+        );
     }
     TEMPLATE
         .replace("{{title}}", &escape(title))
         .replace("{{body}}", &body)
 }
 
-fn section(body: &mut String, strip: &Filmstrip, reviewed: Option<&Reviewed>) {
+fn section(
+    body: &mut String,
+    strip: &Filmstrip,
+    reviewed: Option<&Reviewed>,
+    comparison: Option<&crate::compare::Comparison>,
+    compared: Option<&Compared>,
+) {
     let run = &strip.run;
     let class = status_class(&run.status);
     let variant = crate::run::variant_key(&run.variant);
@@ -344,6 +417,30 @@ fn section(body: &mut String, strip: &Filmstrip, reviewed: Option<&Reviewed>) {
     let _ = writeln!(body, "<div class=\"steps\">");
     for step in &run.steps {
         let _ = writeln!(body, "<figure class=\"step\">");
+        let changed = comparison.and_then(|c| c.steps.iter().find(|d| d.step == step.step));
+        if let (Some(diff), Some(compared), Some(outlined)) = (changed, compared, &step.outlined) {
+            // Base beside branch, which is the comparison a review is for.
+            let base = format!(
+                "{}/{}/{}",
+                compared.base_prefix.trim_end_matches('/'),
+                comparison.map_or("", |c| c.run.as_str()),
+                outlined
+            );
+            let _ = writeln!(
+                body,
+                "<div class=\"pair\"><a href=\"{0}\"><img src=\"{0}\" alt=\"base step {1}\" \
+                 loading=\"lazy\"></a><span class=\"muted\">base</span></div>",
+                escape(&base),
+                step.step
+            );
+            if !diff.observation_changed.is_empty() {
+                let _ = writeln!(
+                    body,
+                    "<div class=\"muted\">changed: {}</div>",
+                    escape(&diff.observation_changed.join(", "))
+                );
+            }
+        }
         if let Some(outlined) = &step.outlined {
             let src = format!("{}/{}", strip.dir, outlined);
             let _ = writeln!(
@@ -1141,5 +1238,49 @@ mod tests {
             let text = summary(&Header::default(), &strips, &reviewed);
             assert_eq!(text.lines().next(), Some("storyboards-key: treekey"));
         }
+    }
+
+    #[test]
+    fn a_changed_step_shows_its_base_frame_and_unchanged_runs_are_counted() {
+        use crate::compare::{Comparison, Kind, StepDiff};
+        let (_out, strips) = tree();
+        let compared = Compared {
+            comparisons: vec![
+                Comparison {
+                    run: "classic/archive-walks-down/default".into(),
+                    kind: Kind::Changed,
+                    steps: vec![StepDiff {
+                        step: 1,
+                        frame_changed: true,
+                        observation_changed: vec!["cursor.index".into()],
+                        status_changed: false,
+                    }],
+                    seed_changed: false,
+                },
+                Comparison {
+                    run: "classic/tab-cycles-panes/default".into(),
+                    kind: Kind::Unchanged,
+                    steps: vec![],
+                    seed_changed: false,
+                },
+            ],
+            base_prefix: "base".into(),
+            runs_prefix: "runs".into(),
+        };
+        let html = render_compared(&Header::default(), &strips, None, &compared);
+        assert!(
+            html.contains("<img src=\"base/classic/archive-walks-down/default/01.outlined.png\""),
+            "the changed step's base frame sits beside it"
+        );
+        assert!(
+            !html.contains("base/classic/archive-walks-down/default/00.outlined.png"),
+            "an unchanged step shows no base frame"
+        );
+        assert!(html.contains("changed: cursor.index"));
+        assert!(
+            !html.contains("id=\"runs/classic/tab-cycles-panes/default\""),
+            "an unchanged storyboard is not shown in full"
+        );
+        assert!(html.contains("1 unchanged against the base: tab-cycles-panes"));
     }
 }

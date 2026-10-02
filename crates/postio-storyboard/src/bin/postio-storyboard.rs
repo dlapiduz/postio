@@ -7,17 +7,18 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use postio_storyboard::{bundle, key, lint, page, prompt, verdicts};
+use postio_storyboard::{bundle, compare, key, lint, page, prompt, verdicts};
 
 const USAGE: &str = "\
 usage:
   postio-storyboard lint <storyboards-dir>
   postio-storyboard key --tree <path=id>...
+  postio-storyboard compare --base <dir> --branch <dir> [--out <comparison.json>]
   postio-storyboard bundle --runs <dir> [--base <dir> [--base-sha <sha>]] --acceptance <file>
                            --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
   postio-storyboard prompt <bundle> (--list | --batch <n>)
   postio-storyboard verdicts (check | merge) <bundle>
-  postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]\n                         [--bundle <dir> [--bundle-prefix <path>]]";
+  postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]\n                         [--bundle <dir> [--bundle-prefix <path>]]\n                         [--base <dir> [--base-prefix <path>]]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -25,6 +26,7 @@ fn main() -> ExitCode {
         Some("lint") => lint_command(&args[1..]),
         Some("page") => page_command(&args[1..]),
         Some("key") => key_command(&args[1..]),
+        Some("compare") => compare_command(&args[1..]),
         Some("bundle") => bundle_command(&args[1..]),
         Some("prompt") => prompt_command(&args[1..]),
         Some("verdicts") => verdicts_command(&args[1..]),
@@ -76,7 +78,25 @@ fn bundle_command(args: &[String]) -> ExitCode {
         design_dirs: &design_dirs,
         out: &PathBuf::from(&out),
     };
-    match bundle::build(&inputs, &bundle::all_new) {
+    // Against a base, only what the branch changed is put to the reviewer;
+    // without one, every run is new (research R8).
+    let comparisons = match &base {
+        Some(base) => match compare::compare_trees(base, &PathBuf::from(&runs)) {
+            Ok(comparisons) => comparisons,
+            Err(error) => {
+                eprintln!("postio-storyboard bundle: {}: {error}", base.display());
+                return ExitCode::from(2);
+            }
+        },
+        None => Vec::new(),
+    };
+    let classify = compare::classifier(&comparisons);
+    let classify: &dyn Fn(&page::Filmstrip) -> bundle::Classification = if base.is_some() {
+        &classify
+    } else {
+        &bundle::all_new
+    };
+    match bundle::build(&inputs, classify) {
         Ok(manifest) => {
             let steps: usize = manifest.batches.iter().map(|b| b.steps.len()).sum();
             println!(
@@ -234,9 +254,26 @@ fn page_command(args: &[String]) -> ExitCode {
         }
         None => None,
     };
-    let html = match &reviewed {
-        Some(reviewed) => page::render_reviewed(&header, &strips, reviewed),
-        None => page::render(&header, &strips),
+    let compared = match flag(args, "--base") {
+        Some(base) => match compare::compare_trees(&PathBuf::from(&base), &PathBuf::from(&runs)) {
+            Ok(comparisons) => Some(page::Compared {
+                comparisons,
+                base_prefix: flag(args, "--base-prefix").unwrap_or_else(|| "base".to_owned()),
+                runs_prefix: prefix.clone(),
+            }),
+            Err(error) => {
+                eprintln!("postio-storyboard page: {base}: {error}");
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
+    let html = match (&reviewed, &compared) {
+        (reviewed, Some(compared)) => {
+            page::render_compared(&header, &strips, reviewed.as_ref(), compared)
+        }
+        (Some(reviewed), None) => page::render_reviewed(&header, &strips, reviewed),
+        (None, None) => page::render(&header, &strips),
     };
     if let Err(error) = std::fs::write(&out, html) {
         eprintln!("postio-storyboard page: {out}: {error}");
@@ -270,4 +307,30 @@ fn key_command(args: &[String]) -> ExitCode {
     }
     println!("{}", key::key(&trees));
     ExitCode::SUCCESS
+}
+
+fn compare_command(args: &[String]) -> ExitCode {
+    let (Some(base), Some(branch)) = (flag(args, "--base"), flag(args, "--branch")) else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    match compare::compare_trees(&PathBuf::from(&base), &PathBuf::from(&branch)) {
+        Ok(comparisons) => {
+            let json = serde_json::to_string_pretty(&comparisons).unwrap_or_default();
+            match flag(args, "--out") {
+                Some(out) => {
+                    if let Err(error) = std::fs::write(&out, json + "\n") {
+                        eprintln!("postio-storyboard compare: {out}: {error}");
+                        return ExitCode::from(2);
+                    }
+                }
+                None => println!("{json}"),
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("postio-storyboard compare: {error}");
+            ExitCode::from(2)
+        }
+    }
 }
