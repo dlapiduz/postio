@@ -1,6 +1,10 @@
 # ADR 0024 — Layout intent is stored; the viewport's constraint is applied, never written back
 
-- **Status:** Accepted (2026-09-02)
+- **Status:** Accepted (2026-09-02). Built in the classic app's three-pane
+  shell until that app is removed (ADR 0043). Focus follows the same rule:
+  `[focus] reading` is the intent (the open message over the list or beside
+  it), and a window narrower than 980 px opens the dialog without touching
+  the setting (spec 007 T232)
 - **Date:** 2026-09-02
 - **Decision by:** a `/ux-architect` session, on the question
   [#825](https://github.com/dlapiduz/postio/issues/825) raised: what should

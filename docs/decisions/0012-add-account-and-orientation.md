@@ -1,7 +1,10 @@
 # ADR 0012 — Adding a second account, and orienting a first-time user
 
-- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14 — built, and
-  the view-layer ban now names the current store engine
+- **Status:** Accepted (2026-08-24). Built. The form and joining a running
+  application are shared (`postio_widgets::present::onboarding`) and Focus
+  uses them; the orientation plate (Q4–Q6) is the classic app's alone, since
+  every Focus control carries its key (`specs/007-postio-focus`
+  classic-parity.md row 12)
 - **Date:** 2026-08-24
 - **Issue:** [#64 Setup wizard: add-account flow and first-run keyboard orientation](https://github.com/dlapiduz/postio/issues/64)
 - **Related:** [ADR 0005](0005-multiple-accounts.md) (what a second account

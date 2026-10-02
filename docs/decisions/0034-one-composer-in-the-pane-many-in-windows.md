@@ -1,6 +1,10 @@
 # ADR 0034 — One composer in the pane, many in windows
 
-- **Status:** Accepted (2026-09-11)
+- **Status:** Accepted (2026-09-11). Built. "The pane" is the classic
+  app's reading pane until that app is removed (ADR 0043); in Focus the one
+  composer in the window is its compose dialog, or the open message's place
+  in the pane beside the list, and a draft may be detached to a window of its
+  own (`specs/007-postio-focus` FR-050, screens.md "The composer")
 - **Date:** 2026-09-11
 - **Decision by:** the maintainer, clarifying `specs/002-compose-editor/spec.md` on 2026-09-10. Asked how many drafts may be open at once and chose *one in the pane, many detached* over one composition total.
 - **Feature:** `specs/002-compose-editor/` — FR-010, FR-011, FR-013, FR-014. Spec-driven work carries no issue (constitution 1.1.0).

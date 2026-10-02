@@ -1,37 +1,30 @@
 # ADR 0031 — The settings window is one model in two frames
 
-- **Status:** Accepted (2026-09-06)
+- **Status:** Accepted (2026-09-06). Built: the GTK frame is
+  `postio_widgets::settings`, which Focus opens in a dialog; macOS has its own
 - **Date:** 2026-09-06
 - **Decision by:** `/ux-architect`, on [#1156](https://github.com/dlapiduz/postio/issues/1156), after the maintainer confirmed the macOS build should get a real settings screen with structured panes rather than a raw config-file editor.
 - **Issue:** [#1156](https://github.com/dlapiduz/postio/issues/1156)
-- **Supersedes earlier drafts** of this decision numbered 0029 and then 0030. Both numbers were taken by ADRs that landed on main while this branch was open ([ADR 0029](0029-one-control-vocabulary.md), [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md)), and the draft also argued from a premise that stopped being true while it was being written. Q1 has that correction; the renumbering is just what parallel sessions cost.
 - **Related:** [ADR 0029](0029-one-control-vocabulary.md) (which control a setting gets — binding here too), [ADR 0019](0019-macos-frontend.md) Q1 (Native), canvas 3f, `Design/screens/22`, [#1179](https://github.com/dlapiduz/postio/issues/1179) (the GTK window this follows)
 - **Decision:** **the settings *model* is shared and the *frame* is each platform's own.** The eight sections, their order, their two headings, their labels, their descriptions and the table each one writes all live in `postio_ui::settings`; so does every rule about what a change does to the file. What each frontend owns is the widget tree and the icon set. **Swift parses no TOML and writes none.**
 
 ---
 
-## Q1 — Window or pane, and two corrections
+## Q1 — Where each frame puts it
 
-The first draft of this ADR argued at length that macOS should use a window
-*because* GTK used an in-window pane, and that ADR 0019 Q1's "wrong window
-chrome" outranked `/ux-architect`'s "settings is an overlay" invariant.
+The frame is each platform's, and each puts settings where its own surfaces
+go:
 
-**The conclusion was right and the argument was obsolete before it was
-written.** `c70a830d` — landed the same day — made the GTK settings surface a
-real `AdwWindow`, for the maintainer's own reason: the panes "render as
-floating cards with no window frame — no way to tell whether they are tabs,
-panes or a dialog." So this is not a platform divergence to be justified. Both
-frontends put settings in a window, and they did so independently, which is
-better evidence than the argument was.
+- **macOS:** a window. `⌘,` opens the SwiftUI `Settings` scene, which is how
+  the platform provides one.
+- **Focus:** a dialog over the list, in the open message's frame — the same
+  size rule, the same 52 px header with the one close button
+  (`specs/007-postio-focus` screens.md, "Settings"). Focus is one window, and
+  everything it opens over the list is a dialog that closes back to the list
+  as it was.
+- **The classic GTK app**, until its removal (ADR 0043): an `AdwWindow`.
 
-What survives is the narrower claim, and it still matters: `⌘,` opens a window
-on macOS, and the `Settings` scene is how SwiftUI provides one. The rest of
-that draft's reasoning is withdrawn rather than restated.
-
-The second correction is bookkeeping with teeth: the draft was numbered 0029,
-which was already taken by *One control vocabulary* — decided from the same
-screens, on the same day, by the maintainer. That ADR is not a neighbour of
-this one, it is **binding on it** (Q3).
+[ADR 0029](0029-one-control-vocabulary.md) is **binding** on every frame (Q3).
 
 ## Q2 — Where the seam falls
 
@@ -41,10 +34,12 @@ assumed. `postio-config` owns `patch_ui`, `patch_keys`, `patch_sync`,
 `patch_filters` and `validate::check_str`, each with tests asserting it
 rewrites only its own table and leaves the rest of the file verbatim.
 
-So the move was the *navigation model*, not the semantics: `Section`, `Group`,
-`find_section`, `section_at_line` and `humanize_interval` go to
-`postio_ui::settings`, and `postio-gtk` re-exports them. Two things stay
-behind, and the line between them is the useful part:
+So the shared part is the *navigation model*, not the semantics: `Section`,
+`Group`, `find_section`, `section_at_line` and `humanize_interval` are in
+`postio_ui::settings`. On GTK, one panel draws them
+(`postio_widgets::settings::SettingsPanel`), in whichever frame the app gives
+it; a frame may leave out a section whose keys it does not honour (Focus shows
+no Appearance). The line between shared and own is the useful part:
 
 | Shared | Each frontend's own |
 |---|---|
@@ -85,11 +80,6 @@ bar whose application menu is hand-built as About, Hide, Quit. So the item the
 platform supplied is replaced by one that does not have it, and `Settings`
 falls back to `MenuSection::Edit`, which is where it does not belong on this
 platform.
-
-Observed the wrong way round, which is worth recording: the menus were
-inspected while the app sat on the Keychain prompt, so they were SwiftUI's
-stock ones, and the first draft of this section concluded the placement was
-free. It is free only before the application has finished starting.
 
 So [#1207](https://github.com/dlapiduz/postio/issues/1207) is not cosmetic
 after all — `⌘,` is discoverable in the menu only until your mail arrives —
