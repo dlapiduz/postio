@@ -43,11 +43,14 @@ scripts/storyboards.sh page --open
 **Determinism (SC-003).** Run it twice, then compare:
 
 ```bash
-diff <(jq -S 'del(.commit)' Design/review/<branch>/runs/classic/archive-walks-down/default/run.json) \
-     <(jq -S 'del(.commit)' <second run>/run.json)
+diff <(jq -S 'del(.commit, .steps[].settle.ms)' Design/review/<branch>/runs/classic/archive-walks-down/default/run.json) \
+     <(jq -S 'del(.commit, .steps[].settle.ms)' <second run>/run.json)
 ```
 
-The diff is empty, and the frame hashes are equal.
+The diff is empty, and the frame hashes are equal. `settle.ms` is left out
+because it is how long the step took to come to rest, which is wall time and
+varies by a few milliseconds between runs; it is recorded for the budget, and
+nothing compares it.
 
 ## 3. A storyboard is red on its base (US1, research R0 source 1)
 
