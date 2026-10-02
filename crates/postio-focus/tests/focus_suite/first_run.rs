@@ -291,12 +291,30 @@ fn body_scroller(form: &Onboarding) -> gtk::ScrolledWindow {
         .expect("the form's scrolled body")
 }
 
-/// What the account form with its server fields and a refusal showing needs,
-/// with room to spare for a larger font.
-const FORM_HEIGHT: i32 = 600;
+/// The form's Connect button: the last thing it asks the person to reach.
+fn connect_button(form: &Onboarding) -> gtk::Button {
+    support::descendants(form)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .find(|button| {
+            support::descendants(button).into_iter().any(|widget| {
+                widget
+                    .downcast::<gtk::Label>()
+                    .is_ok_and(|label| label.text() == "Connect")
+            })
+        })
+        .expect("the form's Connect button")
+}
 
 /// T174: the form opens large enough that the mail-server details, once
-/// shown, fit without scrolling.
+/// shown, fit without scrolling at the window's default size -- 1440 by 900,
+/// which the test compositor's 1280 by 800 screen holds to 800 tall, the
+/// shortest window the form has to fit whole in.
+///
+/// It waits for the server fields to be laid out -- the scrolled body as
+/// tall as its content measures, the Connect button under them allocated --
+/// before it measures: asked any earlier, the body still has the height of
+/// the form without them, and the case passed whatever the dialog's size.
 pub fn the_wizard_opens_large_enough_for_the_server_details() {
     crate::gtk_case(async {
         if !support::display() {
@@ -318,23 +336,42 @@ pub fn the_wizard_opens_large_enough_for_the_server_details() {
             "The server refused the password.".to_owned(),
         ));
         form.show_manual(true);
-        crate::settle();
         let scroller = body_scroller(&form);
+        let body = scroller
+            .child()
+            .and_then(|viewport| viewport.first_child())
+            .expect("the form's body");
+        let connect = connect_button(&form);
         let adjustment = scroller.vadjustment();
+        let laid_out = || {
+            let width = body.width();
+            if width == 0 || !connect.is_mapped() || connect.height() == 0 {
+                return false;
+            }
+            let (_, natural, _, _) = body.measure(gtk::Orientation::Vertical, width);
+            natural > 0 && (adjustment.upper() - f64::from(natural)).abs() < 1.0
+        };
         assert!(
-            crate::settle_until(async || adjustment.page_size() > 0.0).await,
-            "the form was never laid out"
+            crate::settle_until(async || laid_out()).await,
+            "the server fields were never laid out"
         );
-        assert!(
-            dialog.content_height() >= FORM_HEIGHT,
-            "the form opens {}px tall, less than the {FORM_HEIGHT}px its details want",
-            dialog.content_height()
-        );
+        // Settled: one more turn, and the size has not moved.
+        crate::settle();
+        assert!(laid_out(), "the form was still growing");
         assert!(
             adjustment.upper() <= adjustment.page_size() + 1.0,
             "the server details need scrolling: {} of {} px show",
             adjustment.page_size(),
             adjustment.upper()
+        );
+        let bounds = connect
+            .compute_bounds(&scroller)
+            .expect("Connect is inside the scrolled body");
+        assert!(
+            f64::from(bounds.y() + bounds.height()) <= f64::from(scroller.height()) + 1.0,
+            "Connect sits below the fold: its bottom at {}px of a {}px body",
+            bounds.y() + bounds.height(),
+            scroller.height()
         );
     });
 }

@@ -58,11 +58,8 @@ fn scope_line(icon: &str, text: &str) -> gtk::Box {
     row
 }
 
-/// How tall the form gets before it scrolls instead of growing.
-///
-/// Chosen so the whole plate — header, body and all — still fits inside the
-/// shortest window Postio supports.
-const BODY_MAX_HEIGHT: i32 = 600;
+/// How wide a port field is, in characters: five digits and a little air.
+const PORT_CHARS: i32 = 6;
 
 type SubmitHandler = Box<dyn Fn(&Submission)>;
 type ProbeHandler = Box<dyn Fn(&str)>;
@@ -1018,32 +1015,53 @@ impl Onboarding {
         imp.manual.set_orientation(gtk::Orientation::Vertical);
         imp.manual.set_spacing(8);
         imp.manual.set_visible(false);
-        for (label, entry) in [
-            ("IMAP server", &imp.imap_host),
-            ("IMAP port", &imp.imap_port),
-            ("SMTP server", &imp.smtp_host),
-            ("SMTP port", &imp.smtp_port),
-            ("Login name", &imp.login),
-        ] {
-            entry.set_hexpand(true);
-            // Ret here has never done anything -- postio-68. Address and
-            // password already commit the form this way; the five manual
-            // fields had no handler on `activate` at all.
-            entry.connect_activate(glib::clone!(
-                #[weak(rename_to = screen)]
-                self,
-                move |_| screen.submit()
-            ));
-            entry.connect_changed(glib::clone!(
-                #[weak(rename_to = screen)]
-                self,
-                move |_| {
-                    if !screen.imp().echoing.get() {
-                        screen.render();
-                    }
+        // A server and its port share a row, the port a narrow field at its
+        // end: three rows where five stood, so the form with these open, a
+        // provider's card and a refusal still fits a dialog in a window 800
+        // pixels tall (T174). Tab and Return still walk them in the order
+        // they read.
+        // Each field: its caption, its entry, and whether it is a port.
+        let rows: [&[(&str, &gtk::Entry, bool)]; 3] = [
+            &[
+                ("IMAP server", &imp.imap_host, false),
+                ("IMAP port", &imp.imap_port, true),
+            ],
+            &[
+                ("SMTP server", &imp.smtp_host, false),
+                ("SMTP port", &imp.smtp_port, true),
+            ],
+            &[("Login name", &imp.login, false)],
+        ];
+        for row in rows {
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            for &(label, entry, is_port) in row {
+                entry.set_hexpand(!is_port);
+                if is_port {
+                    entry.set_width_chars(PORT_CHARS);
+                    entry.set_max_width_chars(PORT_CHARS);
                 }
-            ));
-            imp.manual.append(&field(label, entry));
+                // Ret here has never done anything -- postio-68. Address and
+                // password already commit the form this way; the five manual
+                // fields had no handler on `activate` at all.
+                entry.connect_activate(glib::clone!(
+                    #[weak(rename_to = screen)]
+                    self,
+                    move |_| screen.submit()
+                ));
+                entry.connect_changed(glib::clone!(
+                    #[weak(rename_to = screen)]
+                    self,
+                    move |_| {
+                        if !screen.imp().echoing.get() {
+                            screen.render();
+                        }
+                    }
+                ));
+                let field = field(label, entry);
+                field.set_hexpand(!is_port);
+                line.append(&field);
+            }
+            imp.manual.append(&line);
         }
 
         // -- the buttons ----------------------------------------------------
@@ -1276,8 +1294,10 @@ impl Onboarding {
         // repeat `postio-qhz.4`.
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        // As tall as the body asks, with no cap of its own: what holds the
+        // form decides its height, and below that the body scrolls.
         scroller.set_propagate_natural_height(true);
-        scroller.set_max_content_height(BODY_MAX_HEIGHT);
+        scroller.set_vexpand(true);
         scroller.set_focusable(false);
         scroller.set_child(Some(&body));
 
