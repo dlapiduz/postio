@@ -815,9 +815,7 @@ impl FocusWindow {
         if self.imp().resolver.borrow().is_none() {
             return self.key_before_mail(&chord);
         }
-        let typing = gtk::prelude::GtkWindowExt::focus(self)
-            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
-            || self.composer_body_has_keyboard();
+        let typing = self.is_typing();
         let outcome = {
             let mut resolver = self.imp().resolver.borrow_mut();
             let Some(resolver) = resolver.as_mut() else {
@@ -915,8 +913,17 @@ impl FocusWindow {
         }
     }
 
+    /// Whether the keyboard is on text entry: what the resolver is told, so
+    /// a letter types rather than runs. A storyboard's observation reads the
+    /// same answer.
+    fn is_typing(&self) -> bool {
+        gtk::prelude::GtkWindowExt::focus(self)
+            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
+            || self.composer_body_has_keyboard()
+    }
+
     /// Which surface owns the keyboard: the open message, or the list.
-    fn key_context(&self) -> KeyContext {
+    pub fn key_context(&self) -> KeyContext {
         if self.compose().is_some_and(|compose| compose.is_showing()) {
             return KeyContext::Composer;
         }
@@ -4720,6 +4727,284 @@ impl FocusWindow {
         let toast = self.imp().on_screen.borrow().clone();
         if let Some(toast) = toast {
             toast.dismiss();
+        }
+    }
+}
+
+impl FocusWindow {
+    /// Where everything is, for a storyboard (specs/008-storyboards,
+    /// contracts/observation.md § Focus).
+    ///
+    /// Every field is read off what is on screen -- the widget that really
+    /// holds the keyboard, the cursor's row, the toast that is up -- and not
+    /// off what a surface was told. It reads only: no store, no command, no
+    /// focus change, and it builds no surface that is not already there.
+    ///
+    /// Unobserved, and left empty so a check on them reads "not applicable"
+    /// and never a pass: `rows.first_visible` (the list is windowed over the
+    /// store, so a row's index is not its place on screen),
+    /// `reading.focused` (the open message shows one message, not a
+    /// conversation of them) and `back_depth` (Back is a cascade, not a
+    /// stack).
+    pub fn observe(&self) -> postio_ui::observe::Observation {
+        use postio_ui::observe::{
+            Banner, Composer as ComposerState, Cursor, Keyboard, Notice, Observation, Overlay,
+            OverlayState, Reading, Region, Rows, Scroll, Selection as SelectionCount, View,
+            Window as WindowState,
+        };
+        use postio_widgets::storyboard::{deliver, reach};
+
+        let toplevel: &gtk::Window = self.upcast_ref();
+        let target = deliver::keyboard_target(toplevel);
+        let focus = gtk::prelude::GtkWindowExt::focus(self);
+        let within = |pane: &gtk::Widget| {
+            focus
+                .as_ref()
+                .is_some_and(|widget| widget == pane || widget.is_ancestor(pane))
+        };
+        let dialog = deliver::presented_dialog(toplevel);
+        let dialog_named = |name: &str| dialog.as_ref().is_some_and(|d| d.widget_name() == name);
+
+        let bar = self.bar().filter(|bar| bar.is_open());
+        let places = self.places().filter(|places| places.is_open());
+        let picker = self.open_picker();
+        let menu = self.row_menu().filter(|menu| menu.is_open());
+        let key_map = self.key_map();
+        let rule = self.rule_dialog().filter(|rule| rule.dialog().is_mapped());
+        let reading = self.reading().filter(|reading| reading.is_open());
+        let digest = self.digest();
+        // The composer in its dialog or in the reading pane (T232).
+        let compose_open = self.compose().is_some_and(|compose| compose.is_showing());
+        let sign_in = self.add_account_dialog().is_some();
+        let settings = self.settings_dialog().is_some();
+        // The raw source and the open chooser are dialogs of their own over
+        // the open message.
+        let small_dialog = [crate::source::DIALOG_NAME, crate::chooser::DIALOG_NAME]
+            .into_iter()
+            .find(|name| dialog_named(name));
+        // A message open beside the list, the keyboard on it (T232): the
+        // window's own context says so, as it does for every key.
+        let reading_here = self.visible_dialog().is_none() && self.reading_beside();
+
+        let region = if menu.is_some() {
+            Region::Menu
+        } else if picker.is_some() || places.is_some() {
+            Region::Picker
+        } else if settings {
+            Region::Settings
+        } else if key_map.is_some()
+            || rule.is_some()
+            || small_dialog.is_some()
+            || dialog_named(crate::capture::DIALOG_NAME)
+            || sign_in
+        {
+            Region::Dialog
+        } else if compose_open {
+            Region::Composer
+        } else if dialog_named(crate::open::DIALOG_NAME) || reading_here {
+            Region::Reader
+        } else if digest.is_some() {
+            Region::Dialog
+        } else if focus.is_none() {
+            // Focus leaves the keyboard on the window itself when nothing
+            // is focused (a closed bar hands focus back to nothing, by
+            // design: `Bar::close`), and the window's own key controller
+            // is where its list's keys are handled.
+            Region::List
+        } else if bar
+            .as_ref()
+            .is_some_and(|bar| within(&bar.widget().clone().upcast()))
+        {
+            Region::Search
+        } else if self
+            .pane()
+            .is_some_and(|pane| within(pane.widget().upcast_ref()))
+        {
+            Region::List
+        } else if dialog.is_none() && !self.is_typing() && self.key_context() == KeyContext::List
+        {
+            // A control in the top bar or the foot strip holds focus, but
+            // the window's controller takes every key first (capture
+            // phase), and in the list's context they are the list's.
+            Region::List
+        } else {
+            Region::Other
+        };
+
+        let field = match region {
+            Region::Search | Region::Picker => Some("query".to_owned()),
+            _ => None,
+        };
+
+        let mut path = Vec::new();
+        let mut node = Some(target.clone());
+        while let Some(widget) = node {
+            path.push(widget.type_().name().to_string());
+            node = widget.parent();
+        }
+        path.reverse();
+
+        let pane = self.pane();
+        let at = pane
+            .as_ref()
+            .map(|pane| pane.cursor().selected())
+            .filter(|at| *at != gtk::INVALID_LIST_POSITION);
+        let row = self.cursor_row();
+        let count = pane.as_ref().map(|pane| pane.feed().list().n_items());
+        let selected = match self.selection() {
+            Selection::These(ids) => ids.len() as u32,
+            Selection::Everything { except } => {
+                count.unwrap_or(0).saturating_sub(except.len() as u32)
+            }
+        };
+
+        let overlay = if key_map.is_some() {
+            OverlayState {
+                kind: Overlay::Keymap,
+                mode: None,
+            }
+        } else if rule.is_some() {
+            OverlayState {
+                kind: Overlay::Dialog,
+                mode: Some("rule".to_owned()),
+            }
+        } else if settings {
+            OverlayState {
+                kind: Overlay::Dialog,
+                mode: Some("settings".to_owned()),
+            }
+        } else if let Some(name) = small_dialog {
+            OverlayState {
+                kind: Overlay::Dialog,
+                mode: Some(name.trim_start_matches("focus-").to_owned()),
+            }
+        } else if menu.is_some() {
+            OverlayState {
+                kind: Overlay::Menu,
+                mode: None,
+            }
+        } else if picker.is_some() {
+            OverlayState {
+                kind: Overlay::Picker,
+                mode: None,
+            }
+        } else if places.is_some() {
+            OverlayState {
+                kind: Overlay::Picker,
+                mode: Some("places".to_owned()),
+            }
+        } else if bar.is_some() {
+            OverlayState {
+                kind: Overlay::Finder,
+                mode: None,
+            }
+        } else {
+            OverlayState {
+                kind: Overlay::None,
+                mode: None,
+            }
+        };
+
+        let imp = self.imp();
+        let notice = Notice {
+            text: self.toast_showing(),
+            tone: imp.toast.tone(),
+            undo: imp.toast.offers_undo(),
+        };
+
+        let view = if settings {
+            View::Settings
+        } else if compose_open {
+            View::Composer
+        } else if sign_in {
+            View::FirstRun
+        } else if reading.is_some() {
+            View::Reader
+        } else if digest.is_some() {
+            View::Digest
+        } else if self.filtered().is_some() {
+            View::Filtered
+        } else if bar.is_some() {
+            View::Search
+        } else {
+            View::List
+        };
+
+        let scroll = reading
+            .as_ref()
+            .filter(|_| view == View::Reader)
+            .and_then(|reading| reading.reader().view().scroll_extent())
+            .map(|(offset, max)| Scroll {
+                offset: offset.max(0.0) as u32,
+                max: max as u32,
+            });
+
+        let mut app = std::collections::BTreeMap::new();
+        let bulk = imp.bulk.borrow().as_ref().and_then(|bulk| bulk.summary());
+        app.insert(
+            "focus.bulk".to_owned(),
+            serde_json::json!({ "shown": bulk.is_some(), "summary": bulk }),
+        );
+        if let Some(digest) = &digest {
+            app.insert(
+                "focus.digest_page".to_owned(),
+                serde_json::Value::String(format!("{:?}", digest.showing()).to_lowercase()),
+            );
+        }
+
+        Observation {
+            window: if self.is_visible() {
+                WindowState::Open
+            } else {
+                WindowState::Closed
+            },
+            view,
+            scope: Some(self.place_name()).filter(|place| !place.is_empty()),
+            keyboard: Keyboard {
+                region,
+                field,
+                typing: self.is_typing(),
+                // The window's own controller takes a key when nothing is
+                // focused and nothing is over it, so that is reachable.
+                reachable: reach::reachable(toplevel)
+                    || (focus.is_none() && dialog.is_none() && self.is_visible()),
+                widget: path.join("/"),
+            },
+            cursor: Cursor {
+                index: at,
+                id: row.as_ref().map(|row| row.id().get().to_string()),
+                subject: row.as_ref().and_then(|row| match row {
+                    crate::list::FocusRow::Digest(digest) => Some(digest.rule.clone()),
+                    other => other
+                        .as_conversation()
+                        .and_then(|row| row.summary.subject.clone()),
+                }),
+            },
+            rows: Rows {
+                first_visible: None,
+                count,
+            },
+            selection: SelectionCount { count: selected },
+            overlay,
+            notice,
+            banner: Banner {
+                title: self.banner_showing().map(|(title, _, _)| title),
+            },
+            reading: Reading {
+                id: reading
+                    .as_ref()
+                    .filter(|_| view == View::Reader)
+                    .and_then(|reading| reading.shown())
+                    .map(|id| id.get().to_string()),
+                focused: None,
+                scroll,
+            },
+            composer: ComposerState {
+                open: compose_open,
+                detached: false,
+            },
+            back_depth: None,
+            app,
         }
     }
 }

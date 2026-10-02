@@ -98,6 +98,14 @@ impl Bulk {
         self.keys.set(&said);
     }
 
+    /// What the bar says while it is up: `None` while it is hidden. Read off
+    /// the widgets, for a storyboard's observation.
+    pub fn summary(&self) -> Option<String> {
+        self.root
+            .is_visible()
+            .then(|| self.count.text().to_string())
+    }
+
     /// Say what is selected, or hide the bar when nothing is.
     pub fn set_summary(&self, summary: Option<&str>) {
         match summary {

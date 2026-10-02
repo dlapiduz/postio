@@ -61,6 +61,7 @@ mod marked_rows;
 mod marker_card;
 mod motion;
 mod notify_off_the_main_thread;
+mod observe;
 mod offline_send;
 mod one_composer;
 mod one_keymap;
@@ -659,6 +660,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps",
         open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps as fn(),
+    ),
+    (
+        "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",
+        observe::the_window_says_where_the_keyboard_cursor_and_notices_are as fn(),
     ),
     (
         "open_keys::j_and_k_step_the_open_message_from_where_the_keyboard_is",

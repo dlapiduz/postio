@@ -1039,6 +1039,13 @@ impl BodyView {
         self.scrolling().map_or(0.0, |a| a.value())
     }
 
+    /// How far the message is scrolled and how far it can go, as a pair:
+    /// `None` until something scrolls it. For a storyboard's observation.
+    pub fn scroll_extent(&self) -> Option<(f64, f64)> {
+        self.scrolling()
+            .map(|a| (a.value(), (a.upper() - a.page_size()).max(0.0)))
+    }
+
     /// The snapshot on screen, if one has arrived.
     pub fn document(&self) -> Option<Arc<RenderedDocument>> {
         self.imp().document.borrow().clone()
