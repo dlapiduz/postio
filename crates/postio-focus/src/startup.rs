@@ -395,10 +395,10 @@ pub fn open(
 }
 
 /// Set the store aside and start a fresh one (`Opener::start_over_on_a_thread`),
-/// then open it as `reopen` does: what "Start a fresh store" runs. A start
+/// then open it as `open_fresh` does: what "Start a fresh store" runs. A start
 /// over that could not be done says why, with "Try again" -- which opens the
 /// store again and, if it is still the old one, offers this again.
-fn start_over(window: &FocusWindow, opener: &Opener, reopen: Rc<dyn Fn()>) {
+fn start_over(window: &FocusWindow, opener: &Opener, open_fresh: Rc<dyn Fn()>) {
     window.show_starting_over();
     let started = opener.start_over_on_a_thread();
     let window = window.downgrade();
@@ -412,7 +412,7 @@ fn start_over(window: &FocusWindow, opener: &Opener, reopen: Rc<dyn Fn()>) {
         match answer {
             Ok(started) => {
                 tracing::info!(accounts = started.accounts, "the store was started over");
-                reopen();
+                open_fresh();
                 window.say(&format!(
                     "Started a fresh store. The old one is in {}",
                     started.set_aside.display()
@@ -420,7 +420,7 @@ fn start_over(window: &FocusWindow, opener: &Opener, reopen: Rc<dyn Fn()>) {
             }
             Err(sentence) => {
                 tracing::error!(reason = %sentence, "the store could not be started over");
-                window.show_unavailable(&sentence, move || reopen());
+                window.show_unavailable(&sentence, move || open_fresh());
             }
         }
     });

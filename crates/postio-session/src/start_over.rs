@@ -57,13 +57,13 @@ pub async fn start_over_at(path: &Path, store_key: &StoreKey) -> Result<StartedO
     }
 
     let set_aside = set_aside(path).map_err(|error| {
-        tracing::error!(%error, "the store could not be set aside");
+        tracing::error!(%error, "the store could not be set aside: {error}");
         format!("Postio could not set the old store aside, and left it where it was: {error}")
     })?;
     tracing::info!(set_aside = %set_aside.display(), "the store was set aside");
 
     let fresh = Store::open(path, &database_key).await.map_err(|error| {
-        tracing::error!(%error, "a fresh store could not be made");
+        tracing::error!(%error, "a fresh store could not be made: {error}");
         format!("Postio set the old store aside but could not start a fresh one: {error}")
     })?;
     let earlier = set_aside.join(path.file_name().unwrap_or_default());
@@ -72,7 +72,7 @@ pub async fn start_over_at(path: &Path, store_key: &StoreKey) -> Result<StartedO
     let accounts = match fresh.carry_accounts_from(&earlier, &database_key).await {
         Ok(accounts) => accounts,
         Err(error) => {
-            tracing::warn!(%error, "the accounts did not come across to the fresh store");
+            tracing::warn!(%error, "the accounts did not come across to the fresh store: {error}");
             0
         }
     };
