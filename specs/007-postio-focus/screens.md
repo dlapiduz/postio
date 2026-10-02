@@ -228,6 +228,21 @@ Pressing Reply in the message dialog puts Send where Reply was.
 | A send that failed, reopened from Drafts | The subtitle says "Not sent — {reason}" in place of the saved time |
 | Narrow (1024 x 768) | 655 x 688; the column stays 480; the four verbs fit the action row with their caps, a reminder's day included |
 
+**Compared (2026-10-01), shots 05, 06 and 30 at 1440 x 900 and 1024 x 768,
+light and dark.** Before: the 980 px dialog's header held "New message"
+centred with Detach, Send later `ctrl+shift+Return` ▾ and a boxed Send
+`ctrl+Return` running up to it from the right; the editor ran the dialog's
+full width on the reader palette's ground (`#f5f5f8` under `#fdfdfb`
+rows in light); a footer repeated Attach beside the toolbar's paperclip.
+After: the header holds Detach, the centred title over "Plain text · 19
+words", and the X; the four verbs sit in their own row with 8-character
+caps; To, From, Subject, Labels, the toolbar and the first written line
+start at one edge, 480 px across, and the body is the dialog's own colour
+in both schemes. Still differing from the message dialog: the dialog does
+not dim the list behind it in the shots (libadwaita's dimming, under the
+shot's animations off, as screen 05's (k)); Detach is the icon theme's
+`window-new-symbolic`, which at 16 px reads as a corner mark.
+
 Pinned by `compose_layout::the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own`,
 `…send_is_the_one_primary_and_nothing_wears_the_accent`,
 `…the_keycaps_are_short`, `…the_field_rows_share_their_edges`,
