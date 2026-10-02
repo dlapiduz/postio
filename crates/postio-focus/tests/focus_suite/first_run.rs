@@ -406,3 +406,133 @@ pub fn the_list_keys_work_while_the_first_sync_fills_the_inbox() {
         );
     });
 }
+
+/// What the empty page says, when it is the page showing.
+fn page_says(window: &postio_focus::window::FocusWindow) -> Option<Vec<String>> {
+    let page = support::only(window, "focus-empty");
+    page.is_mapped().then(|| support::texts(&page))
+}
+
+/// Add Grace's account through the form over `window`, as a first run does.
+async fn sign_in(window: &postio_focus::window::FocusWindow) {
+    assert!(
+        crate::settle_until(async || window.add_account_dialog().is_some()).await,
+        "an empty store opened no add-account form"
+    );
+    let dialog = window.add_account_dialog().expect("the wizard");
+    let form = form_in(dialog.upcast_ref()).expect("the account form in the dialog");
+    add_through(
+        &form,
+        "Grace Okafor",
+        "grace@example.test",
+        "an app password",
+    );
+    assert!(
+        crate::settle_until(async || window.add_account_dialog().is_none()).await,
+        "the wizard stayed open after the save: {:?}",
+        form.status()
+    );
+}
+
+/// T220: while the first pass has not finished, an inbox with no rows is
+/// syncing, never empty; the rows replace the page as they arrive.
+pub fn an_inbox_whose_first_pass_is_running_says_syncing_not_empty() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let backend = MockBackend::builder()
+            .mailbox(
+                postio_account::backend::MockMailbox::new("INBOX")
+                    .message(arriving("First", 30))
+                    .message(arriving("Second", 20)),
+            )
+            .build();
+        // Every call takes a moment, so the pass is observably in flight.
+        backend.set_latency(std::time::Duration::from_millis(400));
+        let (window, _backend) = opened(backend).await;
+        sign_in(&window).await;
+
+        assert!(
+            crate::settle_until(async || page_says(&window).is_some()).await,
+            "no page stood where the list is empty"
+        );
+        let said = page_says(&window).expect("the page");
+        assert!(
+            said.iter()
+                .any(|line| line.starts_with("Syncing your inbox")),
+            "the first pass is running and the page does not say so: {said:?}"
+        );
+        assert!(
+            said.iter().all(|line| !line.contains("is empty")),
+            "an inbox still filling said it was empty: {said:?}"
+        );
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the rows never replaced the page: {:?}",
+            support::subjects(&window)
+        );
+    });
+}
+
+/// T220: once a pass has finished with nothing in the inbox, it is empty,
+/// and it says when it last synced.
+pub fn an_inbox_a_finished_pass_found_empty_says_empty_and_when() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let backend = MockBackend::builder()
+            .mailbox(postio_account::backend::MockMailbox::new("INBOX"))
+            .build();
+        let (window, _backend) = opened(backend).await;
+        sign_in(&window).await;
+
+        assert!(
+            crate::settle_until(async || {
+                page_says(&window).is_some_and(|said| {
+                    said.contains(&"Inbox is empty".to_owned())
+                        && said.iter().any(|line| line.starts_with("Synced "))
+                })
+            })
+            .await,
+            "the finished pass never said empty and when: {:?}",
+            page_says(&window)
+        );
+    });
+}
+
+/// T220: a first sync that fails says so, rather than "empty" or an
+/// endless "syncing".
+pub fn a_first_sync_that_fails_says_so_rather_than_empty() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let backend = MockBackend::builder()
+            .mailbox(postio_account::backend::MockMailbox::new("INBOX"))
+            .build();
+        // Slow enough that the fault below lands before the pass's first
+        // call is answered; the form's own check passes before it exists.
+        backend.set_latency(std::time::Duration::from_millis(600));
+        let (window, backend) = opened(backend).await;
+        sign_in(&window).await;
+        backend.fail_all(postio_account::backend::Fault::AuthFailed);
+
+        assert!(
+            crate::settle_until(async || {
+                page_says(&window)
+                    .is_some_and(|said| said.iter().any(|line| line.starts_with("Sync failed")))
+            })
+            .await,
+            "a failing first sync did not say so: {:?}",
+            page_says(&window)
+        );
+        let said = page_says(&window).expect("the page");
+        assert!(
+            said.iter()
+                .all(|line| !line.contains("is empty") && !line.starts_with("Syncing")),
+            "{said:?}"
+        );
+    });
+}

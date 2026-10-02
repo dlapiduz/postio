@@ -66,6 +66,19 @@ impl Fixture {
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         test_support::mailbox(&connection, &account, "Archive").await;
         test_support::mailbox(&connection, &account, "Trash").await;
+        // A store that has synced before: its inbox says so, the way a
+        // finished first pass leaves it (T220), so an empty one is empty.
+        let mailboxes = postio_storage::repository::MailboxRepository::new(&connection);
+        let mut synced = mailboxes
+            .get(inbox)
+            .await
+            .expect("the inbox reads")
+            .expect("the inbox");
+        synced.last_synced_at = Some(Utc::now());
+        mailboxes
+            .update(&synced)
+            .await
+            .expect("the inbox is stamped");
         drop(connection);
         Fixture {
             database,

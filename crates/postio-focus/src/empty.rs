@@ -1,5 +1,6 @@
 //! The empty inbox (screen 16; contracts/focus-surface.md, "States"): a tray,
-//! "Inbox is empty" in bold, when the next digest comes if there are
+//! "Inbox is empty" in bold (or, until a first sync has finished, what the
+//! inbox is waiting on: T220), when the next digest comes if there are
 //! digests, and shortcuts to only what exists.
 //!
 //! What it says is `postio_ui::focus_state::empty_inbox`'s; this draws it.
@@ -21,6 +22,8 @@ type Handler = Rc<dyn Fn(CommandId)>;
 /// The empty page.
 pub struct EmptyInbox {
     root: gtk::Box,
+    heading: gtk::Label,
+    detail: gtk::Label,
     next_digest: gtk::Label,
     shortcuts: gtk::Box,
     handler: RefCell<Option<Handler>>,
@@ -38,6 +41,11 @@ impl EmptyInbox {
         tray.set_accessible_role(gtk::AccessibleRole::Presentation);
         let heading = gtk::Label::new(Some("Inbox is empty"));
         heading.add_css_class("focus-empty-heading");
+        let detail = gtk::Label::new(None);
+        detail.add_css_class("dim-label");
+        detail.set_visible(false);
+        detail.set_wrap(true);
+        detail.set_justify(gtk::Justification::Center);
         let next_digest = gtk::Label::new(None);
         next_digest.add_css_class("dim-label");
         next_digest.set_visible(false);
@@ -50,10 +58,13 @@ impl EmptyInbox {
         root.set_vexpand(true);
         root.append(&tray);
         root.append(&heading);
+        root.append(&detail);
         root.append(&next_digest);
         root.append(&shortcuts);
         Rc::new(EmptyInbox {
             root,
+            heading,
+            detail,
             next_digest,
             shortcuts,
             handler: RefCell::default(),
@@ -72,6 +83,14 @@ impl EmptyInbox {
 
     /// Say `said`.
     pub fn show(self: &Rc<Self>, said: &postio_ui::focus_state::EmptyInbox) {
+        self.heading.set_text(&said.heading);
+        match &said.detail {
+            Some(line) => {
+                self.detail.set_text(line);
+                self.detail.set_visible(true);
+            }
+            None => self.detail.set_visible(false),
+        }
         match &said.next_digest {
             Some(line) => {
                 self.next_digest.set_text(line);

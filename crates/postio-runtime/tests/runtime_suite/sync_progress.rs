@@ -63,7 +63,8 @@ fn server() -> MockBackend {
 
 fn progress(event: &Event) -> Option<(u32, u32)> {
     match event {
-        Event::SyncProgress { done, total, .. } => Some((*done, *total)),
+        // `(0, 0)` is a finished pass saying so (T220), not a batch.
+        Event::SyncProgress { done, total, .. } if *total > 0 => Some((*done, *total)),
         _ => None,
     }
 }

@@ -2598,3 +2598,41 @@ async fn an_idle_engine_does_not_poll_the_queue() {
     }
     drop(engine);
 }
+
+#[tokio::test]
+async fn a_finished_pass_over_an_empty_mailbox_says_a_sync_completed() {
+    // T220: a pass with nothing to fetch counts nothing, so `done == total`
+    // was never reached and a frontend could not tell "the first pass found
+    // the inbox empty" from "the first pass has not got there yet".
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .await
+            .expect("the folder is created");
+        mailbox
+    };
+    let empty = MockBackend::builder()
+        .mailbox(postio_account::backend::MockMailbox::new("INBOX"))
+        .build();
+    let (engine, events, _directory) = engine_over(&database, account.id, empty);
+
+    engine.sync(mailbox.id).await.expect("a sync pass");
+
+    assert!(
+        announced(&events).iter().any(|event| matches!(
+            event,
+            Event::SyncProgress {
+                done: 0,
+                total: 0,
+                ..
+            }
+        )),
+        "the pass finished and the stream never said so"
+    );
+}

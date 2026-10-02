@@ -129,6 +129,18 @@ const CASES: &[(&str, fn())] = &[
         bar::the_bar_opens_in_the_top_bars_field as fn(),
     ),
     (
+        "first_run::an_inbox_whose_first_pass_is_running_says_syncing_not_empty",
+        first_run::an_inbox_whose_first_pass_is_running_says_syncing_not_empty as fn(),
+    ),
+    (
+        "first_run::an_inbox_a_finished_pass_found_empty_says_empty_and_when",
+        first_run::an_inbox_a_finished_pass_found_empty_says_empty_and_when as fn(),
+    ),
+    (
+        "first_run::a_first_sync_that_fails_says_so_rather_than_empty",
+        first_run::a_first_sync_that_fails_says_so_rather_than_empty as fn(),
+    ),
+    (
         "first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox",
         first_run::the_list_keys_work_while_the_first_sync_fills_the_inbox as fn(),
     ),

@@ -3868,6 +3868,20 @@ fn announce_status(parts: &EngineParts, status: &SyncStatus) {
         account: parts.account,
         state: connection_of(status),
     });
+    // A pass that finished says so: `done == total` is how the stream says
+    // "a sync completed", and a pass over an empty mailbox never counted
+    // anything to reach it. Without this a frontend cannot tell an inbox a
+    // first pass found empty from one the first pass has not reached (T220).
+    if let SyncStatus::Idle {
+        last_sync: Some(_), ..
+    } = status
+    {
+        parts.events.emit(Event::SyncProgress {
+            account: parts.account,
+            done: 0,
+            total: 0,
+        });
+    }
     // The typed category rides on the state; the prose travels beside it,
     // which is what the status line reads.
     if let SyncStatus::Error { reason, .. } = status {

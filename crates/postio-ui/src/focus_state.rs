@@ -246,9 +246,119 @@ pub struct EmptyInbox {
     /// "Next digest: Weekly · Newsletters, Saturday 16:00", when a digest
     /// rule names a time.
     pub next_digest: Option<String>,
+    /// The bold line: "Inbox is empty" once a pass has finished and found
+    /// nothing, and otherwise what the inbox is waiting on.
+    pub heading: String,
+    /// The line under the heading when it is not the digest's: when mail
+    /// last synced, or how far the first sync has come.
+    pub detail: Option<String>,
     /// Each shortcut: its key under the keymap in force, what it says, and
     /// the command a click runs.
     pub shortcuts: Vec<(Option<String>, String, CommandId)>,
+}
+
+/// What an inbox with no rows may say (T220). "Empty" is a claim that a
+/// pass has finished and found nothing; before that, no rows only means
+/// mail has not arrived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InboxSaying {
+    /// A pass has completed: the inbox really is empty.
+    Empty {
+        /// When mail last synced, if known.
+        last_synced: Option<DateTime<chrono::Utc>>,
+    },
+    /// No pass has completed yet and sync is on its way or running.
+    Syncing {
+        /// Messages fetched so far and expected, once the engine reports.
+        progress: Option<(u32, u32)>,
+    },
+    /// No pass has completed and there is no network.
+    Offline,
+    /// No pass has completed and sync is failing.
+    Failed,
+}
+
+/// What an inbox with no rows says, given every account's sync `statuses`
+/// and when mail `last_synced` (a completed pass, this run or before).
+pub fn inbox_saying(
+    statuses: &[(AccountId, SyncStatus)],
+    last_synced: Option<DateTime<chrono::Utc>>,
+) -> InboxSaying {
+    let passed = last_synced.is_some() || statuses.iter().any(|(_, s)| s.last_sync.is_some());
+    if passed {
+        return InboxSaying::Empty { last_synced };
+    }
+    let states = || statuses.iter().map(|(_, status)| status.state);
+    if states().any(|state| matches!(state, ConnectionState::Failing { .. })) {
+        return InboxSaying::Failed;
+    }
+    if states().any(|state| state == ConnectionState::Offline) {
+        // A tracker that has heard nothing reads Offline too; only a
+        // report of progress or a connection says otherwise.
+        let heard = statuses
+            .iter()
+            .any(|(_, s)| s.state != ConnectionState::Offline || s.progress.is_some());
+        if !heard {
+            return InboxSaying::Offline;
+        }
+    }
+    let passes: Vec<(u32, u32)> = statuses
+        .iter()
+        .filter_map(|(_, status)| running(status))
+        .collect();
+    let progress = (!passes.is_empty()).then(|| {
+        (
+            passes.iter().map(|(done, _)| done).sum(),
+            passes.iter().map(|(_, total)| total).sum(),
+        )
+    });
+    InboxSaying::Syncing { progress }
+}
+
+impl EmptyInbox {
+    /// This page as `saying` has it: the words that say why there are no
+    /// rows, and only the shortcuts that still make sense. `zone` is for
+    /// the clock time; `keymap` for the key that syncs again.
+    pub fn saying<Tz: TimeZone>(mut self, saying: &InboxSaying, keymap: &Keymap, zone: &Tz) -> Self
+    where
+        Tz::Offset: std::fmt::Display,
+    {
+        let retry = crate::hints::key(keymap, CommandId::Refresh)
+            .map(|key| format!(" Press {key} to sync again."))
+            .unwrap_or_default();
+        match saying {
+            InboxSaying::Empty { last_synced } => {
+                self.detail = last_synced
+                    .map(|at| format!("Synced {}", at.with_timezone(zone).format("%H:%M")));
+                return self;
+            }
+            InboxSaying::Syncing { progress } => {
+                "Syncing your inbox\u{2026}".clone_into(&mut self.heading);
+                self.detail = Some(match progress {
+                    Some((done, total)) => format!(
+                        "{} of {} messages, newest first. Mail shows here as it arrives.",
+                        count(*done),
+                        count(*total)
+                    ),
+                    None => "Mail shows here as it arrives.".to_owned(),
+                });
+            }
+            InboxSaying::Offline => {
+                "Your inbox hasn't synced yet".clone_into(&mut self.heading);
+                self.detail =
+                    Some("You're offline. Mail shows here once the first sync runs.".to_owned());
+            }
+            InboxSaying::Failed => {
+                "Your inbox hasn't synced yet".clone_into(&mut self.heading);
+                self.detail = Some(format!("Sync failed.{retry}"));
+            }
+        }
+        // Nothing has been filtered or archived that anyone could count yet.
+        self.next_digest = None;
+        self.shortcuts
+            .retain(|(_, _, command)| *command == CommandId::Compose);
+        self
+    }
 }
 
 /// The empty inbox for `focus`'s rules, `filtered_today` messages filed
@@ -303,6 +413,8 @@ where
         CommandId::Compose,
     ));
     EmptyInbox {
+        heading: "Inbox is empty".to_owned(),
+        detail: None,
         next_digest,
         shortcuts,
     }
@@ -600,6 +712,70 @@ mod tests {
             empty.next_digest.as_deref(),
             Some("Next digest: Monthly \u{b7} Receipts, Thursday 15 October 09:00")
         );
+    }
+
+    fn at(hour: u32) -> Option<DateTime<chrono::Utc>> {
+        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 10, 1, hour, 0, 0).single()
+    }
+
+    #[test]
+    fn an_inbox_is_empty_only_once_a_pass_has_finished() {
+        let heard = status(ConnectionState::Online, Some((120, 300)));
+        assert_eq!(
+            inbox_saying(&[(account(1), heard)], None),
+            InboxSaying::Syncing {
+                progress: Some((120, 300))
+            }
+        );
+        assert_eq!(
+            inbox_saying(&[], None),
+            InboxSaying::Syncing { progress: None },
+            "before anything has been heard"
+        );
+        let done = status(ConnectionState::Online, None);
+        assert_eq!(
+            inbox_saying(&[(account(1), done)], at(9)),
+            InboxSaying::Empty { last_synced: at(9) }
+        );
+    }
+
+    #[test]
+    fn a_first_sync_that_cannot_run_says_so() {
+        assert_eq!(
+            inbox_saying(&[(account(1), status(AUTH, None))], None),
+            InboxSaying::Failed
+        );
+        let mut offline = status(ConnectionState::Offline, None);
+        offline.state = ConnectionState::Offline;
+        assert_eq!(
+            inbox_saying(&[(account(1), offline)], None),
+            InboxSaying::Offline
+        );
+    }
+
+    #[test]
+    fn the_words_say_why_there_are_no_rows() {
+        let keymap = Keymap::defaults();
+        let zone = FixedOffset::east_opt(0).expect("UTC");
+        let page = || empty_inbox(&FocusConfig::default(), 0, keymap, &wednesday());
+        let syncing = page().saying(
+            &InboxSaying::Syncing {
+                progress: Some((120, 300)),
+            },
+            keymap,
+            &zone,
+        );
+        assert_eq!(syncing.heading, "Syncing your inbox\u{2026}");
+        assert_eq!(
+            syncing.detail.as_deref(),
+            Some("120 of 300 messages, newest first. Mail shows here as it arrives.")
+        );
+        let empty = page().saying(&InboxSaying::Empty { last_synced: at(9) }, keymap, &zone);
+        assert_eq!(empty.heading, "Inbox is empty");
+        assert_eq!(empty.detail.as_deref(), Some("Synced 09:00"));
+        let failed = page().saying(&InboxSaying::Failed, keymap, &zone);
+        assert_eq!(failed.heading, "Your inbox hasn't synced yet");
+        assert!(failed.detail.expect("a detail").starts_with("Sync failed."));
     }
 
     #[test]

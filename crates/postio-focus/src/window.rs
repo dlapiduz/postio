@@ -2133,12 +2133,18 @@ impl FocusWindow {
         };
         match (empty, imp.empty.borrow().as_ref()) {
             (Some(counts), Some(page)) => {
-                page.show(&postio_ui::focus_state::empty_inbox(
-                    &imp.focus_config.borrow(),
-                    counts.filtered_today,
-                    &self.keymap(),
-                    &chrono::Local::now(),
-                ));
+                // "Empty" is only said once a pass has finished (T220).
+                let statuses = imp.trackers.borrow().statuses(&imp.tracked.borrow());
+                let saying = postio_ui::focus_state::inbox_saying(&statuses, imp.last_synced.get());
+                page.show(
+                    &postio_ui::focus_state::empty_inbox(
+                        &imp.focus_config.borrow(),
+                        counts.filtered_today,
+                        &self.keymap(),
+                        &chrono::Local::now(),
+                    )
+                    .saying(&saying, &self.keymap(), &chrono::Local),
+                );
                 stack.set_visible_child_name(EMPTY);
             }
             _ => stack.set_visible_child_name(LIST),
@@ -3012,6 +3018,8 @@ impl FocusWindow {
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
             chrome.set_sync(&label.text, label.icon);
         }
+        // What an inbox with no rows says follows the same news.
+        self.show_empty_or_list();
     }
 
     /// The banner under the strip, while one shows: what it says, its
