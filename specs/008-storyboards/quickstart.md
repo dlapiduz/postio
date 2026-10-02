@@ -68,15 +68,20 @@ scripts/storyboards.sh page --open
 ## 4. Chain delivery sees a swallowed key (US1, research R3)
 
 ```bash
-scripts/storyboards.sh run --app classic --only list/keys-reach-the-list-under-nothing
+cargo test -p postio-gtk --test gtk_suite storyboard_chain_delivery
 ```
 
-This storyboard opens and closes the cheat sheet, then presses `j`. **Expect**
-`keyboard.reachable = true` and the cursor moved.
+**Expect:** a key reaches the window from inside a list; a dialog over the
+window keeps the key from it; a key aimed at a widget that has left the
+window is reported **dropped**, never delivered; and `Return` in a text
+field activates it, mirroring GTK's own binding.
 
-**Delivery mode.** Rerun with `--delivery direct`, and the run says
-`delivery: direct` in its header. A step marked `routing = "real"` reads
-`not covered (delivery: chain)` in both runs, never `passed`.
+**Delivery mode.** Any storyboard re-run with `--delivery direct` says
+`delivery: direct` in its run and page header. The two modes can disagree,
+and that disagreement is evidence: #1748's `K` in the reading pane is
+dropped along the focus chain and accepted-but-inert handed straight to the
+window. A step marked `routing = "real"` reads `not covered` in both, never
+`passed` (`sidebar/shift-tab-from-reader-returns-to-row`).
 
 ## 5. A review before the maintainer (US2)
 
