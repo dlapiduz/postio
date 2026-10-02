@@ -430,6 +430,31 @@ fn cadence(written: &str) -> String {
     }
 }
 
+/// What the reading pane says with no message open (T232): never blank,
+/// and never a dead end -- the key that opens one, and the key that puts
+/// messages back over the list, each a shortcut a click runs too. Drawn by
+/// the empty inbox's own page, so Focus has one empty pattern.
+pub fn empty_pane(keymap: &Keymap) -> EmptyInbox {
+    let key = |command| crate::hints::key(keymap, command).map(|key| crate::hints::short(&key));
+    EmptyInbox {
+        next_digest: None,
+        heading: "No message open".to_owned(),
+        detail: Some("Messages open here, beside the list.".to_owned()),
+        shortcuts: vec![
+            (
+                key(CommandId::OpenMessage),
+                "open".to_owned(),
+                CommandId::OpenMessage,
+            ),
+            (
+                key(CommandId::ToggleReadingPane),
+                "read over the list".to_owned(),
+                CommandId::ToggleReadingPane,
+            ),
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{FixedOffset, TimeZone, Utc};
@@ -791,5 +816,27 @@ mod tests {
         );
         assert_eq!(label.text, "Sync failed");
         assert_eq!(label.icon, "dialog-warning-symbolic");
+    }
+
+    #[test]
+    fn the_empty_pane_names_what_opens_a_message_and_the_way_back() {
+        let said = empty_pane(Keymap::defaults());
+        assert_eq!(said.heading, "No message open");
+        assert_eq!(
+            said.detail.as_deref(),
+            Some("Messages open here, beside the list.")
+        );
+        assert_eq!(
+            said.shortcuts,
+            vec![
+                (Some("\u{21b5}".to_owned()), "open".to_owned(), CommandId::OpenMessage),
+                (
+                    Some("F8".to_owned()),
+                    "read over the list".to_owned(),
+                    CommandId::ToggleReadingPane
+                ),
+            ]
+        );
+        assert_eq!(said.next_digest, None);
     }
 }

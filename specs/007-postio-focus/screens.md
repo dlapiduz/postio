@@ -342,7 +342,7 @@ Below 980 it is the composer's dialog, as before.
 
 | State | The pane |
 |---|---|
-| Empty: nothing open | "No message open", over two buttons that each run their command and wear its key: Open `↵` and Read over the list `F8`. Never blank, and never a dead end |
+| Empty: nothing open | "No message open", "Messages open here, beside the list.", and two shortcuts that each run their command and wear its key: `↵` open, `F8` read over the list. The empty inbox's own page draws it (`focus_state::empty_pane`), so Focus has one empty pattern. Never blank, and never a dead end |
 | Empty: the inbox is empty | No pane. The empty inbox (screen 16) takes the window, as in dialog mode: there is nothing to open beside it. The pane comes back with the first row |
 | Loading, partial body | The header, the subject, the labels and the position are drawn from the row at once. The body says what the dialog's says when headers have synced and the body has not (the reader's partial notice), never a spinner over local data |
 | Offline | The window's banner says so. A body already on disk reads as normal, and one that is not says it is not downloaded yet. Every verb works and is queued (local-first) |
