@@ -258,3 +258,10 @@ function reportFormat() {
 }
 document.addEventListener('selectionchange', reportFormat);
 document.addEventListener('input', reportFormat);
+
+/* Last, on purpose: every listener above is attached. The page's HTML makes
+ * the body editable as soon as it is parsed, before this script runs at
+ * document end, so an editable body says nothing about whether an edit will
+ * be reported. Anything that types into a fresh page -- a test, today --
+ * waits for this instead (#1716). */
+window.postioEditorReady = true;

@@ -80,11 +80,18 @@ fn ready(editor: &Editor) {
     // that was then replaced, and the test waited out its whole deadline
     // for words that no longer existed. It took a loaded machine to make the
     // load that slow, which is why it failed in the nightly and nowhere else.
-    settle("the editor's empty page to commit", || {
+    //
+    // And the editor's *script*, not merely its page (#1716): the body is
+    // editable as soon as the HTML is parsed, and the script that reports
+    // edits arrives at document end. Typing in between is typing nothing
+    // listens to, and the test waited out its deadline for a bold run that
+    // was never reported -- twice in a week on CI.
+    settle("the editor's empty page to commit, its script listening", || {
         eval_str(
             editor.widget(),
             "(document.body && document.body.isContentEditable \
-              && document.body.textContent === '') ? 'ready' : ''",
+              && document.body.textContent === '' \
+              && window.postioEditorReady === true) ? 'ready' : ''",
         ) == "ready"
     });
     eval_str(
