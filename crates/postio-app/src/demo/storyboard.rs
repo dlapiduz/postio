@@ -108,6 +108,7 @@ pub fn runner_info() -> RunnerInfo {
         ("contrast", &["normal", "high"][..]),
         ("width", &["wide", "normal", "narrow"][..]),
         ("text", &["100", "200"][..]),
+        ("density", &["airy", "comfortable", "compact"][..]),
     ]
     .into_iter()
     .map(|(axis, values)| {
@@ -241,6 +242,14 @@ async fn acting(window: &Window, options: &DemoOptions) -> Option<Acting> {
     })
 }
 
+/// Every window starts as a first window: the size, pane widths and sidebar
+/// a previous storyboard's window saved would otherwise be restored into
+/// this one, and a storyboard that hid the sidebar would hide it for the
+/// next.
+fn forget_window_state() {
+    let _ = std::fs::remove_file(postio_gtk::state::WindowState::path());
+}
+
 /// Turns the main loop for `duration`, so timers and frames happen.
 fn pump(duration: Duration) {
     let context = glib::MainContext::default();
@@ -270,11 +279,26 @@ fn apply_variant(window: &Window, variant: &BTreeMap<String, String>) -> Vec<Str
         _ => (1280, 800),
     };
     window.set_default_size(width, height);
-    if let Some(scale) = variant.get("text").and_then(|t| t.parse::<f64>().ok())
-        && let Some(settings) = gtk::Settings::default()
-    {
-        let base = settings.gtk_xft_dpi();
+    // Text scale is a process-wide setting: set it from the DPI the process
+    // started with, every run, so one storyboard's 200% is not the next one's
+    // starting size.
+    if let Some(settings) = gtk::Settings::default() {
+        static BASE_DPI: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+        let base = *BASE_DPI.get_or_init(|| settings.gtk_xft_dpi());
+        let scale = variant
+            .get("text")
+            .and_then(|t| t.parse::<f64>().ok())
+            .unwrap_or(100.0);
         settings.set_gtk_xft_dpi((f64::from(base) * scale / 100.0) as i32);
+    }
+    // Row density is the list's own setting, as `shot` sets it.
+    match variant.get("density").map(String::as_str) {
+        Some("compact") => window.list().set_density(postio_config::Density::Compact),
+        Some("comfortable") => window
+            .list()
+            .set_density(postio_config::Density::Comfortable),
+        Some("airy") => window.list().set_density(postio_config::Density::Airy),
+        _ => {}
     }
     let known = runner_info().axes;
     variant
@@ -341,7 +365,7 @@ fn press(window: &Window, binding: &Binding, delivery: Delivery) -> StepOutcome 
                 };
                 window.handle_key(key, modifiers);
             }
-            Delivery::Chain | Delivery::Real => match deliver::press(window.upcast_ref(), chord) {
+            Delivery::Chain | Delivery::Real => match deliver::press(&window.frontmost(), chord) {
                 Ok(deliver::Delivery::Delivered { .. }) => {}
                 Ok(deliver::Delivery::Dropped) | Err(_) => return StepOutcome::Dropped,
             },
@@ -412,7 +436,7 @@ fn deliver_input(
                 ));
                 true
             };
-            match deliver::type_text(window.upcast_ref(), text, Some(&composer_body)) {
+            match deliver::type_text(&window.frontmost(), text, Some(&composer_body)) {
                 deliver::TypeOutcome::Typed => StepOutcome::Delivered,
                 deliver::TypeOutcome::NothingToTypeInto => StepOutcome::NothingToTypeInto,
             }
@@ -523,7 +547,7 @@ fn settle_and_capture(
     // check run that waited less than a filmed one would disagree with it
     // about anything on a timer, which is how a live search's debounce
     // made the two read #1744 differently.
-    let settled = settle::settle(window.upcast_ref(), settings);
+    let settled = settle::settle(&window.frontmost(), settings);
     if !options.frames {
         let verdict = match settled.verdict {
             settle::Verdict::Settled { ms } => Settle::Settled { ms },
@@ -566,7 +590,7 @@ fn settle_and_capture(
         });
     let region = region_name(&window.observe());
     let outlined_name = RunWriter::outlined(step);
-    let outlined = outline::outlined(window.upcast_ref(), &region)
+    let outlined = outline::outlined(&window.frontmost(), &region)
         .save_to_png(writer.dir().join(&outlined_name))
         .ok()
         .map(|()| outlined_name);
@@ -659,6 +683,7 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
         settings.set_gtk_enable_animations(false);
     }
 
+    forget_window_state();
     let window = Window::default();
     played.ignored_axes = apply_variant(&window, &options.variant);
     played
@@ -916,7 +941,7 @@ pub async fn every_command(gaps: &[postio_storyboard::coverage::Gap]) -> Vec<Con
                 stride: 2,
                 ..settle::Settings::default()
             };
-            let before_frame = settle::settle(window.upcast_ref(), &settings);
+            let before_frame = settle::settle(&window.frontmost(), &settings);
             let before = window.observe();
             // Typing wins: with the keyboard in a text field, a command bound
             // to a bare key is a letter, not a command, and that is right.
@@ -949,7 +974,7 @@ pub async fn every_command(gaps: &[postio_storyboard::coverage::Gap]) -> Vec<Con
             );
             let press = match outcome {
                 Ok((StepOutcome::Delivered, _)) => {
-                    let after_frame = settle::settle(window.upcast_ref(), &settings);
+                    let after_frame = settle::settle(&window.frontmost(), &settings);
                     let after = window.observe();
                     judge(
                         &command,
@@ -989,6 +1014,7 @@ async fn fresh(setup: &[&str]) -> Option<(Window, Acting)> {
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_enable_animations(false);
     }
+    forget_window_state();
     let window = Window::default();
     apply_variant(&window, &BTreeMap::new());
     window.present();

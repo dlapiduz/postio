@@ -203,7 +203,16 @@ pub fn the_catalogue_holds_on_classic() {
                                 .iter()
                                 .filter(|c| c.outcome == Outcome::Fail)
                                 .map(move |c| {
-                                    format!("step {}: {} {}", step.step, c.path, c.expected)
+                                    format!(
+                                        "step {}: {} {} (saw {})",
+                                        step.step,
+                                        c.path,
+                                        c.expected,
+                                        c.observed.as_ref().map_or_else(
+                                            || "absent".to_owned(),
+                                            ToString::to_string
+                                        )
+                                    )
                                 })
                                 .chain(
                                     (step.outcome != StepOutcome::Delivered)

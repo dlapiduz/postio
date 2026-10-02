@@ -166,6 +166,24 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert_eq!(seen.view, View::Conversation, "{seen:#?}");
         assert!(seen.reading.id.is_some(), "the pane names what it shows");
 
+        // Settings open in a window of their own: that is the one in front,
+        // and the one a storyboard films.
+        window.open_settings();
+        while glib::MainContext::default().iteration(false) {}
+        let front = window.frontmost();
+        assert!(
+            window
+                .settings_window()
+                .is_some_and(|settings| front == *settings.upcast_ref::<gtk::Window>()),
+            "the settings window is in front once it is open"
+        );
+        assert_eq!(window.observe().view, View::Settings);
+        window.close_settings();
+        while glib::MainContext::default().iteration(false) {}
+        assert!(
+            front != window.frontmost() || window.settings_window().is_none_or(|s| !s.is_visible())
+        );
+
         // The store-locked screen replaces the shell: the view says so.
         postio_app::demo::show_locked(&window);
         while glib::MainContext::default().iteration(false) {}

@@ -3816,6 +3816,27 @@ impl Default for Window {
 }
 
 impl Window {
+    /// The window a person is looking at: the settings window while it is
+    /// up, a detached composer's window while one is open, else this one.
+    /// A storyboard films and types into this, because a frame of the main
+    /// window drawn behind settings is a picture of nothing anyone sees.
+    pub fn frontmost(&self) -> gtk::Window {
+        if let Some(settings) = self.settings_window().filter(|w| w.is_visible()) {
+            return settings.upcast();
+        }
+        let detached = self
+            .imp()
+            .detached_composers
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|composer| composer.detached_window().filter(|w| w.is_visible()));
+        match detached {
+            Some(window) => window.upcast(),
+            None => self.clone().upcast(),
+        }
+    }
+
     /// Where everything is, for a storyboard (specs/008-storyboards,
     /// contracts/observation.md § Classic).
     ///
