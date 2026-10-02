@@ -78,3 +78,23 @@ cannot do (findings, not verdicts):
   is more, and the keyboard stays on the list behind it.
 - The composer footer's last hint is cut off ("Escape keeps the…"), and
   Schedule… is live with no recipient.
+
+## The budget, measured (T101)
+
+SC-002 asks for one storyboard in under 15 s warm and the whole GTK catalogue
+in under 5 minutes. Measured 2026-10-02 on the workstation, frames on, each
+invocation on its own headless compositor:
+
+| What | Time |
+|---|---|
+| One storyboard (`list/archive-walks-down`), warm, build check included | 7.5 s |
+| The whole Classic catalogue, 78 storyboards (42 interactions, 36 screens) | 3 min 32 s |
+| The same with frames off, as the app suite's catalogue case | 3 min 9 s |
+| The screen sweep alone (36 screens, in their variants) | 53 s |
+| The generated pass, every command in every context (119 presses) | 3 min 16 s |
+
+Frames off saves less than expected because "no frames" still settles every
+step: it means nothing is written, not less waiting, after a live search's
+debounce made the two modes disagree. Focus plays most of the catalogue too,
+so the both-apps figure is measured on the Focus lane; if it passes five
+minutes, the stride (2) is the dial, not the settle rules.
