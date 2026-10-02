@@ -13,6 +13,12 @@ repository.workspace = true
 name = "postio"
 path = "src/main.rs"
 
+[features]
+# Seeded, fed windows for the tools that photograph or drive the app
+# (`postio_app::demo`, the `shot` example). Off by default: the seeds and the
+# in-memory store are test-support code and must not reach a normal build.
+demo = ["postio-storage/test-support", "dep:tempfile"]
+
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 async-channel = { workspace = true }
@@ -50,6 +56,8 @@ postio-session.workspace = true
 postio-ui.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
+# The demo's blob directory; only the `demo` feature builds it.
+tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tracing = { workspace = true }
 
@@ -83,6 +91,11 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 async-trait = { workspace = true }
 serde-xml-rs = { workspace = true }
 url = { workspace = true }
+
+# Needs the seeded store and the demo module, which are behind `demo`.
+[[example]]
+name = "shot"
+required-features = ["demo"]
 
 # The consolidated app suite: same custom harness as postio-gtk's
 # gtk_suite, same reasons -- see tests/app_suite/main.rs. #329.
