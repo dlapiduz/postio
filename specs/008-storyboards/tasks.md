@@ -93,14 +93,15 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 ### Measure first: these decide two numbers the rest depends on
 
 - [X] T005 Measure the capture cost and renderer determinism, with a
-  throwaway example `crates/postio-app/examples/capture_probe.rs`:
+  throwaway example `crates/postio-app/examples/capture_probe.rs` (deleted once
+  measured):
   - seed `seed_small` through `feed_the_window`, as `shot` does;
   - time 200 `capture::texture_within` calls on a settled 1280×800 window;
   - capture the same settled window twice in two separate processes, under the
     default `GSK_RENDERER` and under `GSK_RENDERER=cairo`, and compare blake3
     of the pixels.
 
-  Record the results in `docs/notes/2026-10-0X-storyboard-capture.md` (date
+  Record the results in `docs/notes/2026-10-01-what-a-storyboard-capture-costs.md` (date
   and title) and list it in `docs/engineering-notes.md`. The note must give:
   - the median and p95 cost of one capture;
   - the sampling stride *n* this implies for a 3 s `settle_max` within SC-002;
@@ -382,7 +383,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
   `run.json` values are equal apart from `commit`, and the frame hashes are
   equal (SC-003). Red until T041's hermetic setup is complete. If it is
   already green, tighten it by also comparing the outlined frames.
-- [X] T043 [US1] [TEST] Write `scripts/tests/test-storyboards-sh.sh` against a
+- [X] T043 [US1] [TEST] Write `scripts/tests/test-storyboards-sh.py` against a
   stub runner binary:
   - `run --only` selects by glob;
   - exit codes are 0, 1 and 2 per `contracts/runner.md`;
@@ -414,7 +415,8 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
   - `storyboards/search/escape-returns-to-the-row.toml` (`pinned`);
   - `storyboards/list/launch-keyboard-on-first-row.toml` (`pinned`; seed
     `small`, no steps before `j`);
-  - `storyboards/search/tab-hands-keyboard-to-list.toml` (`open`, if #1252
+  - `storyboards/search/tab-hands-keyboard-to-list.toml` (folded into
+    `return-hands-keyboard-to-results.toml`, which carries #1252) (`open`, if #1252
     still reproduces).
 
   Run each. The `pinned` ones pass with exact checks. The `open` one is
@@ -511,7 +513,7 @@ US2; quickstart § 5).
   It has six `must_pass` twins with the correct expectation. The lint passes.
 - [X] T061 [US2] Run `/ux-review --calibrate` on Classic. **The `must_fail`
   storyboards are the reviewer's red.** Record the hit rate in
-  `docs/notes/2026-10-0X-storyboard-capture.md` (or a sibling note). Tune the
+  `docs/notes/2026-10-01-what-a-storyboard-capture-costs.md` (or a sibling note). Tune the
   prompt template, not the calibration set, until 12 of 12 are correct. If
   the template changes, re-run.
 - [X] T062 [US2] [TEST] Extend `scripts/tests/test-issue-land*.sh`, or the
@@ -555,7 +557,7 @@ storyboards before and after, and reports the rest as unchanged with a count
 - [X] T065 [US4] Implement `crates/postio-storyboard/src/compare.rs` and
   `compare`, plus the page's changed, new and unchanged sections, with base
   and branch side by side. T064 goes green.
-- [X] T066 [US4] [TEST] Extend `scripts/tests/test-storyboards-sh.sh` for
+- [X] T066 [US4] [TEST] Extend `scripts/tests/test-storyboards-sh.py` for
   `base`:
   - it creates a detached worktree at the merge-base with the recorded
     `postio-base`;
@@ -565,8 +567,10 @@ storyboards before and after, and reports the rest as unchanged with a count
   - it links `Design/review/<branch>/base/`.
 
   Use a temporary git repository and a stub runner.
-- [X] T067 [US4] Implement `scripts/storyboards.sh base`, plus `--changed`
-  selection through `postio-storyboard select`. Put no worktree path into
+- [X] T067 [US4] Implement `scripts/storyboards.sh base`. (`--changed` and
+  `postio-storyboard select` were dropped: for a GTK app they select every
+  storyboard, so the base comparison does the narrowing -- contracts/runner.md.)
+  Put no worktree path into
   anything rustc sees (#1101). T066 goes green. Prove it end to end: on a
   scratch branch that changes only finder spacing in
   `crates/postio-gtk/src/finder.rs`, `page` shows the search storyboards
@@ -813,7 +817,7 @@ screens` reproduces the old contact sheet (quickstart § 8).
   its variant, and `design = "<canvas screen>"`, or no `design` where the
   table said `-`. Add any preset `shot` hand-feeds to `postio_app::demo`'s
   preset list.
-- [X] T095 [US7] [TEST] Extend `scripts/tests/test-storyboards-sh.sh`:
+- [X] T095 [US7] [TEST] Extend `scripts/tests/test-storyboards-sh.py`:
   `screens` writes an `index.html` that pairs each design PNG with the
   rendered frame, and exits non-zero naming any screen that failed to render
   (the old `screens.sh` contract).

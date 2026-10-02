@@ -9,7 +9,7 @@ between them, and what comes back. The reasoning is in research R9 and R10.
 implementing session                      ux-reviewer (fresh agent, Opus)
 ────────────────────                      ──────────────────────────────
 /ux-review
-  storyboards.sh run --changed --variants
+  storyboards.sh run --app <app> --variants
   storyboards.sh base
   postio-storyboard bundle  ──► bundle/
   postio-storyboard prompt  ──► prompt.txt ──────►  reads the SKILL.md files,

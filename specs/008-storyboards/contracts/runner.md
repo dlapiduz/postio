@@ -70,11 +70,13 @@ scripts/storyboards.sh lint                          # load and lint the whole c
 scripts/storyboards.sh coverage [--app ...]          # every-command, per app
 ```
 
-- **`--changed`** selects storyboards whose app's crates changed against the
-  base, plus any storyboard file that changed. For a GTK app that is every
-  storyboard applying to it: there is no finer selection, because a shared
-  type's callers are not knowable from a diff (#419). SC-002 keeps that
-  affordable.
+- **There is no `--changed`.** A selection by changed crates would select,
+  for a GTK app, every storyboard applying to it -- a shared type's callers
+  are not knowable from a diff (#419) -- so the flag could never narrow
+  anything, and SC-002 makes the whole set affordable. What narrows a review
+  is the comparison with the base (`base`, then `bundle --base`): a reviewer
+  is asked only about runs that are new or whose frames or observations
+  changed.
 - **`--variants`** runs each storyboard's `vary` matrix. Without it, only the
   default variant runs. The default run is the per-edit loop, and variants are
   the pre-review sweep.
@@ -96,16 +98,14 @@ The script calls this. People rarely do.
 | Subcommand | Does |
 |---|---|
 | `lint <dir>` | Loads every storyboard; validates per data-model; prints applicability per app |
-| `select --changed-crates <list> --changed-files <list>` | Prints the storyboards to run |
-| `compare --base <dir> --branch <dir>` | Writes `comparison.json` (data-model § Comparison) |
-| `parity --runs <dir>` | Writes `parity.json` |
-| `bundle --runs <dir> --base <dir> --acceptance <file> --out <dir>` | Writes the review bundle (contracts/review.md) |
-| `prompt <bundle>` | Prints the reviewer prompt, from the fixed template |
-| `verdicts check <bundle>/verdicts.json` | Validates the citations and completeness (FR-019) |
-| `page <bundle> --out <dir>` | Writes `index.html` and `summary.md` |
-| `key --tree <git-tree-ids>...` | Prints the review key |
-| `verdicts merge <bundle>` | Folds per-batch `verdicts.N.json` into `verdicts.json` |
-| `sheet --runs <dir> --catalogue <dir> --design-dir <dir> --out <index.html>` | The screen sweep's contact sheet; exits 1 naming any screen that did not render |
+| `key --tree <path=id>...` | Prints the review key for those trees |
+| `compare --base <dir> --branch <dir> [--out <file>]` | Writes `comparison.json` (data-model § Comparison) |
+| `sheet --runs <dir> --catalogue <dir> --design-dir <dir> --out <file>` | The screen sweep's contact sheet, design beside app |
+| `bundle --runs <dir> [--base <dir>] --acceptance <file> --catalogue <dir> --design-dir <dir> --out <dir>` | Writes the review bundle (contracts/review.md) |
+| `prompt <bundle> (--list \| --batch <n>)` | The batch count, or one batch's reviewer prompt, from the fixed template |
+| `verdicts merge <bundle>` | Merges `verdicts.N.json` into `verdicts.json` |
+| `verdicts check <bundle>` | Validates the citations and completeness (FR-019) |
+| `page --runs <dir> --out <file> [--prefix <p>] [--title <t>] [--key <k>]` | The page; parity rows are drawn on it, not written to a file |
 
 Every invocation of the script plays on a compositor of its own
 (`postio-storyboard-<pid>`, 1920×1200), stopped on exit: on the shared one,
