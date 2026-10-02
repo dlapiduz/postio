@@ -83,6 +83,45 @@ pub fn column_width(dialog: i32, treatment: Treatment) -> i32 {
     .max(0)
 }
 
+/// The narrowest the list gets beside a reading pane (T232): canvas 1b's
+/// list width, the classic app's.
+pub const LIST_MIN: i32 = 404;
+/// The narrowest reading pane: the app colours column and its inset, so the
+/// column is never squeezed.
+pub const PANE_MIN: i32 = COLUMN_APP_COLOURS + COLUMN_APP_COLOURS_INSET;
+/// The widest reading pane: the dialog at its widest, so a message reads at
+/// the same measure beside the list as over it.
+pub const PANE_MAX: i32 = DIALOG_MAX;
+/// The narrowest window with room for the list and a pane beside it.
+pub const PANE_WINDOW_MIN: i32 = LIST_MIN + PANE_MIN;
+
+/// Where an open message is drawn: over the list, or beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Placement {
+    /// The message dialog, over the list (T205).
+    #[default]
+    Dialog,
+    /// A pane beside the list (T232).
+    Pane,
+}
+
+/// The reading pane's width in a window `window` pixels wide:
+/// `min(820, W - 404)`, or `None` when that would be under 576 -- a window
+/// narrower than [`PANE_WINDOW_MIN`] has no room for one.
+pub fn pane_width(window: i32) -> Option<i32> {
+    let pane = (window - LIST_MIN).min(PANE_MAX);
+    (pane >= PANE_MIN).then_some(pane)
+}
+
+/// Where a message opens in a window `window` pixels wide, when the person
+/// chose `chosen`: a pane only where one fits, the dialog otherwise.
+pub fn placement(chosen: Placement, window: i32) -> Placement {
+    match chosen {
+        Placement::Pane if pane_width(window).is_some() => Placement::Pane,
+        _ => Placement::Dialog,
+    }
+}
+
 /// The vertical rhythm, in pixels (an 8px grid around a 24px body line).
 /// A block that is absent takes the gap above it with it; the next gap
 /// stays as listed.
@@ -157,6 +196,53 @@ mod tests {
         assert_eq!(column_width(820, Treatment::AppColours), 480);
         assert_eq!(column_width(dialog_width(1024), Treatment::AppColours), 480);
         assert_eq!(column_width(560, Treatment::AppColours), 464);
+    }
+
+    #[test]
+    fn the_pane_is_the_dialog_at_its_widest_and_the_list_keeps_404() {
+        assert_eq!(pane_width(1024), Some(620));
+        assert_eq!(pane_width(1280), Some(820));
+        assert_eq!(pane_width(1440), Some(820));
+        assert_eq!(pane_width(1920), Some(820));
+        // The list takes the rest, never less than its floor.
+        for window in [980, 1024, 1180, 1280, 1440, 1920] {
+            let pane = pane_width(window).expect("room for a pane");
+            assert!(window - pane >= LIST_MIN, "{window}: list {}", window - pane);
+            assert!((PANE_MIN..=PANE_MAX).contains(&pane), "{window}: pane {pane}");
+        }
+    }
+
+    #[test]
+    fn a_window_under_980_has_no_pane() {
+        assert_eq!(PANE_WINDOW_MIN, 980);
+        assert_eq!(pane_width(980), Some(576));
+        assert_eq!(pane_width(979), None);
+        assert_eq!(pane_width(800), None);
+    }
+
+    #[test]
+    fn a_pane_holds_the_app_colours_column_whole() {
+        for window in [980, 1024, 1280] {
+            let pane = pane_width(window).expect("a pane");
+            assert_eq!(column_width(pane, Treatment::AppColours), 480, "{window}");
+        }
+        assert_eq!(column_width(620, Treatment::Paper), 572);
+        assert_eq!(column_width(820, Treatment::Paper), 640);
+    }
+
+    #[test]
+    fn a_pane_opens_where_one_fits_and_the_dialog_everywhere_else() {
+        assert_eq!(placement(Placement::Pane, 1280), Placement::Pane);
+        assert_eq!(placement(Placement::Pane, 980), Placement::Pane);
+        assert_eq!(placement(Placement::Pane, 979), Placement::Dialog);
+        assert_eq!(placement(Placement::Dialog, 1920), Placement::Dialog);
+        assert_eq!(Placement::default(), Placement::Dialog);
+    }
+
+    #[test]
+    fn a_pane_under_760_folds_its_action_row_as_the_dialog_does() {
+        assert!(folds_into_more(pane_width(1024).expect("a pane")));
+        assert!(!folds_into_more(pane_width(1280).expect("a pane")));
     }
 
     #[test]
