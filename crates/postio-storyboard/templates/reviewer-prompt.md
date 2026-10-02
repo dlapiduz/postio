@@ -51,6 +51,16 @@ Report findings for anything a person would notice:
 - an inconsistency with another storyboard or app in the batch;
 - a jump or blank the runner flagged.
 
+**What the runner does on purpose, and is not a finding:**
+
+- Text in scripts the embedded fonts do not cover (CJK, emoji) draws as
+  boxes. The runner gives fontconfig only Postio's own faces, so that a font
+  update can never move a pixel between two runs.
+- The magenta outline and its caption mark where the keyboard is. They are
+  drawn by the runner on the outlined frame, not by the app.
+- Dates read as of 2 June 2026, 09:00 UTC. The clock is frozen there.
+- Nothing animates. Animations are off, so every frame is a resting state.
+
 ## 5. How to word a finding
 
 Say what a person would notice, in their terms, and name the rule it rests

@@ -368,7 +368,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
 
   Implement `event` steps by emitting on the wiring's `EventSink`. T039 goes
   green. Write `storyboards/README.md` from `contracts/storyboard-format.md`.
-- [ ] T041 [US1] Write the example `crates/postio-app/examples/storyboard.rs`
+- [X] T041 [US1] Write the example `crates/postio-app/examples/storyboard.rs`
   (`required-features = ["demo"]`), with the subcommands `list` and `run`
   (`contracts/runner.md`). Add the hermetic re-exec from research R5:
   - `TZ` and `LANG`;
