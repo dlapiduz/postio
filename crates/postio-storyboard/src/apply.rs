@@ -7,9 +7,10 @@
 use std::collections::BTreeMap;
 
 use postio_core::CommandId;
+use postio_core::registry::{self, Requirement};
 use serde::{Deserialize, Serialize};
 
-use crate::format::Storyboard;
+use crate::format::{Apps, Input, Storyboard};
 
 /// A Postio frontend a storyboard can be played against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -25,15 +26,38 @@ pub enum App {
     Macos,
 }
 
-/// Whether `app` exists on this branch at all. Focus and macOS are built on
-/// other branches; here they are named in the vocabulary and nothing more.
-pub fn present(_app: App) -> bool {
-    true
+impl std::fmt::Display for App {
+    /// The name the storyboard file and `runner list` spell it with.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            App::Classic => "classic",
+            App::Focus => "focus",
+            App::Terminal => "terminal",
+            App::Macos => "macos",
+        })
+    }
 }
 
-/// Whether `app` offers `command`, by what the registry says it requires.
-pub fn provides(_app: App, _command: CommandId) -> bool {
-    true
+/// Whether `app` exists on this branch at all. Focus and macOS are built on
+/// other branches; here they are named in the vocabulary and nothing more.
+/// The Focus lane changes this, and `provides`, where its code lands
+/// (research R7).
+pub fn present(app: App) -> bool {
+    matches!(app, App::Classic | App::Terminal)
+}
+
+/// Whether `app` offers `command`, by what the registry says it requires: the
+/// desktop does not offer what only the terminal's composer has, and the
+/// terminal does not offer what is about drawing pixels. A command the
+/// registry offers but the app never wired still counts as provided; that gap
+/// is what the generated pass is for.
+pub fn provides(app: App, command: CommandId) -> bool {
+    let requires = registry::get(command).requires;
+    match app {
+        App::Classic => !requires.contains(Requirement::Terminal),
+        App::Terminal => !requires.contains(Requirement::Graphical),
+        App::Focus | App::Macos => false,
+    }
 }
 
 /// What a runner declares it can build, as `runner list` reports it.
@@ -79,22 +103,88 @@ pub enum Reason {
 }
 
 /// Whether `storyboard` applies to `app`, given what its runner declares.
-pub fn applies(_storyboard: &Storyboard, _app: App, _info: &RunnerInfo) -> Applicability {
-    Applicability::Applies
+///
+/// Every reason is listed, not just the first, so one run of the lint says
+/// everything standing between a storyboard and an app.
+pub fn applies(storyboard: &Storyboard, app: App, info: &RunnerInfo) -> Applicability {
+    if !present(app) {
+        return Applicability::NotApplicable(vec![Reason::NotPresentOnBranch]);
+    }
+    let mut reasons = Vec::new();
+    if let Apps::Named(named) = &storyboard.apps
+        && !named.contains(&app)
+    {
+        reasons.push(Reason::NotNamed);
+    }
+    for command in commands_needed(storyboard, app) {
+        if !provides(app, command) {
+            reasons.push(Reason::MissingCommand(command.as_str().to_owned()));
+        }
+    }
+    if !info.seeds.iter().any(|seed| seed == storyboard.seed()) {
+        reasons.push(Reason::MissingSeed(storyboard.seed().to_owned()));
+    }
+    if let Some(preset) = &storyboard.preset
+        && !info.presets.contains(preset)
+    {
+        reasons.push(Reason::MissingPreset(preset.clone()));
+    }
+    if reasons.is_empty() {
+        Applicability::Applies
+    } else {
+        Applicability::NotApplicable(reasons)
+    }
 }
 
 /// Commands an explicitly named, present app does not provide: `(app,
-/// command id)`. Naming apps turns each into a load error.
-pub fn unprovided_for_named_apps(_storyboard: &Storyboard) -> Vec<(App, String)> {
-    Vec::new()
+/// command id)`. Naming apps turns each into a load error, because the author
+/// asked for that app and the storyboard cannot be played on it. Apps absent
+/// from this branch are not judged; there is no registry to ask.
+pub fn unprovided_for_named_apps(storyboard: &Storyboard) -> Vec<(App, String)> {
+    let Apps::Named(named) = &storyboard.apps else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for app in named.iter().copied().filter(|app| present(*app)) {
+        for command in commands_needed(storyboard, app) {
+            if !provides(app, command) {
+                out.push((app, command.as_str().to_owned()));
+            }
+        }
+    }
+    out
+}
+
+/// The commands `app` would have to press, once: those of steps it does not
+/// skip. A command that is not an id is the lint's to report, not this
+/// module's.
+fn commands_needed(storyboard: &Storyboard, app: App) -> Vec<CommandId> {
+    let skipped = |number: usize, id: Option<&str>| {
+        storyboard.overrides.get(&app).is_some_and(|steps| {
+            [Some(number.to_string()), id.map(str::to_owned)]
+                .into_iter()
+                .flatten()
+                .any(|reference| steps.get(&reference).is_some_and(|o| o.skip.is_some()))
+        })
+    };
+    let mut out = Vec::new();
+    for (index, step) in storyboard.steps.iter().enumerate() {
+        if skipped(index + 1, step.id.as_deref()) {
+            continue;
+        }
+        if let Input::Command(id) = &step.input
+            && let Ok(command) = id.parse::<CommandId>()
+            && !out.contains(&command)
+        {
+            out.push(command);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-
-    use postio_core::registry;
-    use postio_core::registry::Requirement;
 
     use super::*;
     use crate::format::parse;
