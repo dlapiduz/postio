@@ -63,7 +63,7 @@ impl Settings {
         let panel = SettingsPanel::new();
         panel.set_frontend(Frontend::Focus);
         // The message dialog is at most 820 wide, so a pane is at most 606:
-        // too narrow for two columns side by side (screens.md, "Narrow").
+        // too narrow for two columns side by side (screens.md, Settings, "One column").
         panel.set_narrow(true);
         panel.set_vexpand(true);
 
