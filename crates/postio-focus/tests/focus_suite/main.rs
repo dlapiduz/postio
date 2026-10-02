@@ -994,6 +994,10 @@ const CASES: &[(&str, fn())] = &[
         "icon_buttons::the_settings_icon_buttons_keep_their_own_shape",
         icon_buttons::the_settings_icon_buttons_keep_their_own_shape as fn(),
     ),
+    (
+        "settings::a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next",
+        settings::a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next as fn(),
+    ),
 ];
 
 use gtk::glib;

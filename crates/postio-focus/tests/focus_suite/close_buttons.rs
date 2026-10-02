@@ -153,8 +153,7 @@ pub fn settings_has_the_same_x_at_the_right() {
         if !support::display() {
             return;
         }
-        let (_fixture, window, _directory, _path) =
-            crate::settings::one_message_under("").await;
+        let (_fixture, window, _directory, _path) = crate::settings::one_message_under("").await;
         support::deliver_with(&window, "comma", gtk::gdk::ModifierType::CONTROL_MASK);
         let dialog = crate::settings::settings_shown(&window)
             .await

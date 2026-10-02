@@ -235,7 +235,7 @@ button.postio-button-secondary:hover {
 }
 
 button.postio-settings-keys-binding {
-  border-color: var(--postio-hairline-strong);
+  border: 1px solid var(--postio-hairline-strong);
   color: var(--postio-ink);
 }
 
@@ -265,6 +265,27 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 
 .postio-settings-account-warning {
   color: var(--postio-error);
+}
+
+/* An account's enable switch: on is the ink, as a checked box is. */
+.postio-settings switch:checked {
+  background-color: var(--postio-ink-secondary);
+}
+
+/* The section list's and a pane's small headings ("MAIL", "Check for
+   mail"): the classic app's kicker comes from its generated tokens, which
+   Focus does not load. Here it is Focus's own small heading, in its face. */
+.postio-settings .postio-kicker {
+  font-family: var(--postio-font-body);
+  font-weight: bold;
+  font-size: var(--postio-text-micro);
+  letter-spacing: 0.08em;
+  color: var(--postio-dim);
+}
+
+/* The header is the message dialog's, ruled off from the panel below. */
+.focus-settings-header {
+  border-bottom: 1px solid var(--postio-hairline);
 }
 
 /* ── Day headings (32 px) ───────────────────────────────────────────── */

@@ -549,3 +549,67 @@ pub fn mod_e_opens_config_toml_in_the_persons_editor() {
         );
     });
 }
+
+/// Filters (classic-parity row 42): deleting a saved search in Settings
+/// writes `[filters]`, and Focus follows the file, so `alt+1` runs the one
+/// that is first now.
+pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _directory, path) = one_message_under(
+            "[filters.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\n\
+             name = \"Waiting on reply\"\n\n\
+             [filters.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\n\
+             name = \"Atlas\"\n",
+        )
+        .await;
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        let filters = || {
+            section_rows(&dialog)
+                .into_iter()
+                .find(|(name, _)| name == "Filters")
+                .map(|(_, row)| row)
+        };
+        assert!(crate::settle_until(async || filters().is_some()).await);
+        support::click(&window, &filters().expect("Filters"), 1);
+        let delete = || {
+            support::with_class(&dialog, "postio-settings-filter-delete")
+                .into_iter()
+                .find(|button| button.is_mapped() && button.width() > 0)
+        };
+        assert!(
+            crate::settle_until(async || delete().is_some()).await,
+            "Filters lists the saved searches, each with Delete"
+        );
+        support::click(&window, &delete().expect("the first Delete"), 1);
+        assert!(
+            crate::settle_until(async || {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                !text.contains("from:juno") && text.contains("subject:atlas")
+            })
+            .await,
+            "the first saved search left config.toml, and the second stayed: {}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+
+        support::deliver(&window, "Escape");
+        assert!(settings_gone(&window).await);
+        assert!(
+            crate::settle_until(async || {
+                support::deliver_with(&window, "1", ModifierType::ALT_MASK);
+                let opened = window.bar().is_some_and(|bar| bar.is_open());
+                let query = window.bar().map(|bar| bar.query()).unwrap_or_default();
+                if opened && query != "subject:atlas" {
+                    support::deliver(&window, "Escape");
+                }
+                opened && query == "subject:atlas"
+            })
+            .await,
+            "alt+1 runs Atlas now: {:?}",
+            window.bar().map(|bar| bar.query())
+        );
+    });
+}

@@ -73,6 +73,9 @@ impl Settings {
         let search = panel.search_field();
         search.set_valign(gtk::Align::Center);
         search.add_css_class("focus-settings-search");
+        // Narrower than the classic header's: the title stays centred in a
+        // dialog as narrow as 640.
+        search.set_width_chars(16);
         let title = gtk::Label::new(Some("Settings"));
         title.add_css_class("focus-open-title");
         title.set_accessible_role(gtk::AccessibleRole::Heading);

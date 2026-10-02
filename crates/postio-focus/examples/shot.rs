@@ -31,6 +31,10 @@
 //! | `31` | The same newsletter past its render deadline: the plain-text fallback (T218) |
 //! | `32` | A new message with an attachment and "Remind if no reply" chosen (T221's states) |
 //! | `33` | A store no migration reaches: the page offering a fresh store (T215, T216) |
+//! | `40` | Settings over screen 01: Accounts, the account's detail open (T234) |
+//! | `41` | Settings: Sync & storage, with each folder's "Back up locally" |
+//! | `42` | Settings: Keyboard, Focus's commands and their keys |
+//! | `43` | Settings: Privacy |
 //!
 //! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
 //! (1440x900, the references', by default). A screen that is not built yet,
@@ -238,6 +242,10 @@ const SCREENS: &[(&str, &str)] = &[
     ),
     ("35", "the reading pane with nothing open"),
     ("36", "reply to all in the reading pane, beside the inbox"),
+    ("40", "Settings: Accounts, the account's detail open"),
+    ("41", "Settings: Sync & storage, each folder's backfill"),
+    ("42", "Settings: Keyboard"),
+    ("43", "Settings: Privacy"),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -673,10 +681,18 @@ fn render(args: &[String]) -> Result<String, String> {
     let config = postio_config::Config::from_toml_str(&text)
         .map_err(|error| format!("the demo's config: {error}"))?;
 
+    // Settings shows the file it writes: the demo's, in a scratch place.
+    // Under /tmp, whatever TMPDIR says: the foot strip prints the path.
+    let config_dir = tempfile::Builder::new()
+        .prefix("postio-shot")
+        .tempdir_in("/tmp")
+        .map_err(|error| format!("no scratch: {error}"))?;
+    let config_path = config_dir.path().join("config.toml");
+    std::fs::write(&config_path, &text).map_err(|error| format!("no config: {error}"))?;
     let window = FocusWindow::new(None);
     window.set_default_size(request.size.0, request.size.1);
     window.present();
-    let session = postio_focus::startup::adopt(&window, host, &config);
+    let session = postio_focus::startup::adopt_at(&window, host, &config, Some(&config_path));
 
     let outcome = stage(&window, &request.screen, &sink, account).and_then(|()| {
         postio_widgets::capture::png(&window, std::path::Path::new(&request.path))
@@ -1131,6 +1147,41 @@ fn stage(
             }) {
                 return Err("Filtered never listed the demo's filtered mail".into());
             }
+        }
+        "40" | "41" | "42" | "43" => {
+            pick_three();
+            window.act(CommandId::Settings);
+            let settings = || window.settings().filter(|settings| settings.is_open());
+            if !settle_until(|| {
+                settings().is_some_and(|settings| {
+                    settings.panel().is_mapped() && settings.panel().width() > 0
+                })
+            }) {
+                return Err("Settings never opened".into());
+            }
+            let settings = settings().ok_or("Settings closed")?;
+            let panel = settings.panel().clone();
+            let section = match screen {
+                "41" => postio_ui::settings::Section::Sync,
+                "42" => postio_ui::settings::Section::Keyboard,
+                "43" => postio_ui::settings::Section::Privacy,
+                _ => postio_ui::settings::Section::Accounts,
+            };
+            panel.show_section(section);
+            if screen == "40" {
+                // The account's row, read by the presenter, then its form.
+                if !settle_until(|| panel.accounts_list().row_at_index(0).is_some()) {
+                    return Err("the account's row never landed".into());
+                }
+                panel.open_account_detail(account);
+            }
+            if screen == "41" {
+                // The folders land a read after the pane: give them it.
+                let shown = Instant::now();
+                settle_until(|| shown.elapsed() > Duration::from_millis(800));
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(400));
         }
         "20" => {
             pick_three();
