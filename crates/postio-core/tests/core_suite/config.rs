@@ -289,9 +289,9 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
     );
 
     // A command whose *only* binding is taken is palette-only rather than
-    // dead, which is the case this test was written for. `d` is Delete's, and
-    // Delete has no second layer.
-    let keymap = Keymap::resolve(&bindings(&[("flag", "d")]));
+    // dead, which is the case this test was written for. `Delete` is
+    // Delete's under the one keymap, and Delete has no second layer.
+    let keymap = Keymap::resolve(&bindings(&[("flag", "Delete")]));
     assert_eq!(
         keymap.binding(CommandId::Delete),
         None,

@@ -19,6 +19,12 @@ Legend:
     banner uses it.
 - **New**: a new `CommandId`, and so a new `[keys]` name.
 - `mod` is Ctrl on Linux and ⌘ on macOS (`crates/postio-config/src/keys.rs:191-221`).
+- **The second layer**: the `mod` chords the macOS frontend (#1306) gave the
+  menu-shaped verbs, so each can sit in a menu bar. They are alternates
+  beside the keys this table sets, never instead of them, and every app
+  has them. `registry::offered_on` withholds a command from a platform with
+  no surface for it (on macOS: `darken_message`, `detach_composer`,
+  `next_scope`), and then it has no key there.
 
 ## Message surfaces: List, Conversation, Reader
 
@@ -36,9 +42,9 @@ it.
 | `J` / `K` | `extend_selection_down` / `_up` | All | Unchanged (list, reader, search) |
 | `X` (alt `mod+a`) | `select_all` | All | Was `mod+a` |
 | `Escape` | `back` | All | Unchanged. Clears the selection in the list, closes a dialog |
-| `]` / `[` | `next_in_conversation` / `prev_in_conversation` | All | Were `J`/`K`, conversation only. Now also in the reader, where they step the dialog through the thread |
-| `e` / `E` / `f` | `reply` / `reply_all` / `forward` | All | Unchanged |
-| `a` | `archive` | All | Unchanged |
+| `]` / `[` | `next_in_conversation` / `prev_in_conversation` | All | Were `J`/`K`, conversation only. Now also in the reader, where they step the dialog through the thread. Alternates `alt+Down` / `alt+Up` (the second layer) |
+| `e` / `E` / `f` | `reply` / `reply_all` / `forward` | All | Unchanged. Alternates `mod+r` / `mod+shift+r` / `mod+shift+f` (the second layer) |
+| `a` | `archive` | All | Unchanged. Alternate `mod+shift+a` (the second layer) |
 | `A` | `archive_thread` | All | Unchanged. In `Context::Digest` it archives the whole digest |
 | `Delete` | `delete` | All | Was `d` |
 | `s` | `snooze` | All | Was `b`. Opens the snooze picker; gains an `until` (R6) |
@@ -48,7 +54,7 @@ it.
 | `l` | `add_label` | All | Was `L`. Opens the label picker in Focus, and the finder's `+` mode in the classic app |
 | `m` | `move` | All | Unchanged. Opens the move picker in Focus, and the finder's `#` mode in the classic app |
 | `mod+z` | `undo` | All | Was `u`. Cancels an open RSVP window first (R9) |
-| `c` | `compose` | All | Unchanged |
+| `c` | `compose` | All | Unchanged. Alternate `mod+n` (the second layer) |
 | `y` / `Y` | `accept_invite` / `decline_invite` | Focus | **New** |
 | `U` | `unsubscribe` | All | Was `X` |
 | `d` | `digest_rule` | Focus | **New.** From a message: the dialog for a new sender rule. In a digest: edit its rule and cadence |
@@ -63,7 +69,7 @@ it.
 
 | Key | Command id | Offered by | Change |
 |---|---|---|---|
-| `/` | `search` | All | Unchanged. Focus's command bar, open for mail search (spec C24) |
+| `/` | `search` | All | Unchanged. Focus's command bar, open for mail search (spec C24). Alternate `alt+mod+f` (the second layer) |
 | `mod+k` | `command_palette` | All | Unchanged. Focus's command bar, open in command mode with `>` already typed, so only commands show (spec C24) |
 | `g i` | `go_to_inbox` | All | Unchanged |
 | `g o` | `go_to_folders` | All | **New id, replaces `focus_sidebar` (`g f`).** The classic app focuses its folder list, and Focus opens its folders popover |

@@ -142,21 +142,22 @@ const CONTRACT: &[Row] = &[
     with(
         "next_in_conversation",
         "]",
-        &[],
+        &["alt+Down"],
         All,
         &[Context::Conversation, Context::Reader],
     ),
     with(
         "prev_in_conversation",
         "[",
-        &[],
+        &["alt+Up"],
         All,
         &[Context::Conversation, Context::Reader],
     ),
-    row("reply", "e", All),
-    row("reply_all", "E", All),
-    row("forward", "f", All),
-    row("archive", "a", All),
+    // The second layer's chords (#1306): alternates, in every app.
+    with("reply", "e", &["mod+r"], All, &[]),
+    with("reply_all", "E", &["mod+shift+r"], All, &[]),
+    with("forward", "f", &["mod+shift+f"], All, &[]),
+    with("archive", "a", &["mod+shift+a"], All, &[]),
     with("archive_thread", "A", &[], All, &[Context::Digest]),
     row("delete", "Delete", All),
     row("snooze", "s", All),
@@ -173,7 +174,7 @@ const CONTRACT: &[Row] = &[
     row("add_label", "l", All),
     row("move", "m", All),
     row("undo", "mod+z", All),
-    row("compose", "c", All),
+    with("compose", "c", &["mod+n"], All, &[]),
     row("accept_invite", "y", Focus),
     row("decline_invite", "Y", Focus),
     with(
@@ -197,7 +198,7 @@ const CONTRACT: &[Row] = &[
     row("prev_view", "Left", All),
     row("darken_message", "alt+d", Graphical),
     // -- Going places: Global, and the surfaces that go ------------------
-    row("search", "/", All),
+    with("search", "/", &["alt+mod+f"], All, &[]),
     row("command_palette", "mod+k", All),
     row("go_to_inbox", "g i", All),
     row("go_to_folders", "g o", All),
@@ -423,7 +424,11 @@ fn every_command_an_app_offers_has_a_key() {
     for app in APPS {
         let keymap = Keymap::resolve_on(&KeyBindings::default(), platform_of(app));
         for spec in registry::all() {
-            if !spec.requires.met_by(open_in(app)) {
+            // Not offered, and so unbound, where the platform has no
+            // surface for it (`registry::offered_on`).
+            if !spec.requires.met_by(open_in(app))
+                || !registry::offered_on(spec.id.into(), platform_of(app))
+            {
                 continue;
             }
             assert!(
@@ -468,7 +473,9 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
     for spec in registry::all() {
         let mut keys: Vec<(Frontend, Vec<String>)> = Vec::new();
         for app in APPS {
-            if !spec.requires.met_by(open_in(app)) {
+            if !spec.requires.met_by(open_in(app))
+                || !registry::offered_on(spec.id.into(), platform_of(app))
+            {
                 continue;
             }
             let keymap = Keymap::resolve_on(&KeyBindings::default(), platform_of(app));
