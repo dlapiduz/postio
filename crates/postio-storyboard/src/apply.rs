@@ -182,6 +182,41 @@ fn commands_needed(storyboard: &Storyboard, app: App) -> Vec<CommandId> {
     out
 }
 
+/// Every variant a storyboard asks this app for: the cross product of the
+/// values it lists on each axis the app supports, plus the axes it asked
+/// for that the app does not have (FR-017). A storyboard that varies nothing
+/// has one variant, the default, which is empty.
+pub fn variants(
+    storyboard: &Storyboard,
+    info: &RunnerInfo,
+) -> (Vec<BTreeMap<String, String>>, Vec<String>) {
+    let mut ignored = Vec::new();
+    let mut all: Vec<BTreeMap<String, String>> = vec![BTreeMap::new()];
+    for (axis, asked) in &storyboard.vary {
+        let Some(supported) = info.axes.get(axis) else {
+            ignored.push(axis.clone());
+            continue;
+        };
+        let values: Vec<&String> = asked.iter().filter(|v| supported.contains(v)).collect();
+        if values.is_empty() {
+            ignored.push(axis.clone());
+            continue;
+        }
+        all = all
+            .into_iter()
+            .flat_map(|variant| {
+                values.iter().map(move |value| {
+                    let mut next = variant.clone();
+                    next.insert(axis.clone(), (*value).clone());
+                    next
+                })
+            })
+            .collect();
+    }
+    all.sort_by_key(crate::run::variant_key);
+    (all, ignored)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -326,5 +361,73 @@ mod tests {
             applies(&plain, App::Classic, &bare),
             Applicability::NotApplicable(vec![Reason::MissingSeed("small".into())])
         );
+    }
+
+    #[test]
+    fn variants_are_the_cross_product_of_what_is_asked_and_supported() {
+        let board = parse(
+            "source = { kind = \"flow\", ref = \"x\" }\n\
+             vary = { scheme = [\"light\", \"dark\"], width = [\"wide\", \"narrow\"], density = [\"compact\"] }\n",
+            Path::new("list/walk.toml"),
+        )
+        .expect("loads");
+        let mut info = info(App::Classic);
+        info.axes = [
+            (
+                "scheme".to_owned(),
+                vec!["light".to_owned(), "dark".to_owned()],
+            ),
+            (
+                "width".to_owned(),
+                vec!["wide".to_owned(), "normal".to_owned(), "narrow".to_owned()],
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let (all, ignored) = variants(&board, &info);
+        let keys: Vec<String> = all.iter().map(crate::run::variant_key).collect();
+        assert_eq!(
+            keys,
+            [
+                "scheme=dark,width=narrow",
+                "scheme=dark,width=wide",
+                "scheme=light,width=narrow",
+                "scheme=light,width=wide"
+            ]
+        );
+        assert_eq!(
+            ignored,
+            ["density"],
+            "an axis the app lacks is said, not played"
+        );
+    }
+
+    #[test]
+    fn an_unsupported_value_is_left_out_and_nothing_asked_is_the_default() {
+        let board = parse(
+            "source = { kind = \"flow\", ref = \"x\" }\nvary = { scheme = [\"dark\", \"sepia\"] }\n",
+            Path::new("list/walk.toml"),
+        )
+        .expect("loads");
+        let mut info = info(App::Classic);
+        info.axes = [(
+            "scheme".to_owned(),
+            vec!["light".to_owned(), "dark".to_owned()],
+        )]
+        .into_iter()
+        .collect();
+        let (all, _) = variants(&board, &info);
+        assert_eq!(
+            all.iter().map(crate::run::variant_key).collect::<Vec<_>>(),
+            ["scheme=dark"]
+        );
+        let plain = parse(
+            "source = { kind = \"flow\", ref = \"x\" }\n",
+            Path::new("list/walk.toml"),
+        )
+        .expect("loads");
+        let (all, ignored) = variants(&plain, &info);
+        assert_eq!(all, [BTreeMap::new()]);
+        assert!(ignored.is_empty());
     }
 }

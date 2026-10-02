@@ -14,6 +14,7 @@
 # Usage
 # -----
 #   scripts/storyboards.sh run   [--app classic|focus|all] [--only <glob>] [--no-frames] [--delivery chain|direct]
+#                                [--variants]      # every variant each storyboard asks for
 #                                [--calibration]   # play only the reviewer's calibration set
 #   scripts/storyboards.sh lint                    # load and lint the whole catalogue
 #   scripts/storyboards.sh page  [--open]          # Design/review/<branch>/index.html from the runs
@@ -41,7 +42,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -64,6 +65,7 @@ while [ $# -gt 0 ]; do
         --app)       APP="${2:?--app needs classic, focus or all}"; shift 2 ;;
         --only)      ONLY="${2:?--only needs a pattern}"; shift 2 ;;
         --no-frames) RUNNER_ARGS+=(--no-frames); shift ;;
+        --variants)  RUNNER_ARGS+=(--variants); shift ;;
         --delivery)  RUNNER_ARGS+=(--delivery "${2:?--delivery needs chain or direct}"); shift 2 ;;
         --open)      OPEN=1; shift ;;
         --calibration) CALIBRATION=1; shift ;;
