@@ -35,6 +35,7 @@ mod dwell_wiring;
 mod egress_wiring;
 mod escape_after_finder_closed;
 mod event_fanout;
+mod every_command;
 mod focus_on_launch;
 mod folder_header_count;
 mod glib_main_context;
@@ -351,6 +352,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "storyboards::a_storyboard_plays_on_classic_and_writes_its_run",
         storyboards::a_storyboard_plays_on_classic_and_writes_its_run as fn(),
+    ),
+    (
+        "every_command::every_bound_command_shows_or_is_a_listed_gap",
+        every_command::every_bound_command_shows_or_is_a_listed_gap as fn(),
     ),
     (
         "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",
