@@ -13,6 +13,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
+postio-core = { workspace = true }
+postio-config = { workspace = true }
+postio-ui = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
