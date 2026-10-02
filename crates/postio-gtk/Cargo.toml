@@ -9,6 +9,7 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+serde_json = { workspace = true }
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 async-channel = { workspace = true }
 blake3 = { workspace = true }

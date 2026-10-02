@@ -3846,3 +3846,264 @@ impl Default for Window {
         glib::Object::new()
     }
 }
+
+impl Window {
+    /// Where everything is, for a storyboard (specs/008-storyboards,
+    /// contracts/observation.md § Classic).
+    ///
+    /// Every field is read off what is on screen -- the widget that really
+    /// holds the keyboard, the cursor's row, the toast that is up -- and not
+    /// off what a pane was told, because a field read from what a layer was
+    /// told cannot fail when the join between them breaks. It reads only:
+    /// no store, no command, no focus change, and it never builds a pane
+    /// that does not exist yet (each slot is asked, not each accessor that
+    /// would install one).
+    ///
+    /// Two fields Classic does not observe, and says so by leaving them
+    /// empty: `rows.first_visible` (the list knows its scroll in pixels,
+    /// not in rows) and `banner.title`. The runner declares both
+    /// unobserved, so a check on them reads "not applicable", never a
+    /// pass. `back_depth` is `None` because Classic's Back is a cascade,
+    /// not a stack.
+    pub fn observe(&self) -> postio_ui::observe::Observation {
+        use postio_ui::observe::{
+            Banner, Composer as ComposerState, Cursor, Keyboard, Notice, Observation, Overlay,
+            OverlayState, Reading, Region, Rows, Scroll, Selection as SelectionCount, View,
+            Window as WindowState,
+        };
+
+        let imp = self.imp();
+        let toplevel: &gtk::Window = self.upcast_ref();
+        let target = crate::storyboard::deliver::keyboard_target(toplevel);
+        let focus = gtk::prelude::GtkWindowExt::focus(self);
+        let within = |pane: &gtk::Widget| {
+            focus
+                .as_ref()
+                .is_some_and(|widget| widget == pane || widget.is_ancestor(pane))
+        };
+
+        // The finder decides whether it has the keyboard, by asking where
+        // focus is (`Finder::has_keyboard`): a search leaves the field up
+        // with the list in charge, and that is not the finder's keyboard.
+        let finder = imp.finder.get();
+        let finder_mode = finder.filter(|f| f.is_open()).map(|f| f.mode());
+        let finder_has_keyboard = finder.is_some_and(|f| f.has_keyboard());
+        let cheatsheet_up = imp.cheatsheet.get().is_some_and(|c| c.is_visible());
+        let dialog = crate::storyboard::deliver::presented_dialog(toplevel);
+        let composer = imp.composer.borrow().clone();
+        let composer_open = composer.as_ref().is_some_and(|c| c.is_open());
+
+        let region = if dialog.is_some() {
+            Region::Dialog
+        } else if cheatsheet_up && imp.cheatsheet.get().is_some_and(|c| within(c.upcast_ref())) {
+            Region::Cheatsheet
+        } else if finder_has_keyboard {
+            match finder_mode {
+                Some(crate::finder::Mode::Command) => Region::Palette,
+                Some(crate::finder::Mode::Mailbox | crate::finder::Mode::Label) => Region::Picker,
+                _ => Region::Search,
+            }
+        } else if focus.is_none() {
+            Region::None
+        } else if composer
+            .as_ref()
+            .is_some_and(|c| composer_open && within(c.upcast_ref()))
+        {
+            Region::Composer
+        } else if imp
+            .conversation
+            .get()
+            .is_some_and(|pane| within(&pane.widget()))
+        {
+            Region::Conversation
+        } else if imp
+            .reader
+            .get()
+            .is_some_and(|reader| within(&reader.widget()))
+        {
+            Region::Reader
+        } else if imp.list.get().is_some_and(|list| within(list.upcast_ref())) {
+            Region::List
+        } else if imp
+            .sidebar
+            .get()
+            .is_some_and(|bar| within(bar.upcast_ref()))
+        {
+            Region::Sidebar
+        } else {
+            Region::Other
+        };
+
+        let field = match region {
+            Region::Composer => composer
+                .as_ref()
+                .and_then(|c| c.focused_field())
+                .map(|field| format!("{field:?}").to_lowercase()),
+            Region::Search | Region::Palette | Region::Picker => Some("query".to_owned()),
+            _ => None,
+        };
+
+        // The widget path, for a reader of the run. Informative only: no
+        // check may name it, because widget types are not stable.
+        let mut path = Vec::new();
+        let mut node = Some(target.clone());
+        while let Some(widget) = node {
+            path.push(widget.type_().name().to_string());
+            node = widget.parent();
+        }
+        path.reverse();
+
+        let list = imp.list.get();
+        let cursor_index = list
+            .map(|list| list.cursor().selected())
+            .filter(|index| *index != gtk::INVALID_LIST_POSITION);
+        let cursor_row = list.and_then(|list| list.cursor_row());
+        let count = list.map(|list| list.model().n_items());
+        let selected = list.map_or(0, |list| match list.selection().selection() {
+            postio_core::state::Selection::These(ids) => ids.len() as u32,
+            postio_core::state::Selection::Everything { except } => {
+                count.unwrap_or(0).saturating_sub(except.len() as u32)
+            }
+        });
+
+        let overlay = if dialog.is_some() {
+            OverlayState {
+                kind: Overlay::Dialog,
+                mode: dialog.map(|d| d.type_().name().to_string()),
+            }
+        } else if cheatsheet_up {
+            OverlayState {
+                kind: Overlay::Cheatsheet,
+                mode: None,
+            }
+        } else if let Some(mode) = finder_mode {
+            let kind = match mode {
+                crate::finder::Mode::Command => Overlay::Palette,
+                crate::finder::Mode::Mailbox | crate::finder::Mode::Label => Overlay::Picker,
+                _ => Overlay::Finder,
+            };
+            OverlayState {
+                kind,
+                mode: Some(format!("{mode:?}").to_lowercase()),
+            }
+        } else {
+            OverlayState {
+                kind: Overlay::None,
+                mode: None,
+            }
+        };
+
+        let toast = imp.toast.get();
+        let notice = Notice {
+            text: toast
+                .filter(|t| t.tone().is_some())
+                .and_then(|t| t.showing())
+                .and_then(|t| t.title())
+                .map(|title| title.to_string()),
+            tone: toast.and_then(|t| t.tone()),
+            undo: toast.is_some_and(|t| t.offers_undo()),
+        };
+
+        let shell = imp.shell.get();
+        let occupant = shell.map(|shell| shell.reader_occupant());
+        let conversation = imp.conversation.get();
+        let view = if self.settings_window().is_some_and(|w| w.is_visible()) {
+            View::Settings
+        } else if imp.orientation.get().is_some_and(|o| o.is_visible()) {
+            View::FirstRun
+        } else {
+            match occupant {
+                Some(crate::shell::ReaderOccupant::Composer) => View::Composer,
+                Some(crate::shell::ReaderOccupant::Conversation) => View::Conversation,
+                Some(crate::shell::ReaderOccupant::SearchPreview) => View::Search,
+                Some(crate::shell::ReaderOccupant::Reader) if self.reading() => View::Reader,
+                _ => View::List,
+            }
+        };
+
+        let reading_id = match view {
+            View::Conversation => conversation
+                .and_then(|pane| pane.focused())
+                .map(|id| id.get().to_string()),
+            View::Reader => list
+                .and_then(|list| list.cursor_id())
+                .map(|id| id.get().to_string()),
+            _ => None,
+        };
+        let reader = match view {
+            View::Conversation => conversation.and_then(|pane| pane.document_reader()),
+            View::Reader => imp.reader.get().cloned(),
+            _ => None,
+        };
+        let scroll = reader
+            .and_then(|reader| reader.view().vadjustment())
+            .map(|a| Scroll {
+                offset: a.value().max(0.0) as u32,
+                max: (a.upper() - a.page_size()).max(0.0) as u32,
+            });
+
+        let mut app = std::collections::BTreeMap::new();
+        if let Some(shell) = shell {
+            app.insert(
+                "classic.pane".to_owned(),
+                serde_json::Value::String(format!("{:?}", shell.focused_pane()).to_lowercase()),
+            );
+            app.insert(
+                "classic.reader_occupant".to_owned(),
+                serde_json::Value::String(format!("{:?}", shell.reader_occupant()).to_lowercase()),
+            );
+        }
+        if let Some(list) = list {
+            app.insert(
+                "classic.list_scroll".to_owned(),
+                serde_json::Value::from(list.scroll_offset().max(0.0) as u64),
+            );
+        }
+
+        Observation {
+            window: if self.is_visible() {
+                WindowState::Open
+            } else {
+                WindowState::Closed
+            },
+            view,
+            scope: Some(format!("{:?}", self.scope())),
+            keyboard: Keyboard {
+                region,
+                field,
+                typing: self.is_typing(),
+                reachable: crate::storyboard::reach::reachable(toplevel),
+                widget: path.join("/"),
+            },
+            cursor: Cursor {
+                index: cursor_index,
+                id: list
+                    .and_then(|list| list.cursor_id())
+                    .map(|id| id.get().to_string()),
+                subject: cursor_row.and_then(|row| row.subject),
+            },
+            rows: Rows {
+                first_visible: None,
+                count,
+            },
+            selection: SelectionCount { count: selected },
+            overlay,
+            notice,
+            banner: Banner { title: None },
+            reading: Reading {
+                id: reading_id,
+                focused: conversation
+                    .filter(|_| view == View::Conversation)
+                    .and_then(|pane| pane.focused_index())
+                    .map(|index| index as u32),
+                scroll,
+            },
+            composer: ComposerState {
+                open: composer_open,
+                detached: !imp.detached_composers.borrow().is_empty(),
+            },
+            back_depth: None,
+            app,
+        }
+    }
+}

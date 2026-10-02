@@ -4893,6 +4893,7 @@ dependencies = [
  "postio-test-support",
  "postio-ui",
  "postio-widgets",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tracing",
