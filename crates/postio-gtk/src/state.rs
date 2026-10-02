@@ -16,15 +16,7 @@ use std::path::{Path, PathBuf};
 
 use gtk::glib;
 use postio_model::ids::MailboxId;
-
-/// The key-file group everything lives under.
-const GROUP: &str = "Window";
-
-/// The widest a stored dimension may be before it is treated as corrupt.
-///
-/// Displays get bigger; this only has to be absurd, not tight. It exists so a
-/// truncated write or a hand-edit cannot open a window nobody can reach.
-const SANE_MAX: i32 = 32_000;
+use postio_widgets::state::{GROUP, Geometry, length};
 
 /// The geometry and pane proportions a window reopens with.
 ///
@@ -77,20 +69,22 @@ impl WindowState {
         }
 
         let fallback = Self::default();
-        let length = |key: &str, default: i32| match key_file.integer(GROUP, key) {
-            // A zero-width pane or a window wider than any display is not a
-            // preference, it is a corrupt file.
-            Ok(value) if (1..=SANE_MAX).contains(&value) => value,
-            _ => default,
-        };
         let flag = |key: &str, default: bool| key_file.boolean(GROUP, key).unwrap_or(default);
+        let geometry = Geometry::read(
+            &key_file,
+            Geometry {
+                width: fallback.width,
+                height: fallback.height,
+                maximized: fallback.maximized,
+            },
+        );
 
         WindowState {
-            width: length("width", fallback.width),
-            height: length("height", fallback.height),
-            maximized: flag("maximized", fallback.maximized),
-            sidebar_width: length("sidebar-width", fallback.sidebar_width),
-            list_width: length("list-width", fallback.list_width),
+            width: geometry.width,
+            height: geometry.height,
+            maximized: geometry.maximized,
+            sidebar_width: length(&key_file, "sidebar-width", fallback.sidebar_width),
+            list_width: length(&key_file, "list-width", fallback.list_width),
             sidebar_visible: flag("sidebar-visible", fallback.sidebar_visible),
         }
     }
@@ -102,24 +96,15 @@ impl WindowState {
 
     /// As [`save`](Self::save), to a path you name.
     pub fn save_to(&self, path: &Path) -> Result<(), glib::Error> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                glib::Error::new(
-                    glib::FileError::Failed,
-                    &format!("cannot create {}: {error}", parent.display()),
-                )
-            })?;
+        // The file also carries the `[Sidebar]` group `SidebarState` owns,
+        // and a fresh `KeyFile` here would silently drop it.
+        let key_file = postio_widgets::state::open_for_writing(path)?;
+        Geometry {
+            width: self.width,
+            height: self.height,
+            maximized: self.maximized,
         }
-
-        let key_file = glib::KeyFile::new();
-        // Load what is already there first: this file also carries the
-        // `[Sidebar]` group `SidebarState` owns, and a fresh `KeyFile` here
-        // would silently drop it. A missing or unreadable file is fine —
-        // there is nothing to preserve yet.
-        let _ = key_file.load_from_file(path, glib::KeyFileFlags::NONE);
-        key_file.set_integer(GROUP, "width", self.width);
-        key_file.set_integer(GROUP, "height", self.height);
-        key_file.set_boolean(GROUP, "maximized", self.maximized);
+        .write(&key_file);
         key_file.set_integer(GROUP, "sidebar-width", self.sidebar_width);
         key_file.set_integer(GROUP, "list-width", self.list_width);
         key_file.set_boolean(GROUP, "sidebar-visible", self.sidebar_visible);
@@ -128,25 +113,8 @@ impl WindowState {
 
     /// `$XDG_STATE_HOME/postio/window.ini`.
     pub fn path() -> PathBuf {
-        state_dir().join("postio").join("window.ini")
+        postio_widgets::state::path()
     }
-}
-
-/// `$XDG_STATE_HOME`, falling back to `~/.local/state` per the XDG Base
-/// Directory spec.
-///
-/// Not `glib::user_state_dir()`: GLib caches that function's result on its
-/// first call in the process and never re-reads the environment after, so a
-/// test that sets `$XDG_STATE_HOME` to a scratch directory only isolates
-/// itself if it is the very first thing in the binary to ask GLib for a
-/// state directory — every test after the first real one silently writes
-/// into the developer's actual `~/.local/state/postio/`, `#324` found. Read
-/// directly from `std::env` instead, which has no such cache.
-fn state_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("XDG_STATE_HOME").filter(|d| !d.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    glib::home_dir().join(".local").join("state")
 }
 
 /// The `[Sidebar]` group of `$XDG_STATE_HOME/postio/window.ini` (#324):
@@ -206,19 +174,9 @@ impl SidebarState {
 
     /// As [`save`](Self::save), to a path you name.
     pub fn save_to(&self, path: &Path) -> Result<(), glib::Error> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                glib::Error::new(
-                    glib::FileError::Failed,
-                    &format!("cannot create {}: {error}", parent.display()),
-                )
-            })?;
-        }
-
-        let key_file = glib::KeyFile::new();
-        // As `WindowState::save_to`: load first so the `[Window]` group this
-        // file also carries survives a sidebar-only save.
-        let _ = key_file.load_from_file(path, glib::KeyFileFlags::NONE);
+        // As `WindowState::save_to`: keep the `[Window]` group this file
+        // also carries across a sidebar-only save.
+        let key_file = postio_widgets::state::open_for_writing(path)?;
         let mut ids: Vec<i64> = self.collapsed_folders.iter().map(|id| id.get()).collect();
         ids.sort_unstable();
         let joined = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
@@ -262,19 +220,6 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_file_is_not_an_error() {
-        let path = scratch("missing").with_file_name("nothing-here.ini");
-        assert_eq!(WindowState::load_from(&path), WindowState::default());
-    }
-
-    #[test]
-    fn a_corrupt_file_falls_back_rather_than_failing() {
-        let path = scratch("corrupt");
-        std::fs::write(&path, b"this is not a key file at all\x00\x01").unwrap();
-        assert_eq!(WindowState::load_from(&path), WindowState::default());
-    }
-
-    #[test]
     fn nonsense_dimensions_are_rejected_field_by_field() {
         let path = scratch("nonsense");
         std::fs::write(
@@ -303,17 +248,6 @@ mod tests {
         assert_eq!(
             state.list_width, 380,
             "one bad key must not throw away the good ones"
-        );
-    }
-
-    #[test]
-    fn the_state_lives_beside_the_other_state_not_in_the_config() {
-        let path = WindowState::path();
-        assert!(path.ends_with("postio/window.ini"), "{}", path.display());
-        assert!(
-            !path.to_string_lossy().contains("/.config/"),
-            "view state is not configuration: {}",
-            path.display()
         );
     }
 
