@@ -332,7 +332,7 @@ window's settings key context (`gtk_settings_accounts_keys`,
 `settings_wiring::the_account_verbs_have_keys_on_the_focused_row`),
 `onboarding_probe` (the classic onboarding window), the remaining
 `gtk_reader.rs` thread-document cases, and the `postio-gtk`/`postio-app` unit
-tests of their own modules. The storyboard runner's cases wait on question 3.
+tests of their own modules. The storyboard runner and its 24 cases are rebuilt over Focus (T265).
 
 ## Risks
 
@@ -366,11 +366,5 @@ tests of their own modules. The storyboard runner's cases wait on question 3.
 
 ## Questions for the maintainer
 
-1. **Removal (T256)** waits for your word, once T233–T255 are done.
-2. **The constitution amendment** for one desktop app, with the branch's
-   existing amendment.
-3. **The storyboard runner (spec 008).** It drives the classic window only
-   (`postio_gtk::storyboard`, `postio_app::demo`, `postio-storyboard`,
-   `postio_ui::observe`), with 19 `gtk_suite` and 5 `app_suite` cases.
-   Either it is rebuilt over Focus's window in `postio-widgets`, and its
-   cases move with it, or it is deleted with the classic app in T256.
+1. **The constitution amendment** for one desktop app, with the branch's
+   existing amendment (drafted in T255).
