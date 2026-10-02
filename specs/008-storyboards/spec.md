@@ -84,10 +84,13 @@ machine-checkable expectation.
 guesses". Filming it is what makes a sequence defect visible at all. Every
 other story consumes what this one produces.
 
-**Independent Test**: Write the storyboard for #1687 (archive walks down) and
-run it against Classic. Use a build with the #1687 defect reintroduced to see
-the cursor check fail on the archive step, with the frame showing where the
-cursor went. Use current `main` to see it pass.
+**Independent Test**: Write the storyboard for a defect that is still open,
+such as #1252 or one the catalogue mining finds unfixed, and run it against
+Classic. It fails on the right step, and the frame shows where the cursor or
+keyboard went. Write the storyboard for #1687 (archive walks down) and run it
+on current `main`. It passes, and its checks pin the exact row the cursor must
+land on. Neither test is proved by re-breaking fixed code (constitution IV;
+research R0).
 
 **Acceptance Scenarios**:
 
@@ -126,9 +129,11 @@ what changed.
 **Why this priority**: This is the request: something that looks at the
 interaction with a designer's eye before the maintainer has to.
 
-**Independent Test**: On a branch that reintroduces #1474 (Escape does not
-leave search), run the review. The reviewer marks the Escape step failed and
-cites its frame. The implementing session receives that finding before
+**Independent Test**: Run the review over the calibration set (research
+R10). These are storyboards whose prose expectations are known to be false of
+today's correct behaviour, such as "after archive the cursor returns to the
+top". The reviewer fails every one of them, citing the frame, and passes their
+known-true twins. The implementing session receives those failures before
 anything is offered to the maintainer.
 
 **Acceptance Scenarios**:
@@ -167,8 +172,9 @@ several versions and storyboards that apply to one. Divergence between the apps
 is itself a class of defect, and side by side is the only view that shows it.
 
 **Independent Test**: Run the archive-walks-down storyboard on both apps. The
-parity sheet shows both columns. Reintroduce a cursor defect in only one app,
-and the sheet flags that app's step as diverging from the other's observation.
+parity sheet shows both columns. Run a shared storyboard over an interaction
+the two apps really do perform differently, with no override yet. The sheet
+flags that step as diverging. Adding the override clears the flag.
 
 **Acceptance Scenarios**:
 
@@ -234,8 +240,12 @@ of the ones that will. A regression catalogue turns each one into a permanent
 check, and shows the maintainer their own reports being honoured.
 
 **Independent Test**: The catalogue holds a storyboard for each defect in the
-Context table. Each one names its issue and fails on a build where that defect
-is present.
+Context table. Each one names its issue and says where its red evidence comes
+from:
+- **`base`**: it was red on the base of the branch that fixed it.
+- **`open`**: it is red until the fix lands.
+- **`pinned`**: it was written after the fix. Its checks pin the exact outcome
+  the fix established, and it says it was never seen red.
 
 **Acceptance Scenarios**:
 
@@ -262,8 +272,10 @@ reads as the application ignoring you. The macOS app has six open issues of
 exactly this shape (#1571–#1576, #1705, #1706). It is cheap to generate, but
 it depends on US1's observation.
 
-**Independent Test**: Unbind one Classic command's handler. The generated pass
-names that command and context as having no visible effect.
+**Independent Test**: Run the generated pass on Classic. Every command it
+names as having no visible effect is either a real gap, which is filed or
+fixed, or is added to the gap list with a reason. The pass's own logic is
+proved red-green against synthetic observations in its unit tests.
 
 **Acceptance Scenarios**:
 
@@ -308,9 +320,12 @@ groups them by variant.
   "unbound". The runner does not fall back to invoking the command by name,
   because that would pass a broken binding.
 - **The interaction is about where input is routed** (Tab, focus on launch,
-  typing into a field). The runner delivers keys by direct dispatch, not by
-  toolkit event delivery. The step is reported as **not covered by this
-  delivery mode**, never as passed (FR-008).
+  typing into a field). The runner delivers keys along the window's real focus
+  chain, through every key controller on it, but not through the compositor.
+  It catches a key swallowed by a dialog, or one lost on a removed widget. It
+  cannot see window activation, input methods, or toolkit built-ins that are
+  not on the chain. A step that depends on those is reported as **not covered
+  by this delivery mode**, never as passed (FR-008; research R3).
 - **A storyboard for Focus is run from `main`.** Focus does not exist on
   `main` until spec 007 lands. The run reports it as "app not present on this
   branch". It is neither a failure nor a pass.
@@ -347,6 +362,9 @@ groups them by variant.
     platform-neutral modifier
   - **typed text**
   - a **wait**, either for a duration or for an observation to hold
+  - an **environment event** from a fixed, neutral list: new mail arrives,
+    the folder list changes, the connection drops or returns, a backfill
+    progresses, or a body arrives
 - **FR-003**: A step MAY carry **checks**: assertions over the observation
   (FR-010). Checks can be:
   - equal to a value
@@ -370,7 +388,9 @@ groups them by variant.
   binding for that command on the current platform. Every run MUST state its
   input delivery mode. Each storyboard and each step MAY declare that it
   depends on real input routing. Such steps MUST be reported as not covered
-  under direct dispatch.
+  under any delivery mode short of real input. Every step MUST also observe
+  whether a real key would reach the window at all: the focused widget is
+  mapped, inside the window, and not under a modal.
 - **FR-009**: After each step, the runner MUST sample frames for a bounded
   settle window. It MUST report a step as having:
   - **jumped**, if the frame changed after the window had settled
@@ -520,12 +540,15 @@ groups them by variant.
 
 ### Measurable Outcomes
 
-- **SC-001**: Every defect in the Context table has a storyboard. Each one
-  fails, naming the right step, on a build where its defect is present, and
-  passes on current `main`. Two kinds are exceptions, and neither is ever
+- **SC-001**: Every defect in the Context table has a storyboard. Its red
+  evidence comes from the base, from an open defect, or is declared `pinned`;
+  never from re-breaking a fix (constitution IV; research R0). A storyboard
+  with `base` or `open` proof fails on the right step where the defect is
+  present. Every storyboard passes on current `main`, except those for open
+  defects. Two kinds are exceptions, and neither is ever
   reported as passed:
-  - Routing defects such as #1252 are reported as not covered under direct
-    dispatch.
+  - Defects that need routing beyond the focus chain are reported as not
+    covered (FR-008).
   - Pointer defects such as #1433 (a scroll) are recorded as not expressible
     until pointer input exists.
 - **SC-002**: A single storyboard on one app gives its filmstrip in under 15
@@ -556,8 +579,9 @@ groups them by variant.
   code shared by both apps in `postio-widgets`, so the GTK half of the runner
   that both apps share moves there with it. Until then it lives beside
   Classic's `shot`.
-- **Input is delivered by direct dispatch in this phase.** Real input routing
-  is a later phase. One way would be injecting input through the headless
+- **Input is delivered along the focus chain in this phase** (research R3).
+  This is closer to real input than direct dispatch, but it is not real.
+  Real input routing is a later phase. One way would be injecting input through the headless
   compositor's remote-desktop interface. Its feasibility is unproven, so this
   spec requires honesty about the limit (FR-008) rather than the capability.
 - **Review output is not secret.** Fixture mail is fictional and public, so
