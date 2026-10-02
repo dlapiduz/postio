@@ -377,14 +377,14 @@ def main() -> int:
             must_mention=("postio-storyboard", "gtk4"),
         )
         check_case(
-            "postio-storyboard reaches tokio through another crate",
+            "postio-storyboard reaches turso through another crate",
             build_fixture(
-                tmp_path / "storyboard-tokio",
+                tmp_path / "storyboard-turso",
                 storyboard_deps='helper = { path = "../helper" }\n',
-                helper_deps='tokio = { path = "../../vendor/tokio" }\n',
+                helper_deps='turso = { path = "../../vendor/turso" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-storyboard", "tokio", "helper"),
+            must_mention=("postio-storyboard", "turso", "helper"),
         )
 
         # 18. And the real workspace is clean today.
