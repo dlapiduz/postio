@@ -217,7 +217,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 
 ### The shared GTK half, in `postio-gtk::storyboard` (freeze after T029)
 
-- [ ] T022 [P] [TEST] Write unit tests in
+- [X] T022 [P] [TEST] Write unit tests in
   `crates/postio-gtk/src/storyboard/deliver.rs` for `chord_to_gdk`:
   - `j` gives `(Key::j, empty)`;
   - `J` gives `(Key::J, SHIFT)`, mirroring `gtk_accelerator`'s unfolding
@@ -227,7 +227,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 
   These are pure `gdk::Key::from_name` calls, with no `adw::init`
   (`check-no-gtk-init-in-unit-tests.py`).
-- [ ] T023 [TEST] Add a `gtk_suite` case, `storyboard_chain_delivery.rs`, plus
+- [X] T023 [TEST] Add a `gtk_suite` case, `storyboard_chain_delivery.rs`, plus
   its `CASES` row:
   - **(a)** A `j` delivered by chain to a window whose focus is in a list
     reaches the window's capture-phase controller.
@@ -237,7 +237,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
     fate is reported as `dropped`, not as delivered.
 
   Red: no `deliver` exists.
-- [ ] T024 Port focus's `support::deliver_with` into
+- [X] T024 Port focus's `support::deliver_with` into
   `crates/postio-gtk/src/storyboard/deliver.rs`. Read it with
   `git show origin/feature/postio-focus:crates/postio-focus/tests/focus_suite/support.rs`,
   lines about 731–950. It should:
@@ -247,24 +247,24 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
   - return `Delivered { stopped_at }` or `Dropped`.
 
   Add `fn press(window, chord)` on top. T022 and T023 go green.
-- [ ] T025 [TEST] Add a `gtk_suite` case, `storyboard_typing.rs`, plus its
+- [X] T025 [TEST] Add a `gtk_suite` case, `storyboard_typing.rs`, plus its
   `CASES` row. `type_text`:
   - inserts at the cursor of a focused `gtk::Text`;
   - inserts at the insert mark of a focused `gtk::TextView`;
   - returns `NothingToTypeInto` when focus is on a list.
-- [ ] T026 Implement `type_text` in
+- [X] T026 Implement `type_text` in
   `crates/postio-gtk/src/storyboard/deliver.rs`. The composer's web body is
   reached through a `TypeInto` hook the window supplies, which Classic wires to
   `Composer::test_body_eval` (`composer.rs:3382`). T025 goes green.
-- [ ] T027 [P] [TEST] Add a `gtk_suite` case, `storyboard_reach.rs`, plus its
+- [X] T027 [P] [TEST] Add a `gtk_suite` case, `storyboard_reach.rs`, plus its
   `CASES` row. `reachable(&window)`:
   - is true for a focused mapped list;
   - is false after the focused widget is unmapped;
   - is false while a modal dialog is presented over the window;
   - is false when the window has no focus widget.
-- [ ] T028 Implement `crates/postio-gtk/src/storyboard/reach.rs`. T027 goes
+- [X] T028 Implement `crates/postio-gtk/src/storyboard/reach.rs`. T027 goes
   green.
-- [ ] T029 [TEST] Add a `gtk_suite` case, `storyboard_settle.rs`, plus its
+- [X] T029 [TEST] Add a `gtk_suite` case, `storyboard_settle.rs`, plus its
   `CASES` row. Over a test window:
   - a static label gives `settled` within `K` samples;
   - a label that changes text 150 ms after settling gives `jumped`, keeping
@@ -273,18 +273,18 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
   - a label that changes every 50 ms forever gives `unsettled` at `max_ms`.
 
   Use T005's stride.
-- [ ] T030 Implement `crates/postio-gtk/src/storyboard/settle.rs`: the
+- [X] T030 Implement `crates/postio-gtk/src/storyboard/settle.rs`: the
   tick-callback sampler, blake3 of the texture bytes, and the K, watch and max
   parameters per research R4. Add `capture::texture_with(&window, overlay)`
   in `crates/postio-gtk/src/capture.rs`, wrapping the private `drawn()` node in
   a `ContainerNode`. T029 goes green.
-- [ ] T031 [TEST] Add a `gtk_suite` case, `storyboard_outline.rs`, plus its
+- [X] T031 [TEST] Add a `gtk_suite` case, `storyboard_outline.rs`, plus its
   `CASES` row. `outlined(&window, region_name)`:
   - draws a border whose pixels at the focused widget's bounds differ from the
     plain frame;
   - draws a caption carrying the region name;
   - leaves the plain frame's hash unchanged.
-- [ ] T032 Implement `crates/postio-gtk/src/storyboard/outline.rs`, with
+- [X] T032 Implement `crates/postio-gtk/src/storyboard/outline.rs`, with
   `pub mod storyboard` in `crates/postio-gtk/src/lib.rs`. T031 goes green.
   **The GTK half is now frozen** for the Focus lane.
 
