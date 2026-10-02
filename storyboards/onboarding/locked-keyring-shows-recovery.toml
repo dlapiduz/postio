@@ -1,0 +1,16 @@
+# A locked keyring shows a recovery screen, not an empty inbox (#67, #404).
+#
+# The defect: a failed credential store left a dead end, and a locked
+# keyring was only a toast. The `locked` preset is the app's own stand-in
+# for that state. Classic does not yet report view = locked (the observer
+# still says conversation while the recovery card is up), so the card is
+# judged from the frame; the keyboard must be
+# somewhere a person can act from.
+source = { kind = "issue", ref = "#404" }
+proof  = "pinned"
+preset = "locked"
+
+[[step]]
+wait    = { ms = 300 }
+check   = { keyboard.reachable = true }
+expect  = "The window says the keyring is locked and offers a way to recover; it is not an empty inbox."
