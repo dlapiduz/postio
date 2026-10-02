@@ -49,7 +49,8 @@ const USAGE: &str = "\
 usage:
   storyboard list
   storyboard run <storyboard.toml>... --out <dir> [--no-frames] [--delivery chain|direct]
-                 [--variants | --variant <axis>=<value>...] [--tree-key <key>] [--commit <sha>]";
+                 [--variants | --variant <axis>=<value>...] [--tree-key <key>] [--commit <sha>]
+  storyboard every-command --out <dir> [--gaps <storyboards/gaps/classic.toml>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -59,6 +60,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("list") => list(),
         Some("run") => play(&args[1..]),
+        Some("every-command") => every_command(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -291,5 +293,84 @@ fn play_one(board: &postio_storyboard::format::Storyboard, options: &Options) ->
             }
         }
         code
+    }
+}
+
+/// Starts GTK the way every subcommand that draws needs it.
+fn start_gtk() -> Result<(), ExitCode> {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("storyboard: no display; run it under scripts/test-headless.sh");
+        return Err(ExitCode::from(2));
+    }
+    let display = gdk::Display::default().expect("a display");
+    if let Err(error) = fonts::install() {
+        eprintln!("storyboard: {error}");
+        return Err(ExitCode::from(2));
+    }
+    style::install(&display);
+    app::install_icons(&display);
+    Ok(())
+}
+
+/// The generated pass (spec US6): every command in every context, judged.
+/// Writes `coverage.json`; exits 1 on any command with no visible effect
+/// that the gap list does not name, or any stale gap.
+fn every_command(args: &[String]) -> ExitCode {
+    let Some(out) = flag(args, "--out") else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let gaps = match flag(args, "--gaps") {
+        Some(path) => match postio_storyboard::coverage::load_gaps(&PathBuf::from(path)) {
+            Ok(gaps) => gaps,
+            Err(error) => {
+                eprintln!("storyboard: {error}");
+                return ExitCode::from(2);
+            }
+        },
+        None => Vec::new(),
+    };
+    if let Err(code) = start_gtk() {
+        return code;
+    }
+    let all = postio_app::demo::on_runtime(postio_app::demo::storyboard::every_command(&gaps));
+    let presses: Vec<_> = all.iter().flat_map(|c| c.presses.iter().cloned()).collect();
+    let counts = postio_storyboard::coverage::tally(&presses);
+    for coverage in &all {
+        if let Some(why) = &coverage.unreachable {
+            println!("{}: unreachable -- {why}", coverage.context);
+        }
+        for press in &coverage.presses {
+            use postio_storyboard::coverage::Effect;
+            match &press.effect {
+                Effect::NoEffect => {
+                    println!("{} {}: NO VISIBLE EFFECT", press.context, press.command)
+                }
+                Effect::StaleGap { reason } => println!(
+                    "{} {}: STALE GAP (now has an effect; listed because: {reason})",
+                    press.context, press.command
+                ),
+                _ => {}
+            }
+        }
+    }
+    println!("coverage: {counts:?}");
+    let json = serde_json::Value::Array(all.iter().map(|c| c.to_json()).collect());
+    let dir = PathBuf::from(&out).join("classic");
+    if std::fs::create_dir_all(&dir).is_err()
+        || std::fs::write(dir.join("coverage.json"), json.to_string()).is_err()
+    {
+        eprintln!(
+            "storyboard: cannot write {}",
+            dir.join("coverage.json").display()
+        );
+        return ExitCode::from(2);
+    }
+    let bad = counts.get("no_effect").copied().unwrap_or(0)
+        + counts.get("stale_gap").copied().unwrap_or(0);
+    if bad > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
