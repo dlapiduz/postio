@@ -14,7 +14,9 @@
   (the renderer the message view is built on),
   [ADR 0031](0031-the-settings-window-is-one-model-two-frames.md) (the
   settings model is shared, the frame is each app's).
-- **Decision:** **Postio has one desktop app, Postio Focus (`postio-focus`).
+- **Decision:** **Postio has one desktop app, built from Focus (`postio-focus`),
+  named Postio: at the package switch (T253) it takes the name "Postio", the
+  binary `postio` and the app id `dev.postio.Postio`.
   The classic three-pane app -- `postio-gtk` and the `postio` binary in
   `postio-app` -- is retired: it is kept building and secure until it is
   removed, and gets no new work. What Focus draws, other than its own window,

@@ -28,7 +28,7 @@ terminal and macOS too).
 
 **Count:** 52 capabilities. 21 are covered. 19 have a gap, closed by T233–T248;
 four of those are already partly covered. 12 are dropped, and one of them
-(flagging) needs the maintainer.
+(flagging) is decided: Flag stays, on `*` (C13).
 
 ## The table
 
@@ -57,7 +57,7 @@ four of those are already partly covered. 12 are dropped, and one of them
 | 14 | Cursor separate from selection; extend, toggle and select all as a predicate | `list_view.rs` | **Covered by** `window.rs` (cursor, `x`, `J`/`K`, select all as a predicate, C19) and `bulk.rs` |
 | 15 | Archive, delete, mark read or unread, move, label, snooze, with undo | `Command::default_for`, `list_view.rs` | **Covered by** `FocusWindow::act`, the pickers (`move_picker.rs`, `label_picker.rs`, `when.rs`) and the undo toast |
 | 16 | Unsnooze (`B`) | `list_view.rs` (`Command::Unsnooze`) | **Gap → T238.** Focus lists the Snoozed mailbox but nothing answers `Unsnooze` there |
-| 17 | Flag (`*`), and the Flagged view | `Flag` (three-pane only), `row.rs`'s flag mark | **Dropped**, because C13 and the Assumptions make flagging no Focus verb ("Has action" plays that part), and flags stay searchable (`is:flagged`, `g *`). **Needs the maintainer**: `docs/PRODUCT.md` §23 lists "flag" in v1, and without the classic app nothing could clear a flag that another client set |
+| 17 | Flag (`*`), and the Flagged view | `Flag` (three-pane only), `row.rs`'s flag mark | **Gap → T257.** Focus offers Flag on `*` with no mark on the row; `g *` lists flagged mail (C13) |
 | 18 | Row density (`[ui] density`), hover actions, sender avatars | `list_view.rs` (`set_density`), `row.rs`; `[ui]` | **Dropped**, because Focus's row is one fixed design (40 px, or 72 px with a marker, `contracts/focus-surface.md`, "Rows"), and the spec's handoff ranks consistency above preference. Maintainer: no |
 | 19 | Theme override (`[ui] theme`: light, dark or system) | `postio-gtk::style` | **Dropped**, because Focus follows the system's scheme and accent (FR-090, C26). Maintainer: no |
 | 20 | Row context menu | `list_view.rs` | **Covered by** `row_menu.rs` |
@@ -246,19 +246,6 @@ The skills `/gtk-design`, `/issue`, `/initiative` and `/steward` name
 
 ## Questions for the maintainer
 
-1. **Flagging (row 17).** Should Postio keep a Flag verb now that Focus is the
-   only app?
-   - (a) No. Flags stay searchable and visible under `g *`, and PRODUCT §23
-     drops "flag".
-   - (b) Yes. Focus offers Flag on `*` in the row menu and the command bar,
-     with no mark on the row, so a flag set elsewhere can be cleared.
-
-   Recommended: (b). A view that shows flags but can never clear one is a
-   dead end.
-2. **The one app's name and binary (T253).** When Focus takes the app id
-   `dev.postio.Postio`, is it called "Postio", with binary `postio`, or
-   "Postio Focus", with binary `postio-focus`? Recommended: "Postio" and
-   `postio`. With one app, "Focus" no longer tells two apps apart.
-3. **Removal (T256)** waits for your word, once T233–T255 are done.
-4. **The constitution amendment** for one desktop app, with the branch's
+1. **Removal (T256)** waits for your word, once T233–T255 are done.
+2. **The constitution amendment** for one desktop app, with the branch's
    existing amendment.
