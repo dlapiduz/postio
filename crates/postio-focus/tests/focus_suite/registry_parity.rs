@@ -142,12 +142,7 @@ pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
 
 /// Commands that are answered, but not by running them here: `Quit` closes
 /// the window the case is standing in.
-const NOT_RUN: &[CommandId] = &[
-    CommandId::Quit,
-    // Answered by the Settings lane's arm (its own test), which this branch
-    // does not carry yet.
-    CommandId::Settings,
-];
+const NOT_RUN: &[CommandId] = &[CommandId::Quit];
 
 /// A command Focus offers with its key, bar row and control must also reach
 /// an arm of `FocusWindow::act`: the three above are all things to look at,
@@ -170,8 +165,12 @@ pub fn every_offered_command_that_is_whole_reaches_a_handler() {
             window.act(id);
             crate::settle();
             unanswered.extend(window.take_unanswered());
-            // Whatever it opened -- a picker, the bar, the folders -- is
-            // closed before the next.
+            // Whatever it opened -- a picker, the bar, the folders,
+            // Settings -- is closed before the next. Settings is a dialog
+            // whose own keys close it, so `Back` acted on the window does not.
+            if let Some(settings) = window.settings() {
+                settings.close();
+            }
             window.act(CommandId::Back);
             window.act(CommandId::Back);
             window.take_unanswered();
