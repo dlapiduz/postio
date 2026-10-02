@@ -158,6 +158,55 @@ pub fn deliver(window: &gtk::Window, key: gdk::Key, state: gdk::ModifierType) ->
     }
 }
 
+/// What became of typed text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeOutcome {
+    /// The text went into the widget the keyboard is on.
+    Typed,
+    /// The keyboard is on nothing that takes text: the step fails, which is
+    /// the check that a person could not type here either (#1473).
+    NothingToTypeInto,
+}
+
+/// What a window supplies to type into a widget this module cannot: the
+/// composer's web body. Called with the keyboard's widget and the text;
+/// answers whether it took it.
+pub type TypeInto<'a> = &'a dyn Fn(&gtk::Widget, &str) -> bool;
+
+/// Type `text` into whatever the keyboard is on.
+///
+/// An editable takes it at the cursor, a text view at its insert mark (both
+/// replacing a selection, as typing does); anything else is offered to
+/// `hook`, and if that declines too there is nothing to type into.
+pub fn type_text(window: &gtk::Window, text: &str, hook: Option<TypeInto>) -> TypeOutcome {
+    let target = keyboard_target(window);
+    if !target.is_mapped() || target.root().is_none() {
+        return TypeOutcome::NothingToTypeInto;
+    }
+    if let Some(editable) = target.dynamic_cast_ref::<gtk::Editable>() {
+        if editable.is_editable() {
+            editable.delete_selection();
+            let mut position = editable.position();
+            editable.insert_text(text, &mut position);
+            editable.set_position(position);
+            drain();
+            return TypeOutcome::Typed;
+        }
+    } else if let Some(view) = target.downcast_ref::<gtk::TextView>() {
+        let buffer = view.buffer();
+        buffer.delete_selection(true, view.is_editable());
+        if buffer.insert_interactive_at_cursor(text, view.is_editable()) {
+            drain();
+            return TypeOutcome::Typed;
+        }
+    }
+    if hook.is_some_and(|hook| hook(&target, text)) {
+        drain();
+        return TypeOutcome::Typed;
+    }
+    TypeOutcome::NothingToTypeInto
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -180,6 +180,7 @@ mod gtk_window_state;
 mod gtk_window_teardown;
 mod storyboard_chain_delivery;
 mod storyboard_support;
+mod storyboard_typing;
 mod list_contract;
 mod list_model;
 mod no_stray_prints;
@@ -241,6 +242,22 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry",
+        storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry as fn(),
+    ),
+    (
+        "storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view",
+        storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view as fn(),
+    ),
+    (
+        "storyboard_typing::a_hook_takes_what_no_editable_does",
+        storyboard_typing::a_hook_takes_what_no_editable_does as fn(),
+    ),
+    (
+        "storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into",
+        storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into as fn(),
+    ),
     (
         "storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list",
         storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list as fn(),
