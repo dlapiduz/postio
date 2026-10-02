@@ -315,7 +315,7 @@ impl RulesView {
         });
         self.empty.set_visible(rules.is_empty());
         let keymap = self.keymap.borrow();
-        let now = chrono::Local::now();
+        let now = postio_ui::clock::now();
         for (index, rule) in rules.iter().enumerate() {
             let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
             line.add_css_class("focus-filtered-row");

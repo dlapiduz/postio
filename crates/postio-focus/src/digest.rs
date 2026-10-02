@@ -627,7 +627,7 @@ impl DigestWindow {
             None => digest.rule.clone(),
         };
         self.title.set_text(&title);
-        let now = chrono::Local::now();
+        let now = postio_ui::clock::now();
         self.subtitle.set_text(&postio_ui::digest::window_subtitle(
             digest.count,
             digest.senders.len(),
@@ -713,7 +713,7 @@ impl DigestWindow {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
-        let now = chrono::Local::now();
+        let now = postio_ui::clock::now();
         for row in self.rows.borrow().iter() {
             let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
             line.add_css_class("focus-digest-row");

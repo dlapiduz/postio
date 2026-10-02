@@ -762,7 +762,7 @@ impl Bar {
     /// `typed`, read as plain English against today and the address book.
     fn lowered(&self, typed: &str) -> postio_search::ParsedQuery {
         let names = self.names.borrow();
-        postio_search::natural::lower(typed, chrono::Local::now().date_naive(), &|name| {
+        postio_search::natural::lower(typed, postio_ui::clock::now().date_naive(), &|name| {
             names.lookup(name)
         })
     }
@@ -1187,7 +1187,10 @@ impl Bar {
             place.add_css_class("focus-bar-place");
             line.append(&place);
         }
-        let date = gtk::Label::new(Some(&postio_ui::row::timestamp(at, chrono::Local::now())));
+        let date = gtk::Label::new(Some(&postio_ui::row::timestamp(
+            at,
+            postio_ui::clock::now(),
+        )));
         date.add_css_class("dim-label");
         line.append(&date);
         let row = gtk::ListBoxRow::new();

@@ -411,7 +411,7 @@ impl Frame {
     /// Open the Send later menu, as its key does.
     pub fn pop_send_later(&self) {
         let menu = gio::Menu::new();
-        for (label, when) in postio_ui::schedule::schedule_presets(Local::now()) {
+        for (label, when) in postio_ui::schedule::schedule_presets(postio_ui::clock::now()) {
             let item = gio::MenuItem::new(Some(label), None);
             item.set_action_and_target_value(
                 Some("focus-send-later.choose"),

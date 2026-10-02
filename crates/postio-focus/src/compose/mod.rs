@@ -158,7 +158,7 @@ impl Compose {
             subject
         };
         self.remind
-            .open(&self.frame.remind, None, &target, chrono::Local::now());
+            .open(&self.frame.remind, None, &target, postio_ui::clock::now());
     }
 
     /// The composer.
