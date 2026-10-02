@@ -1,11 +1,11 @@
 # Architecture decision records
 
-One file per decision, numbered in the order they were made. An ADR is
-never deleted or moved when it is overtaken: the correction is written
-beside the text it corrects — a `> **Amended …**` blockquote at the affected
-section, or a clause on the status line — so the reasoning stays readable
-and the reader sees what changed and why. The table says where each
-decision stands as of 0.4.0 (2026-09-14).
+One file per decision, numbered in the order they were made. Each one
+states the decision as it stands now. When a decision changes, its ADR is
+rewritten in place to say the new truth, and the commit that rewrites it
+carries the story of what changed and why: history lives in git, not in
+the file, so a reader loads only what is true. The table says where each
+decision stands.
 
 | ADR | Decision | Where it stands |
 |---|---|---|
@@ -58,5 +58,7 @@ decision stands as of 0.4.0 (2026-09-14).
 Copy the shape of a recent one: a status line on line 3, the context, the
 questions the decision answers, the alternatives rejected and why, the
 consequences, and what would falsify it. Number it next in sequence. When
-a later decision changes an earlier one, amend the earlier one in place and
-say which ADR did it; do not rewrite the history it records.
+a decision changes, rewrite its ADR to state the new decision and keep the
+alternatives section to what stops the old answer being argued again; the
+commit body says what changed. Do not leave `> **Amended …**` blockquotes or
+"superseded by" trails behind.
