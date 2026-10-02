@@ -163,6 +163,14 @@ mod imp {
         pub empty: RefCell<Option<Rc<crate::empty::EmptyInbox>>>,
         /// The open-email dialog, built on the first open and reused.
         pub reading: RefCell<Option<Rc<crate::open::OpenMessage>>>,
+        /// The pane beside the list that an open message is drawn in when
+        /// the person reads beside the list (T232).
+        pub reading_pane: RefCell<Option<Rc<crate::reading_pane::ReadingPane>>>,
+        /// The list and the reading pane, side by side.
+        pub split: RefCell<Option<gtk::Box>>,
+        /// Where an open message is drawn now: the setting, as far as the
+        /// window's width and the page on screen allow.
+        pub placement: Cell<postio_ui::focus_dialog::Placement>,
         /// Where a chosen link or part is opened: the desktop, unless a
         /// test has said otherwise.
         pub launcher: RefCell<Option<super::Launcher>>,
@@ -280,6 +288,9 @@ mod imp {
                 list_or_empty: RefCell::default(),
                 empty: RefCell::default(),
                 reading: RefCell::default(),
+                reading_pane: RefCell::default(),
+                split: RefCell::default(),
+                placement: Cell::default(),
                 launcher: RefCell::default(),
                 choices: RefCell::default(),
                 runtime: RefCell::default(),
@@ -641,6 +652,9 @@ impl FocusWindow {
         if let Some(reading) = imp.reading.borrow().as_ref() {
             reading.set_keymap(&keymap);
         }
+        if let Some(pane) = imp.reading_pane.borrow().as_ref() {
+            pane.set_keymap(&keymap);
+        }
         if let Some(bar) = imp.bar.borrow().as_ref() {
             bar.set_keymap(&keymap);
         }
@@ -755,7 +769,7 @@ impl FocusWindow {
         };
         // The composer's dialog has the keyboard for the composer's own
         // commands: Send, Esc keeping the draft, and the rest (US3).
-        if let Some(compose) = self.compose().filter(|compose| compose.dialog().is_some()) {
+        if let Some(compose) = self.compose().filter(|compose| compose.is_showing()) {
             return match outcome {
                 Outcome::Command(id) => match id.parse::<CommandId>() {
                     Ok(id) => {
@@ -800,6 +814,21 @@ impl FocusWindow {
                 _ => glib::Propagation::Proceed,
             };
         }
+        // A message open beside the list has the open message's keys, as
+        // the dialog does; the list keeps the rest, `/` and `x` among them
+        // (T232).
+        if self.reading_beside() {
+            if self.scroll_reading(key, state) {
+                return glib::Propagation::Stop;
+            }
+            if let Outcome::Command(id) = &outcome
+                && let Ok(command) = id.parse::<CommandId>()
+                && self.reading_key(outcome.clone()) == glib::Propagation::Proceed
+            {
+                self.act(command);
+            }
+            return glib::Propagation::Stop;
+        }
         match outcome {
             Outcome::Command(id) => match id.parse::<CommandId>() {
                 Ok(id) => {
@@ -822,15 +851,13 @@ impl FocusWindow {
 
     /// Which surface owns the keyboard: the open message, or the list.
     fn key_context(&self) -> KeyContext {
-        if self
-            .compose()
-            .is_some_and(|compose| compose.dialog().is_some())
-        {
+        if self.compose().is_some_and(|compose| compose.is_showing()) {
             return KeyContext::Composer;
         }
         if self
             .visible_dialog()
             .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
+            || (self.visible_dialog().is_none() && self.reading_beside())
         {
             KeyContext::Reader
         } else if self.capture().is_some() {
@@ -1007,6 +1034,10 @@ impl FocusWindow {
             Ok(CommandId::ViewSource) => self.view_source(),
             Ok(CommandId::DismissMarker) => self.dismiss_marker(),
             Ok(CommandId::MoreActions) => reading.show_more(),
+            // The open message moves between the dialog and the pane (T232).
+            Ok(CommandId::ToggleReadingPane) => self.toggle_reading_pane(),
+            // `Return` on the row already open beside the list: it is open.
+            Ok(CommandId::OpenMessage) if reading.in_pane() => self.open_message(),
             Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(),
             // Screen 04's toolbar verbs and the Invite card's answers, for
             // the message on screen (US3, US8).
@@ -1131,6 +1162,11 @@ impl FocusWindow {
         let compose = crate::compose::Compose::new(self, client, account, current);
         if self.imp().warm.get() {
             compose.warm();
+        }
+        if let Some(pane) = self.imp().reading_pane.borrow().as_ref()
+            && self.imp().placement.get() == postio_ui::focus_dialog::Placement::Pane
+        {
+            compose.place(Some(pane.compose_slot()));
         }
         self.imp().compose.replace(Some(Rc::clone(&compose)));
         if let Some(mailto) = self.imp().pending_mailto.take() {
@@ -1453,6 +1489,7 @@ impl FocusWindow {
                 }
             }
             CommandId::DigestRule => self.new_digest_rule(),
+            CommandId::ToggleReadingPane => self.toggle_reading_pane(),
             CommandId::BackToWords => {
                 if let Some(bar) = self.bar() {
                     bar.back_to_words();
@@ -1947,6 +1984,14 @@ impl FocusWindow {
                 window.act(CommandId::OpenMessage);
             }
         ));
+        // While a message is open beside the list, the pane shows the
+        // cursor's row wherever the cursor goes: a click on a row is the
+        // pointer's `j`/`k` (T232).
+        pane.cursor().connect_selected_notify(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| window.follow_cursor()
+        ));
         // A right-click opens the row's menu (T199).
         pane.connect_row_menu(glib::clone!(
             #[weak(rename_to = window)]
@@ -1981,7 +2026,23 @@ impl FocusWindow {
         }
         imp.stage.add_overlay(bar.widget());
         list_or_empty.set_vexpand(true);
-        imp.inbox.append(&list_or_empty);
+        // The list, its bulk bar under it, and the reading pane beside them
+        // (T232): hidden until the person reads beside the list.
+        let list_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        list_column.set_hexpand(true);
+        list_column.append(&list_or_empty);
+        let reading_pane = crate::reading_pane::ReadingPane::new(&self.keymap());
+        reading_pane.connect_command(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |id| window.act(id)
+        ));
+        reading_pane.widget().set_visible(false);
+        let split = self.split(&list_column, &reading_pane.widget());
+        split.set_vexpand(true);
+        imp.inbox.append(&split);
+        imp.split.replace(Some(split));
+        imp.reading_pane.replace(Some(reading_pane));
         imp.bar.replace(Some(bar));
         imp.list_or_empty.replace(Some(list_or_empty));
         imp.empty.replace(Some(empty));
@@ -1991,7 +2052,7 @@ impl FocusWindow {
             self,
             move |id| window.act(id)
         ));
-        imp.inbox.append(bulk.widget());
+        list_column.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
         imp.picked.connect_changed(glib::clone!(
             #[weak(rename_to = window)]
@@ -2009,6 +2070,7 @@ impl FocusWindow {
         imp.pages.set_visible_child_name(INBOX);
         crate::a11y::teach_shortcuts(self);
         crate::motion::keep_to_budget(self);
+        self.place_reading();
         feed.open(ListScope::Focus(FocusScope::Inbox));
 
         // Exactly one reader of the client's events, on the main loop:
@@ -2251,6 +2313,11 @@ impl FocusWindow {
             }
             _ => stack.set_visible_child_name(LIST),
         }
+        // An empty inbox takes the window: there is nothing to read beside it.
+        let beside = self.imp().placement.get() == postio_ui::focus_dialog::Placement::Pane;
+        if beside != (stack.visible_child_name().as_deref() == Some(LIST)) {
+            self.place_reading();
+        }
     }
 
     /// `[focus]`, for what the empty inbox names.
@@ -2259,10 +2326,15 @@ impl FocusWindow {
             bar.set_digesting(!focus.digests.is_empty());
         }
         let capture = focus.vault.is_some();
+        let beside = focus.reading == postio_config::Reading::Pane;
         self.imp().focus_config.replace(focus);
+        if let Some(menu) = self.lookup_action("reading-pane") {
+            menu.change_state(&beside.to_variant());
+        }
         self.show_capture(capture);
         self.show_empty_or_list();
         self.show_counts();
+        self.place_reading();
     }
 
     /// Whether rows and the marker card offer Task: once a vault is
@@ -3231,6 +3303,186 @@ impl FocusWindow {
         }
     }
 
+    /// The list's column and the reading pane, side by side (T232): the pane
+    /// as wide as `focus_dialog::pane_width` says for the split's width, the
+    /// list the rest. A layout of its own, so the widths come from the
+    /// allocation itself and never from a size request the window would
+    /// then refuse to shrink below; and the place a crossing of the
+    /// narrowest width a pane fits is noticed, to move an open message
+    /// between pane and dialog.
+    fn split(&self, list: &gtk::Box, pane: &gtk::Widget) -> gtk::Box {
+        let split = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        split.add_css_class("focus-split");
+        split.append(list);
+        split.append(pane);
+        let fits: Rc<Cell<Option<bool>>> = Rc::default();
+        let window = self.downgrade();
+        split.set_layout_manager(Some(crate::split::SplitLayout::new(move |width| {
+            let now = postio_ui::focus_dialog::pane_width(width).is_some();
+            if fits.replace(Some(now)) != Some(now) {
+                // Not from inside an allocation: once it is done.
+                let window = window.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(window) = window.upgrade() {
+                        window.place_reading();
+                    }
+                });
+            }
+        })));
+        split
+    }
+
+    /// Where an open message goes now, and put it there (T232): beside the
+    /// list when the person reads beside it, the window has room for a pane
+    /// and the inbox's list is what is on screen; over it otherwise. An open
+    /// message, and an open composer, move with it and stay open.
+    fn place_reading(&self) {
+        use postio_ui::focus_dialog::{self, Placement};
+        let imp = self.imp();
+        let (Some(pane), Some(split)) = (
+            imp.reading_pane.borrow().clone(),
+            imp.split.borrow().clone(),
+        ) else {
+            return;
+        };
+        let chosen = match imp.focus_config.borrow().reading {
+            postio_config::Reading::Pane => Placement::Pane,
+            postio_config::Reading::Dialog => Placement::Dialog,
+        };
+        let width = match split.width() {
+            0 => self.width(),
+            width => width,
+        };
+        let listing = imp
+            .list_or_empty
+            .borrow()
+            .as_ref()
+            .is_some_and(|stack| stack.visible_child_name().as_deref() == Some(LIST));
+        let placement = if listing {
+            focus_dialog::placement(chosen, width)
+        } else {
+            Placement::Dialog
+        };
+        imp.placement.set(placement);
+        let beside = placement == Placement::Pane;
+        pane.widget().set_visible(beside);
+        if let Some(reading) = self.reading() {
+            reading.place(beside.then(|| pane.message_slot()));
+        }
+        if let Some(compose) = self.compose() {
+            compose.place(beside.then(|| pane.compose_slot()));
+        }
+        self.show_pane_page();
+    }
+
+    /// Show in the reading pane what is open: the composer, which takes the
+    /// open message's place, then the message, then nothing (T232).
+    pub(crate) fn show_pane_page(&self) {
+        use crate::reading_pane::Page;
+        let Some(pane) = self.imp().reading_pane.borrow().clone() else {
+            return;
+        };
+        let page = if self.compose().is_some_and(|compose| compose.in_pane()) {
+            Page::Compose
+        } else if self
+            .reading()
+            .is_some_and(|reading| reading.in_pane() && reading.is_open())
+        {
+            Page::Message
+        } else {
+            Page::Empty
+        };
+        pane.show(page);
+    }
+
+    /// Whether a message is open in the reading pane beside the list.
+    fn reading_beside(&self) -> bool {
+        self.reading()
+            .is_some_and(|reading| reading.in_pane() && reading.is_open())
+    }
+
+    /// The reading pane, once the inbox is showing: what a test reads.
+    pub fn reading_pane(&self) -> Option<gtk::Widget> {
+        self.imp()
+            .reading_pane
+            .borrow()
+            .as_ref()
+            .map(|pane| pane.widget())
+    }
+
+    /// The cursor moved: while a message is open beside the list, show the
+    /// cursor's row in its place, as `j`/`k` would (T232). Over the list the
+    /// dialog takes the pointer, so only the keys move it, and they open
+    /// what they land on themselves.
+    fn follow_cursor(&self) {
+        if !self.reading_beside() {
+            return;
+        }
+        let Some(row) = self.cursor_row() else {
+            return;
+        };
+        let showing = self.reading().and_then(|reading| reading.showing_row());
+        if showing == Some(row.id()) {
+            return;
+        }
+        // A draft is written, not read: passing over one opens no composer.
+        let draft = row
+            .as_conversation()
+            .is_some_and(|row| row.summary.representative.send_state.is_some());
+        if draft || matches!(row, FocusRow::Digest(_)) {
+            if let Some(reading) = self.reading() {
+                reading.close();
+            }
+            return;
+        }
+        self.open_message();
+    }
+
+    /// `F8`: open messages beside the list, or over it again (T232). The
+    /// window switches at once, an open message moving with it, and the
+    /// choice is written to `config.toml` as `[focus] reading`, so it
+    /// outlives the session; the watcher's echo of the write changes
+    /// nothing.
+    fn toggle_reading_pane(&self) {
+        use postio_config::Reading;
+        let imp = self.imp();
+        let next = match imp.focus_config.borrow().reading {
+            Reading::Dialog => Reading::Pane,
+            Reading::Pane => Reading::Dialog,
+        };
+        imp.focus_config.borrow_mut().reading = next;
+        self.place_reading();
+        if let Some(menu) = self.lookup_action("reading-pane") {
+            menu.change_state(&(next == Reading::Pane).to_variant());
+        }
+        let path = imp.config_path.borrow().clone();
+        if let Some(path) = path {
+            let original = std::fs::read_to_string(&path).unwrap_or_default();
+            let written =
+                postio_config::focus_edit::set_reading(&original, next).and_then(|edited| {
+                    match edited {
+                        Some(text) => postio_config::Config::write_text_to_path(&text, &path),
+                        None => Ok(()),
+                    }
+                });
+            if let Err(error) = written {
+                tracing::warn!(%error, "Focus could not write where messages open");
+            }
+        }
+        let beside = imp.placement.get() == postio_ui::focus_dialog::Placement::Pane;
+        let said = match (next, beside) {
+            (Reading::Pane, true) => "Messages open beside the list",
+            (Reading::Pane, false) => "Messages open beside the list once the window is wider",
+            (Reading::Dialog, _) => "Messages open over the list",
+        };
+        imp.toast.show_notice(said);
+        self.follow_toast();
+        // Where the keyboard was, the message beside it or over it.
+        if !beside && let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
+            reading.dialog().grab_focus();
+        }
+    }
+
     /// The open-email dialog, built the first time anything opens.
     fn reading_dialog(&self) -> Option<Rc<crate::open::OpenMessage>> {
         let client = self.imp().client.borrow().clone()?;
@@ -3251,10 +3503,38 @@ impl FocusWindow {
                     move |id| window.act(id)
                 ));
                 reading.set_capture(self.imp().focus_config.borrow().vault.is_some());
+                // Opening or closing it changes what the reading pane shows,
+                // and closing it there gives the keyboard back to the list.
+                reading.connect_changed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.reading_changed()
+                ));
+                if let Some(pane) = self.imp().reading_pane.borrow().as_ref()
+                    && self.imp().placement.get() == postio_ui::focus_dialog::Placement::Pane
+                {
+                    reading.place(Some(pane.message_slot()));
+                }
                 reading
             })
             .clone();
         Some(reading)
+    }
+
+    /// The open message opened or closed: the pane shows what is open now,
+    /// and a message closed beside the list leaves the keyboard in the list,
+    /// on the row it was on (T232).
+    fn reading_changed(&self) {
+        self.show_pane_page();
+        let Some(reading) = self.reading() else {
+            return;
+        };
+        if reading.in_pane()
+            && !reading.is_open()
+            && let Some(pane) = self.pane()
+        {
+            pane.view().grab_focus();
+        }
     }
 
     /// `Enter`: the conversation under the cursor, over the list (screen 04).
@@ -3278,9 +3558,14 @@ impl FocusWindow {
             index: pane.cursor().selected(),
             total: pane.feed().list().n_items(),
         };
+        // The row already on screen is not read again: beside the list the
+        // pane follows the cursor, and `j` both moves it and asks.
+        if reading.showing_row() == Some(row.id()) && reading.in_pane() {
+            return;
+        }
         reading.show(self, &row, position);
-        crate::a11y::teach_shortcuts(&reading.dialog());
-        crate::motion::keep_to_budget(&reading.dialog());
+        crate::a11y::teach_shortcuts(&reading.view());
+        crate::motion::keep_to_budget(&reading.view());
     }
 
     /// Open URIs through `launch` rather than the desktop: what a test

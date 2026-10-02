@@ -95,7 +95,13 @@ impl Compose {
         dialog.set_widget_name(NAME);
         dialog.add_css_class("focus-compose");
 
-        let host = Rc::new(host::DialogHost::new(window, dialog.clone(), slot, column));
+        let host = Rc::new(host::DialogHost::new(
+            window,
+            dialog.clone(),
+            slot,
+            column,
+            layout.clone().upcast(),
+        ));
         composer.mount_on(Rc::clone(&host) as Rc<dyn postio_widgets::composer::ComposerHost>);
         // The dialog's own ways out -- Escape reaching it, a click outside
         // -- mean what `Esc` means: close, keeping the draft.
@@ -154,7 +160,23 @@ impl Compose {
 
     /// The dialog, while it is over the window.
     pub fn dialog(&self) -> Option<adw::Dialog> {
-        self.host.showing().then(|| self.host.dialog.clone())
+        (self.host.showing() && !self.host.in_pane()).then(|| self.host.dialog.clone())
+    }
+
+    /// Whether the composer is open, in its dialog or in the reading pane.
+    pub fn is_showing(&self) -> bool {
+        self.host.showing()
+    }
+
+    /// Whether the composer is open in the reading pane.
+    pub fn in_pane(&self) -> bool {
+        self.host.showing() && self.host.in_pane()
+    }
+
+    /// Place the composer in `slot`, the reading pane, or with `None` in its
+    /// dialog (T232).
+    pub fn place(&self, slot: Option<&gtk::Box>) {
+        self.host.place(slot);
     }
 
     /// Run `id`, as a key or a control asked: the composer's own verbs, and

@@ -8,6 +8,7 @@
 //! `[keys]` reaches the composer here exactly as it does there.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -36,9 +37,15 @@ pub struct DialogHost {
     following: Cell<bool>,
     /// Who hears the commands the window dispatches to the composer.
     commands: RefCell<Vec<CommandHandler>>,
-    /// Whether the dialog is over the window: between taking the pane and
-    /// giving it back.
+    /// Whether the composer is open: between taking the pane and giving it
+    /// back, in the dialog or the reading pane.
     showing: Cell<bool>,
+    /// The composer's surface: the dialog's child, or the reading pane's.
+    surface: gtk::Widget,
+    /// The reading pane's slot the surface is in, while it is placed there
+    /// (T232): shared with the resize follower, which fits the column to
+    /// whichever host holds it.
+    pane: Rc<RefCell<Option<gtk::Box>>>,
 }
 
 impl DialogHost {
@@ -47,6 +54,7 @@ impl DialogHost {
         dialog: adw::Dialog,
         slot: gtk::Box,
         column: adw::Clamp,
+        surface: gtk::Widget,
     ) -> Self {
         DialogHost {
             window: window.downgrade(),
@@ -56,6 +64,50 @@ impl DialogHost {
             following: Cell::new(false),
             commands: RefCell::default(),
             showing: Cell::new(false),
+            surface,
+            pane: Rc::default(),
+        }
+    }
+
+    /// Whether the composer's surface is in the reading pane.
+    pub fn in_pane(&self) -> bool {
+        self.pane.borrow().is_some()
+    }
+
+    /// Place the composer's surface in `slot`, the reading pane beside the
+    /// list, or with `None` back in its dialog (T232). An open composer stays
+    /// open, and is drawn where it now is.
+    pub fn place(&self, slot: Option<&gtk::Box>) {
+        let here = self.pane.borrow().clone();
+        match (slot, here) {
+            (Some(slot), Some(here)) if *slot == here => return,
+            (None, None) => return,
+            (Some(slot), here) => {
+                match &here {
+                    None => {
+                        if self.showing.get() {
+                            self.dialog.force_close();
+                        }
+                        self.dialog.set_child(None::<&gtk::Widget>);
+                    }
+                    Some(here) => here.remove(&self.surface),
+                }
+                slot.append(&self.surface);
+                self.pane.replace(Some(slot.clone()));
+            }
+            (None, Some(here)) => {
+                here.remove(&self.surface);
+                self.pane.replace(None);
+                self.dialog.set_child(Some(&self.surface));
+                if self.showing.get()
+                    && let Some(window) = self.window.upgrade()
+                {
+                    self.dialog.present(Some(&window));
+                }
+            }
+        }
+        if let Some(window) = self.window.upgrade() {
+            self.follow(&window);
         }
     }
 
@@ -73,8 +125,9 @@ impl DialogHost {
 
     /// Size the dialog for a window `width` by `height`: the message
     /// dialog's rule (T205), so the two are one size over one window, and
-    /// the column inside it hers.
-    fn fit(dialog: &adw::Dialog, column: &adw::Clamp, width: i32, height: i32) {
+    /// the column inside it hers -- or, in the reading pane, the column the
+    /// pane's width gives (T232).
+    fn fit(dialog: &adw::Dialog, column: &adw::Clamp, in_pane: bool, width: i32, height: i32) {
         if width <= 0 || height <= 0 {
             return;
         }
@@ -86,8 +139,13 @@ impl DialogHost {
         if dialog.content_height() != tall {
             dialog.set_content_height(tall);
         }
+        let host = if in_pane {
+            focus_dialog::pane_width(width).unwrap_or(wide)
+        } else {
+            wide
+        };
         let measure =
-            focus_dialog::column_width(wide, postio_body::treatment::Treatment::AppColours);
+            focus_dialog::column_width(host, postio_body::treatment::Treatment::AppColours);
         if column.maximum_size() != measure {
             column.set_maximum_size(measure);
             column.set_tightening_threshold(measure);
@@ -102,7 +160,7 @@ impl DialogHost {
             (width, height) if width > 0 && height > 0 => (width, height),
             _ => window.default_size(),
         };
-        Self::fit(&self.dialog, &self.column, width, height);
+        Self::fit(&self.dialog, &self.column, self.in_pane(), width, height);
         if self.following.get() {
             return;
         }
@@ -112,12 +170,14 @@ impl DialogHost {
         self.following.set(true);
         let dialog = self.dialog.downgrade();
         let column = self.column.downgrade();
+        let pane = Rc::clone(&self.pane);
         let window = window.downgrade();
         surface.connect_layout(move |_, _, _| {
             if let (Some(dialog), Some(column), Some(window)) =
                 (dialog.upgrade(), column.upgrade(), window.upgrade())
             {
-                Self::fit(&dialog, &column, window.width(), window.height());
+                let in_pane = pane.borrow().is_some();
+                Self::fit(&dialog, &column, in_pane, window.width(), window.height());
             }
         });
     }
@@ -150,21 +210,30 @@ impl ComposerHost for DialogHost {
         }
         if let Some(window) = self.window.upgrade() {
             self.follow(&window);
-            self.dialog.present(Some(&window));
+            if self.in_pane() {
+                // The pane shows the composer in the open message's place.
+                window.show_pane_page();
+            } else {
+                self.dialog.present(Some(&window));
+            }
         }
-        crate::a11y::teach_shortcuts(&self.dialog);
-        crate::motion::keep_to_budget(&self.dialog);
+        crate::a11y::teach_shortcuts(&self.surface);
+        crate::motion::keep_to_budget(&self.surface);
     }
 
     fn release_pane(&self) {
         if !self.showing.replace(false) {
             return;
         }
-        self.dialog.force_close();
+        if !self.in_pane() {
+            self.dialog.force_close();
+        }
         // The keyboard goes back to the list, on the row it left from: a
         // field of a closed dialog would otherwise hold it, and the
         // resolver's "typing wins" would swallow the next key.
         if let Some(window) = self.window.upgrade() {
+            // The pane gives its place back to the message, or to nothing.
+            window.show_pane_page();
             gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
             // Back to the message it was written from, when one is open;
             // to the list otherwise.

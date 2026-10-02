@@ -2,6 +2,12 @@
 //! open-email dialog"): `Enter` opens the conversation under the cursor over
 //! the list, and the list stays in place behind it.
 //!
+//! Its message view is placed in one of two hosts (T232): the dialog, or the
+//! reading pane beside the list ([`OpenMessage::place`]). It is one view
+//! moved between them, never two built alike, so the pane and the dialog
+//! cannot drift: the header, the action row, the column and everything in
+//! it follow the width of whichever holds it.
+//!
 //! One dialog and one [`Reader`] for the window's life (scenario 7): the
 //! hundredth open reuses the message view the first one built. The header --
 //! the subject, the position, the thread chip, the labels -- is drawn from
@@ -81,6 +87,21 @@ pub struct OpenMessage {
     /// More's menu: the folded verbs, with their keys.
     more: gtk::Popover,
     more_items: gtk::Box,
+    /// The message view: the header, the action row, find and the column.
+    /// The dialog's child, or the reading pane's while it is placed there.
+    content: gtk::Box,
+    /// The reading pane's slot the view is in, while it is placed there.
+    slot: RefCell<Option<gtk::Box>>,
+    /// Raised while the view moves between hosts: the dialog closing on the
+    /// way out is a move, not the message closing.
+    placing: Cell<bool>,
+    /// What the dialog is presented over.
+    parent: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
+    /// Told whenever the message opens or closes, in either host.
+    changed: RefCell<Option<Rc<dyn Fn()>>>,
+    /// The list row on screen, by its id: what `Return` on the same row
+    /// would show again.
+    row: Cell<Option<MessageId>>,
     /// The window's size the dialog was last fitted to, and whether it
     /// follows the window's resizes yet.
     window: Cell<(i32, i32)>,
@@ -348,10 +369,6 @@ impl OpenMessage {
             .build();
         dialog.set_widget_name(DIALOG_NAME);
         let open = Rc::new(Cell::new(false));
-        dialog.connect_closed({
-            let open = Rc::clone(&open);
-            move |_| open.set(false)
-        });
 
         let page = Rc::new(OpenMessage {
             client,
@@ -367,6 +384,12 @@ impl OpenMessage {
             clamp,
             more,
             more_items,
+            content,
+            slot: RefCell::default(),
+            placing: Cell::new(false),
+            parent: RefCell::default(),
+            changed: RefCell::default(),
+            row: Cell::new(None),
             window: Cell::new(WINDOW),
             following: Cell::new(false),
             row_width: Cell::new(None),
@@ -397,6 +420,20 @@ impl OpenMessage {
 
         let weak = Rc::downgrade(&page);
         page.this.replace(weak.clone());
+        // A dialog closed by its own ways out closes the message; one closed
+        // on the view's way to the pane does not.
+        page.dialog.connect_closed({
+            let weak = weak.clone();
+            move |_| {
+                if let Some(page) = weak.upgrade()
+                    && !page.placing.get()
+                    && page.slot.borrow().is_none()
+                    && page.open.replace(false)
+                {
+                    page.tell_changed();
+                }
+            }
+        });
         close.connect_clicked({
             let weak = weak.clone();
             move |_| {
@@ -455,6 +492,103 @@ impl OpenMessage {
         page
     }
 
+    /// Place the message view in `slot`, the reading pane beside the list,
+    /// or with `None` back in the dialog (T232). A message that is open stays
+    /// open, and is drawn where it now is.
+    pub fn place(&self, slot: Option<&gtk::Box>) {
+        let here = self.slot.borrow().clone();
+        match (slot, here) {
+            (Some(slot), Some(here)) if *slot == here => return,
+            (None, None) => return,
+            (Some(slot), here) => {
+                match &here {
+                    None => {
+                        if self.open.get() {
+                            self.placing.set(true);
+                            self.dialog.force_close();
+                            self.placing.set(false);
+                        }
+                        self.dialog.set_child(None::<&gtk::Widget>);
+                    }
+                    Some(here) => here.remove(&self.content),
+                }
+                slot.append(&self.content);
+                self.slot.replace(Some(slot.clone()));
+            }
+            (None, Some(here)) => {
+                here.remove(&self.content);
+                self.slot.replace(None);
+                self.dialog.set_child(Some(&self.content));
+                let parent = self
+                    .parent
+                    .borrow()
+                    .as_ref()
+                    .and_then(glib::WeakRef::upgrade);
+                if self.open.get()
+                    && let Some(parent) = parent
+                {
+                    self.dialog.present(Some(&parent));
+                }
+            }
+        }
+        let (width, height) = self.window.get();
+        self.fit(width, height);
+    }
+
+    /// Whether the view is in the reading pane rather than the dialog.
+    pub fn in_pane(&self) -> bool {
+        self.slot.borrow().is_some()
+    }
+
+    /// The message view, wherever it is placed.
+    pub fn view(&self) -> gtk::Widget {
+        self.content.clone().upcast()
+    }
+
+    /// Run `changed` whenever the message opens or closes.
+    pub fn connect_changed(&self, changed: impl Fn() + 'static) {
+        self.changed.replace(Some(Rc::new(changed)));
+    }
+
+    fn tell_changed(&self) {
+        let changed = self.changed.borrow().clone();
+        if let Some(changed) = changed {
+            changed();
+        }
+    }
+
+    /// The list row on screen, while one is.
+    pub fn showing_row(&self) -> Option<MessageId> {
+        self.open.get().then(|| self.row.get()).flatten()
+    }
+
+    /// Open the host, over `parent` when it is the dialog: once, while the
+    /// message is not already open.
+    fn present(&self, parent: &gtk::Widget) {
+        if self.open.get() {
+            return;
+        }
+        self.parent.replace(Some(parent.downgrade()));
+        self.follow(parent);
+        if !self.in_pane() {
+            self.dialog.present(Some(parent));
+        }
+        self.open.set(true);
+        self.tell_changed();
+    }
+
+    /// How wide the view's host is: the dialog's width for the window, or
+    /// the reading pane's.
+    fn host_width(&self) -> i32 {
+        let window = self.window.get().0;
+        let dialog = focus_dialog::dialog_width(window);
+        if self.in_pane() {
+            focus_dialog::pane_width(window).unwrap_or(dialog)
+        } else {
+            dialog
+        }
+    }
+
     /// Size the dialog for a window `width` by `height` (T205): its width
     /// and height come from the window and nothing else, so stepping
     /// through the list never resizes it.
@@ -472,9 +606,8 @@ impl OpenMessage {
             self.dialog.set_content_height(tall);
         }
         self.fit_column();
-        self.fold_into_more(
-            focus_dialog::folds_into_more(dialog) || self.full_row_width() > dialog,
-        );
+        let host = self.host_width();
+        self.fold_into_more(focus_dialog::folds_into_more(host) || self.full_row_width() > host);
     }
 
     /// How wide the action row is with every verb laid out: the handoff's
@@ -598,8 +731,7 @@ impl OpenMessage {
 
     /// The column's width, for the dialog's and the body's treatment.
     fn fit_column(&self) {
-        let dialog = focus_dialog::dialog_width(self.window.get().0);
-        let column = focus_dialog::column_width(dialog, self.reader.treatment());
+        let column = focus_dialog::column_width(self.host_width(), self.reader.treatment());
         if self.clamp.maximum_size() != column {
             self.clamp.set_maximum_size(column);
             self.clamp.set_tightening_threshold(column);
@@ -707,12 +839,9 @@ impl OpenMessage {
         self.show_labels(&conversation.labels);
         self.marker
             .replace(summary.marker.clone().map(|marker| (message, marker)));
+        self.row.set(Some(row.id()));
 
-        if !self.open.get() {
-            self.follow(parent.upcast_ref());
-            self.dialog.present(Some(parent));
-            self.open.set(true);
-        }
+        self.present(parent.upcast_ref());
         self.show_message(message);
         if let (Some(thread), true) = (summary.id, summary.message_count > 1) {
             self.read_thread(thread, message);
@@ -732,11 +861,8 @@ impl OpenMessage {
         self.show_thread_chip(1);
         self.show_labels(&[]);
         self.marker.replace(None);
-        if !self.open.get() {
-            self.follow(parent.upcast_ref());
-            self.dialog.present(Some(parent));
-            self.open.set(true);
-        }
+        self.row.set(None);
+        self.present(parent.upcast_ref());
         self.show_message(message);
     }
 
@@ -1035,13 +1161,18 @@ impl OpenMessage {
         }
     }
 
-    /// Close the dialog. The list behind it has not moved.
+    /// Close the message: the dialog, or the pane's message, which leaves the
+    /// pane empty. The list has not moved.
     pub fn close(&self) {
-        self.dialog.close();
-        self.open.set(false);
+        if !self.in_pane() {
+            self.dialog.close();
+        }
+        if self.open.replace(false) {
+            self.tell_changed();
+        }
     }
 
-    /// Whether the dialog is up.
+    /// Whether the message is open, in the dialog or the pane.
     pub fn is_open(&self) -> bool {
         self.open.get()
     }

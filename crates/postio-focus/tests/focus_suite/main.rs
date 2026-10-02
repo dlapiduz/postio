@@ -63,6 +63,7 @@ mod open_reading;
 mod pickers;
 mod places;
 mod pointer_pairs;
+mod reading_pane;
 mod registry_parity;
 mod reload;
 mod remind_on_send;
@@ -582,6 +583,34 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_reading::the_steps_carry_their_keys_inside_and_stay_compact",
         open_reading::the_steps_carry_their_keys_inside_and_stay_compact as fn(),
+    ),
+    (
+        "reading_pane::f8_and_the_setting_switch_between_the_dialog_and_the_pane",
+        reading_pane::f8_and_the_setting_switch_between_the_dialog_and_the_pane as fn(),
+    ),
+    (
+        "reading_pane::return_shows_the_message_beside_the_list_and_keeps_its_cursor",
+        reading_pane::return_shows_the_message_beside_the_list_and_keeps_its_cursor as fn(),
+    ),
+    (
+        "reading_pane::j_and_k_step_the_pane_with_the_cursor",
+        reading_pane::j_and_k_step_the_pane_with_the_cursor as fn(),
+    ),
+    (
+        "reading_pane::escape_and_the_x_return_the_keyboard_to_the_list",
+        reading_pane::escape_and_the_x_return_the_keyboard_to_the_list as fn(),
+    ),
+    (
+        "reading_pane::a_window_under_980_opens_the_dialog_instead",
+        reading_pane::a_window_under_980_opens_the_dialog_instead as fn(),
+    ),
+    (
+        "reading_pane::the_panes_column_follows_column_width_for_its_width",
+        reading_pane::the_panes_column_follows_column_width_for_its_width as fn(),
+    ),
+    (
+        "reading_pane::the_composer_takes_over_the_pane",
+        reading_pane::the_composer_takes_over_the_pane as fn(),
     ),
     (
         "open_layout::the_dialog_is_sized_by_the_window_and_never_by_the_message",
