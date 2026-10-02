@@ -185,6 +185,167 @@ pub fn account_rows_persist_enable_default_and_removal() {
     });
 }
 
+/// Put the keyboard on the account row named `account`, as Tab would.
+fn focus_row(
+    window: &postio_focus::window::FocusWindow,
+    dialog: &adw::Dialog,
+    account: postio_model::ids::AccountId,
+) {
+    let name = format!("postio-account-{}", account.get());
+    let row = rows(dialog)
+        .into_iter()
+        .find(|row| row.widget_name() == name.as_str())
+        .expect("the account's row is on screen");
+    row.grab_focus();
+    crate::settle();
+    assert_eq!(
+        window.settings().expect("Settings").panel().focused_account(),
+        Some(account),
+        "the keyboard is on the account's row"
+    );
+}
+
+/// T258: Set as default (`m`), Enable or disable (`Return`), Rebuild index
+/// (`r`), Map mailbox role (`M`) and Remove (`Delete`, then `mod+z` to undo)
+/// act on the account row the keyboard is on, and on nothing when it is
+/// not on one.
+pub fn the_account_verbs_have_keys_on_the_focused_row() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
+            .await;
+        fixture
+            .write_body(message, "The numbers are attached.")
+            .await;
+        let (second, _) = fixture.second_account().await;
+        let (window, _directory, _path) = open_under(&fixture, "").await;
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        assert!(crate::settle_until(async || rows(&dialog).len() == 2).await);
+        let database = fixture.database.clone();
+
+        // With the keyboard on no account row, the keys do nothing.
+        window
+            .settings()
+            .expect("Settings")
+            .panel()
+            .search_field()
+            .grab_focus();
+        crate::settle();
+        let before = account(&database, second.id).await.is_default;
+        support::deliver(&window, "Delete");
+        support::deliver(&window, "m");
+        crate::settle();
+        assert_eq!(account(&database, second.id).await.is_default, before);
+        assert!(!account(&database, second.id).await.pending_deletion);
+
+        // `m` makes the focused account the default.
+        focus_row(&window, &dialog, second.id);
+        support::deliver(&window, "m");
+        assert!(
+            crate::settle_until(async || account(&database, second.id).await.is_default).await,
+            "`m` on the second account's row made it the default"
+        );
+
+        // `Return` flips the switch.
+        focus_row(&window, &dialog, second.id);
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || !account(&database, second.id).await.enabled).await,
+            "`Return` on the row disabled the account"
+        );
+        focus_row(&window, &dialog, second.id);
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || account(&database, second.id).await.enabled).await,
+            "and enabled it again"
+        );
+
+        // `r` rebuilds the first account's index.
+        fixture.index().await;
+        focus_row(&window, &dialog, fixture.account.id);
+        support::deliver(&window, "r");
+        let first = fixture.account.id;
+        assert!(
+            crate::settle_until(async || {
+                let connection = database.connect().await.expect("a connection");
+                postio_index::index::messages_missing_body_text_for_account(
+                    &connection,
+                    first.get(),
+                    10,
+                )
+                .await
+                .expect("candidates")
+                .is_empty()
+            })
+            .await,
+            "`r` rebuilt the account's index"
+        );
+
+        // `Delete` removes, and `mod+z` brings it back.
+        focus_row(&window, &dialog, second.id);
+        support::deliver(&window, "Delete");
+        assert!(
+            crate::settle_until(async || account(&database, second.id).await.pending_deletion)
+                .await,
+            "`Delete` marked the account for removal"
+        );
+        support::deliver_with(&window, "z", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || !account(&database, second.id).await.pending_deletion)
+                .await,
+            "`mod+z` restored it"
+        );
+
+        // `M` opens the account's detail, where its roles are mapped.
+        focus_row(&window, &dialog, second.id);
+        support::deliver(&window, "M");
+        let detail = || {
+            support::with_class(&dialog, "postio-settings-account-detail-mailboxes")
+                .into_iter()
+                .any(|group| group.is_mapped())
+        };
+        assert!(
+            crate::settle_until(async || detail()).await,
+            "`M` opened the account's roles"
+        );
+    });
+}
+
+/// T258: the command bar lists the five, and running one with Settings shut
+/// opens Settings rather than guessing an account.
+pub fn the_command_bar_offers_the_account_verbs() {
+    use postio_core::CommandId::*;
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (fixture, window, _directory, _path) = one_message_under("").await;
+        let _keep = &fixture;
+        let bar = window.command_bar_rows();
+        for verb in [
+            RemoveAccount,
+            RebuildAccountIndex,
+            SetDefaultAccount,
+            ToggleAccountEnabled,
+            MapMailboxRole,
+        ] {
+            assert!(bar.contains(&verb), "the command bar lists {verb}");
+        }
+        window.take_unanswered();
+        window.act(SetDefaultAccount);
+        assert!(
+            settings_shown(&window).await.is_some(),
+            "with Settings shut, the verb opens it to pick an account"
+        );
+        assert!(window.take_unanswered().is_empty());
+    });
+}
+
 /// `settings_credential_wiring`: Update credential opens the account form
 /// over the window, filled in from the account's row, and the list behind
 /// is untouched.

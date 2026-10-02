@@ -246,6 +246,11 @@ impl Settings {
         }
     }
 
+    /// Press the toast's Undo, if one is showing: whether it was.
+    pub fn undo(&self) -> bool {
+        self.toast.activate_undo()
+    }
+
     /// `description` on the dialog's toast, with an Undo that runs `undo`.
     pub fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>) {
         self.toast.show_removable(description, undo);
@@ -363,7 +368,17 @@ impl Settings {
     /// The commands Settings has a control for: its foot strip's "Open in
     /// $EDITOR".
     pub fn controls() -> Vec<postio_core::CommandId> {
-        vec![postio_core::CommandId::EditConfig]
+        // The account verbs are on each account row's menu and its detail
+        // view (T258 gives them keys).
+        use postio_core::CommandId::*;
+        vec![
+            EditConfig,
+            ToggleAccountEnabled,
+            RemoveAccount,
+            RebuildAccountIndex,
+            SetDefaultAccount,
+            MapMailboxRole,
+        ]
     }
 
     /// Take `keymap` as the keys in force: the foot strip's cap, the
@@ -472,8 +487,72 @@ impl crate::window::FocusWindow {
                 self.edit_config();
                 glib::Propagation::Stop
             }
+            // The Accounts section's keys, resolved only while the keyboard
+            // is on an account row (`key_context`), act on that row (T258).
+            Ok(
+                verb @ (CommandId::ToggleAccountEnabled
+                | CommandId::RemoveAccount
+                | CommandId::RebuildAccountIndex
+                | CommandId::SetDefaultAccount
+                | CommandId::MapMailboxRole),
+            ) => {
+                self.account_verb(verb);
+                glib::Propagation::Stop
+            }
+            // `mod+z` takes back the removal its toast offers.
+            Ok(CommandId::Undo) => {
+                let undone = self.settings().is_some_and(|settings| settings.undo());
+                if undone {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
             _ => glib::Propagation::Proceed,
         }
+    }
+
+    /// An account verb, from its key or the command bar (T258): it acts on
+    /// the account row Settings has focused. With Settings shut it opens
+    /// Settings to pick one, and with no row focused it does nothing: the
+    /// first account is never a guess at whose mail to remove.
+    pub(crate) fn account_verb(&self, verb: postio_core::CommandId) {
+        use postio_core::CommandId;
+        use postio_widgets::settings::AccountAction;
+        let Some(settings) = self.settings().filter(|settings| settings.is_open()) else {
+            self.open_settings();
+            return;
+        };
+        let panel = settings.panel();
+        let Some(account) = panel.focused_account() else {
+            return;
+        };
+        match verb {
+            CommandId::ToggleAccountEnabled => {
+                panel.toggle_account_enabled(account);
+            }
+            CommandId::RemoveAccount => {
+                panel.request_account_action(account, AccountAction::Remove)
+            }
+            CommandId::RebuildAccountIndex => {
+                panel.request_account_action(account, AccountAction::RebuildIndex)
+            }
+            CommandId::SetDefaultAccount => {
+                panel.request_account_action(account, AccountAction::SetDefault)
+            }
+            // A role is mapped from the account's detail view, where its
+            // folders are.
+            CommandId::MapMailboxRole => panel.open_account_detail(account),
+            _ => {}
+        }
+    }
+
+    /// Whether the keyboard is on an account row in Settings, which is when
+    /// the Accounts section's keys are the keyboard's.
+    pub(crate) fn settings_on_an_account(&self) -> bool {
+        self.settings().is_some_and(|settings| {
+            settings.is_open() && settings.panel().focused_account().is_some()
+        })
     }
 
     /// Whether Settings' Keyboard section is waiting for a key to bind.

@@ -1014,6 +1014,14 @@ const CASES: &[(&str, fn())] = &[
         settings::mod_e_opens_config_toml_in_the_persons_editor as fn(),
     ),
     (
+        "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
+        settings_wiring::the_account_verbs_have_keys_on_the_focused_row as fn(),
+    ),
+    (
+        "settings_wiring::the_command_bar_offers_the_account_verbs",
+        settings_wiring::the_command_bar_offers_the_account_verbs as fn(),
+    ),
+    (
         "settings_wiring::account_rows_persist_enable_default_and_removal",
         settings_wiring::account_rows_persist_enable_default_and_removal as fn(),
     ),

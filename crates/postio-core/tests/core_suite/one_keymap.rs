@@ -296,8 +296,9 @@ const CONTRACT: &[Row] = &[
         &[Context::Digest],
     ),
     // -- Classic-only surfaces: "delete" has one key ---------------------
-    // Only the apps with a folder list and an account list offer these
-    // (T166): Focus has neither surface.
+    // Only the apps with a folder list offer the first (T166): Focus has
+    // none. The account list's verbs are Focus's too, from Settings'
+    // Accounts section (T258).
     with(
         "delete_saved_search",
         "Delete",
@@ -305,13 +306,7 @@ const CONTRACT: &[Row] = &[
         ThreePane,
         &[Context::Sidebar],
     ),
-    with(
-        "remove_account",
-        "Delete",
-        &[],
-        ThreePane,
-        &[Context::Accounts],
-    ),
+    with("remove_account", "Delete", &[], All, &[Context::Accounts]),
     // `R` is Filtered's now; refresh keeps F5.
     row("refresh", "F5", All),
 ];

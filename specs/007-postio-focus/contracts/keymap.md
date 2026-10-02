@@ -16,7 +16,10 @@ Legend:
   - the sidebar toggle, pane cycling and the parts panel (T029);
   - the conversation rail, and the folder-list, parts-panel and account-list
     keys (T166). `update_credential` stays with Focus, because its sign-in
-    banner uses it.
+    banner uses it. The account list's other verbs (`toggle_account_enabled`,
+    `remove_account`, `rebuild_account_index`, `set_default_account`,
+    `map_mailbox_role`) are Focus's too (T258): Settings' Accounts section
+    has the list, so they are offered by every app.
 - **New**: a new `CommandId`, and so a new `[keys]` name.
 - `mod` is Ctrl on Linux and ⌘ on macOS (`crates/postio-config/src/keys.rs:191-221`).
 - **The second layer**: the `mod` chords the macOS frontend (#1306) gave the

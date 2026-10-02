@@ -912,7 +912,10 @@ impl FocusWindow {
         if self.compose().is_some_and(|compose| compose.is_showing()) {
             return KeyContext::Composer;
         }
-        if self
+        if self.settings_on_an_account() {
+            // Settings' account list, the keyboard on a row (T258).
+            KeyContext::Accounts
+        } else if self
             .visible_dialog()
             .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
             || (self.visible_dialog().is_none() && self.reading_beside())
@@ -1551,6 +1554,12 @@ impl FocusWindow {
             // `crate::settings`.
             CommandId::Settings => self.toggle_settings(),
             CommandId::EditConfig => self.edit_config(),
+            // The account verbs, on the row Settings has focused (T258).
+            CommandId::ToggleAccountEnabled
+            | CommandId::RemoveAccount
+            | CommandId::RebuildAccountIndex
+            | CommandId::SetDefaultAccount
+            | CommandId::MapMailboxRole => self.account_verb(id),
             CommandId::OpenMessage => match self.digest_at_cursor() {
                 Some(digest) => self.open_digest(digest),
                 None => self.open_message(),

@@ -1933,7 +1933,7 @@ static SPECS: &[CommandSpec] = &[
         // Pressing it again is the reversal, so there is nothing for the undo
         // stack to hold (ADR 0005 Q6c).
         recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RemoveAccount,
@@ -1949,7 +1949,7 @@ static SPECS: &[CommandSpec] = &[
         // is something to undo for as long as the toast is up, and declaring
         // it here is what the registry enforces a keyboard path for.
         recovery: Recovery::Undo,
-        requires: THREE_PANE_MAIL,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::UpdateCredential,
@@ -1982,7 +1982,7 @@ static SPECS: &[CommandSpec] = &[
         // Rewriting a derived table -- postio_session::reindex_account's own
         // doc explains why there is nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SetDefaultAccount,
@@ -2004,7 +2004,7 @@ static SPECS: &[CommandSpec] = &[
         // hold. Nothing is lost either -- the previous holder is still there,
         // unmarked.
         recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MapMailboxRole,
@@ -2022,7 +2022,7 @@ static SPECS: &[CommandSpec] = &[
         // The previous mapping is the inverse, and a wrong pick costs one
         // keystroke rather than a dialog (ADR 0035).
         recovery: Recovery::Undo,
-        requires: THREE_PANE_MAIL,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::NextScope,

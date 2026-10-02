@@ -138,6 +138,37 @@ pub struct Bar {
     stepped: Cell<bool>,
 }
 
+/// The verbs on an account, which Settings' Accounts section binds keys to
+/// (T258). They are reached from the list's bar too, where they act on the
+/// account row Settings has focused, or open Settings to pick one.
+const ACCOUNT_VERBS: [CommandId; 5] = [
+    CommandId::ToggleAccountEnabled,
+    CommandId::RemoveAccount,
+    CommandId::RebuildAccountIndex,
+    CommandId::SetDefaultAccount,
+    CommandId::MapMailboxRole,
+];
+
+/// Add the account verbs `query` matches to `found`, ranked among it. The
+/// palette lists a context's own commands, and these are `Accounts`'.
+fn add_account_verbs(
+    found: &mut Vec<postio_ui::palette::Entry>,
+    keymap: &Keymap,
+    state: postio_core::Availability,
+    query: &str,
+) {
+    let extra: Vec<_> = postio_ui::palette::entries(keymap, Context::Accounts, state, query)
+        .into_iter()
+        .filter(|entry| {
+            matches!(entry.id, ActionId::Builtin(id) if ACCOUNT_VERBS.contains(&id))
+                && !found.iter().any(|have| have.id == entry.id)
+        })
+        .collect();
+    found.extend(extra);
+    found.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+    found.truncate(postio_ui::palette::MAX_ROWS);
+}
+
 impl Bar {
     /// The commands the bar has a control for beyond its command rows: a
     /// pill for each saved search, and a row for each message found.
@@ -625,7 +656,10 @@ impl Bar {
             store_open: true,
             frontend: Frontend::Focus,
         };
-        postio_ui::palette::entries(&self.keymap.borrow(), Context::List, state, "")
+        let keymap = self.keymap.borrow();
+        let mut entries = postio_ui::palette::entries(&keymap, Context::List, state, "");
+        add_account_verbs(&mut entries, &keymap, state, "");
+        entries
             .into_iter()
             .filter_map(|entry| match entry.id {
                 ActionId::Builtin(command) => Some(command),
@@ -767,7 +801,11 @@ impl Bar {
             frontend: Frontend::Focus,
         };
         let keymap = self.keymap.borrow();
-        let blend = finder::blend(typed, &places, &keymap, Context::List, state);
+        let mut blend = finder::blend(typed, &places, &keymap, Context::List, state);
+        let words = typed.strip_prefix(finder::COMMANDS_ONLY).unwrap_or(typed);
+        if typed.starts_with(finder::COMMANDS_ONLY) || !words.trim().is_empty() {
+            add_account_verbs(&mut blend.commands, &keymap, state, words.trim());
+        }
         if !blend.commands.is_empty() {
             self.append_heading("Commands");
             for entry in blend.commands.iter().take(5) {

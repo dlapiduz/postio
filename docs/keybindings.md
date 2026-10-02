@@ -151,12 +151,12 @@ command from inside a text field.
 | `shift+Up` | Move saved search up | Folder list (not Postio Focus) |  | `move_saved_search_up` |
 | `shift+Down` | Move saved search down | Folder list (not Postio Focus) |  | `move_saved_search_down` |
 | `Delete` | Delete saved search | Folder list (not Postio Focus) | Asks first | `delete_saved_search` |
-| `Return` | Enable or disable account | Account list (not Postio Focus) |  | `toggle_account_enabled` |
-| `Delete` | Remove account | Account list (not Postio Focus) | Undoable | `remove_account` |
+| `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
+| `Delete` | Remove account | Account list | Undoable | `remove_account` |
 | `c` | Update account credential | Account list |  | `update_credential` |
-| `r` | Rebuild search index | Account list (not Postio Focus) |  | `rebuild_account_index` |
-| `m` | Set as default account | Account list (not Postio Focus) |  | `set_default_account` |
-| `M` | Map mailbox role | Account list (not Postio Focus) | Undoable | `map_mailbox_role` |
+| `r` | Rebuild search index | Account list |  | `rebuild_account_index` |
+| `m` | Set as default account | Account list |  | `set_default_account` |
+| `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` | Refresh | List, conversation, reader |  | `refresh` |
 | `p` | Show message parts | Reader (not Postio Focus) |  | `open_parts` |
