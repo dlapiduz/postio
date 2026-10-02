@@ -77,6 +77,21 @@ pub async fn settings_shown(window: &postio_focus::window::FocusWindow) -> Optio
     .await
     .then(|| window.settings_dialog())
     .flatten()
+    .or_else(|| {
+        // Say what there was, for the failure that follows.
+        eprintln!(
+            "Settings did not show: built {}, open {}, panel mapped {}, dialog mapped {}",
+            window.settings().is_some(),
+            window.settings().is_some_and(|settings| settings.is_open()),
+            window
+                .settings()
+                .is_some_and(|settings| settings.panel().is_mapped()),
+            window
+                .settings_dialog()
+                .is_some_and(|dialog| dialog.is_mapped()),
+        );
+        None
+    })
 }
 
 /// Whether Settings has gone from over the window.

@@ -73,6 +73,7 @@ mod rows;
 mod rule_query;
 mod selection;
 mod settings;
+mod settings_wiring;
 mod shot;
 mod starts_offline;
 mod state;
@@ -964,6 +965,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings::mod_e_opens_config_toml_in_the_persons_editor",
         settings::mod_e_opens_config_toml_in_the_persons_editor as fn(),
+    ),
+    (
+        "settings_wiring::account_rows_persist_enable_default_and_removal",
+        settings_wiring::account_rows_persist_enable_default_and_removal as fn(),
+    ),
+    (
+        "settings_wiring::update_credential_opens_a_prefilled_form_over_the_window",
+        settings_wiring::update_credential_opens_a_prefilled_form_over_the_window as fn(),
+    ),
+    (
+        "settings_wiring::rebuilding_an_index_refills_it_and_clears_the_row",
+        settings_wiring::rebuilding_an_index_refills_it_and_clears_the_row as fn(),
+    ),
+    (
+        "settings_wiring::opening_makes_no_connection_and_privacy_lists_the_log",
+        settings_wiring::opening_makes_no_connection_and_privacy_lists_the_log as fn(),
+    ),
+    (
+        "settings_wiring::privacy_counts_the_receipts_asked_for",
+        settings_wiring::privacy_counts_the_receipts_asked_for as fn(),
     ),
 ];
 

@@ -47,6 +47,9 @@ pub struct Seams {
 pub struct Settings {
     dialog: adw::Dialog,
     panel: SettingsPanel,
+    /// The dialog's own toasts: one over the window would be under the
+    /// dialog's scrim, where a removal's Undo cannot be reached.
+    toast: postio_widgets::widgets::toast::Toast,
     accounts: RefCell<Option<Accounts>>,
     open: Cell<bool>,
     /// Whether the dialog is following its window's size yet.
@@ -87,17 +90,20 @@ impl Settings {
         content.append(&header);
         content.append(&panel);
 
+        let toast = postio_widgets::widgets::toast::Toast::new();
+        toast.overlay().set_child(Some(&content));
         let dialog = adw::Dialog::builder()
             .title("Settings")
             .content_width(focus_dialog::dialog_width(REFERENCE_WINDOW.0))
             .content_height(focus_dialog::dialog_height(REFERENCE_WINDOW.1))
-            .child(&content)
+            .child(toast.overlay())
             .build();
         dialog.set_widget_name(DIALOG_NAME);
 
         let settings = Rc::new(Settings {
             dialog,
             panel,
+            toast,
             accounts: RefCell::default(),
             open: Cell::new(false),
             following: Cell::new(false),
@@ -233,6 +239,11 @@ impl Settings {
         if self.open.get() {
             self.dialog.close();
         }
+    }
+
+    /// `description` on the dialog's toast, with an Undo that runs `undo`.
+    pub fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>) {
+        self.toast.show_removable(description, undo);
     }
 
     /// What the store just said, as far as the account rows care.
@@ -504,7 +515,10 @@ impl crate::window::FocusWindow {
     /// `description` on the toast, with an Undo that runs `undo`: a removed
     /// account's, which the global undo stack never holds.
     pub(crate) fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>) {
-        self.imp().toast.show_removable(description, undo);
+        match self.settings().filter(|settings| settings.is_open()) {
+            Some(settings) => settings.offer_undo(description, undo),
+            None => self.imp().toast.show_removable(description, undo),
+        }
     }
 
     /// Hand `command` to the host, as the window's own verbs are.
