@@ -536,6 +536,8 @@ one,two\r\n\
             downloaded: true,
             last: true,
             attachment: Some(attachment.id),
+            content_id: None,
+            inline: false,
         };
 
         let into = tempfile::tempdir().expect("a directory");
@@ -576,6 +578,8 @@ one,two\r\n\
             downloaded: true,
             last: true,
             attachment: None,
+            content_id: None,
+            inline: false,
         };
 
         let into = tempfile::tempdir().expect("a directory");

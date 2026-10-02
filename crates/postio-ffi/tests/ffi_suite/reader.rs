@@ -61,13 +61,17 @@ async fn the_document_carries_the_shared_content_security_policy() {
     // works.
     let (session, id) = with_body("<p>hello</p>").await;
 
-    let blocked = session.reader_document(id, RemoteImagesFfi::Blocked).await;
+    let blocked = session
+        .reader_document(id, RemoteImagesFfi::Blocked, false)
+        .await;
     assert!(
         blocked.contains(&shared::content_security_policy(RemoteImages::Blocked)),
         "the blocked document does not carry the shared policy"
     );
 
-    let allowed = session.reader_document(id, RemoteImagesFfi::Allowed).await;
+    let allowed = session
+        .reader_document(id, RemoteImagesFfi::Allowed, false)
+        .await;
     assert!(
         allowed.contains(&shared::content_security_policy(RemoteImages::Allowed)),
         "the allowed document does not carry the shared policy"
@@ -104,7 +108,9 @@ async fn the_document_is_the_one_the_gtk_reader_would_render() {
     );
 
     assert_eq!(
-        session.reader_document(id, RemoteImagesFfi::Blocked).await,
+        session
+            .reader_document(id, RemoteImagesFfi::Blocked, false)
+            .await,
         expected
     );
     session.shutdown();
@@ -117,7 +123,9 @@ async fn the_senders_markup_is_bounded_and_carries_no_script() {
     // so markup imitating application chrome has a harder time. A frontend
     // that forgot it would look fine and be wrong.
     let (session, id) = with_body("<p>hi</p><script>alert(1)</script>").await;
-    let document = session.reader_document(id, RemoteImagesFfi::Blocked).await;
+    let document = session
+        .reader_document(id, RemoteImagesFfi::Blocked, false)
+        .await;
 
     assert!(
         document.contains("postio-body"),
@@ -153,7 +161,7 @@ async fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
             .expect("a session");
 
     let document = session
-        .reader_document(id.into(), RemoteImagesFfi::Blocked)
+        .reader_document(id.into(), RemoteImagesFfi::Blocked, false)
         .await;
     assert!(
         document.len() > 200,
@@ -259,4 +267,185 @@ async fn a_content_id_nothing_declared_does_not_resolve() {
             .is_none()
     );
     session.shutdown();
+}
+
+/// A session over a store holding one message addressed to `to` and `cc`.
+///
+/// Recipients are read per open message rather than carried on every list
+/// row: a mailbox is never loaded into memory (`PRODUCT.md` §18), and `To`
+/// and `Cc` are questions asked about the message in front of you.
+async fn with_recipients(
+    to: &[(Option<&str>, &str)],
+    cc: &[(Option<&str>, &str)],
+) -> (std::sync::Arc<Session>, i64) {
+    use postio_model::address::EmailAddress;
+
+    let database = test_support::memory().await;
+    let addresses = |list: &[(Option<&str>, &str)]| -> Vec<EmailAddress> {
+        list.iter()
+            .map(|(name, address)| EmailAddress::new(*name, *address))
+            .collect()
+    };
+
+    let id = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let repository = MessageRepository::new(&connection);
+        let mut message = Message::new(account.id, inbox, Utc::now());
+        message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
+        message.to = addresses(to);
+        message.cc = addresses(cc);
+        repository.create(&mut message).await.expect("a message")
+    };
+
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    (session, id.into())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_open_message_can_say_who_it_was_addressed_to() {
+    // #1259: macOS drew who a message was *from* and never who it was *to*.
+    // GTK's reader has drawn both since #319, from four functions it kept
+    // private — so the second frontend's choice was to write them again or
+    // to share them. This asserts it shares them.
+    let (session, id) = with_recipients(
+        &[(None, "bob@example.com")],
+        &[(Some("Grace Hopper"), "grace@example.com")],
+    )
+    .await;
+
+    let drawn = session
+        .recipients(id)
+        .await
+        .expect("a message has recipients");
+    let shared = postio_ui::reader::header::MessageHeader::of(
+        &[],
+        &[postio_model::address::EmailAddress::new(
+            None::<&str>,
+            "bob@example.com",
+        )],
+        &[postio_model::address::EmailAddress::new(
+            Some("Grace Hopper"),
+            "grace@example.com",
+        )],
+        None,
+        Utc::now(),
+        chrono::Local::now(),
+    );
+
+    assert_eq!(drawn.to, shared.to_line());
+    assert_eq!(drawn.cc, shared.cc);
+    assert_eq!(drawn.cc_label, shared.cc_toggle_label());
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_addressed_to_nobody_offers_no_recipient_lines_at_all() {
+    // Not blank lines: a header spends no space on a question this message
+    // does not answer, which is what makes the one-recipient case one line.
+    let (session, id) = with_recipients(&[], &[]).await;
+    let drawn = session.recipients(id).await.expect("a message");
+    assert_eq!(drawn.to, None);
+    assert_eq!(drawn.cc, None);
+    assert_eq!(drawn.cc_label, None);
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_that_is_not_in_the_store_has_no_recipients_rather_than_empty_ones() {
+    let (session, id) = with_recipients(&[(None, "bob@example.com")], &[]).await;
+    assert!(session.recipients(id + 4_242).await.is_none());
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_reading_pane_offers_the_same_four_verbs_the_keyboard_does() {
+    // Reply, reply all and forward were reachable with the pointer; archive
+    // was keyboard-only, which is the gap #1221 closed for the list. Which
+    // four and in what order is the shared list's call, so the two frontends
+    // cannot offer different bars.
+    let (session, _) = with_recipients(&[], &[]).await;
+
+    let offered = session.reader_actions();
+    assert_eq!(
+        offered.len(),
+        postio_ui::reader::header::ReaderAction::ALL.len()
+    );
+    for (action, shared) in offered
+        .iter()
+        .zip(postio_ui::reader::header::ReaderAction::ALL)
+    {
+        assert_eq!(action.command, shared.command().as_str());
+        assert_eq!(action.title, shared.title());
+        assert_eq!(action.primary, shared.primary());
+    }
+    assert!(
+        offered.iter().any(|action| action.command == "archive"),
+        "archive is still unreachable with the pointer"
+    );
+    session.shutdown();
+}
+
+// --- the grants, as the Privacy pane reads them (#1156) ---------------------
+
+/// A session with nothing in it, for the grant tests.
+///
+/// `in_memory` gives each session an allow-list file of its own under the
+/// temp directory — checked rather than assumed, because a shared path once
+/// made one test's grant true for the next, and because the equivalent
+/// mistake with the keyring reached the developer's real login keychain.
+///
+/// Synchronous, unlike the helpers above, and that is the shape of the thing
+/// rather than an oversight: a grant lives in a file beside the store, not in
+/// the store, so nothing here ever touches a connection.
+fn a_session() -> std::sync::Arc<Session> {
+    Session::open(SessionOptions::in_memory()).expect("an in-memory session")
+}
+
+#[test]
+fn a_grant_can_be_seen_and_taken_back() {
+    // "Blocked until allowed per sender" is only a promise if *allowed* is
+    // reviewable: a permission nobody can see is one nobody can withdraw.
+    let session = a_session();
+    assert!(
+        session.remote_image_grants().is_empty(),
+        "nothing is allowed until somebody allows it"
+    );
+
+    session.allow_sender("ada@example.com".to_owned());
+    session.allow_domain("example.net".to_owned());
+
+    let grants = session.remote_image_grants();
+    assert_eq!(grants.len(), 2);
+    let sender = grants
+        .iter()
+        .find(|grant| grant.subject == "ada@example.com")
+        .expect("the address grant");
+    assert!(!sender.whole_domain);
+    let domain = grants
+        .iter()
+        .find(|grant| grant.subject == "example.net")
+        .expect("the domain grant");
+    assert!(
+        domain.whole_domain,
+        "a domain grant covers everyone at it, and the pane has to say so"
+    );
+
+    session.revoke_remote_images("ada@example.com".to_owned());
+
+    let left = session.remote_image_grants();
+    assert_eq!(left.len(), 1, "only the one that was named went");
+    assert_eq!(left[0].subject, "example.net");
+}
+
+#[test]
+fn revoking_a_domain_does_not_need_to_be_told_it_is_one() {
+    // One entry point for both kinds. A caller that had to guess which list
+    // held a subject would leave a grant in place while reporting it gone.
+    let session = a_session();
+    session.allow_domain("example.org".to_owned());
+
+    session.revoke_remote_images("example.org".to_owned());
+
+    assert!(session.remote_image_grants().is_empty());
 }

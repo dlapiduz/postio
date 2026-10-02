@@ -102,6 +102,22 @@ rustflags = [
 # real display (#315).
 #
 # `gtk_display_required.rs` is what notices when this stops applying.
+# The store's pages are AES-256-GCM, and every page read is a decryption.
+# `aes` 0.8 and `polyval` 0.6 use the ARMv8 AES and PMULL instructions only
+# when told to with these two cfgs; without them an aarch64 build runs the
+# portable bit-sliced fallback. On x86_64 they detect AES-NI at runtime and
+# need nothing, which is how this went unnoticed: on Apple silicon a first
+# sync spent three quarters of its CPU in `aes::soft` (2026-10-01, sampled
+# live). Measured on that machine, one 4 KiB page: 37.6 us in software,
+# 3.6 us with the instructions. Both crates still check the CPU at runtime
+# and fall back, so a core without the extensions loses nothing.
+#
+# A cfg table, not a triple one, so ARM Linux gets it too. It sets no other
+# rustflags, so it suppresses nothing: no cfg table above sets any, and the
+# one triple table that does is x86_64's.
+[target.'cfg(target_arch = "aarch64")']
+rustflags = ["--cfg", "aes_armv8", "--cfg", "polyval_armv8"]
+
 [target.'cfg(target_os = "linux")']
 runner = "scripts/headless-runner.sh"
 

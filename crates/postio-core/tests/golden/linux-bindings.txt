@@ -10,8 +10,8 @@ select_all	ctrl+a
 prev_view	h | Left
 back	Escape
 toggle_result_order	o
-next_in_conversation	J
-prev_in_conversation	K
+next_in_conversation	J | alt+Down
+prev_in_conversation	K | alt+Up
 toggle_fold	z
 view_original	ctrl+o
 toggle_reader_view	ctrl+shift+o | alt+o
@@ -22,12 +22,12 @@ find_previous	ctrl+shift+g | shift+F3
 zoom_in	ctrl+plus | ctrl+equal | ctrl+KP_Add
 zoom_out	ctrl+minus | ctrl+KP_Subtract
 zoom_reset	ctrl+0 | ctrl+KP_0
-expand_all	O
+expand_all	O | ctrl+shift+e
 toggle_rail	I
-reply	e
-reply_all	E
-forward	f
-archive	a
+reply	e | ctrl+r
+reply_all	E | ctrl+shift+r
+forward	f | ctrl+shift+f
+archive	a | ctrl+shift+a
 archive_thread	A
 delete	d
 move	m
@@ -36,15 +36,15 @@ mark_unread	U
 snooze	b
 unsnooze	B
 add_label	L
-search	/
+search	/ | alt+ctrl+f
 save_search	ctrl+s
-compose	c
-send	ctrl+Return | alt+s | alt+Return
+compose	c | ctrl+n
+send	ctrl+shift+d | ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S
 save_draft	ctrl+s
 discard_draft	ctrl+d
 mark_sent	ctrl+shift+m | alt+m
-retry_send	ctrl+shift+r | alt+r
+retry_send	ctrl+shift+y | alt+r
 cancel_send	ctrl+shift+x | alt+x
 attach_file	ctrl+shift+a | alt+a
 detach_composer	ctrl+shift+o | alt+o
@@ -58,7 +58,7 @@ bullet_list	ctrl+shift+8 | alt+8
 numbered_list	ctrl+shift+7 | alt+7
 insert_link	ctrl+shift+k | alt+k
 quote_block	ctrl+shift+9 | alt+9
-undo	u
+undo	u | ctrl+z
 command_palette	ctrl+k
 cheat_sheet	?
 settings	ctrl+comma | alt+comma

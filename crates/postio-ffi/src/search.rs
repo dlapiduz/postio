@@ -122,6 +122,21 @@ pub fn query_chips(query: String) -> Vec<ChipFfi> {
         .collect()
 }
 
+/// What to draw over a list with nothing in it.
+///
+/// Two sentences, both the core's. A frontend that composed its own would be
+/// composing the same ones again and getting them different — and this is the
+/// family of sentence where being different means being *wrong*, not merely
+/// inconsistent: "No messages" over a search that matched nothing is a claim
+/// about the user's mail that is false (ADR 0005 Q10).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmptyPlateFfi {
+    /// The heading. *No matches*, not *No messages*.
+    pub title: String,
+    /// The sentence under it, including what could not be searched.
+    pub detail: String,
+}
+
 /// What one search turned out to be, as the field's right-hand end says it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OutcomeFfi {
@@ -131,5 +146,82 @@ pub struct OutcomeFfi {
     /// punctuation and an abbreviation rather than something to read out.
     pub spoken: String,
     /// How many messages matched.
+    pub hits: u64,
+}
+
+/// Which slice of the mailbox a search looks at: the scope rail's three
+/// rows (#1157). `postio_search::facets::Scope`, crossed as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SearchScopeFfi {
+    /// Every folder but drafts, junk and trash — the default.
+    AllMail,
+    /// Only what is still in the inbox.
+    Inbox,
+    /// The folders list mail is filed into.
+    Lists,
+}
+
+impl From<postio_search::facets::Scope> for SearchScopeFfi {
+    fn from(scope: postio_search::facets::Scope) -> Self {
+        use postio_search::facets::Scope;
+        match scope {
+            Scope::AllMail => SearchScopeFfi::AllMail,
+            Scope::Inbox => SearchScopeFfi::Inbox,
+            Scope::Lists => SearchScopeFfi::Lists,
+        }
+    }
+}
+
+impl From<SearchScopeFfi> for postio_search::facets::Scope {
+    fn from(scope: SearchScopeFfi) -> Self {
+        use postio_search::facets::Scope;
+        match scope {
+            SearchScopeFfi::AllMail => Scope::AllMail,
+            SearchScopeFfi::Inbox => Scope::Inbox,
+            SearchScopeFfi::Lists => Scope::Lists,
+        }
+    }
+}
+
+/// One row of the scope rail: a scope, what it is called, and how many of
+/// the query's matches switching to it would find.
+///
+/// The word and the sentence are the boundary's — `Scope::label` and
+/// `postio_ui::search::scope_spoken` — so both rails say the same thing.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ScopeCountFfi {
+    /// Which scope.
+    pub scope: SearchScopeFfi,
+    /// What the row says — `Inbox only`.
+    pub label: String,
+    /// Matches inside it, zero included.
+    pub hits: u64,
+    /// What a screen reader hears — `Inbox only, 2 matches`.
+    pub spoken: String,
+}
+
+/// What the result set on screen is made of: the scope rail's counts and the
+/// refine chips, from one pass over the index rather than two.
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+pub struct SearchFacetsFfi {
+    /// Every scope, in the canvas' order, with its count. Empty over a
+    /// mailbox.
+    pub scopes: Vec<ScopeCountFfi>,
+    /// The refine chips worth offering, best first. Empty over a mailbox.
+    pub refinements: Vec<RefinementFfi>,
+}
+
+/// One refine chip: the token to append, and what it would keep.
+///
+/// The measurement is the point. A chip that keeps none of the current
+/// matches is a dead end and one that keeps all of them appears to do
+/// nothing when clicked, so `Facets::suggested` drops both and the frontend
+/// draws whatever survives — it does not choose, and it certainly does not
+/// carry a fixed list of operators of its own.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RefinementFfi {
+    /// The query token, exactly as it would be typed — `is:unread`.
+    pub token: String,
+    /// How many of the current matches it would keep.
     pub hits: u64,
 }

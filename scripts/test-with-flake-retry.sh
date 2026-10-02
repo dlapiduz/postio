@@ -26,7 +26,7 @@
 #
 # A test that fails in isolation too is not a flake, and fails the run.
 #
-# Usage: scripts/test-with-flake-retry.sh [profile]
+# Usage: scripts/test-with-flake-retry.sh [profile] [package]
 #
 # The profile defaults to `ci`, which is what a merge-path run wants. The
 # release gate asks for `ci-full`: the same tests plus the measurement tier,
@@ -35,16 +35,40 @@
 # whatever profile the run used -- otherwise "it passed alone" would be
 # evidence about a different question than the one that failed.
 #
+# A `package` narrows the first run to one crate -- `postio-gtk`, for the
+# pull-request job that runs the widget suite. The isolated retry is already
+# scoped to one binary and one test, so it needs no narrowing of its own.
+#
+# That job wants this for the reason named above: **the GTK editor cases
+# flake on a shared runner often enough to matter.** Two failures of
+# `gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces`
+# in one day, 657 of 658 passing each time, on commits touching no GTK code
+# -- each one a `timed_out ... waiting for the bold run to cross the bridge`
+# on a runner announcing `ZINK: vkCreateInstance failed`. A WebKit message
+# that never arrives on a machine with no GPU is not evidence about the
+# branch, and it was blocking merges.
+#
+# This weakens nothing. A test that fails twice still fails, and the retry
+# is what tells the two apart -- which is the same judgement a session would
+# otherwise make by hand, badly, under time pressure.
+#
 # Exit status: 0 if the suite passed, or every failure was confirmed a
 # flake by an isolated rerun. 1 if any test failed twice.
 set -uo pipefail
 
 PROFILE="${1:-ci}"
+# Empty means the whole workspace, which is what the release gate wants.
+PACKAGE="${2:-}"
+if [ -n "$PACKAGE" ]; then
+    SCOPE=(-p "$PACKAGE")
+else
+    SCOPE=(--workspace)
+fi
 
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 
-cargo nextest run --workspace --profile "$PROFILE" --no-fail-fast 2>&1 | tee "$LOG"
+cargo nextest run "${SCOPE[@]}" --profile "$PROFILE" --no-fail-fast 2>&1 | tee "$LOG"
 STATUS="${PIPESTATUS[0]}"
 
 if [ "$STATUS" -eq 0 ]; then

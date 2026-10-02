@@ -364,16 +364,18 @@ pub async fn install_for(
                 // Every part failed is the safe fallback if the runtime
                 // vanished mid-batch.
                 let failed = receiver.recv().await.unwrap_or(leaves_len);
-                if failed > 0 {
-                    // One toast for the whole batch rather than one per part:
-                    // `S` can easily name a dozen parts, and a save that is
-                    // mostly working does not need a dozen interruptions.
-                    events.emit(postio_core::Event::Error {
-                        message: format!(
-                            "{failed} part{} could not be saved",
-                            if failed == 1 { "" } else { "s" }
-                        ),
-                    });
+                // One toast for the whole batch rather than one per part:
+                // `S` can easily name a dozen parts, and a save that is
+                // mostly working does not need a dozen interruptions.
+                //
+                // The sentence is `postio_ui::reader::parts::save_all_failure`'s
+                // rather than this closure's, because the macOS boundary
+                // reports the same partial save and two frontends phrasing it
+                // separately is how they come to disagree about it. `None` is
+                // what "nothing failed" looks like, so the test for it is the
+                // same expression as the wording.
+                if let Some(sentence) = postio_gtk::parts::save_all_failure(failed) {
+                    events.emit(postio_core::Event::Error { message: sentence });
                 }
             });
         }
@@ -1542,14 +1544,13 @@ struct Loaded {
 /// What [`postio_gtk::reader::Reader::set_unsubscribe`] shows for `message`,
 /// per #971's own doc comment: the `List-Id` header when there is one, the
 /// sender's domain otherwise.
+///
+/// The rule moved to `postio_ui::unsubscribe` (#1585), where the macOS reader
+/// can reach it — it decides which list an activation gets recorded against,
+/// which is not a thing two frontends may answer separately. This is the
+/// shape the store hands over, and nothing else.
 fn list_identifier(message: &Message) -> Option<String> {
-    message.list_id.clone().or_else(|| {
-        message
-            .from
-            .first()
-            .and_then(|from| from.domain())
-            .map(str::to_owned)
-    })
+    postio_ui::unsubscribe::list_identifier(message.list_id.as_deref(), &message.from)
 }
 
 /// Which pane a body is being prepared for: they stamp references
@@ -1792,41 +1793,6 @@ impl From<Message> for Envelope {
     }
 }
 
-/// The message's own content type — the row the parts tree hangs off.
-///
-/// # Read when it is there, derived otherwise
-///
-/// `BODYSTRUCTURE` says what it is and `postio-account` records it in
-/// [`Message::content_type`] at fetch time (`postio-roj4`), so `stored` is
-/// the honest answer whenever a sync has actually filled it in. `stored` is
-/// `None` for a row synced before that column existed and never refetched
-/// since — the composer's own in-progress drafts too — and for those this
-/// falls back to reconstructing a plausible shape from what *is* recorded: a
-/// message with parts is `multipart/mixed`, one with two bodies is
-/// `multipart/alternative`, and one with neither is whichever body it has.
-///
-/// The fallback can be wrong in exactly the case the real value fixes: a
-/// `multipart/related` with inline images has parts, so it reads as
-/// `multipart/mixed` here. That is a label on one row rather than a wrong
-/// tree, which is why it was P3 rather than a bug.
-///
-/// [`Message::content_type`]: postio_model::Message::content_type
-fn root_type(
-    stored: Option<&str>,
-    body: &postio_model::MessageBody,
-    parts: &[Attachment],
-) -> String {
-    if let Some(content_type) = stored {
-        return content_type.to_owned();
-    }
-    match (parts.is_empty(), body.text.is_some(), body.html.is_some()) {
-        (false, _, _) => "multipart/mixed".to_owned(),
-        (true, true, true) => "multipart/alternative".to_owned(),
-        (true, false, true) => "text/html".to_owned(),
-        _ => "text/plain".to_owned(),
-    }
-}
-
 /// What opening or "Open with…"-ing a part needs, bundled so the seam that
 /// actually varies between the two -- `always_ask` -- does not have to travel
 /// beside four things that never change per call.
@@ -1894,6 +1860,20 @@ impl PartOpener {
 /// -- is counted here without asking. Runtime work, not main-context work: a
 /// part not yet downloaded is waited for on `tokio::time::sleep`, which
 /// panics off the runtime.
+///
+/// # Every part gets a name of its own
+///
+/// The names come from [`postio_gtk::parts::save_names`], over the whole set
+/// at once, and not from asking each node what it is called. Nothing stops a
+/// message carrying two parts that both say `invoice.pdf`, and naming them
+/// one at a time writes the second over the first: a directory with one
+/// invoice in it, no error, and no sign that a second ever arrived. That is a
+/// silent loss of the user's mail from the one command whose whole promise is
+/// that it got everything.
+///
+/// The rule is shared with the macOS boundary rather than written twice, so a
+/// repeat lands as `invoice-2.pdf` on both frontends, compared without case
+/// because the filesystem under one of them is.
 pub(crate) async fn save_all_parts(
     client: &Client,
     into: &std::path::Path,
@@ -1925,10 +1905,14 @@ fn part_targets(
 ) {
     let mut targets = Vec::new();
     let mut refused = 0;
-    for node in nodes {
-        match crate::export::part_target(into, node) {
-            Ok(target) => targets.push(target),
-            Err(_) => refused += 1,
+    // Named over the whole set at once: see `save_all_parts`.
+    let names = postio_gtk::parts::save_names(nodes);
+    for (node, name) in nodes.iter().zip(&names) {
+        // The row id is the *leaf* test and nothing else: a container has
+        // none, and there is no file in it to write.
+        match node.attachment {
+            Some(attachment) => targets.push((attachment, into.join(name))),
+            None => refused += 1,
         }
     }
     (targets, refused)
@@ -1988,6 +1972,11 @@ pub(crate) fn cid_source(
     })
 }
 
+// `root_type` is `postio_ui::reader::parts`' now. A message's own content
+// type is what the parts tree hangs off, and the macOS panel hangs its tree
+// off the same answer.
+use postio_ui::reader::parts::root_type;
+
 #[cfg(test)]
 mod tests {
     //! The one thing about saving a part that is not GTK's problem: getting
@@ -2002,6 +1991,9 @@ mod tests {
 
     use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_model::MailboxRole;
+    // Only the fixtures still speak in row ids: `part_bytes` resolves one to
+    // a MIME path before it fetches, for the reason its own doc gives.
+    use postio_model::ids::AttachmentId;
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
@@ -2009,7 +2001,6 @@ mod tests {
     use postio_storage::{BlobStore, Store, test_support};
 
     use super::*;
-    use postio_model::ids::AttachmentId;
     use postio_runtime::Engine;
 
     /// [`super::save_all_parts`] over a store rather than a client: the same
@@ -2026,41 +2017,6 @@ mod tests {
     ) -> usize {
         let (targets, refused) = part_targets(into, nodes);
         refused + postio_host::parts::save_parts(database, blobs, engine, message, &targets).await
-    }
-
-    #[test]
-    fn root_type_reads_the_stored_content_type_when_there_is_one() {
-        // The case the derivation below gets wrong: a `multipart/related`
-        // carrying inline images has parts, so the old heuristic always read
-        // it as `multipart/mixed`. A stored value settles it outright.
-        assert_eq!(
-            root_type(
-                Some("multipart/related"),
-                &postio_model::MessageBody::default(),
-                &[]
-            ),
-            "multipart/related"
-        );
-    }
-
-    #[test]
-    fn root_type_falls_back_to_derivation_when_nothing_is_stored() {
-        // A row synced before `content_type` existed, or resynced and not
-        // yet refetched -- the reconstruction `postio-roj4` describes.
-        let with_html = postio_model::MessageBody {
-            text: Some("plain".to_owned()),
-            html: Some("<p>html</p>".to_owned()),
-        };
-        assert_eq!(
-            root_type(None, &with_html, &[]),
-            "multipart/alternative",
-            "two bodies and no parts is the alternative case"
-        );
-        assert_eq!(
-            root_type(None, &postio_model::MessageBody::default(), &[]),
-            "text/plain",
-            "neither body present falls back to plain"
-        );
     }
 
     const BODY: &str = "the bytes that had to travel to get here";
@@ -2349,6 +2305,8 @@ mod tests {
             downloaded: false,
             last: true,
             attachment: Some(attachment),
+            content_id: None,
+            inline: false,
         };
         let into = tempfile::tempdir().expect("a save directory");
 
@@ -2387,6 +2345,8 @@ mod tests {
             downloaded: true,
             last: false,
             attachment: None,
+            content_id: None,
+            inline: false,
         };
         let leaf = postio_gtk::parts::Node {
             part_id: "2".to_owned(),
@@ -2397,6 +2357,8 @@ mod tests {
             downloaded: false,
             last: true,
             attachment: Some(attachment),
+            content_id: None,
+            inline: false,
         };
         let into = tempfile::tempdir().expect("a save directory");
 
@@ -2414,6 +2376,55 @@ mod tests {
         assert!(
             into.path().join("report.pdf").exists(),
             "the leaf after the failure must still be saved"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn save_all_parts_does_not_write_one_part_over_another() {
+        // Two rows in the panel that both say `report.pdf`, which is an
+        // ordinary message rather than a corner: a sender forwarding two
+        // statements, or a scanner naming everything after itself. Named one
+        // at a time, the second lands on top of the first and `S` reports a
+        // clean save of a directory holding half the mail it promised.
+        //
+        // The collision is resolved by `postio_gtk::parts::save_names` over
+        // the whole set, which is `postio_ui`'s function and the same one the
+        // macOS boundary uses -- so what this is really asserting is that
+        // this side calls it at all.
+        let (database, blobs, engine, message, _directory) = world().await;
+        let attachment = a_part_not_here(&database, message).await;
+        let node = postio_gtk::parts::Node {
+            part_id: "2".to_owned(),
+            depth: 1,
+            mime: "application/pdf".to_owned(),
+            filename: Some("report.pdf".to_owned()),
+            size: 9,
+            downloaded: false,
+            last: false,
+            attachment: Some(attachment),
+            content_id: None,
+            inline: false,
+        };
+        let into = tempfile::tempdir().expect("a save directory");
+
+        let failed = save_all_parts(
+            &database,
+            &blobs,
+            Some(engine),
+            into.path(),
+            message,
+            &[node.clone(), node],
+        )
+        .await;
+
+        assert_eq!(failed, 0, "both parts had bytes to save");
+        let written = std::fs::read_dir(into.path())
+            .expect("the save directory")
+            .count();
+        assert_eq!(
+            written, 2,
+            "two parts claiming one name overwrote each other: `S` promised \
+             everything and wrote {written} file(s)"
         );
     }
 

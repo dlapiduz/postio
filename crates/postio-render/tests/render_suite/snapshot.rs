@@ -63,6 +63,7 @@ fn snapshot() -> RenderedDocument {
             styles: "",
             recipients: "",
             cc: "",
+            sheet: postio_ui::reader::document::Sheet::Theme,
             body,
         })
         .collect();

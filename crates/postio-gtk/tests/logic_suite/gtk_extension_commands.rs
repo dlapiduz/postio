@@ -163,7 +163,9 @@ fn a_key_bound_to_a_registered_command_resolves_through_the_real_resolver() {
     // command that is in the registry and not in the resolver is bound on
     // paper and dead in the hand.
     let id = unique_id("triage");
-    register(&id, "Triage", Some("ctrl+shift+y"));
+    // A chord no built-in holds in the list. It was `ctrl+shift+y` until Retry
+    // send moved there, so that Reply All could keep `mod+shift+r` on the Mac.
+    register(&id, "Triage", Some("ctrl+shift+j"));
 
     let (resolver, problems) =
         postio_gtk::keymap::Keymap::from_commands(&Keymap::resolve(&Default::default()));
@@ -179,7 +181,7 @@ fn a_key_bound_to_a_registered_command_resolves_through_the_real_resolver() {
     // would be asserting the display convention rather than the binding.
     assert_eq!(
         bound,
-        &"ctrl+shift+y"
+        &"ctrl+shift+j"
             .parse::<postio_gtk::keymap::Binding>()
             .expect("the key the command asked for is parseable"),
         "the resolver bound it to something other than the key it asked for"

@@ -54,8 +54,8 @@ command from inside a text field.
 | `h` or `Left` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
 | `o` | Toggle result order | Search |  | `toggle_result_order` |
-| `J` | Next message in conversation | Conversation |  | `next_in_conversation` |
-| `K` | Previous message in conversation | Conversation |  | `prev_in_conversation` |
+| `J` or `alt+Down` | Next message in conversation | Conversation |  | `next_in_conversation` |
+| `K` or `alt+Up` | Previous message in conversation | Conversation |  | `prev_in_conversation` |
 | `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
@@ -66,12 +66,12 @@ command from inside a text field.
 | `ctrl+plus` or `ctrl+equal` or `ctrl+KP_Add` | Zoom in | List, conversation, reader |  | `zoom_in` |
 | `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader |  | `zoom_out` |
 | `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader |  | `zoom_reset` |
-| `O` | Expand all | Conversation |  | `expand_all` |
+| `O` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
 | `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
-| `e` | Reply | List, conversation, reader, composer |  | `reply` |
-| `E` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
-| `f` | Forward | List, conversation, reader, composer |  | `forward` |
-| `a` | Archive | List, conversation, reader | Undoable | `archive` |
+| `e` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
+| `E` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
+| `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
+| `a` or `ctrl+shift+a` | Archive | List, conversation, reader | Undoable | `archive` |
 | `A` | Archive thread | List, conversation, reader | Undoable | `archive_thread` |
 | `d` | Delete | List, conversation, reader | Undoable | `delete` |
 | `m` | Move to… | List, conversation, reader | Undoable | `move` |
@@ -80,15 +80,15 @@ command from inside a text field.
 | `b` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
 | `L` | Add label… | List, conversation, reader | Undoable | `add_label` |
-| `/` | Search | List, conversation, reader, search, folder list |  | `search` |
+| `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
-| `c` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
+| `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
+| `ctrl+shift+d` or `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
 | `ctrl+shift+m` or `alt+m` | Mark as sent | List, composer |  | `mark_sent` |
-| `ctrl+shift+r` or `alt+r` | Retry send | List, composer |  | `retry_send` |
+| `ctrl+shift+y` or `alt+r` | Retry send | List, composer |  | `retry_send` |
 | `ctrl+shift+x` or `alt+x` | Cancel send | List, composer |  | `cancel_send` |
 | `ctrl+shift+a` or `alt+a` | Attach file… | Composer |  | `attach_file` |
 | `ctrl+shift+o` or `alt+o` | Detach composer | Composer |  | `detach_composer` |
@@ -102,7 +102,7 @@ command from inside a text field.
 | `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
-| `u` | Undo | List, conversation, reader, account list |  | `undo` |
+| `u` or `ctrl+z` | Undo | List, conversation, reader, account list |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, conversation, reader |  | `cheat_sheet` |
 | `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |

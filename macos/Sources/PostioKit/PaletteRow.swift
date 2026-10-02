@@ -39,15 +39,22 @@ public enum PaletteRow {
     /// done by walking `utf8` rather than by assuming one byte per character,
     /// which is right until the first title with an em dash in it.
     public static func highlighted(_ entry: PaletteEntryFfi) -> AttributedString {
-        var attributed = AttributedString(entry.title)
-        guard !entry.positions.isEmpty else { return attributed }
+        highlighted(title: entry.title, positions: entry.positions)
+    }
 
-        let wanted = Set(entry.positions)
+    /// `title` with the characters at byte offsets `positions` emphasised --
+    /// a palette entry's, or a folder's, label's or correspondent's in the
+    /// search box's other modes.
+    public static func highlighted(title: String, positions: [UInt32]) -> AttributedString {
+        var attributed = AttributedString(title)
+        guard !positions.isEmpty else { return attributed }
+
+        let wanted = Set(positions)
         var offset = 0
-        for character in entry.title {
+        for character in title {
             let width = String(character).utf8.count
             if wanted.contains(UInt32(offset)),
-                let range = range(of: offset, width: width, in: attributed, title: entry.title)
+                let range = range(of: offset, width: width, in: attributed, title: title)
             {
                 attributed[range].inlinePresentationIntent = .stronglyEmphasized
             }
