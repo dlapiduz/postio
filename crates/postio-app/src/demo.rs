@@ -668,10 +668,15 @@ pub fn show_search_panels(window: &Window, existing: Option<&'static postio_gtk:
 /// Canvas 3f's own sample file, so the shot can be held up against the
 /// drawing.
 pub fn show_settings(window: &Window, pane: Option<postio_gtk::settings::Section>) {
-    let path =
-        std::env::temp_dir().join(format!("postio-shot-settings-{}.toml", std::process::id()));
+    // One fixed path, because the privacy pane prints it and a storyboard
+    // films that pane: a path with the process id in it made every run a
+    // different frame. Written beside it and renamed into place, so two
+    // processes at once each read a whole file -- the same bytes either way.
+    let path = std::env::temp_dir().join("postio-demo-settings.toml");
+    let scratch =
+        std::env::temp_dir().join(format!("postio-demo-settings-{}.toml", std::process::id()));
     std::fs::write(
-        &path,
+        &scratch,
         "# edits here and in the window are the same file\n\
          [ui]\n\
          density = \"compact\"\n\
@@ -691,6 +696,7 @@ pub fn show_settings(window: &Window, pane: Option<postio_gtk::settings::Section
          undo = \"u\"\n",
     )
     .expect("a scratch config.toml for the shot");
+    std::fs::rename(&scratch, &path).expect("the config.toml moved into place");
     window.settings().load(&path);
     window.open_settings();
     // Every pane wears the same frame, so a shot of one says nothing about
