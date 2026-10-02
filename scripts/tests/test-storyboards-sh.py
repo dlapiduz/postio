@@ -60,6 +60,10 @@ esac
 # storyboard so `page` has something to read.
 FAKE_RUNNER = """#!/usr/bin/env bash
 echo "runner $*" >> "$FAKE_LOG"
+echo "display ${POSTIO_TEST_DISPLAY:-}" >> "$FAKE_LOG"
+echo "start $$" >> "$FAKE_LOG"
+sleep "${RUNNER_SLEEP:-0}"
+echo "end $$" >> "$FAKE_LOG"
 exit "${RUNNER_EXIT:-0}"
 """
 
@@ -144,7 +148,7 @@ def main() -> int:
         ctx = setup(Path(tmp_name))
 
         print("case: run --only selects by path and builds once")
-        result = run(ctx, "run", "--app", "classic", "--only", "list/*")
+        result = run(ctx, "run", "--app", "classic", "--only", "list/*", "--jobs", "1")
         lines = log_lines(ctx)
         builds = [l for l in lines if l.startswith("cargo build") and "--example storyboard" in l]
         runner_calls = [l for l in lines if l.startswith("runner run")]
@@ -158,13 +162,13 @@ def main() -> int:
         expect("only", "--out" in call and "Design/review/feature-storyboards/runs" in call, call)
 
         print("case: a plain run never plays calibration storyboards or gap lists")
-        run(ctx, "run", "--app", "classic")
+        run(ctx, "run", "--app", "classic", "--jobs", "1")
         call = next((l for l in log_lines(ctx) if l.startswith("runner run")), "")
         expect("calibration", "escape-leaves-search.toml" in call, call)
         expect("calibration", "calibration/" not in call and "gaps/" not in call, call)
 
         print("case: --calibration plays only the calibration set")
-        run(ctx, "run", "--app", "classic", "--calibration")
+        run(ctx, "run", "--app", "classic", "--calibration", "--jobs", "1")
         call = next((l for l in log_lines(ctx) if l.startswith("runner run")), "")
         expect("calibration-only", "calibration/archive-returns-to-top.toml" in call, call)
         expect("calibration-only", "list/" not in call and "search/" not in call, call)
@@ -173,6 +177,28 @@ def main() -> int:
         for code in ("1", "2"):
             result = run(ctx, "run", "--app", "classic", RUNNER_EXIT=code)
             expect("exit", result.returncode == int(code), f"runner {code} -> {result.returncode}")
+
+        print("case: --jobs splits the storyboards across runners on their own displays")
+        result = run(ctx, "run", "--app", "classic", "--jobs", "2", RUNNER_SLEEP="0.5")
+        lines = log_lines(ctx)
+        calls = [l for l in lines if l.startswith("runner run")]
+        expect("jobs", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
+        expect("jobs", len(calls) == 2, f"two runners, saw {calls}")
+        played = sorted(
+            word for call in calls for word in call.split() if word.endswith(".toml")
+        )
+        expect(
+            "jobs",
+            sorted(Path(p).name for p in played)
+            == ["archive-walks-down.toml", "escape-leaves-search.toml", "launch-keyboard-on-first-row.toml"],
+            f"every storyboard played once: {played}",
+        )
+        displays = {l.split()[-1] for l in lines if l.startswith("display ")}
+        expect("jobs", len(displays) == 2, f"a compositor each: {displays}")
+        order = [l.split()[0] for l in lines if l.split()[0] in ("start", "end")]
+        expect("jobs", order[:2] == ["start", "start"], f"the runners overlap: {order}")
+        result = run(ctx, "run", "--app", "classic", "--jobs", "2", RUNNER_EXIT="1")
+        expect("jobs", result.returncode == 1, f"the worst shard's exit, got {result.returncode}")
 
         print("case: an --only that matches nothing says so and fails")
         result = run(ctx, "run", "--app", "classic", "--only", "nowhere/*")
