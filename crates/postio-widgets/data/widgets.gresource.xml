@@ -13,4 +13,13 @@
          metrics both apps share, which widgets.css imports. -->
     <file compressed="true">metrics.css</file>
   </gresource>
+
+  <!-- The app icon, from the classic app's own committed files (build.rs adds
+       postio-gtk/data/icons as a source directory): one file with two homes
+       in the binary, never a second copy in the tree. Laid out as an icon
+       theme under a resource path expects, <context>/<name>.svg. -->
+  <gresource prefix="/dev/postio/Widgets/icons">
+    <file compressed="true" alias="scalable/apps/dev.postio.Postio.svg">scalable/apps/dev.postio.Postio.svg</file>
+    <file compressed="true" alias="scalable/apps/dev.postio.Postio-symbolic.svg">scalable/apps/dev.postio.Postio-symbolic.svg</file>
+  </gresource>
 </gresources>

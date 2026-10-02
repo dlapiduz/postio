@@ -23,6 +23,7 @@
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
 #   scripts/run-isolated.sh HEAD --focus    # run Postio Focus instead (spec 007)
 #   scripts/run-isolated.sh HEAD --focus --shot  # render Focus's screen 01 to a PNG
+#   scripts/run-isolated.sh HEAD --focus --install-desktop  # also give Focus its dock icon (see below)
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
 # The store lives under $ROOT/state and persists between runs, so a synced
@@ -48,12 +49,14 @@ INSPECT=0
 SHOT=0
 PROVISION=0
 FOCUS=0
+INSTALL_DESKTOP=0
 for arg in "$@"; do
     case "$arg" in
         --inspect) INSPECT=1 ;;
         --shot) SHOT=1 ;;
         --provision) PROVISION=1 ;;
         --focus) FOCUS=1 ;;
+        --install-desktop) INSTALL_DESKTOP=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -130,6 +133,32 @@ if [ "$FOCUS" = 1 ]; then
         echo "wrote $OUT"
         exit 0
     fi
+    # --- --install-desktop (T217) -----------------------------------------
+    # The binary draws the Postio icon in its own window (a bundled icon theme
+    # and a default icon name), but a dock or window switcher on Wayland
+    # (COSMIC, GNOME) shows the icon of the *desktop entry* the compositor
+    # matches to the window's app id, and a plain cargo build installs none.
+    # This puts Focus's entry and the package's icon where the session looks,
+    # under your home only, with Exec= on the isolated binary. Opt-in: it
+    # writes outside $ROOT. Remove with the two rm lines it prints.
+    if [ "$INSTALL_DESKTOP" = 1 ]; then
+        DATA="${HOME}/.local/share"
+        APPS="$DATA/applications"
+        ICONS="$DATA/icons/hicolor"
+        ID=dev.postio.Postio.Focus
+        mkdir -p "$APPS" "$ICONS/scalable/apps" "$ICONS/symbolic/apps"
+        sed "s|^Exec=.*|Exec=$TARGET/release/postio-focus %U|" \
+            "$TREE/crates/postio-focus/data/$ID.desktop" > "$APPS/$ID.desktop"
+        install -m644 "$TREE/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg" \
+            "$ICONS/scalable/apps/dev.postio.Postio.svg"
+        install -m644 "$TREE/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" \
+            "$ICONS/symbolic/apps/dev.postio.Postio-symbolic.svg"
+        command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
+        command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$ICONS" || true
+        echo "installed $APPS/$ID.desktop and the Postio icon under $ICONS"
+        echo "undo: rm $APPS/$ID.desktop $ICONS/scalable/apps/dev.postio.Postio.svg $ICONS/symbolic/apps/dev.postio.Postio-symbolic.svg"
+    fi
+    # --- end --install-desktop ---------------------------------------------
     echo "building Postio Focus (first run compiles GTK deps; later runs are incremental)…"
     cargo build --release -p postio-focus
     echo "running — Ctrl-C to stop"

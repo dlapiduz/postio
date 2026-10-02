@@ -280,6 +280,10 @@ const CASES: &[(&str, fn())] = &[
         rule_query::digest_mail_like_this_present_with_a_message_says_so_with_no_model as fn(),
     ),
     (
+        "desktop::focus_shows_the_postio_icon",
+        desktop::focus_shows_the_postio_icon as fn(),
+    ),
+    (
         "desktop::focus_says_which_application_it_is",
         desktop::focus_says_which_application_it_is as fn(),
     ),

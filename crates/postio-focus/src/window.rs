@@ -326,6 +326,8 @@ impl FocusWindow {
 
     fn build(&self) {
         crate::style::install(&WidgetExt::display(self));
+        postio_widgets::style::install_icons(&WidgetExt::display(self));
+        gtk::Window::set_default_icon_name(crate::app::ICON_NAME);
         self.add_css_class("focus-window");
         let imp = self.imp();
         imp.opening.add_css_class("focus-opening");

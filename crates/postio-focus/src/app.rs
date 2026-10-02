@@ -20,6 +20,13 @@ use crate::window::FocusWindow;
 /// which a sandboxed app may own (research R3).
 pub const APP_ID: &str = "dev.postio.Postio.Focus";
 
+/// The icon Focus is drawn with: the package's one icon, `dev.postio.Postio`,
+/// which the Flatpak installs and the desktop entry's `Icon=` names. Focus is
+/// a second launcher in the desktop package with no art of its own (spec 007,
+/// research R3), so the window's default icon, the desktop entry and the
+/// binary's bundled theme all use this name.
+pub const ICON_NAME: &str = "dev.postio.Postio";
+
 /// Focus's application, as `run` starts it.
 pub fn application() -> adw::Application {
     // Tell the compositor which application this is: GNOME matches a

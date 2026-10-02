@@ -94,7 +94,7 @@ fn the_desktop_entry_describes_focus() {
     assert_eq!(value("StartupWMClass"), APP_ID);
     // The one icon the package installs is the desktop app's: Focus is a
     // second launcher in the same package, with nothing of its own to draw.
-    assert_eq!(value("Icon"), "dev.postio.Postio");
+    assert_eq!(value("Icon"), postio_focus::app::ICON_NAME);
 }
 
 /// `postio://` links written into notes (spec FR-185) open Focus, and only
@@ -116,6 +116,34 @@ fn focus_handles_postio_links_and_leaves_mailto_to_the_desktop_app() {
     assert!(
         exec.contains("%u") || exec.contains("%U"),
         "Exec should pass the link on, got `{exec}`"
+    );
+}
+
+#[test]
+fn the_entry_is_named_after_the_id_and_its_icon_ships_in_the_package() {
+    assert_eq!(
+        entry_path().file_name().and_then(|name| name.to_str()),
+        Some(format!("{APP_ID}.desktop").as_str())
+    );
+    // `Icon=` is a theme name: the package installs it as an SVG, and the
+    // symbolic variant, under that name.
+    let icon = postio_focus::app::ICON_NAME;
+    let manifest = read("flatpak/dev.postio.Postio.json");
+    for installed in [
+        format!("/app/share/icons/hicolor/scalable/apps/{icon}.svg"),
+        format!("/app/share/icons/hicolor/symbolic/apps/{icon}-symbolic.svg"),
+    ] {
+        assert!(
+            manifest.contains(&installed),
+            "the manifest never installs {installed}"
+        );
+    }
+    assert!(
+        root()
+            .join(format!(
+                "crates/postio-gtk/data/icons/scalable/apps/{icon}.svg"
+            ))
+            .exists()
     );
 }
 

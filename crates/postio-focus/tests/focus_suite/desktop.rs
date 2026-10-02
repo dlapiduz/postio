@@ -25,6 +25,42 @@ pub fn focus_says_which_application_it_is() {
     );
 }
 
+/// T217: a running Focus is drawn with the Postio icon. The dock matches the
+/// window to `dev.postio.Postio.Focus.desktop`, whose `Icon=` names the
+/// package's one icon; a window with no icon of its own (an AdwWindow's
+/// switcher entry, a compositor without the entry) asks the theme for the
+/// same name, so the theme must be able to answer from the binary.
+pub fn focus_shows_the_postio_icon() {
+    crate::gtk_case(async {
+        if !crate::support::display() {
+            return;
+        }
+        let (_fixture, window) = crate::support::three_in_the_inbox().await;
+        let name = postio_focus::app::ICON_NAME;
+        assert_eq!(name, "dev.postio.Postio", "the package's one icon");
+        assert_eq!(
+            gtk::Window::default_icon_name().as_deref(),
+            Some(name),
+            "windows without an icon of their own would be drawn with none"
+        );
+        let display = gtk::prelude::WidgetExt::display(&window);
+        let theme = gtk::IconTheme::for_display(&display);
+        assert!(theme.has_icon(name), "the icon theme cannot find {name}");
+        let paintable = theme.lookup_icon(
+            name,
+            &[],
+            64,
+            1,
+            gtk::TextDirection::Ltr,
+            gtk::IconLookupFlags::empty(),
+        );
+        assert!(
+            paintable.file().is_some(),
+            "the lookup found nothing to draw for {name}"
+        );
+    });
+}
+
 /// US15 scenario 2: a `postio://message/<id>` link opens that message over
 /// the list and does nothing else to it; a link naming nothing here, or
 /// nothing Postio knows how to name, is refused with a sentence.

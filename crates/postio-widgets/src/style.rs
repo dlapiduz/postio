@@ -27,6 +27,10 @@ pub const WIDGETS_CSS: &str = "/dev/postio/Widgets/widgets.css";
 /// The shared stylesheet as an `@import` names it.
 pub const WIDGETS_CSS_URL: &str = "resource:///dev/postio/Widgets/widgets.css";
 
+/// The bundled app icon, laid out as `GtkIconTheme` expects a resource path:
+/// `scalable/apps/<name>.svg` beneath this directory.
+pub const ICONS: &str = "/dev/postio/Widgets/icons";
+
 const BUNDLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/postio-widgets.gresource"));
 
 /// Register the bundle with GIO. Safe to call more than once; never touches
@@ -39,6 +43,20 @@ pub fn register() {
             .expect("the compiled GResource bundle is malformed; this is a build bug");
         gio::resources_register(&resource);
     });
+}
+
+/// Make the bundled app icon resolvable by name on `display`. Idempotent: a
+/// path already on the theme is not added again.
+pub fn install_icons(display: &gdk::Display) {
+    register();
+    let theme = gtk::IconTheme::for_display(display);
+    let already = theme
+        .resource_path()
+        .iter()
+        .any(|path| path.as_str() == ICONS);
+    if !already {
+        theme.add_resource_path(ICONS);
+    }
 }
 
 /// Load the shared stylesheet for `display` as a provider of its own, at
