@@ -233,7 +233,7 @@ page_command() {
         compare=(--base "$BASE_RUNS" --base-prefix "$(realpath -s --relative-to="$(dirname "$out")" "$BASE_RUNS")")
     fi
     "$bin" page --runs "$RUNS" --prefix "$(realpath --relative-to="$(dirname "$out")" "$RUNS")" \
-        --out "$out" --title "$BRANCH" --key "$key" ${review[@]+"${review[@]}"} \
+        --out "$out" --title "$BRANCH" --key "$key" --catalogue "$CATALOGUE" ${review[@]+"${review[@]}"} \
         ${compare[@]+"${compare[@]}"} || exit 2
     if [ "$OPEN" = 1 ]; then
         xdg-open "$out" >/dev/null 2>&1 &

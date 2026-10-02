@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use postio_storyboard::{bundle, compare, key, lint, page, prompt, verdicts};
+use postio_storyboard::{bundle, compare, format, key, lint, page, parity, prompt, verdicts};
 
 const USAGE: &str = "\
 usage:
@@ -18,7 +18,7 @@ usage:
                            --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
   postio-storyboard prompt <bundle> (--list | --batch <n>)
   postio-storyboard verdicts (check | merge) <bundle>
-  postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]\n                         [--bundle <dir> [--bundle-prefix <path>]]\n                         [--base <dir> [--base-prefix <path>]]";
+  postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]\n                         [--bundle <dir> [--bundle-prefix <path>]]\n                         [--base <dir> [--base-prefix <path>]] [--catalogue <storyboards-dir>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -275,6 +275,19 @@ fn page_command(args: &[String]) -> ExitCode {
         (Some(reviewed), None) => page::render_reviewed(&header, &strips, reviewed),
         (None, None) => page::render(&header, &strips),
     };
+    // Across the apps, when the runs cover more than one (spec US3). Needs the
+    // catalogue, because an override is what makes a difference legitimate.
+    let html = match flag(args, "--catalogue") {
+        Some(catalogue) => {
+            let runs: Vec<_> = strips.iter().map(|strip| strip.run.clone()).collect();
+            let section = page::parity_section(
+                &parity::parity(&runs, &load_catalogue(&PathBuf::from(&catalogue))),
+                &prefix,
+            );
+            html.replacen("</main>", &format!("{section}\n</main>"), 1)
+        }
+        None => html,
+    };
     if let Err(error) = std::fs::write(&out, html) {
         eprintln!("postio-storyboard page: {out}: {error}");
         return ExitCode::from(2);
@@ -333,4 +346,29 @@ fn compare_command(args: &[String]) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// Every storyboard under `root`, by name; ones that do not load are left out
+/// (the lint is what reports them).
+fn load_catalogue(
+    root: &std::path::Path,
+) -> std::collections::BTreeMap<String, format::Storyboard> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|x| x == "toml")
+                && let Ok(board) = format::load(&path)
+            {
+                found.insert(board.name.clone(), board);
+            }
+        }
+    }
+    found
 }
