@@ -436,11 +436,32 @@ fn deliver_input(
                 if composer.focused_field() != Some(postio_gtk::composer::Field::Body) {
                     return false;
                 }
+                // The editor listens only once its script has loaded (#1716):
+                // typing before that is typing nothing hears.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while composer.test_body_eval("window.postioEditorReady === true ? 'ready' : ''")
+                    != "ready"
+                {
+                    if Instant::now() > deadline {
+                        return false;
+                    }
+                    pump(Duration::from_millis(30));
+                }
+                // The caret where the app put it (above a reply's quote), or
+                // at the start of the body if the selection is elsewhere --
+                // then one character at a time, the way a person types and
+                // the way the editor's transformations see it.
                 let escaped = serde_json::to_string(typed).unwrap_or_default();
                 composer.test_body_eval(&format!(
-                    "document.execCommand('insertText', false, {escaped})"
-                ));
-                true
+                    "(() => {{ document.body.focus(); \
+                       const s = window.getSelection(); \
+                       if (!s.rangeCount || !document.body.contains(s.anchorNode)) {{ \
+                         const r = document.createRange(); \
+                         r.setStart(document.body, 0); r.collapse(true); \
+                         s.removeAllRanges(); s.addRange(r); }} \
+                       for (const c of {escaped}) document.execCommand('insertText', false, c); \
+                       return 'typed'; }})()"
+                )) == "typed"
             };
             match deliver::type_text(&window.frontmost(), text, Some(&composer_body)) {
                 deliver::TypeOutcome::Typed => StepOutcome::Delivered,
