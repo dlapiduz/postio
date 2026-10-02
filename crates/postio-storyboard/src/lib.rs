@@ -15,6 +15,7 @@ pub mod apply;
 pub mod bundle;
 pub mod check;
 pub mod compare;
+pub mod coverage;
 pub mod format;
 pub mod key;
 pub mod lint;

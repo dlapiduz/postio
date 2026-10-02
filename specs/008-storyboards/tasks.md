@@ -672,7 +672,7 @@ For every task in this phase:
 - record each row's outcome in `catalogue-seed.md`, as a new column `storyboard`
   holding either the file or `not expressible: <reason>`.
 
-- [ ] T078 [P] [US5] List rows → `storyboards/list/`:
+- [X] T078 [P] [US5] List rows → `storyboards/list/`:
   - #1687 multi-press (`a a a`, `d d d`);
   - #1609 rapid keys, one step per key;
   - #753/#750, cursor versus selection and revealing new mail, using an
@@ -680,11 +680,11 @@ For every task in this phase:
   - #468/#1701/#811/#1300, selection acting on the right messages (unified,
     `two-accounts` seed);
   - #1475/#499, the sort chip.
-- [ ] T079 [P] [US5] Search rows → `storyboards/search/`:
+- [X] T079 [P] [US5] Search rows → `storyboards/search/`:
   - 79b1cd8a, Return on a mode hint;
   - #961/#767/#1526, search scope and opening from a preview;
   - #1011, the list restored after search.
-- [ ] T080 [P] [US5] Sidebar and navigation rows → `storyboards/sidebar/`:
+- [X] T080 [P] [US5] Sidebar and navigation rows → `storyboards/sidebar/`:
   - #494/#437, the Tab and Shift-Tab pane cycle (`routing = "real"` on any
     step relying on GTK's native traversal);
   - d2be7412, the sidebar walk past Snoozed;
@@ -713,7 +713,7 @@ For every task in this phase:
   - #690/#325, where focus lands on reply and forward;
   - #1481, undo send;
   - 15192fb5, the caret above the quote.
-- [ ] T083 [P] [US5] Onboarding and settings rows → `storyboards/onboarding/`
+- [X] T083 [P] [US5] Onboarding and settings rows → `storyboards/onboarding/`
   and `storyboards/settings/`:
   - #629/#68, Return in every onboarding field (seed `first-run`);
   - #1016, the rebind list does not leak bare keys;
@@ -793,12 +793,12 @@ becomes zero-step storyboards (FR-030).
 apps, produces four filmstrips grouped by variant (spec US7). `storyboards.sh
 screens` reproduces the old contact sheet (quickstart § 8).
 
-- [ ] T092 [P] [US7] [TEST] Write variant-expansion tests in
+- [X] T092 [P] [US7] [TEST] Write variant-expansion tests in
   `crates/postio-storyboard/src/apply.rs`:
   - the cross product of the requested and the supported axes;
   - an unsupported axis is reported as ignored, per app;
   - variant keys are stable strings, such as `scheme=dark,width=narrow`.
-- [ ] T093 [US7] Implement variant expansion. Have both runners' `list`
+- [X] T093 [US7] Implement variant expansion. Have both runners' `list`
   declare their axes, per data-model § Axis, and apply each axis:
   - `scheme` through `adw::StyleManager`;
   - `contrast` through the high-contrast class;

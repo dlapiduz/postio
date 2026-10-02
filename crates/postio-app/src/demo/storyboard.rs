@@ -799,3 +799,182 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
     postio_ui::clock::thaw();
     finish(played)
 }
+
+/// Commands the generated pass never presses, because they reach outside the
+/// window: the network (FR-013), the desktop, or a file chooser that would
+/// sit waiting for a person. Reported as skipped, with the reason, so the
+/// list is visible and argued with rather than silently shrinking coverage.
+pub const NEVER_PRESSED: &[(&str, &str)] = &[
+    ("refresh", "syncs, which dials the server"),
+    ("retry_send", "sends, which dials the server"),
+    ("show_images", "fetches remote images"),
+    ("always_show_images", "fetches remote images"),
+    ("unsubscribe", "follows an unsubscribe link off the machine"),
+    ("edit_config", "opens an external editor"),
+    ("edit_externally", "opens an external editor"),
+    ("open_part", "hands a part to another application"),
+    (
+        "open_part_externally",
+        "hands a part to another application",
+    ),
+    ("save_part", "opens a file chooser"),
+    ("save_all_parts", "opens a file chooser"),
+    ("attach_file", "opens a file chooser"),
+    ("insert_image", "opens a file chooser"),
+    ("add_account", "may open a browser to sign in"),
+    ("update_credential", "may open a browser to sign in"),
+];
+
+/// How each context is reached from a fresh window: the commands that put
+/// the keyboard there. A context whose setup does not land in it is reported,
+/// not pressed in.
+pub const CONTEXTS: &[(&str, &[&str])] = &[
+    ("list", &[]),
+    ("conversation", &["cycle_pane"]),
+    ("search", &["search"]),
+    ("palette", &["command_palette"]),
+    ("composer", &["compose"]),
+    ("sidebar", &["focus_sidebar"]),
+];
+
+/// One context's coverage, or why it could not be reached.
+#[derive(Debug, Clone)]
+pub struct ContextCoverage {
+    /// The context.
+    pub context: String,
+    /// What each bound command came to.
+    pub presses: Vec<postio_storyboard::coverage::Press>,
+    /// Commands not pressed, and why.
+    pub skipped: Vec<(String, String)>,
+    /// Set when the setup did not reach this context.
+    pub unreachable: Option<String>,
+}
+
+impl ContextCoverage {
+    /// As JSON, for `coverage.json`.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "context": self.context,
+            "unreachable": self.unreachable,
+            "skipped": self.skipped.iter()
+                .map(|(command, why)| serde_json::json!({ "command": command, "why": why }))
+                .collect::<Vec<_>>(),
+            "presses": self.presses,
+        })
+    }
+}
+
+/// The generated pass (spec US6): every command bound in every context,
+/// each from a fresh window in that context's starting state, judged on
+/// whether anything a person can see changed.
+pub async fn every_command(gaps: &[postio_storyboard::coverage::Gap]) -> Vec<ContextCoverage> {
+    use postio_storyboard::coverage::{Effect, Press, judge};
+
+    let mut all = Vec::new();
+    for (context, setup) in CONTEXTS {
+        let mut coverage = ContextCoverage {
+            context: (*context).to_owned(),
+            presses: Vec::new(),
+            skipped: Vec::new(),
+            unreachable: None,
+        };
+        // The commands bound here, found from a window set up for it.
+        let Some((window, _acting)) = fresh(setup).await else {
+            coverage.unreachable = Some("the seeded store fed no window".to_owned());
+            all.push(coverage);
+            continue;
+        };
+        if context_name(&window) != *context {
+            coverage.unreachable = Some(format!(
+                "setup {setup:?} left the keyboard in `{}`",
+                context_name(&window)
+            ));
+            window.destroy();
+            all.push(coverage);
+            continue;
+        }
+        let (keymap, _) = Keymap::from_commands(&window.keymap_in_force());
+        let here = window.key_context();
+        let mut commands: Vec<String> = keymap
+            .entries()
+            .filter(|(layer, _, _)| here.chain().contains(layer))
+            .map(|(_, _, command)| command.to_owned())
+            .collect();
+        commands.sort();
+        commands.dedup();
+        window.destroy();
+
+        for command in commands {
+            if let Some((_, why)) = NEVER_PRESSED.iter().find(|(id, _)| *id == command) {
+                coverage.skipped.push((command, (*why).to_owned()));
+                continue;
+            }
+            let Some((window, acting)) = fresh(setup).await else {
+                continue;
+            };
+            let settings = settle::Settings {
+                stride: 2,
+                ..settle::Settings::default()
+            };
+            let before_frame = settle::settle(window.upcast_ref(), &settings);
+            let before = window.observe();
+            let outcome = deliver_input(
+                &window,
+                &Input::Command(command.clone()),
+                &acting,
+                Delivery::Chain,
+            );
+            let press = match outcome {
+                Ok((StepOutcome::Delivered, _)) => {
+                    let after_frame = settle::settle(window.upcast_ref(), &settings);
+                    let after = window.observe();
+                    judge(
+                        &command,
+                        context,
+                        (&before, &before_frame.hash),
+                        (&after, &after_frame.hash),
+                        gaps,
+                    )
+                }
+                _ => Press {
+                    command: command.clone(),
+                    context: (*context).to_owned(),
+                    effect: Effect::Unbound,
+                },
+            };
+            coverage.presses.push(press);
+            window.destroy();
+        }
+        all.push(coverage);
+    }
+    postio_ui::clock::thaw();
+    all
+}
+
+/// A fresh, seeded, acting window, with `setup` pressed.
+async fn fresh(setup: &[&str]) -> Option<(Window, Acting)> {
+    postio_ui::clock::freeze(
+        chrono::DateTime::parse_from_rfc3339(FROZEN_AT)
+            .expect("a fixed instant")
+            .with_timezone(&chrono::Local),
+    );
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_enable_animations(false);
+    }
+    let window = Window::default();
+    apply_variant(&window, &BTreeMap::new());
+    window.present();
+    deliver::drain();
+    let acting = acting(&window, &DemoOptions::new().with(Seed::Small)).await?;
+    deliver::drain();
+    for command in setup {
+        let _ = deliver_input(
+            &window,
+            &Input::Command((*command).to_owned()),
+            &acting,
+            Delivery::Chain,
+        );
+        pump(Duration::from_millis(200));
+    }
+    Some((window, acting))
+}

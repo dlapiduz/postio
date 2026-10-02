@@ -20,6 +20,7 @@
 #   scripts/storyboards.sh page  [--open]          # Design/review/<branch>/index.html from the runs
 #   scripts/storyboards.sh key   [--app classic|focus|all]   # the review key for HEAD's tree
 #   scripts/storyboards.sh base  [--app classic|focus]   # the branch's storyboards on the merge-base's code
+#   scripts/storyboards.sh coverage [--app classic]      # every command in every context: does it show?
 #   scripts/storyboards.sh bundle --acceptance <file> [--calibration]   # what a reviewer reads
 #   scripts/storyboards.sh tool  <postio-storyboard arguments>          # the pure tool, built
 #
@@ -42,7 +43,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -328,8 +329,24 @@ base_command() {
     echo "base: $cache"
 }
 
+# The generated pass (spec US6): every command bound in every context,
+# pressed from a fresh window, judged on whether a person could see anything
+# change. The gap list says which are known to show nothing yet.
+coverage_command() {
+    local crate bin
+    crate=$(runner_crate "$APP")
+    echo "building the $APP runner..."
+    if ! cargo build -q -p "$crate" --example storyboard --features demo 2>&1 | tail -20 >&2; then
+        echo "storyboards.sh: the $APP runner did not build" >&2
+        exit 2
+    fi
+    bin="$(target_dir)/debug/examples/storyboard"
+    headless "$bin" every-command --out "$REVIEW/coverage" --gaps "$CATALOGUE/gaps/$APP.toml"
+}
+
 case "$COMMAND" in
     run)  run_command ;;
+    coverage) coverage_command ;;
     base) base_command ;;
     bundle) bundle_command ;;
     tool) bin=$(tool); "$bin" ${TOOL_ARGS[@]+"${TOOL_ARGS[@]}"}; exit $? ;;
