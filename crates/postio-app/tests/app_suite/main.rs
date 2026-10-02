@@ -96,6 +96,7 @@ mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
 mod store_in_use_window;
+mod storyboards;
 mod sync_window;
 mod thread_bodies_in_one_crossing;
 mod thread_bulk_keystroke;
@@ -333,6 +334,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "go_to_keystroke::pressing_g_i_shows_the_inbox",
         go_to_keystroke::pressing_g_i_shows_the_inbox as fn(),
+    ),
+    (
+        "storyboards::a_storyboard_plays_on_classic_and_writes_its_run",
+        storyboards::a_storyboard_plays_on_classic_and_writes_its_run as fn(),
     ),
     (
         "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",

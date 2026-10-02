@@ -2987,7 +2987,10 @@ impl Window {
             .is_some_and(|composer| composer.focused_field() == Some(crate::composer::Field::Body))
     }
 
-    fn key_context(&self) -> KeyContext {
+    /// The context the key resolver is asked in right now. Public so a
+    /// storyboard can press a command by the binding that context has
+    /// (specs/008-storyboards research R3).
+    pub fn key_context(&self) -> KeyContext {
         // The box owns the keyboard while it *has* the keyboard, and which of
         // its two contexts depends on the mode: `Enter` runs a command in one
         // and searches in the other.
