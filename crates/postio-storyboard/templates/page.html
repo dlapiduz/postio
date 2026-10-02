@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+:root {
+  --ground: #f6f5f2; --paper: #ffffff; --ink: #1d1c1a; --muted: #6b6862;
+  --rule: #e2dfd8; --pass: #2f7d4f; --fail: #b3261e; --warn: #9a6400;
+  --quiet: #5b6b8c; --accent: #3a5ccc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #17171a; --paper: #202024; --ink: #ecebe8; --muted: #a09d97;
+    --rule: #34343a; --pass: #6cc58f; --fail: #ff8a80; --warn: #e6b450;
+    --quiet: #9fb0d4; --accent: #8fa8ff;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px 16px 64px; background: var(--ground); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1400px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 0; }
+.meta, .muted { color: var(--muted); }
+.counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 24px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+  border: 1px solid currentColor; white-space: nowrap; }
+.passed, .pass { color: var(--pass); }
+.failed, .fail { color: var(--fail); }
+.not_covered, .not_applicable, .unavailable { color: var(--quiet); }
+.error, .jumped, .unsettled, .blanked { color: var(--warn); }
+section.run { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px;
+  margin: 0 0 20px; overflow: hidden; }
+section.run > header { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  padding: 12px 16px; border-bottom: 1px solid var(--rule); }
+.reason { padding: 8px 16px; color: var(--quiet); }
+.steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px; padding: 16px; }
+figure.step { margin: 0; }
+figure.step img { width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 6px;
+  display: block; background: var(--ground); }
+figcaption { margin-top: 6px; }
+figcaption .input { font-family: ui-monospace, monospace; font-size: 12px; }
+ul.checks { list-style: none; padding: 0; margin: 6px 0; font-size: 12px; }
+ul.checks li { font-family: ui-monospace, monospace; }
+details { font-size: 12px; margin-top: 4px; }
+table.obs { border-collapse: collapse; width: 100%; }
+table.obs td { padding: 1px 6px 1px 0; vertical-align: top; overflow-wrap: anywhere; }
+table.obs td:first-child { color: var(--muted); white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+{{body}}
+</main>
+</body>
+</html>

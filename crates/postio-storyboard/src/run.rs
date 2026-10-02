@@ -152,6 +152,10 @@ pub struct StepRun {
     pub id: Option<String>,
     /// What was delivered. `None` at the starting state.
     pub input: Option<Delivered>,
+    /// The step's prose expectation, for this app (an override's if it has
+    /// one), carried so a run can be read and reviewed on its own.
+    #[serde(default)]
+    pub expect: Option<String>,
     /// What happened to it.
     pub outcome: StepOutcome,
     /// Where everything was afterwards.
@@ -339,6 +343,7 @@ mod tests {
             step: n,
             id: None,
             input: None,
+            expect: None,
             outcome,
             observation: observation(),
             checks: check
