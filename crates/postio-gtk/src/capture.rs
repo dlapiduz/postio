@@ -208,6 +208,58 @@ pub fn texture_within(
     })
 }
 
+/// Render `widget` as it is this instant, without waiting for the
+/// compositor.
+///
+/// For a caller that is already watching frames go by — storyboard settle
+/// sampling takes one of these per frame-clock tick — and for whom
+/// [`texture_within`]'s wait for a presented frame would be paid every time.
+/// A widget with no allocation or no renderer is the same [`Error`] it is
+/// there.
+pub fn texture_now(widget: &impl IsA<gtk::Widget>) -> Result<gdk::Texture, Error> {
+    render_now(widget.as_ref(), None)
+}
+
+/// [`texture_now`] with `overlay` drawn over the widget's own picture.
+///
+/// The widget's render node and whatever `overlay` snapshots are wrapped in
+/// one container node, so the overlay is in the widget's own coordinates and
+/// is never part of the widget: the plain frame stays what it was.
+pub fn texture_with(
+    widget: &impl IsA<gtk::Widget>,
+    overlay: impl FnOnce(&gtk::Snapshot),
+) -> Result<gdk::Texture, Error> {
+    render_now(widget.as_ref(), Some(Box::new(overlay)))
+}
+
+fn render_now(
+    widget: &gtk::Widget,
+    overlay: Option<Box<dyn FnOnce(&gtk::Snapshot) + '_>>,
+) -> Result<gdk::Texture, Error> {
+    let never_drawable = || Error::NeverDrawable {
+        waited: Duration::ZERO,
+        mapped: widget.is_mapped(),
+        width: widget.width(),
+        height: widget.height(),
+    };
+    let node = drawn(widget).ok_or_else(never_drawable)?;
+    let node = match overlay {
+        None => node,
+        Some(overlay) => {
+            let snapshot = gtk::Snapshot::new();
+            snapshot.append_node(&node);
+            overlay(&snapshot);
+            snapshot.to_node().ok_or_else(never_drawable)?
+        }
+    };
+    let renderer = widget
+        .native()
+        .and_then(|native| native.renderer())
+        .ok_or(Error::NoRenderer)?;
+    let bounds = graphene::Rect::new(0.0, 0.0, widget.width() as f32, widget.height() as f32);
+    Ok(renderer.render_texture(&node, Some(&bounds)))
+}
+
 /// The window's picture, laid out first.
 ///
 /// `None` for a widget with no allocation as well as for one GTK will not
