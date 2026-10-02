@@ -1,3 +1,4 @@
+# A ux-architect §4 flow, red on #1750 (e is unbound on an open search hit) until it lands.
 # Search, open a hit, reply, and come back (ux-architect §4).
 #
 # `/` and a query narrow the list, Return hands the keyboard to the hits,
@@ -7,7 +8,8 @@
 #
 # The reply step is red: the preview offers Reply with `e`, but `e` is
 # unbound in the search context, even after Enter has opened the hit.
-source = { kind = "flow", ref = "ux-architect §4" }
+source = { kind = "issue", ref = "#1750" }
+proof  = "open"
 
 [[step]]
 wait    = { until = { reading.id = "12" } }

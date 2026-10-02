@@ -1,3 +1,4 @@
+# A ux-architect §4 flow, red on #1748 (J/K cannot walk the conversation from the keyboard) until it lands.
 # The reading walk: open, walk the thread, reply, send, leave
 # (ux-architect §4).
 #
@@ -8,7 +9,8 @@
 #
 # The J/K steps are red while J and K never reach the conversation (see
 # conversation/j-k-walk-the-messages); the rest of the walk is the flow.
-source = { kind = "flow", ref = "ux-architect §4" }
+source = { kind = "issue", ref = "#1748" }
+proof  = "open"
 seed   = "long-thread"
 
 [[step]]

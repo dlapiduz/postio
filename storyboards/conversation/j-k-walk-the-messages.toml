@@ -9,7 +9,7 @@
 # Open: in the running app the keyboard never reaches the conversation's
 # own context. `K` is unbound in the list context and dropped from the
 # reader context, so the focus stays on message 7 and the pane never moves.
-source = { kind = "issue", ref = "#1386" }
+source = { kind = "issue", ref = "#1748" }
 proof  = "open"
 seed   = "long-thread"
 

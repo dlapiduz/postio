@@ -6,7 +6,7 @@
 # reopening already uses. The mechanism landed; the toast is the part the
 # decision left as ready. Open until it ships: after `send`, the notice
 # must offer Undo.
-source = { kind = "issue", ref = "#1481" }
+source = { kind = "issue", ref = "#1752" }
 proof  = "open"
 
 [[step]]

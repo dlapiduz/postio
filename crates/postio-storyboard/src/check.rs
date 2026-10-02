@@ -123,6 +123,12 @@ fn leaf_result(leaf: &Leaf, path: String, step: usize, history: &History<'_>) ->
 /// The field at a dotted path. Missing and `null` are the same thing: an
 /// `Option` the app serialised as `None`.
 fn field(observation: &Value, path: &str) -> Option<Value> {
+    // `app` holds namespaced names that are dotted themselves
+    // ("classic.pane"): the rest of the path is one key there.
+    if let Some(name) = path.strip_prefix("app.") {
+        let value = observation.get("app")?.get(name)?;
+        return (!value.is_null()).then(|| value.clone());
+    }
     let mut node = observation;
     for part in path.split('.') {
         node = node.get(part)?;
@@ -372,5 +378,22 @@ mod tests {
         let mut paths: Vec<_> = results.iter().map(|r| r.path.as_str()).collect();
         paths.sort();
         assert_eq!(paths, ["cursor.index", "keyboard.region", "notice.text"]);
+    }
+
+    #[test]
+    fn an_app_field_is_found_by_its_whole_dotted_name() {
+        // `app` is a map whose keys are themselves dotted ("classic.pane"),
+        // so the path after `app.` is one key, not more nesting.
+        let observations = vec![json!({ "app": { "classic.pane": "reader" } })];
+        let results = evaluate(
+            &checks(&[("app.classic.pane", Leaf::Literal(json!("reader")))]),
+            0,
+            &History {
+                observations: &observations,
+                step_number: &by_id,
+                unobserved: &[],
+            },
+        );
+        assert_eq!(results[0].outcome, Outcome::Pass, "{results:?}");
     }
 }
