@@ -1,0 +1,24 @@
+# Return on a search mode hint enters that mode (79b1cd8a).
+#
+# The defect: with an empty search box the finder offers mode hints (`#`
+# labels and so on). Moving onto one and pressing Return ran an empty search
+# and the list fell back to the folder, so a visible row did nothing. Return
+# must enter the mode with the keyboard still in the box.
+source = { kind = "commit", ref = "79b1cd8a" }
+proof  = "pinned"
+design = "05-search"
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "The finder opens on an empty box and offers its modes as hint rows."
+
+[[step]]
+key     = "Down"
+check   = { overlay.kind = "finder", overlay.mode = "search" }
+expect  = "The first hint row is highlighted."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.region = "picker", keyboard.typing = true, overlay.kind = "picker", overlay.mode = "mailbox" }
+expect  = "The box is now in the hinted mode (the folder picker opens, marker `#`) with the keyboard still in it; nothing ran an empty search and the list did not fall back to the folder."
