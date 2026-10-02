@@ -230,6 +230,54 @@ def main() -> int:
         call = next((l for l in log_lines(ctx) if l.startswith("tool verdicts")), "")
         expect("tool", call == "tool verdicts check /some/bundle", call)
 
+        print("case: base plays the branch's storyboards on the merge-base, cached")
+        repo = Path(ctx["repo"])
+        (repo / "crates" / "postio-app" / "examples").mkdir(parents=True, exist_ok=True)
+        (repo / "crates" / "postio-app" / "examples" / "storyboard.rs").write_text("")
+        gitdir = subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-dir"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        gitdir = (repo / gitdir) if not gitdir.startswith("/") else Path(gitdir)
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                        "commit", "-qm", "base", "--allow-empty"], check=True)
+        subprocess.run(["git", "-C", str(repo), "branch", "-f", "main"], check=True)
+        base_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True, check=True).stdout.strip()
+        subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", base_sha], check=True)
+        (gitdir / "postio-base").write_text("main\n")
+        (repo / "storyboards" / "list" / "archive-walks-down.toml").write_text(
+            'source = { kind = "flow", ref = "changed on the branch" }\n')
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                        "commit", "-qam", "branch"], check=True)
+        cache = Path(ctx["env"]["FAKE_TARGET"]).parent / "cache"
+        result = run(ctx, "base", "--app", "classic", STORYBOARDS_CACHE=str(cache))
+        lines = log_lines(ctx)
+        expect("base", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
+        tree = repo / "target" / "storyboard-base" / "tree"
+        head = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        expect("base", head == base_sha, f"the base tree is at the merge-base: {head} vs {base_sha}")
+        call = next((l for l in lines if l.startswith("runner run")), "")
+        expect("base", str(repo / "storyboards" / "list" / "archive-walks-down.toml") in call,
+               f"the branch's storyboard is played: {call}")
+        expect("base", f"--out {cache / base_sha}" in call, f"into the cache: {call}")
+        link = repo / "Design" / "review" / "feature-storyboards" / "base"
+        expect("base", link.is_symlink() and link.resolve() == (cache / base_sha).resolve(),
+               f"the review links the base: {link}")
+        result = run(ctx, "base", "--app", "classic", STORYBOARDS_CACHE=str(cache))
+        again = log_lines(ctx)
+        expect("base-cache", not any(l.startswith("runner run") for l in again),
+               f"a second call with nothing changed plays nothing: {again}")
+
+        print("case: a base with no runner is reported, not failed")
+        (repo / "crates" / "postio-app" / "examples" / "storyboard.rs").unlink()
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                        "commit", "-qam", "drop the runner"], check=True)
+        subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+        result = run(ctx, "base", "--app", "classic", STORYBOARDS_CACHE=str(cache))
+        expect("no-runner", result.returncode == 0, f"exit {result.returncode}")
+        expect("no-runner", "predates the runner" in result.stdout, result.stdout)
+
     if FAILURES:
         print(f"\n{len(FAILURES)} self-test assertion(s) failed:", file=sys.stderr)
         for failure in FAILURES:

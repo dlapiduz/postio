@@ -18,6 +18,7 @@
 #   scripts/storyboards.sh lint                    # load and lint the whole catalogue
 #   scripts/storyboards.sh page  [--open]          # Design/review/<branch>/index.html from the runs
 #   scripts/storyboards.sh key   [--app classic|focus|all]   # the review key for HEAD's tree
+#   scripts/storyboards.sh base  [--app classic|focus]   # the branch's storyboards on the merge-base's code
 #   scripts/storyboards.sh bundle --acceptance <file> [--calibration]   # what a reviewer reads
 #   scripts/storyboards.sh tool  <postio-storyboard arguments>          # the pure tool, built
 #
@@ -40,7 +41,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -210,10 +211,14 @@ page_command() {
     fi
     local out="$REVIEW/index.html"
     [ "$CALIBRATION" = 0 ] || out="$REVIEW/calibration/index.html"
-    local key
+    local key compare=()
     key=$(review_key 2>/dev/null | tail -1)
+    if [ -d "$BASE_RUNS" ] && [ "$CALIBRATION" = 0 ]; then
+        compare=(--base "$BASE_RUNS" --base-prefix "$(realpath -s --relative-to="$(dirname "$out")" "$BASE_RUNS")")
+    fi
     "$bin" page --runs "$RUNS" --prefix "$(realpath --relative-to="$(dirname "$out")" "$RUNS")" \
-        --out "$out" --title "$BRANCH" --key "$key" ${review[@]+"${review[@]}"} || exit 2
+        --out "$out" --title "$BRANCH" --key "$key" ${review[@]+"${review[@]}"} \
+        ${compare[@]+"${compare[@]}"} || exit 2
     if [ "$OPEN" = 1 ]; then
         xdg-open "$out" >/dev/null 2>&1 &
     fi
@@ -243,8 +248,71 @@ key_command() {
     review_key
 }
 
+# The branch's storyboards, played against the base's code (research R8):
+# that is what makes "changed" mean behaviour changed, and a storyboard
+# written for a defect this branch fixes is red here -- its proof. The base
+# tree is a detached worktree inside this tree's target/, so it belongs to
+# whoever owns this tree; its build output is a reflink copy of this tree's,
+# never a path into it (#1101). Runs are cached by base commit, and a
+# storyboard is played again only when its file changed.
+base_command() {
+    local based sha tree cache crate bin file name hash marker files=() app
+    app="${APP:-classic}"
+    [ "$app" != all ] || { echo "storyboards.sh: base takes one app at a time" >&2; exit 2; }
+    crate=$(runner_crate "$app")
+    based=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
+    sha=$(git merge-base HEAD "origin/$based" 2>/dev/null) \
+        || { echo "storyboards.sh: no merge-base with origin/$based -- fetch first" >&2; exit 2; }
+    tree="$ROOT/target/storyboard-base/tree"
+    if [ -d "$tree" ]; then
+        git -C "$tree" checkout -q --detach "$sha" || exit 2
+    else
+        mkdir -p "$(dirname "$tree")"
+        git worktree add -q --detach "$tree" "$sha" || exit 2
+    fi
+    if [ ! -f "$tree/crates/$crate/examples/storyboard.rs" ]; then
+        echo "base: ${sha:0:12} predates the runner; every storyboard is new against it."
+        exit 0
+    fi
+    cache="${STORYBOARDS_CACHE:-$HOME/.cache/postio/storyboards}/$sha"
+    mkdir -p "$cache/.sources"
+    while read -r file; do
+        name=$(basename "$file" .toml)
+        hash=$(sha256sum "$file" | cut -d' ' -f1)
+        marker="$cache/.sources/$app-$name"
+        if [ "$(cat "$marker" 2>/dev/null)" != "$hash" ]; then
+            files+=("$file")
+        fi
+    done < <(selected)
+    mkdir -p "$REVIEW"
+    ln -sfn "$cache" "$BASE_RUNS"
+    if [ "${#files[@]}" -eq 0 ]; then
+        echo "base: every storyboard is cached for ${sha:0:12}."
+        exit 0
+    fi
+    if [ ! -d "$tree/target/debug" ] && [ -d "$ROOT/target/debug" ]; then
+        mkdir -p "$tree/target"
+        cp -a --reflink=auto "$ROOT/target/debug" "$tree/target/" 2>/dev/null || true
+    fi
+    echo "building the $app runner at ${sha:0:12}..."
+    if ! (cd "$tree" && cargo build -q -p "$crate" --example storyboard --features demo) 2>&1 | tail -20 >&2; then
+        echo "storyboards.sh: the base runner did not build" >&2
+        exit 2
+    fi
+    bin="$(cd "$tree" && target_dir)/debug/examples/storyboard"
+    scripts/test-headless.sh "$bin" run "${files[@]}" --out "$cache" --commit "$sha" \
+        ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
+    # A base run that fails is what a base run of a fixed defect does: it is
+    # recorded, not a failure of this command.
+    for file in "${files[@]}"; do
+        sha256sum "$file" | cut -d' ' -f1 > "$cache/.sources/$app-$(basename "$file" .toml)"
+    done
+    echo "base: $cache"
+}
+
 case "$COMMAND" in
     run)  run_command ;;
+    base) base_command ;;
     bundle) bundle_command ;;
     tool) bin=$(tool); "$bin" ${TOOL_ARGS[@]+"${TOOL_ARGS[@]}"}; exit $? ;;
     key)  key_command ;;
