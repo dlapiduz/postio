@@ -2232,10 +2232,42 @@ impl Composer {
     /// [`send`](Self::send), [`send_later`](Self::send_later) and
     /// [`dispatch`](Self::dispatch) -- so nothing about what a composition
     /// does changes with where its buttons are drawn.
+    ///
+    /// The toolbar's paperclip and the attachments' "Attach another" hint go
+    /// with them: the frame draws Attach as a verb with its key on it
+    /// (T221), and one control for one verb is the rule.
     pub fn set_framed(&self, framed: bool) {
-        for widget in self.imp().chrome.borrow().iter() {
+        let imp = self.imp();
+        for widget in imp.chrome.borrow().iter() {
             widget.set_visible(!framed);
         }
+        imp.attach_button.set_visible(!framed);
+        imp.attach_hint.set_visible(!framed);
+    }
+
+    /// Draw the body in the host's column (specs/007-postio-focus T221), as
+    /// Focus's open message draws a body (T203, T211): on the column's
+    /// ground, in its ink, accent and hairlines, from its edge. Each colour
+    /// is read from a probe that wears a `.postio-flow-*` class -- the
+    /// reader's own -- whose `color` the host's stylesheet sets to its
+    /// token, so no colour is written in Rust and the body follows the
+    /// host's light and dark. The classic composer never calls this, and
+    /// keeps the generated palette and its inset.
+    pub fn flow_in_column(&self) {
+        let Some(column) = self.child().and_downcast::<gtk::Box>() else {
+            return;
+        };
+        let mut probes = Vec::new();
+        for (variable, class) in std::iter::once((editor::GROUND, "postio-flow-ground"))
+            .chain(crate::reader::view::FLOW_PALETTE)
+        {
+            let probe = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            probe.add_css_class(class);
+            probe.set_accessible_role(gtk::AccessibleRole::Presentation);
+            column.append(&probe);
+            probes.push((variable, probe.upcast::<gtk::Widget>()));
+        }
+        self.imp().body.flow_in(probes);
     }
 
     /// Add `row` under the composer's own fields, above the body: a field a

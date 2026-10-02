@@ -1354,7 +1354,7 @@ impl BodyView {
 
 /// A toolkit colour as CSS: `rgb()`, or `rgba()` when it is see-through --
 /// a hairline is a translucent ink.
-fn css_colour(colour: &gtk::gdk::RGBA) -> String {
+pub(crate) fn css_colour(colour: &gtk::gdk::RGBA) -> String {
     let channel = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
     let (r, g, b) = (
         channel(colour.red()),

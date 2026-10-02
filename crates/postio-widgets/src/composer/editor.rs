@@ -217,8 +217,17 @@ fn paint_ground(view: &webkit6::WebView) {
 /// the sheet is replaced in place: the document keeps its DOM and its
 /// selection, and only the `<style>` element's text changes.
 pub fn restyle(view: &webkit6::WebView) {
+    restyle_with(view, None);
+}
+
+/// [`restyle`], with `flow` -- a host column's palette and rhythm -- added
+/// after the sheet, where it wins.
+fn restyle_with(view: &webkit6::WebView, flow: Option<&str>) {
     paint_ground(view);
-    let css = editor_document::editor_css(presentation());
+    let mut css = editor_document::editor_css(presentation());
+    if let Some(flow) = flow {
+        css.push_str(flow);
+    }
     // `textContent`, not `innerHTML`: a stylesheet is text, and the engine
     // would otherwise be parsing our own CSS as markup looking for entities.
     let script = format!(
@@ -228,6 +237,45 @@ pub fn restyle(view: &webkit6::WebView) {
     );
     view.evaluate_javascript(&script, None, None, None::<&gtk::gio::Cancellable>, |_| {});
 }
+
+/// The host column's palette as CSS, and its rhythm, when the editor reads
+/// one ([`Editor::flow_in`]).
+fn flow_css(state: &EditorState) -> Option<String> {
+    let flow = state.flow.borrow();
+    if flow.is_empty() {
+        return None;
+    }
+    let declarations: Vec<String> = flow
+        .iter()
+        .filter_map(|(variable, probe)| {
+            let probe = probe.upgrade()?;
+            Some(format!(
+                "{variable}:{}",
+                crate::body_view::css_colour(&probe.color())
+            ))
+        })
+        .collect();
+    Some(format!(
+        "\n:root{{{};}}\n{FLOW_CSS}",
+        declarations.join(";")
+    ))
+}
+
+/// Paint the column's ground on the widget too, so the interval before a
+/// document parses is the column's colour, not the generated palette's.
+fn paint_flow_ground(view: &webkit6::WebView, state: &EditorState) {
+    let flow = state.flow.borrow();
+    if let Some(probe) = flow
+        .iter()
+        .find(|(variable, _)| *variable == GROUND)
+        .and_then(|(_, probe)| probe.upgrade())
+    {
+        view.set_background_color(&probe.color());
+    }
+}
+
+/// The palette variable a column's ground is read into.
+pub const GROUND: &str = "--r-ground";
 
 /// `value` as a JavaScript string literal.
 ///
@@ -356,7 +404,20 @@ struct EditorState {
     /// which is tens of milliseconds, and it would otherwise all fall on the
     /// first composition somebody writes. See [`Editor::warm`].
     loaded: Cell<bool>,
+    /// The palette variables a host's column supplies, each read from a
+    /// probe its stylesheet colours ([`Editor::flow_in`]); empty for a
+    /// surface that keeps the generated palette, as the classic one does.
+    flow: RefCell<Vec<(&'static str, glib::WeakRef<gtk::Widget>)>>,
 }
+
+/// What a host's column adds to the editing sheet (specs/007-postio-focus
+/// T221): the text starts at the column's edge, with no inset of its own,
+/// and runs on the app colours treatment's rhythm -- a 24px line,
+/// paragraphs 12 apart -- so what is written is laid out as it will be
+/// read. No colour is written here: the column's own are read from its
+/// probes at each restyle.
+const FLOW_CSS: &str =
+    "\nbody { padding-left: 0; padding-right: 0; line-height: 24px; }\np { margin: 0 0 12px 0; }\n";
 
 /// The editing surface with its document attached: Document in, WebKit's
 /// dialect out, Document again.
@@ -404,6 +465,7 @@ impl Editor {
             format: Cell::new(FormatState::default()),
             format_watchers: RefCell::new(Vec::new()),
             loaded: Cell::new(false),
+            flow: RefCell::default(),
         });
 
         content.connect_script_message_received(Some(EDITED_MESSAGE), {
@@ -458,12 +520,97 @@ impl Editor {
         &self.view
     }
 
+    /// Draw the document in a host's column (specs/007-postio-focus T221):
+    /// each of `probes` names a reader palette variable (`--r-ground`,
+    /// `--r-ink`, ...) and a widget whose CSS `color` the host's stylesheet
+    /// sets to its own token for it, as the open message's body reads its
+    /// column (`BodyView::set_ground`, T203, T211). The document is drawn on
+    /// the column's ground, in its ink, from its edge; read again whenever
+    /// the scheme changes, so light and dark both follow the host.
+    pub fn flow_in(&self, probes: Vec<(&'static str, gtk::Widget)>) {
+        let first = self.state.flow.borrow().is_empty();
+        self.state.flow.replace(
+            probes
+                .into_iter()
+                .map(|(variable, probe)| (variable, probe.downgrade()))
+                .collect(),
+        );
+        self.restyle();
+        if !first {
+            return;
+        }
+        // The style manager says the scheme changed before the stylesheet
+        // that paints the probes is in place: read them once the main loop
+        // has turned, after the plain restyle `view_with` connected.
+        let view = self.view.downgrade();
+        let state = Rc::downgrade(&self.state);
+        let handler = adw::StyleManager::default().connect_dark_notify(move |_| {
+            let (view, state) = (view.clone(), state.clone());
+            glib::idle_add_local_once(move || {
+                if let (Some(view), Some(state)) = (view.upgrade(), state.upgrade()) {
+                    restyle_with(&view, flow_css(&state).as_deref());
+                    paint_flow_ground(&view, &state);
+                }
+            });
+        });
+        let handler = RefCell::new(Some(handler));
+        self.view.connect_destroy(move |_| {
+            if let Some(handler) = handler.borrow_mut().take() {
+                adw::StyleManager::default().disconnect(handler);
+            }
+        });
+        // And whenever the view comes on screen: a probe is only dressed by
+        // the host's stylesheet once it is in the host's window, and a
+        // draft is loaded before the dialog it is written in is presented.
+        // The same once a document has loaded on screen, since one seeded
+        // before then read the probes before they were dressed.
+        let state = Rc::downgrade(&self.state);
+        self.view.connect_map(move |view| {
+            if let Some(state) = state.upgrade() {
+                restyle_with(view, flow_css(&state).as_deref());
+                paint_flow_ground(view, &state);
+            }
+        });
+        let state = Rc::downgrade(&self.state);
+        self.view.connect_load_changed(move |view, event| {
+            if event == webkit6::LoadEvent::Finished
+                && view.is_mapped()
+                && let Some(state) = state.upgrade()
+            {
+                restyle_with(view, flow_css(&state).as_deref());
+                paint_flow_ground(view, &state);
+            }
+        });
+    }
+
+    /// Load `inner_html` with the host's column added to the sheet.
+    fn seed(&self, inner_html: &str) {
+        match flow_css(&self.state) {
+            Some(flow) => {
+                let shell = editor_document::wrap_document(inner_html, presentation()).replacen(
+                    "</style>",
+                    &format!("{flow}</style>"),
+                    1,
+                );
+                paint_flow_ground(&self.view, &self.state);
+                self.view.load_html(&shell, Some(EDITOR_BASE_URI));
+            }
+            None => seed(&self.view, inner_html),
+        }
+    }
+
+    /// The sheet again, with the host's column read afresh.
+    fn restyle(&self) {
+        restyle_with(&self.view, flow_css(&self.state).as_deref());
+        paint_flow_ground(&self.view, &self.state);
+    }
+
     /// Show `document` for editing, forgetting any previous history — a
     /// draft opening, not an edit.
     pub fn load(&self, document: Document) {
         self.state.history.borrow_mut().clear();
         self.state.last_edit.set(None);
-        seed(&self.view, &document.editor_html());
+        self.seed(&document.editor_html());
         self.state.loaded.set(true);
         *self.state.document.borrow_mut() = document;
     }
@@ -542,7 +689,7 @@ impl Editor {
     /// the shared tail of undo and redo.
     fn show(&self, document: Document) {
         self.state.last_edit.set(None);
-        seed(&self.view, &document.editor_html());
+        self.seed(&document.editor_html());
         *self.state.document.borrow_mut() = document;
         let current = self.state.document.borrow();
         for handler in self.state.changed.borrow().iter() {
