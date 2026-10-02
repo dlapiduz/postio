@@ -1,0 +1,36 @@
+# Delete in the open message deletes it (88c1f0f7).
+#
+# The defect: Delete's cap read `Delete` where the action row draws `Del`,
+# and the key was the thing the commit was about -- a key under the dialog
+# that does nothing is the same family as #1546's dead keys. Fixed on the
+# Focus branch before storyboards existed, so this is pinned: with the
+# message open, `Delete` removes its conversation, offers Undo, and the
+# dialog goes on to the next message.
+#
+# Wide, so Delete is a visible button in the action row and not folded into
+# More (see `more-menu-escape-closes-only-the-menu`).
+source = { kind = "commit", ref = "88c1f0f7" }
+proof  = "pinned"
+apps   = ["focus"]
+seed   = "long-newsletter"
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", reading.id = "89", keyboard.region = "reader", rows.count = 60 }
+expect  = "The message is open, its action row showing Delete with the cap `Del`."
+
+[[step]]
+command = "delete"
+check   = { view = "reader", rows.count = 59, notice.undo = true, reading.id = { changed = true }, keyboard.reachable = true }
+expect  = "Delete acts: the conversation is gone from the list, the toast offers Undo, and the dialog goes on to the message that took its place (T190)."
