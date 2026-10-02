@@ -27,14 +27,12 @@
 //!
 //! [`install_at`] is also where `CommandId::EditConfig` becomes an actual
 //! process: it is the one place in `postio-gtk` that already owns both the
-//! window's command stream and the path being watched. [`spawn_editor`]
-//! prefers `$VISUAL` over `$EDITOR`, the POSIX order, and does not open a
-//! terminal to run either in — see its own doc comment for why that is a
-//! documented limitation rather than a bug, on the host and doubly so under
-//! Flatpak.
+//! window's command stream and the path being watched. The launcher is
+//! `postio_widgets::editor`, which Focus answers the same command with; its
+//! doc says why it prefers `$VISUAL` and opens no terminal.
 //!
 //! Every successful reload this bridge sees — whichever save caused it — is
-//! also handed to [`crate::settings::SettingsPanel::note_known_good`], which
+//! also handed to `SettingsPanel::note_known_good`, which
 //! is what lets "Revert file" undo a bad `$EDITOR` save as readily as a bad
 //! one typed in the panel.
 //!
@@ -167,7 +165,7 @@ pub fn install_at(window: &Window, path: &Path) {
         let window = window.downgrade();
         move |id| {
             if id == CommandId::EditConfig {
-                spawn_editor(&path);
+                postio_widgets::editor::open(&path);
             } else if id == CommandId::SaveSearch
                 && let Some(window) = window.upgrade()
             {
@@ -444,130 +442,5 @@ fn rename_saved_search(window: &Window, path: &Path, key: &str, name: &str) {
 fn report(errors: &[postio_config::validate::ValidationError]) {
     for error in errors {
         tracing::warn!(%error, "config");
-    }
-}
-
-/// Launches the user's editor on `path`.
-///
-/// `$VISUAL` wins over `$EDITOR`, the precedence every POSIX tool gives them.
-/// Neither is run inside a terminal: many desktop users already point
-/// `$EDITOR` at a GUI editor for exactly this reason, and guessing at a
-/// terminal emulator to wrap a text-mode one in is not a guess this module
-/// has any way to make well. A terminal-only `$EDITOR` — vim, nano, `emacs
-/// -nw` — starts with nothing to attach to; that is a real, documented
-/// limitation of opening an editor from a GUI application, not a bug to
-/// paper over with a heuristic that would be wrong as often as it was right.
-///
-/// # Flatpak
-///
-/// This does not work sandboxed, and cannot without more than this function:
-/// the sandbox has neither the host's editor binary nor a path to launch one.
-/// The one relevant portal, `org.freedesktop.portal.OpenURI`, opens the
-/// desktop's default handler for a file — never an arbitrary command, so
-/// never literally `$EDITOR` — and there is no terminal portal in the
-/// freedesktop spec at all, so a text-mode editor has no portal answer
-/// regardless. Reaching the host's own binary would need the app to talk to
-/// `org.freedesktop.Flatpak` (the spawn portal) and the manifest to grant it,
-/// neither of which this bead adds: that is a sandbox-permission decision for
-/// whoever ships the Flatpak build to make deliberately, not a default to
-/// slip in here. Until then, the settings panel itself is the sandboxed
-/// fallback — it already edits the same file.
-fn spawn_editor(path: &Path) {
-    // `[compose] editor` first, when it is set (#1297). `path` is
-    // `config.toml` itself — it is the file being opened — so the setting is
-    // read from the same file, live, rather than from a copy taken at
-    // startup that a `[compose]` edit would have made stale.
-    //
-    // What the name *means* is `postio_ui::handoff`'s, so this and the macOS
-    // frontend reach the same conclusion about the same value. What only
-    // this platform can answer is what it found, and it has two of the three
-    // answers available to it: freedesktop cannot tell a windowed program
-    // from a terminal one by looking (see this function's own note above), so
-    // it never reports `TerminalProgram` — the caveat there stays a caveat.
-    // It *can* tell that a name is not on `PATH` at all, which is a typo, and
-    // saying so is the whole reason that third answer exists.
-    let configured = Config::load_from_path(path)
-        .unwrap_or_default()
-        .compose
-        .editor;
-    match postio_ui::handoff::target(&configured, found_on_path(&configured)) {
-        postio_ui::handoff::Target::Application(name) => {
-            spawn(std::ffi::OsString::from(name), path);
-            return;
-        }
-        postio_ui::handoff::Target::Missing(name) => {
-            tracing::warn!(
-                editor = %name,
-                "{}",
-                postio_ui::handoff::missing_advice(&name)
-            );
-            return;
-        }
-        postio_ui::handoff::Target::NeedsTerminal(name) => {
-            tracing::warn!(
-                editor = %name,
-                "{}",
-                postio_ui::handoff::terminal_advice(&name)
-            );
-            return;
-        }
-        // Nothing chosen: the desktop's own convention, exactly as before.
-        postio_ui::handoff::Target::PlatformDefault => {}
-    }
-
-    let Some(editor) = std::env::var_os("VISUAL").or_else(|| std::env::var_os("EDITOR")) else {
-        tracing::warn!(
-            path = %path.display(),
-            "neither $VISUAL nor $EDITOR is set, so there is no editor to open"
-        );
-        return;
-    };
-    spawn(editor, path);
-}
-
-/// Start `editor` on `path`, and say so if it will not start.
-fn spawn(editor: std::ffi::OsString, path: &Path) {
-    if let Err(error) = std::process::Command::new(&editor).arg(path).spawn() {
-        tracing::warn!(
-            editor = %editor.to_string_lossy(),
-            path = %path.display(),
-            %error,
-            "cannot launch the editor"
-        );
-    }
-}
-
-/// What this desktop has by the name in `[compose] editor`.
-///
-/// Two of `Found`'s three answers, and the missing one is deliberate: this
-/// platform cannot tell a windowed program from a terminal one by looking, so
-/// it never claims `TerminalProgram` — `spawn_editor`'s own note above is the
-/// standing caveat about that, and it is unchanged. What it can tell is that
-/// a name resolves to nothing at all, which is a typo and is worth saying.
-///
-/// An empty setting answers `Nothing` and never reaches a lookup:
-/// `handoff::target` reads a blank as "not chosen" before it looks at this.
-fn found_on_path(configured: &str) -> postio_ui::handoff::Found {
-    let name = configured.trim();
-    if name.is_empty() {
-        return postio_ui::handoff::Found::Nothing;
-    }
-    // A path is taken at its word, the way a shell does.
-    if name.contains('/') {
-        return match std::fs::metadata(name) {
-            Ok(_) => postio_ui::handoff::Found::Application,
-            Err(_) => postio_ui::handoff::Found::Nothing,
-        };
-    }
-    let Some(paths) = std::env::var_os("PATH") else {
-        return postio_ui::handoff::Found::Nothing;
-    };
-    let on_path = std::env::split_paths(&paths).any(|directory| {
-        std::fs::metadata(directory.join(name)).is_ok_and(|found| found.is_file())
-    });
-    if on_path {
-        postio_ui::handoff::Found::Application
-    } else {
-        postio_ui::handoff::Found::Nothing
     }
 }

@@ -1388,6 +1388,35 @@ fn one_line(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// How tall a message row is at `density`, laid out `width` wide with a
+/// representative message in it: what the settings' Appearance pane says a
+/// density costs. Measured from a real row, because that is the only number
+/// that stays true when the row's anatomy or the font changes.
+pub fn height_at(density: postio_config::Density, width: i32) -> i32 {
+    let probe = MessageRowView::new();
+    probe.set_density(density);
+    probe.set_row(Some(crate::list::Row {
+        id: postio_model::ids::MessageId::new(1),
+        thread: None,
+        from: Some(postio_model::EmailAddress::new(
+            Some("Ada Lovelace"),
+            "ada@example.com",
+        )),
+        subject: Some("A representative subject line".into()),
+        preview: Some("And the snippet under it, which the compact density drops.".into()),
+        received_at: chrono::Utc::now(),
+        seen: true,
+        flagged: false,
+        answered: false,
+        send_state: None,
+        send_at: None,
+        has_attachments: false,
+        thread_count: 1,
+        participants: Vec::new(),
+    }));
+    probe.measured_height(width).ceil() as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

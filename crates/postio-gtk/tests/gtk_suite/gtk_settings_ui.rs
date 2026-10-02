@@ -170,6 +170,9 @@ fn panel_with_text(text: &str) -> Option<(gtk::Window, SettingsPanel)> {
     style::install(&display);
 
     let panel = SettingsPanel::new();
+    // The density line measures the classic app's own row, which the
+    // shared panel is lent (T233).
+    panel.set_row_height_probe(postio_gtk::row::height_at);
     let window = gtk::Window::new();
     style::track(&window);
     window.set_child(Some(&panel));
