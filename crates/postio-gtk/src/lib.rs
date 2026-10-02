@@ -102,7 +102,8 @@ pub mod settings;
 pub mod shell;
 pub mod sidebar;
 pub mod startup;
-pub mod storyboard;
+// Moved to postio-widgets, which both desktop apps play storyboards with (ADR 0043).
+pub use postio_widgets::storyboard;
 pub mod state;
 pub mod style;
 pub mod thread_row;

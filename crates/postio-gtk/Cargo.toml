@@ -12,7 +12,6 @@ repository.workspace = true
 serde_json = { workspace = true }
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 async-channel = { workspace = true }
-blake3 = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 gio = "0.22.9"
 glib = { version = "0.22.9", features = ["v2_72"] }
@@ -32,6 +31,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+blake3 = { workspace = true }
 # The editor's WebView, which the composer suites read back: the composer
 # and its editor are postio-widgets' now (ADR 0043; T024).
 webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }

@@ -29,7 +29,7 @@ pub enum ChordError {
 ///
 /// A character key reports the character it types, so `J` is `Key::J` held
 /// with Shift, which is what GTK delivers and what
-/// `Chord::from_key_event` folds back into `J`. A chord with an unexpanded
+/// `keys::chord` folds back into `J`. A chord with an unexpanded
 /// `mod` cannot get here: it does not parse as a [`Chord`].
 pub fn chord_to_gdk(chord: &Chord) -> Result<(gdk::Key, gdk::ModifierType), ChordError> {
     let name = chord.key.keysym_name();
@@ -239,7 +239,6 @@ pub fn type_text(window: &gtk::Window, text: &str, hook: Option<TypeInto>) -> Ty
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keymap::ChordFromGdk;
 
     fn chord(text: &str) -> Chord {
         text.parse().expect("a chord")
@@ -265,7 +264,7 @@ mod tests {
             let original = chord(text);
             let (key, state) = chord_to_gdk(&original).expect("a key");
             assert_eq!(
-                Chord::from_key_event(key, state),
+                crate::keys::chord(key, state),
                 Some(original),
                 "{text} did not survive the trip"
             );
