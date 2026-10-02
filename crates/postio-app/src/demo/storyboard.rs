@@ -101,6 +101,12 @@ impl Default for Options {
     }
 }
 
+/// The variants `board` asks Classic for, and the axes it asked for that
+/// Classic does not have.
+pub fn variants_for(board: &Storyboard) -> (Vec<BTreeMap<String, String>>, Vec<String>) {
+    postio_storyboard::apply::variants(board, &runner_info())
+}
+
 /// What Classic's runner can do, for applicability and `runner list`.
 pub fn runner_info() -> RunnerInfo {
     let axes = [
@@ -892,8 +898,10 @@ impl ContextCoverage {
 /// The generated pass (spec US6): every command bound in every context,
 /// each from a fresh window in that context's starting state, judged on
 /// whether anything a person can see changed.
-pub async fn every_command(gaps: &[postio_storyboard::coverage::Gap]) -> Vec<ContextCoverage> {
-    use postio_storyboard::coverage::{Effect, Press, judge};
+pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCoverage>, String> {
+    use postio_storyboard::coverage::{Effect, Press, judge, load_gaps};
+    let gaps = load_gaps(gap_list)?;
+    let gaps = gaps.as_slice();
 
     let mut all = Vec::new();
     for (context, setup) in CONTEXTS {
@@ -1001,7 +1009,7 @@ pub async fn every_command(gaps: &[postio_storyboard::coverage::Gap]) -> Vec<Con
         all.push(coverage);
     }
     postio_ui::clock::thaw();
-    all
+    Ok(all)
 }
 
 /// A fresh, seeded, acting window, with `setup` pressed.

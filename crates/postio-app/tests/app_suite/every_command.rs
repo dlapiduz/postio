@@ -26,7 +26,7 @@ use std::path::Path;
 
 use gtk::gdk;
 use postio_gtk::{app, fonts, style};
-use postio_storyboard::coverage::{Effect, load_gaps};
+use postio_storyboard::coverage::Effect;
 
 pub fn every_bound_command_shows_or_is_a_listed_gap() {
     crate::gtk_case(async {
@@ -42,11 +42,11 @@ pub fn every_bound_command_shows_or_is_a_listed_gap() {
         style::install(&display);
         app::install_icons(&display);
 
-        let gaps = load_gaps(
+        let all = postio_app::demo::storyboard::every_command(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../storyboards/gaps/classic.toml"),
         )
+        .await
         .expect("the gap list parses");
-        let all = postio_app::demo::storyboard::every_command(&gaps).await;
         let pressed: usize = all.iter().map(|c| c.presses.len()).sum();
         assert!(pressed > 50, "the pass pressed only {pressed} commands");
         let problems: Vec<String> = all
