@@ -52,3 +52,61 @@ Checks: F=focus region, C=cursor, V=view, O=overlay, T=toast/notice, S=scroll.
 | 1687, 1609 | Rapid `a a a` / `d d d` working through the list must be one step per key | both | 20 rows; press `a` 5 times quickly; V: 5 rows gone, C on 6th original row | timing |
 | 56 | Mail notification click should focus specific message; save search as folder | classic | notification activation for msg 7; C/F on msg 7 and pane shows it | pointer |
 | 40 | Drag and drop as complete story (selections, dragging out) | classic | select 3 rows; drag to folder; V list drops them, T undo | pointer |
+
+## Outcome (T078–T086, 2026-10-02)
+
+What each row became. **Pinned** storyboards pass on Classic with checks that
+name the exact outcome the fix established; **open** ones are red on purpose
+until their issue lands; the rest say why they cannot be filmed yet. Focus
+rows live on `feature/storyboards-focus` (T085).
+
+| Row(s) | Storyboard | Proof |
+|---|---|---|
+| 1687 (+f84d1343, 1fa814a0) | `list/archive-walks-down`, `list/archive-keeps-walking-down`, `list/delete-keeps-walking-down` | pinned |
+| 1474, 1011, db9e5423 | `search/escape-leaves-search` | pinned |
+| 6eadd8e2 | `search/escape-returns-to-the-row` -- **found #1744** | open |
+| 1473, 33b7fd4c | `list/launch-keyboard-on-first-row` | pinned |
+| 693, 1252, 1034 | `search/return-hands-keyboard-to-results` (Tab now refines; Return is the handoff) | pinned |
+| 79b1cd8a | `search/return-on-a-mode-hint` | pinned |
+| 494, 437 | `sidebar/tab-cycles-the-panes`; `sidebar/shift-tab-from-reader-returns-to-row` (`routing = "real"`, not covered by chain delivery) | pinned |
+| d2be7412 | `sidebar/walk-reaches-outbox` | pinned |
+| 455, 471 | not expressible yet: no seed holds saved searches | -- |
+| 813 | `sidebar/folder-reload-keeps-flagged`; filming it **found #1747** (`sidebar/go-to-flagged-lists-flagged`) | pinned / open |
+| 1177, 1212, 1444 | `compose/launch-does-not-jump-to-a-draft`, `compose/draft-has-no-reply` | pinned |
+| 601, 1414 | `reader/pane-is-filled-on-launch` | pinned |
+| 491, 1196, 1240, 426 | `compose/blank-compose-after-a-left-over-draft` | pinned |
+| 1195 | `compose/composer-takes-the-reading-pane` | pinned |
+| 602, 73 | `compose/body-typing-is-not-eaten` | pinned |
+| 690, 325 | `compose/reply-and-forward-focus` | pinned |
+| 1481 | `compose/send-can-be-taken-back` (pinned); `compose/send-offers-an-undo-toast` -- **found #1752** | pinned / open |
+| 629, 68 | not expressible yet: the first-run seed shows no onboarding form in Classic | -- |
+| 67, 404 | `onboarding/locked-keyring-shows-recovery` | pinned |
+| 1016 | not expressible yet: keys do not reach the settings window's rebind list by the runner | -- |
+| 756 | `sidebar/toggle-sidebar-from-palette` | pinned |
+| 825 | not expressible yet: `narrow` (900 px) is above the one-pane breakpoint (720 px) | -- |
+| 1402, 1431, 438, 0b808ee8 | `reader/page-keys-scroll-the-pane` | pinned |
+| 1398 | `reader/view-original-in-the-pane` | pinned |
+| 1386, 1365, 5621ef0f | `conversation/j-k-walk-the-messages` -- **found #1748** | open |
+| 1385, 1372 | `reader/open-lands-on-the-newest-message` | pinned |
+| d1ddd2dc, 69d0d56a, 1433 | `reader/no-flash-between-messages` (the scroll half of #1433 is pointer, below) | pinned |
+| 749, 947 | covered by `reader/no-flash-between-messages` (a blank frame fails the run) | pinned |
+| 1679, 2209a7dc | not expressible yet: pointer (Show images by click) | -- |
+| 797, 1400 | `conversation/read-mark-follows-focus` (only "no redraw" is pinned; the read mark itself is not observed) | pinned |
+| 1173, 822 | `conversation/single-message-has-one-reply-bar` | pinned |
+| 468, 1701, 811, 1300 | `list/selection-archives-the-selected` (account scope; the unified variant needs a unified start) | pinned |
+| 753, 750 | `list/cursor-and-selection-look-different`; revealing new mail needs the `new_mail` event, not yet supported | pinned |
+| 1475, 499 | `search/result-order-toggles` (search); the folder chip awaits #1475's decision -- evidence commented there | pinned |
+| 961, 767, 1526 | `search/open-a-hit-from-the-results` | pinned |
+| 1523, 1524, 1525 | `reader/outbox-offers-no-reply` -- **found #1749** | open |
+| 2af808b1 | not expressible yet: pointer (maximise and restore) | -- |
+| 15192fb5 | `compose/reply-caret-above-the-quote` (prose; the caret is not observed) | pinned |
+| 1687, 1609 rapid keys | `list/rapid-keys-one-step-each` | pinned |
+| 56 | not expressible yet: pointer (a notification's activation) | -- |
+| 40 | not expressible yet: pointer (drag and drop) | -- |
+| Focus rows (92a093b8, 0cbbd3d8, a19c4bbb, de495089, 2ba0e97c, 8ab954bf, 88c1f0f7, 63641d47) | on the Focus lane (T085); the shared storyboards already found **#1746** there | -- |
+
+The ux-architect §4 flows are `flows/triage-walk` (passes),
+`flows/open-walk-reply-send` (red on #1748) and `flows/search-open-reply-back`
+(red on #1750). Reviewing the first runs also found #1745 (the first key
+after launch can be lost) and #1751 (leaving the composer strands the
+keyboard).
