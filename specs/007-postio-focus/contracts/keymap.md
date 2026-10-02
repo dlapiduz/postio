@@ -1,105 +1,131 @@
 # Contract: one keymap for every app
 
-The maintainer's answer (spec, Clarifications): `KEYS.md` becomes the default
-for every app. This file is the resulting table: what each key does, which
-command id it belongs to, and what moves out of the way. The registry
-(`crates/postio-core/src/registry.rs`) stays the one source. This contract
-describes the defaults the registry will hold, and generated artefacts
-(`docs/keybindings.md`, the golden `linux-bindings.txt`) follow it.
+`KEYS.md` is the default keymap for every app (spec, Clarifications). The
+registry (`crates/postio-core/src/registry.rs`) is the one source: this file
+is the table of its defaults that Focus's design relies on, and the
+generated artefacts (`docs/keybindings.md`, the golden `linux-bindings.txt`)
+follow the registry, not this file.
 
 Legend:
 
 - **All**: every app that has the surface.
 - **Focus**: `Requirement::Focus`, offered only by Focus.
-- **Three-pane**: `Requirement::ThreePane`, offered by the apps with a
-  sidebar and panes (classic, terminal, macOS) and not by Focus. It covers:
-  - the sidebar toggle, pane cycling and the parts panel (T029);
-  - the conversation rail, and the folder-list, parts-panel and account-list
-    keys (T166). `update_credential` stays with Focus, because its sign-in
-    banner uses it. The account list's other verbs (`toggle_account_enabled`,
-    `remove_account`, `rebuild_account_index`, `set_default_account`,
-    `map_mailbox_role`) are Focus's too (T258): Settings' Accounts section
-    has the list, so they are offered by every app.
-- **New**: a new `CommandId`, and so a new `[keys]` name.
-- `mod` is Ctrl on Linux and ⌘ on macOS (`crates/postio-config/src/keys.rs:191-221`).
-- **The second layer**: the `mod` chords the macOS frontend (#1306) gave the
-  menu-shaped verbs, so each can sit in a menu bar. They are alternates
-  beside the keys this table sets, never instead of them, and every app
-  has them. `registry::offered_on` withholds a command from a platform with
-  no surface for it (on macOS: `darken_message`, `detach_composer`,
-  `next_scope`), and then it has no key there.
+- **Graphical**: every app with a window.
+- **Three-pane**: `Requirement::ThreePane`, which means "not Focus": the
+  terminal and macOS (and the classic app until its removal) offer it, for
+  their sidebar, panes, conversation rail and parts panel.
+- `mod` is Ctrl on Linux and ⌘ on macOS (`crates/postio-config/src/keys.rs`).
+- **The second layer**: `mod` chords that let the menu-shaped verbs sit in a
+  menu bar, as alternates beside the keys below, never instead of them.
+  `registry::offered_on` withholds a command from a platform with no surface
+  for it (on macOS: `darken_message`, `detach_composer`, `next_scope`), and
+  then it has no key there.
+
+**Each app binds only what it offers.** An app builds its resolver with
+`Resolver::from_commands_for(keymap, Frontend)`, so a key the keymap keeps
+for Focus does nothing in another app: `y` does not answer an invitation in
+the terminal.
 
 ## Message surfaces: List, Conversation, Reader
 
-The Focus dialog is `Context::Reader`. Its fallback chain (Reader →
+The open message is `Context::Reader`. Its fallback chain (Reader →
 Conversation → List → Global) is what lets `j`/`k` step the list from inside
 it.
 
-| Key | Command id | Offered by | Change |
+| Key | Command id | Offered by | Notes |
 |---|---|---|---|
-| `j` / `Down` | `next_message` | All | Unchanged |
-| `k` / `Up` | `prev_message` | All | Unchanged |
-| `g g` / `G` | `first_message` / `last_message` | All | Unchanged |
-| `Return` / `Right` | `open_message` | All | The `l` alternate is dropped |
-| `x` | `toggle_selection` | All | Unchanged |
-| `J` / `K` | `extend_selection_down` / `_up` | All | Unchanged (list, reader, search) |
-| `X` (alt `mod+a`) | `select_all` | All | Was `mod+a` |
-| `Escape` | `back` | All | Unchanged. Clears the selection in the list, closes a dialog |
-| `]` / `[` | `next_in_conversation` / `prev_in_conversation` | All | Were `J`/`K`, conversation only. Now also in the reader, where they step the dialog through the thread. Alternates `alt+Down` / `alt+Up` (the second layer) |
-| `e` / `E` / `f` | `reply` / `reply_all` / `forward` | All | Unchanged. Alternates `mod+r` / `mod+shift+r` / `mod+shift+f` (the second layer) |
-| `a` | `archive` | All | Unchanged. Alternate `mod+shift+a` (the second layer) |
-| `A` | `archive_thread` | All | Unchanged. In `Context::Digest` it archives the whole digest |
-| `Delete` | `delete` | All | Was `d` |
-| `s` | `snooze` | All | Was `b`. Opens the snooze picker; gains an `until` (R6) |
-| `B` | `unsnooze` | All | Unchanged |
-| `h` (alt `mod+h`) | `remind_if_no_reply` | Focus | **New.** `mod+h` is the composer's key, where `h` types |
-| `r` | `toggle_read` | All | **New id, replaces `mark_unread` (`U`)** |
-| `l` | `add_label` | All | Was `L`. Opens the label picker in Focus, and the finder's `+` mode in the classic app |
-| `m` | `move` | All | Unchanged. Opens the move picker in Focus, and the finder's `#` mode in the classic app |
-| `mod+z` | `undo` | All | Was `u`. Cancels an open RSVP window first (R9) |
-| `c` | `compose` | All | Unchanged. Alternate `mod+n` (the second layer) |
-| `y` / `Y` | `accept_invite` / `decline_invite` | Focus | **New** |
-| `U` | `unsubscribe` | All | Was `X` |
-| `d` | `digest_rule` | Focus | **New.** From a message: the dialog for a new sender rule. In a digest: edit its rule and cadence |
-| `v` | `view_source` | Focus | **New.** The raw RFC 822 message (R2). Focus-only for now: the other apps adopt it with a source view of their own, and its key is reserved for them |
-| `o` | `open_attachment_or_link` | Focus | **New.** A chooser over the message's links and parts |
-| `?` | `cheat_sheet` | All | Unchanged. Focus's key map (screen 20) |
-| `*` | `flag` | All | Was `s`. Toggles the flag; in Focus the row carries no mark (spec C13) |
-| `Left` | `prev_view` | All | Was `h` (with `Left` as its alternate) |
-| `alt+d` | `darken_message` | All graphical | Was `D` |
+| `j` / `Down` | `next_message` | All | |
+| `k` / `Up` | `prev_message` | All | |
+| `g g` / `G` | `first_message` / `last_message` | All | |
+| `Return` / `Right` | `open_message` | All | |
+| `x` | `toggle_selection` | All | |
+| `J` / `K` | `extend_selection_down` / `_up` | All | List, reader and search; alternates `shift+Down` / `shift+Up` |
+| `X` (alt `mod+a`) | `select_all` | All | A predicate over the view (C19) |
+| `Escape` | `back` | All | Clears the selection in the list, closes a dialog |
+| `]` / `[` | `next_in_conversation` / `prev_in_conversation` | All | Steps the open message through its thread. Alternates `alt+Down` / `alt+Up` |
+| `e` / `E` / `f` | `reply` / `reply_all` / `forward` | All | Alternates `mod+r` / `mod+shift+r` / `mod+shift+f` |
+| `a` | `archive` | All | Alternate `mod+shift+a` |
+| `A` | `archive_thread` | All | In `Context::Digest` it archives the whole digest |
+| `Delete` | `delete` | All | Moves to Trash, undoable (C12) |
+| `s` | `snooze` | All | Opens the snooze picker |
+| `B` | `unsnooze` | All | |
+| `h` (alt `mod+h`) | `remind_if_no_reply` | Focus | `mod+h` is the composer's key, where `h` types |
+| `r` | `toggle_read` | All | |
+| `*` | `flag` | All | Toggles the flag; in Focus the row carries no mark (C13) |
+| `l` | `add_label` | All | Opens the label picker |
+| `m` | `move` | All | Opens the move picker |
+| `mod+z` | `undo` | All | Cancels an open RSVP window first (research R9) |
+| `c` | `compose` | All | Alternate `mod+n` |
+| `y` / `Y` | `accept_invite` / `decline_invite` | Focus | |
+| `U` | `unsubscribe` | All | Also in `Context::Digest` |
+| `d` | `digest_rule` | Focus | From a message: a new sender rule. In a digest: edit its rule |
+| `L` | `digest_like_this` | Focus | In the list, with a model configured |
+| `v` | `view_source` | Focus | The raw RFC 822 message |
+| `o` | `open_attachment_or_link` | Focus | A chooser over the message's links and parts, which also saves |
+| `-` | `dismiss_marker` | Focus | |
+| `t` / `n` | `capture_task` / `capture_note` | Focus | With a vault configured; also switch the capture sheet |
+| `Left` | `prev_view` | All | |
+| `F5` | `refresh` | All | |
+| `Page_Down` / `Page_Up` (alt `space` / `shift+space`) | `scroll_reader_down` / `_up` | All | |
 
-## Going places: Global, and the surfaces that go
+## Reading
 
-| Key | Command id | Offered by | Change |
+| Key | Command id | Offered by | Notes |
 |---|---|---|---|
-| `/` | `search` | All | Unchanged. Focus's command bar, open for mail search (spec C24). Alternate `alt+mod+f` (the second layer) |
-| `mod+k` | `command_palette` | All | Unchanged. Focus's command bar, open in command mode with `>` already typed, so only commands show (spec C24) |
-| `g i` | `go_to_inbox` | All | Unchanged |
-| `g o` | `go_to_folders` | All | **New id, replaces `focus_sidebar` (`g f`).** The classic app focuses its folder list, and Focus opens its folders popover |
-| `g t` | `go_to_drafts` | All | Was `g d` |
-| `g s` | `go_to_sent` | All | Was `g t` |
-| `g r` | `go_to_archive` | All | **New** |
-| `g z` | `go_to_snoozed` | All | **New** |
-| `g *` | `go_to_flagged` | All | Was `g s` |
-| `g f` | `go_to_filtered` | Focus | **New** |
-| `g d` | `go_to_digest_rules` | Focus | **New** |
-| `alt+1` … `alt+4` | `saved_search_1` … `saved_search_4` | All | **New.** The pinned `[filters]` entries, in their order |
-| `!` | `toggle_has_action` | Focus | **New.** Needs a punctuation alias in `crates/postio-ui/src/keymap.rs:196-216` |
+| `O` | `switch_treatment` | Focus | Reader only: app colours or the original |
+| `.` | `more_actions` | Focus | Reader only: the open message's More (Label, Move, Delete) |
+| `i i` / `i a` | `show_images` / `always_show_images` | All | Once, or always for this sender |
+| `mod+f`, `mod+g`, `mod+shift+g` | `find_in_message`, `find_next`, `find_previous` | All | Alternates `F3` / `shift+F3` |
+| `mod+plus`, `mod+minus`, `mod+0` | `zoom_in`, `zoom_out`, `zoom_reset` | Graphical | Kept in `[reader] zoom` |
+| `alt+d` | `darken_message` | Graphical | Withheld on macOS |
+| `mod+o`, `mod+shift+o` | `view_original`, `toggle_reader_view` | All | |
+| `F8` | `toggle_reading_pane` | Focus | List context, reached from the reader through its fallback: open messages beside the list or over it (`[focus] reading`) |
+
+## Composer
+
+| Key | Command id | Notes |
+|---|---|---|
+| `mod+Return` | `send` | Alternates `alt+s`, `alt+Return`, which a terminal delivers |
+| `mod+shift+Return` | `schedule_send` | Opens the Send later picker. Alternate `alt+S` |
+| `mod+shift+a` | `attach_file` | Alternate `alt+a` |
+| `mod+h` | `remind_if_no_reply` | |
+| `mod+shift+o` | `detach_composer` | Alternate `alt+o` |
+| `mod+shift+c` | `copy_fields` | Cc and Bcc. Alternate `alt+c` |
+| `mod+s` / `mod+d` | `save_draft` / `discard_draft` | |
+| `mod+b`, `mod+i`, `mod+shift+k`, `mod+shift+7`, `mod+shift+8`, `mod+shift+9`, `mod+shift+g` | bold, italic, link, numbered and bullet lists, quote, image | Each with an `alt` alternate but bold |
+| `mod+shift+x`, `mod+shift+y`, `mod+shift+m` | `cancel_send`, `retry_send`, `mark_sent` | Also in the list, for a draft being sent. Alternates `alt+x`, `alt+r`, `alt+m` |
+
+## Going places
+
+| Key | Command id | Offered by | Notes |
+|---|---|---|---|
+| `/` | `search` | All | Focus's command bar, open for mail search (C24). Alternate `alt+mod+f` |
+| `mod+k` | `command_palette` | All | Focus's command bar in command mode, `>` typed (C24) |
+| `g i` | `go_to_inbox` | All | |
+| `g o` | `go_to_folders` | All | Focus's folders popover |
+| `g t` | `go_to_drafts` | All | |
+| `g s` | `go_to_sent` | All | |
+| `g r` | `go_to_archive` | All | |
+| `g z` | `go_to_snoozed` | All | |
+| `g *` | `go_to_flagged` | All | |
+| `g f` | `go_to_filtered` | Focus | |
+| `g d` | `go_to_digest_rules` | Focus | |
+| `g a` | `next_scope` | All | Withheld on macOS |
+| `alt+1` … `alt+4` | `saved_search_1` … `saved_search_4` | All | The pinned `[filters]` entries, in their order |
+| `!` | `toggle_has_action` | Focus | A punctuation alias in `postio-ui`'s keymap |
 
 ## Search: `Context::Search`
 
-| Key | Command id | Offered by | Change |
-|---|---|---|---|
-| `mod+s` | `save_search` | All | Unchanged |
-| `mod+BackSpace` | `back_to_words` | Focus | **New.** Returns from chips to the plain-English words |
-| `O` | `toggle_result_order` | All | Was `o` |
-| `Tab` | the search field's own chip navigation | All | Unchanged. It is not a registry command (#494) |
+| Key | Command id | Offered by |
+|---|---|---|
+| `mod+s` | `save_search` | All |
+| `mod+BackSpace` | `back_to_words` | Focus |
+| `O` | `toggle_result_order` | All |
+| `Tab` | the bar's own chip navigation, not a registry command | All |
 
 The `>` prefix in the command bar is the finder's mode prefix, not a key.
-`Ctrl K` types it for you; `/` leaves the bar empty, for search. Both open the
-bar in place, in the top bar's own field, with the results below it.
 
-## Pickers: `Context::Picker` (new)
+## Pickers: `Context::Picker`
 
 | Key | Command id | Offered by |
 |---|---|---|
@@ -107,96 +133,89 @@ bar in place, in the top bar's own field, with the results below it.
 | `Tab` | `picker_type_date` | Focus |
 | `space` | `picker_toggle` | Focus |
 | `Return` | `picker_confirm` | Focus |
-| `Escape` | `back` | All (unchanged; closes the picker) |
+| `Escape` | `back` | All |
 
-## Digests and Filtered (new contexts)
+## Digests and Filtered
 
 | Context | Key | Command id | Offered by |
 |---|---|---|---|
 | `Digest` | `A` | `archive_thread` (the whole digest) | All |
 | `Digest` | `d` | `digest_rule` (edit) | Focus |
 | `Digest`, `Reader` | `D` | `stop_digesting_sender` | Focus |
-| `Digest`, `Reader` | `U` | `unsubscribe` | All |
+| `Digest` | `U` | `unsubscribe` | All |
+| `Digest` | `]` / `[` | `next_reference` / `prev_reference` | Focus |
+| `Digest` | `Tab` | `toggle_digest_summary` | Focus |
 | `Filtered` | `R` | `restore_filtered` | Focus |
-| message surfaces | `-` | `dismiss_marker` | Focus (T118) |
-| `Reader` | `.` | `more_actions`: the open message's More (Label, Move, Delete) | Focus (T206) |
-| `List` | `F` | `sweep_inbox`: shows a count, then acts | Focus (T128) |
-| `List` (and `Reader`, through its fallback) | `F8` | `toggle_reading_pane`: open messages beside the list or over it (`[focus] reading`) | Focus (T232) |
 | `Filtered` | `1` … `7` | `filtered_tab_1` … `filtered_tab_7` | Focus |
-| `Digest` | `]` / `[` | `next_reference` / `prev_reference` | Focus, milestone 2 |
-| `Digest` | `Tab` | `toggle_digest_summary` | Focus, milestone 2 |
+| `List` | `F` | `sweep_inbox`: shows a count, then acts | Focus |
 | `Digest`, `Filtered` | `mod+z` | `undo` | All |
 
-Both contexts fall back to Global only, so undo is bound in each. Archiving
-the whole digest is one undoable action (FR-125), and a restore from Filtered
-is undoable (FR-116, T125). Each has to be undoable where it was done (T163).
+Both contexts fall back to Global only, so undo is bound in each: archiving
+the whole digest and a restore from Filtered are undoable where they were
+done (FR-116, FR-125).
 
-**Each app binds only what it offers.** An app builds its resolver with
-`Resolver::from_commands_for(keymap, Frontend)`. So a key the one keymap
-keeps for Focus does nothing in the classic app, the terminal or macOS. For
-example, `y` does not answer an invitation there (T029).
-
-## Obsidian: `Context::Capture` (new, milestone 3)
+## Obsidian: `Context::Capture`
 
 | Key | Command id |
 |---|---|
-| `t` / `n` | `capture_task` / `capture_note` (in message surfaces) |
 | `mod+p` | `capture_change_project` |
 | `alt+s` | `capture_use_subject` |
 | `mod+Return` | `capture_write` |
 
-## Classic-only surfaces keep their context keys
+## The application
 
-These surfaces exist only in the classic app, and each has its own context,
-so their keys are the classic ones:
+| Key | Command id | Offered by |
+|---|---|---|
+| `?` | `cheat_sheet` (Focus's key map, screen 20) | All |
+| `mod+comma` | `settings` (alt `alt+comma`) | All |
+| `mod+shift+n` | `add_account` (alt `alt+n`) | All |
+| `mod+e` | `edit_config`: `config.toml` in the person's editor | All |
+| `mod+q` | `quit` (alt `mod+w`) | All |
 
-- Sidebar: `j`, `k`, `space`, `r`, `shift+Up`/`Down`;
-- Accounts: `Return`, `c`, `r`, `m`, `M`;
-- Parts: `j`, `k`, `Return`, `s`, `S`, `x`, `H`;
-- conversation-only: `z`, `O`, `I`.
+## Accounts: `Context::Accounts`
 
-Deleting a saved search (Sidebar) and removing an account (Accounts) move from
-`d` to `Delete`, with the message verb, so "delete" has one key.
+Settings' Accounts section, with the keyboard on an account row. Offered by
+every app.
+
+| Key | Command id |
+|---|---|
+| `Return` | `toggle_account_enabled` |
+| `Delete` | `remove_account` |
+| `c` | `update_credential` |
+| `r` | `rebuild_account_index` |
+| `m` | `set_default_account` |
+| `M` | `map_mailbox_role` |
+
+## Three-pane surfaces keep their context keys
+
+These surfaces exist only in the three-pane frontends, each in its own
+context, so their keys do not collide with the message surfaces':
+
+- Global: `mod+b` toggles the sidebar; `tab` / `shift+tab` cycle the panes;
+- Sidebar: `j`, `k`, `space`, `r`, `shift+Up`/`Down`, and `Delete` deletes a
+  saved search;
+- Parts: `p` opens it from the reader; `j`, `k`, `Return`, `s`, `S`, `x`,
+  `H`;
+- Conversation: `z` folds, `O` expands all, `I` toggles the rail.
 
 ## The terminal
 
-- **`mod+z`** becomes `ctrl+z`. Raw mode delivers it as a key
-  (`crates/postio-tui/src/term.rs:184`), and today nothing is bound to it, so
-  undo on `ctrl+z` works as soon as the default changes.
-- **Suspend was never built,** although spec 005 says it was
-  (`specs/005-tui-frontend/contracts/tui-surface.md:103-105`, `spec.md:360`,
-  task T028). The same commit corrects those three claims.
-- **Every key above offered by All is deliverable by a terminal:** `Delete`,
-  `*`, `alt+1`–`alt+4`, `]`, `[` and `!`. The terminal's parity test
-  (`crates/postio-tui/tests/registry_parity.rs:91-144`) proves it. Commands
-  marked **Focus** are unmet by the terminal's `Availability`, so they are
-  outside that test.
+- Raw mode delivers `ctrl+z` as a key, so undo is `ctrl+z`. The terminal
+  does not suspend.
+- Every key offered by All is deliverable by a terminal, `Delete`, `*`,
+  `alt+1`–`alt+4`, `]`, `[` and `!` included; the terminal's parity test
+  (`crates/postio-tui/tests/registry_parity.rs`) proves it. Commands marked
+  Focus are unmet by the terminal's `Availability`, so they are outside it.
 
-## What changes with it
+## How it is tested
 
-These change in the same commit as the defaults:
-
-- `crates/postio-core/tests/core_suite/command_registry.rs:75-164`: the tests
-  that pin `u`, `h`, `l`, `g i`, `g d`, `g t` and `g s`;
-- `crates/postio-core/src/registry.rs:2256-2275` and `:2327-2340`;
-- `crates/postio-gtk/tests/logic_suite/keymap_defaults.rs:144-175`;
-- the golden `linux-bindings.txt` (`crates/postio-core/tests/golden/`);
-- `docs/keybindings.md`, regenerated with
-  `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`;
-- the terminal's `app.rs` tests that press `s`, `d` and `X`;
-- `docs/PRODUCT.md` §8 (`e` replies, `a` archives, `u` undoes, `J`/`K` walk a
-  thread), which becomes the new sentence;
-- `CLAUDE.md`'s line of keys (`e` reply, `a`/`A` archive, `u` undo, `J`/`K`
-  walk a thread), which says `mod+z` for undo;
-- the design canvas's key hints, which follow the registry at render time.
-
-**How to test it.** An enumeration across frontends
-(`Availability { frontend: Classic | Terminal | Focus | Macos }`) asserts, for
-every app (SC-015):
+An enumeration across frontends (`Availability { frontend: Classic |
+Terminal | Focus | Macos }`) asserts, for every app (SC-015):
 
 - every command it offers has a default key;
 - no key is bound to two commands in one context;
 - a command's key is the same wherever it is offered.
 
-The Focus key-map groups table (R4) is enumerated too. Every command Focus
-offers has a group.
+Focus's `registry_parity` adds that every command Focus is offered reaches a
+handler, and the key-map groups table is enumerated so every command Focus
+offers has a group (research R4).

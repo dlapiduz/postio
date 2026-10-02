@@ -1,8 +1,8 @@
 # Contract: `config.toml` for Focus
 
-**The user's decisions live in `config.toml`, not the store.** A schema change
-makes the store resync, and anything held only there is lost (research R0,
-R14).
+**The user's decisions live in `config.toml`, not the store.** A store that
+no migration reaches starts over, and anything held only there is lost
+(research R0, R14).
 
 **Every write Focus makes to the file uses the path the settings panel
 already uses.** That is `toml_edit`, which keeps what Focus does not own,
@@ -11,15 +11,15 @@ followed by `postio_config::save::write_atomically`, the save an editor makes
 rule each write this way.
 
 **The change reaches every running surface through `ConfigWatcher`,** exactly
-as `$EDITOR`'s would. `ConfigChanged` gains a `focus` flag
-(`crates/postio-config/src/change.rs:41-62`).
+as `$EDITOR`'s would. `ConfigChanged` carries a `focus` flag
+(`crates/postio-config/src/change.rs`).
 
 ## `[focus]`
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `filtering` | bool | `true` | FR-119. `false` stops filing new mail into Filtered. What is already filtered stays where it is |
-| `reading` | `"dialog"` \| `"pane"` | `"dialog"` | T232. Where `Return` opens a message: over the list in the dialog, or in a pane beside it. A window narrower than 980 px uses the dialog whatever this says. `toggle_reading_pane` (`F8`) writes it |
+| `reading` | `"dialog"` \| `"pane"` | `"dialog"` | FR-038. Where `Return` opens a message: over the list in the dialog, or in a pane beside it. A window narrower than 980 px uses the dialog whatever this says. `toggle_reading_pane` (`F8`) writes it |
 
 Keys this version does not know are kept, as `[tui]` keeps them (`extras`).
 
@@ -28,7 +28,7 @@ Keys this version does not know are kept, as `[tui]` keeps them (`extras`).
 | Key | Type | Meaning |
 |---|---|---|
 | `never` | array of strings | Senders that are never filtered: pinned (FR-111), or restored from Filtered (FR-116). An entry is an address (`ada@example.org`) or a whole domain (`@example.org`) |
-| `stop_markers` | array of `{ sender, kind }` | Marker kinds the user stopped for a sender, by repeated dismissal (FR-108). `kind` is `question` or `todo`. As built (T118), it is an array of inline tables inside `[focus.filter]`. A third dismissal writes one entry, and undo takes it back |
+| `stop_markers` | array of inline tables `{ sender, kind }` | Marker kinds the user stopped for a sender, by repeated dismissal (FR-108). `kind` is `question` or `todo`. A third dismissal writes one entry, and undo takes it back |
 
 Validation reports an entry that is not an address or `@domain`. It reports
 the entry by position, never by content, in the log.
@@ -42,7 +42,7 @@ message.
 | Key | Type | Meaning |
 |---|---|---|
 | `name` | string, unique | What the digest row and the rules list call it ("Newsletters"). It defaults to the sender's display name |
-| `match` | array of strings | Queries in the one query language. The rule holds a message when **any** of them matches (FR-127). Milestone 1 writes only `from:<address>`, and milestone 2 adds `list:` and free queries |
+| `match` | array of strings | Queries in the one query language. The rule holds a message when **any** of them matches (FR-127): `from:<address>` for a sender rule, `list:` and other queries for list and search rules. A query the filing pass's matcher cannot answer is refused when the rule is saved |
 | `cadence` | `"daily"` \| `"weekly"` \| `"monthly"` | |
 | `day` | weekday name (weekly) \| `1`–`28` (monthly) | Absent for daily |
 | `at` | `"HH:MM"` | Local time |
@@ -72,7 +72,7 @@ created, in the local zone.
 A rule that fails validation is not applied, and the others still are
 (ADR 0008, Q6).
 
-## `[focus.model]` (milestone 2; absent means off)
+## `[focus.model]` (absent means off)
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -92,7 +92,7 @@ A rule that fails validation is not applied, and the others still are
   client (research R16).
 - **No runtime or model is named in code** (FR-169).
 
-## `[focus.vault]` (milestone 3)
+## `[focus.vault]` (absent means no capture)
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -102,15 +102,10 @@ A rule that fails validation is not applied, and the others still are
 
 ## `[keys]`
 
-The format is unchanged: overrides only, by command id
-(`crates/postio-config/src/keys.rs`).
+Overrides only, by command id (`crates/postio-config/src/keys.rs`), over the
+one keymap's defaults ([keymap.md](./keymap.md)).
 
-- **What changes is the defaults under it,** which become the one keymap for
-  every app ([keymap.md](./keymap.md)).
 - **An override applies in every app that has the command.** There is no
   per-app table and no `keys.toml` (FR-081).
-- **Renamed ids are simply new names.** `mark_unread` becomes `toggle_read`,
-  and `focus_sidebar` becomes `go_to_folders`. The validator reports an
-  override naming an id that no longer exists
-  (`crates/postio-config/src/validate.rs:402`), and there is no alias (no
-  backwards compatibility, constitution).
+- **The validator reports an override naming an id that does not exist.**
+  A renamed id has no alias (constitution: no backwards compatibility).
