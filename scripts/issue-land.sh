@@ -980,13 +980,6 @@ fi
 # real `gh` call below.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
 
-# The *state*, not merely the existence, of a PR for this head branch.
-# `gh pr view` resolves the most recent PR for the branch whatever state it is
-# in, so a branch name that has been used before -- which
-# `issue-claim.sh` makes likely, since it generates the name from the issue
-# title and two sessions on one issue is the normal state of this repository --
-# resolves to somebody else's *merged* PR. Adopting that as "already open"
-# then merges nothing and reports success. #312.
 # Storyboards (specs/008-storyboards, FR-022/023). A branch that changes a
 # GTK app's interaction should arrive with a `/ux-review` of the tree it
 # lands. Never a refusal -- the review is advisory and the catalogue is
@@ -1008,7 +1001,13 @@ STORYBOARD_NOTE=""
 STORYBOARD_SUMMARY=""
 if [ -n "$STORYBOARD_APP" ]; then
     STORYBOARD_FILE="Design/review/${BRANCH//\//-}/summary.md"
-    STORYBOARD_KEY=$(scripts/storyboards.sh key --app "$STORYBOARD_APP" 2>/dev/null | tail -1)
+    # `|| true`: under `set -e` and `pipefail` a tree without the script (a
+    # self-test's sandbox, an older base) would otherwise end the landing
+    # here with exit 127 and no word, after the push. No key is a warning.
+    STORYBOARD_KEY=""
+    if [ -x scripts/storyboards.sh ]; then
+        STORYBOARD_KEY=$(scripts/storyboards.sh key --app "$STORYBOARD_APP" 2>/dev/null | tail -1) || true
+    fi
     STORYBOARD_SEEN=""
     if [ -f "$STORYBOARD_FILE" ]; then
         STORYBOARD_SEEN=$(head -1 "$STORYBOARD_FILE" | sed -n 's/^storyboards-key: *//p')
@@ -1027,6 +1026,13 @@ if [ -n "$STORYBOARD_APP" ]; then
     fi
 fi
 
+# The *state*, not merely the existence, of a PR for this head branch.
+# `gh pr view` resolves the most recent PR for the branch whatever state it is
+# in, so a branch name that has been used before -- which
+# `issue-claim.sh` makes likely, since it generates the name from the issue
+# title and two sessions on one issue is the normal state of this repository --
+# resolves to somebody else's *merged* PR. Adopting that as "already open"
+# then merges nothing and reports success. #312.
 PR_STATE=$(gh pr view --json state -q .state 2>/dev/null || echo "")
 if [ "$PR_STATE" = "OPEN" ]; then
     echo "PR already open for $BRANCH; the push updated it."

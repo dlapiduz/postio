@@ -283,6 +283,9 @@ def main() -> int:
     print()
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed.", file=sys.stderr)
+        # The detail, not just the count: on CI this log is all there is.
+        for failure in FAILURES:
+            print(f"\n--- {failure}", file=sys.stderr)
         return 1
     print("all cases behaved.")
     return 0
