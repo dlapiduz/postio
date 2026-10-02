@@ -48,7 +48,8 @@ const USAGE: &str = "\
 usage:
   storyboard list
   storyboard run <storyboard.toml>... --out <dir> [--no-frames] [--delivery chain|direct]
-                 [--variant <axis>=<value>]... [--tree-key <key>] [--commit <sha>]";
+                 [--variants | --variant <axis>=<value>...] [--tree-key <key>] [--commit <sha>]
+  storyboard every-command --out <dir> [--gaps <storyboards/gaps/focus.toml>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -223,7 +224,30 @@ fn play(args: &[String]) -> ExitCode {
                 continue;
             }
         };
-        let played = postio_focus::demo::on_runtime(run(&board, &options));
+        // Each variant the storyboard asks for and Focus supports, with
+        // --variants; otherwise the one variant the flags named (or none).
+        let variants = if args.iter().any(|arg| arg == "--variants") {
+            postio_focus::demo::storyboard::variants_for(&board)
+        } else {
+            (vec![options.variant.clone()], Vec::new())
+        };
+        for variant in variants.0 {
+            let options = Options {
+                variant,
+                ignored_axes: variants.1.clone(),
+                ..options.clone()
+            };
+            worst = worst.max(play_one(&board, &options));
+        }
+    }
+    ExitCode::from(worst)
+}
+
+/// Plays one storyboard in one variant, says how it went, and returns the
+/// exit code it is worth.
+fn play_one(board: &postio_storyboard::format::Storyboard, options: &Options) -> u8 {
+    {
+        let played = postio_focus::demo::on_runtime(run(board, options));
         let (word, code) = match &played.status {
             Status::Passed => ("passed".to_owned(), 0),
             Status::Failed => ("FAILED".to_owned(), 1),
@@ -232,7 +256,12 @@ fn play(args: &[String]) -> ExitCode {
             Status::Unavailable { reason } => (format!("unavailable: {reason}"), 0),
             Status::Error { message } => (format!("ERROR: {message}"), 2),
         };
-        println!("focus {}: {word}", board.name);
+        let variant = postio_storyboard::run::variant_key(&options.variant);
+        if variant == "default" {
+            println!("focus {}: {word}", board.name);
+        } else {
+            println!("focus {} [{variant}]: {word}", board.name);
+        }
         if played.status == Status::Failed {
             for step in &played.steps {
                 for check in step
@@ -256,7 +285,6 @@ fn play(args: &[String]) -> ExitCode {
                 }
             }
         }
-        worst = worst.max(code);
+        code
     }
-    ExitCode::from(worst)
 }

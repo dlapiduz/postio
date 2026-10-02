@@ -27,17 +27,22 @@ pub enum Seed {
     Small,
     /// An account with its folders and no mail in the inbox.
     Empty,
+    /// The small seed with the row screen 04 opens refiled as a long
+    /// newsletter that paints its own page: a message tall enough to
+    /// scroll, with a treatment `O` can switch.
+    LongNewsletter,
 }
 
 impl Seed {
     /// Every seed Focus can build.
-    pub const ALL: [Seed; 2] = [Seed::Small, Seed::Empty];
+    pub const ALL: [Seed; 3] = [Seed::Small, Seed::Empty, Seed::LongNewsletter];
 
     /// The name a storyboard uses.
     pub fn id(self) -> &'static str {
         match self {
             Seed::Small => "small",
             Seed::Empty => "empty",
+            Seed::LongNewsletter => "long-newsletter",
         }
     }
 

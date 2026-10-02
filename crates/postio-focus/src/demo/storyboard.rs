@@ -71,6 +71,9 @@ pub struct Options {
     pub stride: u32,
     /// The variant, axis by axis.
     pub variant: BTreeMap<String, String>,
+    /// Axes the storyboard asked for that this runner does not have,
+    /// recorded in the run so the page can say so.
+    pub ignored_axes: Vec<String>,
     /// The review key of the tree this runs on.
     pub tree_key: String,
     /// The commit, for information.
@@ -85,10 +88,17 @@ impl Default for Options {
             delivery: Delivery::Chain,
             stride: 2,
             variant: BTreeMap::new(),
+            ignored_axes: Vec::new(),
             tree_key: String::new(),
             commit: String::new(),
         }
     }
+}
+
+/// The variants `board` asks Focus for, and the axes it asked for that
+/// Focus does not have.
+pub fn variants_for(board: &Storyboard) -> (Vec<BTreeMap<String, String>>, Vec<String>) {
+    postio_storyboard::apply::variants(board, &runner_info())
 }
 
 /// What Focus's runner can do, for applicability and `runner list`.
@@ -121,6 +131,11 @@ async fn acting(seed: Seed, size: (i32, i32)) -> Result<Started, String> {
     let (database, account) = match seed {
         Seed::Small => super::demo().await,
         Seed::Empty => super::empty_demo().await,
+        Seed::LongNewsletter => {
+            let (database, account) = super::demo().await;
+            super::treatment_demo(&database, account, "30").await;
+            (database, account)
+        }
     };
     let config = postio_config::Config::from_toml_str(super::CONFIG)
         .map_err(|error| format!("the demo's config: {error}"))?;
@@ -568,6 +583,9 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
     }
     let (size, ignored) = apply_variant(&options.variant);
     played.ignored_axes = ignored;
+    played
+        .ignored_axes
+        .extend(options.ignored_axes.iter().cloned());
 
     let started = match acting(base, size).await {
         Ok(started) => started,
