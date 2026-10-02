@@ -186,6 +186,7 @@ mod gtk_window_state;
 mod gtk_window_teardown;
 mod storyboard_chain_delivery;
 mod storyboard_reach;
+mod storyboard_settle;
 mod storyboard_support;
 mod storyboard_typing;
 mod list_contract;
@@ -236,6 +237,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text",
         gtk_reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text as fn(),
+    ),
+    (
+        "storyboard_settle::a_static_window_settles",
+        storyboard_settle::a_static_window_settles as fn(),
+    ),
+    (
+        "storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames",
+        storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames as fn(),
+    ),
+    (
+        "storyboard_settle::an_empty_window_is_blank",
+        storyboard_settle::an_empty_window_is_blank as fn(),
+    ),
+    (
+        "storyboard_settle::a_window_that_never_stops_changing_is_unsettled",
+        storyboard_settle::a_window_that_never_stops_changing_is_unsettled as fn(),
     ),
     (
         "storyboard_reach::a_focused_mapped_list_is_reachable",

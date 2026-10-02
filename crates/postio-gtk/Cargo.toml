@@ -10,6 +10,8 @@ repository.workspace = true
 
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+async-channel = { workspace = true }
+blake3 = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 gio = "0.22.9"
 glib = { version = "0.22.9", features = ["v2_72"] }
