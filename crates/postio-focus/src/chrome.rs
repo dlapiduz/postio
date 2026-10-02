@@ -24,10 +24,16 @@ type Handler = Rc<dyn Fn(CommandId)>;
 /// (`None` for About, which is the application's, not a command).
 const MENU: &[(&str, Option<CommandId>)] = &[
     ("Settings", Some(CommandId::Settings)),
+    // A check item (T232): checked while messages open beside the list.
+    ("Read beside the list", Some(CommandId::ToggleReadingPane)),
     ("Keyboard shortcuts", Some(CommandId::CheatSheet)),
     ("About", None),
     ("Quit", Some(CommandId::Quit)),
 ];
+
+/// The main menu's check item for reading beside the list: the window's
+/// stateful action, which runs `toggle_reading_pane` (T232).
+pub const READING_PANE_ACTION: &str = "win.reading-pane";
 
 /// The chrome's buttons, each with the command a click runs. The command
 /// field runs search, and wears the palette's key beside search's.
@@ -129,6 +135,11 @@ impl Chrome {
         let menu = gio::Menu::new();
         for (label, command) in MENU {
             match command {
+                // The window's stateful action runs the command and carries
+                // the check.
+                Some(CommandId::ToggleReadingPane) => {
+                    menu.append(Some(label), Some(READING_PANE_ACTION));
+                }
                 Some(command) => {
                     menu.append(Some(label), Some(&format!("win.run::{}", command.as_str())));
                 }

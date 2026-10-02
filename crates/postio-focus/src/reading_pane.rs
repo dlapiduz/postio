@@ -54,6 +54,9 @@ impl ReadingPane {
         };
         let (message, compose) = (slot(), slot());
         let empty = crate::empty::EmptyInbox::new();
+        // The empty inbox's page, drawn as it is; named for the pane, so the
+        // inbox's own empty page is still the one `focus-empty`.
+        empty.widget().remove_css_class("focus-empty");
         empty.widget().add_css_class("focus-reading-pane-empty");
         empty.show(&postio_ui::focus_state::empty_pane(keymap));
         let root = gtk::Stack::new();

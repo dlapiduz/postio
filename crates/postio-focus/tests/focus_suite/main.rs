@@ -609,6 +609,18 @@ const CASES: &[(&str, fn())] = &[
         reading_pane::the_panes_column_follows_column_width_for_its_width as fn(),
     ),
     (
+        "reading_pane::the_main_menus_check_item_is_the_pointers_f8",
+        reading_pane::the_main_menus_check_item_is_the_pointers_f8 as fn(),
+    ),
+    (
+        "reading_pane::a_click_moves_the_cursor_and_the_open_pane_follows_it",
+        reading_pane::a_click_moves_the_cursor_and_the_open_pane_follows_it as fn(),
+    ),
+    (
+        "reading_pane::archiving_steps_the_pane_past_the_message",
+        reading_pane::archiving_steps_the_pane_past_the_message as fn(),
+    ),
+    (
         "reading_pane::the_composer_takes_over_the_pane",
         reading_pane::the_composer_takes_over_the_pane as fn(),
     ),

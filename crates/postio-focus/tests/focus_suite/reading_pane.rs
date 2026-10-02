@@ -423,3 +423,139 @@ pub fn the_composer_takes_over_the_pane() {
         );
     });
 }
+
+/// The main menu's "Read beside the list" is the pointer's `F8`: a check
+/// item that runs the same command, and is checked while messages open
+/// beside the list.
+pub fn the_main_menus_check_item_is_the_pointers_f8() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        let menu = support::only(&window, "focus-menu")
+            .downcast::<gtk::MenuButton>()
+            .expect("the main menu");
+        let model = menu.menu_model().expect("the menu has items");
+        let action = (0..model.n_items())
+            .find(|item| {
+                model
+                    .item_attribute_value(*item, "label", Some(gtk::glib::VariantTy::STRING))
+                    .and_then(|label| label.get::<String>())
+                    .as_deref()
+                    == Some("Read beside the list")
+            })
+            .and_then(|item| {
+                model.item_attribute_value(item, "action", Some(gtk::glib::VariantTy::STRING))
+            })
+            .and_then(|action| action.get::<String>())
+            .expect("the item names an action");
+        let name = action.trim_start_matches("win.");
+        let checked = || {
+            window
+                .action_state(name)
+                .and_then(|state| state.get::<bool>())
+        };
+        assert_eq!(
+            checked(),
+            Some(false),
+            "unchecked while messages open over the list"
+        );
+
+        gtk::prelude::WidgetExt::activate_action(&window, &action, None).expect("the item runs");
+        crate::settle();
+        assert_eq!(
+            checked(),
+            Some(true),
+            "checked once messages open beside the list"
+        );
+        support::keys(&window, &["j"]);
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("First")).await,
+            "the menu item did not switch to the pane"
+        );
+
+        // The setting moves it too, as the config watcher hands it over.
+        window.set_focus_config(postio_config::FocusConfig::default());
+        crate::settle();
+        assert_eq!(checked(), Some(false), "the check follows the setting");
+    });
+}
+
+/// A click on a row is the pointer's `j`/`k`: with nothing open it moves
+/// the cursor only (FR-016), and while a message is open beside the list the
+/// pane follows it to the row clicked.
+pub fn a_click_moves_the_cursor_and_the_open_pane_follows_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        read_in_pane(&window);
+        let list = window.pane().expect("the list");
+
+        support::click(&window, &list.rows_on_screen()[3], 1);
+        assert!(crate::settle_until(async || cursor(&window) == 3).await);
+        crate::settle();
+        assert!(pane_title(&window).is_none(), "a click opened a message");
+
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Fourth")).await
+        );
+        support::click(&window, &list.rows_on_screen()[1], 1);
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await,
+            "the pane did not follow the click: {:?}",
+            pane_title(&window)
+        );
+        assert_eq!(cursor(&window), 1);
+    });
+}
+
+/// Archiving the message open beside the list steps the pane past it to
+/// the row that took its place, as the dialog does (T190); the last one
+/// archived leaves the pane on the previous row.
+pub fn archiving_steps_the_pane_past_the_message() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        read_in_pane(&window);
+        support::keys(&window, &["j", "j"]);
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
+        );
+        support::deliver(&window, "a");
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await,
+            "the pane did not step past the archived message: {:?}",
+            pane_title(&window)
+        );
+        assert!(crate::settle_until(async || support::subjects(&window).len() == 4).await);
+        assert_eq!(
+            cursor(&window),
+            1,
+            "the cursor is on the row that took its place"
+        );
+
+        support::keys(&window, &["G"]);
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Fifth")).await,
+            "G moved the cursor without the pane: {:?}",
+            pane_title(&window)
+        );
+        support::deliver(&window, "a");
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Fourth")).await,
+            "the last row archived did not leave the pane on the previous one: {:?}",
+            pane_title(&window)
+        );
+    });
+}

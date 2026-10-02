@@ -63,7 +63,13 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
             .collect();
         assert_eq!(
             items,
-            ["Settings", "Keyboard shortcuts", "About", "Quit"],
+            [
+                "Settings",
+                "Read beside the list",
+                "Keyboard shortcuts",
+                "About",
+                "Quit"
+            ],
             "the main menu holds what the contract names"
         );
         let close = only(&window, "focus-close");

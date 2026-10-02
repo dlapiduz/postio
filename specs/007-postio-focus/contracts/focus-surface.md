@@ -36,8 +36,9 @@ never from literals (`check-key-hints-are-derived.py`).
   count once filtering does, the rule count once digests do (spec FR-018).
 - **With the has-action filter on (03),** the toggle is drawn in the accent,
   and the strip adds "Showing 7 of 312 · ! again to show all".
-- **The main menu** holds Settings (`mod+comma`), Keyboard shortcuts (`?`),
-  About, and Quit (`mod+q`).
+- **The main menu** holds Settings (`mod+comma`), Read beside the list
+  (`F8`, a check item: T232), Keyboard shortcuts (`?`), About, and Quit
+  (`mod+q`).
 
 ## Rows
 

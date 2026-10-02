@@ -505,6 +505,19 @@ impl FocusWindow {
             move |_, _| window.act(CommandId::Undo)
         ));
         self.add_action(&undo);
+        // The main menu's "Read beside the list": `F8` for the pointer, a
+        // check item whose state follows `[focus] reading` (T232).
+        let reading = gio::SimpleAction::new_stateful(
+            crate::chrome::READING_PANE_ACTION.trim_start_matches("win."),
+            None,
+            &false.to_variant(),
+        );
+        reading.connect_activate(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_, _| window.act(CommandId::ToggleReadingPane)
+        ));
+        self.add_action(&reading);
         let about = gio::SimpleAction::new("about", None);
         about.connect_activate(glib::clone!(
             #[weak(rename_to = window)]
@@ -2328,7 +2341,9 @@ impl FocusWindow {
         let capture = focus.vault.is_some();
         let beside = focus.reading == postio_config::Reading::Pane;
         self.imp().focus_config.replace(focus);
-        if let Some(menu) = self.lookup_action("reading-pane") {
+        if let Some(menu) =
+            self.lookup_action(crate::chrome::READING_PANE_ACTION.trim_start_matches("win."))
+        {
             menu.change_state(&beside.to_variant());
         }
         self.show_capture(capture);
@@ -3452,7 +3467,9 @@ impl FocusWindow {
         };
         imp.focus_config.borrow_mut().reading = next;
         self.place_reading();
-        if let Some(menu) = self.lookup_action("reading-pane") {
+        if let Some(menu) =
+            self.lookup_action(crate::chrome::READING_PANE_ACTION.trim_start_matches("win."))
+        {
             menu.change_state(&(next == Reading::Pane).to_variant());
         }
         let path = imp.config_path.borrow().clone();
@@ -3902,6 +3919,13 @@ impl FocusWindow {
             .map(|(_, _, command)| command),
         );
         commands.extend(crate::open::OpenMessage::controls());
+        // The empty reading pane's shortcuts (T232).
+        commands.extend(
+            postio_ui::focus_state::empty_pane(&self.keymap())
+                .shortcuts
+                .into_iter()
+                .map(|(_, _, command)| command),
+        );
         commands.extend(crate::places::Places::controls());
         commands.extend(crate::row_menu::RowMenu::commands());
         commands.extend(crate::bar::Bar::controls());
