@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use postio_storyboard::{bundle, key, lint, page};
+use postio_storyboard::{bundle, key, lint, page, prompt};
 
 const USAGE: &str = "\
 usage:
@@ -15,6 +15,7 @@ usage:
   postio-storyboard key --tree <path=id>...
   postio-storyboard bundle --runs <dir> [--base <dir> [--base-sha <sha>]] --acceptance <file>
                            --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
+  postio-storyboard prompt <bundle> (--list | --batch <n>)
   postio-storyboard page --runs <dir> --out <index.html> [--prefix <path>] [--title <t>] [--key <k>]";
 
 fn main() -> ExitCode {
@@ -24,6 +25,7 @@ fn main() -> ExitCode {
         Some("page") => page_command(&args[1..]),
         Some("key") => key_command(&args[1..]),
         Some("bundle") => bundle_command(&args[1..]),
+        Some("prompt") => prompt_command(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -96,6 +98,40 @@ fn bundle_command(args: &[String]) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn prompt_command(args: &[String]) -> ExitCode {
+    let Some(bundle_dir) = args.first().map(PathBuf::from) else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let manifest = match prompt::load_manifest(&bundle_dir) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            eprintln!("postio-storyboard prompt: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    if args.iter().any(|arg| arg == "--list") {
+        println!("{}", prompt::count(&manifest));
+        return ExitCode::SUCCESS;
+    }
+    // One batch needs no number; several must say which.
+    let n = match flag(args, "--batch") {
+        Some(n) => n.parse::<usize>().ok(),
+        None if prompt::count(&manifest) == 1 => Some(1),
+        None => None,
+    };
+    let Some(text) = n.and_then(|n| prompt::render(&manifest, n, &bundle_dir)) else {
+        eprintln!(
+            "postio-storyboard prompt: choose --batch 1..={} (--list counts them)",
+            prompt::count(&manifest)
+        );
+        return ExitCode::from(2);
+    };
+    eprintln!("template blake3 {}", prompt::template_hash());
+    print!("{text}");
+    ExitCode::SUCCESS
 }
 
 fn lint_command(args: &[String]) -> ExitCode {
