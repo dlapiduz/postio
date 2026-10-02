@@ -122,6 +122,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ToggleReaderView
         | C::DarkenMessage
         | C::SwitchTreatment
+        // Where a message opens, beside the list or over it.
+        | C::ToggleReadingPane
         | C::FindInMessage
         | C::FindNext
         | C::FindPrevious

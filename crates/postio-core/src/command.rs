@@ -155,6 +155,8 @@ command_ids! {
     DismissMarker => "dismiss_marker",
     /// Show the open message's verbs that do not fit its action row.
     MoreActions => "more_actions",
+    /// Open messages beside the list, or over it.
+    ToggleReadingPane => "toggle_reading_pane",
     /// Focus the search field.
     Search => "search",
     /// Save the current search as a pinned folder in the sidebar.
@@ -783,6 +785,9 @@ pub enum Command {
     /// Show the verbs a narrow message dialog folds out of its action row:
     /// Label, Move and Delete (spec 007 T206).
     MoreActions,
+    /// Open messages in a pane beside the list, or in the dialog over it
+    /// (spec 007 T232): `[focus] reading`.
+    ToggleReadingPane,
 
     // -- Search ----------------------------------------------------------
     /// Search, or focus the search field when `query` is `None`.
@@ -1286,6 +1291,7 @@ impl Command {
             Command::OpenAttachmentOrLink { .. } => CommandId::OpenAttachmentOrLink,
             Command::DismissMarker { .. } => CommandId::DismissMarker,
             Command::MoreActions => CommandId::MoreActions,
+            Command::ToggleReadingPane => CommandId::ToggleReadingPane,
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
             Command::BackToWords => CommandId::BackToWords,
@@ -1478,6 +1484,7 @@ impl Command {
                 dismissed: true,
             },
             CommandId::MoreActions => Command::MoreActions,
+            CommandId::ToggleReadingPane => Command::ToggleReadingPane,
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
             CommandId::BackToWords => Command::BackToWords,

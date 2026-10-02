@@ -1091,6 +1091,20 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_MAIL,
     },
     CommandSpec {
+        id: CommandId::ToggleReadingPane,
+        title: "Read beside the list or over it",
+        // F8, the key Evolution and Thunderbird give their message pane
+        // (specs/007-postio-focus T232). The List context, which the
+        // Reader falls back to, so it moves an open message too.
+        default_binding: "F8",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List]),
+        destructive: false,
+        // A view preference, written to config.toml; pressed again, back.
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
         id: CommandId::Search,
         title: "Search",
         default_binding: "/",

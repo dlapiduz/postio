@@ -46,6 +46,7 @@ view_source	v
 open_attachment_or_link	o
 dismiss_marker	-
 more_actions	.
+toggle_reading_pane	F8
 search	/ | alt+ctrl+f
 save_search	ctrl+s
 back_to_words	ctrl+BackSpace

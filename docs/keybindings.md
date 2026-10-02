@@ -93,6 +93,7 @@ command from inside a text field.
 | `o` | Open attachment or link… | List, conversation, reader (Postio Focus) |  | `open_attachment_or_link` |
 | `-` | Dismiss marker | List, conversation, reader (Postio Focus) | Undoable | `dismiss_marker` |
 | `.` | More actions | Reader (Postio Focus) |  | `more_actions` |
+| `F8` | Read beside the list or over it | List (Postio Focus) |  | `toggle_reading_pane` |
 | `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `ctrl+BackSpace` | Back to words | Search (Postio Focus) |  | `back_to_words` |

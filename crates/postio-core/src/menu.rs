@@ -236,6 +236,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::OpenAttachmentOrLink
         | C::DismissMarker
         | C::MoreActions
+        | C::ToggleReadingPane
         | C::BackToWords
         | C::GoToFiltered
         | C::GoToDigestRules
