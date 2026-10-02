@@ -2636,3 +2636,44 @@ async fn a_finished_pass_over_an_empty_mailbox_says_a_sync_completed() {
         "the pass finished and the stream never said so"
     );
 }
+
+#[tokio::test]
+async fn a_pass_that_failed_is_not_announced_as_a_completed_sync() {
+    // T220: an interrupted or failed first pass must not read as a finished
+    // one -- the inbox it never filled would be called empty.
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .await
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
+    // The link is up and cached once a pass has run; only then is the
+    // fault certain to land on the next pass's own call.
+    engine.sync(mailbox.id).await.expect("a first pass");
+    let _ = announced(&events);
+    backend.fail_all(Fault::Rejected("no".to_owned()));
+
+    engine.sync(mailbox.id).await.expect_err("the pass failed");
+
+    let seen = announced(&events);
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            Event::SyncProgress {
+                done: 0,
+                total: 0,
+                ..
+            }
+        )),
+        "a failed pass was announced as a completed sync: {seen:?}"
+    );
+}

@@ -299,6 +299,34 @@ impl StatusTracker {
         }
         self.status.clone()
     }
+
+    /// A pass that stopped without finishing: cancelled, turned away or
+    /// failed. It leaves the in-flight set like a finished one, but it is
+    /// not a completed sync, so `last_sync` is not stamped (T220): an
+    /// interrupted first pass must not read as a finished one.
+    pub fn on_sync_abandoned(&mut self, mailbox: MailboxId) -> SyncStatus {
+        let was_foremost = self.foremost() == Some(mailbox);
+        self.in_flight.retain(|&in_flight| in_flight != mailbox);
+        match self.foremost() {
+            Some(mailbox) => {
+                if was_foremost {
+                    self.last_progress_at = None;
+                }
+                self.status = SyncStatus::Syncing {
+                    mailbox,
+                    progress: None,
+                    last_sync: self.last_sync,
+                };
+            }
+            None => {
+                self.last_progress_at = None;
+                self.status = SyncStatus::Idle {
+                    last_sync: self.last_sync,
+                };
+            }
+        }
+        self.status.clone()
+    }
 }
 
 #[cfg(test)]
@@ -318,6 +346,23 @@ mod tests {
             fetched,
             target,
         }
+    }
+
+    #[test]
+    fn an_abandoned_pass_is_not_a_completed_sync() {
+        let mut tracker = StatusTracker::new();
+        let mailbox = MailboxId::new(1);
+        tracker.on_sync_started(mailbox);
+        let status = tracker.on_sync_abandoned(mailbox);
+        assert_eq!(status, SyncStatus::Idle { last_sync: None });
+        tracker.on_sync_started(mailbox);
+        let status = tracker.on_sync_finished(mailbox, at(5));
+        assert_eq!(
+            status,
+            SyncStatus::Idle {
+                last_sync: Some(at(5))
+            }
+        );
     }
 
     #[test]

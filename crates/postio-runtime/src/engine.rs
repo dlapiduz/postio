@@ -3679,10 +3679,7 @@ async fn settle_pass(
     // (nothing is fetching for it any more) and touches nothing else — in
     // particular not the supervisor, since the link is fine.
     if let Err(PassFailure::Failed(SyncError::Backend(BackendError::Cancelled))) = &result {
-        announce_status(
-            parts,
-            &state.status.borrow_mut().on_sync_finished(mailbox, now),
-        );
+        announce_status(parts, &state.status.borrow_mut().on_sync_abandoned(mailbox));
         return Err(EngineError::new("the sync pass was interrupted"));
     }
 
@@ -3692,6 +3689,24 @@ async fn settle_pass(
                 parts,
                 &state.status.borrow_mut().on_sync_finished(mailbox, now),
             );
+            // A pass that finished says so: `done == total` is how the stream
+            // says "a sync completed", and a pass over an empty mailbox never
+            // counted anything to reach it. Without this a frontend cannot
+            // tell an inbox a first pass found empty from one the first pass
+            // has not reached (T220). Failed and cancelled passes say nothing.
+            if matches!(
+                state.status.borrow().status(),
+                SyncStatus::Idle {
+                    last_sync: Some(_),
+                    ..
+                }
+            ) {
+                parts.events.emit(Event::SyncProgress {
+                    account: parts.account,
+                    done: 0,
+                    total: 0,
+                });
+            }
             if summary.changed() {
                 // A sync is exactly when the set of messages missing a body
                 // changed, so it is exactly when the backfill is worth
@@ -3756,10 +3771,7 @@ async fn settle_pass(
                 let moved = state.supervisor.observe(backend, now);
                 announce_link(parts, state, moved);
             }
-            announce_status(
-                parts,
-                &state.status.borrow_mut().on_sync_finished(mailbox, now),
-            );
+            announce_status(parts, &state.status.borrow_mut().on_sync_abandoned(mailbox));
             Err(EngineError::new(failure.to_string()))
         }
     }
@@ -3868,20 +3880,6 @@ fn announce_status(parts: &EngineParts, status: &SyncStatus) {
         account: parts.account,
         state: connection_of(status),
     });
-    // A pass that finished says so: `done == total` is how the stream says
-    // "a sync completed", and a pass over an empty mailbox never counted
-    // anything to reach it. Without this a frontend cannot tell an inbox a
-    // first pass found empty from one the first pass has not reached (T220).
-    if let SyncStatus::Idle {
-        last_sync: Some(_), ..
-    } = status
-    {
-        parts.events.emit(Event::SyncProgress {
-            account: parts.account,
-            done: 0,
-            total: 0,
-        });
-    }
     // The typed category rides on the state; the prose travels beside it,
     // which is what the status line reads.
     if let SyncStatus::Error { reason, .. } = status {

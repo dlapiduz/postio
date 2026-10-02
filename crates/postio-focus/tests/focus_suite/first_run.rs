@@ -536,3 +536,33 @@ pub fn a_first_sync_that_fails_says_so_rather_than_empty() {
         );
     });
 }
+
+/// T220: a first pass the server turns away part-way is not a finished
+/// one: the inbox it never filled is not "empty".
+pub fn an_interrupted_first_pass_still_says_syncing_not_empty() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let backend = MockBackend::builder()
+            .mailbox(
+                postio_account::backend::MockMailbox::new("INBOX").message(arriving("First", 30)),
+            )
+            .build();
+        backend.set_latency(std::time::Duration::from_millis(600));
+        let (window, backend) = opened(backend).await;
+        sign_in(&window).await;
+        backend.fail_all(postio_account::backend::Fault::Rejected("no".to_owned()));
+
+        // Long enough for the pass to have been tried and to have failed.
+        crate::settle_until(async || backend.calls() > 6).await;
+        for _ in 0..20 {
+            crate::settle();
+        }
+        let said = page_says(&window).expect("the page stands where the list is empty");
+        assert!(
+            said.iter().all(|line| !line.contains("is empty")),
+            "an interrupted first pass said the inbox was empty: {said:?}"
+        );
+    });
+}
