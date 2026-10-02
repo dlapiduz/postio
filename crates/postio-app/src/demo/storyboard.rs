@@ -865,7 +865,7 @@ pub const CONTEXTS: &[(&str, &[&str])] = &[
     ("search", &["search"]),
     ("palette", &["command_palette"]),
     ("composer", &["compose"]),
-    ("sidebar", &["focus_sidebar"]),
+    ("sidebar", &["go_to_folders"]),
 ];
 
 /// One context's coverage, or why it could not be reached.

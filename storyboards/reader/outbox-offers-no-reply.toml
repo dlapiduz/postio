@@ -10,7 +10,7 @@ proof  = "open"
 seed   = "outbox"
 
 [[step]]
-command = "focus_sidebar"
+command = "go_to_folders"
 check   = { keyboard.region = "sidebar" }
 
 [[step]]

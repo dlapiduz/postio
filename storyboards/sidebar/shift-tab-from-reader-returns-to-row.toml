@@ -15,7 +15,7 @@ command = "next_message"
 check   = { cursor.index = 2 }
 
 [[step]]
-command = "focus_sidebar"
+command = "go_to_folders"
 [[step]]
 command = "cycle_pane"
 [[step]]

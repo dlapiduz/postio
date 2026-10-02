@@ -21,7 +21,7 @@ command = "open_message"
 check   = { keyboard.region = "list" }
 
 [[step]]
-command = "focus_sidebar"
+command = "go_to_folders"
 check   = { keyboard.region = "sidebar" }
 
 [[step]]

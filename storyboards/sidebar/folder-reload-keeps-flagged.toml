@@ -9,7 +9,7 @@ source = { kind = "issue", ref = "#813" }
 proof  = "pinned"
 
 [[step]]
-command = "focus_sidebar"
+command = "go_to_folders"
 
 [[step]]
 command = "next_folder"
