@@ -4758,6 +4758,7 @@ dependencies = [
  "postio-search",
  "postio-test-support",
  "postio-ui",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tracing",

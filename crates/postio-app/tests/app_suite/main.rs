@@ -49,6 +49,7 @@ mod manual_sync;
 mod navigation_cost;
 mod next_conversation_prepared;
 mod notify_off_the_main_thread;
+mod observe;
 mod onboarding_probe;
 mod one_document_conversation;
 mod opens_from_storage;
@@ -332,6 +333,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "go_to_keystroke::pressing_g_i_shows_the_inbox",
         go_to_keystroke::pressing_g_i_shows_the_inbox as fn(),
+    ),
+    (
+        "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",
+        observe::the_window_says_where_the_keyboard_cursor_and_notices_are as fn(),
     ),
     (
         "keystroke::pressing_a_archives_the_row_in_the_database",
