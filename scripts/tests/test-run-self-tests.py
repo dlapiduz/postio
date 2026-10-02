@@ -110,6 +110,48 @@ def main() -> int:
             f"the count is missing: {result.stdout!r}",
         )
 
+        # -- Where the time went --------------------------------------------
+        # The job this runs in takes 10-13 minutes when scripts change, and
+        # nothing said which tests that was. Each test's wall time is kept,
+        # and the slowest are named, slowest first, with their seconds.
+        timed = base / "timed"
+        timed.mkdir()
+        write(timed, "test-quick.py", PASSES)
+        write(timed, "test-slow.py", "import time\ntime.sleep(2)\nprint('ok')\n")
+        result = run(timed, base / "logs-timed")
+        out = result.stdout
+        case(
+            "it names the slowest self-tests with their seconds",
+            "slowest" in out and "test-slow.py" in out and "s " in out.split("slowest", 1)[-1],
+            f"no timing report: {out!r}",
+        )
+        case(
+            "slowest first",
+            "slowest" in out
+            and out.split("slowest", 1)[-1].find("test-slow.py")
+            < max(out.split("slowest", 1)[-1].find("test-quick.py"), 10**9 if "test-quick.py" not in out.split("slowest", 1)[-1] else 0),
+            f"order wrong: {out!r}",
+        )
+
+        # -- Skipping one by name ----------------------------------------------
+        # test-ffi-bindgen.py builds most of the workspace and runs in the
+        # macOS job instead; the self-test jobs skip it by name. A skip has to
+        # say so -- a test that silently stopped running is the failure this
+        # runner exists to refuse.
+        skipping = base / "skipping"
+        skipping.mkdir()
+        write(skipping, "test-kept.py", PASSES)
+        write(skipping, "test-heavy.py", "import sys\nprint('should not run')\nsys.exit(1)\n")
+        result = patience.run(
+            ["bash", str(RUNNER), "--dir", str(skipping), "--logs", str(base / "logs-skip"),
+             "--jobs", "2", "--skip", "test-heavy.py"],
+            capture_output=True, text=True, timeout=120,
+        )
+        out = result.stdout + result.stderr
+        case("a skipped self-test does not run", result.returncode == 0, out)
+        case("the run says which it skipped", "skipped" in out and "test-heavy.py" in out, out)
+        case("the rest still run", "running 1 self-test" in out, out)
+
         # -- The bug: ok, then failure ----------------------------------------
         mixed = base / "mixed"
         mixed.mkdir()

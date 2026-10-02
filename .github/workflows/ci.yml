@@ -169,17 +169,15 @@ jobs:
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
 
-      # The registry, and `target/` for the tooling self-tests: most of them
-      # build throwaway sandboxes, but `test-ffi-bindgen.py` builds
-      # `postio-ffi` -- most of the workspace -- in this checkout's own
-      # `target/`, and with only the registry cached that was a cold build on
-      # every run that needed the self-tests, ~11 minutes of this job (#1710).
-      # Restored whether or not they run: `check.sh` needs the registry, and
-      # one cache per job is the build-cache action's rule.
+      # The registry only. The self-tests build throwaway sandboxes, and the
+      # one that built this checkout's `target/` -- `test-ffi-bindgen.py`,
+      # `postio-ffi` and most of the workspace -- runs in the macOS job now,
+      # which builds `postio-ffi` anyway (see `macos` below).
       - name: Restore the build cache
         uses: ./.github/actions/build-cache
         with:
           name: tooling
+          target: "false"
 
       # One step running every invariant `scripts/check.sh` knows about,
       # rather than eight named here by hand (#1169). The eight used to be
@@ -304,7 +302,12 @@ jobs:
           # `ok` per passing case it skipped the log of anything that failed
           # after getting one case right -- announcing a failure and then
           # printing nothing (#1257).
-          scripts/run-self-tests.sh --logs /tmp/self-test-logs
+          #
+          # `--skip test-ffi-bindgen.py`: it builds `postio-ffi` -- most of
+          # the workspace -- and was 900 of a 919 s run, the whole of this
+          # step's cost. The `macos` job runs it after the build it already
+          # does, and ci-changes.sh starts that job when the test changes.
+          scripts/run-self-tests.sh --logs /tmp/self-test-logs --skip test-ffi-bindgen.py
 
       - name: Assert CI never runs the network-touching tests
         run: |
@@ -912,9 +915,7 @@ jobs:
       # The registry and `target/`. This cached only the registry, so
       # `cargo build -p postio-ffi` was a cold 14-minute build on every run --
       # the job's median was 16.7 minutes and it was the last to finish in 31
-      # of 56 pull requests (#1710). Shared with `macos-tooling`, which builds
-      # the same `postio-ffi` the same way: one cache, whichever job `main`
-      # ran last.
+      # of 56 pull requests (#1710).
       - name: Restore the build cache
         uses: ./.github/actions/build-cache
         with:
@@ -948,6 +949,16 @@ jobs:
       # above touches, and both of which fail on their own terms.
       - name: Assemble Postio.app
         run: scripts/macos-bundle.sh
+
+      # The bindings generator's self-test, here rather than among the tooling
+      # self-tests: it builds `postio-ffi`, which the build above has just
+      # done, so it costs seconds here and was 15 minutes there. ci-changes.sh
+      # starts this job when the generator or the test changes.
+      - name: The bindings generator's self-test
+        env:
+          CI: "true"
+          POSTIO_TEST_PATIENCE: "2"
+        run: python3 scripts/tests/test-ffi-bindgen.py
 
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
@@ -1006,7 +1017,8 @@ jobs:
       - name: Restore the build cache
         uses: ./.github/actions/build-cache
         with:
-          name: macos-ffi
+          name: tooling
+          target: "false"
 
       # `test-issue-land-no-tests.py` asserts that the landing gate gives the
       # same answer under both test runners, so it needs the one that is not
@@ -1034,12 +1046,9 @@ jobs:
       - name: Install cargo-deny
         run: scripts/install-cargo-deny.sh
 
-      # `test-ffi-bindgen.py` builds `postio-ffi` -- most of the workspace --
-      # inside a 900 s patience window. With only the registry cached that was
-      # a cold build on a macOS runner every time, and 2026-09-14 saw it cross
-      # the cap twice, on the two pushes that changed Cargo.lock. The
-      # `macos-ffi` cache restored above is what keeps it warm; the patience
-      # dial is doubled for the cold run that follows a lock change.
+      # `--skip test-ffi-bindgen.py`, and so no `target/` in the cache above:
+      # that test builds `postio-ffi`, most of the workspace, and it runs in
+      # the `macos` job after the build that job already does.
       # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
       # prerequisite is a broken runner rather than somebody's laptop. Set
       # explicitly, the way the Swift job sets it, rather than relied upon:
@@ -1049,7 +1058,7 @@ jobs:
         env:
           CI: "true"
           POSTIO_TEST_PATIENCE: "2"
-        run: scripts/run-self-tests.sh --logs "$RUNNER_TEMP/self-test-logs"
+        run: scripts/run-self-tests.sh --logs "$RUNNER_TEMP/self-test-logs" --skip test-ffi-bindgen.py
 
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache
