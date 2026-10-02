@@ -913,7 +913,10 @@ impl OpenMessage {
                     // worker (T223), under the policy this sender is drawn
                     // with: the interface thread only hands the result to
                     // the view. A message nobody is waiting for any more is
-                    // not prepared at all.
+                    // not prepared at all. Preparation is *before* the render
+                    // deadline, not inside it: the deadline times the engine's
+                    // render from `render_prepared`, so a slow sanitise delays
+                    // the draw without tipping it into the plain-text fallback.
                     let remote = reader.remote_images_for(sender.as_deref());
                     let prepared = {
                         let body = body.clone();
@@ -923,6 +926,7 @@ impl OpenMessage {
                                 postio_ui::reader::document::prepare_treated(&body, remote)
                             })
                         })
+                        // POSTIO-GLIB-SAFE: gio's own thread pool answers.
                         .await
                         .ok()
                         .flatten()
