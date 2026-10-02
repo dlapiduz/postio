@@ -8,6 +8,7 @@
 //! spread across widgets that share no handle.
 
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use chrono::{DateTime, Local};
 
@@ -27,11 +28,28 @@ pub fn now() -> DateTime<Local> {
 /// Stop the clock at `at`, for every thread, until [`thaw`].
 pub fn freeze(at: DateTime<Local>) {
     *slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(at);
+    *monotonic().lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+}
+
+/// The monotonic clock, which an age on screen ("last sync 12s") is measured
+/// on so it never jumps with the wall clock. Frozen with [`now`]: stopped at
+/// the instant [`freeze`] was called, so an age reads the same in every frame.
+pub fn instant() -> Instant {
+    monotonic()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(Instant::now)
+}
+
+fn monotonic() -> &'static Mutex<Option<Instant>> {
+    static SLOT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
 }
 
 /// Let the clock run again.
 pub fn thaw() {
     *slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *monotonic().lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 #[cfg(test)]
@@ -69,5 +87,18 @@ mod tests {
         assert_eq!(now(), t, "frozen first, or thawing proves nothing");
         thaw();
         assert!((now() - Local::now()).abs() < Duration::seconds(1));
+    }
+
+    #[test]
+    fn the_monotonic_clock_stops_with_the_wall_clock() {
+        let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+        freeze(Local.with_ymd_and_hms(2026, 6, 2, 9, 0, 0).unwrap());
+        let first = instant();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert_eq!(instant(), first, "an age on screen would grow while frozen");
+        thaw();
+        let thawed = instant();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(instant() > thawed, "thawed, it runs");
     }
 }

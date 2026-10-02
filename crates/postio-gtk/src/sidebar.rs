@@ -25,7 +25,6 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::time::Instant;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -1718,7 +1717,8 @@ impl Sidebar {
     fn render_status(&self) {
         let imp = self.imp();
         let status = imp.status.borrow().clone();
-        let now = Instant::now();
+        // The seam, so a frozen clock freezes the age too (spec 008).
+        let now = postio_ui::clock::instant();
         let (state, detail) = status.lines(now);
         imp.status_state.set_text(&state);
         imp.status_detail.set_text(&detail);
@@ -2233,6 +2233,7 @@ fn set_class(widget: &impl IsA<gtk::Widget>, class: &str, on: bool) {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+    use std::time::Instant;
 
     use super::*;
     use postio_model::ids::AccountId;

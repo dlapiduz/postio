@@ -85,6 +85,22 @@ if [ "$CALIBRATION" = 1 ]; then
 fi
 BASE_RUNS="$REVIEW/base"
 
+# A compositor of this invocation's own. The shared one hosts every other
+# session's test windows too, and a window that is not the active one is drawn
+# in GTK's backdrop style -- faded buttons, grey rows -- so a frame came out
+# differently depending on who else was running. Large enough for the widest
+# variant, and stopped on the way out.
+HEADLESS_STARTED=0
+headless() {
+    export POSTIO_TEST_DISPLAY="postio-storyboard-$$"
+    export POSTIO_TEST_GEOMETRY="1920x1200"
+    if [ "$HEADLESS_STARTED" = 0 ]; then
+        HEADLESS_STARTED=1
+        trap 'scripts/test-headless.sh --stop >/dev/null 2>&1 || true' EXIT
+    fi
+    scripts/test-headless.sh "$@"
+}
+
 target_dir() {
     if [ -n "${CARGO_TARGET_DIR:-}" ]; then
         echo "$CARGO_TARGET_DIR"
@@ -166,7 +182,7 @@ run_command() {
         bin="$(target_dir)/debug/examples/storyboard"
         [ -x "$bin" ] || { echo "storyboards.sh: no runner at $bin" >&2; exit 2; }
         # The headless compositor, never the maintainer's display.
-        scripts/test-headless.sh "$bin" run "${files[@]}" --out "$RUNS" \
+        headless "$bin" run "${files[@]}" --out "$RUNS" \
             --tree-key "$KEY" --commit "$(git rev-parse HEAD 2>/dev/null)" \
             ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
         code=$?
@@ -300,7 +316,7 @@ base_command() {
         exit 2
     fi
     bin="$(cd "$tree" && target_dir)/debug/examples/storyboard"
-    scripts/test-headless.sh "$bin" run "${files[@]}" --out "$cache" --commit "$sha" \
+    headless "$bin" run "${files[@]}" --out "$cache" --commit "$sha" \
         ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
     # A base run that fails is what a base run of a fixed defect does: it is
     # recorded, not a failure of this command.
