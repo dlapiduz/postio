@@ -692,7 +692,7 @@ For every task in this phase:
   - #813, the folder reload keeps Flagged (`event = "mailboxes_changed"`);
   - #756, the sidebar toggle from the palette and `ctrl+b`;
   - #825, narrow-window one-pane navigation.
-- [ ] T081 [P] [US5] Reader and conversation rows →
+- [X] T081 [P] [US5] Reader and conversation rows →
   `storyboards/reader/` and `storyboards/conversation/`:
   - #1402/#1431/#438, keys scroll the one-document pane;
   - #1398, view original;
@@ -704,7 +704,7 @@ For every task in this phase:
   - #1523–#1525, the outbox reader's verbs;
   - d1ddd2dc/#749/#947, no flash between messages, using settle `blanked` and
     `jumped` as the check.
-- [ ] T082 [P] [US5] Compose rows → `storyboards/compose/`:
+- [X] T082 [P] [US5] Compose rows → `storyboards/compose/`:
   - #1177/#1212/#1444, the first screen does not jump to a draft (seed
     `draft-left-over`);
   - #491/#1196/#1240/#426, a left-over draft, and a blank `c`;
@@ -719,7 +719,7 @@ For every task in this phase:
   - #1016, the rebind list does not leak bare keys;
   - #67/#404, a missing credential shows recovery, not an empty inbox (seed
     `locked`).
-- [ ] T084 [US5] Write the flows → `storyboards/flows/` (FR-026). These are
+- [X] T084 [US5] Write the flows → `storyboards/flows/` (FR-026). These are
   the end-to-end walks `/ux-architect` § 4 names:
   - open → `J`/`K` → `e` → `ctrl+Return` → `Escape`;
   - search → open hit → reply → back;
@@ -774,7 +774,7 @@ visible effect. Each one is fixed, filed, or listed with a reason (spec US6).
     `storyboards/gaps/classic.toml` with `tracked = <issue>`.
 
   Commit the gap list.
-- [ ] T090 [US6] Add an `app_suite` case, `every_command.rs`, with its
+- [X] T090 [US6] Add an `app_suite` case, `every_command.rs`, with its
   `CASES` row and a `//! POSTIO-MEASUREMENT:` marker. Exclude it from
   `.config/nextest.toml`'s `profile.default` `default-filter`, so it runs
   nightly (CLAUDE.md, the measurement tier). `check-measurement-tier.py`
@@ -826,7 +826,7 @@ screens` reproduces the old contact sheet (quickstart § 8).
 
 ## Phase 10: Polish and cross-cutting
 
-- [ ] T097 [P] Write `docs/decisions/0044-every-frontend-is-observable-and-storyboarded.md`.
+- [X] T097 [P] Write `docs/decisions/0044-every-frontend-is-observable-and-storyboarded.md`.
   It states the rule only: the `Observation` contract, a runner per frontend,
   and interaction changes shipping with storyboards (plan § ADR). Add it to
   `docs/decisions/README.md`.

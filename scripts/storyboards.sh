@@ -21,6 +21,7 @@
 #   scripts/storyboards.sh key   [--app classic|focus|all]   # the review key for HEAD's tree
 #   scripts/storyboards.sh base  [--app classic|focus]   # the branch's storyboards on the merge-base's code
 #   scripts/storyboards.sh coverage [--app classic]      # every command in every context: does it show?
+#   scripts/storyboards.sh screens [--only <glob>]       # the screen sweep: design beside app, every screen
 #   scripts/storyboards.sh bundle --acceptance <file> [--calibration]   # what a reviewer reads
 #   scripts/storyboards.sh tool  <postio-storyboard arguments>          # the pure tool, built
 #
@@ -43,7 +44,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -344,8 +345,42 @@ coverage_command() {
     headless "$bin" every-command --out "$REVIEW/coverage" --gaps "$CATALOGUE/gaps/$APP.toml"
 }
 
+# The screen sweep (FR-030), which scripts/screens.sh used to be: every
+# zero-step storyboard under storyboards/screens/ in the variants it asks
+# for, then the contact sheet -- the canvas design on the left, the app on
+# the right. Non-zero, naming them, if any screen failed to render.
+screens_command() {
+    local crate bin files=() file out code
+    crate=$(runner_crate classic)
+    while read -r file; do
+        files+=("$file")
+    done < <(find "$CATALOGUE/screens" -name '*.toml' | sort | while read -r f; do
+        rel="${f#"$CATALOGUE"/}"; rel="${rel%.toml}"
+        # shellcheck disable=SC2053 -- a glob, deliberately
+        if [ -z "$ONLY" ] || [[ "$rel" == $ONLY ]] || [[ "$rel" == screens/$ONLY ]]; then echo "$f"; fi
+    done)
+    [ "${#files[@]}" -gt 0 ] || { echo "storyboards.sh: no screen matches '${ONLY:-*}'" >&2; exit 2; }
+    out="$REVIEW/screens"
+    rm -rf "$out/runs"
+    mkdir -p "$out/runs"
+    echo "building the classic runner..."
+    if ! cargo build -q -p "$crate" --example storyboard --features demo 2>&1 | tail -20 >&2; then
+        echo "storyboards.sh: the runner did not build" >&2
+        exit 2
+    fi
+    bin="$(target_dir)/debug/examples/storyboard"
+    headless "$bin" run "${files[@]}" --out "$out/runs" --variants
+    bin=$(tool)
+    "$bin" sheet --runs "$out/runs" --catalogue "$CATALOGUE" --design-dir "$ROOT/Design/screens" \
+        --out "$out/index.html"
+    code=$?
+    [ "$OPEN" = 0 ] || xdg-open "$out/index.html" >/dev/null 2>&1 &
+    exit "$code"
+}
+
 case "$COMMAND" in
     run)  run_command ;;
+    screens) screens_command ;;
     coverage) coverage_command ;;
     base) base_command ;;
     bundle) bundle_command ;;

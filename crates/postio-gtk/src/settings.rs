@@ -741,7 +741,7 @@ mod imp {
         /// Shown instead of `egress_scroller` when nothing has connected —
         /// the egress log never had an empty state, so its heading stood
         /// over nothing at all until the first connection (#1179's kickers
-        /// made that visible, and `scripts/screens.sh` made it obvious).
+        /// made that visible, and the screen sweep, now `scripts/storyboards.sh screens`, made it obvious).
         pub egress_empty: gtk::Label,
         /// Shown instead of `unsubscribe_scroller` when the log is empty —
         /// same "empty is never blank" rule `privacy_empty` follows.

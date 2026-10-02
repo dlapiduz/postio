@@ -14,6 +14,7 @@ usage:
   postio-storyboard lint <storyboards-dir>
   postio-storyboard key --tree <path=id>...
   postio-storyboard compare --base <dir> --branch <dir> [--out <comparison.json>]
+  postio-storyboard sheet --runs <dir> --catalogue <dir> --design-dir <dir> --out <index.html>
   postio-storyboard bundle --runs <dir> [--base <dir> [--base-sha <sha>]] --acceptance <file>
                            --catalogue <storyboards-dir> --design-dir <dir>... --out <bundle-dir>
   postio-storyboard prompt <bundle> (--list | --batch <n>)
@@ -27,6 +28,7 @@ fn main() -> ExitCode {
         Some("page") => page_command(&args[1..]),
         Some("key") => key_command(&args[1..]),
         Some("compare") => compare_command(&args[1..]),
+        Some("sheet") => sheet_command(&args[1..]),
         Some("bundle") => bundle_command(&args[1..]),
         Some("prompt") => prompt_command(&args[1..]),
         Some("verdicts") => verdicts_command(&args[1..]),
@@ -371,4 +373,74 @@ fn load_catalogue(
         }
     }
     found
+}
+
+/// `to` relative to the directory `from`, with `/` separators.
+fn relative(from: &std::path::Path, to: &std::path::Path) -> String {
+    let (from, to) = (
+        from.canonicalize().unwrap_or_else(|_| from.to_path_buf()),
+        to.canonicalize().unwrap_or_else(|_| to.to_path_buf()),
+    );
+    let common = from
+        .components()
+        .zip(to.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let ups = from.components().count() - common;
+    std::iter::repeat_n("..".to_owned(), ups)
+        .chain(
+            to.components()
+                .skip(common)
+                .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+        )
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The screen sweep's contact sheet (FR-030). Exits 1, naming them, if any
+/// screen failed to render: a sweep that half worked and said nothing is how
+/// a blank pane gets reviewed as though it were a design decision.
+fn sheet_command(args: &[String]) -> ExitCode {
+    let (Some(runs), Some(catalogue), Some(design_dir), Some(out)) = (
+        flag(args, "--runs"),
+        flag(args, "--catalogue"),
+        flag(args, "--design-dir"),
+        flag(args, "--out"),
+    ) else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let out_path = PathBuf::from(&out);
+    let out_dir = out_path.parent().map(PathBuf::from).unwrap_or_default();
+    let _ = std::fs::create_dir_all(&out_dir);
+    let prefix = relative(&out_dir, &PathBuf::from(&runs));
+    let strips = match page::collect(&PathBuf::from(&runs), &prefix) {
+        Ok(strips) => strips,
+        Err(error) => {
+            eprintln!("postio-storyboard sheet: {runs}: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let designs: std::collections::BTreeMap<String, String> =
+        load_catalogue(&PathBuf::from(&catalogue))
+            .into_values()
+            .filter_map(|board| {
+                let file =
+                    PathBuf::from(&design_dir).join(format!("{}.png", board.design.as_ref()?));
+                file.is_file()
+                    .then(|| (board.name.clone(), relative(&out_dir, &file)))
+            })
+            .collect();
+    let (html, failed) = page::sheet(&strips, &designs);
+    if let Err(error) = std::fs::write(&out_path, html) {
+        eprintln!("postio-storyboard sheet: {out}: {error}");
+        return ExitCode::from(2);
+    }
+    println!("{out} ({} screens)", strips.len());
+    if failed.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("these screens did not render: {}", failed.join(", "));
+        ExitCode::FAILURE
+    }
 }
