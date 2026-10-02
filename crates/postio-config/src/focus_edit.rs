@@ -115,7 +115,9 @@ pub fn set_reading(text: &str, reading: crate::Reading) -> Result<Option<String>
         .and_then(|focus| focus.get("reading"))
         .and_then(Item::as_str)
         .map(str::to_owned);
-    let says = written.as_deref().unwrap_or(crate::Reading::default().as_str());
+    let says = written
+        .as_deref()
+        .unwrap_or(crate::Reading::default().as_str());
     if says == reading.as_str() {
         return Ok(None);
     }
@@ -362,7 +364,10 @@ at = \"16:00\"
             .expect("an edit")
             .expect("a change");
         assert_eq!(
-            Config::from_toml_str(&back).expect("it reads").focus.reading,
+            Config::from_toml_str(&back)
+                .expect("it reads")
+                .focus
+                .reading,
             Reading::Dialog
         );
         // A file that says nothing already says the dialog.
