@@ -81,6 +81,9 @@ pub struct Options {
     pub tree_key: String,
     /// The commit, for information.
     pub commit: String,
+    /// Axes the storyboard asked for that this app does not have, from
+    /// `postio_storyboard::apply::variants`, recorded on the run.
+    pub ignored_axes: Vec<String>,
 }
 
 impl Default for Options {
@@ -93,6 +96,7 @@ impl Default for Options {
             variant: BTreeMap::new(),
             tree_key: String::new(),
             commit: String::new(),
+            ignored_axes: Vec::new(),
         }
     }
 }
@@ -657,6 +661,9 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
 
     let window = Window::default();
     played.ignored_axes = apply_variant(&window, &options.variant);
+    played
+        .ignored_axes
+        .extend(options.ignored_axes.iter().cloned());
     window.present();
     deliver::drain();
 
