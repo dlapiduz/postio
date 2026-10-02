@@ -46,6 +46,12 @@ pub enum State {
         /// what a window built for a test of one widget has.
         mailbox: Option<String>,
     },
+    /// Online, nothing to show, and no pass has finished yet (T220): the
+    /// first sync is on its way, which is not the same as no mail.
+    Syncing {
+        /// Messages fetched so far and expected, once the engine reports.
+        progress: Option<(u32, u32)>,
+    },
     /// No connection right now; local mail is still fully usable.
     Offline {
         /// Local writes waiting to reach the server.
@@ -215,7 +221,7 @@ impl State {
         match self {
             // Nothing has been read, so there is nothing underneath to
             // protect: the plate is the pane.
-            State::Opening { .. } => Placement::Full,
+            State::Opening { .. } | State::Syncing { .. } => Placement::Full,
             State::InboxZero { .. } | State::NoMatches { .. } => Placement::Full,
             State::Offline { .. } | State::Failing { .. } | State::Partial { .. } => {
                 if item_count == 0 {
@@ -279,6 +285,11 @@ pub fn derive(
                 .unwrap_or_else(|| "the server did not say why".to_string()),
         }),
         ConnectionState::Offline | ConnectionState::Connecting => Some(State::Offline { queued }),
+        ConnectionState::Online if item_count == 0 && status.last_sync.is_none() => {
+            Some(State::Syncing {
+                progress: status.progress,
+            })
+        }
         ConnectionState::Online if item_count == 0 => Some(State::InboxZero {
             last_sync: status.last_sync,
             stored,
@@ -359,6 +370,19 @@ pub fn derive_aggregate(
     // and the only thing left worth saying is that there is nothing in it.
     // The oldest last sync across the accounts, because the freshest would
     // overstate how current the view is.
+    if item_count == 0
+        && accounts
+            .iter()
+            .any(|(_, status)| status.last_sync.is_none())
+    {
+        // An account that has not finished a pass cannot vouch for zero.
+        return Some(State::Syncing {
+            progress: accounts
+                .iter()
+                .find(|(_, status)| status.last_sync.is_none())
+                .and_then(|(_, status)| status.progress),
+        });
+    }
     if item_count == 0 && !accounts.is_empty() {
         return Some(State::InboxZero {
             last_sync: accounts
@@ -528,6 +552,19 @@ pub fn describe(state: &State, now: Instant) -> Content {
                 hints: Vec::new(),
             }
         }
+        State::Syncing { progress } => Content {
+            icon: "emblem-synchronizing-symbolic",
+            icon_class: "syncing",
+            title: "Syncing your inbox\u{2026}".to_string(),
+            detail: match progress {
+                Some((done, total)) => format!(
+                    "{done} of {total} messages, newest first. Mail shows here as it arrives."
+                ),
+                None => "Mail shows here as it arrives.".to_string(),
+            },
+            // Nothing to offer that the engine is not already doing.
+            hints: vec![("Compose", CommandId::Compose, "c")],
+        },
         State::Partial { accounts } => Content {
             icon: "network-offline-symbolic",
             icon_class: "offline",
@@ -569,6 +606,14 @@ mod tests {
         SyncStatus {
             state,
             ..SyncStatus::default()
+        }
+    }
+
+    /// An account whose first pass has finished.
+    fn synced(at: Instant) -> SyncStatus {
+        SyncStatus {
+            last_sync: Some(at),
+            ..status(ConnectionState::Online)
         }
     }
 
@@ -644,12 +689,50 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_inbox_is_not_zero_until_a_pass_has_finished() {
+        // T220: no rows and no completed sync is a first sync under way,
+        // which "Nothing left to triage" would misreport as no mail.
+        let mut first = status(ConnectionState::Online);
+        first.progress = Some((120, 300));
+        assert_eq!(
+            derive(&first, 0, 0, 0, None, None),
+            Some(State::Syncing {
+                progress: Some((120, 300))
+            })
+        );
+        let content = describe(
+            &State::Syncing {
+                progress: Some((120, 300)),
+            },
+            Instant::now(),
+        );
+        assert_eq!(content.title, "Syncing your inbox\u{2026}");
+        assert!(content.detail.starts_with("120 of 300 messages"));
+        let mut done = status(ConnectionState::Online);
+        done.last_sync = Some(Instant::now());
+        assert!(matches!(
+            derive(&done, 0, 0, 0, None, None),
+            Some(State::InboxZero { .. })
+        ));
+        // And the aggregate: one account yet to finish its first pass.
+        let accounts = vec![
+            ("Personal".to_owned(), done.clone()),
+            ("Work".to_owned(), status(ConnectionState::Online)),
+        ];
+        assert!(matches!(
+            derive_aggregate(&accounts, 0, 0, None, None),
+            Some(State::Syncing { .. })
+        ));
+    }
+
+    #[test]
     fn an_empty_online_mailbox_is_inbox_zero() {
-        let derived = derive(&status(ConnectionState::Online), 0, 4291, 0, None, None);
+        let at = Instant::now();
+        let derived = derive(&synced(at), 0, 4291, 0, None, None);
         assert_eq!(
             derived,
             Some(State::InboxZero {
-                last_sync: None,
+                last_sync: Some(at),
                 stored: 4291,
                 mailbox: None,
             })
@@ -662,18 +745,12 @@ mod tests {
         // label, a folder still loading. It read as the application having
         // lost track of where it was, and one paging fault was reported as
         // "I click into another folder and it just shows the inbox is empty".
-        let derived = derive(
-            &status(ConnectionState::Online),
-            0,
-            4291,
-            0,
-            None,
-            Some("Archive"),
-        );
+        let at = Instant::now();
+        let derived = derive(&synced(at), 0, 4291, 0, None, Some("Archive"));
         assert_eq!(
             derived,
             Some(State::InboxZero {
-                last_sync: None,
+                last_sync: Some(at),
                 stored: 4291,
                 mailbox: Some("Archive".to_string()),
             })
@@ -859,6 +936,13 @@ mod aggregate_tests {
         }
     }
 
+    fn synced_at(at: Instant) -> SyncStatus {
+        SyncStatus {
+            last_sync: Some(at),
+            ..status(ConnectionState::Online)
+        }
+    }
+
     fn named(entries: &[(&str, ConnectionState)]) -> Vec<(String, SyncStatus)> {
         entries
             .iter()
@@ -994,14 +1078,15 @@ mod aggregate_tests {
 
     #[test]
     fn an_empty_aggregate_with_everything_online_is_still_inbox_zero() {
-        let accounts = named(&[
-            ("Work", ConnectionState::Online),
-            ("Personal", ConnectionState::Online),
-        ]);
+        let at = Instant::now();
+        let accounts = vec![
+            ("Work".to_owned(), synced_at(at)),
+            ("Personal".to_owned(), synced_at(at)),
+        ];
         assert_eq!(
             derive_aggregate(&accounts, 0, 4291, None, None),
             Some(State::InboxZero {
-                last_sync: None,
+                last_sync: Some(at),
                 stored: 4291,
                 mailbox: None,
             })

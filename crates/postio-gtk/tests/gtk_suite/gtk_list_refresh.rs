@@ -457,6 +457,12 @@ pub fn an_empty_folder_does_not_speak_for_the_next_one_while_it_loads() {
         account: AccountId::new(ACCOUNT),
         state: postio_core::ConnectionState::Online,
     });
+    // A pass has finished: only then is an empty inbox "empty" (T220).
+    feeds.folders.apply(&Event::SyncProgress {
+        account: AccountId::new(ACCOUNT),
+        done: 0,
+        total: 0,
+    });
     let empty = || {
         matches!(
             window.list_state().state(),
