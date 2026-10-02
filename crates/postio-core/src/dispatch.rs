@@ -105,7 +105,10 @@ impl CommandError {
                 command: command.into(),
                 reason,
             },
-            CommandError::Failed(message) => Event::Error { message },
+            CommandError::Failed(message) => Event::Error {
+                message,
+                account: None,
+            },
         }
     }
 }
@@ -418,6 +421,7 @@ impl Dispatcher {
                 let message = format!("{} failed unexpectedly", registry::get(id).title);
                 events.emit(Event::Error {
                     message: message.clone(),
+                    account: None,
                 });
                 finish(&events, InvocationOutcome::Failed { message });
             }
@@ -478,6 +482,7 @@ impl Dispatcher {
                 let message = format!("{title} failed unexpectedly");
                 events.emit(Event::Error {
                     message: message.clone(),
+                    account: None,
                 });
                 finish(&events, InvocationOutcome::Failed { message });
             }
@@ -510,6 +515,7 @@ mod tests {
             CommandError::failed("the disk is full").into_event(CommandId::SaveDraft),
             Event::Error {
                 message: "the disk is full".into(),
+                account: None,
             }
         );
     }

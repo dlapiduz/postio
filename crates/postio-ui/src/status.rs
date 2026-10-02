@@ -278,10 +278,11 @@ pub struct SyncTracker {
 /// account, which is why it survived — and it is load-bearing for ADR 0005
 /// Q10, whose whole subject is *which* account is not answering.
 ///
-/// [`Event::Error`] is the exception, because it carries no account. It goes
-/// to the account whose line is on screen, which is exactly what the single
-/// tracker did with it; writing it down here makes it a decision rather than
-/// an accident of which arm ran first.
+/// [`Event::Error`] names its account when the sync engine raised it (T260),
+/// and goes there. One that names none -- a command's refusal -- goes to the
+/// account whose line is on screen, which is exactly what the single tracker
+/// did with it; writing it down here makes it a decision rather than an
+/// accident of which arm ran first.
 #[derive(Clone, Debug, Default)]
 pub struct Trackers {
     per_account: std::collections::BTreeMap<AccountId, SyncTracker>,
@@ -296,7 +297,11 @@ impl Trackers {
         let account = match event {
             Event::ConnectionChanged { account, .. }
             | Event::SyncProgress { account, .. }
-            | Event::BackfillProgress { account, .. } => Some(*account),
+            | Event::BackfillProgress { account, .. }
+            | Event::Error {
+                account: Some(account),
+                ..
+            } => Some(*account),
             _ => current,
         };
         let Some(account) = account else {
@@ -435,7 +440,7 @@ impl SyncTracker {
                     self.status.progress = None;
                 }
             }
-            Event::Error { message } => {
+            Event::Error { message, .. } => {
                 self.reason = Some(message.clone());
                 if matches!(self.status.state, ConnectionState::Failing { .. }) {
                     self.status.detail = Some(message.clone());
@@ -639,6 +644,7 @@ mod tracker_tests {
         // The reason arrives beside the state change, not inside it.
         tracker.apply(&Event::Error {
             message: "the server rejected the password".to_string(),
+            account: None,
         });
         tracker.apply(&connection(ConnectionState::Failing {
             reason: postio_core::FailureReason::Auth,
@@ -651,6 +657,7 @@ mod tracker_tests {
         // And an error that arrives while already failing replaces it.
         tracker.apply(&Event::Error {
             message: "the certificate expired".to_string(),
+            account: None,
         });
         assert_eq!(
             tracker.status().detail.as_deref(),
@@ -838,6 +845,7 @@ mod trackers_tests {
         trackers.apply(
             &Event::Error {
                 message: "the server refused the password".to_owned(),
+                account: None,
             },
             Some(WORK),
         );
@@ -859,6 +867,34 @@ mod trackers_tests {
             None,
             "an error with no account named must not be attributed to one"
         );
+    }
+
+    #[test]
+    fn an_error_that_names_its_account_lands_there_whatever_is_in_view() {
+        // T260: the sync engine says which account it is talking about, so a
+        // frontend that shows several at once need not guess.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::Error {
+                message: "mailbox is over quota".to_owned(),
+                account: Some(HOME),
+            },
+            Some(WORK),
+        );
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: HOME,
+                state: ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Server,
+                },
+            },
+            Some(WORK),
+        );
+        assert_eq!(
+            trackers.status(HOME).detail.as_deref(),
+            Some("mailbox is over quota")
+        );
+        assert_eq!(trackers.status(WORK).detail, None);
     }
 
     #[test]

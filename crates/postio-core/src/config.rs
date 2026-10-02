@@ -400,7 +400,10 @@ impl ConfigService {
                     .first_error()
                     .map(ToString::to_string)
                     .unwrap_or_else(|| "the configuration could not be loaded".to_string());
-                update.events.push(Event::Error { message });
+                update.events.push(Event::Error {
+                    message,
+                    account: None,
+                });
             }
             Reload::Unchanged => {}
             Reload::Applied => {
@@ -410,6 +413,7 @@ impl ConfigService {
                     for problem in self.keymap.problems() {
                         update.events.push(Event::Error {
                             message: problem.clone(),
+                            account: None,
                         });
                     }
                 }

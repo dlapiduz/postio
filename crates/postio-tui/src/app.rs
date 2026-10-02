@@ -3675,7 +3675,7 @@ impl App {
             Event::CommandRejected { reason, .. } => {
                 return self.say_as(Tone::Failed, reason, None);
             }
-            Event::Error { message } => return self.say_as(Tone::Failed, message, None),
+            Event::Error { message, .. } => return self.say_as(Tone::Failed, message, None),
             _ => {}
         }
         if moved {

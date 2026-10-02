@@ -417,6 +417,7 @@ fn main() {
                 &mut app,
                 Input::Host(postio_core::Event::Error {
                     message: "The server refused the move: mailbox is read-only".into(),
+                    account: None,
                 }),
             );
         }

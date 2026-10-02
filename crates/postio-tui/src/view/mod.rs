@@ -1604,6 +1604,7 @@ mod tests {
             &mut app,
             Input::Host(postio_core::Event::Error {
                 message: "The server refused the move".into(),
+                account: None,
             }),
         );
         let (text, cells, theme) = status_of(&app, Colour::TrueColor);

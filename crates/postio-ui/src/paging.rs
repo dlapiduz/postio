@@ -542,7 +542,8 @@ mod tests {
     fn events_the_list_is_not_about_are_ignored() {
         assert_eq!(
             inbox().plan(&Event::Error {
-                message: "nothing to do with the list".to_owned()
+                message: "nothing to do with the list".to_owned(),
+                account: None,
             }),
             Plan::Ignore
         );

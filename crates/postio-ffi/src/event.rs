@@ -354,7 +354,7 @@ impl From<postio_core::Event> for UiEvent {
                 message: reason,
                 undoable: false,
             },
-            Event::Error { message } => UiEvent::Notice {
+            Event::Error { message, .. } => UiEvent::Notice {
                 kind: NoticeKindFfi::Failed,
                 message,
                 undoable: false,
@@ -447,6 +447,7 @@ mod tests {
         assert_eq!(
             UiEvent::from(postio_core::Event::Error {
                 message: "The server refused the password".to_owned(),
+                account: None,
             }),
             UiEvent::Notice {
                 kind: NoticeKindFfi::Failed,

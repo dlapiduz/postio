@@ -899,6 +899,30 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
 }
 
 #[tokio::test]
+async fn a_failing_connection_says_which_account_the_error_is_about() {
+    // T260. The sync's own words travel as `Event::Error` beside the typed
+    // state, and a frontend showing two accounts at once has to put them on
+    // the right one: the error names the engine's account.
+    let (engine, _database, report, events, _backend, _directory) =
+        engine_with(|backend| backend.fail_all(Fault::Io("the line went dead".to_owned()))).await;
+
+    engine.drain().await.expect_err("the transport failed");
+
+    let said: Vec<_> = announced(&events)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Error { message, account } => Some((message, account)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        said.iter()
+            .any(|(message, account)| !message.is_empty() && *account == Some(report.account.id)),
+        "no error named the failing account: {said:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_refused_password_blocks_and_a_new_one_unblocks() {
     // A refused password does not get better on a timer, so nothing retries
     // it until someone says the credentials have changed. That is the one

@@ -66,7 +66,7 @@ pub fn follow(
 
             let update = service.apply(checked);
             for event in &update.events {
-                if let Event::Error { message } = event {
+                if let Event::Error { message, .. } = event {
                     tracing::warn!(message, "rejected");
                 }
             }

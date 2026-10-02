@@ -179,10 +179,10 @@ pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -
         let facts = accounts.iter().find(|facts| facts.id == *account)?;
         Some(Banner::Failing {
             account: facts.name.clone(),
-            // `Event::Error` names no account, so the sync's own words reach
-            // an account's status only when it was the one in view; the
-            // kind of failure is always its own, and is what a person can
-            // act on (ADR 0005 Q10).
+            // The sync's own words (the `Event::Error` that names this
+            // account, T260), else the words for the kind of failure, which
+            // is always its own and is what a person can act on (ADR 0005
+            // Q10).
             reason: status
                 .detail
                 .clone()

@@ -241,6 +241,7 @@ pub async fn install_for(
                     message: "Could not save that part: that place is not a file on this \
                               computer."
                         .to_owned(),
+                    account: None,
                 });
                 return;
             };
@@ -265,7 +266,10 @@ pub async fn install_for(
                 if let Err(message) = outcome {
                     // Loud rather than silent: the user chose a filename and
                     // is entitled to know nothing arrived at it.
-                    events.emit(postio_core::Event::Error { message });
+                    events.emit(postio_core::Event::Error {
+                        message,
+                        account: None,
+                    });
                 }
             });
         }
@@ -358,7 +362,10 @@ pub async fn install_for(
                 // what "nothing failed" looks like, so the test for it is the
                 // same expression as the wording.
                 if let Some(sentence) = postio_gtk::parts::save_all_failure(failed) {
-                    events.emit(postio_core::Event::Error { message: sentence });
+                    events.emit(postio_core::Event::Error {
+                        message: sentence,
+                        account: None,
+                    });
                 }
             });
         }
@@ -1827,7 +1834,10 @@ impl PartOpener {
             match outcome {
                 Ok(path) => launch(&window, &path, always_ask),
                 Err(message) => {
-                    events.emit(postio_core::Event::Error { message });
+                    events.emit(postio_core::Event::Error {
+                        message,
+                        account: None,
+                    });
                 }
             }
         });

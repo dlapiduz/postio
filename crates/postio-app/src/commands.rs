@@ -157,7 +157,7 @@ pub async fn apply(
         // dialog. Silence is the one answer it must not get: a key that does
         // nothing and says nothing reads as the application ignoring you.
         Event::CommandRejected { reason, .. } => window.show_action_completed(reason, false),
-        Event::Error { message } => {
+        Event::Error { message, .. } => {
             tracing::error!(
                 message = %postio_model::address::redact_addresses(message),
                 "command failed"

@@ -716,6 +716,7 @@ fn perform(
                         let _ = inputs
                             .send(Input::Host(postio_core::Event::Error {
                                 message: error.message().to_owned(),
+                                account: None,
                             }))
                             .await;
                     }
@@ -860,6 +861,7 @@ fn perform(
                     copy_to_clipboard(&target);
                     let _ = inputs.try_send(Input::Host(postio_core::Event::Error {
                         message: format!("No opener here; {target} is on the clipboard"),
+                        account: None,
                     }));
                 }
             }

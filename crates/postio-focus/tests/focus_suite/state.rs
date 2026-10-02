@@ -630,3 +630,71 @@ pub fn a_failing_account_is_named_and_the_others_mail_stays_listed() {
         );
     });
 }
+
+/// T260: the banner says what the sync itself said about the failing account
+/// -- the `Event::Error` that names it -- and not the generic words for the
+/// kind of failure. The account that works keeps its mail on screen.
+pub fn a_failing_banner_says_the_syncs_own_reason() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        let (second, inbox) = fixture.second_account().await;
+        fixture
+            .file_as(second.id, inbox, "Lunch on Friday", 10)
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_focus::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_focus::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "both accounts' mail should be listed: {:?}",
+            support::subjects(&window)
+        );
+        let tell = |event| assert!(sink.emit(event), "the hub took the event");
+        tell(Event::ConnectionChanged {
+            account: fixture.account.id,
+            state: ConnectionState::Online,
+        });
+        tell(Event::SyncProgress {
+            account: fixture.account.id,
+            done: 40,
+            total: 40,
+        });
+        tell(Event::ConnectionChanged {
+            account: second.id,
+            state: ConnectionState::Failing {
+                reason: FailureReason::Server,
+            },
+        });
+        tell(Event::Error {
+            message: "the server said: mailbox is over quota".to_owned(),
+            account: Some(second.id),
+        });
+        assert!(
+            crate::settle_until(async || window
+                .banner_showing()
+                .is_some_and(|(title, ..)| title.contains("mailbox is over quota")))
+            .await,
+            "the banner does not carry the sync's own reason: {:?}",
+            window.banner_showing()
+        );
+        let (title, ..) = window.banner_showing().expect("a banner");
+        assert!(
+            title.starts_with("Second can't sync"),
+            "and it names the account: {title}"
+        );
+        let mut mail = support::subjects(&window);
+        mail.sort();
+        assert_eq!(mail, ["Budget", "Lunch on Friday"], "the mail stays listed");
+    });
+}

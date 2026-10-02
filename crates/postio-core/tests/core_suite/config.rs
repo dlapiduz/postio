@@ -368,7 +368,7 @@ fn a_broken_file_keeps_the_last_good_bindings() {
         "the last good binding stayed in force"
     );
     match update.events.as_slice() {
-        [Event::Error { message }] => assert!(!message.is_empty(), "the user is told why"),
+        [Event::Error { message, .. }] => assert!(!message.is_empty(), "the user is told why"),
         other => panic!("expected one error, got {other:?}"),
     }
 }

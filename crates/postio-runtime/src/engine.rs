@@ -910,6 +910,7 @@ fn run(
             tracing::error!(%error, "the sync engine has no runtime: {error}");
             parts.events.emit(Event::Error {
                 message: format!("the sync engine has no runtime: {error}"),
+                account: None,
             });
             return;
         }
@@ -1761,6 +1762,7 @@ async fn discover(parts: &EngineParts, store: &Store) {
         Err(error) => {
             parts.events.emit(Event::Error {
                 message: error.to_string(),
+                account: Some(parts.account),
             });
             return;
         }
@@ -1787,6 +1789,7 @@ async fn discover(parts: &EngineParts, store: &Store) {
         Err(error) => {
             parts.events.emit(Event::Error {
                 message: error.to_string(),
+                account: Some(parts.account),
             });
         }
     }
@@ -3076,6 +3079,7 @@ async fn sync_wave(
                 {
                     parts.events.emit(Event::Error {
                         message: error.message().to_string(),
+                        account: Some(parts.account),
                     });
                 }
                 // The interruption conditions, checked here as well as in
@@ -3749,6 +3753,7 @@ async fn settle_pass(
                     Err(error) => {
                         parts.events.emit(Event::Error {
                             message: error.to_string(),
+                            account: Some(parts.account),
                         });
                     }
                 }
@@ -3902,6 +3907,7 @@ fn announce_status(parts: &EngineParts, status: &SyncStatus) {
     if let SyncStatus::Error { reason, .. } = status {
         parts.events.emit(Event::Error {
             message: reason.clone(),
+            account: Some(parts.account),
         });
     }
 }
@@ -3968,6 +3974,7 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
         );
         parts.events.emit(Event::Error {
             message: reason.clone(),
+            account: Some(parts.account),
         });
     }
 }
@@ -4025,6 +4032,7 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
             for reason in &summary.failed {
                 events.emit(Event::Error {
                     message: reason.clone(),
+                    account: Some(account),
                 });
             }
             // And deliberately *not* an error (#674). A send that may have
@@ -4039,6 +4047,7 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
         Err(error) => {
             events.emit(Event::Error {
                 message: error.message().to_string(),
+                account: Some(account),
             });
         }
     }

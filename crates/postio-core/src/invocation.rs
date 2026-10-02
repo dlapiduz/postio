@@ -187,6 +187,7 @@ mod tests {
         let envelope = EventEnvelope {
             event: Event::Error {
                 message: "no".into(),
+                account: None,
             },
             origin: Some(mine),
         };

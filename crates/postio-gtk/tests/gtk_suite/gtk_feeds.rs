@@ -309,6 +309,7 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
 
     feeds.apply(&Event::Error {
         message: "app-specific password rejected".to_string(),
+        account: None,
     });
     feeds.apply(&connection(ConnectionState::Failing {
         reason: postio_core::FailureReason::Auth,

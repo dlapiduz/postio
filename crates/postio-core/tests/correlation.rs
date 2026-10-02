@@ -400,6 +400,7 @@ fn a_registered_command_is_trackable_too() {
             async move {
                 invocation.emit(Event::Error {
                     message: format!("{seen:?}"),
+                    account: None,
                 });
                 Ok(())
             }
@@ -422,7 +423,7 @@ fn a_registered_command_is_trackable_too() {
         matches!(
             ours.as_slice(),
             [
-                Event::Error { message },
+                Event::Error { message, .. },
                 Event::InvocationFinished {
                     outcome: InvocationOutcome::Completed,
                     ..

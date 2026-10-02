@@ -208,7 +208,7 @@ fn complaints(probe: &EventStream) -> Vec<String> {
     while let Some(event) = probe.try_next() {
         match event {
             Event::CommandRejected { reason, .. } => said.push(format!("rejected: {reason}")),
-            Event::Error { message } => said.push(format!("error: {message}")),
+            Event::Error { message, .. } => said.push(format!("error: {message}")),
             _ => {}
         }
     }

@@ -262,6 +262,7 @@ fn a_registered_command_can_actually_run() {
                     ran.store(true, Ordering::Relaxed);
                     invocation.emit(postio_core::Event::Error {
                         message: "ran".to_string(),
+                        account: None,
                     });
                     Ok(())
                 }
@@ -278,7 +279,7 @@ fn a_registered_command_can_actually_run() {
     assert!(ran.load(Ordering::Relaxed), "the handler never ran");
     assert!(matches!(
         events.try_next(),
-        Some(postio_core::Event::Error { message }) if message == "ran"
+        Some(postio_core::Event::Error { message, .. }) if message == "ran"
     ));
 }
 

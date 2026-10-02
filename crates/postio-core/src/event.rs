@@ -293,6 +293,13 @@ pub enum Event {
     Error {
         /// The failure, phrased for the user. Never contains a secret.
         message: String,
+        /// The account the failure belongs to, when it belongs to one: a
+        /// sync engine's own words about its account's connection do, a
+        /// command's refusal does not. Frontends that show one status line
+        /// may ignore it; one showing several accounts at once files the
+        /// message under it (T260).
+        #[serde(default)]
+        account: Option<AccountId>,
     },
 
     /// A tracked invocation ended, whichever way it ended.
