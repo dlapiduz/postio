@@ -5,14 +5,12 @@
 //! *mean*, which no markup test can see. The reader draws with this crate
 //! now, so this crate answers them -- in pixels and text geometry, headless.
 
-mod support;
-
 use std::collections::HashMap;
 
+use crate::support::{LIGHT, render, request_for};
 use postio_render::{Raster, RenderedDocument};
 use postio_ui::reader::document::Sheet;
 use postio_ui::reader::thread::{Entry, conversation_document};
-use support::{LIGHT, render, request_for};
 
 fn entry<'a>(scope: &'a str, body: &'a str, styles: &'a str) -> Entry<'a> {
     Entry {

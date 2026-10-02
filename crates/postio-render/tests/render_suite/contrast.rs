@@ -2,12 +2,12 @@
 //! contrast, no text is drawn below the floor against what is actually
 //! behind it -- 4.5:1, or 7:1 in high contrast, at every size (FR-012).
 
-mod support;
+use crate::support;
 
+use crate::support::{DARK, HIGH_CONTRAST, LIGHT, render, request};
 use postio_model::test_corpus;
 use postio_render::theme::{self, Rgb};
 use postio_render::{Presentation, Raster, Theme};
-use support::{DARK, HIGH_CONTRAST, LIGHT, render, request};
 
 /// The ground behind a cluster: the commonest colour in a band just above
 /// and below its box, leaving out its own ink -- glyph edges, an underline

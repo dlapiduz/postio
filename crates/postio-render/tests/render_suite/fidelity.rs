@@ -4,13 +4,11 @@
 //! the reference by `postio_test_support::fidelity`
 //! (`contracts/fidelity-metric.md`).
 
-mod support;
-
 use std::path::PathBuf;
 
+use crate::support::{LIGHT, render, request};
 use postio_model::test_corpus::{self, Category};
 use postio_test_support::fidelity::{self, Image};
-use support::{LIGHT, render, request};
 
 /// The references are the message alone, so the reader's own frame around
 /// it -- its padding, border and margins -- is set aside for the comparison

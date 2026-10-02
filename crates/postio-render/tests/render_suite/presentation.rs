@@ -1,9 +1,7 @@
 //! How each message is presented in each theme (spec FR-013, research R10).
 
-mod support;
-
+use crate::support::{DARK, LIGHT, render, request, request_for};
 use postio_render::Presentation;
-use support::{DARK, LIGHT, render, request, request_for};
 
 fn presentation(name: &str, theme: postio_render::Theme) -> Presentation {
     let doc = render(&request(name, theme).expect("a body"));

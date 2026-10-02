@@ -1,10 +1,8 @@
 //! Zoom (spec 006 FR-021, SC-009): at every step, nothing is lost off the
 //! side, and zoom narrows the effective width the way a browser's does.
 
-mod support;
-
+use crate::support::{LIGHT, render, request};
 use postio_model::test_corpus;
-use support::{LIGHT, render, request};
 
 const STEPS: [f64; 13] = [
     0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0,

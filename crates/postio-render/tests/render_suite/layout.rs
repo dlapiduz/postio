@@ -1,9 +1,7 @@
 //! The sender's layout, as they built it (spec 006 US2).
 
-mod support;
-
+use crate::support::{LIGHT, render, request, request_for};
 use postio_render::Rgb;
-use support::{LIGHT, render, request, request_for};
 
 fn x_of(doc: &postio_render::RenderedDocument, text: &str) -> f64 {
     let range = doc.text.find(text)[0].clone();
