@@ -10,13 +10,13 @@
 //! **not applicable**: it is never a pass, because nothing was checked, and
 //! never a failure, because nothing is wrong (data-model § Checks).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::format::{Check, Checks, Leaf, StepRef};
 
 /// What one check came to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     /// The observation agrees.
@@ -28,7 +28,7 @@ pub enum Outcome {
 }
 
 /// One check's result, worded for whoever reads the run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckResult {
     /// The dotted path into the observation, such as `cursor.index`.
     pub path: String,
