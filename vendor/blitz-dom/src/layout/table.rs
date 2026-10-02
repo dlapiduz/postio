@@ -1,5 +1,6 @@
 use blitz_traits::node_id::NodeId;
 use std::{ops::Range, sync::Arc};
+use thin_vec::ThinVec;
 
 use atomic_refcell::AtomicRefCell;
 use markup5ever::local_name;
@@ -16,6 +17,7 @@ use taffy::{
 
 use crate::BaseDocument;
 
+use super::construct::create_anonymous_box;
 use super::damage::{CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC};
 use super::resolve_calc_value;
 
@@ -72,6 +74,19 @@ pub struct TableCell {
     style: taffy::Style<Atom>,
 }
 
+/// The anonymous cells a table's rows need (CSS 2.1 §17.2.1): each run of
+/// consecutive children of a row that are not cells -- in mail, a `<td>`
+/// that a responsive stylesheet made `display: block` -- is wrapped in one
+/// anonymous cell, where those children stack as blocks.
+#[derive(Default)]
+struct AnonymousCells {
+    /// The row whose children are being collected.
+    row: Option<NodeId>,
+    /// The anonymous cell still taking children: the last box collected in
+    /// this row was not a cell.
+    open: Option<NodeId>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TableRow {
     // kind: TableItemKind,
@@ -79,9 +94,12 @@ pub struct TableRow {
     pub height: f32,
 }
 
+/// `anonymous_blocks` collects the anonymous cells made, for the table to
+/// deallocate when it is next constructed.
 pub(crate) fn build_table_context(
     doc: &mut BaseDocument,
     table_root_node_id: NodeId,
+    anonymous_blocks: &mut ThinVec<NodeId>,
 ) -> (TableContext, Vec<NodeId>) {
     let mut cells: Vec<TableCell> = Vec::new();
     let mut rows: Vec<TableRow> = Vec::new();
@@ -119,6 +137,7 @@ pub(crate) fn build_table_context(
 
     let mut column_sizes: Vec<taffy::TrackSizingFunction> = Vec::new();
     let mut first_cell_border: Option<ServoArc<Border>> = None;
+    let mut anonymous = AnonymousCells::default();
     for child_id in children.iter().copied() {
         collect_table_cells(
             doc,
@@ -131,6 +150,8 @@ pub(crate) fn build_table_context(
             &mut rows,
             &mut column_sizes,
             &mut first_cell_border,
+            &mut anonymous,
+            anonymous_blocks,
         );
     }
     column_sizes.resize(col as usize, style_helpers::auto());
@@ -200,7 +221,7 @@ pub(crate) fn build_table_context(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn collect_table_cells(
+fn collect_table_cells(
     doc: &mut BaseDocument,
     node_id: NodeId,
     is_fixed: bool,
@@ -211,6 +232,8 @@ pub(crate) fn collect_table_cells(
     rows: &mut Vec<TableRow>,
     columns: &mut Vec<TrackSizingFunction>,
     first_cell_border: &mut Option<ServoArc<Border>>,
+    anonymous: &mut AnonymousCells,
+    anonymous_blocks: &mut ThinVec<NodeId>,
 ) {
     let node = &mut doc.nodes[node_id];
 
@@ -226,6 +249,51 @@ pub(crate) fn collect_table_cells(
 
     if display.outside() == DisplayOutside::None {
         node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+        return;
+    }
+
+    // A child of a row that is not a cell goes in an anonymous cell, with
+    // its non-cell siblings on either side (CSS 2.1 §17.2.1). The release
+    // dropped it in the `Flow` arm below, contents and all, and responsive
+    // mail makes its cells `display: block` under a narrow `@media` query to
+    // stack its columns: every stacked column vanished. Captions and the
+    // other internal table boxes keep the arms below.
+    if let Some(row_id) = anonymous.row
+        && matches!(
+            display.outside(),
+            DisplayOutside::Block | DisplayOutside::Inline
+        )
+        && display.inside() != DisplayInside::Contents
+    {
+        let cell_id = match anonymous.open {
+            Some(cell_id) => cell_id,
+            None => {
+                let cell_id = create_anonymous_box(doc, row_id);
+                anonymous_blocks.push(cell_id);
+                anonymous.open = Some(cell_id);
+                let mut style =
+                    stylo_taffy::to_taffy_style(&doc.nodes[cell_id].primary_styles().unwrap());
+                // One column, auto-placed in this row like any cell.
+                if *row == 1 {
+                    columns.push(style_helpers::auto());
+                }
+                style.grid_column = taffy::Line {
+                    start: style_helpers::auto(),
+                    end: style_helpers::span(1),
+                };
+                style.grid_row = taffy::Line {
+                    start: style_helpers::line(*row as i16),
+                    end: style_helpers::span(1),
+                };
+                cells.push(TableCell {
+                    node_id: cell_id,
+                    style,
+                });
+                *col += 1;
+                cell_id
+            }
+        };
+        doc.nodes[cell_id].children.push(node_id);
         return;
     }
 
@@ -249,6 +317,8 @@ pub(crate) fn collect_table_cells(
                     rows,
                     columns,
                     first_cell_border,
+                    anonymous,
+                    anonymous_blocks,
                 );
             }
             doc.nodes[node_id].children = children;
@@ -262,6 +332,8 @@ pub(crate) fn collect_table_cells(
                 node_id,
                 height: 0.0,
             });
+            let outer_row = anonymous.row.replace(node_id);
+            anonymous.open = None;
 
             let children = std::mem::take(&mut doc.nodes[node_id].children);
             for child_id in children.iter().copied() {
@@ -276,11 +348,16 @@ pub(crate) fn collect_table_cells(
                     rows,
                     columns,
                     first_cell_border,
+                    anonymous,
+                    anonymous_blocks,
                 );
             }
             doc.nodes[node_id].children = children;
+            anonymous.row = outer_row;
+            anonymous.open = None;
         }
         DisplayInside::TableCell => {
+            anonymous.open = None;
             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
             let stylo_style = &node.primary_styles().unwrap();
             let colspan: u16 = node

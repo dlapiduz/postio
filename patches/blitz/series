@@ -1,2 +1,3 @@
 # Applied in order, with `patch -p0` from the directory holding both crates.
 0001-collapsed-borders-only-where-they-are-drawn.patch
+0002-non-cell-row-children-in-an-anonymous-cell.patch

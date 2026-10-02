@@ -277,3 +277,105 @@ fn an_app_colours_newsletter_with_images_lays_out_once() {
         );
     }
 }
+
+/// Where `words` start drawing, with the cluster at exactly that character:
+/// [`cluster_of`] tolerates a word missing from the drawing by taking the
+/// next one drawn, which is the very failure this asks about.
+fn drawn_at(doc: &RenderedDocument, words: &str) -> kurbo::Rect {
+    let at = doc
+        .text
+        .text
+        .find(words)
+        .unwrap_or_else(|| panic!("`{words}` is not in the text"));
+    let at = doc.text.text[..at].chars().count();
+    let cluster = doc
+        .text
+        .clusters
+        .iter()
+        .find(|c| c.range.start == at)
+        .unwrap_or_else(|| panic!("`{words}` is in the text but was not drawn"));
+    assert!(
+        cluster.rect.width() > 0.0 && cluster.rect.height() > 0.0,
+        "`{words}` was drawn with no size: {:?}",
+        cluster.rect
+    );
+    cluster.rect
+}
+
+/// T222: a responsive newsletter stacks its columns by making its cells
+/// `display:block` under `@media (max-width: 600px)`, which the 480px
+/// app-colours column satisfies. The engine dropped every such cell, so
+/// all but the header and footer vanished. Every column is drawn, stacked
+/// under its neighbour at 480px and beside it at 700px, where the query
+/// does not apply.
+#[test]
+fn app_colours_draws_the_stacked_cells_of_a_responsive_newsletter() {
+    let name = "html-responsive-stacked-cells";
+    let sections = [
+        (
+            "Orchard walk",
+            "Saplings planted",
+            "Cider press",
+            "The press is mended",
+        ),
+        (
+            "Library hours",
+            "The reading room",
+            "Map archive",
+            "Sixty survey sheets",
+        ),
+        (
+            "Ferry notice",
+            "The morning crossing",
+            "Harbour lights",
+            "New lamps",
+        ),
+    ];
+    let narrow = drawn(name, Some(Treatment::AppColours), LIGHT, 480.0);
+    let wide = drawn(name, Some(Treatment::AppColours), LIGHT, 700.0);
+    for (left, left_text, right, right_text) in sections {
+        let [l, lt, r, rt] = [left, left_text, right, right_text].map(|w| drawn_at(&narrow, w));
+        assert!(
+            lt.y0 > l.y0 && r.y0 > lt.y0 && rt.y0 > r.y0,
+            "{left}: not stacked at 480px"
+        );
+        assert!(
+            (r.x0 - l.x0).abs() < 1.0,
+            "{right} starts at {} but {left} at {}: stacked cells share the column's left edge",
+            r.x0,
+            l.x0
+        );
+        let [l, r] = [left, right].map(|w| drawn_at(&wide, w));
+        assert!(
+            (r.y0 - l.y0).abs() < 1.0 && r.x0 > l.x0 + 200.0,
+            "{right} is not beside {left} at 700px"
+        );
+    }
+    // Each stacked column has the whole width: its paragraph runs past the
+    // middle of the column, where a half-width cell would have wrapped it.
+    let paragraph = "The press is mended and the first pressing is booked for the twelfth.";
+    let at = narrow
+        .text
+        .text
+        .find(paragraph)
+        .expect("the paragraph is in the text");
+    let at = narrow.text.text[..at].chars().count();
+    let reach = narrow
+        .text
+        .clusters
+        .iter()
+        .filter(|c| (at..at + paragraph.chars().count()).contains(&c.range.start))
+        .map(|c| c.rect.x1)
+        .fold(0.0, f64::max);
+    assert!(
+        reach > 300.0,
+        "the stacked paragraph reaches only {reach}px"
+    );
+    // Stacked, the page is longer: about 594px at 480 against 408 side by
+    // side. Dropping the stacked cells left the header and footer alone.
+    let (tall, short) = (narrow.size.height, wide.size.height);
+    assert!(
+        (520.0..680.0).contains(&tall) && tall > short,
+        "{tall}px at 480px and {short}px at 700px"
+    );
+}
