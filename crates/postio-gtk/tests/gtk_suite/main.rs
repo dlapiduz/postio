@@ -179,6 +179,7 @@ mod gtk_window_run_search;
 mod gtk_window_state;
 mod gtk_window_teardown;
 mod storyboard_chain_delivery;
+mod storyboard_reach;
 mod storyboard_support;
 mod storyboard_typing;
 mod list_contract;
@@ -242,6 +243,22 @@ pub(crate) fn reader_deadline() -> std::time::Duration {
 }
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "storyboard_reach::a_focused_mapped_list_is_reachable",
+        storyboard_reach::a_focused_mapped_list_is_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::an_unmapped_focus_is_not_reachable",
+        storyboard_reach::an_unmapped_focus_is_not_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable",
+        storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable as fn(),
+    ),
+    (
+        "storyboard_reach::no_focus_widget_is_not_reachable",
+        storyboard_reach::no_focus_widget_is_not_reachable as fn(),
+    ),
     (
         "storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry",
         storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry as fn(),
