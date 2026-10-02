@@ -107,6 +107,32 @@ RULES: dict[str, dict[str, object]] = {
             "assumptions, or a second store owner, into all of them."
         ),
     },
+    "postio-storyboard": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "tokio",
+        ],
+        "why": (
+            "postio-storyboard is the pure half of storyboards -- format, "
+            "checks, comparison, review page -- that every frontend's runner "
+            "calls (specs/008-storyboards). A toolkit, a store or a runtime "
+            "here would make one runner's assumptions everyone's, and turn "
+            "millisecond tests into window launches."
+        ),
+    },
     "postio-client": {
         "banned": [
             "gtk4",
