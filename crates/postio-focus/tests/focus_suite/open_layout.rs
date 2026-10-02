@@ -988,3 +988,60 @@ pub fn the_dialogs_chrome_is_set_in_the_system_faces() {
         );
     });
 }
+
+/// The paper treatment's fit-to-column multiplies under the person's zoom
+/// (T242): zooming a fitted page in changes `zoom` and draws it larger, and
+/// the fit to the column stays what it was.
+pub fn paper_fit_multiplies_under_the_zoom() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let newsletter = postio_model::mime::parse(
+            postio_model::test_corpus::load("html-newsletter-own-page").bytes(),
+        )
+        .body
+        .html
+        .expect("an HTML part")
+        .replace("width=\"640\"", "width=\"900\"");
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Field Notes", "news@example.com"), "Issue 48", "x", 10)
+            .await;
+        fixture.write_html_body(message, &newsletter).await;
+        let window = opened_at(&fixture, 1, NARROW).await;
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        assert!(
+            crate::settle_until(async || reader.treatment()
+                == postio_body::treatment::Treatment::Paper
+                && reader.view().tiles_settled())
+            .await,
+            "the newsletter never went on paper"
+        );
+        let fit = reader.paper_fit();
+        assert!(fit < 1.0, "the 900px page is not fitted: {fit}");
+        let before = reader.view().document().expect("drawn").size.width;
+        support::press(&window, "plus", gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || reader.zoom() == 110
+                && reader.view().tiles_settled()
+                && reader
+                    .view()
+                    .document()
+                    .is_some_and(|document| { (document.size.width / before - 1.1).abs() < 0.03 }))
+            .await,
+            "zoomed to {}, the page is {} wide, not 1.1 x {before}",
+            reader.zoom(),
+            reader
+                .view()
+                .document()
+                .map_or(0.0, |document| document.size.width)
+        );
+        assert!(
+            (reader.paper_fit() - fit).abs() < 0.01,
+            "zooming moved the fit to the column: {fit} -> {}",
+            reader.paper_fit()
+        );
+    });
+}

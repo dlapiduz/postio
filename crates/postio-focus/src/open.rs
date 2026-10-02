@@ -99,6 +99,8 @@ pub struct OpenMessage {
     parent: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
     /// Told whenever the message opens or closes, in either host.
     changed: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Told which part a chip under the body stands for (T240).
+    chip: RefCell<Option<ChipHandler>>,
     /// The list row on screen, by its id: what `Return` on the same row
     /// would show again.
     row: Cell<Option<MessageId>>,
@@ -170,6 +172,9 @@ impl OpenMessage {
                 CommandId::DismissMarker,
                 // The render-mode line's switch, over an HTML body (T213).
                 CommandId::SwitchTreatment,
+                // The shared banner's two buttons, over held-back images.
+                CommandId::ShowImages,
+                CommandId::AlwaysShowImages,
             ])
             .collect()
     }
@@ -406,6 +411,7 @@ impl OpenMessage {
             preparing: RefCell::default(),
             open,
             handler: RefCell::default(),
+            chip: RefCell::default(),
             thread: Rc::default(),
             at: Rc::default(),
             position: Cell::new(Position { index: 0, total: 0 }),
@@ -420,6 +426,20 @@ impl OpenMessage {
 
         let weak = Rc::downgrade(&page);
         page.this.replace(weak.clone());
+        // A chip asks, as the classic app's does: where the verbs live is
+        // the window's chooser (T240).
+        page.reader.connect_attachment({
+            let weak = weak.clone();
+            move |node| {
+                let Some(page) = weak.upgrade() else {
+                    return;
+                };
+                let chip = page.chip.borrow().clone();
+                if let (Some(chip), Some(part)) = (chip, node.attachment) {
+                    chip(part);
+                }
+            }
+        });
         // A dialog closed by its own ways out closes the message; one closed
         // on the view's way to the pane does not.
         page.dialog.connect_closed({
@@ -548,6 +568,48 @@ impl OpenMessage {
     /// Run `changed` whenever the message opens or closes.
     pub fn connect_changed(&self, changed: impl Fn() + 'static) {
         self.changed.replace(Some(Rc::new(changed)));
+    }
+
+    /// Run `chip` with the part whenever an attachment chip is activated.
+    pub fn connect_chip(&self, chip: impl Fn(postio_model::ids::AttachmentId) + 'static) {
+        self.chip.replace(Some(Rc::new(chip)));
+    }
+
+    /// The part `id`, as the parts tree has it: what a save names its file
+    /// from.
+    pub fn part_node(
+        &self,
+        id: postio_model::ids::AttachmentId,
+    ) -> Option<postio_ui::reader::parts::Node> {
+        self.part_nodes()
+            .into_iter()
+            .find(|node| node.attachment == Some(id))
+    }
+
+    /// Every named part of the message on screen, in the order it lists
+    /// them: what Save all writes, and what the chooser offers.
+    pub fn part_nodes(&self) -> Vec<postio_ui::reader::parts::Node> {
+        postio_ui::reader::parts::tree("multipart/mixed", &self.parts.borrow())
+            .into_iter()
+            .filter(|node| node.is_leaf() && node.attachment.is_some() && node.filename.is_some())
+            .collect()
+    }
+
+    /// The attachment chips under the body, as drawn.
+    pub fn attachment_chips(&self) -> Vec<gtk::Widget> {
+        let mut found = Vec::new();
+        let mut stack = vec![self.reader.widget()];
+        while let Some(widget) = stack.pop() {
+            if widget.has_css_class("postio-attachment") && widget.is::<gtk::Button>() {
+                found.push(widget.clone());
+            }
+            let mut child = widget.last_child();
+            while let Some(next) = child {
+                child = next.prev_sibling();
+                stack.push(next);
+            }
+        }
+        found
     }
 
     fn tell_changed(&self) {
@@ -1464,6 +1526,9 @@ fn root_type(stored: Option<&str>, body: &MessageBody, parts: &[Attachment]) -> 
         _ => "text/plain".to_owned(),
     }
 }
+
+/// Told which part a chip stands for.
+type ChipHandler = Rc<dyn Fn(postio_model::ids::AttachmentId)>;
 
 /// `RemoteImageAllowList`'s own file: the one every reader of the app shares.
 pub fn allowlist_path() -> std::path::PathBuf {

@@ -640,6 +640,24 @@ impl Fixture {
         message.id
     }
 
+    /// A message from Ada with one attached file, `report.pdf`, whose bytes
+    /// are [`ATTACHED`]: its raw source is kept, so the host can write the
+    /// part out as a save does, with no server behind it.
+    pub async fn file_with_kept_attachment(&self, subject: &str) -> MessageId {
+        let message = self.file_with_attachment(subject, "report.pdf").await;
+        self.write_body(message, "See attached.").await;
+        let raw = format!(
+            "From: Ada Moreno <ada@example.com>\r\nSubject: {subject}\r\n\
+             MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"edge\"\r\n\r\n\
+             --edge\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n\
+             --edge\r\nContent-Type: application/pdf; name=\"report.pdf\"\r\n\
+             Content-Disposition: attachment; filename=\"report.pdf\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{ATTACHED_BASE64}\r\n--edge--\r\n"
+        );
+        self.write_raw(message, raw.as_bytes()).await;
+        message
+    }
+
     /// Keep `raw` as `message`'s raw source, as a fetched message is kept.
     pub async fn write_raw(&self, message: MessageId, raw: &[u8]) {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
@@ -1250,3 +1268,8 @@ pub fn focus_path(window: &postio_focus::window::FocusWindow) -> String {
         chain.join(" > ")
     }
 }
+
+/// The bytes of the part [`Fixture::file_with_kept_attachment`] attaches:
+/// not text, so a save that went through a string would show.
+pub const ATTACHED: &[u8] = b"%PDF-1.4\n\x00\xff\x10 the plan\r\n";
+const ATTACHED_BASE64: &str = "JVBERi0xLjQKAP8QIHRoZSBwbGFuDQo=";

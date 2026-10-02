@@ -63,6 +63,7 @@ mod open_reading;
 mod pickers;
 mod places;
 mod pointer_pairs;
+mod reader_zoom;
 mod reading_pane;
 mod registry_parity;
 mod reload;
@@ -71,6 +72,7 @@ mod remote_images;
 mod row_menu;
 mod rows;
 mod rule_query;
+mod save_attachments;
 mod selection;
 mod settings;
 mod settings_wiring;
@@ -816,6 +818,39 @@ const CASES: &[(&str, fn())] = &[
     (
         "registry_parity::every_offered_command_that_is_whole_reaches_a_handler",
         registry_parity::every_offered_command_that_is_whole_reaches_a_handler as fn(),
+    ),
+    (
+        "save_attachments::save_in_the_chooser_writes_the_part_where_the_person_chose",
+        save_attachments::save_in_the_chooser_writes_the_part_where_the_person_chose as fn(),
+    ),
+    (
+        "save_attachments::save_all_in_the_chooser_writes_every_part_into_the_chosen_folder",
+        save_attachments::save_all_in_the_chooser_writes_every_part_into_the_chosen_folder
+            as fn(),
+    ),
+    (
+        "save_attachments::a_cancelled_portal_writes_nothing",
+        save_attachments::a_cancelled_portal_writes_nothing as fn(),
+    ),
+    (
+        "save_attachments::a_click_on_a_chip_shows_the_chooser_at_that_part",
+        save_attachments::a_click_on_a_chip_shows_the_chooser_at_that_part as fn(),
+    ),
+    (
+        "reader_zoom::the_zoom_keys_work_in_the_dialog_and_the_pane_and_the_level_is_kept",
+        reader_zoom::the_zoom_keys_work_in_the_dialog_and_the_pane_and_the_level_is_kept as fn(),
+    ),
+    (
+        "open_layout::paper_fit_multiplies_under_the_zoom",
+        open_layout::paper_fit_multiplies_under_the_zoom as fn(),
+    ),
+    (
+        "remote_images::show_fetches_once_and_asks_for_nothing_before",
+        remote_images::show_fetches_once_and_asks_for_nothing_before as fn(),
+    ),
+    (
+        "remote_images::always_holds_for_the_senders_next_message",
+        remote_images::always_holds_for_the_senders_next_message as fn(),
     ),
     (
         "reload::a_saved_compose_section_reaches_the_next_reply",

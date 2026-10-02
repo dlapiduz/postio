@@ -100,3 +100,157 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
         );
     });
 }
+
+/// A window over `senders`' messages, newest first (so `j` lands on the
+/// first listed), each with the tracking-pixel mail's HTML. The reader's
+/// fetch is a recorder: what it holds is what the app asked the network
+/// for.
+async fn shop(
+    senders: &[(&str, &str, &str)],
+) -> (postio_focus::window::FocusWindow, Rc<RefCell<Vec<String>>>) {
+    let fixture = Fixture::empty().await;
+    for (serial, (minutes, (name, address, subject))) in (5..).step_by(5).zip(senders).enumerate() {
+        let (message, _) = fixture
+            .file((name, address), subject, "Lamps.", minutes)
+            .await;
+        fixture
+            // Each message's images are its own: a URL fetched for one is
+            // not asked for again for the next.
+            .write_html_body(
+                message,
+                &html_of("html-tracking-pixel-remote-images").replace(
+                    "tracker.example.org",
+                    &format!("m{serial}.tracker.example.org"),
+                ),
+            )
+            .await;
+    }
+    let (window, _client) = fixture.open().await;
+    support::keep(fixture);
+    assert!(
+        crate::settle_until(async || support::subjects(&window).len() == senders.len()).await,
+        "the inbox never reached the screen"
+    );
+    support::keys(&window, &["j"]);
+    support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+    let reading = window.reading().expect("open");
+    let asked: Rc<RefCell<Vec<String>>> = Rc::default();
+    reading.reader().set_remote_fetch({
+        let asked = Rc::clone(&asked);
+        move |urls, _done| asked.borrow_mut().extend(urls)
+    });
+    assert!(
+        crate::settle_until(async || reading.reader().banner_visible()).await,
+        "the remote images were not held back behind the banner"
+    );
+    (window, asked)
+}
+
+/// Show images, once: nothing is asked for until the button is pressed, then
+/// the message's images are, and the next message from the sender is held
+/// back again.
+pub fn show_fetches_once_and_asks_for_nothing_before() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, asked) = shop(&[
+            ("Shop", "once@shop.example", "New lamps"),
+            ("Shop", "once@shop.example", "More lamps"),
+        ])
+        .await;
+        let reading = window.reading().expect("open");
+        crate::settle_for(std::time::Duration::from_millis(1500)).await;
+        assert!(
+            asked.borrow().is_empty(),
+            "asked before the person did: {:?}",
+            asked.borrow()
+        );
+        let show = support::button_labelled(&window, "Show images");
+        support::click(&window, &show, 1);
+        assert!(
+            crate::settle_until(async || !asked.borrow().is_empty()).await,
+            "Show images asked for nothing"
+        );
+        assert!(
+            asked
+                .borrow()
+                .iter()
+                .any(|url| url.contains("pixel.m0.tracker.example.org")),
+            "the message's images: {:?}",
+            asked.borrow()
+        );
+        let asked_for_first = asked.borrow().len();
+
+        // Once means this message: the sender's next one is held back.
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "More lamps").await,
+            "j did not step to the next message"
+        );
+        assert!(
+            crate::settle_until(async || reading.reader().banner_visible()).await,
+            "showing once allowed the sender"
+        );
+        crate::settle_for(std::time::Duration::from_millis(1500)).await;
+        assert_eq!(
+            asked.borrow().len(),
+            asked_for_first,
+            "the next message's images were asked for"
+        );
+    });
+}
+
+/// Always show from this sender (`i a`): the images are asked for, and the
+/// sender's next message opens with them, no banner; another sender's does
+/// not.
+pub fn always_holds_for_the_senders_next_message() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, asked) = shop(&[
+            ("Shop", "always@shop.example", "New lamps"),
+            ("Shop", "always@shop.example", "More lamps"),
+            ("Other", "stranger@other.example", "Lamps too"),
+        ])
+        .await;
+        let reading = window.reading().expect("open");
+        crate::settle_for(std::time::Duration::from_millis(1500)).await;
+        assert!(asked.borrow().is_empty(), "asked before the person did");
+        support::keys(&window, &["i", "a"]);
+        assert!(
+            crate::settle_until(async || !asked.borrow().is_empty()).await,
+            "`i a` asked for nothing"
+        );
+        asked.borrow_mut().clear();
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "More lamps").await,
+            "j did not step to the sender's next message"
+        );
+        assert!(
+            crate::settle_until(async || !asked.borrow().is_empty()).await,
+            "the sender's next message did not fetch its images"
+        );
+        assert!(
+            !reading.reader().banner_visible(),
+            "the banner came back for an allowed sender"
+        );
+        asked.borrow_mut().clear();
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Lamps too").await,
+            "j did not step to the stranger's message"
+        );
+        assert!(
+            crate::settle_until(async || reading.reader().banner_visible()).await,
+            "always allowed a sender who was never asked about"
+        );
+        crate::settle_for(std::time::Duration::from_millis(1500)).await;
+        assert!(
+            asked.borrow().is_empty(),
+            "a stranger's images were asked for"
+        );
+    });
+}

@@ -31,6 +31,9 @@ use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 
 /// Where a chosen link or part is opened.
 type Launcher = Rc<dyn Fn(&str)>;
+/// Asks where to save, and answers with the place chosen -- `None` when the
+/// person dismissed it (T240).
+type FilePicker = Rc<dyn Fn(crate::chooser::SavePick, Box<dyn FnOnce(Option<std::path::PathBuf>)>)>;
 
 /// Where `EditConfig` opens `config.toml`, when a test says.
 type Editor = Rc<dyn Fn(&std::path::Path)>;
@@ -177,6 +180,7 @@ mod imp {
         /// Where a chosen link or part is opened: the desktop, unless a
         /// test has said otherwise.
         pub launcher: RefCell<Option<super::Launcher>>,
+        pub file_picker: RefCell<Option<super::FilePicker>>,
         /// What the open-with chooser on screen offers.
         pub choices: RefCell<Vec<crate::chooser::Choice>>,
         /// Where remote images are fetched: the host's runtime.
@@ -309,6 +313,7 @@ mod imp {
                 split: RefCell::default(),
                 placement: Cell::default(),
                 launcher: RefCell::default(),
+                file_picker: RefCell::default(),
                 choices: RefCell::default(),
                 runtime: RefCell::default(),
                 bar: RefCell::default(),
@@ -1085,13 +1090,22 @@ impl FocusWindow {
                 self.open_message();
             }
             Ok(CommandId::ViewSource) => self.view_source(),
+            // The size of the message on screen, in the dialog and beside
+            // the list (T242), and the banner's buttons (T247).
+            Ok(
+                id @ (CommandId::ZoomIn
+                | CommandId::ZoomOut
+                | CommandId::ZoomReset
+                | CommandId::ShowImages
+                | CommandId::AlwaysShowImages),
+            ) => self.act(id),
             Ok(CommandId::DismissMarker) => self.dismiss_marker(),
             Ok(CommandId::MoreActions) => reading.show_more(),
             // The open message moves between the dialog and the pane (T232).
             Ok(CommandId::ToggleReadingPane) => self.toggle_reading_pane(),
             // `Return` on the row already open beside the list: it is open.
             Ok(CommandId::OpenMessage) if reading.in_pane() => self.open_message(),
-            Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(),
+            Ok(CommandId::OpenAttachmentOrLink) => self.offer_choices(None),
             // Screen 04's toolbar verbs and the Invite card's answers, for
             // the message on screen (US3, US8).
             Ok(
@@ -1620,6 +1634,23 @@ impl FocusWindow {
             // Focus's first run (T171), and what `c` offers with no
             // account (T172).
             CommandId::AddAccount => self.open_add_account(),
+            // The open message's size and its banner's buttons (T242,
+            // T247): nothing happens with no message open or nothing held
+            // back.
+            CommandId::ZoomIn | CommandId::ZoomOut | CommandId::ZoomReset => {
+                if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
+                    match id {
+                        CommandId::ZoomIn => reading.reader().zoom_in(),
+                        CommandId::ZoomOut => reading.reader().zoom_out(),
+                        _ => reading.reader().zoom_reset(),
+                    }
+                }
+            }
+            CommandId::ShowImages | CommandId::AlwaysShowImages => {
+                if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
+                    reading.reader().run_banner_command(id);
+                }
+            }
             _ => {
                 tracing::debug!(command = %id, "no Focus surface answers this command yet");
                 self.imp().unanswered.borrow_mut().push(id);
@@ -3587,6 +3618,26 @@ impl FocusWindow {
                 if let Some(zoom) = self.imp().zoom.get() {
                     reading.reader().set_zoom(zoom);
                 }
+                // A zoom a person chose is the next message's too (T242):
+                // written to `[reader]` alone, which the watcher then reads
+                // back as the zoom it already is.
+                reading.reader().connect_zoom_changed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |percent| {
+                        if let Some(path) = window.config_path()
+                            && let Err(error) = postio_config::save_zoom(&path, percent)
+                        {
+                            tracing::warn!(%error, "could not save the zoom");
+                        }
+                    }
+                ));
+                // A chip asks for the chooser, at its part (T240).
+                reading.connect_chip(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |part| window.offer_choices(Some(part))
+                ));
                 // Opening or closing it changes what the reading pane shows,
                 // and closing it there gives the keyboard back to the list.
                 reading.connect_changed(glib::clone!(
@@ -3677,8 +3728,9 @@ impl FocusWindow {
         }
     }
 
-    /// `o`: offer the open message's links and parts (US2 scenario 9).
-    fn offer_choices(&self) {
+    /// `o`: offer the open message's links and parts (US2 scenario 9), or
+    /// a chip's part, which is the same chooser opened at that part (T240).
+    fn offer_choices(&self, at: Option<postio_model::ids::AttachmentId>) {
         let Some(reading) = self.reading().filter(|reading| reading.is_open()) else {
             return;
         };
@@ -3690,14 +3742,64 @@ impl FocusWindow {
             self.follow_toast();
             return;
         }
+        let at = at.and_then(|wanted| {
+            choices.iter().position(
+                |choice| matches!(choice, crate::chooser::Choice::Part { id, .. } if *id == wanted),
+            )
+        });
         self.imp().choices.replace(choices.clone());
         let window = self.downgrade();
-        crate::chooser::dialog(&choices, move |index| {
+        crate::chooser::dialog(&choices, at, move |pick| {
             if let Some(window) = window.upgrade() {
-                window.open_choice(index);
+                window.pick_choice(pick);
             }
         })
         .present(Some(self));
+    }
+
+    /// Ask the file-chooser portal where to save, through the seam a test
+    /// answers for itself.
+    pub fn set_file_picker(
+        &self,
+        pick: impl Fn(crate::chooser::SavePick, Box<dyn FnOnce(Option<std::path::PathBuf>)>) + 'static,
+    ) {
+        self.imp().file_picker.replace(Some(Rc::new(pick)));
+    }
+
+    fn pick_place(
+        &self,
+        pick: crate::chooser::SavePick,
+        then: impl FnOnce(std::path::PathBuf) + 'static,
+    ) {
+        let seam = self.imp().file_picker.borrow().clone();
+        // Dismissed is a person's answer, not a fault: nothing is written
+        // and nothing is said.
+        let answer = move |chosen: Option<std::path::PathBuf>| {
+            if let Some(path) = chosen {
+                then(path);
+            }
+        };
+        if let Some(seam) = seam {
+            return seam(pick, Box::new(answer));
+        }
+        // POSTIO-CONSENT: runs only when the person pressed Save or Save all
+        // in the chooser; the portal's dialog is theirs to dismiss.
+        let dialog = gtk::FileDialog::new();
+        // The portal hands back a local path for every choice.
+        let done = move |chosen: Result<gio::File, glib::Error>| {
+            answer(chosen.ok().and_then(|file| file.path()));
+        };
+        match pick {
+            crate::chooser::SavePick::File { suggested } => {
+                dialog.set_title("Save attachment");
+                dialog.set_initial_name(Some(&suggested));
+                dialog.save(Some(self), None::<&gio::Cancellable>, done);
+            }
+            crate::chooser::SavePick::Folder => {
+                dialog.set_title("Save attachments to");
+                dialog.select_folder(Some(self), None::<&gio::Cancellable>, done);
+            }
+        }
     }
 
     /// What the open-with chooser offers, each as its words and its target
@@ -3719,13 +3821,114 @@ impl FocusWindow {
 
     /// Choose the `index`th thing the chooser offers, as a click on it does.
     pub fn choose(&self, index: usize) {
+        self.close_chooser();
+        self.open_choice(index);
+    }
+
+    /// The row the chooser opened on: where a chip took it.
+    pub fn choice_focused(&self) -> Option<String> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == crate::chooser::DIALOG_NAME)
+            .and_then(|dialog| crate::chooser::selected(&dialog))
+    }
+
+    fn close_chooser(&self) {
         if let Some(dialog) = self
             .visible_dialog()
             .filter(|dialog| dialog.widget_name() == crate::chooser::DIALOG_NAME)
         {
             dialog.close();
         }
-        self.open_choice(index);
+    }
+
+    fn pick_choice(&self, pick: crate::chooser::Pick) {
+        use crate::chooser::Pick;
+        match pick {
+            Pick::Open(index) => self.open_choice(index),
+            Pick::Save(index) => self.save_choice(index),
+            Pick::SaveAll => self.save_all_parts(),
+        }
+    }
+
+    /// Save the part the chooser offered at `index` to a file the portal
+    /// names, written by the host (a part not here yet is fetched first).
+    fn save_choice(&self, index: usize) {
+        let choice = self.imp().choices.borrow().get(index).cloned();
+        self.imp().choices.borrow_mut().clear();
+        let Some(crate::chooser::Choice::Part { id, .. }) = choice else {
+            return;
+        };
+        let (Some(reading), Some(client)) = (self.reading(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let (Some(message), Some(node)) = (reading.shown(), reading.part_node(id)) else {
+            return;
+        };
+        let suggested = postio_ui::reader::parts::save_name(&node);
+        let window = self.downgrade();
+        self.pick_place(crate::chooser::SavePick::File { suggested }, move |to| {
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
+                // host answers on its own runtime (ADR 0041).
+                let saved = client.save_part(message, id, to).await;
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                match saved {
+                    Ok(path) => {
+                        let name = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        window.imp().toast.show_notice(&format!("Saved {name}"));
+                    }
+                    Err(error) => window.imp().toast.show_notice(&error.to_string()),
+                }
+                window.follow_toast();
+            });
+        });
+    }
+
+    /// Save every attachment into a folder the portal names, each under the
+    /// name the sender gave it, no two over one another.
+    fn save_all_parts(&self) {
+        self.imp().choices.borrow_mut().clear();
+        let (Some(reading), Some(client)) = (self.reading(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let Some(message) = reading.shown() else {
+            return;
+        };
+        let nodes = reading.part_nodes();
+        if nodes.is_empty() {
+            return;
+        }
+        let window = self.downgrade();
+        self.pick_place(crate::chooser::SavePick::Folder, move |folder| {
+            let names = postio_ui::reader::parts::save_names(&nodes);
+            let targets: Vec<_> = nodes
+                .iter()
+                .zip(names)
+                .filter_map(|(node, name)| Some((node.attachment?, folder.join(name))))
+                .collect();
+            let count = targets.len();
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: as `save_choice`'s.
+                let saved = client.save_parts(message, targets).await;
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                let said = match saved {
+                    Ok(failed) => postio_ui::reader::parts::save_all_failure(failed)
+                        .unwrap_or_else(|| format!("Saved {count} attachments")),
+                    Err(error) => error.to_string(),
+                };
+                window.imp().toast.show_notice(&said);
+                window.follow_toast();
+            });
+        });
     }
 
     /// Open what the chooser offered at `index`: a link as it is, a part

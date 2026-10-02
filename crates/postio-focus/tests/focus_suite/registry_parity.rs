@@ -63,8 +63,6 @@ const NOT_YET: &[&str] = &[
     "numbered_list",
     "insert_link",
     "quote_block",
-    "show_images",
-    "always_show_images",
     "unsubscribe",
     "update_credential",
     "next_scope",

@@ -516,7 +516,7 @@ impl crate::window::FocusWindow {
         self.imp().client.borrow().clone()
     }
 
-    fn config_path(&self) -> Option<std::path::PathBuf> {
+    pub(crate) fn config_path(&self) -> Option<std::path::PathBuf> {
         self.imp().config_path.borrow().clone()
     }
 
