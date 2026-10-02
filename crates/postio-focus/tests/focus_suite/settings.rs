@@ -527,7 +527,7 @@ pub fn mod_e_opens_config_toml_in_the_persons_editor() {
         crate::settle();
         assert_eq!(
             opened.borrow().as_slice(),
-            [path.clone()],
+            std::slice::from_ref(&path),
             "mod+e from the list opened config.toml"
         );
 

@@ -58,10 +58,7 @@ ALLOWED = {
     "crates/postio-app/src/onboarding.rs": 1,
     "crates/postio-app/src/orientation.rs": 2,
     "crates/postio-app/src/search.rs": 1,
-    "crates/postio-app/src/settings_accounts.rs": 9,
     "crates/postio-app/src/settings_credential.rs": 1,
-    "crates/postio-app/src/settings_egress.rs": 1,
-    "crates/postio-app/src/settings_privacy.rs": 1,
     "crates/postio-app/src/sidebar_backfill.rs": 1,
     # present::reading::cid_source: WebKit's `cid:` resolver is a synchronous
     # foreign callback that cannot be made async -- the one legitimate site
@@ -70,6 +67,11 @@ ALLOWED = {
     # instead of `postio_session`'s, because this crate may not depend on
     # `postio-session` (ADR 0043).
     "crates/postio-widgets/src/present/reading.rs": 1,
+    # The settings presenters, moved from postio-app with their debt
+    # (specs/007-postio-focus T233): accounts 9 and the credential's 1.
+    "crates/postio-widgets/src/present/settings/accounts.rs": 10,
+    "crates/postio-widgets/src/present/settings/egress.rs": 1,
+    "crates/postio-widgets/src/present/settings/privacy.rs": 1,
 }
 
 

@@ -290,6 +290,8 @@ impl Accounts {
             let expiries = self.outside.token_expiries(oauth);
             let panel = self.panel.clone();
             glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: the app reads the keyring on its own
+                // runtime and answers over a channel (`Outside`).
                 let expiries = expiries.await;
                 if let Some(panel) = panel.upgrade() {
                     panel.set_token_expiries(&expiries);
@@ -381,6 +383,8 @@ impl Accounts {
         let answer = self.outside.test_connection(account);
         let panel = self.panel.clone();
         glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: the app dials on its own runtime and answers
+            // over a channel (`Outside`).
             let (incoming, outgoing) = answer.await;
             if let Some(panel) = panel.upgrade() {
                 panel.set_connection_status(ConnectionStatus::Answered { incoming, outgoing });

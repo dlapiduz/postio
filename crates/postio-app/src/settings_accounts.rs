@@ -123,6 +123,8 @@ impl Outside for Classic {
         };
         let frontend = self.frontend.clone();
         glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: reading the account is a client call, a
+            // oneshot receive; the host answers on its own runtime.
             crate::settings_credential::open(&window, &frontend, account, saved).await;
         });
     }

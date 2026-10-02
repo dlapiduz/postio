@@ -55,23 +55,26 @@ pub fn install(panel: &SettingsPanel, client: Client) {
         move |mailbox, excluded| {
             let weak: glib::WeakRef<SettingsPanel> = weak.clone();
             let client = client.clone();
-            postio_core::blocking::now(async move {
-                if let Some(all) = set_excluded(&client, mailbox, excluded).await
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
+                let answer = set_excluded(&client, mailbox, excluded).await;
+                if let Some(all) = answer
                     && let Some(panel) = weak.upgrade()
                 {
                     panel.set_account_folders(all);
                 }
-            })
+            });
         }
     });
     panel.connect_map(move |_| {
         let weak: glib::WeakRef<SettingsPanel> = weak.clone();
         let client = client.clone();
-        postio_core::blocking::now(async move {
+        glib::spawn_future_local(async move {
             if let Some(panel) = weak.upgrade() {
+                // POSTIO-GLIB-SAFE: client calls, oneshot receives.
                 refresh(&panel, &client).await;
             }
-        })
+        });
     });
 }
 

@@ -1885,7 +1885,7 @@ impl SettingsPanel {
         // the list is small, and a diff is a second description of the same
         // state free to disagree with the first.
         if let Some(list) = imp.account_detail_signature_list.get() {
-            clear_rows(&list);
+            clear_rows(list);
             for signature in &account.signatures {
                 let row = gtk::ListBoxRow::new();
                 let label = gtk::Label::new(Some(&signature.name));

@@ -149,9 +149,11 @@ impl Settings {
                 let Some(panel) = settings.upgrade().map(|settings| settings.panel.clone()) else {
                     return;
                 };
+                // POSTIO-GLIB-SAFE: client calls, oneshot receives.
                 postio_widgets::present::settings::privacy::install(&panel, client.clone()).await;
-                let accounts =
-                    Accounts::install(&panel, client, outside, Reindexing::default()).await;
+                let installing = Accounts::install(&panel, client, outside, Reindexing::default());
+                // POSTIO-GLIB-SAFE: client calls, oneshot receives.
+                let accounts = installing.await;
                 if let Some(settings) = settings.upgrade() {
                     settings.accounts.replace(Some(accounts));
                 }
@@ -260,7 +262,10 @@ impl Settings {
     pub fn refresh_accounts(&self) {
         let accounts = self.accounts.borrow().clone();
         if let Some(accounts) = accounts {
-            glib::spawn_future_local(async move { accounts.refresh().await });
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: client calls, oneshot receives.
+                accounts.refresh().await
+            });
         }
     }
 }
@@ -322,12 +327,12 @@ impl Outside for FocusOutside {
         let client = self.client.clone();
         glib::spawn_future_local(async move {
             let open_link = postio_widgets::present::onboarding::open_in_browser(&window);
+            let updating = postio_widgets::present::settings::credential::update(
+                &window, &client, account, open_link, saved,
+            );
             // POSTIO-GLIB-SAFE: reading the account is a client call, a
             // oneshot receive; the host answers on its own runtime.
-            postio_widgets::present::settings::credential::update(
-                &window, &client, account, open_link, saved,
-            )
-            .await;
+            updating.await;
         });
     }
 

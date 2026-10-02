@@ -32,6 +32,9 @@ use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 /// Where a chosen link or part is opened.
 type Launcher = Rc<dyn Fn(&str)>;
 
+/// Where `EditConfig` opens `config.toml`, when a test says.
+type Editor = Rc<dyn Fn(&std::path::Path)>;
+
 /// What the page offering a fresh store says (T215): what happened, why
 /// trying again would not help, what a fresh store keeps and what it does
 /// not, and that the old one is set aside rather than deleted.
@@ -256,7 +259,7 @@ mod imp {
         pub settings_seams: RefCell<Option<crate::settings::Seams>>,
         /// Where `EditConfig` opens `config.toml`: the person's editor,
         /// unless a test has said otherwise (T235).
-        pub editor: RefCell<Option<Rc<dyn Fn(&std::path::Path)>>>,
+        pub editor: RefCell<Option<super::Editor>>,
         /// `[compose]` as the file last said: where a signature goes (T235).
         pub compose_config: RefCell<postio_config::ComposeConfig>,
         /// `[reader]`'s zoom as the file last said, once it has said one

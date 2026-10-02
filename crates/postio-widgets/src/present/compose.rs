@@ -130,13 +130,10 @@ pub fn install_signature_default(
         let weak = weak.clone();
         let selected = selected();
         glib::spawn_future_local(async move {
+            let resolving = client.default_signature(account, selected);
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // resolves the rest.
-            let resolved = client
-                .default_signature(account, selected)
-                .await
-                .ok()
-                .flatten();
+            let resolved = resolving.await.ok().flatten();
             // A default the composer has not been told about: one made in
             // Settings since it read the account's signatures, or the first
             // compose, whose read has not landed yet. Read them again first,
@@ -144,6 +141,7 @@ pub fn install_signature_default(
             if let (Some(id), Some(composer)) = (resolved, weak.upgrade())
                 && !composer.has_signature(id)
             {
+                // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
                 install_identities(&composer, &client, account).await;
             }
             answer(resolved);
