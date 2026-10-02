@@ -29,6 +29,13 @@ use postio_storage::{BlobStore, Store};
 /// How many recipient suggestions a prefix offers.
 pub const SUGGESTION_LIMIT: u32 = 8;
 
+/// The moment a draft is saved, queued or cancelled at, from the clock seam
+/// rather than the system's, so a storyboard that stops the clock sees the
+/// Outbox dated as of its own day.
+fn now() -> DateTime<Utc> {
+    postio_model::clock::now().with_timezone(&Utc)
+}
+
 /// Autosave: the draft is written, and its upload to the server's Drafts
 /// folder is queued in the same transaction (`DraftRepository::save_and_sync`).
 ///
@@ -38,7 +45,7 @@ pub const SUGGESTION_LIMIT: u32 = 8;
 pub async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
     DraftRepository::new(&connection)
-        .save_and_sync(draft, Utc::now())
+        .save_and_sync(draft, now())
         .await?;
     Ok(())
 }
@@ -47,7 +54,7 @@ pub async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::
 pub async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
     DraftRepository::new(&connection)
-        .discard(id, Utc::now())
+        .discard(id, now())
         .await?;
     Ok(())
 }
@@ -64,10 +71,10 @@ pub async fn queue_send(
     let drafts = DraftRepository::new(&connection);
     match at {
         Some(at) => {
-            drafts.queue_send_at(draft, Utc::now(), at).await?;
+            drafts.queue_send_at(draft, now(), at).await?;
         }
         None => {
-            drafts.queue_send(draft, Utc::now()).await?;
+            drafts.queue_send(draft, now()).await?;
         }
     }
     Ok(())
@@ -304,7 +311,7 @@ pub async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> 
         .map_err(|error| tracing::warn!(%error, "could not open the store to cancel a send"))
         .ok()?;
     let drafts = DraftRepository::new(&connection);
-    match drafts.cancel_send(id, Utc::now()).await {
+    match drafts.cancel_send(id, now()).await {
         Ok(CancelSendOutcome::Cancelled) => drafts
             .get(id)
             .await
