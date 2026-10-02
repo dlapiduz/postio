@@ -156,6 +156,29 @@ impl ListPane {
         self.on_pick.replace(Some(Rc::new(handler)));
     }
 
+    /// Offer `offer`'s content when a row is dragged out of the list (T245):
+    /// it is asked, with the row's place in the list, only once the pointer
+    /// has moved far enough to be a drag, and answers what a receiver is to
+    /// be offered, or `None` for a drag with nothing to give. A drag starting
+    /// between rows -- a day's heading -- is none.
+    ///
+    /// Copy, not move: Focus has no folder to drop a row on, and what leaves
+    /// is a file, so the row stays where it is.
+    pub fn connect_row_drag(
+        &self,
+        offer: impl Fn(u32) -> Option<gtk::gdk::ContentProvider> + 'static,
+    ) {
+        let drag = gtk::DragSource::new();
+        drag.set_actions(gtk::gdk::DragAction::COPY);
+        let view = self.view.downgrade();
+        let list = self.feed.list().downgrade();
+        drag.connect_prepare(move |_, x, y| {
+            let (view, list) = (view.upgrade()?, list.upgrade()?);
+            offer(row_position_at(&view, &list, x, y)?)
+        });
+        self.view.add_controller(drag);
+    }
+
     /// Run `handler` on a secondary click on a row (T199): the row's place
     /// in the list, and where the click was, in the list view's
     /// coordinates. A click between rows -- a day's heading -- runs nothing.
@@ -168,17 +191,9 @@ impl ListPane {
             let (Some(view), Some(list)) = (view.upgrade(), list.upgrade()) else {
                 return;
             };
-            let mut at = view.pick(x, y, gtk::PickFlags::DEFAULT);
-            while let Some(widget) = at {
-                if let Some(row) = widget.downcast_ref::<RowWidget>() {
-                    if let Some(position) = row.item().and_then(|item| list.position_of(item.id()))
-                    {
-                        gesture.set_state(gtk::EventSequenceState::Claimed);
-                        handler(position, gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1));
-                    }
-                    return;
-                }
-                at = widget.parent();
+            if let Some(position) = row_position_at(&view, &list, x, y) {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                handler(position, gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1));
             }
         });
         self.view.add_controller(click);
@@ -378,6 +393,24 @@ fn first_heading_height(view: &gtk::ListView) -> Option<f64> {
             return Some(f64::from(natural));
         }
         child = widget.next_sibling();
+    }
+    None
+}
+
+/// The place in `list` of the row drawn at `x`, `y` in `view`'s coordinates:
+/// `None` over a day's heading or the empty space between.
+fn row_position_at(
+    view: &gtk::ListView,
+    list: &super::model::FocusList,
+    x: f64,
+    y: f64,
+) -> Option<u32> {
+    let mut at = view.pick(x, y, gtk::PickFlags::DEFAULT);
+    while let Some(widget) = at {
+        if let Some(row) = widget.downcast_ref::<RowWidget>() {
+            return row.item().and_then(|item| list.position_of(item.id()));
+        }
+        at = widget.parent();
     }
     None
 }

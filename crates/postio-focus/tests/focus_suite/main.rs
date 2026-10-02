@@ -38,6 +38,7 @@ mod cursor;
 mod desktop;
 mod digest;
 mod digest_summary;
+mod drag_out;
 mod drafts;
 mod empty;
 mod filtered;
@@ -1014,6 +1015,18 @@ const CASES: &[(&str, fn())] = &[
         settings::mod_e_opens_config_toml_in_the_persons_editor as fn(),
     ),
     (
+        "drag_out::a_dragged_row_hands_a_file_manager_its_message_as_an_eml",
+        drag_out::a_dragged_row_hands_a_file_manager_its_message_as_an_eml as fn(),
+    ),
+    (
+        "drag_out::a_dragged_selection_is_every_selected_message_and_nothing_is_written_early",
+        drag_out::a_dragged_selection_is_every_selected_message_and_nothing_is_written_early as fn(),
+    ),
+    (
+        "drag_out::a_select_all_drag_offers_no_files",
+        drag_out::a_select_all_drag_offers_no_files as fn(),
+    ),
+    (
         "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
         settings_wiring::the_account_verbs_have_keys_on_the_focused_row as fn(),
     ),
@@ -1170,6 +1183,9 @@ fn hermetic(arguments: &[String]) {
         // State too: the remote-image allow list lives there, and a case
         // about blocked images must not read the developer's own.
         .env("XDG_STATE_HOME", config.path().join("state"))
+        // Cache too: a message dragged out is written there (T245), and a
+        // case about it must not fill the developer's own.
+        .env("XDG_CACHE_HOME", config.path().join("cache"))
         // Accessible properties are recorded only with a backend: the test
         // one, so a case can ask what a screen reader would be told (T142).
         .env("GTK_A11Y", "test")

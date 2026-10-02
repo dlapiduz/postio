@@ -7,6 +7,8 @@
 //! * [`onboarding`] -- the account form joined to the store's host: its
 //!   probe, its proof, its browser sign-in and its writes, and the
 //!   add-account and credential dialogs built on them.
+//! * [`export`] -- messages as `.eml` files for a drag out of either app's
+//!   list, written only when a drop asks (T245).
 //! * [`reading`] -- the reader's remote images, fetched off the main loop by
 //!   whatever the app's composition root owns, and handed back on it; and its
 //!   `cid:` images, resolved through `postio-client` scoped to the message on
@@ -22,6 +24,7 @@
 
 pub mod compose;
 pub mod config;
+pub mod export;
 pub mod onboarding;
 pub mod reading;
 pub mod settings;

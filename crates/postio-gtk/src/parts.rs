@@ -455,7 +455,7 @@ impl PartsPanel {
             return None;
         }
         let export = self.imp().export.borrow().clone()?;
-        Some(crate::drag_out::LazyFiles::for_part(node.clone(), export).upcast())
+        Some(crate::drag_out::lazy_part(node.clone(), export).upcast())
     }
 
     /// The node whose row sits at `y` in the tree's coordinates.

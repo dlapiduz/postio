@@ -25,6 +25,7 @@ mod body_view_fallback;
 mod body_view_highlight;
 mod body_view_resets;
 mod capture;
+mod drag_out;
 mod harness;
 mod list_contract;
 mod list_model_generic;
@@ -48,6 +49,22 @@ mod widgets_css;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "drag_out::nothing_is_written_until_the_drop_asks",
+        drag_out::nothing_is_written_until_the_drop_asks as fn(),
+    ),
+    (
+        "drag_out::the_sandboxed_spelling_is_offered_too",
+        drag_out::the_sandboxed_spelling_is_offered_too as fn(),
+    ),
+    (
+        "drag_out::an_export_that_produced_nothing_refuses_the_drop",
+        drag_out::an_export_that_produced_nothing_refuses_the_drop as fn(),
+    ),
+    (
+        "drag_out::a_failed_export_fails_the_drop",
+        drag_out::a_failed_export_fails_the_drop as fn(),
+    ),
     (
         "reader_treatment::a_reader_reports_its_treatment_and_tells_when_it_changes",
         reader_treatment::a_reader_reports_its_treatment_and_tells_when_it_changes as fn(),

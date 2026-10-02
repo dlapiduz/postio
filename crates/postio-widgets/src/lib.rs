@@ -13,6 +13,7 @@
 pub mod body_view;
 pub mod capture;
 pub mod composer;
+pub mod drag_out;
 pub mod editor;
 pub mod keys;
 pub mod list_model;

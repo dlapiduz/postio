@@ -2096,6 +2096,8 @@ impl FocusWindow {
             self,
             move |_| window.follow_cursor()
         ));
+        // A row pulled out of the window offers its message as a file (T245).
+        self.connect_drag_out(&pane);
         // A right-click opens the row's menu (T199).
         pane.connect_row_menu(glib::clone!(
             #[weak(rename_to = window)]
