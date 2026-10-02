@@ -621,6 +621,14 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "sending_states::the_pane_offers_a_waiting_send_its_verbs",
+        sending_states::the_pane_offers_a_waiting_send_its_verbs as fn(),
+    ),
+    (
+        "sending_states::received_mail_keeps_its_verbs_and_the_send_keys_say_why_not",
+        sending_states::received_mail_keeps_its_verbs_and_the_send_keys_say_why_not as fn(),
+    ),
+    (
         "read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read",
         read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read as fn(),
     ),

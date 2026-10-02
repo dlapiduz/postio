@@ -352,3 +352,116 @@ pub fn edit_on_a_queued_send_takes_it_off_the_queue_and_opens_the_composer() {
         );
     });
 }
+
+/// The same in the pane beside the list (T232): a waiting send opened from
+/// the Outbox shows there, not in the dialog or the composer, with Cancel
+/// send and Edit in place of received mail's verbs; a click on Cancel send
+/// stops the send, takes the row out of the Outbox and closes the pane.
+pub fn the_pane_offers_a_waiting_send_its_verbs() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (fixture, window, draft) = with_a_draft(DraftState::Queued).await;
+        window.set_focus_config(postio_config::FocusConfig {
+            reading: postio_config::Reading::Pane,
+            ..postio_config::FocusConfig::default()
+        });
+        crate::settle();
+        go_to(&window, "Outbox").await;
+        assert!(
+            crate::settle_until(async || {
+                row_texts(&window, SUBJECT)
+                    .is_some_and(|texts| texts.iter().any(|text| text == "Waiting to send"))
+            })
+            .await,
+            "the Outbox row does not say Waiting to send: {:?}",
+            row_texts(&window, SUBJECT)
+        );
+        open_the_draft(&window).await;
+        let reading = reading(&window).await;
+        assert!(
+            reading.in_pane(),
+            "a waiting send opened in the dialog with the pane chosen"
+        );
+        assert!(
+            window.compose_dialog().is_none(),
+            "looking at a waiting send opened the composer"
+        );
+        assert!(
+            crate::settle_until(async || verbs(&reading) == ["Cancel send", "Edit"]).await,
+            "the pane offers a waiting send {:?}",
+            verbs(&reading)
+        );
+
+        let cancel = support::button_labelled(&reading.view(), "Cancel send");
+        support::click(&window, &cancel, 1);
+        assert!(
+            crate::settle_until(async || {
+                state_of(&fixture, draft).await == Some(DraftState::Editing)
+            })
+            .await,
+            "Cancel send in the pane left it {:?}",
+            state_of(&fixture, draft).await
+        );
+        assert!(
+            crate::settle_until(async || row_texts(&window, SUBJECT).is_none()).await,
+            "the cancelled send is still in the Outbox"
+        );
+        assert!(
+            crate::settle_until(async || !reading.is_open()).await,
+            "the pane stayed on a send that left the list"
+        );
+        assert!(
+            window.compose_dialog().is_none(),
+            "cancelling a send opened the composer"
+        );
+    });
+}
+
+/// Received mail keeps received mail's verbs, and the send verbs' keys over
+/// it say why they do nothing rather than doing nothing silently.
+pub fn received_mail_keeps_its_verbs_and_the_send_keys_say_why_not() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (fixture, window, draft) = with_a_draft(DraftState::Unconfirmed).await;
+        support::deliver(&window, "j");
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .reading()
+                    .is_some_and(|reading| reading.is_open() && reading.title() == "Budget")
+            })
+            .await,
+            "Return on the inbox row opened nothing"
+        );
+        let reading = window.reading().expect("the open message");
+        assert!(
+            crate::settle_until(async || verbs(&reading) == ["Reply", "Archive"]).await,
+            "received mail offers {:?}",
+            verbs(&reading)
+        );
+        // Mark as sent's own key, as the registry binds it.
+        support::deliver_with(
+            &window,
+            "m",
+            gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
+        );
+        assert!(
+            crate::settle_until(async || {
+                window.toast_showing().as_deref() == Some("That message is not one being sent")
+            })
+            .await,
+            "Mark as sent over received mail said {:?}",
+            window.toast_showing()
+        );
+        assert_eq!(
+            state_of(&fixture, draft).await,
+            Some(DraftState::Unconfirmed),
+            "Mark as sent over received mail settled a draft it was not aimed at"
+        );
+    });
+}
