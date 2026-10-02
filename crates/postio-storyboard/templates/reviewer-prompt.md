@@ -7,7 +7,8 @@ Base: {{base}}
 App: {{app}}
 Surface: {{surface}}
 
-Every path below is relative to the bundle directory.
+Every path below, except the three under the repository, is relative to the
+bundle directory.
 
 ## 1. Role
 
@@ -17,10 +18,10 @@ storyboards. Find what a person would notice.
 
 ## 2. Read first
 
-- `.claude/skills/ux-architect/SKILL.md`
-- `.claude/skills/gtk-design/SKILL.md`
-- `docs/PRODUCT.md` (skim)
-- `acceptance.md`
+- `{{repo}}/.claude/skills/ux-architect/SKILL.md`
+- `{{repo}}/.claude/skills/gtk-design/SKILL.md`
+- `{{repo}}/docs/PRODUCT.md` (skim)
+- `acceptance.md` (in the bundle)
 - each design screen named for this batch:
 {{design}}
 

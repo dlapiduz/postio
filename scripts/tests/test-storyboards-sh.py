@@ -213,6 +213,23 @@ def main() -> int:
         expect("key", "--tree crates/postio-gtk=absent" in call, call)
         expect("key", "crates/postio-app=" in call and "crates/postio-app=absent" not in call, call)
 
+        print("case: bundle points the tool at the runs, the catalogue and the design screens")
+        acceptance = Path(ctx["repo"]) / "acceptance.md"
+        acceptance.write_text("Escape returns to the row.\n")
+        result = run(ctx, "bundle", "--acceptance", str(acceptance))
+        call = next((l for l in log_lines(ctx) if l.startswith("tool bundle")), "")
+        expect("bundle", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
+        expect("bundle", "Design/review/feature-storyboards/runs" in call, call)
+        expect("bundle", "--catalogue" in call and call.split("--catalogue ")[1].split()[0].endswith("storyboards"), call)
+        expect("bundle", "--design-dir" in call and "Design/screens" in call, call)
+        expect("bundle", "Design/review/feature-storyboards/bundle" in call, call)
+        expect("bundle", "postio-focus-design" not in call, "the untracked Focus design folder is never offered")
+
+        print("case: tool passes its arguments to postio-storyboard")
+        run(ctx, "tool", "verdicts", "check", "/some/bundle")
+        call = next((l for l in log_lines(ctx) if l.startswith("tool verdicts")), "")
+        expect("tool", call == "tool verdicts check /some/bundle", call)
+
     if FAILURES:
         print(f"\n{len(FAILURES)} self-test assertion(s) failed:", file=sys.stderr)
         for failure in FAILURES:

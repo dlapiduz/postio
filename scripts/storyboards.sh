@@ -18,6 +18,8 @@
 #   scripts/storyboards.sh lint                    # load and lint the whole catalogue
 #   scripts/storyboards.sh page  [--open]          # Design/review/<branch>/index.html from the runs
 #   scripts/storyboards.sh key   [--app classic|focus|all]   # the review key for HEAD's tree
+#   scripts/storyboards.sh bundle --acceptance <file> [--calibration]   # what a reviewer reads
+#   scripts/storyboards.sh tool  <postio-storyboard arguments>          # the pure tool, built
 #
 # `--only` matches a storyboard's path under storyboards/ without `.toml`:
 # `--only 'list/*'`, `--only search/escape-leaves-search`. Calibration
@@ -38,16 +40,23 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
 shift
+# `tool` hands everything after it to postio-storyboard untouched.
+TOOL_ARGS=()
+if [ "$COMMAND" = tool ]; then
+    TOOL_ARGS=("$@")
+    set --
+fi
 
 APP=classic
 ONLY=""
 OPEN=0
 CALIBRATION=0
+ACCEPTANCE=""
 RUNNER_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -57,6 +66,7 @@ while [ $# -gt 0 ]; do
         --delivery)  RUNNER_ARGS+=(--delivery "${2:?--delivery needs chain or direct}"); shift 2 ;;
         --open)      OPEN=1; shift ;;
         --calibration) CALIBRATION=1; shift ;;
+        --acceptance) ACCEPTANCE="${2:?--acceptance needs a file}"; shift 2 ;;
         -h|--help)   usage; exit 0 ;;
         *) echo "storyboards.sh: unknown argument '$1' -- try --help" >&2; exit 2 ;;
     esac
@@ -67,9 +77,12 @@ REVIEW="$ROOT/Design/review/${BRANCH//\//-}"
 RUNS="$REVIEW/runs"
 # The calibration set is the reviewer's test, not the branch's: its runs
 # live apart, so a page about the branch never shows them.
+BUNDLE="$REVIEW/bundle"
 if [ "$CALIBRATION" = 1 ]; then
     RUNS="$REVIEW/calibration/runs"
+    BUNDLE="$REVIEW/calibration/bundle"
 fi
+BASE_RUNS="$REVIEW/base"
 
 target_dir() {
     if [ -n "${CARGO_TARGET_DIR:-}" ]; then
@@ -167,13 +180,36 @@ lint_command() {
     exit $?
 }
 
+# The bundle a reviewer reads (contracts/review.md): the runs, the base if
+# there is one, the acceptance, and the design screens the storyboards name
+# -- from the committed references only. The untracked Focus design folder
+# carries a real name and is never offered; the tool refuses it besides.
+bundle_command() {
+    local bin base=()
+    [ -n "$ACCEPTANCE" ] || { echo "storyboards.sh: bundle needs --acceptance <file>" >&2; exit 2; }
+    bin=$(tool)
+    if [ -d "$BASE_RUNS" ] && [ "$CALIBRATION" = 0 ]; then
+        base=(--base "$BASE_RUNS")
+    fi
+    rm -rf "$BUNDLE"
+    "$bin" bundle --runs "$RUNS" ${base[@]+"${base[@]}"} --acceptance "$ACCEPTANCE" \
+        --catalogue "$CATALOGUE" --design-dir "$ROOT/Design/screens" --out "$BUNDLE"
+    exit $?
+}
+
 page_command() {
-    local bin
+    local bin review=()
     bin=$(tool)
     mkdir -p "$REVIEW"
-    "$bin" page --runs "$RUNS" --prefix runs --out "$REVIEW/index.html" --title "$BRANCH" || exit 2
+    if [ -d "$BUNDLE" ]; then
+        review=(--bundle "$BUNDLE")
+    fi
+    local out="$REVIEW/index.html"
+    [ "$CALIBRATION" = 0 ] || out="$REVIEW/calibration/index.html"
+    "$bin" page --runs "$RUNS" --prefix "$(realpath --relative-to="$(dirname "$out")" "$RUNS")" \
+        --out "$out" --title "$BRANCH" ${review[@]+"${review[@]}"} || exit 2
     if [ "$OPEN" = 1 ]; then
-        xdg-open "$REVIEW/index.html" >/dev/null 2>&1 &
+        xdg-open "$out" >/dev/null 2>&1 &
     fi
 }
 
@@ -199,6 +235,8 @@ key_command() {
 
 case "$COMMAND" in
     run)  run_command ;;
+    bundle) bundle_command ;;
+    tool) bin=$(tool); "$bin" ${TOOL_ARGS[@]+"${TOOL_ARGS[@]}"}; exit $? ;;
     key)  key_command ;;
     lint) lint_command ;;
     page) page_command ;;
