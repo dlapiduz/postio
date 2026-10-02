@@ -5114,6 +5114,7 @@ dependencies = [
 name = "postio-storyboard"
 version = "0.4.2"
 dependencies = [
+ "blake3",
  "postio-config",
  "postio-core",
  "postio-ui",
