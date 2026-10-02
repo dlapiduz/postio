@@ -71,6 +71,7 @@ def run(*, event: str, reply: str | None, args: list[str]) -> tuple[subprocess.C
         env["GITHUB_REPOSITORY"] = "example/postio"
         env["GITHUB_EVENT_NAME"] = event
         env["GITHUB_SHA"] = HEAD
+        env["GITHUB_REF_NAME"] = "main"
         proc = patience.run(
             ["bash", str(SCRIPT), *args],
             capture_output=True,
@@ -123,6 +124,15 @@ def main() -> int:
         reply=f"success\t{HEAD}",
         expect="false",
         expect_asked="workflows/mutants.yml/runs",
+    )
+    # Only `main`'s runs count. A full suite run on a feature branch -- an
+    # agent asking for one before landing -- must not become "the last run"
+    # a scheduled one compares against (2026-10-01).
+    case(
+        "the last run is looked up on the branch being run, not any branch",
+        reply=f"success\t{HEAD}",
+        expect="false",
+        expect_asked="branch=main",
     )
     case(
         "new commits since the last run are run",
