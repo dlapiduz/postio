@@ -5230,6 +5230,7 @@ dependencies = [
  "postio-render",
  "postio-test-support",
  "postio-ui",
+ "postio-widgets",
  "tempfile",
  "thiserror",
  "tokio",

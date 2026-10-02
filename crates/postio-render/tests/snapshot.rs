@@ -71,6 +71,7 @@ fn snapshot() -> RenderedDocument {
         generation: 1,
         document,
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(Resources::new()),
         viewport: Viewport {

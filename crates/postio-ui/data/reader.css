@@ -53,6 +53,19 @@ body:empty::before {
   content: "";
 }
 
+/* Why a body is shown as its plain text (spec 006 FR-023; T218): a quiet
+   line above the body, drawn as the reader's other notices are -- small,
+   dim, in the reader's own face -- never a line of the message. Outside
+   the body's container, because these are Postio's words. The renderer
+   writes it (`postio_render::NOTICE_CLASS`). */
+.postio-fallback-notice {
+  margin: 0 0 12px 0;
+  font-family: "Barlow", sans-serif;
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--r-dim);
+}
+
 /* The message body's own bounded surface (postio-3s2): a sender's content
    sits inside this, distinct from Postio's own words. The banner and the
    header (#319) never render into this document at all — they are native

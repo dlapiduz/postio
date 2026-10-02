@@ -33,6 +33,7 @@ fn request(generation: u64, resources: Resources) -> RenderRequest {
                    <img src=\"postio-cid:part%40example.com\"></body></html>"
             .to_owned(),
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(resources),
         viewport: Viewport {

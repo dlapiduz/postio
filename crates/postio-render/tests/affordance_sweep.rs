@@ -44,6 +44,7 @@ fn rendered(fixture: &test_corpus::Fixture) -> Option<RenderedDocument> {
         generation: 1,
         document: html,
         plain_text: parsed.body.text.clone().unwrap_or_default(),
+        fallback: None,
         over_cap: body.over_cap,
         resources: Arc::new(Resources::new()),
         viewport: Viewport {

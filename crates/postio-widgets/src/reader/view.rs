@@ -1497,6 +1497,29 @@ impl Reader {
         // "render-mode line -> body 12").
         self.container
             .insert_child_after(&line.widget(), Some(&self.notices.widget()));
+        // A body that fell back to plain text is in neither treatment: the
+        // line says so, and why, in place of naming one (T218). The next
+        // snapshot that is the sender's markup puts the treatment back.
+        let place = Rc::downgrade(&self.place);
+        let open = Rc::downgrade(&self.open);
+        self.view.connect_rendered(move |view| {
+            let (Some(place), Some(open)) = (place.upgrade(), open.upgrade()) else {
+                return;
+            };
+            let Some(line) = place.line.borrow().clone() else {
+                return;
+            };
+            match view.document().map(|document| document.outcome) {
+                Some(postio_render::Outcome::FellBack(reason)) if place.treated.get().is_some() => {
+                    line.show_fallback(reason.why());
+                }
+                Some(postio_render::Outcome::Rendered) if line.is_fallback() => {
+                    let remembered = open.borrow().as_ref().and_then(|open| open.remembered);
+                    show_treatment(&place, remembered);
+                }
+                _ => {}
+            }
+        });
         self.place.line.replace(Some(line));
     }
 
@@ -2321,15 +2344,56 @@ fn content_for(document: &str, place: &Place) -> crate::body_view::Content {
             resources.insert_remote(&url, bytes.clone());
         }
     }
-    crate::body_view::Content {
-        document: if place.flow.get() {
-            flow_document(document)
+    let flowed = |document: String| {
+        if place.flow.get() {
+            flow_document(&document)
         } else {
-            document.to_owned()
-        },
+            document
+        }
+    };
+    crate::body_view::Content {
+        document: flowed(document.to_owned()),
         resources: std::sync::Arc::new(resources),
         plain_text: place.plain.borrow().clone(),
+        fallback: Some(fallback_for(place, flowed)),
         over_cap: None,
+    }
+}
+
+/// The plain text a render past its deadline shows, composed as this reader
+/// composes a plain-text body: the same column, face and rhythm as every
+/// other body, rather than the renderer's own page (T218).
+///
+/// A body drawn under a treatment has the render-mode line above it, and
+/// the line is what says the body fell back; anywhere else the document
+/// says so itself, in a quiet line above the body.
+fn fallback_for(place: &Place, flowed: impl Fn(String) -> String) -> postio_render::Fallback {
+    use postio_ui::reader::document;
+    let body = MessageBody {
+        text: Some(place.plain.borrow().clone()),
+        html: None,
+    };
+    let treated = place.treated.get().is_some();
+    let html = if treated {
+        let drawn = document::body_html_treated(&body, RemoteImages::Blocked, None, None);
+        document::document_for_treated(
+            &drawn.html,
+            "",
+            RemoteImages::Blocked,
+            Treatment::AppColours,
+        )
+    } else {
+        let drawn = document::body_html(&body, RemoteImages::Blocked, Rendering::Original);
+        document::document_for(
+            &drawn.html,
+            "",
+            RemoteImages::Blocked,
+            document::Sheet::Theme,
+        )
+    };
+    postio_render::Fallback {
+        document: flowed(html),
+        notice: !treated,
     }
 }
 

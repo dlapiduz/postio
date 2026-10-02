@@ -95,6 +95,14 @@ const CASES: &[(&str, fn())] = &[
         harness::an_empty_case_is_listed_and_runs as fn(),
     ),
     (
+        "body_view_fallback::a_fallback_is_laid_out_as_a_plain_text_body",
+        body_view_fallback::a_fallback_is_laid_out_as_a_plain_text_body as fn(),
+    ),
+    (
+        "body_view_fallback::the_render_mode_line_says_a_body_fell_back",
+        body_view_fallback::the_render_mode_line_says_a_body_fell_back as fn(),
+    ),
+    (
         "body_view_fallback::a_finished_render_is_shown_when_the_main_loop_was_late",
         body_view_fallback::a_finished_render_is_shown_when_the_main_loop_was_late as fn(),
     ),

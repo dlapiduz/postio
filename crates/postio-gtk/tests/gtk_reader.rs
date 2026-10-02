@@ -1594,6 +1594,7 @@ fn ground_behind_first_text(document: &str) -> String {
         generation: 1,
         document: document.to_owned(),
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(resources),
         viewport: postio_render::Viewport {

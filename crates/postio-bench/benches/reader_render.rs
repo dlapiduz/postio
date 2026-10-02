@@ -60,6 +60,7 @@ fn request(fixture: &test_corpus::Fixture) -> Option<RenderRequest> {
         generation: 1,
         document: html,
         plain_text: parsed.body.text.unwrap_or_default(),
+        fallback: None,
         over_cap: body.over_cap,
         resources: Arc::new(resources),
         viewport: Viewport {

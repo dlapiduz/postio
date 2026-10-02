@@ -15,6 +15,7 @@ fn render(toggled: &[&str]) -> (postio_render::RenderedDocument, postio_render::
         generation: 1,
         document: DOCUMENT.to_owned(),
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(Resources::new()),
         viewport: Viewport {
@@ -138,6 +139,7 @@ fn a_single_messages_quote_opens_by_its_id() {
                 generation: 1,
                 document: html.clone(),
                 plain_text: String::new(),
+                fallback: None,
                 over_cap: None,
                 resources: Arc::new(Resources::new()),
                 viewport: Viewport {

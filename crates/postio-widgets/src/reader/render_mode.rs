@@ -27,6 +27,9 @@ pub struct RenderModeLine {
     detail: gtk::Label,
     always: gtk::Button,
     switch: Rc<KeycapButton>,
+    /// Whether it is saying the body fell back to plain text, rather than
+    /// naming a treatment.
+    fell_back: std::cell::Cell<bool>,
 }
 
 impl RenderModeLine {
@@ -80,6 +83,7 @@ impl RenderModeLine {
             detail,
             always,
             switch,
+            fell_back: std::cell::Cell::new(false),
         })
     }
 
@@ -91,6 +95,7 @@ impl RenderModeLine {
     /// Say `words`, or hide the line when there are none: plain text, or no
     /// body at all.
     pub fn show(&self, words: Option<RenderModeWords>) {
+        self.fell_back.set(false);
         let Some(words) = words else {
             self.root.set_visible(false);
             return;
@@ -98,6 +103,7 @@ impl RenderModeLine {
         self.title.set_label(words.title);
         self.detail.set_label(words.detail);
         self.switch.set_label(words.action);
+        self.switch.widget().set_visible(true);
         self.always.set_visible(words.offer_always);
         self.root
             .update_property(&[gtk::accessible::Property::Label(&format!(
@@ -105,6 +111,28 @@ impl RenderModeLine {
                 words.title, words.detail
             ))]);
         self.root.set_visible(true);
+    }
+
+    /// Say the body fell back to plain text, and `why` ("this message took
+    /// too long to lay out") -- in place of a treatment, because neither
+    /// treatment is what is drawn (T218). Nothing to switch to: the line
+    /// offers no control.
+    pub fn show_fallback(&self, why: &str) {
+        self.fell_back.set(true);
+        self.title.set_label("Plain text");
+        self.detail.set_label(why);
+        self.switch.widget().set_visible(false);
+        self.always.set_visible(false);
+        self.root
+            .update_property(&[gtk::accessible::Property::Label(&format!(
+                "Plain text, {why}"
+            ))]);
+        self.root.set_visible(true);
+    }
+
+    /// Whether the line is saying the body fell back.
+    pub fn is_fallback(&self) -> bool {
+        self.fell_back.get()
     }
 
     /// The switch's key, from the keymap: `None` hides the cap.
@@ -129,6 +157,9 @@ impl RenderModeLine {
 
     /// What it says, as "title · detail · action key": test-facing.
     pub fn text(&self) -> String {
+        if !self.switch.widget().is_visible() {
+            return format!("{} · {}", self.title.label(), self.detail.label());
+        }
         format!(
             "{} · {} · {} {}",
             self.title.label(),

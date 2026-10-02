@@ -52,6 +52,7 @@ fn rendering_every_hostile_fixture_opens_no_connection() {
                 generation,
                 document: listener.rewrite(&html),
                 plain_text: parsed.body.text.clone().unwrap_or_default(),
+                fallback: None,
                 over_cap: body.over_cap,
                 resources: Arc::new(Resources::new()),
                 viewport: Viewport {

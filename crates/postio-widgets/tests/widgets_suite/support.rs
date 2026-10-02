@@ -45,6 +45,7 @@ pub fn content(name: &str) -> Content {
         ),
         resources: Arc::new(resources),
         plain_text: parsed.body.text.unwrap_or_default(),
+        fallback: None,
         over_cap: body.over_cap,
     }
 }

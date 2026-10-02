@@ -28,6 +28,7 @@ fn raster(scale: f64) -> Raster {
             the quick brown fox jumps over the lazy dog.</p></body></html>"
             .to_owned(),
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(Resources::new()),
         viewport: Viewport {

@@ -36,6 +36,9 @@ pub struct Content {
     pub resources: Arc<Resources>,
     /// The plain-text alternative, drawn if the render falls back.
     pub plain_text: String,
+    /// That text as the reader composes a plain-text body, drawn in its
+    /// place when there is one: the same column, face and rhythm (T218).
+    pub fallback: Option<postio_render::Fallback>,
     /// The input cap the sanitizer found the body over, if any.
     pub over_cap: Option<postio_body::Cap>,
 }
@@ -1080,18 +1083,23 @@ impl BodyView {
         let style = adw::StyleManager::default();
         let ground = self.ground_css();
         imp.ground_drawn.replace(ground.clone());
-        let document = match ground {
-            Some(ground) if content.document.contains("</style>") => {
-                content
-                    .document
-                    .replacen("</style>", &format!("{ground}</style>"), 1)
+        // The column's ground, in the document and in its fallback alike.
+        let grounded = |document: String| match &ground {
+            Some(ground) if document.contains("</style>") => {
+                document.replacen("</style>", &format!("{ground}</style>"), 1)
             }
-            _ => content.document,
+            _ => document,
         };
+        let document = grounded(content.document);
+        let composed = content.fallback.map(|fallback| postio_render::Fallback {
+            document: grounded(fallback.document),
+            ..fallback
+        });
         let request = RenderRequest {
             generation,
             document,
             plain_text: content.plain_text,
+            fallback: composed,
             over_cap: content.over_cap,
             resources: content.resources,
             viewport: Viewport {
@@ -1107,7 +1115,20 @@ impl BodyView {
             toggled_folds: imp.toggled_folds.borrow().clone(),
             reader_view: Vec::new(),
         };
-        let fallback = (request.plain_text.clone(), request.theme, request.viewport);
+        // What the deadline draws instead: everything but the document.
+        let fallback = RenderRequest {
+            generation,
+            document: String::new(),
+            plain_text: request.plain_text.clone(),
+            fallback: request.fallback.clone(),
+            over_cap: None,
+            resources: request.resources.clone(),
+            viewport: request.viewport,
+            theme: request.theme,
+            darkened: Vec::new(),
+            toggled_folds: Vec::new(),
+            reader_view: Vec::new(),
+        };
         #[cfg(feature = "test-hooks")]
         if let Some(held) = imp.held.borrow_mut().as_mut() {
             held.push(request.resources.hold_lookup());
@@ -1136,13 +1157,12 @@ impl BodyView {
             let next = generation + 1;
             imp.generation.set(next);
             imp.pending.set(None);
-            let (text, theme, viewport) = &fallback;
             let document = view.renderer().fallback(
-                text,
-                theme,
-                *viewport,
+                &RenderRequest {
+                    generation: next,
+                    ..fallback.clone()
+                },
                 postio_render::FallbackReason::Deadline,
-                next,
             );
             view.show(document);
         });

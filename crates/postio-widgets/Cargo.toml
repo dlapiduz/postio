@@ -48,6 +48,9 @@ webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 glib-build-tools = "0.22.8"
 
 [dev-dependencies]
+# The crate's own suite, with its hooks on: a render held past its deadline
+# (the plain-text fallback, T218).
+postio-widgets = { path = ".", features = ["test-hooks"] }
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-test-support.workspace = true
 tempfile = { workspace = true }

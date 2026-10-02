@@ -24,6 +24,7 @@ fn render_html(html: String) -> RenderedDocument {
         generation: 1,
         document: html,
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(Resources::new()),
         viewport: Viewport {
@@ -175,6 +176,7 @@ fn cluster_rects_do_not_carry_the_device_scale() {
             document: "<!DOCTYPE html><html><body><p>Hello there, the quick fox.</p></body></html>"
                 .to_owned(),
             plain_text: String::new(),
+            fallback: None,
             over_cap: None,
             resources: Arc::new(Resources::new()),
             viewport: Viewport {
