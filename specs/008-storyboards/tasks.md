@@ -111,33 +111,33 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 
 ### Neutral types in `postio-ui`
 
-- [ ] T006 [P] [TEST] Write tests in `crates/postio-ui/src/observe.rs` for
+- [X] T006 [P] [TEST] Write tests in `crates/postio-ui/src/observe.rs` for
   `Observation` (data-model § Observation):
   - a JSON round trip of a fully populated value;
   - `Observation::shared_eq` ignores `keyboard.widget` and `app.*`, and
     compares every other field;
   - the enums serialise to the snake-case names data-model lists, such as
     `"first_run"` and `"cheatsheet"`.
-- [ ] T007 Implement `crates/postio-ui/src/observe.rs`:
+- [X] T007 Implement `crates/postio-ui/src/observe.rs`:
   - `Observation`, plus `View`, `Region`, `Overlay`, `Tone` and the nested
     structs;
   - `shared_eq`;
   - `pub mod observe` in `crates/postio-ui/src/lib.rs`.
 
   T006 goes green.
-- [ ] T008 [P] [TEST] Write tests in `crates/postio-ui/src/clock.rs`:
+- [X] T008 [P] [TEST] Write tests in `crates/postio-ui/src/clock.rs`:
   - `now()` is within a second of `Local::now()` by default;
   - after `freeze(t)`, `now()` returns `t` exactly, from any thread;
   - `thaw()` restores the default.
-- [ ] T009 Implement `crates/postio-ui/src/clock.rs`: a process-wide frozen
+- [X] T009 Implement `crates/postio-ui/src/clock.rs`: a process-wide frozen
   instant behind a `OnceLock<Mutex<Option<DateTime<Local>>>>`, with `now()`,
   `freeze()` and `thaw()`. T008 goes green.
-- [ ] T010 [TEST] Add a case in `crates/postio-gtk/tests/gtk_suite/`,
+- [X] T010 [TEST] Add a case in `crates/postio-gtk/tests/gtk_suite/`,
   `row_timestamp_reads_the_clock.rs`, with its `CASES` row. With
   `clock::freeze(2026-06-02 09:00 UTC)`, a list row for a message received
   2026-06-01 09:00 shows the "yesterday" text that `postio_ui::row::timestamp`
   gives for that pair. Red today: rows read `Local::now()`.
-- [ ] T011 Replace `Local::now()` with `postio_ui::clock::now()` at the
+- [X] T011 Replace `Local::now()` with `postio_ui::clock::now()` at the
   timestamp call sites:
   - `crates/postio-gtk/src/row.rs:101, 129, 894`
   - `crates/postio-gtk/src/thread_row.rs:408`
@@ -149,7 +149,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 
 ### The format and its logic, in `postio-storyboard`
 
-- [ ] T012 [P] [TEST] Write format tests in
+- [X] T012 [P] [TEST] Write format tests in
   `crates/postio-storyboard/src/format.rs`, one per rule in
   `contracts/storyboard-format.md` § Rules:
   - two inputs in a step fail to load;
@@ -159,10 +159,10 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
   - `[app.focus.step.<id>]` parses into overrides;
   - `event` accepts only the six names in data-model § Step;
   - the grammar example in the contract parses into the expected value.
-- [ ] T013 Implement `crates/postio-storyboard/src/format.rs`: serde types
+- [X] T013 Implement `crates/postio-storyboard/src/format.rs`: serde types
   for `Storyboard`, `Source`, `Step`, `Input`, `Checks` (with the leaf enum),
   `StepOverride` and `Settle`, plus `load(path)`. T012 goes green.
-- [ ] T014 [P] [TEST] Write lint tests in
+- [X] T014 [P] [TEST] Write lint tests in
   `crates/postio-storyboard/src/lint.rs`. Each of these is a named error:
   - a missing `source`;
   - `proof` missing when `kind = issue`;
@@ -178,10 +178,10 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 
   Also: `the_catalogue_loads_and_lints` walks `storyboards/` from
   `CARGO_MANIFEST_DIR` and expects zero errors.
-- [ ] T015 Implement `crates/postio-storyboard/src/lint.rs`. Reuse
+- [X] T015 Implement `crates/postio-storyboard/src/lint.rs`. Reuse
   `check-no-personal-data.py`'s list of reserved domains by reading it as a
   constant, kept in step by a test that greps the script. T014 goes green.
-- [ ] T016 [P] [TEST] Write applicability tests in
+- [X] T016 [P] [TEST] Write applicability tests in
   `crates/postio-storyboard/src/apply.rs`:
   - on `main`, a storyboard using only shared commands applies to `classic`,
     and reads `focus: not present on this branch`;
@@ -189,21 +189,21 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
     with the command named;
   - `apps = ["classic"]` with an unprovided command is a load error;
   - a seed or preset the app does not declare means not applicable.
-- [ ] T017 Implement `crates/postio-storyboard/src/apply.rs`: `App`,
+- [X] T017 Implement `crates/postio-storyboard/src/apply.rs`: `App`,
   `provides(App, CommandId)` from `postio_core::registry` (research R7), and
   `applies(&Storyboard, App, &RunnerInfo) -> Applicability`. T016 goes
   green.
-- [ ] T018 [P] [TEST] Write check-evaluator tests in
+- [X] T018 [P] [TEST] Write check-evaluator tests in
   `crates/postio-storyboard/src/check.rs`:
   - every leaf (`literal`, `same_as`, `changed`, `unchanged`, `absent`,
     `one_of`) both passing and failing;
   - a check on a field the app declares unobserved (`back_depth: None` by
     declaration) gives `not_applicable`, not pass and not fail;
   - a failure names the path, the expected value and the observed value.
-- [ ] T019 Implement `crates/postio-storyboard/src/check.rs` over
+- [X] T019 Implement `crates/postio-storyboard/src/check.rs` over
   `serde_json::Value` paths into a serialised `Observation`. T018 goes
   green.
-- [ ] T020 [P] [TEST] Write tests for `Run` and `StepRun` in
+- [X] T020 [P] [TEST] Write tests for `Run` and `StepRun` in
   `crates/postio-storyboard/src/run.rs`, against data-model § Run's status
   rules:
   - any failed check, `unbound`, `nothing_to_type_into` or `blanked` gives
@@ -212,7 +212,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
   - `not_covered` steps never yield `passed` for their storyboard, only
     `not_covered`;
   - frame paths are written relative to `run.json`.
-- [ ] T021 Implement `crates/postio-storyboard/src/run.rs`: the types,
+- [X] T021 Implement `crates/postio-storyboard/src/run.rs`: the types,
   `RunWriter`, and `status()`. T020 goes green.
 
 ### The shared GTK half, in `postio-gtk::storyboard` (freeze after T029)
@@ -290,12 +290,12 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
 
 ### Classic's observation
 
-- [ ] T033 [TEST] Add a `gtk_suite` case, `toast_tone_and_undo.rs`, plus its
+- [X] T033 [TEST] Add a `gtk_suite` case, `toast_tone_and_undo.rs`, plus its
   `CASES` row:
   - a toast shown by an undoable verb reports `offers_undo() == true` and
     `tone() == Some(Info)`;
   - an error notice reports `Some(Error)` and no undo.
-- [ ] T034 Add `tone()` and `offers_undo()` to `crates/postio-gtk/src/toast.rs`,
+- [X] T034 Add `tone()` and `offers_undo()` to `crates/postio-gtk/src/toast.rs`,
   recorded at show time. Update the show-sites that know their tone. T033
   goes green.
 - [ ] T035 [TEST] Add an `app_suite` case, `observe.rs`, plus its row in
@@ -382,16 +382,16 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
   `run.json` values are equal apart from `commit`, and the frame hashes are
   equal (SC-003). Red until T041's hermetic setup is complete. If it is
   already green, tighten it by also comparing the outlined frames.
-- [ ] T043 [US1] [TEST] Write `scripts/tests/test-storyboards-sh.sh` against a
+- [X] T043 [US1] [TEST] Write `scripts/tests/test-storyboards-sh.sh` against a
   stub runner binary:
   - `run --only` selects by glob;
   - exit codes are 0, 1 and 2 per `contracts/runner.md`;
   - `lint` calls `postio-storyboard lint`;
   - the runner is built once per invocation.
-- [ ] T044 [US1] Implement the `run`, `lint` and `key` subcommands of
+- [X] T044 [US1] Implement the `run`, `lint` and `key` subcommands of
   `scripts/storyboards.sh`. Output goes to `Design/review/<branch>/runs/`.
   T043 goes green.
-- [ ] T045 [US1] [TEST] Write the filmstrip test in
+- [X] T045 [US1] [TEST] Write the filmstrip test in
   `crates/postio-storyboard/src/page.rs`. From a `runs/` tree of two fixture
   runs, the page lists each storyboard with:
   - every step's outlined frame, as a relative `<img>`;
@@ -402,7 +402,7 @@ step. Two runs are identical (spec US1; quickstart §§ 2–4).
 
   `not_covered` and `not_applicable` runs are shown and counted, never as
   passed.
-- [ ] T046 [US1] Implement the filmstrip part of
+- [X] T046 [US1] Implement the filmstrip part of
   `crates/postio-storyboard/src/page.rs`, using the template
   `crates/postio-storyboard/templates/page.html`: self-contained, light and
   dark, no external fetches. Add `page` to `scripts/storyboards.sh`. T045
@@ -479,7 +479,7 @@ US2; quickstart § 5).
     image.
 - [ ] T056 [US2] Implement the review sections of the page and `summary.md`.
   T055 goes green.
-- [ ] T057 [US2] Write `crates/postio-storyboard/src/key.rs` and its tests
+- [X] T057 [US2] Write `crates/postio-storyboard/src/key.rs` and its tests
   together, in the same test-first order. The key is blake3 over the given
   git tree ids, in sorted order. Then add `scripts/storyboards.sh key`, which
   computes the trees per research R13 (`git rev-parse HEAD:<crate>` for the
