@@ -179,6 +179,13 @@ def sandbox(base: Path, existing_pr: bool = False):
     gh_path.write_text(GH_STUB, encoding="utf-8")
     gh_path.chmod(0o755)
     (stub_dir / "calls").write_text("", encoding="utf-8")
+    # A host that has GTK, whatever this one has: the stand-in crate is
+    # postio-gtk, and a CI runner without the libraries is refused before
+    # the storyboard warning is ever reached (test-issue-land-unbuildable.py
+    # is where that refusal is tested).
+    pkg_config = stub_dir / "bin" / "pkg-config"
+    pkg_config.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    pkg_config.chmod(0o755)
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
     build_sandbox(root, channel)

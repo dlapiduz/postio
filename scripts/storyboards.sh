@@ -108,6 +108,12 @@ headless() {
     scripts/test-headless.sh "$@"
 }
 
+# <path> relative to <dir>, without resolving symlinks. Python rather than
+# `realpath --relative-to`, which BSD realpath (macOS) does not have.
+relpath() {
+    python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$2"
+}
+
 target_dir() {
     if [ -n "${CARGO_TARGET_DIR:-}" ]; then
         echo "$CARGO_TARGET_DIR"
@@ -207,8 +213,10 @@ run_shards() {
 }
 
 run_command() {
-    local apps app crate bin status=0 code files
-    mapfile -t files < <(selected)
+    local apps app crate bin status=0 code files file
+    files=()
+    # A read loop, not `mapfile`: macOS ships bash 3.2, which has none.
+    while IFS= read -r file; do files+=("$file"); done < <(selected)
     if [ "${#files[@]}" -eq 0 ]; then
         echo "storyboards.sh: no storyboard matches '${ONLY:-*}'" >&2
         exit 2
@@ -284,9 +292,9 @@ page_command() {
     local key compare=()
     key=$(review_key 2>/dev/null | tail -1)
     if [ -d "$BASE_RUNS" ] && [ "$CALIBRATION" = 0 ]; then
-        compare=(--base "$BASE_RUNS" --base-prefix "$(realpath -s --relative-to="$(dirname "$out")" "$BASE_RUNS")")
+        compare=(--base "$BASE_RUNS" --base-prefix "$(relpath "$BASE_RUNS" "$(dirname "$out")")")
     fi
-    "$bin" page --runs "$RUNS" --prefix "$(realpath --relative-to="$(dirname "$out")" "$RUNS")" \
+    "$bin" page --runs "$RUNS" --prefix "$(relpath "$RUNS" "$(dirname "$out")")" \
         --out "$out" --title "$BRANCH" --key "$key" --catalogue "$CATALOGUE" ${review[@]+"${review[@]}"} \
         ${compare[@]+"${compare[@]}"} || exit 2
     if [ "$OPEN" = 1 ]; then
