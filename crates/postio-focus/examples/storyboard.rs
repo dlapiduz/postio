@@ -59,6 +59,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("list") => list(),
         Some("run") => play(&args[1..]),
+        Some("every-command") => every_command(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -286,5 +287,68 @@ fn play_one(board: &postio_storyboard::format::Storyboard, options: &Options) ->
             }
         }
         code
+    }
+}
+
+/// The generated pass (spec US6): every command in every context, judged.
+/// Writes `coverage.json`; exits 1 on any command with no visible effect
+/// that the gap list does not name, or any stale gap.
+fn every_command(args: &[String]) -> ExitCode {
+    let Some(out) = flag(args, "--out") else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let gaps = flag(args, "--gaps").map(PathBuf::from).unwrap_or_default();
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("storyboard: no display; run it under scripts/test-headless.sh");
+        return ExitCode::from(2);
+    }
+    let all = match postio_focus::demo::on_runtime(postio_focus::demo::storyboard::every_command(
+        &gaps,
+    )) {
+        Ok(all) => all,
+        Err(error) => {
+            eprintln!("storyboard: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let presses: Vec<_> = all.iter().flat_map(|c| c.presses.iter().cloned()).collect();
+    let counts = postio_storyboard::coverage::tally(&presses);
+    for coverage in &all {
+        if let Some(why) = &coverage.unreachable {
+            println!("{}: unreachable -- {why}", coverage.context);
+        }
+        for press in &coverage.presses {
+            use postio_storyboard::coverage::Effect;
+            match &press.effect {
+                Effect::NoEffect => {
+                    println!("{} {}: NO VISIBLE EFFECT", press.context, press.command);
+                }
+                Effect::StaleGap { reason } => println!(
+                    "{} {}: STALE GAP (now has an effect; listed because: {reason})",
+                    press.context, press.command
+                ),
+                _ => {}
+            }
+        }
+    }
+    println!("coverage: {counts:?}");
+    let json = serde_json::Value::Array(all.iter().map(|c| c.to_json()).collect());
+    let dir = PathBuf::from(&out).join("focus");
+    if std::fs::create_dir_all(&dir).is_err()
+        || std::fs::write(dir.join("coverage.json"), json.to_string()).is_err()
+    {
+        eprintln!(
+            "storyboard: cannot write {}",
+            dir.join("coverage.json").display()
+        );
+        return ExitCode::from(2);
+    }
+    let bad = counts.get("no_effect").copied().unwrap_or(0)
+        + counts.get("stale_gap").copied().unwrap_or(0);
+    if bad > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }

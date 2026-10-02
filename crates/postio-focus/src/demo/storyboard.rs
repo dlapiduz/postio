@@ -722,3 +722,224 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
     end(started);
     finish(played)
 }
+
+/// Commands the generated pass never presses, because they reach outside the
+/// window: the network (FR-013), the desktop, or a file chooser that would
+/// sit waiting for a person. Reported as skipped, with the reason, so the
+/// list is visible and argued with rather than silently shrinking coverage.
+/// The same list Classic's pass keeps (`postio-app`'s `demo::storyboard`):
+/// what leaves the machine does so from either app.
+pub const NEVER_PRESSED: &[(&str, &str)] = &[
+    ("refresh", "syncs, which dials the server"),
+    ("retry_send", "sends, which dials the server"),
+    ("show_images", "fetches remote images"),
+    ("always_show_images", "fetches remote images"),
+    ("unsubscribe", "follows an unsubscribe link off the machine"),
+    ("edit_config", "opens an external editor"),
+    ("edit_externally", "opens an external editor"),
+    ("open_part", "hands a part to another application"),
+    (
+        "open_part_externally",
+        "hands a part to another application",
+    ),
+    ("save_part", "opens a file chooser"),
+    ("save_all_parts", "opens a file chooser"),
+    ("attach_file", "opens a file chooser"),
+    ("insert_image", "opens a file chooser"),
+    ("add_account", "may open a browser to sign in"),
+    ("update_credential", "may open a browser to sign in"),
+];
+
+/// How each context is reached from a fresh window: the commands that put
+/// the keyboard there, in Focus's own words. Focus has no panes to cycle
+/// between: its contexts are the list, the surfaces a key opens over it --
+/// the search bar, Filtered, the digest window, the open message, the
+/// composer -- and nothing else. A context the setup does not land in is
+/// reported, not pressed in.
+pub const CONTEXTS: &[(&str, &[&str])] = &[
+    // Focus opens with no cursor row, so a `j` puts it on the first.
+    ("list", &["next_message"]),
+    ("search", &["search"]),
+    ("filtered", &["go_to_filtered"]),
+    // The digest row is the second row of the small seed's inbox.
+    ("digest", &["next_message", "next_message", "open_message"]),
+    // The first row is a message with an invitation card.
+    ("reader", &["next_message", "open_message"]),
+    ("composer", &["compose"]),
+];
+
+/// One context's coverage, or why it could not be reached.
+#[derive(Debug, Clone)]
+pub struct ContextCoverage {
+    /// The context.
+    pub context: String,
+    /// What each bound command came to.
+    pub presses: Vec<postio_storyboard::coverage::Press>,
+    /// Commands not pressed, and why.
+    pub skipped: Vec<(String, String)>,
+    /// Set when the setup did not reach this context.
+    pub unreachable: Option<String>,
+}
+
+impl ContextCoverage {
+    /// As JSON, for `coverage.json`.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "context": self.context,
+            "unreachable": self.unreachable,
+            "skipped": self.skipped.iter()
+                .map(|(command, why)| serde_json::json!({ "command": command, "why": why }))
+                .collect::<Vec<_>>(),
+            "presses": self.presses,
+        })
+    }
+}
+
+/// The generated pass (spec US6): every command bound in every context,
+/// each from a fresh window in that context's starting state, judged on
+/// whether anything a person can see changed.
+pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCoverage>, String> {
+    use postio_storyboard::coverage::{Effect, Press, judge, load_gaps};
+    let gaps = load_gaps(gap_list)?;
+    let gaps = gaps.as_slice();
+
+    // One context, to run a gap list's entries again without the other
+    // five minutes: `POSTIO_STORYBOARD_CONTEXT=composer`.
+    let only = std::env::var("POSTIO_STORYBOARD_CONTEXT").ok();
+    let mut all = Vec::new();
+    for (context, setup) in CONTEXTS {
+        if only.as_deref().is_some_and(|only| only != *context) {
+            continue;
+        }
+        let mut coverage = ContextCoverage {
+            context: (*context).to_owned(),
+            presses: Vec::new(),
+            skipped: Vec::new(),
+            unreachable: None,
+        };
+        // The commands bound here, found from a window set up for it.
+        let Some(started) = fresh(setup).await else {
+            coverage.unreachable = Some("the seeded store fed no window".to_owned());
+            all.push(coverage);
+            continue;
+        };
+        let reached = context_name(&started.window);
+        if reached != *context {
+            coverage.unreachable =
+                Some(format!("setup {setup:?} left the keyboard in `{reached}`"));
+            started.finish();
+            all.push(coverage);
+            continue;
+        }
+        let (keymap, _) = Keymap::from_commands_for(&started.window.keymap(), Frontend::Focus);
+        let here = started.window.key_context();
+        let mut commands: Vec<String> = keymap
+            .entries()
+            .filter(|(layer, _, _)| here.chain().contains(layer))
+            .map(|(_, _, command)| command.to_owned())
+            .collect();
+        commands.sort();
+        commands.dedup();
+        started.finish();
+
+        for command in commands {
+            if let Some((_, why)) = NEVER_PRESSED.iter().find(|(id, _)| *id == command) {
+                coverage.skipped.push((command, (*why).to_owned()));
+                continue;
+            }
+            let Some(started) = fresh(setup).await else {
+                continue;
+            };
+            let window = started.window.clone();
+            let settings = settle::Settings {
+                stride: 2,
+                ..settle::Settings::default()
+            };
+            let before_frame = settle::settle(window.upcast_ref(), &settings);
+            let before = window.observe();
+            // Typing wins: with the keyboard in a text field, a command bound
+            // to a bare key is a letter, not a command, and that is right.
+            let (keymap, _) = Keymap::from_commands_for(&window.keymap(), Frontend::Focus);
+            let bare = window
+                .key_context()
+                .chain()
+                .iter()
+                .find_map(|layer| keymap.binding_for(*layer, &command))
+                .and_then(|binding| binding.chords().first().cloned())
+                .is_some_and(|chord| {
+                    let shown = chord.to_string();
+                    shown.chars().count() == 1
+                        || shown.starts_with("shift+") && shown.chars().count() == 7
+                });
+            if before.keyboard.typing && bare {
+                coverage.presses.push(Press {
+                    command: command.clone(),
+                    context: (*context).to_owned(),
+                    effect: Effect::Typing,
+                });
+                started.finish();
+                continue;
+            }
+            let outcome = deliver_input(
+                &window,
+                &Input::Command(command.clone()),
+                &started,
+                Delivery::Chain,
+            );
+            let press = match outcome {
+                Ok((StepOutcome::Delivered, _)) => {
+                    let after_frame = settle::settle(window.upcast_ref(), &settings);
+                    let after = window.observe();
+                    judge(
+                        &command,
+                        context,
+                        (&before, &before_frame.hash),
+                        (&after, &after_frame.hash),
+                        gaps,
+                    )
+                }
+                Ok((StepOutcome::Dropped, _)) => Press {
+                    command: command.clone(),
+                    context: (*context).to_owned(),
+                    effect: Effect::Dropped,
+                },
+                _ => Press {
+                    command: command.clone(),
+                    context: (*context).to_owned(),
+                    effect: Effect::Unbound,
+                },
+            };
+            coverage.presses.push(press);
+            started.finish();
+        }
+        all.push(coverage);
+    }
+    postio_ui::clock::thaw();
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
+    Ok(all)
+}
+
+/// A fresh, seeded, acting window, with `setup` pressed.
+async fn fresh(setup: &[&str]) -> Option<Started> {
+    postio_ui::clock::freeze(
+        chrono::DateTime::parse_from_rfc3339(FROZEN_AT)
+            .expect("a fixed instant")
+            .with_timezone(&chrono::Local),
+    );
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_enable_animations(false);
+    }
+    let (size, _) = apply_variant(&BTreeMap::new());
+    let started = acting(Seed::Small, size).await.ok()?;
+    deliver::drain();
+    for command in setup {
+        let _ = deliver_input(
+            &started.window,
+            &Input::Command((*command).to_owned()),
+            &started,
+            Delivery::Chain,
+        );
+        pump(Duration::from_millis(200));
+    }
+    Some(started)
+}
