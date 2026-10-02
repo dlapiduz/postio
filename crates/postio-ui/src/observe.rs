@@ -194,7 +194,13 @@ impl Observation {
     /// apps' answers to one storyboard are compared. `keyboard.widget` and
     /// `app.*` name one toolkit's internals and are left out.
     pub fn shared_eq(&self, other: &Self) -> bool {
-        self == other
+        let mut a = self.clone();
+        let mut b = other.clone();
+        for o in [&mut a, &mut b] {
+            o.keyboard.widget.clear();
+            o.app.clear();
+        }
+        a == b
     }
 }
 
