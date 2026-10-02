@@ -19,3 +19,10 @@ settle  = { until = { rows.count = { changed = true } } }
 key     = "Return"
 check   = { keyboard.region = "list", keyboard.typing = false, keyboard.reachable = true, cursor.index = 0 }
 expect  = "The keyboard is on the first result, and the search field keeps the query."
+
+# In Focus, Return in the bar runs the search and lists the matches in the
+# bar; the keyboard stays in the field, and the arrows walk the matches. There
+# is no list to hand it to, and no first result under the inbox's cursor.
+[app.focus.step.3]
+check  = { keyboard.region = "search", keyboard.typing = true, keyboard.reachable = true, overlay.kind = "finder" }
+expect = "Return runs the search; the matches are listed in the bar and the field keeps the keyboard."

@@ -32,3 +32,13 @@ expect  = "A second archive works on the row that took the first one's place."
 command = "undo"
 check   = { keyboard.region = "list" }
 expect  = "The last archived row comes back, in its place."
+
+# Focus counts from 0 and starts with no cursor row, so the same two keys
+# leave the cursor on index 0 and then 1. Nothing is overridden after the
+# archive: the row below taking the cursor's place is the point (#1687), and
+# Focus is held to it.
+[app.focus.step.down]
+check = { keyboard.region = "list", cursor.index = 0 }
+
+[app.focus.step.second]
+check = { cursor.index = 1 }
