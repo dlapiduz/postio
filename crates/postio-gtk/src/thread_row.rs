@@ -405,7 +405,7 @@ impl ThreadRowView {
         let when = run(
             &palette.when[tone],
             &row.as_ref()
-                .map(|row| crate::row::timestamp(row.received_at, chrono::Local::now()))
+                .map(|row| crate::row::timestamp(row.received_at, postio_ui::clock::now()))
                 .unwrap_or_default(),
         );
 

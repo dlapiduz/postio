@@ -48,7 +48,6 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use chrono::Local;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -98,7 +97,7 @@ pub fn accessible_label(row: &Row) -> String {
         parts.push(match row.send_at {
             Some(due) => format!(
                 "{word} {}",
-                postio_ui::row::timestamp(due, chrono::Local::now())
+                postio_ui::row::timestamp(due, postio_ui::clock::now())
             ),
             None => word.to_string(),
         });
@@ -126,7 +125,7 @@ pub fn accessible_label(row: &Row) -> String {
             .filter(|subject| !subject.trim().is_empty())
             .unwrap_or_else(|| "no subject".to_string()),
     );
-    parts.push(timestamp(row.received_at, Local::now()));
+    parts.push(timestamp(row.received_at, postio_ui::clock::now()));
     if row.thread_count > 1 {
         parts.push(format!("{} in thread", row.thread_count));
     }
@@ -891,7 +890,7 @@ impl MessageRowView {
         let time = line(
             &palette.time[tone],
             &row.as_ref()
-                .map(|row| timestamp(row.received_at, Local::now()))
+                .map(|row| timestamp(row.received_at, postio_ui::clock::now()))
                 .unwrap_or_default(),
         );
         let badge = row
