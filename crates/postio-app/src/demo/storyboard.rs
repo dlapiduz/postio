@@ -107,14 +107,15 @@ pub fn variants_for(board: &Storyboard) -> (Vec<BTreeMap<String, String>>, Vec<S
     postio_storyboard::apply::variants(board, &runner_info())
 }
 
-/// What Classic's runner can do, for applicability and `runner list`.
+/// What Classic's runner can do, for applicability and `runner list`. Each
+/// axis lists the app's default first ([`postio_storyboard::apply::default_variant`]).
 pub fn runner_info() -> RunnerInfo {
     let axes = [
         ("scheme", &["light", "dark"][..]),
         ("contrast", &["normal", "high"][..]),
-        ("width", &["wide", "normal", "narrow"][..]),
+        ("width", &["normal", "wide", "narrow"][..]),
         ("text", &["100", "200"][..]),
-        ("density", &["airy", "comfortable", "compact"][..]),
+        ("density", &["comfortable", "airy", "compact"][..]),
     ]
     .into_iter()
     .map(|(axis, values)| {
@@ -214,6 +215,9 @@ async fn acting(window: &Window, options: &DemoOptions) -> Option<Acting> {
         account,
         state: ConnectionState::Online,
     });
+    if options.has(Seed::Backfilling) {
+        super::backfill_in_flight(&wired.feeds, account);
+    }
     crate::commands::install(
         window,
         &wired.feeds,

@@ -182,6 +182,36 @@ fn commands_needed(storyboard: &Storyboard, app: App) -> Vec<CommandId> {
     out
 }
 
+/// The one variant a run without `--variants` plays. Each axis the runner
+/// lists has its default value first; an axis whose asked values include that
+/// default keeps it, and one that asks only for others -- `inbox-dark` asks
+/// for `scheme = ["dark"]` and nothing else -- takes the first of them, so a
+/// storyboard is never filmed in a variant it did not ask for. Axes the runner
+/// lacks are returned, as [`variants`] returns them.
+pub fn default_variant(
+    storyboard: &Storyboard,
+    info: &RunnerInfo,
+) -> (BTreeMap<String, String>, Vec<String>) {
+    let mut variant = BTreeMap::new();
+    let mut ignored = Vec::new();
+    for (axis, asked) in &storyboard.vary {
+        let Some(supported) = info.axes.get(axis) else {
+            ignored.push(axis.clone());
+            continue;
+        };
+        if supported.first().is_some_and(|default| asked.contains(default)) {
+            continue;
+        }
+        match asked.iter().find(|value| supported.contains(value)) {
+            Some(value) => {
+                variant.insert(axis.clone(), value.clone());
+            }
+            None => ignored.push(axis.clone()),
+        }
+    }
+    (variant, ignored)
+}
+
 /// Every variant a storyboard asks this app for: the cross product of the
 /// values it lists on each axis the app supports, plus the axes it asked
 /// for that the app does not have (FR-017). A storyboard that varies nothing
@@ -400,6 +430,42 @@ mod tests {
             ["density"],
             "an axis the app lacks is said, not played"
         );
+    }
+
+    #[test]
+    fn the_default_variant_keeps_an_app_default_and_takes_what_is_asked_otherwise() {
+        let board = parse(
+            "source = { kind = \"flow\", ref = \"x\" }\n\
+             vary = { scheme = [\"dark\"], width = [\"wide\", \"normal\"], density = [\"compact\"] }\n",
+            Path::new("screens/inbox-dark.toml"),
+        )
+        .expect("loads");
+        let mut info = info(App::Classic);
+        info.axes = [
+            (
+                "scheme".to_owned(),
+                vec!["light".to_owned(), "dark".to_owned()],
+            ),
+            (
+                "width".to_owned(),
+                vec!["normal".to_owned(), "wide".to_owned()],
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let (variant, ignored) = default_variant(&board, &info);
+        assert_eq!(
+            crate::run::variant_key(&variant),
+            "scheme=dark",
+            "a storyboard that asks only for dark is dark; one that allows the default width keeps it"
+        );
+        assert_eq!(ignored, ["density"]);
+        let plain = parse(
+            "source = { kind = \"flow\", ref = \"x\" }\n",
+            Path::new("list/walk.toml"),
+        )
+        .expect("loads");
+        assert!(default_variant(&plain, &info).0.is_empty());
     }
 
     #[test]

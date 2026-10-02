@@ -480,17 +480,7 @@ pub async fn populate(window: &Window, options: &DemoOptions) -> Option<&'static
     // (#411). Applied only for the shot that wants it: the ordinary `demo`
     // line reads `idle · imap` / `last sync 12s`, which is the canvas.
     if options.has(Seed::Backfilling) {
-        wired.feeds.apply(&postio_core::Event::BackfillProgress {
-            account,
-            done: 12_400,
-            total: 81_744,
-            footprint: Some(postio_core::event::MailFootprint {
-                total_bytes: 1_503_238_553,
-                attachment_bytes: 1_400_000_000,
-                local_bytes: 933_232_640,
-                complete: true,
-            }),
-        });
+        backfill_in_flight(&wired.feeds, account);
     }
 
     let wired: &'static Wired = Box::leak(Box::new(wired));
@@ -867,6 +857,24 @@ pub fn show_account_weights(window: &Window) {
         ],
         false,
     );
+    window.open_settings();
+}
+
+/// The backfill the `backfilling` seed shows in flight (#411), with the size
+/// of the account's mail beside it. Shared by `shot` and the storyboard
+/// runner, which wire the window differently and must not drift apart.
+pub(crate) fn backfill_in_flight(feeds: &postio_gtk::feed::Feeds, account: AccountId) {
+    feeds.apply(&postio_core::Event::BackfillProgress {
+        account,
+        done: 12_400,
+        total: 81_744,
+        footprint: Some(postio_core::event::MailFootprint {
+            total_bytes: 1_503_238_553,
+            attachment_bytes: 1_400_000_000,
+            local_bytes: 933_232_640,
+            complete: true,
+        }),
+    });
 }
 
 /// Canvas 2a's own reply, so the composer can be held up against the drawing.
