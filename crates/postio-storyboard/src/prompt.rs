@@ -77,11 +77,22 @@ pub fn render(manifest: &Manifest, n: usize, bundle: &Path) -> Option<String> {
     } else {
         format!("verdicts.{n}.json")
     };
+    // Absolute, so a reviewer started anywhere can open every file it is
+    // told to read: the bundle's own paths are relative to it, and the
+    // project's guidance lives in the repository the bundle sits in.
+    let absolute = bundle
+        .canonicalize()
+        .unwrap_or_else(|_| bundle.to_path_buf());
+    let repo = absolute
+        .ancestors()
+        .find(|dir| dir.join(".claude").is_dir())
+        .map_or_else(|| ".".to_owned(), |dir| dir.display().to_string());
     let values = [
         ("batch", n.to_string()),
         ("batches", manifest.batches.len().to_string()),
         ("hash", template_hash()),
-        ("bundle", bundle.display().to_string()),
+        ("bundle", absolute.display().to_string()),
+        ("repo", repo),
         ("tree_key", manifest.tree_key.clone()),
         (
             "base",
