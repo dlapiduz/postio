@@ -1,4 +1,4 @@
-//! A [`SecretStore`](super::SecretStore) over the macOS Keychain.
+//! A [`SecretStore`](crate::secret::SecretStore) over the macOS Keychain.
 //!
 //! The macOS answer to what `KeyringSecretStore` does on freedesktop. Not an
 //! optional nicety: ADR 0014 keeps the local store's own encryption key in the

@@ -111,6 +111,7 @@ fn thread(body: &str) -> postio_gtk::body_view::Content {
         styles: "",
         recipients: "",
         cc: "",
+        sheet: postio_ui::reader::document::Sheet::Theme,
         body: &folded,
     };
     let mut content = content("plain-text-simple");
@@ -283,6 +284,7 @@ pub fn the_rail_follows_the_snapshot() {
             styles: "",
             recipients: "",
             cc: "",
+            sheet: postio_ui::reader::document::Sheet::Theme,
             body,
         })
         .collect();

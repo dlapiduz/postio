@@ -222,3 +222,81 @@ async fn a_cursor_on_a_row_whose_page_is_in_flight_finds_it_when_it_lands() {
     );
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rows_that_left_the_mailbox_do_not_stay_selected() {
+    // Mark twelve, press `a`: the rows leave the inbox, and the `Selection`
+    // predicate went on naming those twelve. The next destructive verb landed
+    // on mail that was no longer on screen -- and, until the notice path
+    // existed, with nothing saying what had happened and no undo offered.
+    //
+    // GTK clears it, in one line with the reason written beside it: *"Rows
+    // that have left the mailbox cannot stay selected: the next action would
+    // be aimed at mail that is no longer there."* It belongs on this side of
+    // the boundary rather than in each frontend, because the selection is
+    // here -- and because `Everything { except }` is a predicate a frontend
+    // cannot re-derive without enumerating the mailbox.
+    let session = listed(6).await;
+    let first = session.row_at(0).expect("a row").id;
+    let second = session.row_at(1).expect("a row").id;
+    session.toggle_selection(first);
+    session.toggle_selection(second);
+    assert_eq!(
+        session.selected_messages().map(|ids| ids.len()),
+        Some(2),
+        "the fixture did not select anything"
+    );
+
+    session.emit_for_test(postio_core::Event::MessagesRemoved {
+        account: postio_model::ids::AccountId::new(1),
+        mailbox: postio_model::ids::MailboxId::new(1),
+        messages: vec![postio_model::ids::MessageId::new(first)],
+    });
+    let _ = session.next_event_blocking();
+    session.settle_for_test();
+
+    assert_eq!(
+        session.selected_messages(),
+        Some(Vec::new()),
+        "a selection naming mail that has left the mailbox is a verb aimed at \
+         nothing"
+    );
+    session.shutdown();
+}
+
+/// Whether a `SelectionChanged` is waiting, draining everything else.
+fn heard_selection_change(session: &Session) -> bool {
+    let mut heard = false;
+    while let Some(event) = session.try_next_event() {
+        heard |= matches!(event, postio_ffi::UiEvent::SelectionChanged);
+    }
+    heard
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_change_to_the_selection_is_announced() {
+    // The selection lives here, and the rows that draw it and the "12
+    // selected" bar live in the frontend. Nothing told the Mac it had
+    // changed, so `x` marked a message and the list drew nothing -- the
+    // tint was there to draw, and nobody asked for it.
+    let session = listed(5).await;
+    session.invoke("next_message");
+    let _ = heard_selection_change(&session);
+
+    session.invoke("toggle_selection");
+    assert!(heard_selection_change(&session), "x");
+
+    session.invoke("extend_selection_down");
+    assert!(heard_selection_change(&session), "shift-extend");
+
+    session.invoke("back");
+    assert!(heard_selection_change(&session), "escape clearing it");
+
+    session.select_all();
+    assert!(heard_selection_change(&session), "select all");
+
+    // And moving the cursor is not one: it changes no mark.
+    session.invoke("next_message");
+    assert!(!heard_selection_change(&session), "j marked nothing");
+    session.shutdown();
+}

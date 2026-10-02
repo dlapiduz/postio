@@ -154,6 +154,18 @@ pub struct Draft {
     pub subject: String,
     /// Body being composed.
     pub body: MessageBody,
+    /// Whether this is being written as rich text (#1271).
+    ///
+    /// Stored rather than derived from `body.html`. The composer's rule is
+    /// that the switch is on the *document*: turning it off changes what
+    /// will be built and does not throw the marks away, in case it is turned
+    /// back on. A flag derived from "has an HTML part" cannot say "has
+    /// marks, sending plain" -- keeping the marks would turn the switch back
+    /// on by itself.
+    ///
+    /// It decides what leaves: `text/html` plus a `text/plain` alternative
+    /// **always**, against `text/plain` alone, wrapped and flowed.
+    pub rich: bool,
     /// The Markdown the user typed, when the draft was written in the
     /// terminal composer; `None` when a frontend that does not author
     /// Markdown saved it last.
@@ -214,6 +226,9 @@ impl Draft {
             bcc: Vec::new(),
             subject: String::new(),
             body: MessageBody::default(),
+            // Plain by default, on both frontends. A composer that opened
+            // rich would decide for the person what shape their mail takes.
+            rich: false,
             body_markdown: None,
             attachments: Vec::new(),
             state: DraftState::Editing,

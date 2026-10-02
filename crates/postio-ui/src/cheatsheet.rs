@@ -109,7 +109,9 @@ pub fn sections(keymap: &Keymap, context: Context, state: Availability) -> Vec<S
         rows: Vec::new(),
     };
 
-    for spec in registry::reachable_in(context, state) {
+    // Not what this platform has no surface for: the sheet teaches keys, and
+    // a key for a missing surface is one the application would ignore.
+    for spec in registry::reachable_in(context, state).filter(|spec| keymap.offers(spec.id)) {
         let ActionId::Builtin(id) = spec.id else {
             // Registered commands get their own sections, by provenance.
             continue;
@@ -225,6 +227,29 @@ mod tests {
         Keymap::resolve(&postio_config::KeyBindings::default())
     }
 
+    #[test]
+    fn a_command_the_platform_does_not_offer_is_not_taught_there() {
+        // `g a` on a Mac sidebar with no account strip is a key the sheet
+        // would teach and the application would ignore (#1573).
+        use postio_config::paths::Platform;
+        let (context, state) = in_the_list();
+        for platform in [Platform::Freedesktop, Platform::Apple] {
+            let keymap = Keymap::resolve_on(&postio_config::KeyBindings::default(), platform);
+            let taught = sections(&keymap, context, state)
+                .iter()
+                .flat_map(|section| section.rows.iter())
+                .any(|row| row.id == Some(ActionId::Builtin(CommandId::NextScope)));
+            assert_eq!(
+                taught,
+                postio_core::registry::offered_on(
+                    ActionId::Builtin(CommandId::NextScope),
+                    platform
+                ),
+                "{platform:?}"
+            );
+        }
+    }
+
     /// The reader's ordinary position: standing in the message list, with one
     /// account's mailboxes on screen.
     fn in_the_list() -> (Context, Availability) {
@@ -237,13 +262,18 @@ mod tests {
     #[test]
     fn every_reachable_command_appears_exactly_once() {
         let (context, scope) = in_the_list();
-        let listed: Vec<ActionId> = sections(&defaults(), context, scope)
+        let keymap = defaults();
+        let listed: Vec<ActionId> = sections(&keymap, context, scope)
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| row.id)
             .collect();
+        // What this platform offers; the rest is
+        // `a_command_the_platform_does_not_offer_is_not_taught_there`'s.
+        let offered =
+            || registry::reachable_in(context, scope).filter(|spec| keymap.offers(spec.id));
 
-        for spec in registry::reachable_in(context, scope) {
+        for spec in offered() {
             let count = listed.iter().filter(|id| **id == spec.id).count();
             assert_eq!(
                 count, 1,
@@ -251,7 +281,7 @@ mod tests {
                 spec.id
             );
         }
-        assert_eq!(listed.len(), registry::reachable_in(context, scope).count());
+        assert_eq!(listed.len(), offered().count());
     }
 
     /// The sheet answers "what can I do *now*", so it must not advertise a
@@ -297,8 +327,9 @@ mod tests {
         let keymap = defaults();
         let scope = Availability::open(Scope::Account(AccountId::new(1)));
 
-        let reachable: Vec<_> =
-            postio_core::registry::reachable_in(Context::Composer, scope).collect();
+        let reachable: Vec<_> = postio_core::registry::reachable_in(Context::Composer, scope)
+            .filter(|spec| keymap.offers(spec.id))
+            .collect();
         assert!(
             !reachable.is_empty(),
             "the registry offers nothing in the composer, so this test would \

@@ -27,6 +27,7 @@
 
 mod concurrent_accounts;
 mod engine;
+mod last_synced;
 mod list_refresh;
 mod local_store;
 mod mail_store;

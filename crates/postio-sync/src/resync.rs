@@ -574,9 +574,10 @@ async fn incremental(
                 let source: Vec<Message> = slice.to_vec();
                 postio_storage::transaction(connection, move |connection| async move {
                     let mut written = source;
-                    MessageRepository::new(&connection)
-                        .upsert_batch(&mut written)
-                        .await?;
+                    // Indexed once per message, and not at all when nothing
+                    // in its search text changed -- which on a resync of
+                    // known mail is almost every message (#1587).
+                    crate::initial::upsert_indexed(&connection, &mut written).await?;
 
                     let threading = ThreadingRepository::new(&connection, account_id);
                     for message in &written {

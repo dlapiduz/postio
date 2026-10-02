@@ -44,6 +44,7 @@ private func makeRow(
     seen: Bool = true,
     flagged: Bool = false,
     threadCount: UInt32 = 1,
+    participants: String = "",
     isThread: Bool = false
 ) -> RowFfi {
     RowFfi(
@@ -56,6 +57,7 @@ private func makeRow(
         // what these tests are about.
         isThread: isThread,
         from: from,
+        fromAddress: from.map { "\($0.lowercased().replacingOccurrences(of: " ", with: "."))@example.com" },
         initials: "AL",
         subject: subject,
         preview: preview,
@@ -68,7 +70,8 @@ private func makeRow(
         // Nil here — these tests are about ordinary mail.
         sendState: nil,
         hasAttachments: false,
-        threadCount: threadCount
+        threadCount: threadCount,
+        participants: participants
     )
 }
 
@@ -267,5 +270,85 @@ struct MessageTableTests {
         // list of six enormous rows, which is its own kind of broken.
         #expect(MessageRowCell.preferredHeight() > 40)
         #expect(MessageRowCell.preferredHeight() < 120)
+    }
+
+    // -- a reload keeps the cursor's row selected (found using the app) ----
+
+    private func mounted(rows: UInt32) -> MessageTableController {
+        let controller = MessageTableController(source: StubRowSource(rowCount: rows))
+        let scroll = MessageListView.makeTable(controller: controller)
+        controller.tableView = scroll.documentView as? NSTableView
+        controller.tableView?.reloadData()
+        return controller
+    }
+
+    @Test func aReloadPutsTheSelectionBackOnTheCursorsRow() {
+        // Reading an unread message marks it read after a few seconds; the
+        // change reloads the list, and `reloadData()` dropped the selection
+        // the cursor had made -- the highlight vanished from under the
+        // message being read. The boundary still had the cursor there.
+        let controller = mounted(rows: 10)
+        controller.showCursor(on: 3)
+        controller.tableView?.deselectAll(nil)  // what the reload did
+
+        controller.reload(keepingCursorOn: 3)
+
+        #expect(controller.tableView?.selectedRow == 3)
+    }
+
+    @Test func puttingTheSelectionBackIsNotReportedAsAMove() {
+        // The cursor did not move, so nothing is said to the boundary about
+        // it -- a report would re-open the conversation it is already on.
+        let controller = mounted(rows: 10)
+        var reported: [UInt32?] = []
+        controller.onCursorRowChanged = { reported.append($0) }
+        controller.showCursor(on: 3)
+        controller.tableView?.deselectAll(nil)
+        reported = []
+
+        controller.reload(keepingCursorOn: 3)
+
+        #expect(reported.isEmpty)
+    }
+
+    @Test func aMarkChangeRedrawsTheMarkWhereTheCursorIs() throws {
+        // `x` marks the row the cursor is on. The model changed and nothing
+        // redrew the row, so the tint the cell knows how to draw was never
+        // drawn -- the user saw no sign that anything was marked.
+        let source = StubRowSource(
+            rowCount: 3,
+            rows: [0: makeRow(id: 10), 1: makeRow(id: 11), 2: makeRow(id: 12)]
+        )
+        let controller = MessageTableController(source: source)
+        let scroll = MessageListView.makeTable(controller: controller)
+        // In a window, so the rows are real cells drawn once -- the question
+        // is whether a mark change draws them *again*.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 600),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = scroll
+        controller.tableView = scroll.documentView as? NSTableView
+        let table = try #require(controller.tableView)
+        table.reloadData()
+        scroll.layoutSubtreeIfNeeded()
+        controller.showCursor(on: 1)
+        let before = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: false) as? MessageRowCell)
+        #expect(!before.isMarkedForTesting)
+        var reported: [UInt32?] = []
+        controller.onCursorRowChanged = { reported.append($0) }
+
+        source.marked = [11]
+        controller.marksChanged()
+
+        let cell = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: false) as? MessageRowCell)
+        #expect(cell.isMarkedForTesting, "the mark is drawn")
+        #expect(table.selectedRow == 1, "and the cursor stays where it was")
+        #expect(reported.isEmpty, "which is not a move")
+    }
+
+    @Test func aReloadWithNoCursorSelectsNothing() {
+        let controller = mounted(rows: 10)
+        controller.reload(keepingCursorOn: nil)
+        #expect(controller.tableView?.selectedRow == -1)
     }
 }

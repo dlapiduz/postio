@@ -208,8 +208,11 @@ fn sample_draft() -> Draft {
         subject: "Re: Contract".into(),
         body: MessageBody {
             text: Some("sure".into()),
-            html: None,
+            html: Some("<p>sure</p>".into()),
         },
+        // `true` rather than the default, for this file's own reason: a
+        // field set to its default proves nothing about a round trip.
+        rich: true,
         body_markdown: Some("sure".into()),
         attachments: vec![],
         state: DraftState::Editing,

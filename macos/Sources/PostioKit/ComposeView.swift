@@ -1,0 +1,513 @@
+import AppKit
+import PostioFFI
+import SwiftUI
+
+/// The compose window (canvas screen 26).
+///
+/// Its own window, not a pane and not a sheet: writing a message is a thing
+/// you do *beside* reading rather than instead of it, several at once, each
+/// in the Window menu. The subject is the window's title, which is what makes
+/// two of them tellable apart.
+///
+/// Nothing here composes MIME, addresses a reply, or decides what a quote
+/// looks like. It takes what the boundary handed over, shows it, and hands
+/// back what was typed.
+public struct ComposeView: View {
+    private let session: PostioSession
+    private let model: ComposeModel
+    private let close: () -> Void
+
+    @FocusState private var focus: Field?
+    /// Whether the Link button is asking where to point.
+    ///
+    /// A mark that needs an argument cannot be a plain toggle: `insert_link`
+    /// is the one entry in the bar that has to ask something before it can
+    /// do anything, which is why it does not go through `markScript`.
+    @State private var askingForLink = false
+    @State private var confirmingDiscard = false
+    /// The times the schedule-send picker is offering, or empty when it is
+    /// closed. Held rather than computed in the dialog because they are
+    /// computed *as it opens* — see `schedulePresets`.
+    @State private var schedule: [SchedulePresetFfi] = []
+    @State private var linkAddress = ""
+
+    private enum Field: Hashable {
+        case to, cc, bcc, subject, body
+    }
+
+    public init(
+        session: PostioSession,
+        model: ComposeModel,
+        close: @escaping () -> Void
+    ) {
+        self.session = session
+        self.model = model
+        self.close = close
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            headers
+            Divider()
+            formatBar
+            Divider()
+            if !model.attachments.isEmpty { attachments }
+            if model.rich {
+                // A document, not a text field (#1271): the format bar's
+                // marks have to apply to something, and on both frontends
+                // that something is a contenteditable web view over
+                // `postio_body`'s dialect.
+                ComposeEditor(session: session, model: model)
+                    // Another editor holds it: two writers would each
+                    // silently undo the other.
+                    .disabled(model.isHandedOff)
+                    .accessibilityLabel("Message body")
+            } else {
+                TextEditor(text: Bindable(model).body)
+                    .font(.system(.body, design: .monospaced))
+                    .focused($focus, equals: .body)
+                    .disabled(model.isHandedOff)
+                    .padding(PostioTokens.space3)
+                    .accessibilityLabel("Message body")
+            }
+            if let status = model.status {
+                statusRow(status)
+            }
+            Divider()
+            footer
+        }
+        .frame(minWidth: 520, minHeight: 420)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                // Asks rather than opens: on a plain draft there is no
+                // document to hold a picture, and the model says so.
+                Button {
+                    model.askForImage()
+                } label: {
+                    Image(systemName: "photo")
+                }
+                .help(tooltip("Insert an image", "insert_image"))
+                .accessibilityLabel("Insert an image")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    attach()
+                } label: {
+                    Image(systemName: "paperclip")
+                }
+                .help(tooltip("Attach a file", "attach_file"))
+                .accessibilityLabel("Attach a file")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: send) {
+                    HStack(spacing: PostioTokens.space2) {
+                        Text("Send")
+                        if let chord = accelerator("send") {
+                            Text(chord).opacity(0.75)
+                        }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .help(tooltip("Send this message", "send"))
+            }
+        }
+        .onAppear {
+            focus = model.to.isEmpty ? .to : .body
+            // Which editor the hand-off names, read now rather than when the
+            // model was built: this window may have been open since before
+            // the setting was chosen (#1288).
+            model.refreshEditor()
+        }
+        // Coming back to this window is what a person means by "I am done
+        // over there".
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            if model.isHandedOff { model.takeBack(through: session) }
+        }
+        // Autosave, because unsaved words are the thing a compose window must
+        // never lose. On a pause rather than a keystroke: a save is one row,
+        // but it is also one write lock, and typing is not the time to take
+        // one.
+        .onChange(of: model.edited) { _, _ in scheduleSave() }
+        .onDisappear {
+            if model.isDirty, !model.sent { model.save(through: session) }
+            close()
+        }
+    }
+
+    /// What is attached, each with a way off again.
+    ///
+    /// Above the body rather than below it: an attachment is part of what is
+    /// being sent, and a list under the fold is one people forget they added.
+    private var attachments: some View {
+        HStack(spacing: PostioTokens.space2) {
+            Text("Files")
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            ForEach(model.attachments, id: \.id) { attachment in
+                HStack(spacing: PostioTokens.space2) {
+                    Image(systemName: "doc")
+                    Text(attachment.filename)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(attachment.size)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Button {
+                        model.detach(attachment, through: session)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(attachment.filename)")
+                }
+                .padding(.horizontal, PostioTokens.space2)
+                .padding(.vertical, 3)
+                .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: PostioTokens.radiusMd))
+                .accessibilityElement(children: .contain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, PostioTokens.space4)
+        .padding(.vertical, PostioTokens.space2)
+    }
+
+    // -- the header fields --------------------------------------------------
+
+    private var headers: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: PostioTokens.space2) {
+                field("To", text: Bindable(model).to, focus: .to)
+                // `+ Cc` is the same affordance GTK draws, and it disappears
+                // once the rows are up because it has nothing left to ask
+                // for. The rows show themselves when they hold somebody.
+                if !model.showsCopyFields {
+                    Button("+ Cc") { model.toggleCopyFields() }
+                        .buttonStyle(.link)
+                        .padding(.trailing, PostioTokens.space4)
+                        .accessibilityLabel("Show the Cc and Bcc fields")
+                }
+            }
+            if model.showsCopyFields {
+                Divider()
+                field("Cc", text: Bindable(model).cc, focus: .cc)
+                Divider()
+                field("Bcc", text: Bindable(model).bcc, focus: .bcc)
+            }
+            Divider()
+            field("From", value: model.draft.from)
+            Divider()
+            field("Subject", text: Bindable(model).subject, focus: .subject)
+        }
+    }
+
+    private func field(
+        _ label: String,
+        text: Binding<String>,
+        focus target: Field
+    ) -> some View {
+        HStack(spacing: PostioTokens.space4) {
+            Text(label)
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            TextField("", text: text)
+                .textFieldStyle(.plain)
+                .focused($focus, equals: target)
+                .accessibilityLabel(label)
+        }
+        .padding(.horizontal, PostioTokens.space4)
+        .padding(.vertical, PostioTokens.space3)
+    }
+
+    /// A field that is not edited — `From`, which is the account's identity
+    /// rather than something to type into.
+    private func field(_ label: String, value: String) -> some View {
+        HStack(spacing: PostioTokens.space4) {
+            Text(label)
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+            Spacer()
+        }
+        .padding(.horizontal, PostioTokens.space4)
+        .padding(.vertical, PostioTokens.space3)
+        .accessibilityElement(children: .combine)
+    }
+
+    // -- the format bar -----------------------------------------------------
+
+    /// Only what mail actually renders (canvas 26): paragraph marks, lists,
+    /// a quote and a link. No fonts, no colours, no sizes — a mail client
+    /// that offers them is one whose messages arrive looking like something
+    /// else.
+    private var formatBar: some View {
+        HStack(spacing: PostioTokens.space2) {
+            Text("Body")
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            ForEach(ComposeFormat.marks, id: \.command) { mark in
+                Button {
+                    // The registry command *and* the document. `invoke`
+                    // keeps this on the one path a keystroke takes -- undo
+                    // included -- and `applyMark` is what reaches the
+                    // surface the marks actually apply to (#1271).
+                    session.invoke(mark.command)
+                    if mark.command == ComposeFormat.link {
+                        linkAddress = ""
+                        askingForLink = true
+                    } else {
+                        model.applyMark(mark.command)
+                    }
+                } label: {
+                    Image(systemName: mark.symbol)
+                        // Lit when the caret is inside the mark, from the
+                        // bridge's own reflection channel rather than from
+                        // anything this window tracks -- a toolbar that
+                        // guessed would be wrong the moment somebody moved
+                        // the caret with the mouse.
+                        .foregroundStyle(
+                            model.isMarkActive(mark.command)
+                                ? Color(nsColor: PostioTokens.colorAccent) : Color.primary
+                        )
+                }
+                .help(tooltip(mark.title, mark.command))
+                .accessibilityLabel(mark.title)
+                .disabled(!model.marksApply)
+            }
+            Spacer()
+            Picker("", selection: Bindable(model).rich) {
+                Text("Rich").tag(true)
+                Text("Plain").tag(false)
+            }
+            // The plain field is about to become the only one that matters,
+            // and everything typed in Rich went into the document (#1293).
+            // Derived here rather than only at save, so what will be sent is
+            // what is on screen the moment the switch moves.
+            .onChange(of: model.rich) { was, now in
+                guard was, !now, let html = model.bodyHtml, !html.isEmpty else { return }
+                model.switchedToPlain(text: session.plainTextOf(html))
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            // Live since #1271. It was drawn disabled while the body was a
+            // text field, because a switch over a body that cannot carry
+            // marks would make the footer's claim about what leaves untrue.
+            // The body carries marks now, and the footer follows the switch.
+            .disabled(model.isHandedOff)
+            .help("Rich sends html and a plain-text alternative; Plain sends flowed text")
+            .accessibilityLabel("How this message is written")
+        }
+        .padding(.horizontal, PostioTokens.space4)
+        .padding(.vertical, PostioTokens.space2)
+        // The three things a *command* can ask for and cannot do: a sheet, an
+        // open panel and a confirmation all need a view to present them, and
+        // `ComposeCommands` runs with no view in reach. It records the wish;
+        // this is where it is granted.
+        .onChange(of: model.wantsLink) { _, wanted in
+            guard wanted else { return }
+            model.wantsLink = false
+            linkAddress = ""
+            askingForLink = true
+        }
+        .onChange(of: model.wantsAttachment) { _, wanted in
+            guard wanted else { return }
+            model.wantsAttachment = false
+            attach()
+        }
+        .onChange(of: model.wantsImage) { _, wanted in
+            guard wanted else { return }
+            model.wantsImage = false
+            insertImage()
+        }
+        .onChange(of: model.wantsSchedule) { _, wanted in
+            guard wanted else { return }
+            model.wantsSchedule = false
+            schedule = schedulePresets()
+        }
+        .confirmationDialog(
+            "Send this message later?",
+            isPresented: Binding(get: { !schedule.isEmpty }, set: { if !$0 { schedule = [] } }),
+            titleVisibility: .visible
+        ) {
+            // The four times are the boundary's, recomputed as the picker
+            // opens: "in 1 hour" on a picker opened yesterday is not "in 1
+            // hour" today, and two frontends each deciding what "tomorrow
+            // morning" means is two products.
+            ForEach(schedule, id: \.when) { preset in
+                Button(preset.label) {
+                    model.send(at: preset.when, through: session)
+                    schedule = []
+                }
+            }
+            Button("Cancel", role: .cancel) { schedule = [] }
+        }
+        .onChange(of: model.wantsDiscard) { _, wanted in
+            guard wanted else { return }
+            model.wantsDiscard = false
+            confirmingDiscard = true
+        }
+        // `Recovery::Confirm` in the registry, so the verb asks. A discard
+        // that just happened would be a destructive command with no way back,
+        // which is exactly what the registry says this one is not.
+        .confirmationDialog(
+            "Discard this draft?",
+            isPresented: $confirmingDiscard,
+            titleVisibility: .visible
+        ) {
+            Button("Discard", role: .destructive) {
+                model.discard(through: session)
+                close()
+            }
+            Button("Keep writing", role: .cancel) {}
+        } message: {
+            Text("What you have written will not be kept.")
+        }
+        .alert("Link to", isPresented: $askingForLink) {
+            TextField("https://example.com", text: $linkAddress)
+            Button("Link") { model.applyMark(ComposeFormat.link, href: linkAddress) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            // Said before it is refused rather than after: the subset is
+            // http, https and mailto, and a link to anything else would be
+            // created, look right, and vanish at the next parse.
+            Text("A message can link to http, https or mailto.")
+        }
+    }
+
+    private func statusRow(_ status: String) -> some View {
+        HStack(spacing: PostioTokens.space2) {
+            Image(systemName: "exclamationmark.triangle")
+            Text(status)
+            Spacer()
+        }
+        .font(.callout)
+        .padding(.horizontal, PostioTokens.space4)
+        .padding(.vertical, PostioTokens.space2)
+        .background(.quaternary.opacity(0.5))
+        .accessibilityElement(children: .combine)
+    }
+
+    // -- the footer ---------------------------------------------------------
+
+    private var footer: some View {
+        HStack {
+            // Before the path, because it is the part that changes what
+            // somebody does next: FR-023's reassurance about scale, said only
+            // when there is more than one person on the message.
+            if let recipients = model.recipientSummary {
+                Text(recipients)
+                    .font(.system(.callout, design: .monospaced))
+                    .accessibilityLabel("This message goes to \(recipients)")
+                Text("·").foregroundStyle(.secondary)
+            }
+            Text(model.footer)
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            // Named for what it does. `$EDITOR` is a shell variable an
+            // application launched from Finder does not have (#1288), and a
+            // button promising one would be promising the wrong thing.
+            Button(
+                model.isHandedOff
+                    ? "Take it back"
+                    : settingsHandoffLabel(configured: model.editor)
+            ) {
+                if model.isHandedOff {
+                    model.takeBack(through: session)
+                } else {
+                    Task {
+                        await model.handOff(through: session) { file in
+                            await ComposeHandoff.open(file, using: model.editor)
+                        }
+                    }
+                }
+            }
+            .buttonStyle(.link)
+            // No chord: the hand-off has no command of its own, and the one
+            // this used to borrow -- `detach_composer` -- is a different verb
+            // the Mac does not offer, so the tooltip taught a key that did
+            // nothing.
+            .help("Edit this draft in your text editor")
+        }
+        .padding(.horizontal, PostioTokens.space4)
+        .padding(.vertical, PostioTokens.space2)
+    }
+
+    // -- what the buttons do ------------------------------------------------
+
+    private func send() {
+        if model.send(through: session) { close() }
+    }
+
+    private func attach() {
+        // POSTIO-CONSENT: a file leaves this machine only because somebody
+        // chose it in an open panel.
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK else { return }
+        model.attach(panel.urls, through: session)
+    }
+
+    private func insertImage() {
+        // POSTIO-CONSENT: a picture leaves this machine only because somebody
+        // chose it in an open panel, and it leaves inside the message they
+        // are writing.
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image]
+        guard panel.runModal() == .OK, let file = panel.url else { return }
+        model.insertImage(from: file, through: session)
+    }
+
+    private func scheduleSave() {
+        model.save(through: session)
+    }
+
+    private func accelerator(_ command: String) -> String? {
+        session.accelerator(for: command)
+    }
+
+    private func tooltip(_ title: String, _ command: String) -> String {
+        guard let chord = accelerator(command) else { return title }
+        return "\(title) (\(chord))"
+    }
+}
+
+/// The marks a message can carry, and nothing else.
+///
+/// Limited to what mail renders — paragraph style, bold, italic, underline,
+/// monospace, lists, quote, link (canvas 26). The list is here rather than in
+/// the view so it can be asserted, and every entry is a registry command.
+public enum ComposeFormat {
+    public struct Mark: Equatable, Sendable {
+        public let command: String
+        public let symbol: String
+        public let title: String
+    }
+
+    /// The one mark that has to ask something before it can be applied.
+    ///
+    /// Named rather than written as a literal at the `if`, for the reason
+    /// `Intercepted` names its commands: a literal that no longer matches
+    /// the registry is a button that silently does nothing.
+    public static let link = "insert_link"
+
+    public static let marks: [Mark] = [
+        Mark(command: "bold", symbol: "bold", title: "Bold"),
+        Mark(command: "italic", symbol: "italic", title: "Italic"),
+        Mark(command: "bullet_list", symbol: "list.bullet", title: "Bulleted list"),
+        Mark(command: "numbered_list", symbol: "list.number", title: "Numbered list"),
+        Mark(command: "quote_block", symbol: "text.quote", title: "Quote"),
+        Mark(command: "insert_link", symbol: "link", title: "Link"),
+    ]
+}

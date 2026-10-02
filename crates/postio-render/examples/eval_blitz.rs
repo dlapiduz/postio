@@ -503,6 +503,7 @@ fn cost(fonts: &FontSet, report: &mut String) {
                 body,
                 recipients: "",
                 cc: "",
+                sheet: postio_ui::reader::document::Sheet::Theme,
                 styles,
             })
             .collect();

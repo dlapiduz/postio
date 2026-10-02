@@ -811,6 +811,40 @@ async fn the_backend_choice_round_trips_and_defaults_to_imap() {
 }
 
 #[tokio::test]
+async fn a_maildir_account_remembers_which_directory_it_is() {
+    // The tree on disk *is* the account (#1278): a maildir row that came back
+    // without its root would be an account pointing at nothing. The root lives
+    // in `accounts.backend_location`, the one column that says where a backend
+    // lives whatever kind it is — JMAP's session resource for one account, a
+    // directory for this one — so this is the assertion that the column has two
+    // readers and not just the one it was named for.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let mut account = test_support::account(&connection).await;
+
+    account.backend = postio_model::account::Backend::Maildir {
+        root: "/home/ada/mail".to_string(),
+    };
+    AccountRepository::new(&connection)
+        .update(&mut account)
+        .await
+        .expect("update");
+
+    let read = AccountRepository::new(&connection)
+        .get(account.id)
+        .await
+        .expect("read")
+        .expect("the account");
+
+    assert_eq!(
+        read.backend,
+        postio_model::account::Backend::Maildir {
+            root: "/home/ada/mail".to_string(),
+        }
+    );
+}
+
+#[tokio::test]
 async fn two_signatures_in_one_account_cannot_share_a_name() {
     // `signatures.name` is documented "unique per account so the picker never
     // offers two entries a person cannot tell apart", and `idx_signatures_name`

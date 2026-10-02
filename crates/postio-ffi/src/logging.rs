@@ -51,4 +51,23 @@ pub fn start_logging() {
     // There is no other owner here -- this is a free function, not a `main`.
     std::mem::forget(config_path.as_deref().and_then(|path| logging.watch(path)));
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio starting");
+
+    // First run: `config.toml` does not exist yet. Postio's defaults apply
+    // with nothing on disk, so this changes *discoverability*, not behaviour
+    // — the Config file pane, `⌘E` and a file manager all find something to
+    // read and edit rather than a blank buffer that documents nothing.
+    //
+    // `postio-app` has done this since it had a settings surface; macOS
+    // never did, and the empty editor was the first thing the pane showed
+    // when it was built. Here rather than in `Session::open`, because
+    // settings are a file and the settings window works with no session at
+    // all — the one thing both frontends' launch paths have in common is
+    // that they turn the log on.
+    if let Some(path) = config_path.as_deref() {
+        match postio_config::Config::seed_if_missing(path) {
+            Ok(true) => tracing::info!(path = %path.display(), "seeded a starter config.toml"),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(%error, "could not seed a starter config.toml"),
+        }
+    }
 }

@@ -198,6 +198,27 @@ pub async fn stored_expiry(store: &dyn SecretStore, account: &AccountKey) -> Opt
     Some(UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
+/// The client secret `account` signed in with, when its provider issued
+/// one — Google's "Desktop app" clients do, and require it at the token
+/// endpoint even with PKCE.
+///
+/// Read back rather than only written because a *reconnect* has to present
+/// the same client the first sign-in did, and there is nobody to ask for it:
+/// the add-account sheet has a person in front of it who can type a client
+/// id and secret, and an account row that has gone bad does not. Asking
+/// again there would be asking somebody to go and find a credential they
+/// registered months ago, in order to fix an account that used to work.
+///
+/// `None` is the ordinary public-client case and every failure besides —
+/// the caller's answer is the same either way, exactly as it is for
+/// [`stored_expiry`].
+pub async fn stored_client_secret(
+    store: &dyn SecretStore,
+    account: &AccountKey,
+) -> Option<Password> {
+    store.retrieve(&client_secret_key(account)).await.ok()
+}
+
 struct CachedAccessToken {
     token: Password,
     /// `None` means "the server did not say", treated as never stale on
