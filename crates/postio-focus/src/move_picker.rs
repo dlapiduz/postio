@@ -12,12 +12,9 @@ use gtk::prelude::*;
 use postio_client::Client;
 use postio_core::{Command, Keymap, MessageTarget};
 use postio_model::listing::MailStore as _;
-use postio_model::{Mailbox, MailboxId, MailboxRole};
+use postio_model::{Mailbox, MailboxId};
 use postio_ui::pickers;
 use postio_widgets::widgets::pickers::{Field, Picked, Picker, Row};
-
-/// How many of Recent get a number key and a row.
-const RECENT: usize = 2;
 
 /// What moving sends: the command, aimed at what the picker opened on.
 type Sender = Rc<dyn Fn(Command)>;
@@ -108,14 +105,13 @@ impl MovePicker {
             for account in accounts.iter().filter(|account| account.enabled) {
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.mailboxes(account.id).await;
-                folders.extend(read.unwrap_or_default().into_iter().filter(destination));
+                folders.extend(
+                    read.unwrap_or_default()
+                        .into_iter()
+                        .filter(pickers::is_destination),
+                );
             }
-            folders.sort_by_key(|folder| {
-                (
-                    folder.role != MailboxRole::Archive,
-                    folder.name.to_lowercase(),
-                )
-            });
+            pickers::order_destinations(&mut folders);
             // POSTIO-GLIB-SAFE: as above.
             let recent = client.move_recent().await.unwrap_or_default();
             let Some(this) = weak.upgrade() else {
@@ -130,48 +126,18 @@ impl MovePicker {
     /// Recent, then every folder, as the filter keeps them.
     fn show(&self) {
         let filter = self.picker.entry().text().to_string();
-        let folders = self.folders.borrow();
-        let named = |id: &MailboxId| folders.iter().find(|folder| folder.id == *id);
-        let keeps = |folder: &Mailbox| {
-            !pickers::filtered([crate::places::place_name(folder).as_str()], &filter).is_empty()
-        };
-        let mut rows = Vec::new();
-        let mut shown = Vec::new();
-        let recent: Vec<&Mailbox> = self
-            .recent
-            .borrow()
-            .iter()
-            .filter_map(named)
-            .filter(|folder| keeps(folder))
-            .take(RECENT)
+        let rows = pickers::move_rows(&self.folders.borrow(), &self.recent.borrow(), &filter);
+        let shown = rows.iter().map(|row| row.folder).collect();
+        let rows = rows
+            .into_iter()
+            .map(|row| Row {
+                section: row.section.map(str::to_owned),
+                name: row.name,
+                detail: row.count,
+                numbered: row.numbered,
+                ..Row::default()
+            })
             .collect();
-        for (index, folder) in recent.iter().enumerate() {
-            rows.push(Row {
-                section: (index == 0).then(|| "Recent".to_owned()),
-                name: crate::places::place_name(folder),
-                detail: folder.counts.total.to_string(),
-                numbered: true,
-                ..Row::default()
-            });
-            shown.push(folder.id);
-        }
-        let mut first = true;
-        // What Recent lists is not listed again under it (screen 14).
-        let recent_ids: Vec<MailboxId> = recent.iter().map(|folder| folder.id).collect();
-        for folder in folders
-            .iter()
-            .filter(|folder| keeps(folder) && !recent_ids.contains(&folder.id))
-        {
-            rows.push(Row {
-                section: first.then(|| "All folders".to_owned()),
-                name: crate::places::place_name(folder),
-                detail: folder.counts.total.to_string(),
-                ..Row::default()
-            });
-            shown.push(folder.id);
-            first = false;
-        }
-        drop(folders);
         self.shown.replace(shown);
         self.picker.set_rows(rows);
     }
@@ -201,11 +167,4 @@ impl MovePicker {
             }
         });
     }
-}
-
-/// Whether mail can be moved to `folder` from the picker: the person's own
-/// folders and the archive. Sending, drafting, snoozing and deleting have
-/// verbs of their own, and the inbox is where the mail already is.
-fn destination(folder: &Mailbox) -> bool {
-    matches!(folder.role, MailboxRole::Regular | MailboxRole::Archive)
 }

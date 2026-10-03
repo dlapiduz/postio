@@ -22,7 +22,7 @@ use postio_ui::focus_dialog;
 use postio_widgets::composer::Composer;
 use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 
-pub use frame::{remind_meaning, remind_words, saved_at, subtitle, summary, title};
+pub use postio_ui::compose::{remind_meaning, remind_words, saved_at, subtitle, summary, title};
 pub use seams::Current;
 
 use crate::window::FocusWindow;

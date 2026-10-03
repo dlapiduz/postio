@@ -7,6 +7,7 @@
 //! the conversation's count is worth a badge.
 
 use chrono::{Datelike, NaiveDate};
+use postio_core::CommandId;
 
 /// The most label pills a row draws; the open message shows them all
 /// (spec Edge Cases, "Labels").
@@ -80,6 +81,48 @@ pub fn digest_line(summary: Option<&str>, senders: &[String]) -> String {
             let others = if rest.len() == 1 { "other" } else { "others" };
             format!("From {one}, {two} and {} {others}", rest.len())
         }
+    }
+}
+
+/// The words on the top bar's command field.
+pub const COMMAND_PROMPT: &str = "Search mail, go to a folder, or run a command";
+
+/// The main menu, top to bottom: each item's label and the command it runs
+/// (`None` for About, which is the application's, not a command).
+pub const MENU: &[(&str, Option<CommandId>)] = &[
+    ("Settings", Some(CommandId::Settings)),
+    // A check item (T232): checked while messages open beside the list.
+    ("Read beside the list", Some(CommandId::ToggleReadingPane)),
+    ("Keyboard shortcuts", Some(CommandId::CheatSheet)),
+    ("About", None),
+    ("Quit", Some(CommandId::Quit)),
+];
+
+/// The chrome's buttons, each with the command a click runs. The command
+/// field runs search, and wears the palette's key beside search's.
+pub const BUTTONS: &[CommandId] = &[
+    CommandId::Compose,
+    CommandId::Search,
+    CommandId::CommandPalette,
+    CommandId::GoToFolders,
+    CommandId::ToggleHasAction,
+    CommandId::Quit,
+];
+
+/// The compose button's tooltip: "Compose · c", or "Compose" with no key.
+pub fn compose_tooltip(key: Option<&str>) -> String {
+    match key {
+        Some(key) => format!("Compose \u{b7} {key}"),
+        None => "Compose".to_owned(),
+    }
+}
+
+/// The strip's digest rules button: "1 digest rule", "4 digest rules".
+pub fn digest_rules(count: usize) -> String {
+    if count == 1 {
+        "1 digest rule".to_owned()
+    } else {
+        format!("{count} digest rules")
     }
 }
 
@@ -608,5 +651,13 @@ mod strip_tests {
         let columns = row_columns(404.0);
         assert_eq!(columns.sender_width, SENDER_MIN);
         assert_eq!(columns.subject_x, SENDER_X + SENDER_MIN + COLUMN_GAP);
+    }
+
+    #[test]
+    fn the_strip_counts_digest_rules() {
+        assert_eq!(digest_rules(1), "1 digest rule");
+        assert_eq!(digest_rules(4), "4 digest rules");
+        assert_eq!(compose_tooltip(Some("c")), "Compose \u{b7} c");
+        assert_eq!(compose_tooltip(None), "Compose");
     }
 }

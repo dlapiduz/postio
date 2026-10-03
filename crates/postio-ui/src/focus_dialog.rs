@@ -200,6 +200,110 @@ pub mod rhythm {
     pub const BOTTOM: i32 = 32;
 }
 
+/// One button of a Focus action row: the command it runs, the words on it,
+/// and the slug a surface builds its CSS class or accessible id from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Verb {
+    /// The command it runs, whose key its cap shows.
+    pub command: CommandId,
+    /// The words on it.
+    pub label: &'static str,
+    /// What names it: `reply-all`.
+    pub slug: &'static str,
+}
+
+const fn verb(command: CommandId, label: &'static str, slug: &'static str) -> Verb {
+    Verb {
+        command,
+        label,
+        slug,
+    }
+}
+
+/// The open message's toolbar, in the order screen 04 draws it. Task and
+/// Note join in milestone 3 (spec C9).
+pub const OPEN_TOOLBAR: &[Verb] = &[
+    verb(CommandId::Reply, "Reply", "reply"),
+    verb(CommandId::ReplyAll, "Reply all", "reply-all"),
+    verb(CommandId::Forward, "Forward", "forward"),
+    verb(CommandId::Archive, "Archive", "archive"),
+    verb(CommandId::Snooze, "Snooze", "snooze"),
+    verb(CommandId::RemindIfNoReply, "Remind", "remind"),
+    verb(CommandId::AddLabel, "Label", "label"),
+    verb(CommandId::Move, "Move", "move"),
+    verb(CommandId::Delete, "Delete", "delete"),
+    verb(CommandId::MoreActions, "More", "more"),
+];
+
+/// The action row of a message on its way or stopped (T239), in the order
+/// it draws them: which of these show is [`send_verbs`]'s answer for the
+/// message's state. Edit is `OpenMessage`: for a draft, opening is writing.
+pub const SEND_TOOLBAR: &[Verb] = &[
+    verb(CommandId::CancelSend, "Cancel send", "cancel-send"),
+    verb(CommandId::RetrySend, "Retry send", "retry-send"),
+    verb(CommandId::MarkSent, "Mark as sent", "mark-sent"),
+    verb(CommandId::OpenMessage, "Edit", "edit"),
+];
+
+/// What a narrow dialog folds into More (T206), in the action row's order.
+pub const FOLDED: [CommandId; 3] = [CommandId::AddLabel, CommandId::Move, CommandId::Delete];
+
+/// The bulk bar's verbs while anything is selected, in the order screen 01
+/// draws them. Task joins them once Obsidian exists (milestone 3, spec C9).
+pub const BULK: &[Verb] = &[
+    verb(CommandId::Archive, "Archive", "archive"),
+    verb(CommandId::Snooze, "Snooze", "snooze"),
+    verb(CommandId::ToggleRead, "Mark read", "read"),
+    verb(CommandId::DigestRule, "Digest these\u{2026}", "digest"),
+    verb(CommandId::AddLabel, "Label", "label"),
+    verb(CommandId::Move, "Move", "move"),
+    verb(CommandId::Delete, "Delete", "delete"),
+];
+
+/// The open message's position line: "Message 3 of 60", then, for a
+/// conversation of `messages`, where the dialog is in it -- "thread of 6"
+/// at the latest, "2 of 6 in the thread" stepped back -- and, for a draft
+/// on its way or stopped, which.
+pub fn position_line(
+    index: usize,
+    total: usize,
+    messages: u32,
+    thread_at: usize,
+    latest: bool,
+    send_state: Option<postio_model::DraftState>,
+) -> String {
+    let mut said = format!("Message {} of {}", index + 1, total);
+    if messages > 1 {
+        if latest {
+            said.push_str(&format!(" \u{b7} thread of {messages}"));
+        } else {
+            said.push_str(&format!(
+                " \u{b7} {} of {messages} in the thread",
+                thread_at + 1
+            ));
+        }
+    }
+    if let Some(state) = send_state.filter(|state| *state != postio_model::DraftState::Sent) {
+        said.push_str(&format!(" \u{b7} {}", crate::row::send_state_word(state)));
+    }
+    said
+}
+
+/// The thread chip's sentence, "Latest of 6 in this thread", for a
+/// conversation of more than one message.
+pub fn thread_chip(messages: u32) -> Option<String> {
+    (messages > 1).then(|| format!("Latest of {messages} in this thread"))
+}
+
+/// What follows the key on the thread chip.
+pub const EARLIER_MESSAGE: &str = "earlier message";
+
+/// Where stepping `by` messages from `at` lands in a conversation of `len`
+/// messages: `None` past either end, or before the conversation is read.
+pub fn step_thread(at: usize, len: usize, by: isize) -> Option<usize> {
+    at.checked_add_signed(by).filter(|next| *next < len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +456,46 @@ mod tests {
             send_verbs(Some(DraftState::Editing)),
             Some(&[OpenMessage][..])
         );
+    }
+
+    #[test]
+    fn the_position_line_says_where_in_the_list_and_the_thread() {
+        assert_eq!(position_line(2, 60, 1, 0, true, None), "Message 3 of 60");
+        assert_eq!(
+            position_line(2, 60, 6, 5, true, None),
+            "Message 3 of 60 \u{b7} thread of 6"
+        );
+        assert_eq!(
+            position_line(2, 60, 6, 1, false, None),
+            "Message 3 of 60 \u{b7} 2 of 6 in the thread"
+        );
+        assert!(
+            position_line(0, 1, 1, 0, true, Some(postio_model::DraftState::Queued))
+                .starts_with("Message 1 of 1 \u{b7} ")
+        );
+        assert_eq!(
+            position_line(0, 1, 1, 0, true, Some(postio_model::DraftState::Sent)),
+            "Message 1 of 1"
+        );
+    }
+
+    #[test]
+    fn a_thread_chip_is_for_threads_and_stepping_stops_at_the_ends() {
+        assert_eq!(thread_chip(1), None);
+        assert_eq!(
+            thread_chip(6).as_deref(),
+            Some("Latest of 6 in this thread")
+        );
+        assert_eq!(step_thread(2, 4, -1), Some(1));
+        assert_eq!(step_thread(0, 4, -1), None);
+        assert_eq!(step_thread(3, 4, 1), None);
+        assert_eq!(step_thread(0, 0, 1), None);
+    }
+
+    #[test]
+    fn what_a_narrow_dialog_folds_is_in_the_toolbar() {
+        for command in FOLDED {
+            assert!(OPEN_TOOLBAR.iter().any(|verb| verb.command == command));
+        }
     }
 }

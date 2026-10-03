@@ -40,38 +40,20 @@ use crate::open_header::HeaderCard;
 /// the window's own default.
 const WINDOW: (i32, i32) = (1440, 900);
 
-/// The toolbar, in the order screen 04 draws it. Task and Note join in
-/// milestone 3 (spec C9).
-const TOOLBAR: &[Action] = &[
-    Action::new(CommandId::Reply, "Reply", "focus-open-reply"),
-    Action::new(CommandId::ReplyAll, "Reply all", "focus-open-reply-all"),
-    Action::new(CommandId::Forward, "Forward", "focus-open-forward"),
-    Action::new(CommandId::Archive, "Archive", "focus-open-archive"),
-    Action::new(CommandId::Snooze, "Snooze", "focus-open-snooze"),
-    Action::new(CommandId::RemindIfNoReply, "Remind", "focus-open-remind"),
-    Action::new(CommandId::AddLabel, "Label", "focus-open-label"),
-    Action::new(CommandId::Move, "Move", "focus-open-move"),
-    Action::new(CommandId::Delete, "Delete", "focus-open-delete"),
-    Action::new(CommandId::MoreActions, "More", "focus-open-more"),
-];
+/// The toolbar, in the order screen 04 draws it
+/// (`postio_ui::focus_dialog::OPEN_TOOLBAR`).
+fn toolbar() -> &'static [Action] {
+    crate::verbs::actions("focus-open-", focus_dialog::OPEN_TOOLBAR)
+}
 
-/// The action row of a message on its way or stopped (T239), in the order
-/// it draws them: which of these show is `focus_dialog::send_verbs`'s
-/// answer for the message's state. Edit is `OpenMessage`: for a draft,
-/// opening is writing.
-const SEND_TOOLBAR: &[Action] = &[
-    Action::new(
-        CommandId::CancelSend,
-        "Cancel send",
-        "focus-open-cancel-send",
-    ),
-    Action::new(CommandId::RetrySend, "Retry send", "focus-open-retry-send"),
-    Action::new(CommandId::MarkSent, "Mark as sent", "focus-open-mark-sent"),
-    Action::new(CommandId::OpenMessage, "Edit", "focus-open-edit"),
-];
+/// The action row of a message on its way or stopped (T239): which of these
+/// show is `focus_dialog::send_verbs`'s answer for the message's state.
+fn send_toolbar() -> &'static [Action] {
+    crate::verbs::actions("focus-open-", focus_dialog::SEND_TOOLBAR)
+}
 
-/// What a narrow dialog folds into More (T206), in the action row's order.
-const FOLDED: [CommandId; 3] = [CommandId::AddLabel, CommandId::Move, CommandId::Delete];
+/// What a narrow dialog folds into More (T206).
+const FOLDED: [CommandId; 3] = focus_dialog::FOLDED;
 
 /// What a control in the dialog asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
@@ -192,7 +174,7 @@ impl OpenMessage {
     /// The commands the dialog has a control for: its toolbar, Close and
     /// the two steps.
     pub fn controls() -> Vec<CommandId> {
-        TOOLBAR
+        toolbar()
             .iter()
             .map(|action| action.command)
             .chain([
@@ -281,7 +263,7 @@ impl OpenMessage {
         header.set_center_widget(Some(&titles));
         header.set_end_widget(Some(&close));
 
-        let toolbar = ActionBar::new(TOOLBAR, "focus-open-toolbar");
+        let toolbar = ActionBar::new(toolbar(), "focus-open-toolbar");
         // The handoff's verbs sit edge to edge, each padded 8px a side.
         if let Some(row) = toolbar.widget().downcast_ref::<gtk::Box>() {
             row.set_spacing(0);
@@ -289,7 +271,7 @@ impl OpenMessage {
         tighten_keycaps(&toolbar.widget());
         // Its own class: the received row stays the one `focus-open-toolbar`,
         // and the sheet dresses both alike.
-        let send_bar = ActionBar::new(SEND_TOOLBAR, "focus-open-send-toolbar");
+        let send_bar = ActionBar::new(send_toolbar(), "focus-open-send-toolbar");
         if let Some(row) = send_bar.widget().downcast_ref::<gtk::Box>() {
             row.set_spacing(0);
         }
@@ -804,7 +786,7 @@ impl OpenMessage {
         }
         let keymap = self.keymap.borrow().clone();
         for command in FOLDED {
-            let Some(action) = TOOLBAR.iter().find(|action| action.command == command) else {
+            let Some(action) = toolbar().iter().find(|action| action.command == command) else {
                 continue;
             };
             let item = gtk::Button::new();
@@ -910,14 +892,14 @@ impl OpenMessage {
         self.keymap.replace(keymap.clone());
         self.toolbar.set_keymap(keymap);
         // The action row's caps are tight: `Del`, not `Delete` (SPEC 2).
-        for action in TOOLBAR {
+        for action in toolbar() {
             if let Some(button) = self.toolbar.button(action.command) {
                 let key = hints::key(keymap, action.command).map(|key| hints::short(&key));
                 button.set_key(key.as_deref());
             }
         }
         self.send_bar.set_keymap(keymap);
-        for action in SEND_TOOLBAR {
+        for action in send_toolbar() {
             if let Some(button) = self.send_bar.button(action.command) {
                 let key = hints::key(keymap, action.command).map(|key| hints::short(&key));
                 button.set_key(key.as_deref());
@@ -1025,7 +1007,7 @@ impl OpenMessage {
         let verbs = focus_dialog::send_verbs(state);
         self.toolbar.set_visible(verbs.is_none());
         self.send_bar.set_visible(verbs.is_some());
-        for action in SEND_TOOLBAR {
+        for action in send_toolbar() {
             if let Some(button) = self.send_bar.button(action.command) {
                 button
                     .widget()
@@ -1115,13 +1097,10 @@ impl OpenMessage {
     pub fn step_thread(&self, by: isize) {
         let (next, message) = {
             let thread = self.thread.borrow();
-            let Some(next) = self.at.get().checked_add_signed(by) else {
+            let Some(next) = focus_dialog::step_thread(self.at.get(), thread.len(), by) else {
                 return;
             };
-            match thread.get(next) {
-                Some(message) => (next, *message),
-                None => return,
-            }
+            (next, thread[next])
         };
         self.at.set(next);
         self.show_position(false);
@@ -1135,28 +1114,14 @@ impl OpenMessage {
         let messages = self.messages.get();
         let thread_len = self.thread.borrow().len();
         let latest = latest || thread_len == 0 || self.at.get() + 1 == thread_len;
-        let mut said = format!("Message {} of {}", position.index + 1, position.total);
-        if messages > 1 {
-            if latest {
-                said.push_str(&format!(" \u{b7} thread of {messages}"));
-            } else {
-                said.push_str(&format!(
-                    " \u{b7} {} of {messages} in the thread",
-                    self.at.get() + 1
-                ));
-            }
-        }
-        // A draft on its way or stopped says which, as its row does (T239).
-        if let Some(state) = self
-            .send_state
-            .get()
-            .filter(|state| *state != postio_model::DraftState::Sent)
-        {
-            said.push_str(&format!(
-                " \u{b7} {}",
-                postio_ui::row::send_state_word(state)
-            ));
-        }
+        let said = focus_dialog::position_line(
+            position.index as usize,
+            position.total as usize,
+            messages,
+            self.at.get(),
+            latest,
+            self.send_state.get(),
+        );
         self.subtitle.set_text(&said);
         self.show_thread_chip(messages);
     }
@@ -1303,18 +1268,17 @@ impl OpenMessage {
         while let Some(child) = self.thread_chip.first_child() {
             self.thread_chip.remove(&child);
         }
-        self.thread_chip.set_visible(messages > 1);
-        if messages <= 1 {
+        let chip = focus_dialog::thread_chip(messages);
+        self.thread_chip.set_visible(chip.is_some());
+        let Some(chip) = chip else {
             return;
-        }
+        };
         let keymap = self.keymap.borrow();
-        self.thread_chip.append(&gtk::Label::new(Some(&format!(
-            "Latest of {messages} in this thread"
-        ))));
+        self.thread_chip.append(&gtk::Label::new(Some(&chip)));
         if let Some(key) = hints::key(&keymap, CommandId::PrevInConversation) {
             self.thread_chip.append(&keyhint::cap(&key));
             self.thread_chip
-                .append(&gtk::Label::new(Some("earlier message")));
+                .append(&gtk::Label::new(Some(focus_dialog::EARLIER_MESSAGE)));
         }
     }
 

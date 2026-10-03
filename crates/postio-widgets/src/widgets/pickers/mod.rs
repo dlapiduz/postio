@@ -465,7 +465,7 @@ impl Picker {
         let digit_or_space = key
             .to_unicode()
             .is_some_and(|c| c.is_ascii_digit() || c == ' ');
-        let typing = in_field && !(empty_filter && bare && digit_or_space);
+        let typing = postio_ui::pickers::is_typing(in_field, empty_filter, bare, digit_or_space);
         let outcome =
             self.resolver
                 .borrow_mut()

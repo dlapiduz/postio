@@ -18,14 +18,7 @@ use postio_model::{AccountId, Label, LabelId, ThreadId};
 use postio_ui::pickers;
 use postio_widgets::widgets::pickers::{Field, Mark, Picked, Picker, Row};
 
-/// What one row of the picker is.
-#[derive(Debug, Clone)]
-enum Entry {
-    /// "Create label “…”".
-    Create(String),
-    /// A label the account has.
-    Label(Label),
-}
+use postio_ui::pickers::LabelRow as Entry;
 
 /// What the label picker opens on.
 #[derive(Debug, Clone)]
@@ -168,16 +161,7 @@ impl LabelPicker {
                 return;
             };
             // Applied: on every conversation the picker acts on.
-            let mut on: HashMap<LabelId, HashSet<ThreadId>> = HashMap::new();
-            for (thread, label) in carried {
-                on.entry(label.id).or_default().insert(thread);
-            }
-            let wanted: HashSet<ThreadId> = threads.into_iter().collect();
-            let applied = on
-                .into_iter()
-                .filter(|(_, carrying)| !wanted.is_empty() && carrying.is_superset(&wanted))
-                .map(|(label, _)| label)
-                .collect();
+            let applied = pickers::applied_labels(carried, &threads);
             this.labels.replace(labels);
             this.counts.replace(counts.into_iter().collect());
             this.applied.replace(applied);
@@ -190,14 +174,7 @@ impl LabelPicker {
     fn show(&self) {
         let filter = self.picker.entry().text().to_string();
         let labels = self.labels.borrow();
-        let names = labels.iter().map(|label| label.name.as_str());
-        let mut shown = Vec::new();
-        if pickers::offers_create(names.clone(), &filter) {
-            shown.push(Entry::Create(filter.trim().to_owned()));
-        }
-        for index in pickers::filtered(names, &filter) {
-            shown.push(Entry::Label(labels[index].clone()));
-        }
+        let shown = pickers::label_rows(&labels, &filter);
         let applied = self.applied.borrow();
         let counts = self.counts.borrow();
         let rows = shown
@@ -210,11 +187,10 @@ impl LabelPicker {
                 Entry::Label(label) => Row {
                     mark: Some(Mark::Dot(crate::places::label_rgba(label))),
                     name: label.name.clone(),
-                    detail: if applied.contains(&label.id) {
-                        pickers::APPLIED.to_owned()
-                    } else {
-                        counts.get(&label.id).copied().unwrap_or(0).to_string()
-                    },
+                    detail: pickers::label_detail(
+                        applied.contains(&label.id),
+                        counts.get(&label.id).copied().unwrap_or(0),
+                    ),
                     ..Row::default()
                 },
             })
@@ -293,10 +269,8 @@ impl LabelPicker {
                         on: Some(true),
                     });
                     this.applied.borrow_mut().insert(label.id);
-                    this.labels.borrow_mut().push(label);
-                    this.labels
-                        .borrow_mut()
-                        .sort_by_key(|label| label.name.to_lowercase());
+                    let labels = std::mem::take(&mut *this.labels.borrow_mut());
+                    this.labels.replace(pickers::with_label(labels, label));
                     if then_close {
                         this.picker.close();
                     } else {

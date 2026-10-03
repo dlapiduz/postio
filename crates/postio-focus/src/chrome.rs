@@ -20,31 +20,11 @@ use postio_widgets::widgets::{Kind, Size, close_button, icon_button, icon_menu_b
 /// What a control asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
 
-/// The main menu, top to bottom: each item's label and the command it runs
-/// (`None` for About, which is the application's, not a command).
-const MENU: &[(&str, Option<CommandId>)] = &[
-    ("Settings", Some(CommandId::Settings)),
-    // A check item (T232): checked while messages open beside the list.
-    ("Read beside the list", Some(CommandId::ToggleReadingPane)),
-    ("Keyboard shortcuts", Some(CommandId::CheatSheet)),
-    ("About", None),
-    ("Quit", Some(CommandId::Quit)),
-];
+use postio_ui::focus_row::{BUTTONS, MENU};
 
 /// The main menu's check item for reading beside the list: the window's
 /// stateful action, which runs `toggle_reading_pane` (T232).
 pub const READING_PANE_ACTION: &str = "win.reading-pane";
-
-/// The chrome's buttons, each with the command a click runs. The command
-/// field runs search, and wears the palette's key beside search's.
-const BUTTONS: &[CommandId] = &[
-    CommandId::Compose,
-    CommandId::Search,
-    CommandId::CommandPalette,
-    CommandId::GoToFolders,
-    CommandId::ToggleHasAction,
-    CommandId::Quit,
-];
 
 /// The top bar and the header strip, and the keycaps on them.
 pub struct Chrome {
@@ -109,7 +89,7 @@ impl Chrome {
         let search_icon = gtk::Image::from_icon_name("system-search-symbolic");
         search_icon.set_accessible_role(gtk::AccessibleRole::Presentation);
         field_row.append(&search_icon);
-        let prompt = gtk::Label::new(Some("Search mail, go to a folder, or run a command"));
+        let prompt = gtk::Label::new(Some(postio_ui::focus_row::COMMAND_PROMPT));
         prompt.add_css_class("dim-label");
         prompt.set_xalign(0.0);
         prompt.set_hexpand(true);
@@ -120,7 +100,7 @@ impl Chrome {
         field_row.append(&field_keys);
         field.set_child(Some(&field_row));
         field.update_property(&[gtk::accessible::Property::Label(
-            "Search mail, go to a folder, or run a command",
+            postio_ui::focus_row::COMMAND_PROMPT,
         )]);
 
         let sync_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
@@ -357,10 +337,9 @@ impl Chrome {
 
     /// Read every key the chrome shows from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
-        let compose = match hints::key(keymap, CommandId::Compose) {
-            Some(key) => format!("Compose \u{b7} {key}"),
-            None => "Compose".to_owned(),
-        };
+        let compose = postio_ui::focus_row::compose_tooltip(
+            hints::key(keymap, CommandId::Compose).as_deref(),
+        );
         self.compose.set_tooltip_text(Some(&compose));
         while let Some(child) = self.field_keys.first_child() {
             self.field_keys.remove(&child);
@@ -378,11 +357,8 @@ impl Chrome {
 
     /// Say how many digest rules there are, or nothing with none.
     pub fn set_digest_rules(&self, count: usize) {
-        self.digest_rules_label.set_text(&if count == 1 {
-            "1 digest rule".to_owned()
-        } else {
-            format!("{count} digest rules")
-        });
+        self.digest_rules_label
+            .set_text(&postio_ui::focus_row::digest_rules(count));
         self.digest_rules.set_visible(count > 0);
     }
 

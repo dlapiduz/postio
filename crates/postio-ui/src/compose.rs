@@ -545,3 +545,145 @@ mod schedule_tests {
         }
     }
 }
+
+/// What the header calls a composition (contracts/focus-surface.md,
+/// "Compose"): "New message", or what it answers.
+pub fn title(kind: postio_model::DraftKind) -> &'static str {
+    match kind {
+        postio_model::DraftKind::New => "New message",
+        postio_model::DraftKind::Reply => "Reply",
+        postio_model::DraftKind::ReplyAll => "Reply to all",
+        postio_model::DraftKind::Forward => "Forward",
+    }
+}
+
+/// What the subtitle says will be sent: "Plain text · 58 words", or "Rich
+/// text" once the body carries structure the text part cannot (the
+/// composer sends an HTML part only then).
+pub fn summary(draft: &postio_model::Draft) -> String {
+    let words = draft
+        .body
+        .text
+        .as_deref()
+        .map(|text| postio_model::signature::split(text).0)
+        .unwrap_or_default()
+        .split_whitespace()
+        .count();
+    let kind = if draft.body.html.is_some() {
+        "Rich text"
+    } else {
+        "Plain text"
+    };
+    let words = match words {
+        1 => "1 word".to_owned(),
+        count => format!("{count} words"),
+    };
+    format!("{kind} \u{b7} {words}")
+}
+
+/// The header's subtitle: what will be sent, then what has happened to the
+/// draft, when anything has -- "Plain text · 58 words · Draft saved locally
+/// 16:12" -- as the message dialog's says "Message 5 of 60 · thread of 6".
+pub fn subtitle(summary: &str, note: &str) -> String {
+    if note.is_empty() {
+        summary.to_owned()
+    } else {
+        format!("{summary} \u{b7} {note}")
+    }
+}
+
+/// "Draft saved locally 16:12", for a save that landed at `at`.
+pub fn saved_at(at: chrono::DateTime<chrono::Utc>) -> String {
+    format!(
+        "Draft saved locally {}",
+        at.with_timezone(&chrono::Local).format("%H:%M")
+    )
+}
+
+/// What the reminder verb says: "Remind", as the message dialog's action
+/// row names the same command, and the day once one is chosen ("Remind ·
+/// Tue 29 Sep"), in the person's own time zone. The whole of it -- "if no
+/// reply" -- is the verb's tooltip and accessible name ([`remind_meaning`]),
+/// the palette's title and the picker's heading; the row has room for the
+/// day, not for both (T221).
+pub fn remind_words(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    match at {
+        Some(at) => format!(
+            "Remind \u{b7} {}",
+            at.with_timezone(&chrono::Local).format("%a %-d %b")
+        ),
+        None => "Remind".to_owned(),
+    }
+}
+
+/// What the reminder verb means, said in full: "Remind if no reply", and
+/// the day once one is chosen.
+pub fn remind_meaning(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    match at {
+        Some(at) => format!(
+            "Remind if no reply \u{b7} {}",
+            at.with_timezone(&chrono::Local).format("%a %-d %b")
+        ),
+        None => "Remind if no reply".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use chrono::{Local, TimeZone, Utc};
+    use postio_model::{AccountId, Draft, DraftKind};
+
+    use super::*;
+
+    #[test]
+    fn the_subtitle_counts_the_words_that_will_be_sent_and_says_which_kind() {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        assert_eq!(summary(&draft), "Plain text \u{b7} 0 words");
+        draft.body.text = Some("Hi Ada,\n\nThe sheet is attached.".to_owned());
+        assert_eq!(summary(&draft), "Plain text \u{b7} 6 words");
+        draft.body.text = Some("One".to_owned());
+        assert_eq!(summary(&draft), "Plain text \u{b7} 1 word");
+        draft.body.html = Some("<p><b>One</b></p>".to_owned());
+        assert_eq!(summary(&draft), "Rich text \u{b7} 1 word");
+    }
+
+    #[test]
+    fn the_signature_is_not_counted_as_written() {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.body.text = Some("Looks good.\n\n-- \nAda Norwood\nExample Corp".to_owned());
+        assert_eq!(summary(&draft), "Plain text \u{b7} 2 words");
+    }
+
+    #[test]
+    fn the_subtitle_says_what_will_be_sent_then_what_happened() {
+        assert_eq!(
+            subtitle("Plain text \u{b7} 0 words", ""),
+            "Plain text \u{b7} 0 words"
+        );
+        assert_eq!(
+            subtitle("Plain text \u{b7} 58 words", "Draft saved locally 16:12"),
+            "Plain text \u{b7} 58 words \u{b7} Draft saved locally 16:12"
+        );
+    }
+
+    #[test]
+    fn remind_is_the_message_dialogs_word_and_says_its_day() {
+        assert_eq!(remind_words(None), "Remind");
+        assert_eq!(remind_meaning(None), "Remind if no reply");
+        let at = Local
+            .with_ymd_and_hms(2026, 9, 29, 9, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(remind_words(Some(at)), "Remind \u{b7} Tue 29 Sep");
+        assert_eq!(
+            remind_meaning(Some(at)),
+            "Remind if no reply \u{b7} Tue 29 Sep"
+        );
+    }
+
+    #[test]
+    fn the_header_names_a_composition_as_the_screens_do() {
+        assert_eq!(title(DraftKind::New), "New message");
+        assert_eq!(title(DraftKind::ReplyAll), "Reply to all");
+    }
+}

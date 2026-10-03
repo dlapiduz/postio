@@ -14,21 +14,11 @@ use postio_core::{CommandId, Keymap};
 use postio_ui::hints;
 use postio_widgets::widgets::{Action, ActionBar, KeyLine};
 
-/// What the bar offers, in the order screen 01 draws it. Task joins them
-/// once Obsidian exists (milestone 3, spec C9).
-const ACTIONS: &[Action] = &[
-    Action::new(CommandId::Archive, "Archive", "focus-bulk-archive"),
-    Action::new(CommandId::Snooze, "Snooze", "focus-bulk-snooze"),
-    Action::new(CommandId::ToggleRead, "Mark read", "focus-bulk-read"),
-    Action::new(
-        CommandId::DigestRule,
-        "Digest these\u{2026}",
-        "focus-bulk-digest",
-    ),
-    Action::new(CommandId::AddLabel, "Label", "focus-bulk-label"),
-    Action::new(CommandId::Move, "Move", "focus-bulk-move"),
-    Action::new(CommandId::Delete, "Delete", "focus-bulk-delete"),
-];
+/// What the bar offers: `postio_ui::focus_dialog::BULK`, each button named
+/// `focus-bulk-<slug>`.
+fn actions() -> &'static [Action] {
+    crate::verbs::actions("focus-bulk-", postio_ui::focus_dialog::BULK)
+}
 
 /// The bar, its count and its keys.
 pub struct Bulk {
@@ -43,7 +33,7 @@ impl Bulk {
     pub fn new(keymap: &Keymap) -> Self {
         let count = gtk::Label::new(None);
         count.add_css_class("focus-bulk-count");
-        let actions = ActionBar::new(ACTIONS, "focus-bulk-actions");
+        let actions = ActionBar::new(actions(), "focus-bulk-actions");
         let keys = KeyLine::new("focus-bulk-keys");
         actions.append_trailing(keys.widget());
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -65,7 +55,7 @@ impl Bulk {
 
     /// Every command the bar has a button for.
     pub fn commands() -> Vec<CommandId> {
-        ACTIONS.iter().map(|action| action.command).collect()
+        actions().iter().map(|action| action.command).collect()
     }
 
     /// The bar, to place under the list.
