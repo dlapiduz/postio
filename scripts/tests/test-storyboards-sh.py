@@ -16,8 +16,9 @@ What is asserted:
   * `lint` hands the catalogue to `postio-storyboard lint`;
   * runs go under Design/review/<branch>/runs, with the branch's `/`
     turned into `-`;
-  * with no `--app`, the app is Focus, the one desktop app (ADR 0043,
-    specs/007-postio-focus T265): its runner is postio-focus's.
+  * storyboards play on Postio, the one desktop app (ADR 0043,
+    specs/007-postio-focus T265): its runner is postio-focus's, and there
+    is no `--app` to choose another -- every subcommand refuses one.
 
 No network, no display, and the real repository is never written to.
 
@@ -149,12 +150,22 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp_name:
         ctx = setup(Path(tmp_name))
 
-        print("case: run --only selects by path and builds once, Focus's runner by default")
+        print("case: no subcommand takes --app; there is one app to play on")
+        for command in ("run", "key", "base", "coverage", "screens"):
+            for app in ("classic", "focus", "all"):
+                result = run(ctx, command, "--app", app)
+                builds = [l for l in log_lines(ctx) if l.startswith("cargo build")]
+                expect("no-app", result.returncode == 2 and "unknown argument '--app'" in result.stderr
+                       and not builds,
+                       f"{command} --app {app} is refused before building: exit {result.returncode}, "
+                       f"{result.stderr.strip()[:120]!r}, builds {builds}")
+
+        print("case: run --only selects by path and builds once, Focus's runner")
         result = run(ctx, "run", "--only", "list/*", "--jobs", "1")
         lines = log_lines(ctx)
         builds = [l for l in lines if l.startswith("cargo build") and "--example storyboard" in l]
-        expect("default-app", all("-p postio-focus" in l for l in builds) and builds,
-               f"the default runner is Focus's: {builds}")
+        expect("runner", all("-p postio-focus" in l for l in builds) and builds,
+               f"the runner is Focus's: {builds}")
         runner_calls = [l for l in lines if l.startswith("runner run")]
         expect("only", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
         expect("only", len(builds) == 1, f"the runner is built once, saw {builds}")
@@ -243,7 +254,7 @@ def main() -> int:
         expect("key", "--tree crates/postio-widgets=absent" in call, call)
         expect("key", "crates/postio-focus=" in call and "crates/postio-focus=absent" not in call, call)
         expect("key", "postio-gtk" not in call and "postio-app" not in call,
-               f"Focus's key names no classic crate: {call}")
+               f"the key names no classic crate: {call}")
 
         print("case: bundle points the tool at the runs, the catalogue and the design screens")
         acceptance = Path(ctx["repo"]) / "acceptance.md"

@@ -2,7 +2,7 @@
 """Self-test for specs/008-storyboards T062: the landing names an unreviewed
 interaction change.
 
-A branch that changes a GTK app's crates should arrive with a storyboard
+A branch that changes the app's crates should arrive with a storyboard
 review (`/ux-review`) for the tree it lands. `issue-land.sh` never refuses
 on it (FR-023) -- the review is advisory and the catalogue is young -- but
 it must not let a missing one pass silently either:
@@ -159,9 +159,12 @@ fi
 exit 0
 """
 
+# The key takes no `--app`: storyboards play on the one app, and the real
+# script refuses the argument, so the stub does too.
 KEY_STUB = """#!/usr/bin/env bash
-[ "$1" = key ] && { echo "k-current"; exit 0; }
-exit 0
+[ "$1" = key ] && [ "$#" -eq 1 ] && { echo "k-current"; exit 0; }
+echo "storyboards.sh: unknown argument '$2'" >&2
+exit 2
 """
 
 
@@ -180,7 +183,7 @@ def sandbox(base: Path, existing_pr: bool = False):
     gh_path.chmod(0o755)
     (stub_dir / "calls").write_text("", encoding="utf-8")
     # A host that has GTK, whatever this one has: the stand-in crate is
-    # postio-gtk, and a CI runner without the libraries is refused before
+    # postio-focus, and a CI runner without the libraries is refused before
     # the storyboard warning is ever reached (test-issue-land-unbuildable.py
     # is where that refusal is tested).
     pkg_config = stub_dir / "bin" / "pkg-config"
@@ -189,15 +192,15 @@ def sandbox(base: Path, existing_pr: bool = False):
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
     build_sandbox(root, channel)
-    # The stand-in crate is a GTK app's crate, so the landing is about one.
+    # The stand-in crate is the app's crate, so the landing is about it.
     (root / "crates").mkdir()
-    shutil.move(str(root / "dummy"), str(root / "crates" / "postio-gtk"))
-    manifest = (root / "crates" / "postio-gtk" / "Cargo.toml").read_text()
-    (root / "crates" / "postio-gtk" / "Cargo.toml").write_text(
-        manifest.replace('name = "dummy"', 'name = "postio-gtk"')
+    shutil.move(str(root / "dummy"), str(root / "crates" / "postio-focus"))
+    manifest = (root / "crates" / "postio-focus" / "Cargo.toml").read_text()
+    (root / "crates" / "postio-focus" / "Cargo.toml").write_text(
+        manifest.replace('name = "dummy"', 'name = "postio-focus"')
     )
     (root / "Cargo.toml").write_text(
-        '[workspace]\nmembers = ["crates/postio-gtk"]\nresolver = "2"\n', encoding="utf-8"
+        '[workspace]\nmembers = ["crates/postio-focus"]\nresolver = "2"\n', encoding="utf-8"
     )
     key = root / "scripts" / "storyboards.sh"
     key.write_text(KEY_STUB, encoding="utf-8")
@@ -211,7 +214,7 @@ def sandbox(base: Path, existing_pr: bool = False):
     git("remote", "add", "origin", str(origin), cwd=root)
     git("push", "-q", "origin", "main", cwd=root)
     git("checkout", "-q", "-b", BRANCH, cwd=root)
-    (root / "crates" / "postio-gtk" / "src" / "extra.rs").write_text("// nothing\n")
+    (root / "crates" / "postio-focus" / "src" / "extra.rs").write_text("// nothing\n")
     return root, target, stub_dir
 
 
@@ -226,7 +229,7 @@ def land(root: Path, target: Path, stub_dir: Path, existing_pr: bool = False):
     if existing_pr:
         environment["EXISTING_PR"] = "1"
     result = patience.run(
-        ["bash", "scripts/issue-land.sh", "-m", "feat(gtk): add a file", "--no-merge"],
+        ["bash", "scripts/issue-land.sh", "-m", "feat(focus): add a file", "--no-merge"],
         cwd=root,
         env=environment,
         capture_output=True,

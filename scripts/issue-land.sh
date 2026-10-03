@@ -980,33 +980,31 @@ fi
 # real `gh` call below.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
 
-# Storyboards (specs/008-storyboards, FR-022/023). A branch that changes a
-# GTK app's interaction should arrive with a `/ux-review` of the tree it
-# lands. Never a refusal -- the review is advisory and the catalogue is
-# young -- but never silent either: a current review's summary goes on the
-# PR, and a missing or stale one is a warning and a label anybody can see.
-# "Current" is the review key, built from the app crates' and the catalogue's
-# git tree ids, so a rebase that leaves them alone keeps it (research R13).
-STORYBOARD_APP=""
+# Storyboards (specs/008-storyboards, FR-022/023). A branch that changes the
+# app's interaction should arrive with a `/ux-review` of the tree it lands.
+# Never a refusal -- the review is advisory and the catalogue is young --
+# but never silent either: a current review's summary goes on the PR, and a
+# missing or stale one is a warning and a label anybody can see. "Current"
+# is the review key, built from the app crates' and the catalogue's git tree
+# ids, so a rebase that leaves them alone keeps it (research R13). The app
+# is Postio, whose crates are postio-focus and postio-widgets (T265).
+STORYBOARD_REVIEWED=0
 for crate in $CRATES; do
     case "$crate" in
-        postio-gtk|postio-app)
-            case "$STORYBOARD_APP" in focus|all) STORYBOARD_APP=all ;; *) STORYBOARD_APP=classic ;; esac ;;
-        postio-focus|postio-widgets)
-            case "$STORYBOARD_APP" in classic|all) STORYBOARD_APP=all ;; *) STORYBOARD_APP=focus ;; esac ;;
+        postio-focus|postio-widgets) STORYBOARD_REVIEWED=1 ;;
     esac
 done
 STORYBOARD_LABEL=""
 STORYBOARD_NOTE=""
 STORYBOARD_SUMMARY=""
-if [ -n "$STORYBOARD_APP" ]; then
+if [ "$STORYBOARD_REVIEWED" = 1 ]; then
     STORYBOARD_FILE="Design/review/${BRANCH//\//-}/summary.md"
     # `|| true`: under `set -e` and `pipefail` a tree without the script (a
     # self-test's sandbox, an older base) would otherwise end the landing
     # here with exit 127 and no word, after the push. No key is a warning.
     STORYBOARD_KEY=""
     if [ -x scripts/storyboards.sh ]; then
-        STORYBOARD_KEY=$(scripts/storyboards.sh key --app "$STORYBOARD_APP" 2>/dev/null | tail -1) || true
+        STORYBOARD_KEY=$(scripts/storyboards.sh key 2>/dev/null | tail -1) || true
     fi
     STORYBOARD_SEEN=""
     if [ -f "$STORYBOARD_FILE" ]; then
@@ -1018,7 +1016,7 @@ if [ -n "$STORYBOARD_APP" ]; then
     else
         STORYBOARD_LABEL="interactions-unreviewed"
         if [ -z "$STORYBOARD_SEEN" ]; then
-            STORYBOARD_NOTE="This changes a GTK app's interaction and has no storyboard review. Run \`/ux-review\` (specs/008-storyboards) and push again."
+            STORYBOARD_NOTE="This changes the app's interaction and has no storyboard review. Run \`/ux-review\` (specs/008-storyboards) and push again."
         else
             STORYBOARD_NOTE="The storyboard review on file is for an earlier tree than this one. Run \`/ux-review\` again and push."
         fi
@@ -1127,7 +1125,7 @@ if [ "$PR_STATE" = "OPEN" ] && [ -n "$STORYBOARD_NOTE" ]; then
 fi
 if [ -n "$STORYBOARD_LABEL" ]; then
     gh label create "$STORYBOARD_LABEL" --color FBCA04 \
-        --description "Changes a GTK app's interaction without a current /ux-review" >/dev/null 2>&1 || true
+        --description "Changes the app's interaction without a current /ux-review" >/dev/null 2>&1 || true
     if gh pr edit --add-label "$STORYBOARD_LABEL" >/dev/null 2>&1; then
         echo "labelled $STORYBOARD_LABEL"
     else
