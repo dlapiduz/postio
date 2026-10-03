@@ -97,6 +97,12 @@ mod settings_keys;
 mod settings_privacy;
 mod settings_sync;
 mod small_widgets;
+mod storyboard_chain_delivery;
+mod storyboard_outline;
+mod storyboard_reach;
+mod storyboard_settle;
+mod storyboard_support;
+mod storyboard_typing;
 mod support;
 mod support_compose;
 mod support_reader;
@@ -112,6 +118,82 @@ mod widgets_css;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "storyboard_outline::the_focused_widgets_bounds_are_drawn_over",
+        storyboard_outline::the_focused_widgets_bounds_are_drawn_over as fn(),
+    ),
+    (
+        "storyboard_outline::the_caption_carries_the_region_name",
+        storyboard_outline::the_caption_carries_the_region_name as fn(),
+    ),
+    (
+        "storyboard_outline::the_plain_frame_is_untouched",
+        storyboard_outline::the_plain_frame_is_untouched as fn(),
+    ),
+    (
+        "storyboard_settle::a_static_window_settles",
+        storyboard_settle::a_static_window_settles as fn(),
+    ),
+    (
+        "storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames",
+        storyboard_settle::a_change_after_settling_is_a_jump_with_both_frames as fn(),
+    ),
+    (
+        "storyboard_settle::an_empty_window_is_blank",
+        storyboard_settle::an_empty_window_is_blank as fn(),
+    ),
+    (
+        "storyboard_settle::a_window_that_never_stops_changing_is_unsettled",
+        storyboard_settle::a_window_that_never_stops_changing_is_unsettled as fn(),
+    ),
+    (
+        "storyboard_reach::a_focused_mapped_list_is_reachable",
+        storyboard_reach::a_focused_mapped_list_is_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::an_unmapped_focus_is_not_reachable",
+        storyboard_reach::an_unmapped_focus_is_not_reachable as fn(),
+    ),
+    (
+        "storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable",
+        storyboard_reach::a_modal_dialog_over_the_window_makes_it_unreachable as fn(),
+    ),
+    (
+        "storyboard_reach::no_focus_widget_is_not_reachable",
+        storyboard_reach::no_focus_widget_is_not_reachable as fn(),
+    ),
+    (
+        "storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry",
+        storyboard_typing::text_goes_in_at_the_cursor_of_a_focused_entry as fn(),
+    ),
+    (
+        "storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view",
+        storyboard_typing::text_goes_in_at_the_insert_mark_of_a_focused_text_view as fn(),
+    ),
+    (
+        "storyboard_typing::a_hook_takes_what_no_editable_does",
+        storyboard_typing::a_hook_takes_what_no_editable_does as fn(),
+    ),
+    (
+        "storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into",
+        storyboard_typing::a_keyboard_on_a_list_has_nothing_to_type_into as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list",
+        storyboard_chain_delivery::a_key_reaches_the_window_from_inside_a_list as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it",
+        storyboard_chain_delivery::a_dialog_over_the_window_keeps_the_key_from_it as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered",
+        storyboard_chain_delivery::a_key_with_the_keyboard_on_nothing_is_dropped_not_delivered as fn(),
+    ),
+    (
+        "storyboard_chain_delivery::return_in_a_text_field_activates_it",
+        storyboard_chain_delivery::return_in_a_text_field_activates_it as fn(),
+    ),
     (
         "jank::a_blocked_main_loop_is_reported_with_the_action_before_it",
         jank::a_blocked_main_loop_is_reported_with_the_action_before_it as fn(),

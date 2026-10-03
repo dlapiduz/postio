@@ -12,7 +12,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use postio_gtk::storyboard::deliver::{Delivery, press};
+use postio_widgets::storyboard::deliver::{Delivery, press};
 
 use super::storyboard_support::{display, show, until};
 

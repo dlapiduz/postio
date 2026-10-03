@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use gtk::prelude::*;
-use postio_gtk::storyboard::settle::{Settings, Verdict, settle};
+use postio_widgets::storyboard::settle::{Settings, Verdict, settle};
 
 use super::storyboard_support::{display, show};
 
@@ -19,9 +19,11 @@ fn window_with(label: &gtk::Label) -> gtk::Window {
     window
 }
 
+/// Settings with a shorter wait, stretched by `POSTIO_TEST_PATIENCE` on a
+/// loaded machine, where six identical frames can take longer than 1.2 s.
 fn quick() -> Settings {
     Settings {
-        max: Duration::from_millis(1200),
+        max: postio_test_support::scaled(Duration::from_millis(1200)),
         ..Settings::default()
     }
 }
@@ -51,13 +53,27 @@ pub fn a_change_after_settling_is_a_jump_with_both_frames() {
     }
     let label = gtk::Label::new(Some("before"));
     let window = window_with(&label);
-    // Sampling settles in about six frames; this lands inside the watch.
-    let later = label.clone();
-    gtk::glib::timeout_add_local_once(Duration::from_millis(250), move || {
-        later.set_text("a rather different after");
+    // Sampling settles after six identical frames; the change comes ten
+    // frames later, inside the watch. Counted on the frame clock, not
+    // timed: a wall-clock 250 ms landed before the settle on a loaded
+    // machine, which drew one frame in the time it had six.
+    let ticks = std::cell::Cell::new(0u32);
+    label.add_tick_callback(move |label, _| {
+        ticks.set(ticks.get() + 1);
+        if ticks.get() == 16 {
+            label.set_text("a rather different after");
+            return gtk::glib::ControlFlow::Break;
+        }
+        gtk::glib::ControlFlow::Continue
     });
 
-    let settled = settle(&window, &quick());
+    let settled = settle(
+        &window,
+        &Settings {
+            watch: postio_test_support::scaled(Duration::from_millis(3000)),
+            ..quick()
+        },
+    );
 
     assert!(
         matches!(settled.verdict, Verdict::Jumped { frames: 2 }),

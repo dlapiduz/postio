@@ -3,7 +3,7 @@
 //! observed on every step, whatever the delivery mode.
 
 use adw::prelude::*;
-use postio_gtk::storyboard::reach::reachable;
+use postio_widgets::storyboard::reach::reachable;
 
 use super::storyboard_support::{display, show, until};
 

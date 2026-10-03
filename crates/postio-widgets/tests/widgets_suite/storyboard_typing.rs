@@ -2,7 +2,7 @@
 //! keyboard on nothing that takes text is a failure, not a silent no-op.
 
 use gtk::prelude::*;
-use postio_gtk::storyboard::deliver::{TypeOutcome, type_text};
+use postio_widgets::storyboard::deliver::{TypeOutcome, type_text};
 
 use super::storyboard_support::{display, show, until};
 

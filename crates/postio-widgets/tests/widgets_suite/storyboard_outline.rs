@@ -5,8 +5,8 @@
 //! moves with focus would otherwise count as a visual change.
 
 use gtk::prelude::*;
-use postio_gtk::capture;
-use postio_gtk::storyboard::outline::outlined;
+use postio_widgets::capture;
+use postio_widgets::storyboard::outline::outlined;
 
 use super::storyboard_support::{display, show, until};
 
