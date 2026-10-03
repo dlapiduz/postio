@@ -70,10 +70,6 @@ pub type Notifier = Rc<
 /// Where a test takes notifications instead of the desktop.
 type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 
-/// What Cancel send, Retry send and Mark as sent say over a message that is
-/// not a draft on its way or stopped (T239).
-const NOT_BEING_SENT: &str = "That message is not one being sent";
-
 /// The stop-digesting confirmation (US10 scenario 5).
 const STOP_DIALOG: &str = "focus-stop-digesting";
 
@@ -1005,46 +1001,18 @@ impl FocusWindow {
 
     /// What a capture is made from: the message open over the list when one
     /// is, the cursor's row otherwise, with its marker's sentence and day.
-    fn capture_source(&self) -> Option<crate::capture::Source> {
+    fn capture_source(&self) -> Option<postio_ui::capture::Source> {
         let message = self.aimed_message()?;
-        let row = self.cursor_row().filter(|row| row.id() == message);
-        let Some(row) = row else {
-            let subject = self
-                .reading()
-                .map(|reading| reading.title())
-                .unwrap_or_default();
-            return Some(crate::capture::Source {
-                message,
-                sender: String::new(),
-                subject,
-                when: String::new(),
-                sentence: None,
-                due: None,
-            });
-        };
-        let conversation = row.as_conversation()?;
-        let summary = &conversation.summary;
-        let representative = &summary.representative;
-        let marker = summary.marker.as_ref();
-        Some(crate::capture::Source {
+        let title = self
+            .reading()
+            .map(|reading| reading.title())
+            .unwrap_or_default();
+        postio_ui::capture::source(
             message,
-            sender: representative
-                .from
-                .as_ref()
-                .map(|from| from.display().to_owned())
-                .unwrap_or_default(),
-            subject: representative.subject.clone().unwrap_or_default(),
-            when: postio_ui::row::timestamp(summary.last_at, postio_ui::clock::now()),
-            sentence: marker.and_then(|marker| marker.excerpt.clone()),
-            due: marker.and_then(|marker| match marker.when {
-                Some(postio_model::listing::MarkerWhen::Due(at))
-                    if marker.kind == postio_model::listing::MarkerKind::Todo =>
-                {
-                    Some(at.with_timezone(&chrono::Local).date_naive())
-                }
-                _ => None,
-            }),
-        })
+            self.cursor_row().as_ref(),
+            &title,
+            postio_ui::clock::now(),
+        )
     }
 
     /// Scroll the open message for `key`, when it is one that scrolls:
@@ -1551,7 +1519,7 @@ impl FocusWindow {
                 if !opened {
                     self.imp()
                         .toast
-                        .show_notice(&format!("No saved search {} is pinned", index + 1));
+                        .show_notice(&postio_ui::focus_target::no_saved_search(index));
                     self.follow_toast();
                 }
             }
@@ -1572,15 +1540,19 @@ impl FocusWindow {
                     self.archive_digest(digest.delivery);
                 }
             }
-            CommandId::Archive | CommandId::Delete | CommandId::ToggleRead => {
-                self.send(Command::default_for(id));
-            }
-            // The last action this window took, whatever it was and however
-            // long ago the toast went (FR-041): the host keeps the stack.
-            CommandId::Undo => self.post(Command::Undo),
+            // The host's own verbs: `postio_ui::focus_target::dispatch` says
+            // which are aimed at mail and which are not. Undo is the last
+            // action this window took, whatever it was and however long ago
+            // the toast went (FR-041): the host keeps the stack.
+            CommandId::Archive
+            | CommandId::Delete
+            | CommandId::ToggleRead
+            | CommandId::Flag
+            | CommandId::Unsnooze
+            | CommandId::Undo
+            | CommandId::Refresh => self.dispatch(id),
             CommandId::ToggleHasAction => self.toggle_has_action(),
             CommandId::Quit => self.close(),
-            CommandId::Refresh => self.post(Command::Refresh),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
             // Settings (T234) and its file in the person's editor (T235):
@@ -1665,11 +1637,8 @@ impl FocusWindow {
             CommandId::GoToArchive => self.go_to_role(postio_model::MailboxRole::Archive),
             CommandId::GoToSnoozed => self.go_to_view(postio_model::MailboxRole::Snoozed),
             CommandId::GoToFlagged => self.go_to_view(postio_model::MailboxRole::Flagged),
-            // Flag toggles on `*`; Unsnooze wakes a snoozed row on `B`
-            // (T257, T238). Both are the host's, aimed like Archive.
             // A Focus row is a whole conversation, so `A` is `a` here.
             CommandId::ArchiveThread => self.act(CommandId::Archive),
-            CommandId::Flag | CommandId::Unsnooze => self.send(Command::default_for(id)),
             // A send on its way or stopped, from the list or the open
             // message (T239): the draft behind the message aimed at.
             CommandId::CancelSend | CommandId::RetrySend | CommandId::MarkSent => {
@@ -1880,8 +1849,14 @@ impl FocusWindow {
     /// the inboxes, never a list of what happens to be on screen.
     fn aims(&self) -> Vec<MessageTarget> {
         let imp = self.imp();
-        match imp.picked.selection() {
-            Selection::Everything { except } => {
+        let cursor = self.cursor_row();
+        let aim = postio_ui::focus_target::aim(
+            &imp.picked.selection(),
+            &imp.reach.borrow(),
+            cursor.as_ref(),
+        );
+        match aim {
+            postio_ui::focus_target::Aim::Everything { except } => {
                 if let Some(state) = imp.state.borrow().as_ref() {
                     let accounts = imp.accounts.borrow().clone();
                     let (sink, _) = postio_core::bridge::event_channel();
@@ -1900,37 +1875,18 @@ impl FocusWindow {
                 }
                 vec![MessageTarget::Selection]
             }
-            Selection::These(picked) if !picked.is_empty() => {
-                let reach = imp.reach.borrow();
-                let mut threads = Vec::new();
-                let mut lone = Vec::new();
-                for message in picked {
-                    match reach.get(&message) {
-                        Some(theirs) if !theirs.is_empty() => {
-                            threads.extend(theirs.iter().copied())
-                        }
-                        _ => lone.push(message),
-                    }
-                }
-                let mut aims = Vec::new();
-                if !threads.is_empty() {
-                    aims.push(MessageTarget::Threads(threads));
-                }
-                if !lone.is_empty() {
-                    aims.push(MessageTarget::Messages(lone));
-                }
-                aims
-            }
-            Selection::These(_) => match self.cursor_row() {
-                // A digest stands for its delivery, which its own verbs
-                // name; a message verb has nothing to aim at there.
-                Some(FocusRow::Digest(_)) => Vec::new(),
-                Some(row) if !row.threads().is_empty() => {
-                    vec![MessageTarget::Threads(row.threads())]
-                }
-                Some(row) => vec![MessageTarget::Messages(vec![row.id()])],
-                None => Vec::new(),
-            },
+            postio_ui::focus_target::Aim::Targets(targets) => targets,
+        }
+    }
+
+    /// Send the host command `id` means, as `postio_ui::focus_target` says:
+    /// aimed at mail, or as it is.
+    fn dispatch(&self, id: CommandId) {
+        use postio_ui::focus_target::Dispatch;
+        match postio_ui::focus_target::dispatch(id) {
+            Some(Dispatch::OnMail(command)) => self.send(command),
+            Some(Dispatch::Plain(command)) => self.post(command),
+            None => {}
         }
     }
 
@@ -2354,10 +2310,11 @@ impl FocusWindow {
     /// The one message a reply or an answer is about: the message open over
     /// the list when one is, the cursor's row otherwise.
     fn aimed_message(&self) -> Option<MessageId> {
-        match self.reading().filter(|reading| reading.is_open()) {
-            Some(reading) => reading.shown(),
-            None => self.cursor_row().map(|row| row.id()),
-        }
+        let open = self
+            .reading()
+            .filter(|reading| reading.is_open())
+            .map(|reading| reading.shown());
+        postio_ui::focus_target::aimed_message(open, self.cursor_row().as_ref())
     }
 
     /// Whether the open message is a draft on its way or stopped whose
@@ -2385,16 +2342,15 @@ impl FocusWindow {
             let behind = client.draft_behind(message).await.ok().flatten();
             let Some(draft) = behind.map(|draft| Some(draft.id)) else {
                 if let Some(window) = window.upgrade() {
-                    window.imp().toast.show_notice(NOT_BEING_SENT);
+                    window
+                        .imp()
+                        .toast
+                        .show_notice(postio_ui::focus_target::NOT_BEING_SENT);
                     window.follow_toast();
                 }
                 return;
             };
-            let command = match id {
-                CommandId::CancelSend => Command::CancelSend { draft },
-                CommandId::RetrySend => Command::RetrySend { draft },
-                _ => Command::MarkSent { draft },
-            };
+            let command = postio_ui::focus_target::settle_command(id, draft);
             // POSTIO-GLIB-SAFE: as above.
             if let Err(error) = client.send(command).await {
                 tracing::warn!(%error, "Focus could not send a command: {error}");
@@ -2860,10 +2816,8 @@ impl FocusWindow {
             .map(|from| from.address.clone())
             .unwrap_or_default();
         let dialog = adw::AlertDialog::new(
-            Some(&format!("Stop digesting {sender}?")),
-            Some(
-                "Their mail comes to the inbox again, and what the digest holds from                  them now comes back with it.",
-            ),
+            Some(&postio_ui::focus_target::stop_digesting_title(&sender)),
+            Some(postio_ui::focus_target::STOP_DIGESTING_BODY),
         );
         dialog.set_widget_name(STOP_DIALOG);
         dialog.add_response("cancel", "Cancel");
@@ -2910,7 +2864,7 @@ impl FocusWindow {
                 // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
                 let left = client.unsubscribe(message).await;
                 let said = match left {
-                    Ok(list) => format!("Unsubscribed from {list}"),
+                    Ok(list) => postio_ui::focus_target::unsubscribed(&list),
                     Err(error) => error.to_string(),
                 };
                 window.imp().toast.show_notice(&said);
@@ -2932,7 +2886,7 @@ impl FocusWindow {
         let Some(rule) = rule else {
             self.imp()
                 .toast
-                .show_notice("That digest's rule is no longer in config.toml");
+                .show_notice(postio_ui::focus_target::RULE_MISSING);
             self.follow_toast();
             return;
         };
@@ -2964,58 +2918,38 @@ impl FocusWindow {
     /// -- whether it connects is a further question the dialog leaves to
     /// `Client::digest_like_this`.
     fn aimed_message_for_like_this(&self) -> Option<MessageId> {
-        let single = match self.selection() {
-            Selection::These(picked) => picked.len() <= 1,
-            Selection::Everything { .. } => false,
-        };
-        if !single {
-            return None;
-        }
-        self.imp()
+        let enabled = self
+            .imp()
             .focus_config
             .borrow()
-            .model_for(postio_config::model::ModelFeature::LikeThis)?;
-        let row = self.cursor_row()?;
-        let conversation = row.as_conversation()?;
-        Some(conversation.summary.representative.id)
+            .model_for(postio_config::model::ModelFeature::LikeThis)
+            .is_some();
+        postio_ui::focus_target::like_this_message(
+            &self.selection(),
+            enabled,
+            self.cursor_row().as_ref(),
+        )
     }
 
     /// The senders of the selection, or of the cursor's conversation, once
     /// each.
     fn aimed_senders(&self) -> Vec<postio_model::EmailAddress> {
-        let picked: Vec<MessageId> = match self.selection() {
-            Selection::These(picked) => picked.into_iter().collect(),
-            Selection::Everything { .. } => Vec::new(),
-        };
-        let mut rows = Vec::new();
-        if picked.is_empty() {
-            rows.extend(self.cursor_row());
-        } else if let Some(pane) = self.pane() {
-            let list = pane.feed().list();
-            for position in 0..list.n_items() {
-                if let Some(row) = list
-                    .item(position)
-                    .and_downcast::<RowObject>()
-                    .and_then(|row| row.item())
-                    && picked.contains(&row.id())
-                {
-                    rows.push(row);
-                }
-            }
-        }
-        let mut senders: Vec<postio_model::EmailAddress> = Vec::new();
-        for row in rows {
-            let Some(from) = row
-                .as_conversation()
-                .and_then(|row| row.summary.representative.from.clone())
-            else {
-                continue;
-            };
-            if !senders.iter().any(|known| known.same_address(&from)) {
-                senders.push(from);
-            }
-        }
-        senders
+        let resident = self
+            .pane()
+            .map(|pane| {
+                let list = pane.feed().list();
+                (0..list.n_items())
+                    .filter_map(|position| {
+                        list.item(position)
+                            .and_downcast::<RowObject>()
+                            .and_then(|row| row.item())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let rows =
+            postio_ui::focus_target::aimed_rows(&self.selection(), self.cursor_row(), resident);
+        postio_ui::focus_target::senders(&rows)
     }
 
     /// Measure this window's start on `timeline` (`startup::time`).
@@ -3047,7 +2981,7 @@ impl FocusWindow {
         let Some(path) = self.imp().config_path.borrow().clone() else {
             self.imp()
                 .toast
-                .show_notice("There is no config.toml to save the search to");
+                .show_notice(postio_ui::focus_target::NO_CONFIG_TO_SAVE);
             self.follow_toast();
             return;
         };
@@ -3059,11 +2993,11 @@ impl FocusWindow {
         let said = match written {
             Ok(()) => {
                 self.set_saved_searches(postio_session::focus::saved_searches(&config));
-                format!("Saved \u{201c}{query}\u{201d}")
+                postio_ui::focus_target::search_saved(&query)
             }
             Err(error) => {
                 tracing::warn!(%error, "Focus could not save the search");
-                "Focus could not write the search to config.toml".to_owned()
+                postio_ui::focus_target::SEARCH_NOT_WRITTEN.to_owned()
             }
         };
         self.imp().toast.show_notice(&said);
@@ -3152,7 +3086,7 @@ impl FocusWindow {
     /// back into the rule, so this is the one place the list asks first.
     fn ask_remove_rule(&self, name: &str, holds: u32) {
         let dialog = adw::AlertDialog::new(
-            Some(&format!("Remove \u{201c}{name}\u{201d}?")),
+            Some(&postio_ui::focus_target::remove_rule_title(name)),
             Some(&postio_ui::digest::remove_body(holds)),
         );
         dialog.set_widget_name(REMOVE_RULE_DIALOG);
@@ -3206,10 +3140,7 @@ impl FocusWindow {
                         if let Some(view) = window.imp().rules_view.borrow().as_ref() {
                             view.forget(&name);
                         }
-                        let messages = if released == 1 { "message" } else { "messages" };
-                        format!(
-                            "Removed \u{201c}{name}\u{201d} \u{b7} {released} {messages} back in the inbox"
-                        )
+                        postio_ui::focus_target::rule_removed(&name, released)
                     }
                     Err(error) => error.to_string(),
                 };
@@ -3233,7 +3164,7 @@ impl FocusWindow {
                     window
                         .imp()
                         .toast
-                        .show_notice(&format!("Digest rule \u{201c}{name}\u{201d} saved"));
+                        .show_notice(&postio_ui::focus_target::rule_saved(&name));
                     window.follow_toast();
                 }
             ));
@@ -3713,11 +3644,7 @@ impl FocusWindow {
             }
         }
         let beside = imp.placement.get() == postio_ui::focus_dialog::Placement::Pane;
-        let said = match (next, beside) {
-            (Reading::Pane, true) => "Messages open beside the list",
-            (Reading::Pane, false) => "Messages open beside the list once the window is wider",
-            (Reading::Dialog, _) => "Messages open over the list",
-        };
+        let said = postio_ui::focus_target::reading_placement(next == Reading::Pane, beside);
         imp.toast.show_notice(said);
         self.follow_toast();
         // Where the keyboard was, the message beside it or over it.
@@ -3889,7 +3816,7 @@ impl FocusWindow {
         if choices.is_empty() {
             self.imp()
                 .toast
-                .show_notice("This message has no links or attachments to open");
+                .show_notice(postio_ui::focus_target::NOTHING_TO_OPEN);
             self.follow_toast();
             return;
         }
@@ -4637,32 +4564,7 @@ impl FocusWindow {
     /// What a picker names as its target: the cursor's conversation, or
     /// how many are selected.
     fn picker_target(&self) -> String {
-        let selected = match self.selection() {
-            Selection::These(picked) => picked.len(),
-            Selection::Everything { .. } => usize::MAX,
-        };
-        if selected == usize::MAX {
-            return "Every conversation".to_owned();
-        }
-        let Some(item) = self.cursor_row() else {
-            return String::new();
-        };
-        let Some(row) = item.as_conversation() else {
-            return String::new();
-        };
-        let representative = &row.summary.representative;
-        let sender = representative
-            .from
-            .as_ref()
-            .map(|from| from.display().to_owned())
-            .unwrap_or_default();
-        let subject = row
-            .summary
-            .subject
-            .clone()
-            .or_else(|| representative.subject.clone())
-            .unwrap_or_default();
-        postio_ui::pickers::target(selected.max(1), &sender, &subject)
+        postio_ui::focus_target::picker_target(&self.selection(), self.cursor_row().as_ref())
     }
 
     /// The key map, while it is open.

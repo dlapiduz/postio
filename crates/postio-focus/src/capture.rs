@@ -24,7 +24,6 @@ use gtk::glib;
 use postio_client::Client;
 use postio_client::protocol::VaultPicture;
 use postio_core::{CommandId, Keymap};
-use postio_model::MessageId;
 use postio_ui::hints;
 use postio_vault::{NoteEntry, Project, Reason, Task};
 use postio_widgets::widgets::keyhint;
@@ -51,22 +50,7 @@ pub enum Mode {
     Note,
 }
 
-/// The message a capture is made from, as the row or the open message says.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Source {
-    /// The message, which the line's link opens.
-    pub message: MessageId,
-    /// Who sent it.
-    pub sender: String,
-    /// Its subject.
-    pub subject: String,
-    /// When it arrived, as a person reads it.
-    pub when: String,
-    /// The sentence its marker quotes, verbatim, when it has one.
-    pub sentence: Option<String>,
-    /// The day the mail says it is due, when it says.
-    pub due: Option<NaiveDate>,
-}
+pub use postio_ui::capture::Source;
 
 /// What a written capture said, for the window's toast.
 type Written = Rc<dyn Fn(String)>;
