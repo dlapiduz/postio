@@ -111,8 +111,6 @@ pub enum At {
     },
     /// A link, by its destination.
     Link(String),
-    /// An image placeholder in a member's body.
-    Placeholder(usize),
     /// An attachment's line.
     Part {
         /// Whose.
@@ -207,7 +205,6 @@ impl Reading {
                         block,
                     },
                     LineTarget::Link(link) => At::Link(body.links[link].as_str().to_owned()),
-                    LineTarget::Placeholder => At::Placeholder(index),
                 })),
                 None => out.push(At::Nothing),
             }

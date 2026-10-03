@@ -832,7 +832,11 @@ fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
             .filter(|app| set.met_by(at(*app)))
             .collect::<Vec<Frontend>>()
     };
-    assert_eq!(offered_to(Requirement::Focus), [Frontend::Focus]);
+    assert_eq!(
+        offered_to(Requirement::Focus),
+        [Frontend::Terminal, Frontend::Focus],
+        "the terminal is Focus drawn in character cells (C29)"
+    );
     assert_eq!(offered_to(Requirement::Terminal), [Frontend::Terminal]);
     assert_eq!(
         offered_to(Requirement::Graphical),
@@ -841,8 +845,29 @@ fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
     );
     assert_eq!(
         offered_to(Requirement::ThreePane),
-        [Frontend::Classic, Frontend::Terminal, Frontend::Macos],
+        [Frontend::Classic, Frontend::Macos],
         "a folder sidebar, panes, the parts panel and flags are the three-pane \
-         apps'; Focus has one list and dialogs"
+         apps'; Focus, in either toolkit, has one list and dialogs"
+    );
+    let in_apps = |id| {
+        let set = registry::get(id).requires;
+        apps.into_iter()
+            .filter(|app| set.met_by(at(*app)))
+            .collect::<Vec<Frontend>>()
+    };
+    assert_eq!(
+        in_apps(CommandId::SwitchTreatment),
+        [Frontend::Focus],
+        "app colours or the original is a Focus verb that needs pixels"
+    );
+    assert_eq!(
+        in_apps(CommandId::CaptureTask),
+        [Frontend::Terminal, Frontend::Focus],
+        "a Focus row is reachable in the terminal"
+    );
+    assert!(
+        in_apps(CommandId::ToggleSidebar)
+            .iter()
+            .all(|a| *a != Frontend::Terminal)
     );
 }

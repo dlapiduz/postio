@@ -39,12 +39,12 @@ enum Offered {
     All,
     /// Every app that draws a message as pixels: all but the terminal.
     Graphical,
-    /// The three-pane apps -- the classic app, the terminal and macOS --
-    /// and not Focus. Flagging is the contract's one row of these: "Focus
+    /// The three-pane apps -- the classic app and macOS -- and not Focus,
+    /// whichever toolkit draws it. Flagging is the contract's one row of these: "Focus
     /// offers no flag verb, but the id stays for the other apps" (spec
     /// C13).
     ThreePane,
-    /// `Requirement::Focus`: Focus alone.
+    /// `Requirement::Focus`: Focus, in either toolkit (the terminal is Focus, C29).
     Focus,
 }
 
@@ -53,8 +53,8 @@ impl Offered {
         match self {
             Offered::All => true,
             Offered::Graphical => app != Frontend::Terminal,
-            Offered::ThreePane => app != Frontend::Focus,
-            Offered::Focus => app == Frontend::Focus,
+            Offered::ThreePane => matches!(app, Frontend::Classic | Frontend::Macos),
+            Offered::Focus => matches!(app, Frontend::Terminal | Frontend::Focus),
         }
     }
 }
@@ -219,7 +219,7 @@ const CONTRACT: &[Row] = &[
     with(
         "back_to_words",
         "mod+BackSpace",
-        &[],
+        &["alt+BackSpace"],
         Focus,
         &[Context::Search],
     ),
@@ -266,7 +266,7 @@ const CONTRACT: &[Row] = &[
     with(
         "capture_write",
         "mod+Return",
-        &[],
+        &["alt+Return"],
         Focus,
         &[Context::Capture],
     ),
@@ -394,7 +394,7 @@ fn focus_offers_nothing_that_works_on_a_surface_it_does_not_have() {
         for app in APPS {
             assert_eq!(
                 spec.requires.met_by(open_in(app)),
-                app != Frontend::Focus,
+                matches!(app, Frontend::Classic | Frontend::Macos),
                 "`{command}` for {app:?}"
             );
         }

@@ -49,7 +49,7 @@ more_actions	.
 toggle_reading_pane	F8
 search	/ | alt+ctrl+f
 save_search	ctrl+s
-back_to_words	ctrl+BackSpace
+back_to_words	ctrl+BackSpace | alt+BackSpace
 compose	c | ctrl+n
 send	ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S
@@ -145,5 +145,5 @@ capture_task	t
 capture_note	n
 capture_change_project	ctrl+p
 capture_use_subject	alt+s
-capture_write	ctrl+Return
+capture_write	ctrl+Return | alt+Return
 digest_like_this	L

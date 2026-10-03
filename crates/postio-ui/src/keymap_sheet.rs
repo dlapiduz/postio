@@ -285,15 +285,18 @@ pub struct KeyMapRow {
     pub keys: Vec<String>,
 }
 
-/// Focus's key map under `keymap`: each group with a row, in the key map's
+/// Focus's key map for `frontend` under `keymap`: each group with a row, in the key map's
 /// order, and in each group the commands Focus offers in the key map's
 /// contexts, in the registry's order -- built-ins first, then commands
 /// registered at run time, which join Act. A group with no rows is left out, so
 /// Obsidian appears when its commands do (spec C9).
-pub fn key_map(keymap: &postio_core::Keymap) -> Vec<(Group, Vec<KeyMapRow>)> {
+pub fn key_map(
+    keymap: &postio_core::Keymap,
+    frontend: postio_core::Frontend,
+) -> Vec<(Group, Vec<KeyMapRow>)> {
     let shown = postio_core::ContextSet::from_slice(KEY_MAP_CONTEXTS);
     let mut rows: Vec<(Group, KeyMapRow)> = postio_core::registry::every_action()
-        .filter(|spec| spec.requires.offered_by(postio_core::Frontend::Focus))
+        .filter(|spec| spec.requires.offered_by(frontend))
         .filter(|spec| spec.contexts.intersects(shown))
         .filter_map(|spec| {
             // A built-in sits where the table puts it. A command registered
@@ -334,7 +337,7 @@ mod tests {
     #[test]
     fn every_row_shows_the_keys_the_keymap_binds() {
         let keymap = Keymap::defaults();
-        let map = key_map(keymap);
+        let map = key_map(keymap, Frontend::Focus);
         assert!(!map.is_empty(), "the key map has groups");
         for (_, rows) in &map {
             for row in rows {
@@ -364,7 +367,7 @@ mod tests {
         let config =
             postio_config::Config::from_toml_str("[keys]\narchive = \"w\"\n").expect("a config");
         let keymap = postio_core::Keymap::resolve(&config.keys);
-        let map = key_map(&keymap);
+        let map = key_map(&keymap, Frontend::Focus);
         let archive = map
             .iter()
             .flat_map(|(_, rows)| rows)
@@ -392,7 +395,7 @@ mod tests {
         })
         .expect("it registers");
         let keymap = postio_core::Keymap::resolve(&postio_config::KeyBindings::default());
-        let map = key_map(&keymap);
+        let map = key_map(&keymap, Frontend::Focus);
         let (group, row) = map
             .iter()
             .flat_map(|(group, rows)| rows.iter().map(move |row| (*group, row)))
@@ -405,7 +408,7 @@ mod tests {
 
     #[test]
     fn the_groups_come_in_order_and_hold_only_what_focus_offers() {
-        let map = key_map(Keymap::defaults());
+        let map = key_map(Keymap::defaults(), Frontend::Focus);
         let order: Vec<Group> = map.iter().map(|(group, _)| *group).collect();
         let mut expected: Vec<Group> = Group::ALL.to_vec();
         expected.retain(|group| order.contains(group));

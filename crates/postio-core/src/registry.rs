@@ -114,16 +114,17 @@ pub enum Requirement {
     /// (spec 006). A terminal draws text in its own font and colours, and
     /// has nothing for these to act on.
     Graphical,
-    /// The frontend has to be Postio Focus, because the command works on what
-    /// only Focus has: invitations answered from the row, the has-action
-    /// filter, Filtered, digests and reminders (specs/007-postio-focus
-    /// research R4). The one keymap reserves their keys in every app; only
-    /// Focus offers them.
+    /// The frontend has to be Postio Focus -- the desktop app or the terminal,
+    /// which is Focus drawn in character cells (spec 007 C29) -- because the
+    /// command works on what only Focus has: invitations answered from the
+    /// row, the has-action filter, Filtered, digests and reminders
+    /// (specs/007-postio-focus research R4). The one keymap reserves their
+    /// keys in every app; only Focus offers them.
     Focus,
     /// The frontend has to be one of the three-pane apps -- the classic
-    /// desktop app, the terminal and macOS -- because the command works on
-    /// what they have and Postio Focus does not: a folder sidebar, panes to
-    /// move between, the parts panel, and flags. Focus shows one list and
+    /// desktop app and macOS -- because the command works on what they have
+    /// and Postio Focus, in either toolkit, does not: a folder sidebar, panes
+    /// to move between, the parts panel, and flags. Focus shows one list and
     /// opens mail in dialogs, and "Has action" plays the part flags play
     /// (specs/007-postio-focus, spec C13). The one keymap keeps these keys
     /// free in Focus.
@@ -294,8 +295,8 @@ impl Requirement {
             Requirement::StoreOpen => state.store_open,
             Requirement::Terminal => state.frontend == Frontend::Terminal,
             Requirement::Graphical => state.frontend != Frontend::Terminal,
-            Requirement::Focus => state.frontend == Frontend::Focus,
-            Requirement::ThreePane => state.frontend != Frontend::Focus,
+            Requirement::Focus => matches!(state.frontend, Frontend::Focus | Frontend::Terminal),
+            Requirement::ThreePane => matches!(state.frontend, Frontend::Classic | Frontend::Macos),
         }
     }
 }
@@ -365,9 +366,16 @@ const GRAPHICAL_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requireme
 /// has-action filter, Filtered, digests and reminders (specs/007-postio-focus
 /// research R4). Every other app keeps the key free and offers nothing on it.
 const FOCUS_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::Focus]);
+/// A Focus verb that changes how a message is drawn as pixels, so the
+/// terminal, which is Focus too, does not offer it.
+const FOCUS_GRAPHICAL_MAIL: RequirementSet = needs(&[
+    Requirement::StoreOpen,
+    Requirement::Focus,
+    Requirement::Graphical,
+]);
 /// Mail on a surface only the three-pane apps have: flags, the folder
 /// list, the account list, the parts panel and the conversation rail.
-/// Focus has none of them (T166).
+/// Focus has none of them, in either toolkit (T166).
 const THREE_PANE_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::ThreePane]);
 /// Chrome only the three-pane apps have: the sidebar and the panes.
 const THREE_PANE_CHROME: RequirementSet = needs(&[Requirement::ThreePane]);
@@ -725,8 +733,9 @@ static SPECS: &[CommandSpec] = &[
         // is a setting the line beside the body offers to undo.
         recovery: Recovery::None,
         // Focus's open message is the surface the two treatments are drawn
-        // on (T211, T212); the three-pane readers draw reader view instead.
-        requires: FOCUS_MAIL,
+        // on (T211, T212); the three-pane readers draw reader view instead and
+        // the terminal draws text in its own colours.
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::FindInMessage,
@@ -1139,7 +1148,9 @@ static SPECS: &[CommandSpec] = &[
         // Beside the word-erasing `mod+BackSpace` every text field knows:
         // this takes the chips back to the words they were typed as.
         default_binding: "mod+BackSpace",
-        alternate_bindings: &[],
+        // A terminal delivers `ctrl+BackSpace` as plain backspace, so the
+        // terminal's key is `alt+BackSpace`.
+        alternate_bindings: &["alt+BackSpace"],
         contexts: Context::Search.as_set(),
         destructive: false,
         recovery: Recovery::None,
@@ -2433,7 +2444,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::CaptureWrite,
         title: "Add to the vault",
         default_binding: "mod+Return",
-        alternate_bindings: &[],
+        // The composer's `send` alternate, for a terminal that cannot send
+        // `ctrl+Return`.
+        alternate_bindings: &["alt+Return"],
         contexts: Context::Capture.as_set(),
         // It appends a line to a note on this computer, which the person
         // can delete there; Postio never edits a note beyond appending.

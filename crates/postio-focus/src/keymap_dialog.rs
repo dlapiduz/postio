@@ -57,7 +57,7 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     x.set_valign(gtk::Align::Center);
     header.append(&x);
 
-    let map = keymap_sheet::key_map(keymap);
+    let map = keymap_sheet::key_map(keymap, postio_core::Frontend::Focus);
     let total: usize = map.iter().map(|(_, rows)| rows.len() + 2).sum();
     let per_column = total.div_ceil(COLUMNS);
     let columns = gtk::Box::new(gtk::Orientation::Horizontal, S6);

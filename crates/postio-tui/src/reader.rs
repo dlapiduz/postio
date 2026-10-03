@@ -80,8 +80,6 @@ pub enum LineTarget {
     Fold(usize),
     /// A link: which of [`Rendered::links`].
     Link(usize),
-    /// An image's placeholder.
-    Placeholder,
 }
 
 impl Rendered {
@@ -95,8 +93,6 @@ impl Rendered {
                 .position(|link| text.contains(link.as_str()))
             {
                 LineTarget::Link(index)
-            } else if text.contains("[image:") {
-                LineTarget::Placeholder
             } else {
                 LineTarget::Text
             }

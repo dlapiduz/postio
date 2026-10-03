@@ -119,7 +119,7 @@ it.
 | Key | Command id | Offered by |
 |---|---|---|
 | `mod+s` | `save_search` | All |
-| `mod+BackSpace` | `back_to_words` | Focus |
+| `mod+BackSpace` (alt `alt+BackSpace`, which a terminal delivers) | `back_to_words` | Focus |
 | `O` | `toggle_result_order` | All |
 | `Tab` | the bar's own chip navigation, not a registry command | All |
 
@@ -160,7 +160,7 @@ done (FR-116, FR-125).
 |---|---|
 | `mod+p` | `capture_change_project` |
 | `alt+s` | `capture_use_subject` |
-| `mod+Return` | `capture_write` |
+| `mod+Return` (alt `alt+Return`) | `capture_write` |
 
 ## The application
 

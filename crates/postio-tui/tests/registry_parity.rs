@@ -17,12 +17,14 @@ use postio_ui::keymap::{Binding, Chord, Key, KeyContext, Modifiers, Outcome};
 const PALETTE_SURFACES: &[Context] = &[
     Context::List,
     Context::Search,
-    Context::Sidebar,
     Context::Reader,
     Context::Conversation,
-    Context::Parts,
     Context::Composer,
     Context::Accounts,
+    Context::Picker,
+    Context::Digest,
+    Context::Filtered,
+    Context::Capture,
 ];
 
 /// Commands whose surface the terminal does not have yet, each with the task

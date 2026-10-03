@@ -396,8 +396,6 @@ pub enum Effect {
     SaveSyncWindow(postio_ui::onboarding::SyncWindow),
     /// Remember the layout for the next run.
     SaveLayout(crate::state::TerminalState),
-    /// Rename, move or delete a saved search in `config.toml`.
-    EditSearch(crate::config_file::SearchEdit),
     /// Read the privacy pane's log: what left this machine.
     ReadPrivacy,
     /// Hand a signature's text to the person's editor, then save what it
@@ -507,8 +505,6 @@ pub struct App {
     privacy: Option<Privacy>,
     /// What the palette is naming, while it is.
     renaming: Option<Renaming>,
-    /// The saved search a first `delete_saved_search` asked about.
-    deleting: Option<String>,
     /// The account's labels, as the finder's `+` offers them.
     labels: Vec<postio_model::Label>,
     /// The account's correspondents, as the finder's `@` offers them.
@@ -527,8 +523,6 @@ pub struct App {
     resting: Option<postio_model::MessageId>,
     /// The first reader line in view.
     reader_top: usize,
-    /// The part the keyboard is on, in the parts of the message being read.
-    part_cursor: usize,
     /// Where saved parts go.
     downloads: std::path::PathBuf,
     /// Senders whose remote images are always allowed, shared with the
@@ -598,8 +592,6 @@ pub type SheetSection = (&'static str, Vec<(&'static str, String)>);
 /// What a name typed in the palette is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Renaming {
-    /// The saved search with this `[filters]` key.
-    SavedSearch(String),
     /// A signature of `account`: `signature`, or a new one, whose text is
     /// `text`.
     Signature {
@@ -791,8 +783,6 @@ pub enum Focus {
     Sidebar,
     /// The reading pane.
     Reader,
-    /// The parts of the message being read.
-    Parts,
     /// The composer, in the reading pane.
     Composer,
     /// The search bar.
@@ -837,7 +827,6 @@ impl App {
             sidebar_contents: crate::sidebar::Contents::default(),
             privacy: None,
             renaming: None,
-            deleting: None,
             sidebar_cursor: 0,
             trackers: postio_ui::status::Trackers::default(),
             account: None,
@@ -848,7 +837,6 @@ impl App {
             resting: None,
             reader_top: 0,
             allowlist: postio_ui::allowlist::RemoteImageAllowList::default(),
-            part_cursor: 0,
             downloads: std::path::PathBuf::from("."),
             composer: None,
             compositions: 0,
@@ -878,11 +866,6 @@ impl App {
     pub fn with_downloads(mut self, downloads: std::path::PathBuf) -> App {
         self.downloads = downloads;
         self
-    }
-
-    /// The part the keyboard is on.
-    pub fn part_cursor(&self) -> usize {
-        self.part_cursor
     }
 
     /// The same app, honouring `allowlist`.
@@ -1603,14 +1586,21 @@ impl App {
                     effects
                 }
             }
-            At::Placeholder(member) => {
-                reading.current = member;
-                self.command("open_parts")
-            }
+            // A click on an attachment's line opens it with the system's
+            // opener.
             At::Part { member, part } => {
                 reading.current = member;
-                self.part_cursor = part;
-                self.write_parts(false, false)
+                let Some(member) = reading.members.get(member) else {
+                    return Vec::new();
+                };
+                let Some(attachment) = member.attachments().get(part).map(|part| part.id) else {
+                    return Vec::new();
+                };
+                vec![Effect::SavePart {
+                    message: member.id,
+                    attachment,
+                    to: None,
+                }]
             }
         }
     }
@@ -1679,7 +1669,6 @@ impl App {
             Focus::Search => postio_core::Context::Search,
             Focus::Sidebar => postio_core::Context::Sidebar,
             Focus::Reader => postio_core::Context::Reader,
-            Focus::Parts => postio_core::Context::Parts,
             Focus::Composer => postio_core::Context::Composer,
         }
     }
@@ -2471,7 +2460,6 @@ impl App {
                 KeyContext::Conversation
             }
             Focus::Reader => KeyContext::Reader,
-            Focus::Parts => KeyContext::Parts,
             Focus::Composer => KeyContext::Composer,
             Focus::Search => KeyContext::Search,
             Focus::Palette => KeyContext::Palette,
@@ -2622,10 +2610,6 @@ impl App {
     /// `postio_core::aim` -- the rule every frontend shares for what a verb
     /// acts on -- mirrored into [`App::state`], and sent.
     fn command(&mut self, id: &str) -> Vec<Effect> {
-        // A delete asked about is kept by any other command.
-        if id != "delete_saved_search" {
-            self.deleting = None;
-        }
         let last = self.list.total().saturating_sub(1);
         match id {
             "next_message" => self.move_to(self.cursor.saturating_add(1)),
@@ -2727,11 +2711,6 @@ impl App {
                 self.focus = Focus::Settings;
             }
             "edit_config" => return vec![Effect::EditConfig(None)],
-            "toggle_folder" => return self.toggle_folder(),
-            "rename_saved_search"
-            | "move_saved_search_up"
-            | "move_saved_search_down"
-            | "delete_saved_search" => return self.saved_search_command(id),
             "add_account" => {
                 self.first_run = Some(crate::first_run::FirstRun::another());
                 self.focus = Focus::FirstRun;
@@ -2752,63 +2731,7 @@ impl App {
                     return effects;
                 }
             }
-            "cycle_pane" => {
-                // The composer is the reading pane while it is open.
-                let reader = if self.composer.is_some() && !self.detached {
-                    Focus::Composer
-                } else {
-                    Focus::Reader
-                };
-                self.focus = match self.focus {
-                    Focus::List
-                    | Focus::Search
-                    | Focus::Palette
-                    | Focus::FirstRun
-                    | Focus::Settings => reader,
-                    Focus::Reader | Focus::Parts | Focus::Composer => Focus::Sidebar,
-                    Focus::Sidebar => Focus::List,
-                }
-            }
-            "cycle_pane_back" => {
-                let reader = if self.composer.is_some() && !self.detached {
-                    Focus::Composer
-                } else {
-                    Focus::Reader
-                };
-                self.focus = match self.focus {
-                    Focus::List
-                    | Focus::Search
-                    | Focus::Palette
-                    | Focus::FirstRun
-                    | Focus::Settings => Focus::Sidebar,
-                    Focus::Sidebar => reader,
-                    Focus::Reader | Focus::Parts | Focus::Composer => Focus::List,
-                }
-            }
-            "back" if self.focus == Focus::Parts => self.focus = Focus::Reader,
             "back" if self.focus != Focus::List => self.focus = Focus::List,
-            "open_parts" => {
-                if !self.current_attachments().is_empty() {
-                    self.focus = Focus::Parts;
-                    self.part_cursor = 0;
-                }
-            }
-            "next_part" => {
-                let last = self.current_attachments().len().saturating_sub(1);
-                self.part_cursor = (self.part_cursor + 1).min(last);
-            }
-            "prev_part" => self.part_cursor = self.part_cursor.saturating_sub(1),
-            // The desktop's two ways to open a part -- its own previewer, or
-            // "open with" another app -- are one here: the system's opener.
-            "open_part" | "open_part_externally" => return self.write_parts(false, false),
-            // Loading what a held-back part references is for drawing its
-            // images, and a terminal draws none.
-            "render_part_once" => {
-                return self.say("A terminal draws no images; the part's words are shown already");
-            }
-            "toggle_rail" => return self.say("The terminal has no conversation rail"),
-            "save_part" => return self.write_parts(true, false),
-            "save_all_parts" => return self.write_parts(true, true),
             "expand_all" => self.toggle_folds(),
             "show_images" => return self.allow_images(false),
             "always_show_images" => return self.allow_images(true),
@@ -2830,7 +2753,6 @@ impl App {
                 return self.close_search();
             }
             "back" => self.selection.clear(),
-            "toggle_sidebar" => return self.toggle_sidebar(),
             // One toggle in a terminal: reader view is the readable form of
             // bulk mail here, and both commands move between it and the
             // sender's own markup (spec 006 FR-031).
@@ -2864,8 +2786,6 @@ impl App {
                 return self.open_there(scope);
             }
             "next_scope" => return self.next_scope(),
-            "next_folder" => return self.walk_sidebar(1),
-            "prev_folder" => return self.walk_sidebar(-1),
             other => return self.send(other),
         }
         vec![Effect::Redraw]
@@ -3006,27 +2926,6 @@ impl App {
         self.open_there(scopes[next])
     }
 
-    /// Open or close the sidebar where it fits beside the list and reader;
-    /// where it does not, bring it to the front with the keyboard in it, and
-    /// put the list back on the second press (ADR 0024: fitting is the
-    /// terminal's, asking is the person's).
-    fn toggle_sidebar(&mut self) -> Vec<Effect> {
-        use crate::layout::Pane;
-        if self.size.0 >= crate::layout::THREE_PANES {
-            self.requested.sidebar = !self.requested.sidebar;
-            if !self.requested.sidebar && self.focus == Focus::Sidebar {
-                self.focus = Focus::List;
-            }
-        } else if self.requested.front == Pane::Sidebar {
-            self.requested.front = Pane::List;
-            self.focus = Focus::List;
-        } else {
-            self.requested.front = Pane::Sidebar;
-            self.focus = Focus::Sidebar;
-        }
-        vec![Effect::Redraw]
-    }
-
     /// Aim a verb at what the user is looking at, and send it.
     ///
     /// A move with no folder and a label with no label are half a request:
@@ -3089,48 +2988,6 @@ impl App {
         self.reading
             .as_ref()
             .map(|reading| reading.layout(chrono::Local::now()))
-    }
-
-    /// The attachments of the member being read, and whose they are.
-    fn current_attachments(&self) -> Vec<(postio_model::MessageId, postio_model::Attachment)> {
-        self.reading
-            .as_ref()
-            .and_then(|reading| reading.members.get(reading.current))
-            .map(|member| {
-                member
-                    .attachments()
-                    .into_iter()
-                    .map(|part| (member.id, part.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Open the part under the cursor, or save it -- or every part -- to
-    /// the downloads folder.
-    fn write_parts(&mut self, save: bool, all: bool) -> Vec<Effect> {
-        let parts = self.current_attachments();
-        let chosen: Vec<_> = if all {
-            parts
-        } else {
-            parts.into_iter().skip(self.part_cursor).take(1).collect()
-        };
-        chosen
-            .into_iter()
-            .map(|(message, part)| {
-                let name = part
-                    .filename
-                    .as_deref()
-                    .and_then(|name| std::path::Path::new(name).file_name())
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "part".to_owned());
-                Effect::SavePart {
-                    message,
-                    attachment: part.id,
-                    to: save.then(|| self.downloads.join(name)),
-                }
-            })
-            .collect()
     }
 
     /// Allow the current message's remote images: this once, or from its
@@ -3416,9 +3273,6 @@ impl App {
     /// A name typed in the palette, for what asked for it.
     fn named(&mut self, name: String) -> Vec<Effect> {
         let effect = match self.renaming.take() {
-            Some(Renaming::SavedSearch(key)) => {
-                Effect::EditSearch(crate::config_file::SearchEdit::Rename { key, name })
-            }
             // The picker shows the name, so a signature without one is
             // refused here, as the desktop's form refuses it.
             Some(Renaming::Signature { .. }) if name.is_empty() => {
@@ -3543,47 +3397,6 @@ impl App {
             _ => {}
         }
         vec![Effect::Redraw]
-    }
-
-    /// Rename, move or delete the saved search under the sidebar cursor, as
-    /// the desktop's sidebar does. Deleting has no undo, so it asks first:
-    /// the same command again deletes, anything else keeps it.
-    fn saved_search_command(&mut self, id: &str) -> Vec<Effect> {
-        use crate::config_file::SearchEdit;
-        let Some(line) = self.sidebar.get(self.sidebar_cursor) else {
-            return Vec::new();
-        };
-        let Some(key) = line.saved.clone() else {
-            return Vec::new();
-        };
-        let name = line.label.to_string();
-        let edit = match id {
-            "rename_saved_search" => {
-                self.renaming = Some(Renaming::SavedSearch(key));
-                let effects = self.open_palette(Finding::Rename);
-                if let Some(palette) = self.palette.as_mut() {
-                    palette.input = tui_input::Input::default().with_value(name);
-                }
-                return effects;
-            }
-            "move_saved_search_up" => SearchEdit::Move { key, up: true },
-            "move_saved_search_down" => SearchEdit::Move { key, up: false },
-            _ if self.deleting.as_deref() == Some(key.as_str()) => {
-                self.deleting = None;
-                SearchEdit::Delete { key }
-            }
-            _ => {
-                self.deleting = Some(key);
-                let again = self
-                    .keys
-                    .key_for(KeyContext::Sidebar, "delete_saved_search")
-                    .unwrap_or_else(|| "the same key".to_owned());
-                return self.say(&format!(
-                    "Delete “{name}”? Press {again} again to delete it; anything else keeps it"
-                ));
-            }
-        };
-        vec![Effect::EditSearch(edit), Effect::Redraw]
     }
 
     /// Fold or unfold the folder under the sidebar cursor, and remember it.
@@ -4535,36 +4348,6 @@ pub(crate) mod tests {
         );
     }
 
-    fn panes(app: &App) -> Vec<crate::layout::Pane> {
-        match app.shown() {
-            crate::layout::Shown::Panes(panes) => panes,
-            crate::layout::Shown::TooSmall { .. } => Vec::new(),
-        }
-    }
-
-    #[test]
-    fn toggle_sidebar_closes_and_opens_it_where_it_fits() {
-        use crate::layout::Pane;
-        let mut app = app((160, 40));
-        update(&mut app, ctrl('b'));
-        assert_eq!(panes(&app), vec![Pane::List, Pane::Reader]);
-        update(&mut app, ctrl('b'));
-        assert_eq!(panes(&app), vec![Pane::Sidebar, Pane::List, Pane::Reader]);
-    }
-
-    #[test]
-    fn toggle_sidebar_brings_it_forward_where_it_does_not_fit() {
-        use crate::layout::Pane;
-        let mut app = app((100, 40));
-        assert_eq!(panes(&app), vec![Pane::List, Pane::Reader]);
-        update(&mut app, ctrl('b'));
-        assert_eq!(panes(&app), vec![Pane::Sidebar, Pane::List]);
-        assert_eq!(app.focus(), Focus::Sidebar, "and the keyboard goes with it");
-        update(&mut app, ctrl('b'));
-        assert_eq!(panes(&app), vec![Pane::List, Pane::Reader]);
-        assert_eq!(app.focus(), Focus::List);
-    }
-
     #[test]
     fn open_message_reads_the_row_and_puts_the_keyboard_in_the_reader() {
         // It fell through to the dispatcher, which answered that it was not
@@ -4599,6 +4382,40 @@ pub(crate) mod tests {
         "find_in_message",
         "find_next",
         "find_previous",
+        // Focus's commands the terminal is offered since it became Focus
+        // (C29) and cannot answer yet; tasks T309-T326 empty this list.
+        "digest_rule",
+        "view_source",
+        "open_attachment_or_link",
+        "more_actions",
+        "toggle_reading_pane",
+        "back_to_words",
+        "go_to_filtered",
+        "go_to_digest_rules",
+        "toggle_has_action",
+        "picker_choose_1",
+        "picker_choose_2",
+        "picker_choose_3",
+        "picker_choose_4",
+        "picker_type_date",
+        "picker_toggle",
+        "picker_confirm",
+        "next_reference",
+        "prev_reference",
+        "toggle_digest_summary",
+        "filtered_tab_1",
+        "filtered_tab_2",
+        "filtered_tab_3",
+        "filtered_tab_4",
+        "filtered_tab_5",
+        "filtered_tab_6",
+        "filtered_tab_7",
+        "capture_task",
+        "capture_note",
+        "capture_change_project",
+        "capture_use_subject",
+        "capture_write",
+        "digest_like_this",
     ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
@@ -6458,54 +6275,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn space_in_the_sidebar_folds_a_folder_and_remembers_it() {
-        let mut app = app((160, 40));
-        let mut contents = sidebar_contents();
-        let account = contents.accounts[0].id;
-        let parent = MailboxId::new(76);
-        let mut archives = postio_model::mailbox::Mailbox::new(account, "Archives", Some('/'));
-        archives.id = parent;
-        let mut child = postio_model::mailbox::Mailbox::new(account, "Archives/2024", Some('/'));
-        child.id = MailboxId::new(77);
-        child.parent_id = Some(parent);
-        contents.folders.extend([archives, child]);
-        update(&mut app, Input::Sidebar(contents.clone()));
-        let child_row = |app: &App| {
-            app.sidebar
-                .iter()
-                .any(|line| line.opens == Some(ListScope::Mailbox(MailboxId::new(77))))
-        };
-        assert!(child_row(&app));
-
-        app.focus = Focus::Sidebar;
-        app.sidebar_cursor = app
-            .sidebar
-            .iter()
-            .position(|line| line.folds == Some(parent))
-            .expect("the parent folds");
-        let effects = update(&mut app, press(' '));
-        assert!(!child_row(&app), "folded away");
-        assert!(
-            effects.iter().any(|effect| matches!(
-                effect,
-                Effect::SaveLayout(layout) if layout.collapsed_folders.contains(&parent)
-            )),
-            "{effects:?}"
-        );
-        assert_eq!(
-            app.sidebar[app.sidebar_cursor].folds,
-            Some(parent),
-            "the cursor stays on the folder"
-        );
-
-        // A refresh keeps it folded; Space again opens it.
-        update(&mut app, Input::Sidebar(contents));
-        assert!(!child_row(&app));
-        update(&mut app, press(' '));
-        assert!(child_row(&app));
-    }
-
-    #[test]
     fn a_click_on_a_folders_mark_folds_it_without_opening_it() {
         let mut app = app((160, 40));
         let mut contents = sidebar_contents();
@@ -6542,86 +6311,6 @@ pub(crate) mod tests {
                 |effect| matches!(effect, Effect::Open(ListScope::Mailbox(id)) if *id == parent)
             ),
             "{effects:?}"
-        );
-    }
-
-    #[test]
-    fn a_saved_search_is_renamed_moved_and_deleted_from_the_sidebar() {
-        use crate::config_file::SearchEdit;
-        let mut app = app((160, 40));
-        let mut contents = sidebar_contents();
-        contents.saved = vec![
-            crate::sidebar::Saved {
-                key: "from-ada".into(),
-                name: "from:ada".into(),
-                query: "from:ada".into(),
-            },
-            crate::sidebar::Saved {
-                key: "unread".into(),
-                name: "Unread".into(),
-                query: "is:unread".into(),
-            },
-        ];
-        update(&mut app, Input::Sidebar(contents));
-        app.focus = Focus::Sidebar;
-        app.sidebar_cursor = app
-            .sidebar
-            .iter()
-            .position(|line| line.saved.as_deref() == Some("from-ada"))
-            .expect("its line");
-        let edits = |effects: Vec<Effect>| -> Vec<SearchEdit> {
-            effects
-                .into_iter()
-                .filter_map(|effect| match effect {
-                    Effect::EditSearch(edit) => Some(edit),
-                    _ => None,
-                })
-                .collect()
-        };
-
-        // Rename: the palette, holding the name it has.
-        update(&mut app, press('r'));
-        assert_eq!(app.focus(), Focus::Palette);
-        assert_eq!(app.palette().expect("asking").query, "from:ada");
-        for _ in 0.."from:ada".len() {
-            update(&mut app, key(KeyCode::Backspace, KeyModifiers::NONE));
-        }
-        typing(&mut app, "Ada");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(
-            edits(effects),
-            [SearchEdit::Rename {
-                key: "from-ada".into(),
-                name: "Ada".into()
-            }]
-        );
-        assert_eq!(app.focus(), Focus::Sidebar, "back where it was asked");
-
-        let effects = update(&mut app, key(KeyCode::Down, KeyModifiers::SHIFT));
-        assert_eq!(
-            edits(effects),
-            [SearchEdit::Move {
-                key: "from-ada".into(),
-                up: false
-            }]
-        );
-
-        // Delete asks first; anything else between is a no.
-        let delete = || key(KeyCode::Delete, KeyModifiers::NONE);
-        assert!(edits(update(&mut app, delete())).is_empty());
-        assert!(
-            app.notice().unwrap_or_default().contains("again"),
-            "{:?}",
-            app.notice()
-        );
-        update(&mut app, press(' '));
-        assert_eq!(app.focus(), Focus::Sidebar);
-        assert!(edits(update(&mut app, delete())).is_empty(), "asked again");
-        assert_eq!(
-            edits(update(&mut app, delete())),
-            [SearchEdit::Delete {
-                key: "from-ada".into()
-            }]
         );
     }
 
@@ -7058,61 +6747,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn walking_the_sidebar_opens_what_the_cursor_lands_on() {
-        let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        update(&mut app, press('g'));
-        update(&mut app, press('o'));
-        assert_eq!(app.focus(), Focus::Sidebar, "g o focuses the sidebar");
-
-        let effects = update(&mut app, press('j'));
-        let opened_scope = effects.iter().find_map(|effect| match effect {
-            Effect::Open(scope) => Some(*scope),
-            _ => None,
-        });
-        let (lines, at) = app.sidebar();
-        assert_eq!(opened_scope, lines[at].opens, "{effects:?}");
-        assert!(opened_scope.is_some());
-        assert_ne!(
-            opened_scope,
-            Some(ListScope::Mailbox(MailboxId::new(1))),
-            "it moved off the inbox"
-        );
-
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::List, "Escape goes back to the list");
-    }
-
-    #[test]
-    fn a_saved_search_in_the_sidebar_runs_its_query() {
-        // US4 scenario 3: the desktop's saved search, run by the same search.
-        let mut app = app((160, 40));
-        let mut contents = sidebar_contents();
-        contents.saved = vec![crate::sidebar::Saved {
-            key: "unread-from-ada".into(),
-            name: "Unread from Ada".into(),
-            query: "from:ada is:unread".into(),
-        }];
-        update(&mut app, Input::Sidebar(contents));
-        let opening = opened(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, press('g'));
-        update(&mut app, press('o'));
-        let mut asked = Vec::new();
-        for _ in 0..20 {
-            asked.extend(searches(&update(&mut app, press('j'))));
-        }
-        assert_eq!(
-            asked.last().map(|(_, query)| query.as_str()),
-            Some("from:ada is:unread"),
-            "{asked:?}"
-        );
-        assert_eq!(app.search_query(), Some("from:ada is:unread"));
-    }
-
-    #[test]
     fn the_sidebar_cursor_starts_on_the_list_being_shown() {
         let mut app = app((160, 40));
         let opening = opened(&mut app, 3);
@@ -7282,7 +6916,7 @@ pub(crate) mod tests {
         let mut app = app((160, 40));
         reading_a_long_quoted_reply(&mut app);
         assert!(!reader_text(&app).contains("quoted words"));
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::Reader);
         update(&mut app, press('O'));
         assert!(reader_text(&app).contains("quoted words"), "expanded");
@@ -7444,7 +7078,7 @@ pub(crate) mod tests {
     fn brackets_in_the_reader_walk_the_conversation() {
         let mut app = app((160, 40));
         reading_a_conversation(&mut app);
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.reading().unwrap().current, 2, "it opens on the newest");
         update(&mut app, press('['));
         assert_eq!(app.reading().unwrap().current, 1);
@@ -7515,7 +7149,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_messages_parts_are_listed_and_can_be_opened_or_saved() {
+    fn a_messages_parts_are_listed_and_a_written_one_is_launched() {
         let mut app =
             app((160, 40)).with_downloads(std::path::PathBuf::from("/home/ada/Downloads"));
         let effects = opened(&mut app, 1);
@@ -7573,28 +7207,6 @@ pub(crate) mod tests {
         assert!(
             drawn.contains("2.0 KB") || drawn.contains("2 KB"),
             "{drawn}"
-        );
-
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('p'));
-        assert_eq!(app.focus(), Focus::Parts);
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects.contains(&Effect::SavePart {
-                message,
-                attachment: postio_model::ids::AttachmentId::new(4),
-                to: None,
-            }),
-            "Enter opens: {effects:?}"
-        );
-        let effects = update(&mut app, press('s'));
-        assert!(
-            effects.contains(&Effect::SavePart {
-                message,
-                attachment: postio_model::ids::AttachmentId::new(4),
-                to: Some(std::path::PathBuf::from("/home/ada/Downloads/report.pdf")),
-            }),
-            "s saves to Downloads: {effects:?}"
         );
 
         let effects = update(
