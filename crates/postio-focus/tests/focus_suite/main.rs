@@ -115,12 +115,7 @@ mod window_teardown;
 /// the case needs. A name here still runs when asked for explicitly, and still
 /// appears in `--list`, exactly as an ignored libtest case does. Say in a
 /// comment beside the name which issue or task takes it back.
-const IGNORED: &[&str] = &[
-    // GAP: a mounted composer is not freed with its window: suspected cycle
-    // between `Composer` and the `DialogHost` it is mounted on (the host owns
-    // the dialog that holds the composer).
-    "window_teardown::a_destroyed_window_releases_its_composer",
-];
+const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
     (
