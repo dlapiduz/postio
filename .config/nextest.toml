@@ -317,3 +317,12 @@ slow-timeout = { period = "120s", terminate-after = 10 }
 [[profile.default.overrides]]
 filter = 'binary(focus_suite) & test(/^storyboard_determinism::/)'
 threads-required = "num-test-threads"
+
+# The same for Focus's two nightly storyboard cases, for the same reason:
+# they judge frames, and another case's window on the shared compositor
+# changes what is drawn. Run side by side, the generated pass read five
+# composer gaps as stale that the hermetic `scripts/storyboards.sh
+# coverage` and a run alone both list correctly (T265).
+[[profile.default.overrides]]
+filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
+threads-required = "num-test-threads"
