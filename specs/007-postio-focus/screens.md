@@ -137,9 +137,13 @@ first -- drawn as one more block about the message: 12 under the action
 card, or under the sender block when there is no card, and the 24 to the
 body (or its render-mode line) is then the notice's. It is unfilled like the
 sender block, one line with a hairline under it, its icon and its button on
-the column's edges. Nearly every incoming message carries the unsubscribe
-notice (#971 falls back to the sender's domain); outgoing mail never does,
-and with no notice the slot is hidden and takes its 12 with it.
+the column's edges. The unsubscribe notice shows only for a message that
+really offers to leave a list: it has a `List-Id` or a `List-Unsubscribe`
+(`postio_ui::unsubscribe::banner`). Personal mail has none and stays clean,
+and outgoing mail never does. `U` is not tied to the notice: it leaves the
+list on any message the shared offer rule allows (the `List-Id`, else the
+sender's domain), band or not. With no notice the slot is hidden and takes
+its 12 with it.
 
 **Components.**
 
