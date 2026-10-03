@@ -12,6 +12,9 @@ use ratatui::layout::Rect;
 pub enum Target {
     /// A row of the list, by position in the list.
     Row(u32),
+    /// One of a marked row's drawn answers, by the row's position and the
+    /// command it runs: what its key does, for that row.
+    RowAction(u32, &'static str),
     /// A line of what is being read, by index into its lines; `None` for the
     /// reader's header.
     Reader(Option<usize>),

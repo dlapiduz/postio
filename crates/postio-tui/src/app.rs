@@ -1505,6 +1505,25 @@ impl App {
                     vec![Effect::Redraw]
                 }
                 Target::Overlay => Vec::new(),
+                // A row's drawn answer is its key, for that row: an answer
+                // to an invitation is about the invitation wherever the
+                // cursor is; the rest take the cursor there first.
+                Target::RowAction(position, id) => {
+                    let Some(message) = self.row_at(position).map(|row| row.id) else {
+                        return Vec::new();
+                    };
+                    match id.parse::<postio_core::CommandId>() {
+                        Ok(
+                            command @ (postio_core::CommandId::AcceptInvite
+                            | postio_core::CommandId::DeclineInvite),
+                        ) => self.answer(message, command),
+                        _ => {
+                            self.focus = Focus::List;
+                            self.move_to(position);
+                            self.command(id)
+                        }
+                    }
+                }
                 // A control is its command, the same as its key.
                 Target::Command(id) => self.command(id),
                 // A button is its command, the same as its key.
@@ -2949,6 +2968,24 @@ impl App {
                     return self.say("Only a message in a conversation folds to its header");
                 }
             }
+            // The invitation on the open message, or on the cursor's row:
+            // the host queues the reply for its window (FR-102).
+            "accept_invite" | "decline_invite" => {
+                let message = self
+                    .reading
+                    .as_ref()
+                    .and_then(|reading| reading.members.get(reading.current))
+                    .map(|member| member.id)
+                    .or_else(|| self.cursor_message());
+                if let Some(message) = message {
+                    let command = if id == "accept_invite" {
+                        postio_core::CommandId::AcceptInvite
+                    } else {
+                        postio_core::CommandId::DeclineInvite
+                    };
+                    return self.answer(message, command);
+                }
+            }
             "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
             "go_to_drafts" => return self.go_to(postio_model::mailbox::MailboxRole::Drafts),
@@ -3115,6 +3152,22 @@ impl App {
         };
         let next = here.map_or(0, |at| (at + 1) % scopes.len());
         self.open_there(scopes[next])
+    }
+
+    /// Answer the invitation `message` carries, as `id` says: through the
+    /// host, which queues the reply for the answer's window.
+    fn answer(
+        &mut self,
+        message: postio_model::MessageId,
+        id: postio_core::CommandId,
+    ) -> Vec<Effect> {
+        let message = Some(message);
+        vec![Effect::Send(match id {
+            postio_core::CommandId::DeclineInvite => {
+                postio_core::Command::DeclineInvite { message }
+            }
+            _ => postio_core::Command::AcceptInvite { message },
+        })]
     }
 
     /// Aim a verb at what the user is looking at, and send it.

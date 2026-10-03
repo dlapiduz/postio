@@ -139,6 +139,24 @@ pub fn draw(
         }
         let position = first.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX));
         hits.add(rect, Target::Row(position));
+        if height == 2
+            && let Some(row) = visible.row
+        {
+            // Each drawn answer is its key, for this row.
+            let mut x = area.x
+                + u16::try_from(
+                    usize::from(area.width).saturating_sub(MARGIN + answers_width(row, now, hint)),
+                )
+                .unwrap_or(0);
+            for (command, text) in answers(row, now, hint) {
+                let w = u16::try_from(text.width()).unwrap_or(u16::MAX);
+                hits.add(
+                    Rect::new(x, y + 1, w, 1),
+                    Target::RowAction(position, command.as_str()),
+                );
+                x += w + 2;
+            }
+        }
         y += height;
     }
 }
@@ -253,6 +271,38 @@ fn first_line<'a>(
     Line::from(spans)
 }
 
+/// What a marked row's second line offers to answer it, each as the words
+/// and the key the keymap gives: nothing once the marker has a status.
+fn answers(
+    row: &Row,
+    now: DateTime<Local>,
+    hint: &dyn Fn(CommandId) -> Option<String>,
+) -> Vec<(CommandId, String)> {
+    let Some(marker) = &row.marker else {
+        return Vec::new();
+    };
+    let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local);
+    if line.status.is_some() {
+        return Vec::new();
+    }
+    line.actions
+        .iter()
+        .filter_map(|(command, word)| Some((*command, format!("{word} {}", hint(*command)?))))
+        .collect()
+}
+
+/// The room a row's answers take on the right, with their gaps; what its
+/// status takes when it has one.
+fn answers_width(
+    row: &Row,
+    now: DateTime<Local>,
+    hint: &dyn Fn(CommandId) -> Option<String>,
+) -> usize {
+    let answers = answers(row, now, hint);
+    answers.iter().map(|(_, text)| text.width()).sum::<usize>()
+        + 2 * answers.len().saturating_sub(1)
+}
+
 /// A marked row's second line, under the subject: the chip, the date and the
 /// quoted sentence, and on the right what answers it.
 fn second_line<'a>(
@@ -276,10 +326,9 @@ fn second_line<'a>(
     };
     let right: String = match line.status {
         Some(status) => status.to_owned(),
-        None => line
-            .actions
-            .iter()
-            .filter_map(|(command, word)| Some(format!("{word} {}", hint(*command)?)))
+        None => answers(row, now, hint)
+            .into_iter()
+            .map(|(_, text)| text)
             .collect::<Vec<_>>()
             .join("  "),
     };
@@ -489,6 +538,154 @@ mod tests {
                 );
             }
             assert!(seen >= 5, "{drawn}");
+        }
+    }
+
+    fn sent(effects: &[crate::app::Effect]) -> Vec<postio_core::Command> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                crate::app::Effect::Send(command) => Some(command.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn y_and_shift_y_answer_the_invitation_the_cursor_is_on_with_its_message() {
+        use crate::test_support::press;
+        let mut app = inbox((120, 36));
+        let accept = sent(&crate::app::update(&mut app, press('y')));
+        assert_eq!(
+            accept,
+            vec![postio_core::Command::AcceptInvite {
+                message: Some(postio_model::MessageId::new(1))
+            }]
+        );
+        let decline = sent(&crate::app::update(&mut app, press('Y')));
+        assert_eq!(
+            decline,
+            vec![postio_core::Command::DeclineInvite {
+                message: Some(postio_model::MessageId::new(1))
+            }]
+        );
+    }
+
+    #[test]
+    fn the_dash_takes_the_marker_off_the_row() {
+        use crate::test_support::press;
+        let mut app = inbox((120, 36));
+        let effects = sent(&crate::app::update(&mut app, press('-')));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [postio_core::Command::DismissMarker {
+                    dismissed: true,
+                    ..
+                }]
+            ),
+            "{effects:?}"
+        );
+    }
+
+    /// The cell where `word` starts on the screen's first line holding it.
+    fn at_word(drawn: &str, word: &str) -> (u16, u16) {
+        let (y, line) = drawn
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(word))
+            .unwrap_or_else(|| panic!("no {word} on:\n{drawn}"));
+        let x = line[..line.find(word).unwrap()].chars().count();
+        (u16::try_from(x).unwrap(), u16::try_from(y).unwrap())
+    }
+
+    fn click_at(app: &mut App, x: u16, y: u16) -> Vec<crate::app::Effect> {
+        let hit = crate::test_support::hits_of(120, 36, app)
+            .at(x, y)
+            .expect("something is drawn there");
+        crate::app::update(
+            app,
+            crate::app::Input::Pointer(crate::app::Pointer::Click {
+                hit,
+                ctrl: false,
+                shift: false,
+            }),
+        )
+    }
+
+    #[test]
+    fn a_click_on_a_drawn_action_does_what_its_key_does_for_that_row() {
+        let mut app = inbox((120, 36));
+        // The cursor is elsewhere: the invitation's action is still about
+        // the invitation.
+        crate::app::update(&mut app, crate::test_support::press('j'));
+        crate::app::update(&mut app, crate::test_support::press('j'));
+        let drawn = screen(120, 36, &app);
+        let (x, y) = at_word(&drawn, "Decline");
+        let effects = click_at(&mut app, x, y);
+        assert_eq!(
+            sent(&effects),
+            vec![postio_core::Command::DeclineInvite {
+                message: Some(postio_model::MessageId::new(1))
+            }]
+        );
+        let (x, y) = at_word(&drawn, "Accept");
+        assert_eq!(
+            sent(&click_at(&mut app, x, y)),
+            vec![postio_core::Command::AcceptInvite {
+                message: Some(postio_model::MessageId::new(1))
+            }]
+        );
+    }
+
+    #[test]
+    fn a_click_on_reply_opens_the_reply_to_that_row() {
+        let mut app = inbox((120, 36));
+        let mut ada = unread(conversation(9, "Ines Calvo", "Budget", "", local(23, 8, 0)));
+        ada.marker = Some(MarkerSummary {
+            kind: MarkerKind::Question,
+            when: None,
+            excerpt: Some("Can you approve?".into()),
+            answer: None,
+            cancelled: false,
+        });
+        show_focus(&mut app, vec![FocusRow::conversation(ada)]);
+        let drawn = screen(120, 36, &app);
+        let (x, y) = at_word(&drawn, "Reply");
+        let effects = click_at(&mut app, x, y);
+        assert!(
+            effects.contains(&crate::app::Effect::ReplySource {
+                kind: postio_body::replying::ReplyKind::Reply,
+                message: postio_model::MessageId::new(9),
+            }),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn an_answered_cancelled_or_past_invitation_shows_its_status_where_the_actions_were() {
+        use postio_model::listing::InviteAnswer;
+        for (answer, cancelled, word) in [
+            (Some(InviteAnswer::Accepted), false, "Accepted"),
+            (Some(InviteAnswer::Declined), false, "Declined"),
+            (None, true, "Cancelled"),
+        ] {
+            let mut app = app((120, 36));
+            seed_places(&mut app, places());
+            let mut marker = invite();
+            marker.answer = answer;
+            marker.cancelled = cancelled;
+            show_focus(
+                &mut app,
+                vec![FocusRow::conversation(marked(
+                    unread(conversation(1, "Grace", "Review", "", local(23, 11, 2))),
+                    marker,
+                ))],
+            );
+            let drawn = screen(120, 36, &app);
+            let line = drawn.lines().nth(4).unwrap();
+            assert!(line.trim_end().ends_with(word), "{word}:\n{drawn}");
+            assert!(!drawn.contains("Accept y"), "{drawn}");
         }
     }
 
