@@ -81,7 +81,7 @@ def main() -> int:
 
     case(
         "the desktop app's suites are minutes, so a landing does not wait for them",
-        crates=["postio-focus"],
+        crates=["postio-gtk"],
         expected=[],
     )
     case(
@@ -91,7 +91,7 @@ def main() -> int:
     )
     case(
         "the expensive ones are dropped and the rest are kept",
-        crates=["postio-core", "postio-focus", "postio-search", "postio-widgets"],
+        crates=["postio-core", "postio-gtk", "postio-search", "postio-widgets"],
         expected=["postio-core", "postio-search"],
     )
 

@@ -8,12 +8,12 @@ the design system, and redefined for the dark scheme, where a black shadow at
 day it was typed and could not follow the tokens anywhere after that.
 
 The rule: no `box-shadow` in a desktop crate's stylesheets --
-`crates/{postio-gtk,postio-widgets,postio-focus}/data/*.css`, the shared
+`crates/{postio-widgets,postio-gtk}/data/*.css`, the shared
 crate's included (ADR 0043) -- may carry a colour of its own -- no `rgba(`,
 `rgb(`, `hsl(` or `#hex`. A shadow is `var(--postio-shadow-*)`, or an inset
 hairline drawn with a colour token (`inset 0 -1px var(--postio-hairline)`),
-or `none`. `tokens.css` is exempt: it is generated from the design system,
-and is where the scale is defined.
+or `none`. The scale itself is defined from libadwaita's shade colour, in
+`focus-colours.css`.
 
 Fix: use `var(--postio-shadow-sm|md|lg)`, or a colour token. For a lift the
 scale does not have, add it to the design system's tokens and regenerate,
@@ -32,12 +32,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# The crates whose `data/` holds stylesheets: both desktop apps, and the crate
-# holding the widget rules both of them draw with (ADR 0043;
-# specs/007-postio-focus R1).
-CRATES = ("postio-gtk", "postio-widgets", "postio-focus")
-# Generated from the design system: where the scale is defined, not used.
-GENERATED = "tokens.css"
+# The crates whose `data/` holds stylesheets: the desktop app, and the crate
+# holding the widget rules it draws with (ADR 0043; specs/007-postio-focus R1).
+CRATES = ("postio-widgets", "postio-gtk")
 
 COMMENT = re.compile(r"/\*.*?\*/", re.S)
 DECLARATION = re.compile(r"box-shadow\s*:([^;}]*)", re.S)
@@ -54,7 +51,6 @@ def sheets_of(argv: list[str]) -> list[tuple[Path, str]]:
         (sheet, sheet.relative_to(root).as_posix())
         for crate in CRATES
         for sheet in sorted((root / "crates" / crate / "data").glob("*.css"))
-        if sheet.name != GENERATED
     ]
 
 

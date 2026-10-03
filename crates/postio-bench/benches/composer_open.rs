@@ -33,8 +33,8 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::CommandId;
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
-use postio_focus::startup::Session;
-use postio_focus::window::FocusWindow;
+use postio_gtk::startup::Session;
+use postio_gtk::window::FocusWindow;
 use postio_host::Host;
 use postio_storage::BlobStore;
 use postio_storage::test_support;
@@ -64,7 +64,7 @@ async fn mounted() -> Option<(FocusWindow, Session, tempfile::TempDir)> {
 
     let window = FocusWindow::new(None);
     window.present();
-    let session = postio_focus::startup::adopt(&window, host, &postio_config::Config::default());
+    let session = postio_gtk::startup::adopt(&window, host, &postio_config::Config::default());
     settle();
     // The first open builds the composer and its frame; every open after it
     // is what a person pays for `c`.

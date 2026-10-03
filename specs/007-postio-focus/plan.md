@@ -16,7 +16,7 @@ arrived. It does four things to mail:
   restore;
 - links mail to an Obsidian vault.
 
-**The app is one crate, `postio-focus`.** Like the terminal, it runs
+**The app is one crate, `postio-gtk`.** Like the terminal, it runs
 `postio-host` in its own process and reaches mail only through
 `postio-client` (ADR 0041). **The GTK it draws outside its own window lives
 in `postio-widgets`**, which depends on no app (R1, ADR 0043): the message
@@ -101,7 +101,7 @@ where one can be written, and a store no migration reaches starts over
 Wayland first, installed from the desktop Flatpak.
 
 **Project Type**: A desktop application frontend in a Cargo workspace. Focus
-added six crates: `postio-widgets`, `postio-focus`, `postio-classify`,
+added six crates: `postio-widgets`, `postio-gtk`, `postio-classify`,
 `postio-calendar`, `postio-ai` and `postio-vault`.
 
 **Performance Goals**: The constitution's budgets: startup under 500 ms,
@@ -122,7 +122,7 @@ counts:
 - A mailbox is never loaded into memory.
 - Drawing a row reads no body.
 - Logs carry ids, counts and outcomes only.
-- `postio-focus` never depends on `postio-gtk` or `postio-app`.
+- `postio-gtk` never depends on `postio-gtk` or `postio-app`.
 - Focus's rules act only while Focus runs.
 - A command's key is the same in every app.
 - No language model and no inference engine ships in any package.
@@ -145,7 +145,7 @@ counts:
 | IV. Test-first | Every task's test seen red first | **Pass.** `focus_suite` asserts what a person sees. Screens are compared with their PNGs and every difference recorded. |
 | V. Performance, gated as counts | New read paths carry statement and row assertions | **Pass.** `sort_at` on the hottest path left the list's counting tests unchanged (R7). The Focus scopes add a predicate at every membership site, each asserted (contracts/engine.md). The filing pass is bounded per message and counted in the sync suite. |
 | VI. Privacy is a feature | Nothing leaves the machine unasked; no content in logs | **Pass.** An RSVP leaves only on a key press, after a cancel window. Promoted headers and calendar parts come from the user's own server, for new mail and with bodies. The model is loopback-only, off unless configured, never probed, and egress-logged. Obsidian is local files. `postio://` only navigates. Excerpts and reasons live only in the encrypted store. |
-| VII. Boundaries are enforced | New crates have checked rules | **Pass.** `check-crate-boundaries.py` has rules for `postio-widgets`, `postio-focus`, `postio-classify`, `postio-calendar` and `postio-ai`. The checks that scan GTK code scan the new crates too (R1). Pimalaya was surveyed first; calcard was chosen with its reason recorded (R9). Automated senders and model runtimes are data. |
+| VII. Boundaries are enforced | New crates have checked rules | **Pass.** `check-crate-boundaries.py` has rules for `postio-widgets`, `postio-gtk`, `postio-classify`, `postio-calendar` and `postio-ai`. The checks that scan GTK code scan the new crates too (R1). Pimalaya was surveyed first; calcard was chosen with its reason recorded (R9). Automated senders and model runtimes are data. |
 | Additional Constraints: Scope | Work outside scope belongs on the roadmap | **Amended in 1.3.0** (approved 2026-09-27): the Scope names Focus and allows its optional, user-supplied model. Its "two desktop apps" changes with the one-app decision (C27), an amendment that lands with the branch and needs the maintainer. |
 | Additional Constraints: No backwards compatibility | Clean versions, no shims | **Pass.** Renamed ids (`toggle_read`, `go_to_folders`) have no aliases. A store no migration reaches starts over. |
 | Additional Constraints: One fact, one home | ADRs for rules, specs for features | **Pass.** ADR 0043 is the `postio-widgets` rule and the one-app decision. ADR 0032 records Focus's one-message view, and ADR 0025 the three promoted headers. The spec carries the reasoning. |
@@ -196,7 +196,7 @@ crates/
 │   ├── src/present/           #   compose, reading, config, onboarding, export,
 │   │                          #   and settings (accounts, credentials, privacy)
 │   └── tests/widgets_suite/
-├── postio-focus/              # the app (R3)
+├── postio-gtk/              # the app (R3)
 │   ├── src/{main,app,startup,window,chrome,keys}.rs
 │   ├── src/list/              #   model, rows, the surfaced-row splice, the reading pane
 │   ├── src/{open,open_header,source,chooser}.rs   # the open message
@@ -227,7 +227,7 @@ crates/
 ├── postio-gmail/              # the same fields from its metadata
 ├── postio-config/             # [focus]; ConfigChanged.focus
 └── postio-tui/                # ctrl+z is undo
-flatpak/dev.postio.Postio.json          # builds postio-focus and its desktop file
+flatpak/dev.postio.Postio.json          # builds postio-gtk and its desktop file
 scripts/checks/                         # boundary rules for the new crates
 docs/decisions/0043-…                   # the one desktop app, and postio-widgets
 .specify/memory/constitution.md         # Scope 1.3.0
@@ -237,7 +237,7 @@ docs/decisions/0043-…                   # the one desktop app, and postio-widg
 
 - **Two crates carry the app.** `postio-widgets` holds the GTK that can be
   tested without Focus's window and keeps the presenters on
-  `postio-client`. `postio-focus` holds Focus's window, rows and dialogs, on
+  `postio-client`. `postio-gtk` holds Focus's window, rows and dialogs, on
   the terminal's one-crate pattern (R3).
 - **Leaves carry the new engine logic.** `postio-classify` is where "cannot
   send" is checked, `postio-calendar` keeps calcard out of `postio-model`,

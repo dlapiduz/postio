@@ -2,7 +2,7 @@
 //!
 //! docs/PRODUCT.md §18 gives an ordinary interaction 16ms, and scrolling the
 //! list is the interaction that happens most. Focus's row
-//! (`postio_focus::list::RowWidget`) draws itself in one `snapshot()` to stay
+//! (`postio_gtk::list::RowWidget`) draws itself in one `snapshot()` to stay
 //! inside that; this bench is what says whether it does.
 //!
 //! # What is measured, and what is not
@@ -40,7 +40,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::perf_budget::{INTERACTION_BUDGET, check_budget};
-use postio_focus::list::{FocusRow, RowObject, RowWidget};
+use postio_gtk::list::{FocusRow, RowObject, RowWidget};
 use postio_model::address::EmailAddress;
 use postio_model::ids::{MessageId, ThreadId};
 use postio_model::listing::{MessageSummary, ThreadSummary};
@@ -97,7 +97,7 @@ fn mounted() -> Option<RowWidget> {
         return None;
     }
     let display = gdk::Display::default()?;
-    postio_focus::style::install(&display);
+    postio_gtk::style::install(&display);
 
     let row = RowWidget::default();
     let window = gtk::Window::new();

@@ -373,7 +373,7 @@ echo
 # The gate chain runs over the crates this branch changed. On a host missing
 # their system libraries that is not a weaker gate, it is no gate at all, and
 # the work lands anyway. A macOS session cannot build the GTK crates
-# (`postio-widgets`, `postio-focus`): gtk4 and libadwaita have arm64 bottles
+# (`postio-widgets`, `postio-gtk`): gtk4 and libadwaita have arm64 bottles
 # but webkitgtk has none,
 # and the reader and composer are both WebKit views. CI would notice on the
 # pull request, but only after the branch is pushed and only if someone reads
@@ -411,7 +411,7 @@ else
             || MISSING_LIBS="${MISSING_LIBS:+$MISSING_LIBS }$lib"
     done
     UNBUILDABLE=""
-    [ -n "$MISSING_LIBS" ] && UNBUILDABLE="postio-widgets postio-focus"
+    [ -n "$MISSING_LIBS" ] && UNBUILDABLE="postio-widgets postio-gtk"
 fi
 
 BLOCKED=""
@@ -988,11 +988,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
 # missing or stale one is a warning and a label anybody can see. "Current"
 # is the review key, built from the app crates' and the catalogue's git tree
 # ids, so a rebase that leaves them alone keeps it (research R13). The app
-# is Postio, whose crates are postio-focus and postio-widgets (T265).
+# is Postio, whose crates are postio-gtk and postio-widgets (T265).
 STORYBOARD_REVIEWED=0
 for crate in $CRATES; do
     case "$crate" in
-        postio-focus|postio-widgets) STORYBOARD_REVIEWED=1 ;;
+        postio-gtk|postio-widgets) STORYBOARD_REVIEWED=1 ;;
     esac
 done
 STORYBOARD_LABEL=""

@@ -24,7 +24,7 @@ import re
 import sys
 from pathlib import Path
 
-METAINFO = Path("crates/postio-focus/data/dev.postio.Postio.metainfo.xml")
+METAINFO = Path("crates/postio-gtk/data/dev.postio.Postio.metainfo.xml")
 WORKSPACE_VERSION = re.compile(r'(?m)^version = "([0-9]+\.[0-9]+\.[0-9]+)"$')
 INTERNAL_PIN = re.compile(r'version = "([0-9]+\.[0-9]+\.[0-9]+)", path = "\.\./postio-')
 RELEASE = re.compile(r'<release version="([0-9]+\.[0-9]+\.[0-9]+)"')

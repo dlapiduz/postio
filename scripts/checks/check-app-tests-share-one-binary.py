@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse a new `crates/postio-focus/tests/*.rs` that is not `e2e*`.
+"""Refuse a new `crates/postio-gtk/tests/*.rs` that is not `e2e*`.
 
 Every file directly under a crate's ``tests/`` is its own `[[test]]` target,
 and every target in the desktop app's crate links the whole application —
@@ -16,14 +16,14 @@ that bug are the expensive ones, so they are the ones nobody runs. Folding
 them into one already-built binary is what makes the guidance to avoid them
 stop being right.
 
-`crates/postio-focus/tests/focus_suite/` is that binary: `harness = false`,
+`crates/postio-gtk/tests/focus_suite/` is that binary: `harness = false`,
 one `adw::init`, every case a plain `pub fn` run in sequence. #973 moved
 seven files into the first such suite; this check is what stops a stray one
 appearing.
 
 # The rule
 
-A file directly under ``crates/postio-focus/tests`` must be named `e2e*`,
+A file directly under ``crates/postio-gtk/tests`` must be named `e2e*`,
 be in ``ALLOWED_FILES``, or be the `focus_suite` directory. Nothing else.
 
 `e2e*` is one documented exception, and it is not a style preference: the
@@ -38,7 +38,7 @@ out, which is the gap that produced #973.
 and each says the same thing in its own doc comment, which is the half a
 future reader actually reaches.
 
-Otherwise: move it to ``crates/postio-focus/tests/focus_suite/<name>.rs``,
+Otherwise: move it to ``crates/postio-gtk/tests/focus_suite/<name>.rs``,
 turn each `#[test] fn` into a `pub fn`, and add it to `main.rs`'s `mod` list
 and `CASES` table.
 """
@@ -46,7 +46,7 @@ and `CASES` table.
 import sys
 from pathlib import Path
 
-TESTS = Path("crates/postio-focus/tests")
+TESTS = Path("crates/postio-gtk/tests")
 SUITE = "focus_suite"
 
 # Named by the headless runner's watchdog, so it runs on its own (#272).

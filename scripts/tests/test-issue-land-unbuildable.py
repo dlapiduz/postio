@@ -5,7 +5,7 @@
 that cannot build one of them, that chain is not a weaker gate -- it is no gate
 at all, and the work lands anyway.
 
-This is live: a macOS session cannot build `postio-focus` or `postio-widgets` (no
+This is live: a macOS session cannot build `postio-gtk` or `postio-widgets` (no
 gtk4/libadwaita pkg-config, and webkitgtk has no arm64 bottle and no supported
 upstream macOS backend). Without this guard such a session passes its gates and
 pushes something that does not compile on Linux. CI would catch it on the pull
@@ -148,7 +148,7 @@ def world(base: Path, *, have_gtk: bool, touch: str) -> tuple[Path, Path]:
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
     (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
-    for crate in ("postio-focus", "postio-core", "postio-widgets"):
+    for crate in ("postio-gtk", "postio-core", "postio-widgets"):
         (root / "crates" / crate / "src").mkdir(parents=True)
         (root / "crates" / crate / "src" / "lib.rs").write_text("// x\n", encoding="utf-8")
 
@@ -217,7 +217,7 @@ def main() -> int:
     # 1. The crate this host cannot build.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
-        root, stub_dir = world(base, have_gtk=False, touch="postio-focus")
+        root, stub_dir = world(base, have_gtk=False, touch="postio-gtk")
         result = land(root, stub_dir)
         out = result.stdout + result.stderr
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
@@ -229,7 +229,7 @@ def main() -> int:
         )
         case(
             "the refusal names the crate",
-            "postio-focus" in out,
+            "postio-gtk" in out,
             f"the crate is not named:\n{out}",
         )
         case(
@@ -265,7 +265,7 @@ def main() -> int:
     # 3. A host that can build GTK: nothing fires, nothing changes.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
-        root, stub_dir = world(base, have_gtk=True, touch="postio-focus")
+        root, stub_dir = world(base, have_gtk=True, touch="postio-gtk")
         result = land(root, stub_dir)
         out = result.stdout + result.stderr
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
@@ -286,7 +286,7 @@ def main() -> int:
             # #847, so "the gates ran" is no longer spelled `test -p <crate>`.
             # What this case is really about is unchanged: a host that *can*
             # build the crate must not silently skip its gates.
-            "clippy -p postio-focus" in calls
+            "clippy -p postio-gtk" in calls
             and "test --workspace --lib" in calls,
             f"the gates were skipped on a host that can run them:\n{calls}",
         )

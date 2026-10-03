@@ -142,7 +142,7 @@ def world(base: Path, *, fail_workspace_check: bool) -> tuple[Path, Path]:
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
     (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
-    for crate in ("postio-focus", "postio-core", "postio-widgets"):
+    for crate in ("postio-gtk", "postio-core", "postio-widgets"):
         (root / "crates" / crate / "src").mkdir(parents=True)
         (root / "crates" / crate / "src" / "lib.rs").write_text(
             "// x\n", encoding="utf-8"
@@ -183,7 +183,7 @@ def world(base: Path, *, fail_workspace_check: bool) -> tuple[Path, Path]:
     git("push", "-q", "origin", "main", cwd=root)
 
     # The shape of the bug: a change to a crate *other* crates' tests build
-    # against. Nothing here touches `postio-focus`, whose tests broke.
+    # against. Nothing here touches `postio-gtk`, whose tests broke.
     git("checkout", "-q", "-b", "issue-1-workspace-check", cwd=root)
     (root / "crates" / "postio-core" / "src" / "lib.rs").write_text(
         "// a shared type gains a field\n", encoding="utf-8"

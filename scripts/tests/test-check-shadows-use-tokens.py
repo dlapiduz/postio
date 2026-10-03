@@ -35,7 +35,8 @@ def expect_root(name: str, sheets: dict[str, str], ok: bool, *seen: str) -> None
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "crates" / "postio-gtk" / "data").mkdir(parents=True)
-        (root / "crates" / "postio-gtk" / "data" / "shell.css").write_text(".a {}\n")
+        (root / "crates" / "postio-widgets" / "data").mkdir(parents=True)
+        (root / "crates" / "postio-gtk" / "data" / "focus.css").write_text(".a {}\n")
         for rel, css in sheets.items():
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,15 +63,9 @@ expect(
 )
 expect("a commented-out literal passes", "/* box-shadow: 0 1px rgba(0,0,0,.2); */ .a {}", True)
 
-# Both desktop apps carry stylesheets, and the shared crate carries the widget
-# rules both of them draw with (ADR 0043; specs/007-postio-focus R1).
+# The desktop app carries stylesheets, and the shared crate carries the widget
+# rules it draws with (ADR 0043; specs/007-postio-focus R1).
 LITERAL = ".a { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); }"
-expect_root(
-    "a literal shadow in the classic app's stylesheet fails",
-    {"crates/postio-gtk/data/shell.css": LITERAL},
-    False,
-    "crates/postio-gtk/data/shell.css:1",
-)
 expect_root(
     "a literal shadow planted in postio-widgets' stylesheet fails",
     {"crates/postio-widgets/data/widgets.css": LITERAL},
@@ -78,14 +73,14 @@ expect_root(
     "crates/postio-widgets/data/widgets.css:1",
 )
 expect_root(
-    "a literal shadow planted in postio-focus' stylesheet fails",
-    {"crates/postio-focus/data/focus.css": LITERAL},
+    "a literal shadow planted in the desktop app's stylesheet fails",
+    {"crates/postio-gtk/data/focus.css": LITERAL},
     False,
-    "crates/postio-focus/data/focus.css:1",
+    "crates/postio-gtk/data/focus.css:1",
 )
 expect_root(
-    "the generated token sheet is where the scale is defined",
-    {"crates/postio-gtk/data/tokens.css": ":root { --postio-shadow-sm: 0 1px 2px rgba(0,0,0,.1); } .b { box-shadow: 0 1px #000; }"},
+    "defining the scale is not drawing a shadow",
+    {"crates/postio-gtk/data/focus-colours.css": ":root { --postio-shadow-md: 0 2px 8px var(--shade-color); }"},
     True,
 )
 expect_root(

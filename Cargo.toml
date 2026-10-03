@@ -25,7 +25,7 @@ members = [
     "crates/postio-host",
     "crates/postio-tui",
     "crates/postio-widgets",
-    "crates/postio-focus",
+    "crates/postio-gtk",
     "crates/postio-classify",
     "crates/postio-calendar",
     "crates/postio-ai",
@@ -76,7 +76,7 @@ default-members = [
     "crates/postio-host",
     "crates/postio-tui",
     "crates/postio-widgets",
-    "crates/postio-focus",
+    "crates/postio-gtk",
     "crates/postio-classify",
     "crates/postio-calendar",
     "crates/postio-ai",
@@ -159,7 +159,7 @@ postio-transport = { path = "crates/postio-transport" }
 postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
 postio-runtime = { path = "crates/postio-runtime" }
-postio-focus   = { path = "crates/postio-focus" }
+postio-gtk     = { path = "crates/postio-gtk" }
 postio-test-support = { path = "crates/postio-test-support" }
 postio-client = { path = "crates/postio-client" }
 postio-host    = { path = "crates/postio-host" }

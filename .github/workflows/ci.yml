@@ -734,7 +734,7 @@ jobs:
       # fail-fast is turned off, alongside the retry override for #957.
       #
       # Everything but the two GTK crates. `postio-widgets` and the desktop
-      # app, `postio-focus`, run in the two jobs below: their suites are the
+      # app, `postio-gtk`, run in the two jobs below: their suites are the
       # ones a dying web process on this runner's software-GL stack can take
       # down, and they were most of this job's minutes. Apart, a flake there
       # re-runs one job rather than the whole workspace, and the engine
@@ -760,7 +760,7 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: >-
           dbus-run-session -- cargo nextest run --workspace --profile ci --lib
-          -E 'not (package(postio-widgets) + package(postio-focus))'
+          -E 'not (package(postio-widgets) + package(postio-gtk))'
 
       - name: cargo nextest run (the suites a vocabulary change breaks)
         env:
@@ -876,10 +876,10 @@ jobs:
           key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
-      - name: cargo nextest run -p postio-focus
+      - name: cargo nextest run -p postio-gtk
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo nextest run -p postio-focus --profile ci
+        run: dbus-run-session -- cargo nextest run -p postio-gtk --profile ci
 
       # From `main` only; see .github/actions/build-cache.
       - name: Save the build cache

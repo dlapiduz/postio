@@ -45,7 +45,7 @@ FAILURES: list[str] = []
 WORKSPACE = {
     "packages": [
         {"name": "postio-widgets", "dependencies": [{"name": "postio-ui"}]},
-        {"name": "postio-focus", "dependencies": [{"name": "postio-widgets"}]},
+        {"name": "postio-gtk", "dependencies": [{"name": "postio-widgets"}]},
         {"name": "postio-bench", "dependencies": [{"name": "postio-widgets"}]},
         {"name": "postio-ui", "dependencies": [{"name": "postio-core"}]},
         {"name": "postio-core", "dependencies": []},
@@ -108,12 +108,12 @@ def main() -> int:
     case(
         "a host missing webkitgtk cannot build the frontend",
         run(["webkitgtk-6.0"]),
-        ["postio-bench", "postio-focus", "postio-widgets"],
+        ["postio-bench", "postio-gtk", "postio-widgets"],
     )
     case(
         "a host missing all three says the same",
         run(["gtk4", "libadwaita-1", "webkitgtk-6.0"]),
-        ["postio-bench", "postio-focus", "postio-widgets"],
+        ["postio-bench", "postio-gtk", "postio-widgets"],
     )
 
     # The case a hand-written list gets wrong. `postio-bench` reaches the

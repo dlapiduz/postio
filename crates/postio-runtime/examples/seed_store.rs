@@ -7,7 +7,7 @@
 //! ```sh
 //! cargo run -p postio-runtime --example seed_store -- /tmp/postio.db 20000
 //! POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 \
-//!   POSTIO_STARTUP_EXIT=1 cargo run -p postio-focus
+//!   POSTIO_STARTUP_EXIT=1 cargo run -p postio-gtk
 //! ```
 //!
 //! It is a development tool, not part of the application: examples are not

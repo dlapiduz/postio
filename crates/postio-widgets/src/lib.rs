@@ -1,7 +1,7 @@
 //! The GTK the desktop app draws with (ADR 0043; `specs/007-postio-focus`,
 //! research R1).
 //!
-//! Postio Focus (`postio-focus`) depends on this crate, and the shared GTK
+//! Postio Focus (`postio-gtk`) depends on this crate, and the shared GTK
 //! lives here so it stays free of the store and the protocols. What lives
 //! here is what Focus shows: the message view on the
 //! reading renderer, the composer, the account form, the keycap, key-hint,

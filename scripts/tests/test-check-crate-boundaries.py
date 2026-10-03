@@ -86,7 +86,7 @@ def build_fixture(
     # The desktop app and what it stands on (specs/007-postio-focus).
     write_crate(root, "crates", "postio-widgets", widgets_deps)
     if include_focus:
-        write_crate(root, "crates", "postio-focus", focus_deps, focus_dev_deps)
+        write_crate(root, "crates", "postio-gtk", focus_deps, focus_dev_deps)
     write_crate(root, "crates", "postio-classify", classify_deps)
     write_crate(root, "crates", "postio-calendar", calendar_deps)
     # Milestone 2: the client for the person's own model.
@@ -219,7 +219,7 @@ def main() -> int:
 
         # 4. SQL in the view layer.
         check_case(
-            "postio-focus gains a direct turso dependency",
+            "postio-gtk gains a direct turso dependency",
             build_fixture(
                 tmp_path / "focus-turso",
                 focus_deps=(
@@ -228,19 +228,19 @@ def main() -> int:
                 ),
             ),
             expected_status=1,
-            must_mention=("postio-focus", "turso", "direct"),
+            must_mention=("postio-gtk", "turso", "direct"),
         )
 
         # 5. Protocol types in the view layer, via a test-only dependency.
         check_case(
-            "postio-focus gains an io-imap dev-dependency",
+            "postio-gtk gains an io-imap dev-dependency",
             build_fixture(
                 tmp_path / "focus-dev-imap",
                 focus_deps='postio-core = { path = "../postio-core" }\n',
                 focus_dev_deps='io-imap = { path = "../../vendor/io-imap" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-focus", "io-imap", "dev-dependency"),
+            must_mention=("postio-gtk", "io-imap", "dev-dependency"),
         )
 
         # 6. A guarded crate that vanished must be an error, not a silent pass.
@@ -248,7 +248,7 @@ def main() -> int:
             "a missing guarded crate errors out",
             build_fixture(tmp_path / "no-focus-crate", include_focus=False),
             expected_status=2,
-            must_mention=("postio-focus",),
+            must_mention=("postio-gtk",),
         )
 
         # 7. postio-session is the composition root without a toolkit, and
@@ -399,23 +399,23 @@ def main() -> int:
 
         # The desktop app (specs/007-postio-focus) and what it draws with.
         check_case(
-            "postio-focus may link the store engine, through the host",
+            "postio-gtk may link the store engine, through the host",
             build_fixture(
                 tmp_path / "focus-host-turso",
                 focus_deps='helper = { path = "../helper" }\n',
                 helper_deps='turso = { path = "../../vendor/turso" }\n',
             ),
             expected_status=0,
-            must_mention=("postio-focus",),
+            must_mention=("postio-gtk",),
         )
         check_case(
             "postio-widgets reaches the desktop app",
             build_fixture(
                 tmp_path / "widgets-focus",
-                widgets_deps='postio-focus = { path = "../postio-focus" }\n',
+                widgets_deps='postio-gtk = { path = "../postio-gtk" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-widgets", "postio-focus"),
+            must_mention=("postio-widgets", "postio-gtk"),
         )
         check_case(
             "postio-widgets gains the store engine",
@@ -451,17 +451,17 @@ def main() -> int:
                 focus_deps='candle-core = { path = "../../vendor/candle-core" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-focus", "candle-core"),
+            must_mention=("postio-gtk", "candle-core"),
         )
         check_case(
-            "postio-focus reaches an inference engine through another crate",
+            "postio-gtk reaches an inference engine through another crate",
             build_fixture(
                 tmp_path / "focus-candle",
                 focus_deps='helper = { path = "../helper" }\n',
                 helper_deps='candle-core = { path = "../../vendor/candle-core" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-focus", "candle-core", "helper"),
+            must_mention=("postio-gtk", "candle-core", "helper"),
         )
 
         # Milestone 2: postio-ai may speak HTTP to this computer, and nothing

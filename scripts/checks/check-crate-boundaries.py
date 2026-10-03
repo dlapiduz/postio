@@ -6,7 +6,7 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-core`` must not depend on ``gtk4``/``libadwaita``. It is the
     UI-agnostic runtime -- commands in, events out -- which is what makes a
     non-GTK frontend possible later.
-  * ``postio-focus``, the desktop app, must not depend directly on
+  * ``postio-gtk``, the desktop app, must not depend directly on
     ``rusqlite``/``turso``/``io-imap``: its own code does no SQL and speaks no
     protocol. It opens the store in its own process through ``postio-host``
     (ADR 0041), so the engine is in its graph -- transitively, and only
@@ -56,7 +56,7 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-vault``, Obsidian capture, must not link a network crate, a
     toolkit or the store engine: it appends markdown to a folder on this
     computer (``specs/007-postio-focus`` FR-180).
-  * No app binary (``postio-focus``, ``postio-tui``, ``postio-ffi``) may link
+  * No app binary (``postio-gtk``, ``postio-tui``, ``postio-ffi``) may link
     an inference engine. The local model is the
     user's own and optional (``specs/007-postio-focus`` FR-165).
 
@@ -164,7 +164,7 @@ RULES: dict[str, dict[str, object]] = {
             "postio-runtime",
             "postio-storage",
             "postio-sync",
-            "postio-focus",
+            "postio-gtk",
         ],
         "why": (
             "postio-widgets is the GTK the desktop app draws with (ADR 0043): "
@@ -174,7 +174,7 @@ RULES: dict[str, dict[str, object]] = {
             "the app."
         ),
     },
-    "postio-focus": {
+    "postio-gtk": {
         "banned": [*INFERENCE_ENGINES],
         "direct": [
             "rusqlite",
@@ -189,7 +189,7 @@ RULES: dict[str, dict[str, object]] = {
             "io-imap",
         ],
         "why": (
-            "postio-focus is the desktop app's view layer: command down, "
+            "postio-gtk is the desktop app's view layer: command down, "
             "event up. Its own code does no SQL and speaks no protocol -- "
             "storage goes through postio-storage and mail through the "
             "MailBackend trait, behind the host it runs in its own process "

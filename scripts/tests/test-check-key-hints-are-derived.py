@@ -35,7 +35,7 @@ def run_root(files: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """The check over a whole repository: every desktop crate's `src/`."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for crate in ("postio-widgets", "postio-focus"):
+        for crate in ("postio-widgets", "postio-gtk"):
             (root / "crates" / crate / "src").mkdir(parents=True)
         for name, text in files.items():
             path = root / name
@@ -133,16 +133,16 @@ expect_root(
     "crates/postio-widgets/src/widgets/picker.rs:1: a literal key hint",
 )
 expect_root(
-    "a literal key hint planted in postio-focus fails",
-    {"crates/postio-focus/src/window.rs": 'labelled("Has action", "!");'},
+    "a literal key hint planted in postio-gtk fails",
+    {"crates/postio-gtk/src/window.rs": 'labelled("Has action", "!");'},
     False,
-    "crates/postio-focus/src/window.rs:1: a literal key hint",
+    "crates/postio-gtk/src/window.rs:1: a literal key hint",
 )
 expect_root(
-    "a cap built by hand in postio-focus fails",
-    {"crates/postio-focus/src/list.rs": 'key.add_css_class("postio-key");'},
+    "a cap built by hand in postio-gtk fails",
+    {"crates/postio-gtk/src/list.rs": 'key.add_css_class("postio-key");'},
     False,
-    "crates/postio-focus/src/list.rs:1: a cap built by hand",
+    "crates/postio-gtk/src/list.rs:1: a cap built by hand",
 )
 expect_root(
     "the owner draws caps in the shared crate",

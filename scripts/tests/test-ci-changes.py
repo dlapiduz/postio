@@ -134,24 +134,24 @@ def main() -> int:
     # closure, so no binding the Swift compiles against can change because
     # one of them did. The GTK crates are also the most-changed in the
     # repository, which is where the saving is.
-    case("the GTK frontend", "pull_request", ["crates/postio-focus/src/window.rs"],
+    case("the GTK frontend", "pull_request", ["crates/postio-gtk/src/window.rs"],
          "yes", "no", "no")
     case("the shared widgets", "pull_request", ["crates/postio-widgets/src/lib.rs"],
          "yes", "no", "no")
     case("the bench crate", "pull_request", ["crates/postio-bench/benches/search.rs"],
          "yes", "no", "no")
-    case("an outside crate's own manifest", "pull_request", ["crates/postio-focus/Cargo.toml"],
+    case("an outside crate's own manifest", "pull_request", ["crates/postio-gtk/Cargo.toml"],
          "yes", "no", "no")
     case("two outside crates", "pull_request",
-         ["crates/postio-focus/src/window.rs", "crates/postio-widgets/src/lib.rs"],
+         ["crates/postio-gtk/src/window.rs", "crates/postio-widgets/src/lib.rs"],
          "yes", "no", "no")
     # One file inside the closure is enough to oblige the macOS runner, however
     # much of the diff cannot reach it.
     case("an outside crate beside an inside one", "pull_request",
-         ["crates/postio-focus/src/window.rs", "crates/postio-core/src/lib.rs"],
+         ["crates/postio-gtk/src/window.rs", "crates/postio-core/src/lib.rs"],
          "yes", "no", "yes")
     case("an outside crate beside Swift", "pull_request",
-         ["crates/postio-focus/src/window.rs", "macos/Sources/Postio/Shell.swift"],
+         ["crates/postio-gtk/src/window.rs", "macos/Sources/Postio/Shell.swift"],
          "yes", "no", "yes")
     # The root manifest and the toolchain reach everything, so they still do.
     case("the root manifest still obliges macOS", "pull_request", ["Cargo.toml"],

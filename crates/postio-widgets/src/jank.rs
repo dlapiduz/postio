@@ -6,7 +6,7 @@
 //! which keystroke, on this machine, with this mailbox, took 40 ms. This can:
 //!
 //! ```text
-//! POSTIO_LOG=postio_widgets::jank=debug cargo run -p postio-focus
+//! POSTIO_LOG=postio_widgets::jank=debug cargo run -p postio-gtk
 //! ```
 //!
 //! Two kinds of stall, because they are caught in different places:

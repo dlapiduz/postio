@@ -1,6 +1,6 @@
 //! What Focus's Filtered view says (spec 007 US9, screen 21): its tabs, a
 //! row's reason pill, the line on the right of the tabs, and the footer.
-//! The view is `postio-focus`'s; the words are here, where a test holds
+//! The view is `postio-gtk`'s; the words are here, where a test holds
 //! them.
 
 use chrono::NaiveDate;

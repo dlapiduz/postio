@@ -17,7 +17,7 @@ What is asserted:
   * runs go under Design/review/<branch>/runs, with the branch's `/`
     turned into `-`;
   * storyboards play on Postio, the one desktop app (ADR 0043,
-    specs/007-postio-focus T265): its runner is postio-focus's, and there
+    specs/007-postio-focus T265): its runner is postio-gtk's, and there
     is no `--app` to choose another -- every subcommand refuses one.
 
 No network, no display, and the real repository is never written to.
@@ -96,8 +96,8 @@ def setup(tmp: Path) -> dict[str, str]:
     (catalogue / "gaps").mkdir()
     (catalogue / "gaps" / "focus.toml").write_text("")
     (catalogue / "README.md").write_text("")
-    (repo / "crates" / "postio-focus").mkdir(parents=True)
-    (repo / "crates" / "postio-focus" / "Cargo.toml").write_text("")
+    (repo / "crates" / "postio-gtk").mkdir(parents=True)
+    (repo / "crates" / "postio-gtk" / "Cargo.toml").write_text("")
     subprocess.run(["git", "init", "-q", "-b", "feature/storyboards", str(repo)], check=True)
 
     bin_dir = tmp / "bin"
@@ -164,7 +164,7 @@ def main() -> int:
         result = run(ctx, "run", "--only", "list/*", "--jobs", "1")
         lines = log_lines(ctx)
         builds = [l for l in lines if l.startswith("cargo build") and "--example storyboard" in l]
-        expect("runner", all("-p postio-focus" in l for l in builds) and builds,
+        expect("runner", all("-p postio-gtk" in l for l in builds) and builds,
                f"the runner is Focus's: {builds}")
         runner_calls = [l for l in lines if l.startswith("runner run")]
         expect("only", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
@@ -252,9 +252,7 @@ def main() -> int:
         expect("key", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
         expect("key", f"--tree storyboards={tree}" in call, call)
         expect("key", "--tree crates/postio-widgets=absent" in call, call)
-        expect("key", "crates/postio-focus=" in call and "crates/postio-focus=absent" not in call, call)
-        expect("key", "postio-gtk" not in call and "postio-app" not in call,
-               f"the key names no classic crate: {call}")
+        expect("key", "crates/postio-gtk=" in call and "crates/postio-gtk=absent" not in call, call)
 
         print("case: bundle points the tool at the runs, the catalogue and the design screens")
         acceptance = Path(ctx["repo"]) / "acceptance.md"
@@ -275,8 +273,8 @@ def main() -> int:
 
         print("case: base plays the branch's storyboards on the merge-base, cached")
         repo = Path(ctx["repo"])
-        (repo / "crates" / "postio-focus" / "examples").mkdir(parents=True, exist_ok=True)
-        (repo / "crates" / "postio-focus" / "examples" / "storyboard.rs").write_text("")
+        (repo / "crates" / "postio-gtk" / "examples").mkdir(parents=True, exist_ok=True)
+        (repo / "crates" / "postio-gtk" / "examples" / "storyboard.rs").write_text("")
         gitdir = subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-dir"],
                                 capture_output=True, text=True, check=True).stdout.strip()
         gitdir = (repo / gitdir) if not gitdir.startswith("/") else Path(gitdir)
@@ -313,7 +311,7 @@ def main() -> int:
                f"a second call with nothing changed plays nothing: {again}")
 
         print("case: a base with no runner is reported, not failed")
-        (repo / "crates" / "postio-focus" / "examples" / "storyboard.rs").unlink()
+        (repo / "crates" / "postio-gtk" / "examples" / "storyboard.rs").unlink()
         subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
                         "commit", "-qam", "drop the runner"], check=True)
         subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
@@ -332,7 +330,7 @@ def main() -> int:
         expect("screens", "screens/inbox.toml" in call and "list/" not in call, call)
         expect("screens", "--variants" in call and "screens/runs" in call, call)
         builds = [l for l in lines if l.startswith("cargo build") and "--example storyboard" in l]
-        expect("screens", builds and all("-p postio-focus" in l for l in builds),
+        expect("screens", builds and all("-p postio-gtk" in l for l in builds),
                f"the sweep films Focus: {builds}")
         expect("screens", "--design-dir" in sheet and "Design/screens" in sheet and "screens/index.html" in sheet, sheet)
         result = run(ctx, "screens", TOOL_EXIT="1")

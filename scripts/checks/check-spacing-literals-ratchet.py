@@ -9,7 +9,7 @@ Rust spacing had fourteen distinct values -- 4, 6, 8, 9, 10, 12, 14, 16, 18,
 and `widgets::SettingsGroup` lays out a settings column on it.
 
 The rest of the desktop crates' `src/` -- the shared `postio-widgets` (ADR
-0043) and `postio-focus` -- still has literal margins
+0043) and `postio-gtk` -- still has literal margins
 and box spacings, and converting every one at once would be a rewrite nobody
 could review. So this is a ratchet: each file's count of spacing literals --
 `set_margin_*(N)`, `set_spacing(N)`, `set_row_spacing(N)`,
@@ -38,7 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 # The crates whose `src/` lays out widgets: the desktop app, and the crate
 # holding what it draws (ADR 0043; specs/007-postio-focus R1).
-CRATES = ("postio-widgets", "postio-focus")
+CRATES = ("postio-widgets", "postio-gtk")
 BASELINE = Path("scripts/checks/spacing-literals-baseline.txt")
 
 LITERAL = re.compile(
@@ -83,7 +83,7 @@ def write_baseline(path: Path, found: dict[str, int]) -> None:
     lines = [
         "# Spacing literals per file in the desktop crates' src/, outside widgets/,",
         "# each named by its path inside its crate's src/ (postio-widgets,",
-        "# postio-focus). A ratchet: check-spacing-literals-ratchet.py fails if a",
+        "# postio-gtk). A ratchet: check-spacing-literals-ratchet.py fails if a",
         "# file's count grows. Lower a line (or run the check with --write) when a",
         "# file's count drops.",
     ]

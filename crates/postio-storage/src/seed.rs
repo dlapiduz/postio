@@ -2,7 +2,7 @@
 //!
 //! This module is the one place that builds a demo mailbox, so a screenshot,
 //! a storyboard, a GTK test and a bench all render the same one: Postio's
-//! `postio_focus::demo` builds its seeds' store halves here. It works on top
+//! `postio_gtk::demo` builds its seeds' store halves here. It works on top
 //! of the ordinary repositories: an account, a folder tree, and messages
 //! filed and threaded exactly as sync would file them.
 //!

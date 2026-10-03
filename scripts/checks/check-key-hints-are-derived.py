@@ -9,7 +9,7 @@ C-⇧-A` all did (#828 fixed three more before them). A hint that lies is
 worse than none.
 
 So in the `src/` of every desktop crate -- the shared `postio-widgets` (ADR
-0043) and `postio-focus` -- this refuses:
+0043) and `postio-gtk` -- this refuses:
 
 * a cap built by hand: adding the `postio-keyhint` / `postio-key` class
   anywhere but `widgets/keyhint.rs`, which is where a cap is drawn;
@@ -44,7 +44,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 # The crates whose `src/` draws key hints: the desktop app, and the crate
 # holding what it draws (ADR 0043; specs/007-postio-focus R1).
-CRATES = ("postio-widgets", "postio-focus")
+CRATES = ("postio-widgets", "postio-gtk")
 OWNER = "widgets/keyhint.rs"
 
 # A file is named by its path inside its crate's `src/`, so one that moves

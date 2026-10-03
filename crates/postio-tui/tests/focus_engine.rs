@@ -3,7 +3,7 @@
 //! `postio_tui::run::engage_focus` is what `run` calls after the store opens
 //! and before the first sync, and `follow_focus_config` is what re-applies
 //! `[focus]` when the file changes. Both go through the same
-//! `FocusSetup::from_config` `postio-focus` uses, so the two apps cannot
+//! `FocusSetup::from_config` `postio-gtk` uses, so the two apps cannot
 //! disagree about what Focus mode runs with.
 
 use std::sync::Arc;

@@ -70,7 +70,7 @@ It holds:
 `check-buttons-have-a-kind.py`, `check-no-dead-css.py`,
 `check-shadows-use-tokens.py`, `check-spacing-literals-ratchet.py`,
 `check-reader-header-has-one-home.py`, `check-blocking-now-sites.py`,
-`check-uncalled-pub-fn.py`) scan `postio-widgets` and `postio-focus`.
+`check-uncalled-pub-fn.py`) scan `postio-widgets` and `postio-gtk`.
 
 **One view, reused.** `BodyView` drops a message's selection, focused link
 and toggled folds when the next is set, because the open message reuses one
@@ -149,7 +149,7 @@ attachments.
 
 ## R3. Focus as a frontend: one crate, on the terminal's pattern
 
-**Decision.** One crate, `crates/postio-focus`, holds the binary, the window
+**Decision.** One crate, `crates/postio-gtk`, holds the binary, the window
 and its rows and dialogs, over `postio-host` and `postio-client`, as the
 terminal is. It reads through the client in-process, so it needs no split
 between a view crate and a store-reading crate.
@@ -194,12 +194,12 @@ service and watcher, so every section it follows reloads live.
 
 **Packaging.** Focus is the desktop Flatpak's app. Until the package switch
 (T253) it is a second launcher in it: app id `dev.postio.Postio.Focus`,
-desktop file `dev.postio.Postio.Focus.desktop`, binary `postio-focus`. At the
+desktop file `dev.postio.Postio.Focus.desktop`, binary `postio-gtk`. At the
 switch it takes the name "Postio", the binary `postio`, the app id
 `dev.postio.Postio`, the icon and the `mailto:` handler (ADR 0043). It
 already draws the package's one icon, `dev.postio.Postio`.
 
-**Screens against PNGs.** `cargo run -p postio-focus --example shot -- <png>
+**Screens against PNGs.** `cargo run -p postio-gtk --example shot -- <png>
 <screen>` renders a named screen from a seeded demo store: `postio_storage::seed`
 plus Focus's markers, digests and filter decisions, written through the host.
 
@@ -801,7 +801,7 @@ acts, because any page or app can fire one.
   visible control, and every command Focus is offered reaches a handler
   (`registry_parity`).
 
-**Integration:** `crates/postio-focus/tests/focus_suite/` is one binary on the
+**Integration:** `crates/postio-gtk/tests/focus_suite/` is one binary on the
 custom harness, with `CASES`, `IGNORED` and the list contract, on the headless
 compositor. Each user story's acceptance scenarios are cases that assert on
 the widget tree, and keys and clicks are delivered through GTK's own

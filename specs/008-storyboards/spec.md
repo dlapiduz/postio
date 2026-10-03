@@ -47,7 +47,7 @@ What this spec adds:
 - **One page for the maintainer**, showing what changed.
 
 It was written for the two GTK apps, Classic (`postio-app`) and Focus
-(`postio-focus`, spec 007). Focus is now Postio, the one desktop app (ADR
+(`postio-gtk`, spec 007). Focus is now Postio, the one desktop app (ADR
 0043), and the maintainer kept this feature by rebuilding its runner over it
 (2026-10-02, specs/007-postio-focus T265): storyboards play on Postio and
 nothing else, and the runner, the demo store and the catalogue are its. The

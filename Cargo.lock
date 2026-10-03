@@ -4671,7 +4671,7 @@ dependencies = [
  "postio-body",
  "postio-config",
  "postio-core",
- "postio-focus",
+ "postio-gtk",
  "postio-host",
  "postio-index",
  "postio-model",
@@ -4799,7 +4799,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "postio-focus"
+name = "postio-gmail"
+version = "0.4.2"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "io-gmail",
+ "pimalaya-stream",
+ "postio-account",
+ "postio-model",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "postio-gtk"
 version = "0.4.2"
 dependencies = [
  "async-channel",
@@ -4816,7 +4830,7 @@ dependencies = [
  "postio-client",
  "postio-config",
  "postio-core",
- "postio-focus",
+ "postio-gtk",
  "postio-host",
  "postio-index",
  "postio-model",
@@ -4837,20 +4851,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "postio-gmail"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "chrono",
- "io-gmail",
- "pimalaya-stream",
- "postio-account",
- "postio-model",
- "tokio",
- "tracing",
 ]
 
 [[package]]

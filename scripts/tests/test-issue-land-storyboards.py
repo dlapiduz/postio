@@ -183,7 +183,7 @@ def sandbox(base: Path, existing_pr: bool = False):
     gh_path.chmod(0o755)
     (stub_dir / "calls").write_text("", encoding="utf-8")
     # A host that has GTK, whatever this one has: the stand-in crate is
-    # postio-focus, and a CI runner without the libraries is refused before
+    # postio-gtk, and a CI runner without the libraries is refused before
     # the storyboard warning is ever reached (test-issue-land-unbuildable.py
     # is where that refusal is tested).
     pkg_config = stub_dir / "bin" / "pkg-config"
@@ -194,13 +194,13 @@ def sandbox(base: Path, existing_pr: bool = False):
     build_sandbox(root, channel)
     # The stand-in crate is the app's crate, so the landing is about it.
     (root / "crates").mkdir()
-    shutil.move(str(root / "dummy"), str(root / "crates" / "postio-focus"))
-    manifest = (root / "crates" / "postio-focus" / "Cargo.toml").read_text()
-    (root / "crates" / "postio-focus" / "Cargo.toml").write_text(
-        manifest.replace('name = "dummy"', 'name = "postio-focus"')
+    shutil.move(str(root / "dummy"), str(root / "crates" / "postio-gtk"))
+    manifest = (root / "crates" / "postio-gtk" / "Cargo.toml").read_text()
+    (root / "crates" / "postio-gtk" / "Cargo.toml").write_text(
+        manifest.replace('name = "dummy"', 'name = "postio-gtk"')
     )
     (root / "Cargo.toml").write_text(
-        '[workspace]\nmembers = ["crates/postio-focus"]\nresolver = "2"\n', encoding="utf-8"
+        '[workspace]\nmembers = ["crates/postio-gtk"]\nresolver = "2"\n', encoding="utf-8"
     )
     key = root / "scripts" / "storyboards.sh"
     key.write_text(KEY_STUB, encoding="utf-8")
@@ -214,7 +214,7 @@ def sandbox(base: Path, existing_pr: bool = False):
     git("remote", "add", "origin", str(origin), cwd=root)
     git("push", "-q", "origin", "main", cwd=root)
     git("checkout", "-q", "-b", BRANCH, cwd=root)
-    (root / "crates" / "postio-focus" / "src" / "extra.rs").write_text("// nothing\n")
+    (root / "crates" / "postio-gtk" / "src" / "extra.rs").write_text("// nothing\n")
     return root, target, stub_dir
 
 

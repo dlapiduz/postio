@@ -46,9 +46,9 @@
 #                             postio-core     6.3s     postio-smtp     0.9s
 #
 # and the two GTK crates' suites, summed per test on this workstation
-# (2026-10-03, `cargo nextest run -p postio-focus -p postio-widgets`):
+# (2026-10-03, `cargo nextest run -p postio-gtk -p postio-widgets`):
 #
-#   postio-focus   ~1000s of tests (focus_suite)
+#   postio-gtk   ~1000s of tests (focus_suite)
 #   postio-widgets  ~170s of tests (widgets_suite and its unit tests)
 #
 # The gap is wide and lands between `postio-runtime` and `postio-sync`: four
@@ -83,7 +83,7 @@ set -euo pipefail
 # only itself. `issue-land.sh` prints the chain's total against the budget on
 # every landing, and names the worst phases when it is over — that is what
 # this list should be updated from, rather than from an impression.
-SLOW="postio-focus postio-runtime postio-storage postio-widgets"
+SLOW="postio-gtk postio-runtime postio-storage postio-widgets"
 
 if [ "${1:-}" = "--slow" ]; then
     printf '%s\n' $SLOW

@@ -232,7 +232,7 @@ def main() -> int:
     case(
         "the second desktop app's test accessors are not scanned",
         lib="pub fn banner_visible() -> bool { true }\n",
-        crate="postio-focus",
+        crate="postio-gtk",
         should_fail=False,
     )
     case(

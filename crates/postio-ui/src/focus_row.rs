@@ -1,7 +1,7 @@
 //! What a Focus row and the list around it say, with no toolkit in it
 //! (spec 007 US1; contracts/focus-surface.md, "Rows").
 //!
-//! The row draws in one `snapshot()` in `postio-focus`; the rules behind
+//! The row draws in one `snapshot()` in `postio-gtk`; the rules behind
 //! what it draws are here, where a unit test proves them in milliseconds:
 //! which day heading a row sits under, how many label pills fit, and when
 //! the conversation's count is worth a badge.

@@ -10,7 +10,7 @@ crates promise each other. The reasons are in [research.md](../research.md)
 ```rust
 impl Host {
     /// Turn on Focus's pipeline in this process. Called by the two Focus
-    /// apps, postio-focus and postio-tui (C29), at startup, after `start` and
+    /// apps, postio-gtk and postio-tui (C29), at startup, after `start` and
     /// before `start_syncing`. macOS does not call it, so nothing below runs
     /// while it holds the store (spec Clarifications: "only while Focus
     /// runs").
@@ -263,9 +263,9 @@ of Drafts. The list's counting tests hold for it unchanged.
 
 | Crate | Must not depend on |
 |---|---|
-| postio-widgets | rusqlite, libsqlite3-sys, turso, turso_core, io-imap; postio-host, postio-session, postio-runtime, postio-storage, postio-sync; postio-gtk, postio-app, postio-focus |
-| postio-focus | postio-gtk, postio-app; any inference engine |
-| postio-gtk | postio-focus |
+| postio-widgets | rusqlite, libsqlite3-sys, turso, turso_core, io-imap; postio-host, postio-session, postio-runtime, postio-storage, postio-sync; postio-gtk, postio-app, postio-gtk |
+| postio-gtk | postio-gtk, postio-app; any inference engine |
+| postio-gtk | postio-gtk |
 | postio-classify | postio-smtp, io-smtp, postio-account, postio-sync, postio-runtime, postio-transport, io-imap; gtk4, libadwaita, webkit6; the network crates; any inference engine |
 | postio-calendar | turso, turso_core, rusqlite, libsqlite3-sys, gtk4, libadwaita, tokio, async-std; the network crates |
 | postio-ai | postio-smtp, io-smtp, postio-account, postio-sync, postio-runtime, postio-transport, io-imap; postio-storage and the store engine; gtk4, libadwaita, webkit6; every network crate but `io-http`'s; any inference engine |

@@ -1,7 +1,7 @@
 # Screens: each build compared with its PNG
 
 Spec FR-095 and SC-009. Each screen is rendered from the demo store
-(`cargo run -p postio-focus --example shot`, below) and read back beside its
+(`cargo run -p postio-gtk --example shot`, below) and read back beside its
 reference in the maintainer's `Design/postio-focus-design/screens/` (and, for
 the open message, `Design/focus-message-dialog/screens/`), in light and dark.
 Every difference is written down here with its reason. The references are
@@ -530,7 +530,7 @@ and `settings_wiring`.
 
 ## Rendering them
 
-`cargo run -p postio-focus --example shot -- <png> <screen> [light|dark] [WxH]`
+`cargo run -p postio-gtk --example shot -- <png> <screen> [light|dark] [WxH]`
 writes one screen; an unknown screen writes nothing and says `NO IMAGE WAS
 WRITTEN`. The cargo runner sends it to the private headless compositor, whose
 1280x800 monitor mutter will not open a 1440x900 window on without maximizing
@@ -538,7 +538,7 @@ it, so the references' size wants a larger monitor of its own:
 
 ```sh
 POSTIO_TEST_DISPLAY=focus-shot POSTIO_TEST_GEOMETRY=1920x1200 \
-    cargo run -p postio-focus --example shot -- /tmp/01.png 01
+    cargo run -p postio-gtk --example shot -- /tmp/01.png 01
 ```
 
 The shot runs with an empty `XDG_CONFIG_HOME` (a desktop's own `gtk.css` would

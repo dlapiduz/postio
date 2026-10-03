@@ -43,7 +43,7 @@ def expect_root(name: str, files: dict[str, str], baseline: str, ok: bool, *seen
     """The check over a whole repository: every desktop crate's `src/`."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for crate in ("postio-widgets", "postio-focus"):
+        for crate in ("postio-widgets", "postio-gtk"):
             (root / "crates" / crate / "src").mkdir(parents=True)
         for rel, text in files.items():
             path = root / rel
@@ -90,11 +90,11 @@ expect_root(
     "crates/postio-widgets/src/reader/view.rs: 1 spacing literals, baseline 0",
 )
 expect_root(
-    "a literal planted in postio-focus fails",
-    {"crates/postio-focus/src/window.rs": "w.set_spacing(6);"},
+    "a literal planted in postio-gtk fails",
+    {"crates/postio-gtk/src/window.rs": "w.set_spacing(6);"},
     "",
     False,
-    "crates/postio-focus/src/window.rs: 1 spacing literals, baseline 0",
+    "crates/postio-gtk/src/window.rs: 1 spacing literals, baseline 0",
 )
 expect_root(
     "a file that moved to the shared crate keeps its line",

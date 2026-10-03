@@ -33,7 +33,7 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "release-bump.py"
 
-METAINFO_PATH = "crates/postio-focus/data/dev.postio.Postio.metainfo.xml"
+METAINFO_PATH = "crates/postio-gtk/data/dev.postio.Postio.metainfo.xml"
 PLIST_PATH = "macos/Resources/Info.plist"
 
 # The macOS bundle's two version keys (#1714). It ships as a release asset

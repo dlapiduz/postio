@@ -2,7 +2,7 @@
 """Refuse a new `blocking::now` in the frontend (#1608).
 
 `postio_session::blocking::now` drives a future to completion on the thread
-that calls it. In the desktop crates -- the app, `postio-focus`, and
+that calls it. In the desktop crates -- the app, `postio-gtk`, and
 `postio-widgets`, which holds what it draws (ADR 0043) -- that thread is the
 GTK main thread, and the futures were store reads and writes: a reply read two cold
 connections and decoded a body before the composer opened, and every
@@ -42,7 +42,7 @@ from pathlib import Path
 # crate holding what it draws (ADR 0043; specs/007-postio-focus R1).
 ROOTS = [
     "crates/postio-widgets/src",
-    "crates/postio-focus/src",
+    "crates/postio-gtk/src",
 ]
 NEEDLE = "blocking::now("
 

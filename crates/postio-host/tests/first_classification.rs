@@ -16,7 +16,7 @@
 //!   minute, reading only bodies already on this machine.
 //!
 //! Both are what Focus does when it opens, driven through
-//! [`Host::enable_focus`] as `postio-focus` drives it, and each is measured
+//! [`Host::enable_focus`] as `postio-gtk` drives it, and each is measured
 //! on its own, in two opens of one store:
 //!
 //! 1. **Focus's first open.** No mark yet, so filing sorts nothing (FR-118)
@@ -314,7 +314,7 @@ impl Measured {
     }
 }
 
-/// Start a host over `database`, switch Focus on as `postio-focus` does,
+/// Start a host over `database`, switch Focus on as `postio-gtk` does,
 /// and time it until `done` -- reading a page of Focus's inbox every quarter
 /// second meanwhile, as a person would. The host stops before this answers.
 fn open_focus(

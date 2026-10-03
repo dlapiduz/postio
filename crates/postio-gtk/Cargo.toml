@@ -1,0 +1,139 @@
+[package]
+name = "postio-gtk"
+description = "Postio, the desktop app: Focus, a dense, keyboard-first inbox on the Postio engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+# The app is a library with a thin binary over it: a composition root that
+# only launching the binary can reach is one nothing can check.
+# `tests/focus_suite` drives the same startup the binary runs.
+[lib]
+path = "src/lib.rs"
+
+# Focus is Postio (spec 007, C27; ADR 0043): what lands on PATH, and what
+# the desktop entry's `Exec` names, is `postio`.
+[[bin]]
+name = "postio"
+path = "src/main.rs"
+
+[features]
+# Seeded, fed windows for the tools that photograph or drive Focus
+# (`postio_gtk::demo`, the `shot` and `storyboard` examples). Off by
+# default: the seeds and the in-memory store are test-support code and must
+# not reach a normal build.
+demo = [
+    "dep:postio-index",
+    "dep:postio-storage",
+    "postio-storage/test-support",
+    "dep:postio-storyboard",
+    "dep:tempfile",
+]
+
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+# The store opens on a thread of its own, and its progress and its answer
+# come back to the main loop over a channel both sides can wait on.
+async-channel = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
+gio = "0.22.9"
+glib = { version = "0.22.9", features = ["v2_72"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+# The binary's allocator: `postio` is Focus now, and the engine's page cache
+# and fts index churn small allocations on the hot path, which is why the
+# shipped binary has used mimalloc. The memory
+# measurements (#1606) measure the heap under it too.
+mimalloc = "0.1"
+pango = { version = "0.22.9", features = ["v1_56"] }
+# The keyring the store key is read from: this process opens the store.
+postio-account.workspace = true
+# What a marker's sentence is found in: the body's own text (research R2).
+postio-body.workspace = true
+postio-client.workspace = true
+postio-config.workspace = true
+postio-core.workspace = true
+# The store's host, in this process: one Postio at a time has the store
+# (ADR 0041), and Focus turns on its own mode in it.
+postio-host.workspace = true
+postio-model.workspace = true
+# The rendered document's links and text, which `o` offers (US2).
+postio-render.workspace = true
+# The remote-image fetcher, run on the host's runtime for a sender the
+# person allowed (US2 scenario 4), as the desktop app runs it.
+postio-runtime.workspace = true
+# The one query language, and plain English lowered into it (US4).
+postio-search.workspace = true
+# Logging, as the other apps set it up.
+postio-session.workspace = true
+postio-ui.workspace = true
+# What both desktop apps draw with (ADR 0043).
+postio-widgets.workspace = true
+# The vault's task and note, which the capture sheet previews exactly as
+# the host will append them (US15); the host does the writing.
+postio-vault.workspace = true
+# The demo store's search index; only the `demo` feature builds it.
+postio-index = { workspace = true, optional = true }
+# The storyboard runner's pure half -- format, checks, run records. Only the
+# `demo` feature, which is where the runner lives, builds it
+# (specs/008-storyboards).
+postio-storyboard = { workspace = true, optional = true }
+# The demo's store; only the `demo` feature builds it.
+postio-storage = { workspace = true, optional = true }
+# The demo's blob directory; only the `demo` feature builds it.
+tempfile = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tracing = { workspace = true }
+url = { workspace = true }
+# `observe`'s app-specific fields are JSON values, and a digest's summary is
+# stored as JSON (US13).
+serde_json.workspace = true
+
+[dev-dependencies]
+# The in-process IMAP server on loopback, which `e2e` points an account at;
+# and the trait a counting keyring implements.
+async-trait.workspace = true
+postio-account = { workspace = true, features = ["test-server"] }
+# The search index, which sync fills as it files mail: a fixture fills it
+# the same way, so the command bar has something to find.
+postio-index.workspace = true
+postio-model = { workspace = true, features = ["test-corpus"] }
+# A throwaway store with mail in it, for the suite to open.
+postio-storage = { workspace = true, features = ["test-support"] }
+postio-test-support.workspace = true
+# The shot's screen 31 holds a render past its deadline to draw the
+# plain-text fallback (T218).
+postio-widgets = { workspace = true, features = ["test-hooks"] }
+# The drainer and a scripted SMTP server: what a send does once the link is
+# back, driven without a connection (US3 scenario 7).
+postio-smtp.workspace = true
+postio-sync.workspace = true
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
+# The suite drives the shot and the storyboard runner, which sit behind `demo`.
+postio-gtk = { path = ".", features = ["demo"] }
+postio-storyboard.workspace = true
+
+# Focus's GTK suite: a custom harness, for two reasons -- GTK initializes on
+# exactly one thread per process (#41), and libtest runs tests on a pool. See
+# tests/focus_suite/main.rs.
+# Needs the seeded store and the demo module, which are behind `demo`.
+[[example]]
+name = "shot"
+required-features = ["demo"]
+
+# The storyboard runner (specs/008-storyboards); `scripts/storyboards.sh run`
+# builds it.
+[[example]]
+name = "storyboard"
+required-features = ["demo"]
+
+[[test]]
+name = "focus_suite"
+path = "tests/focus_suite/main.rs"
+harness = false
+
+[lints]
+workspace = true

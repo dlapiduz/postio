@@ -7,8 +7,8 @@ A design/UX reviewer that did not build the change judges the filmstrips
 before the maintainer sees them.
 
 The storyboards here play on Postio, the one desktop app (ADR 0043), and on
-nothing else: its runner is `postio-focus`'s `storyboard` example over the
-demo store in `postio_focus::demo`, driven by `scripts/storyboards.sh`. A
+nothing else: its runner is `postio-gtk`'s `storyboard` example over the
+demo store in `postio_gtk::demo`, driven by `scripts/storyboards.sh`. A
 storyboard names `apps = ["focus"]` -- the app's name in the format -- when
 its checks are the app's own.
 

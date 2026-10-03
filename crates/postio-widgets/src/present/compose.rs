@@ -9,7 +9,7 @@
 //! through [`postio_client::Client`], which is what makes this crate able to
 //! hold it at all (ADR 0043).
 //!
-//! Focus's own wiring (`postio_focus::compose::seams`) was already shaped
+//! Focus's own wiring (`postio_gtk::compose::seams`) was already shaped
 //! this way before this module existed -- reaching only through the client,
 //! answering the WebKit-facing seams from a cache it fills ahead of time
 //! rather than a blocking read -- and is what this module is built from.

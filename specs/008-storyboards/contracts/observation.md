@@ -27,7 +27,7 @@ That is why ADR 0044 records them (plan § ADR).
    is shown. They are not inferred from its label (research R6).
 6. **Ids are store ids**, as strings. A seed makes them stable.
 
-## Focus (`postio-focus::window::FocusWindow::observe`)
+## Focus (`postio-gtk::window::FocusWindow::observe`)
 
 Postio's window is the one every storyboard is played on (ADR 0043;
 specs/007-postio-focus T265).

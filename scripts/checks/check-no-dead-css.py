@@ -9,7 +9,7 @@ error -- it is only a paragraph a reader has to understand before learning it
 does nothing, and a place the next restyle edits to no effect.
 
 The rule: a `.postio-*` or `.conversation-*` class selector in a desktop
-crate's stylesheets -- `crates/{postio-widgets,postio-focus}/data/*.css`,
+crate's stylesheets -- `crates/{postio-widgets,postio-gtk}/data/*.css`,
 the shared crate's included (ADR 0043) -- must be named somewhere in the Rust
 sources.
 A mention is the class as a whole token outside a `//` comment line, or a
@@ -40,7 +40,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 # The crates whose `data/` holds stylesheets: the desktop app, and the crate
 # holding the widget rules it draws with (ADR 0043; specs/007-postio-focus R1).
-CRATES = ("postio-widgets", "postio-focus")
+CRATES = ("postio-widgets", "postio-gtk")
 
 
 def stylesheets(root: Path) -> list[Path]:

@@ -2,7 +2,7 @@
 """Self-test for scripts/headless-runner.sh.
 
 The runner is cargo's `runner`, so it fronts EVERY binary cargo executes --
-`cargo run -p postio-focus` included. It exists to put *test* binaries on a
+`cargo run -p postio-gtk` included. It exists to put *test* binaries on a
 hidden compositor; the application itself must reach the real display, or the
 README's own run instruction launches Postio invisibly (#315).
 

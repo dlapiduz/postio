@@ -8,15 +8,15 @@ is the interface, and the other two are its parts.
 ## The runner
 
 Storyboards play on Postio, the one desktop app (ADR 0043), and on nothing
-else. Its runner is `postio_focus::demo::storyboard`, over the demo store
-`postio_focus::demo` shares with `shot`, built as `postio-focus`'s
+else. Its runner is `postio_gtk::demo::storyboard`, over the demo store
+`postio_gtk::demo` shares with `shot`, built as `postio-gtk`'s
 `storyboard` example (specs/007-postio-focus T265). The GTK half it drives
 the window with -- chain delivery, typing, reachability, settling, the
 outline -- is `postio_widgets::storyboard`. No option, variable or frontend
 switch selects another app.
 
 ```text
-cargo run -p postio-focus --example storyboard --features demo -- <subcommand>
+cargo run -p postio-gtk --example storyboard --features demo -- <subcommand>
 ```
 
 **Seeds and presets.** The runner builds every seed the catalogue names
@@ -89,8 +89,8 @@ scripts/storyboards.sh coverage                      # every-command
 ```
 
 - **There is no `--app`.** Every subcommand that plays -- `run`, `base`,
-  `screens`, `coverage` -- builds and plays `postio-focus`'s runner, and
-  `key` covers `postio-focus`, `postio-widgets`, `postio-ui` and the
+  `screens`, `coverage` -- builds and plays `postio-gtk`'s runner, and
+  `key` covers `postio-gtk`, `postio-widgets`, `postio-ui` and the
   catalogue. An `--app` is refused as an unknown argument.
 - **There is no `--changed`.** A selection by changed crates would select,
   for the app, every storyboard applying to it -- a shared type's callers
@@ -140,8 +140,8 @@ an inactive window draws in GTK's backdrop style.
 |---|---|---|
 | `postio-storyboard` lib tests (sanity tier) | `the_catalogue_loads_and_lints` | the lint over `storyboards/` |
 | `postio-widgets` `widgets_suite` | `storyboard_*` (19) | the GTK half: chain delivery, typing, reachability, settling, the outline |
-| `postio-focus` `focus_suite` | `storyboards`, `observe`, `storyboard_determinism` | a run is pressed, checked and written; the window says where everything is; two processes film one storyboard identically |
-| `postio-focus` `focus_suite`, nightly | `storyboard_catalogue`, `every_command` | the whole catalogue holds on the app; every bound command shows or is a listed gap (`POSTIO-MEASUREMENT`) |
+| `postio-gtk` `focus_suite` | `storyboards`, `observe`, `storyboard_determinism` | a run is pressed, checked and written; the window says where everything is; two processes film one storyboard identically |
+| `postio-gtk` `focus_suite`, nightly | `storyboard_catalogue`, `every_command` | the whole catalogue holds on the app; every bound command shows or is a listed gap (`POSTIO-MEASUREMENT`) |
 
 A failing storyboard is named in the catalogue case's panic message, with
 the step and the check. A storyboard whose defect is still open (`proof =

@@ -19,7 +19,7 @@
 # It fronts `cargo run` too, but passes it through: only cargo's test and
 # bench binaries -- the ones named with the 16-hex metadata suffix, like
 # deps/gtk_list-0123456789abcdef -- are sent to the compositor. A plain-named
-# binary (`cargo run -p postio-focus`, an example) is someone launching a
+# binary (`cargo run -p postio-gtk`, an example) is someone launching a
 # program to look at it, and gets the real display. #315.
 set -uo pipefail
 

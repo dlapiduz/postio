@@ -53,9 +53,9 @@ wrong is the whole failure: all three functions above had passing tests.
 Definitions come from the crates the application drives, not the ones that
 drive it:
 
-  * **The frontends** (``postio-gtk``, ``postio-app``, ``postio-focus``,
-    ``postio-ffi``, and ``postio-widgets``, which holds what both desktop
-    apps draw -- ADR 0043) are skipped. A widget's ``pub fn banner_visible``
+  * **The frontends** (the desktop app ``postio-gtk``, ``postio-ffi``, and
+    ``postio-widgets``, which holds what the desktop app draws -- ADR 0043)
+    are skipped. A widget's ``pub fn banner_visible``
     exists so a test on a real display can read the widget back -- the
     composer's ``test_*`` hooks moved into ``postio-widgets`` with it -- and
     ``postio-ffi``'s surface is called from Swift, which this scan cannot
@@ -109,7 +109,7 @@ from pathlib import Path
 # Crates whose public surface is called from outside Rust, or from tests on a
 # real display. Skipped wholesale rather than allow-listed one function at a
 # time: the reason applies to the crate, not to any particular function in it.
-FRONTENDS = frozenset({"postio-gtk", "postio-widgets", "postio-focus", "postio-app", "postio-ffi"})
+FRONTENDS = frozenset({"postio-gtk", "postio-widgets", "postio-ffi"})
 
 # Test-support shipped in `src/` because tests in several crates need it.
 # Matched on the path so a new mock lands under the same reasoning.

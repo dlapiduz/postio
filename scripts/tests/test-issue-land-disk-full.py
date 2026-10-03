@@ -35,23 +35,23 @@ HERE = Path(__file__).resolve().parent.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 FAILURES: list[str] = []
 
-COMPILE_ERROR = """   Compiling postio-focus v0.3.0
+COMPILE_ERROR = """   Compiling postio-gtk v0.3.0
 error: failed to write query cache to .../target/debug/incremental/postio_app-x/query-cache.bin:
   No space left on device (os error 28)
-error: could not compile `postio-focus` (lib test)
+error: could not compile `postio-gtk` (lib test)
 issue-land exit 101
 """
 
 SIGBUS = """     Running tests/focus_suite/main.rs
-error: test failed, to rerun pass `-p postio-focus --test focus_suite`
+error: test failed, to rerun pass `-p postio-gtk --test focus_suite`
 Caused by:
   process didn't exit successfully: .../deps/postio_app-4db7c645e7e843fa (signal: 7, SIGBUS: access to undefined memory)
 issue-land exit 101
 """
 
-PLAIN_FAILURE = """   Compiling postio-focus v0.3.0
+PLAIN_FAILURE = """   Compiling postio-gtk v0.3.0
 error[E0425]: cannot find value `x` in this scope
-error: could not compile `postio-focus` (lib test)
+error: could not compile `postio-gtk` (lib test)
 issue-land exit 101
 """
 

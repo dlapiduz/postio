@@ -24,7 +24,7 @@ def expect(name: str, files: dict[str, str], ok: bool, *seen: str, whole: bool =
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         if whole:
-            for crate in ("postio-widgets", "postio-focus"):
+            for crate in ("postio-widgets", "postio-gtk"):
                 (root / "crates" / crate / "src").mkdir(parents=True)
         for rel, text in files.items():
             path = root / rel
@@ -57,10 +57,10 @@ expect(
     whole=True,
 )
 expect(
-    "a raw class planted in postio-focus fails",
-    {"crates/postio-focus/src/window.rs": 'b.add_css_class("destructive-action");'},
+    "a raw class planted in postio-gtk fails",
+    {"crates/postio-gtk/src/window.rs": 'b.add_css_class("destructive-action");'},
     False,
-    "crates/postio-focus/src/window.rs:1",
+    "crates/postio-gtk/src/window.rs:1",
     whole=True,
 )
 expect(

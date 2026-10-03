@@ -16,7 +16,7 @@ to watch it hold.
 
   ```sh
   export XDG_DATA_HOME=$(mktemp -d) XDG_CONFIG_HOME=$(mktemp -d)
-  cargo run -p postio-focus
+  cargo run -p postio-gtk
   ```
 
   `scripts/run-isolated.sh` builds a pinned commit of Postio with its own
@@ -42,7 +42,7 @@ cargo nextest run -p postio-storage --test storage_suite   # Focus scopes: state
 cargo nextest run -p postio-core --test core_suite # the one keymap enumerated across apps (SC-015)
 cargo nextest run -p postio-tui --test registry_parity     # the terminal still reaches every command
 cargo nextest run -p postio-widgets --test widgets_suite   # the reader, composer and settings window
-cargo nextest run -p postio-focus --test focus_suite       # Focus's stories, asserted on the widget tree
+cargo nextest run -p postio-gtk --test focus_suite       # Focus's stories, asserted on the widget tree
 scripts/check.sh                                   # boundaries, key hints, CSS, personal data
 ```
 
@@ -56,9 +56,9 @@ and the excerpt locator's floors run under `--profile nightly`, marked
 
 ```sh
 for s in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
-  cargo run -p postio-focus --example shot -- /tmp/focus-$s.png "$s"
+  cargo run -p postio-gtk --example shot -- /tmp/focus-$s.png "$s"
 done
-cargo run -p postio-focus --example shot -- /tmp/focus-02.png 02 dark
+cargo run -p postio-gtk --example shot -- /tmp/focus-02.png 02 dark
 ```
 
 `shot` draws a named screen from a seeded demo store: the corpus-derived

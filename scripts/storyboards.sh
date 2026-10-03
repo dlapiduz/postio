@@ -27,7 +27,7 @@
 #   scripts/storyboards.sh tool  <postio-storyboard arguments>          # the pure tool, built
 #
 # Storyboards play on Postio, the one desktop app (ADR 0043): its runner is
-# postio-focus's `storyboard` example (specs/007-postio-focus T265), and
+# postio-gtk's `storyboard` example (specs/007-postio-focus T265), and
 # there is no other to choose.
 #
 # `--only` matches a storyboard's path under storyboards/ without `.toml`:
@@ -139,8 +139,8 @@ tool() {
 
 # The crate whose `storyboard` example is the runner, and the crates a
 # review depends on besides the catalogue.
-RUNNER_CRATE=postio-focus
-REVIEWED="crates/postio-focus crates/postio-widgets crates/postio-ui"
+RUNNER_CRATE=postio-gtk
+REVIEWED="crates/postio-gtk crates/postio-widgets crates/postio-ui"
 
 # Builds the runner in the tree at <dir> and echoes its path.
 build_runner() {

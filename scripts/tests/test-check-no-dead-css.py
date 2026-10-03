@@ -124,17 +124,17 @@ expect(
     "crates/postio-widgets/data/widgets.css:2: .postio-gone",
 )
 expect(
-    "a dead rule planted in postio-focus' stylesheet fails",
-    run_root({"crates/postio-focus/data/focus.css": ".postio-focus-gone {}"}),
+    "a dead rule planted in postio-gtk' stylesheet fails",
+    run_root({"crates/postio-gtk/data/focus.css": ".postio-gtk-gone {}"}),
     False,
-    "crates/postio-focus/data/focus.css:1: .postio-focus-gone",
+    "crates/postio-gtk/data/focus.css:1: .postio-gtk-gone",
 )
 expect(
     "a shared rule set by the app's code is a use",
     run_root(
         {
             "crates/postio-widgets/data/widgets.css": ".postio-pill {}",
-            "crates/postio-focus/src/row.rs": 'w.add_css_class("postio-pill");',
+            "crates/postio-gtk/src/row.rs": 'w.add_css_class("postio-pill");',
         }
     ),
     True,

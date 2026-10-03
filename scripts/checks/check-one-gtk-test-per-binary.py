@@ -35,7 +35,7 @@ why `gtk_shell.rs` legitimately keeps two: one builds a window, the other
 parses the stylesheet as text.
 
 The fix for a violation is not to delete a test. It is to move the cases into
-a crate's custom harness -- ``crates/postio-focus/tests/focus_suite/`` or
+a crate's custom harness -- ``crates/postio-gtk/tests/focus_suite/`` or
 ``crates/postio-widgets/tests/widgets_suite/``, which exist for exactly this
 (#329): `harness = false`, one `adw::init`, every case a plain
 `pub fn` run in sequence on the main thread. A case there is a `pub fn`, not a

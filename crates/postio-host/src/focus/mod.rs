@@ -3,7 +3,7 @@
 //!
 //! Focus's rules act only while Focus runs (FR-134). Mail another app files
 //! lands in the inbox as it always has, and Focus sorts it when it next
-//! opens. So the host has a mode, and only the Focus apps -- `postio-focus`
+//! opens. So the host has a mode, and only the Focus apps -- `postio-gtk`
 //! and `postio-tui`, which is Focus in character cells (C29) -- call
 //! [`Host::enable_focus`]: the classic app never does, and nothing here runs
 //! while it holds the store. The mode
@@ -180,7 +180,7 @@ impl Host {
 
     /// Turn on Focus's pipeline in this process (spec 007).
     ///
-    /// Called by `postio-focus` and `postio-tui` at startup, after the host
+    /// Called by `postio-gtk` and `postio-tui` at startup, after the host
     /// starts and before [`Host::start_syncing`], and by nothing else: the
     /// classic app never calls it, so none of this runs while it holds the
     /// store. The filing pass reaches every engine, running or to come,

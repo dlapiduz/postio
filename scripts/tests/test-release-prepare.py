@@ -94,8 +94,8 @@ def world(base: Path) -> tuple[Path, Path]:
         '[workspace]\nmembers = []\n\n[workspace.package]\nversion = "0.4.2"\nrust-version = "1.98"\n',
         encoding="utf-8",
     )
-    (main / "crates" / "postio-focus" / "data").mkdir(parents=True)
-    (main / "crates" / "postio-focus" / "data" / "dev.postio.Postio.metainfo.xml").write_text(METAINFO, encoding="utf-8")
+    (main / "crates" / "postio-gtk" / "data").mkdir(parents=True)
+    (main / "crates" / "postio-gtk" / "data" / "dev.postio.Postio.metainfo.xml").write_text(METAINFO, encoding="utf-8")
     (main / "macos" / "Resources").mkdir(parents=True)
     (main / "macos" / "Resources" / "Info.plist").write_text(PLIST, encoding="utf-8")
     git(main, "add", "-A")

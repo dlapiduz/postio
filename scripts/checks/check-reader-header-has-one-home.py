@@ -19,7 +19,7 @@ a user.
 
 The rule holds in every desktop crate: the shared
 `postio-widgets` that holds the reader both desktop apps draw (ADR 0043), and
-`postio-focus`.
+`postio-gtk`.
 
 Fix: delete the private copy from the desktop crate and call
 `postio_ui::reader::header` instead. If a rule genuinely needs to differ per
@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OWNER = "crates/postio-ui/src/reader/header.rs"
 # The crates whose `src/` draws a header: the desktop app, and the crate
 # holding the reader it draws (ADR 0043; specs/007-postio-focus R1).
-CRATES = ("postio-widgets", "postio-focus")
+CRATES = ("postio-widgets", "postio-gtk")
 
 # The toolkit-free *rules* #1285 names. Each is matched as a definition, not a
 # use, so calling through to postio-ui is exactly what this check wants to see.

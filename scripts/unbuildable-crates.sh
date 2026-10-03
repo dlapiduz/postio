@@ -64,7 +64,7 @@ meta = json.load(sys.stdin)
 members = {p["name"]: p for p in meta["packages"]}
 
 # The crates whose own system libraries are missing.
-roots = {"postio-widgets", "postio-focus"} & members.keys()
+roots = {"postio-widgets", "postio-gtk"} & members.keys()
 
 # Everything that depends on one, by any edge -- normal, build or dev. A dev
 # edge is what makes postio-bench unbuildable, and it is the edge a reader of

@@ -1,5 +1,5 @@
 //! The person's own model in Focus's body stage (spec 007 T153, T152):
-//! US12 scenario 6 and SC-016, through the host as `postio-focus` drives it.
+//! US12 scenario 6 and SC-016, through the host as `postio-gtk` drives it.
 //!
 //! Every case runs the model client against `postio_ai::fake`: nothing here
 //! opens a connection, loopback included.

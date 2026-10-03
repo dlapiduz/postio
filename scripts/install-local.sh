@@ -114,14 +114,14 @@ fi
 "$here/scripts/install-shims.sh"
 
 echo "Building postio (release) — the first build takes a while..."
-cargo build --release --package postio-focus --bin postio \
+cargo build --release --package postio-gtk --bin postio \
     --manifest-path "$here/Cargo.toml"
 
 # Respect a redirected target dir; cargo names the default one otherwise.
 target="${CARGO_TARGET_DIR:-$here/target}"
 
 install -Dm755 "$target/release/postio" "$bin"
-install -Dm644 "$here/crates/postio-focus/data/dev.postio.Postio.desktop" "$desktop"
+install -Dm644 "$here/crates/postio-gtk/data/dev.postio.Postio.desktop" "$desktop"
 install -Dm644 "$here/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg" "$icon_svg"
 install -Dm644 "$here/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" "$icon_symbolic"
 for size in "${icon_sizes[@]}"; do
@@ -129,7 +129,7 @@ for size in "${icon_sizes[@]}"; do
         "$here/crates/postio-widgets/data/icons/${size}x${size}/apps/dev.postio.Postio.png" \
         "$data_home/icons/hicolor/${size}x${size}/apps/dev.postio.Postio.png"
 done
-install -Dm644 "$here/crates/postio-focus/data/dev.postio.Postio.metainfo.xml" "$metainfo"
+install -Dm644 "$here/crates/postio-gtk/data/dev.postio.Postio.metainfo.xml" "$metainfo"
 refresh_caches
 
 echo "Installed: $bin"

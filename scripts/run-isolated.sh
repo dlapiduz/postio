@@ -140,7 +140,7 @@ fi
 {
     if [ "$SHOT" = 1 ]; then
         OUT="$ROOT/shot-$SHA.png"
-        cargo run --release -p postio-focus --example shot -- "$OUT" 01
+        cargo run --release -p postio-gtk --example shot -- "$OUT" 01
         echo "wrote $OUT"
         exit 0
     fi
@@ -159,7 +159,7 @@ fi
         ID=dev.postio.Postio
         mkdir -p "$APPS" "$ICONS/scalable/apps" "$ICONS/symbolic/apps"
         sed "s|^Exec=.*|Exec=$TARGET/release/postio %U|" \
-            "$TREE/crates/postio-focus/data/$ID.desktop" > "$APPS/$ID.desktop"
+            "$TREE/crates/postio-gtk/data/$ID.desktop" > "$APPS/$ID.desktop"
         install -m644 "$TREE/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg" \
             "$ICONS/scalable/apps/dev.postio.Postio.svg"
         install -m644 "$TREE/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" \
@@ -171,7 +171,7 @@ fi
     fi
     # --- end --install-desktop ---------------------------------------------
     echo "building Postio (first run compiles GTK deps; later runs are incremental)…"
-    cargo build --release -p postio-focus --bin postio
+    cargo build --release -p postio-gtk --bin postio
     echo "running — Ctrl-C to stop"
     exec "$TARGET/release/postio"
 }

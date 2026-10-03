@@ -29,7 +29,7 @@ gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 postio-config.workspace = true
 postio-core.workspace = true
 # `list_scroll` and `composer_open`: Focus's row and its composer frame.
-postio-focus.workspace = true
+postio-gtk.workspace = true
 postio-host.workspace = true
 postio-widgets.workspace = true
 postio-account.workspace = true

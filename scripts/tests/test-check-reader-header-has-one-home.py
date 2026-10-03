@@ -34,7 +34,7 @@ pub fn absolute_date() {}
 def expect(name: str, files: dict[str, str], ok: bool, *seen: str, owner: bool = True) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for crate in ("postio-widgets", "postio-focus"):
+        for crate in ("postio-widgets", "postio-gtk"):
             (root / "crates" / crate / "src").mkdir(parents=True)
         if owner:
             files = {"crates/postio-ui/src/reader/header.rs": OWNER, **files}
@@ -72,10 +72,10 @@ expect(
     "crates/postio-widgets/src/reader/message_header.rs: defines address_line",
 )
 expect(
-    "a private copy planted in postio-focus fails",
-    {"crates/postio-focus/src/open.rs": 'const NO_SUBJECT: &str = "";'},
+    "a private copy planted in postio-gtk fails",
+    {"crates/postio-gtk/src/open.rs": 'const NO_SUBJECT: &str = "";'},
     False,
-    "crates/postio-focus/src/open.rs: defines NO_SUBJECT",
+    "crates/postio-gtk/src/open.rs: defines NO_SUBJECT",
 )
 
 if FAILURES:

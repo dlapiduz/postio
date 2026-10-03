@@ -46,7 +46,7 @@ defect is invisible again, so it is a boundary, not a nicety.
 
 ## Consequences
 
-- The desktop app has one runner (`postio-focus`, over `postio-widgets`'
+- The desktop app has one runner (`postio-gtk`, over `postio-widgets`'
   GTK half), and storyboards play on it and nothing else since the classic
   app's removal was approved (ADR 0043; specs/007-postio-focus T265). The terminal and macOS apps owe one each before their next
   interaction work (FR-031). The terminal's is the cheapest: its update is already pure.

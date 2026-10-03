@@ -35,8 +35,8 @@ The spec asks for four things:
 - **Determinism.** A hermetic re-exec, a frozen clock behind a new
   `postio_ui::clock` seam, embedded fonts only, and animations off (R5).
 - **One runner.** Storyboards play on Postio and nothing else
-  (specs/007-postio-focus T265). Its runner is `postio-focus`'s:
-  `postio_focus::demo` is the one demo store its `shot` and its runner
+  (specs/007-postio-focus T265). Its runner is `postio-gtk`'s:
+  `postio_gtk::demo` is the one demo store its `shot` and its runner
   share, with the seeds' store halves in `postio_storage::seed`, and the
   catalogue is written against its surfaces. The classic app's runner,
   which this plan first built on `main`, is not reachable from the script
@@ -163,7 +163,7 @@ window, the clock seam, and the toast's tone and undo accessors.
 - The GTK half is in `postio-widgets`, per ADR 0043.
 - Seeds stay in the app crate, behind a `demo` feature; their store halves
   are `postio_storage::seed`'s.
-- Neither `postio-storyboard` nor `postio-focus` depends on `postio-gtk` or
+- Neither `postio-storyboard` nor `postio-gtk` depends on `postio-gtk` or
   `postio-app`.
 
 **Re-check after Phase 1: pass.** The design added one crate, two
@@ -194,7 +194,7 @@ specs/008-storyboards/
 ### Source Code (repository root)
 
 As first built on `main`. Since specs/007-postio-focus T265 the GTK half is
-`postio-widgets/src/storyboard/`, the runner is `postio-focus`'s, and the
+`postio-widgets/src/storyboard/`, the runner is `postio-gtk`'s, and the
 suites are `widgets_suite` and `focus_suite`.
 
 ```text
@@ -223,7 +223,7 @@ crates/
 │   └── tests/app_suite/storyboards.rs   # NEW case
 └── (on feature/postio-focus)
     ├── postio-widgets/src/storyboard/   # git mv from postio-gtk
-    └── postio-focus/{src/window.rs + observe(), src/demo.rs, examples/storyboard.rs,
+    └── postio-gtk/{src/window.rs + observe(), src/demo.rs, examples/storyboard.rs,
                       tests/focus_suite/storyboards.rs}
 
 storyboards/                      # NEW: the catalogue (contracts/storyboard-format.md § Layout)

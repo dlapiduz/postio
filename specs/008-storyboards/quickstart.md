@@ -13,7 +13,7 @@ and the file format is in
   the tests (`scripts/test-headless.sh --status`).
 
 Every command plays Postio, the one desktop app (ADR 0043): since
-specs/007-postio-focus T265 the runner is `postio-focus`'s, the catalogue is
+specs/007-postio-focus T265 the runner is `postio-gtk`'s, the catalogue is
 written against its surfaces, and there is no `--app` to choose another.
 
 ## 1. The catalogue loads (sanity tier)
@@ -116,7 +116,7 @@ with the result shown in the page header.
 
 ## 6. The landing warning (FR-023)
 
-On a branch that changes `crates/postio-focus` or `crates/postio-widgets`
+On a branch that changes `crates/postio-gtk` or `crates/postio-widgets`
 with no current review, land:
 
 ```bash
@@ -171,8 +171,8 @@ scripts/storyboards.sh coverage
 ```bash
 cargo test -p postio-storyboard --lib                 # lint and the pure logic, in seconds
 cargo nextest run -p postio-widgets --test widgets_suite storyboard   # the GTK half
-cargo nextest run -p postio-focus --test focus_suite storyboard observe
-cargo nextest run -p postio-focus --test focus_suite --profile nightly storyboard_catalogue every_command
+cargo nextest run -p postio-gtk --test focus_suite storyboard observe
+cargo nextest run -p postio-gtk --test focus_suite --profile nightly storyboard_catalogue every_command
 ```
 
 **Expect** all to pass. A failing storyboard is named in the catalogue

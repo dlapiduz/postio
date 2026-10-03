@@ -21,7 +21,7 @@ from pathlib import Path
 
 CHECK = Path(__file__).resolve().parent.parent / "checks" / "check-blocking-now-sites.py"
 FAILURES: list[str] = []
-CRATES = ("postio-widgets", "postio-focus")
+CRATES = ("postio-widgets", "postio-gtk")
 
 
 def expect(name: str, files: dict[str, str], ok: bool, *seen: str, crates=CRATES) -> None:
@@ -46,10 +46,10 @@ def expect(name: str, files: dict[str, str], ok: bool, *seen: str, crates=CRATES
             FAILURES.append(f"{name}: output lacks {text!r}\n{output}")
 
 
-expect("no call passes", {"crates/postio-focus/src/window.rs": "fn f() {}"}, True)
+expect("no call passes", {"crates/postio-gtk/src/window.rs": "fn f() {}"}, True)
 expect(
     "a comment naming it passes",
-    {"crates/postio-focus/src/window.rs": "// blocking::now(read) used to be here"},
+    {"crates/postio-gtk/src/window.rs": "// blocking::now(read) used to be here"},
     True,
 )
 expect(
@@ -59,16 +59,16 @@ expect(
     "crates/postio-widgets/src/present/reading.rs: 1 call(s) to blocking::now, 0 allowed",
 )
 expect(
-    "a call planted in postio-focus fails",
-    {"crates/postio-focus/src/window.rs": "let x = blocking::now(read());"},
+    "a call planted in postio-gtk fails",
+    {"crates/postio-gtk/src/window.rs": "let x = blocking::now(read());"},
     False,
-    "crates/postio-focus/src/window.rs: 1 call(s) to blocking::now, 0 allowed",
+    "crates/postio-gtk/src/window.rs: 1 call(s) to blocking::now, 0 allowed",
 )
 expect(
     "a frontend crate that is missing is a check that cannot run",
     {},
     False,
-    "crates/postio-focus/src is missing",
+    "crates/postio-gtk/src is missing",
     crates=("postio-widgets",),
 )
 

@@ -64,7 +64,7 @@ pub fn open(
 /// The terminal is Focus in character cells (C29), so it runs Focus's engine
 /// while it holds the store: after the store opens and before the first
 /// sync, so the filing pass is in every engine before its first pass. The
-/// setup is the one `postio-focus` builds.
+/// setup is the one `postio-gtk` builds.
 pub fn engage_focus(
     host: &Host,
     config: &postio_config::Config,
