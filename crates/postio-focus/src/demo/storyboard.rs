@@ -299,8 +299,8 @@ fn show_account_weights(panel: &postio_widgets::settings::SettingsPanel) {
         account
     };
     panel.set_accounts(vec![
-        account(1, "Ada Lovelace", "ada@example.com"),
-        account(2, "Grace Hopper", "grace@example.com"),
+        account(1, "Ada Moreno", "ada@example.com"),
+        account(2, "Lena Park", "lena@example.org"),
         account(3, "A rather long display name", "someone@example.invalid"),
     ]);
     panel.set_mail_weights(
@@ -326,6 +326,8 @@ fn show_account_weights(panel: &postio_widgets::settings::SettingsPanel) {
 /// step `preset` names: a provider found for the address, the browser being
 /// waited on, or how much mail to keep. Each of those needs a server or a
 /// person to reach, so the screen is told, as the classic runner told its.
+/// The provider is an invented one on a reserved domain: providers are data,
+/// and no picture speaks for a real one.
 fn show_add_account(window: &FocusWindow, preset: Preset) -> Result<(), String> {
     use postio_widgets::onboarding::{BrowserSignIn, Onboarding, Server, Settings, Status};
 
@@ -355,32 +357,31 @@ fn show_add_account(window: &FocusWindow, preset: Preset) -> Result<(), String> 
     screen.set_address("lena.tomlin@example.com");
     screen.set_status(Status::Found(Settings {
         imap: Server {
-            host: "outlook.office365.com".to_owned(),
+            host: "imap.example.com".to_owned(),
             port: 993,
             security: postio_model::TransportSecurity::Tls,
         },
         smtp: Server {
-            host: "smtp.office365.com".to_owned(),
+            host: "smtp.example.com".to_owned(),
             port: 587,
             security: postio_model::TransportSecurity::StartTls,
         },
         login: "lena.tomlin@example.com".to_owned(),
-        source: "Microsoft 365".to_owned(),
+        source: "Example Mail".to_owned(),
         oauth_sign_in: true,
         ..Settings::default()
     }));
     match preset {
         Preset::AddAccountBrowser => {
             screen.set_browser_sign_in(BrowserSignIn {
-                provider: "Microsoft 365".to_owned(),
+                provider: "Example Mail".to_owned(),
                 scopes: vec![
-                    "https://outlook.office.com/IMAP.AccessAsUser.All".to_owned(),
-                    "https://outlook.office.com/SMTP.Send".to_owned(),
+                    "https://mail.example.com/imap".to_owned(),
+                    "https://mail.example.com/smtp".to_owned(),
                     "offline_access".to_owned(),
                 ],
                 redirect_uri: "http://127.0.0.1:41337/".to_owned(),
-                authorize_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
-                    .to_owned(),
+                authorize_url: "https://login.example.com/oauth2/authorize".to_owned(),
             });
             screen.set_status(Status::WaitingForBrowser);
         }

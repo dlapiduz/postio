@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Play storyboards against Postio's apps, and build the page that shows them.
+# Play storyboards against Postio's desktop app, Focus, and build the page that
+# shows them.
 #
 # Why this exists
 # ---------------
@@ -13,18 +14,23 @@
 #
 # Usage
 # -----
-#   scripts/storyboards.sh run   [--app classic|focus|all] [--only <glob>] [--no-frames] [--delivery chain|direct]
+#   scripts/storyboards.sh run   [--app focus|classic|all] [--only <glob>] [--no-frames] [--delivery chain|direct]
 #                                [--jobs <n>]      # runners side by side (default: half the cores, at most 4)
 #                                [--variants]      # every variant each storyboard asks for
 #                                [--calibration]   # play only the reviewer's calibration set
 #   scripts/storyboards.sh lint                    # load and lint the whole catalogue
 #   scripts/storyboards.sh page  [--open]          # Design/review/<branch>/index.html from the runs
-#   scripts/storyboards.sh key   [--app classic|focus|all]   # the review key for HEAD's tree
-#   scripts/storyboards.sh base  [--app classic|focus]   # the branch's storyboards on the merge-base's code
-#   scripts/storyboards.sh coverage [--app classic]      # every command in every context: does it show?
+#   scripts/storyboards.sh key   [--app focus|classic|all]   # the review key for HEAD's tree
+#   scripts/storyboards.sh base  [--app focus|classic]   # the branch's storyboards on the merge-base's code
+#   scripts/storyboards.sh coverage [--app focus]        # every command in every context: does it show?
 #   scripts/storyboards.sh screens [--only <glob>]       # the screen sweep: design beside app, every screen
 #   scripts/storyboards.sh bundle --acceptance <file> [--calibration]   # what a reviewer reads
 #   scripts/storyboards.sh tool  <postio-storyboard arguments>          # the pure tool, built
+#
+# The app is Focus unless `--app` says otherwise: it is the one desktop app
+# (ADR 0043), and its runner is postio-focus's `storyboard` example
+# (specs/007-postio-focus T265). `classic` plays the classic app's runner
+# until T256 removes it; `all` plays every runner whose crate is here.
 #
 # `--only` matches a storyboard's path under storyboards/ without `.toml`:
 # `--only 'list/*'`, `--only search/escape-leaves-search`. Calibration
@@ -45,7 +51,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -57,7 +63,7 @@ if [ "$COMMAND" = tool ]; then
     set --
 fi
 
-APP=classic
+APP=focus
 ONLY=""
 OPEN=0
 CALIBRATION=0
@@ -66,7 +72,7 @@ JOBS=""
 RUNNER_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --app)       APP="${2:?--app needs classic, focus or all}"; shift 2 ;;
+        --app)       APP="${2:?--app needs focus, classic or all}"; shift 2 ;;
         --only)      ONLY="${2:?--only needs a pattern}"; shift 2 ;;
         --no-frames) RUNNER_ARGS+=(--no-frames); shift ;;
         --variants)  RUNNER_ARGS+=(--variants); shift ;;
@@ -136,7 +142,7 @@ tool() {
 }
 
 # Which crate holds an app's runner. An app whose crate is not on this
-# branch (Focus, on main) is reported, not failed.
+# branch (the classic app, once T256 removes it) is reported, not failed.
 runner_crate() {
     case "$1" in
         classic) echo postio-app ;;
@@ -335,7 +341,7 @@ key_command() {
 # storyboard is played again only when its file changed.
 base_command() {
     local based sha tree cache crate bin file name hash marker files=() app
-    app="${APP:-classic}"
+    app="${APP:-focus}"
     [ "$app" != all ] || { echo "storyboards.sh: base takes one app at a time" >&2; exit 2; }
     crate=$(runner_crate "$app")
     based=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
@@ -404,12 +410,14 @@ coverage_command() {
 }
 
 # The screen sweep (FR-030), which scripts/screens.sh used to be: every
-# zero-step storyboard under storyboards/screens/ in the variants it asks
-# for, then the contact sheet -- the canvas design on the left, the app on
-# the right. Non-zero, naming them, if any screen failed to render.
+# storyboard under storyboards/screens/ in the variants it asks for, filmed
+# on the app (Focus unless --app says otherwise), then the contact sheet --
+# the canvas design on the left where a screen names one, the app on the
+# right. Non-zero, naming them, if any screen failed to render.
 screens_command() {
     local crate bin files=() file out code
-    crate=$(runner_crate classic)
+    [ "$APP" != all ] || { echo "storyboards.sh: screens takes one app at a time" >&2; exit 2; }
+    crate=$(runner_crate "$APP")
     while read -r file; do
         files+=("$file")
     done < <(find "$CATALOGUE/screens" -name '*.toml' | sort | while read -r f; do
@@ -421,7 +429,7 @@ screens_command() {
     out="$REVIEW/screens"
     rm -rf "$out/runs"
     mkdir -p "$out/runs"
-    echo "building the classic runner..."
+    echo "building the $APP runner..."
     if ! cargo build -q -p "$crate" --example storyboard --features demo 2>&1 | tail -20 >&2; then
         echo "storyboards.sh: the runner did not build" >&2
         exit 2
