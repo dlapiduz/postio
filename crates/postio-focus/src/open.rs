@@ -381,6 +381,13 @@ impl OpenMessage {
             .build();
         scroller.add_css_class("focus-open-scroller");
         reader.flow_in(&scroller);
+        // The reader's notice -- the list a message came from, images held
+        // back, a decode caveat -- is one more block about the message: 12
+        // under the action card (or the sender block), as the card is under
+        // the sender block, and the 24 to the body is then the notice's.
+        // The slot is hidden while it has nothing to say, so with no notice
+        // the gap goes too.
+        reader.notice_slot().set_margin_top(rhythm::CARD_TO_NOTICE);
         // Every body in app colours or as sent on paper, named by a line
         // above it (T210-T213); `reader.treatment()` is what the column's
         // width follows.

@@ -59,6 +59,9 @@ fn page_name(notice: Notice) -> &'static str {
 pub(crate) struct NoticeSlot {
     stack: gtk::Stack,
     wanted: [Cell<bool>; 4],
+    /// Whether the slot collapses to nothing while it has nothing to say;
+    /// see [`set_collapsing`](Self::set_collapsing).
+    collapsing: Cell<bool>,
 }
 
 impl NoticeSlot {
@@ -86,6 +89,7 @@ impl NoticeSlot {
         NoticeSlot {
             stack,
             wanted: Default::default(),
+            collapsing: Cell::new(false),
         }
     }
 
@@ -94,8 +98,15 @@ impl NoticeSlot {
     /// column ([`Reader::flow_in`](super::view::Reader::flow_in)), where the
     /// whole message scrolls together and an empty slot would be a gap in
     /// the column's rhythm rather than a place the body keeps.
+    ///
+    /// "No room" includes the gap the owner spaces the slot by: an empty
+    /// collapsing slot is hidden, not merely zero tall, so a margin set on
+    /// [`widget`](Self::widget) goes with it (T208's "an absent block takes
+    /// its gap with it").
     pub(crate) fn set_collapsing(&self, collapsing: bool) {
+        self.collapsing.set(collapsing);
         self.stack.set_vhomogeneous(!collapsing);
+        self.show(self.page());
     }
 
     pub(crate) fn widget(&self) -> gtk::Widget {
@@ -105,11 +116,7 @@ impl NoticeSlot {
     /// Say whether `notice` applies to the message on screen.
     pub(crate) fn want(&self, notice: Notice, wanted: bool) {
         self.wanted[notice as usize].set(wanted);
-        let page = ORDER
-            .iter()
-            .find(|notice| self.wanted[**notice as usize].get())
-            .map_or(NOTHING, |notice| page_name(*notice));
-        self.stack.set_visible_child_name(page);
+        self.show(self.page());
     }
 
     /// Nothing applies: a message was replaced by something the notices
@@ -118,7 +125,22 @@ impl NoticeSlot {
         for notice in ORDER {
             self.wanted[notice as usize].set(false);
         }
-        self.stack.set_visible_child_name(NOTHING);
+        self.show(NOTHING);
+    }
+
+    /// The page the most important wanted notice is on, or nothing's.
+    fn page(&self) -> &'static str {
+        ORDER
+            .iter()
+            .find(|notice| self.wanted[**notice as usize].get())
+            .map_or(NOTHING, |notice| page_name(*notice))
+    }
+
+    fn show(&self, page: &str) {
+        self.stack.set_visible_child_name(page);
+        if self.collapsing.get() {
+            self.stack.set_visible(page != NOTHING);
+        }
     }
 
     /// Whether `notice` applies to the message on screen, drawn or not: the

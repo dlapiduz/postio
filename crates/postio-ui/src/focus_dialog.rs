@@ -181,7 +181,12 @@ pub mod rhythm {
     pub const SENDER_ROW: i32 = 22;
     /// The sender block to the action card.
     pub const SENDER_TO_CARD: i32 = 12;
-    /// The action card (or the sender block, with no card) to the body.
+    /// The action card (or the sender block, with no card) to the reader's
+    /// notice: the notice is one more block about the message, spaced as
+    /// the card is under the sender block.
+    pub const CARD_TO_NOTICE: i32 = 12;
+    /// The last block above the body -- the notice, the action card, or the
+    /// sender block -- to the body, or to its render-mode line.
     pub const CARD_TO_BODY: i32 = 24;
     /// The render-mode line to the body.
     pub const MODE_LINE_TO_BODY: i32 = 12;

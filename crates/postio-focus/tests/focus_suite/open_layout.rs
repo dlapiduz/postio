@@ -169,6 +169,37 @@ fn near(a: f32, b: f32) -> bool {
     (a - b).abs() <= 1.0
 }
 
+/// The reader's notice on screen under `root`. The fixtures' mail is from a
+/// sender with a domain, so it carries the unsubscribe notice, as nearly
+/// every message does (#971, T261).
+fn the_notice(root: &impl IsA<gtk::Widget>) -> gtk::Widget {
+    let shown: Vec<gtk::Widget> = support::with_class(root, "postio-notice")
+        .into_iter()
+        .filter(gtk::Widget::is_mapped)
+        .collect();
+    assert_eq!(shown.len(), 1, "one notice on screen");
+    shown[0].clone()
+}
+
+/// Withdraw the notice, as outgoing mail has none, and let the column close
+/// up behind it.
+async fn without_the_notice(reading: &postio_focus::open::OpenMessage) {
+    let dialog = reading.dialog();
+    let top = || edges(reading.reader().view(), &dialog).1;
+    let was = top();
+    reading.reader().set_unsubscribe(None);
+    assert!(
+        crate::settle_until(async || support::with_class(&dialog, "postio-notice")
+            .iter()
+            .all(|notice| !notice.is_mapped())
+            && top() < was - 1.0)
+        .await,
+        "the notice never went, or the body never moved up into its place: {}px, was {was}px",
+        top()
+    );
+    crate::settle();
+}
+
 /// T205: the dialog is as wide and as tall as the window says, centred, and
 /// follows the window's resizes -- never the message: `j` keeps its size.
 pub fn the_dialog_is_sized_by_the_window_and_never_by_the_message() {
@@ -360,6 +391,22 @@ pub fn every_block_shares_both_edges_of_one_centred_column() {
                     "{size:?}: the {what} runs {l} to {r}; the column is {left} to {right}"
                 );
             }
+            // The notice is unfilled, like the sender block, so what is in
+            // it -- its icon and its button -- meets the column's edges
+            // rather than sitting inside a margin no fill explains.
+            let notice = the_notice(&dialog);
+            let icon = edges(&support::only(&notice, "postio-notice-icon"), &content);
+            let action = edges(
+                &support::only(&notice, "postio-unsubscribe-banner-action"),
+                &content,
+            );
+            assert!(
+                near(icon.0, left) && near(action.2, right),
+                "{size:?}: the notice's icon starts at {} and its button ends at {}; \
+                 the column is {left} to {right}",
+                icon.0,
+                action.2
+            );
             window.close();
             crate::settle();
         }
@@ -390,6 +437,7 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
         let labels = at("focus-open-labels");
         let sender = at("focus-open-header-card");
         let card = at("focus-marker-card");
+        let notice = edges(&the_notice(&dialog), &dialog);
         let body = edges(reading.reader().view(), &dialog);
         let files = at("postio-attachments");
         let gap = |above: (f32, f32, f32, f32), below: (f32, f32, f32, f32)| below.1 - above.3;
@@ -423,7 +471,12 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
                 gap(sender, card),
                 rhythm::SENDER_TO_CARD,
             ),
-            ("action card -> body", gap(card, body), rhythm::CARD_TO_BODY),
+            (
+                "action card -> notice",
+                gap(card, notice),
+                rhythm::CARD_TO_NOTICE,
+            ),
+            ("notice -> body", gap(notice, body), rhythm::CARD_TO_BODY),
             (
                 "body -> attachments",
                 gap(body, files),
@@ -517,6 +570,17 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             "the column ends {}px under the attachments",
             reach - last
         );
+
+        // With no notice -- outgoing mail -- the card's 24 is the body's
+        // again, and the notice leaves no gap behind.
+        without_the_notice(&reading).await;
+        let card = at("focus-marker-card");
+        let body = edges(reading.reader().view(), &dialog);
+        assert!(
+            near(gap(card, body), rhythm::CARD_TO_BODY as f32),
+            "with no notice the body is {}px under the action card",
+            gap(card, body)
+        );
     });
 }
 
@@ -543,6 +607,7 @@ pub fn an_absent_block_takes_its_gap_with_it() {
         let toolbar = at("focus-open-toolbar");
         let subject = at("focus-open-subject");
         let sender = at("focus-open-header-card");
+        let notice = edges(&the_notice(&dialog), &dialog);
         let body = edges(reading.reader().view(), &dialog);
         assert!(
             near(subject.1 - toolbar.3, rhythm::TOP as f32),
@@ -550,8 +615,22 @@ pub fn an_absent_block_takes_its_gap_with_it() {
             subject.1 - toolbar.3
         );
         assert!(
+            near(notice.1 - sender.3, rhythm::CARD_TO_NOTICE as f32),
+            "with no card the notice is {}px under the sender block",
+            notice.1 - sender.3
+        );
+        assert!(
+            near(body.1 - notice.3, rhythm::CARD_TO_BODY as f32),
+            "the body is {}px under the notice",
+            body.1 - notice.3
+        );
+        // And with neither card nor notice, 24 under the sender block.
+        without_the_notice(&reading).await;
+        let sender = at("focus-open-header-card");
+        let body = edges(reading.reader().view(), &dialog);
+        assert!(
             near(body.1 - sender.3, rhythm::CARD_TO_BODY as f32),
-            "with no card the body is {}px under the sender block",
+            "with no card and no notice the body is {}px under the sender block",
             body.1 - sender.3
         );
     });
@@ -730,6 +809,8 @@ fn office_html() -> String {
 /// T208: over an HTML body the render-mode line sits 24px under the action
 /// card and 12px over the body -- the card's 24 goes to the line, and the
 /// line keeps 12 of its own -- and with no card, 24 under the sender block.
+/// A notice between them is one more block: 12 under the card (or the
+/// sender block), and the 24 is the notice's to the line.
 pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
     crate::gtk_case(async {
         if !support::display() {
@@ -761,23 +842,37 @@ pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
                 "no line over the HTML body"
             );
             crate::settle();
-            let above = if card {
-                edges(&shown(&dialog, "focus-marker-card"), &dialog)
-            } else {
-                edges(&shown(&dialog, "focus-open-header-card"), &dialog)
+            let above = || {
+                if card {
+                    edges(&shown(&dialog, "focus-marker-card"), &dialog)
+                } else {
+                    edges(&shown(&dialog, "focus-open-header-card"), &dialog)
+                }
             };
-            let line = edges(&line.widget(), &dialog);
-            let body = edges(reading.reader().view(), &dialog);
+            let notice = edges(&the_notice(&dialog), &dialog);
             assert!(
-                near(line.1 - above.3, rhythm::CARD_TO_BODY as f32),
-                "card {card}: the line is {}px under the block above it, not 24",
-                line.1 - above.3
+                near(notice.1 - above().3, rhythm::CARD_TO_NOTICE as f32),
+                "card {card}: the notice is {}px under the block above it, not 12",
+                notice.1 - above().3
             );
-            assert!(
-                near(body.1 - line.3, rhythm::MODE_LINE_TO_BODY as f32),
-                "card {card}: the body is {}px under the line, not 12",
-                body.1 - line.3
-            );
+            for noticed in [true, false] {
+                if !noticed {
+                    without_the_notice(&reading).await;
+                }
+                let above = if noticed { notice } else { above() };
+                let line = edges(&line.widget(), &dialog);
+                let body = edges(reading.reader().view(), &dialog);
+                assert!(
+                    near(line.1 - above.3, rhythm::CARD_TO_BODY as f32),
+                    "card {card}, notice {noticed}: the line is {}px under the block above it, not 24",
+                    line.1 - above.3
+                );
+                assert!(
+                    near(body.1 - line.3, rhythm::MODE_LINE_TO_BODY as f32),
+                    "card {card}, notice {noticed}: the body is {}px under the line, not 12",
+                    body.1 - line.3
+                );
+            }
             window.close();
             crate::settle();
         }

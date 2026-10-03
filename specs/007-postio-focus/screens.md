@@ -121,13 +121,25 @@ dialog − 48)` for one on paper, following the treatment the renderer decided
 **Rhythm,** by explicit spacing (`focus_dialog::rhythm`): action row → thread
 marker 28; marker → subject 12; subject → labels 10; labels → sender block
 16; sender block padded 12 above and below, rows 22; sender → action card
-12; card → render-mode line or body 24; render-mode line → body 12; body →
+12; card → notice 12; then 24 from the last of those blocks to the
+render-mode line or the body; render-mode line → body 12; body →
 attachments 24, a hairline, then 16; 32 at the foot. An absent block takes
 its gap with it. Inside the body the rhythm has one home,
 `postio-ui/data/treatment.css`: paragraphs 12 apart (a plain-text body's
 blank lines part paragraphs rather than drawing an empty line), list items 4
 apart under a 20 px indent, the attribution line 20 under the sign-off, the
 28 px quote toggle 4 under it, and nothing under the last block.
+
+**The notice** is the reader's one notice slot -- the list the message
+came from with Unsubscribe `U` (T261), images held back with Show images
+`i i`, reader view, a decode caveat; one at a time, the most important
+first -- drawn as one more block about the message: 12 under the action
+card, or under the sender block when there is no card, and the 24 to the
+body (or its render-mode line) is then the notice's. It is unfilled like the
+sender block, one line with a hairline under it, its icon and its button on
+the column's edges. Nearly every incoming message carries the unsubscribe
+notice (#971 falls back to the sender's domain); outgoing mail never does,
+and with no notice the slot is hidden and takes its 12 with it.
 
 **Components.**
 
@@ -187,9 +199,9 @@ keyboard scrolls the message; the first match is the first from the top of
 what is in view; `mod+g`/`mod+shift+g` step; Escape closes find before it
 closes the message.
 
-Pinned by `open_layout` (size, dimming, column edges, rhythm, palette, More,
-the render-mode line, the card's wrapping, `Del`, paper fit, the system
-faces) and `open_measure` (paragraph gap, measure, find, the column's
+Pinned by `open_layout` (size, dimming, column edges, rhythm with and
+without the notice, palette, More, the render-mode line, the card's
+wrapping, `Del`, paper fit, the system faces) and `open_measure` (paragraph gap, measure, find, the column's
 ground), with `postio-ui`'s `focus_dialog` cases and `postio-body`'s
 `treatment` cases on the corpus.
 

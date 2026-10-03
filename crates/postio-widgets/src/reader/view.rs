@@ -842,6 +842,14 @@ impl Reader {
         &self.view
     }
 
+    /// The one slot the reader's notices share, for an owner that spaces it
+    /// in its own column (Focus's open message, after
+    /// [`flow_in`](Self::flow_in)). While no notice applies a flowing slot
+    /// is hidden, so a margin set here goes with it.
+    pub fn notice_slot(&self) -> gtk::Widget {
+        self.notices.widget()
+    }
+
     /// Show or hide the notice slot altogether.
     ///
     /// For a reader whose document says these things itself -- the

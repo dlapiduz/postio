@@ -710,6 +710,14 @@ button.focus-open-fold-line {
   background-color: var(--postio-accent-soft);
 }
 
+/* The reader's notice, 12px under the card (rhythm::CARD_TO_NOTICE): one
+   more block about the message, unfilled like the sender block, so its icon
+   and its button meet the column's edges rather than the pane's inset. */
+.focus-open-column .postio-notice {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .focus-marker-chip {
   min-height: 20px;
   padding: 0 7px;
