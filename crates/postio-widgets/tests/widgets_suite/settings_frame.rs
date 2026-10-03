@@ -22,7 +22,7 @@ pub fn exactly_one_pane_is_ever_on_screen() {
         return;
     };
 
-    for section in Section::ALL {
+    for section in Section::ALL.into_iter().filter(|section| panel.shown(*section)) {
         panel.show_section(section);
         pump();
 
@@ -73,11 +73,11 @@ pub fn the_frame_is_identical_on_every_pane() {
     };
 
     // The header bar, the sidebar and the footer are the *same widgets* on
-    // all eight panes — not rebuilt per pane, which is what let the old
+    // every pane — not rebuilt per pane, which is what let the old
     // panel's chrome drift from section to section.
     let header = panel.header_bar();
     let mut footers = Vec::new();
-    for section in Section::ALL {
+    for section in Section::ALL.into_iter().filter(|section| panel.shown(*section)) {
         panel.show_section(section);
         pump();
         assert_eq!(
@@ -107,12 +107,12 @@ pub fn the_footer_names_the_table_the_pane_writes() {
         return;
     };
 
-    panel.show_section(Section::Appearance);
+    panel.show_section(Section::Composing);
     pump();
     assert_eq!(
         panel.footer_target_text(),
-        "[ui] in config.toml",
-        "Appearance owns [ui] and the strip has to say so"
+        "[compose] in config.toml",
+        "Composing owns [compose] and the strip has to say so"
     );
 
     panel.show_section(Section::Keyboard);
@@ -167,12 +167,12 @@ pub fn finding_a_setting_narrows_the_sidebar_to_the_panes_that_have_it() {
     pump();
 
     let search = search_entry(&panel);
-    search.set_text("dark");
+    search.set_text("idle");
     pump();
 
     assert!(
-        nav_row(&panel, Section::Appearance).is_child_visible(),
-        "'dark' is Appearance, even though the word is not in its name"
+        nav_row(&panel, Section::Sync).is_child_visible(),
+        "'idle' is Sync & storage, even though the word is not in its name"
     );
     assert!(
         !nav_row(&panel, Section::Keyboard).is_child_visible(),
@@ -184,6 +184,7 @@ pub fn finding_a_setting_narrows_the_sidebar_to_the_panes_that_have_it() {
     assert!(
         Section::ALL
             .iter()
+            .filter(|section| panel.shown(**section))
             .all(|section| nav_row(&panel, *section).is_child_visible()),
         "clearing the field brings every section back"
     );
