@@ -2,7 +2,7 @@
 //!
 //! #603: `EmailAddress.name` was never set from onboarding, so a fresh
 //! account's `From` header and sidebar label were stuck on the bare address.
-//! `postio-app`'s side of the fix (building the account from
+//! The app's side of the fix (building the account from
 //! `Submission::name`) is unit-tested directly; this is the one piece that
 //! needs a real widget — that the form actually has the field, and that what
 //! is typed into it is what [`Onboarding::submit`] reports.

@@ -7,7 +7,7 @@ import Foundation
 /// happens off the main actor — and the moment it does, results can arrive out
 /// of order. A body for the message the cursor has already left would draw one
 /// message's text under another's header, which is the shape of #70 and the
-/// reason `postio-app/src/reading.rs` carries the same apparatus.
+/// reason the classic app's reader carried the same apparatus.
 ///
 /// A counter rather than comparing message ids: moving away and straight back
 /// gives the same id twice, and the older render is still stale.

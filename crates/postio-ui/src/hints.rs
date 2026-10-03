@@ -20,7 +20,7 @@
 //! `docs/keybindings.md` already show: one notation, so a key learned on one
 //! surface is recognised on the next.
 //!
-//! No toolkit here. `postio-gtk`'s `widgets::keyhint` draws these; a second
+//! No toolkit here. The classic app's `widgets::keyhint` drew these; a second
 //! frontend draws the same ones.
 
 use postio_core::{CommandId, Keymap};

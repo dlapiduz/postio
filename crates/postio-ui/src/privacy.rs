@@ -2,7 +2,7 @@
 //! list is empty, and how it sets out a connection.
 //!
 //! The pane is the privacy claim made auditable (#151), so both apps must
-//! make the same claim in the same words. It lived in `postio-gtk::settings`
+//! make the same claim in the same words. It lived in the classic app's settings
 //! until spec 005 gave the terminal the same pane.
 
 use postio_model::egress::EgressEvent;

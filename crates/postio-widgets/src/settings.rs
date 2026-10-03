@@ -719,7 +719,7 @@ mod imp {
         pub account_edited: RefCell<Vec<AccountEditHandler>>,
         /// Who to tell when "Test connection" is pressed (#980). The panel
         /// never dials anything itself, exactly as it never writes an edit
-        /// itself: `postio-app` owns the store and the network.
+        /// itself: the app owns the store and the network.
         pub test_connection: RefCell<Vec<TestConnectionHandler>>,
         /// The control and the line under it, built with the rest of the
         /// detail fields and then only ever relabelled.
@@ -786,7 +786,7 @@ mod imp {
         pub unsubscribe_empty: gtk::Label,
         /// What `redraw_unsubscribe_activations` last drew — handed in by
         /// `window.rs`, the same reason `remote_image_allowlist` is handed
-        /// in rather than read here: `postio-gtk` has no SQL of its own.
+        /// in rather than read here: this crate has no SQL of its own.
         pub unsubscribe_activations: RefCell<Vec<UnsubscribeActivation>>,
         /// How many messages have asked for a read receipt (#970) — a count,
         /// not a toggle: Postio never sends one automatically (CLAUDE.md's
@@ -1317,7 +1317,7 @@ impl SettingsPanel {
     /// (#971), newest first — `window.rs` reads it fresh from
     /// `postio_storage`'s `UnsubscribeRepository` every time the
     /// pane opens, the same reason [`SettingsPanel::set_remote_image_allowlist`]
-    /// is handed its list rather than reading one itself: `postio-gtk` has
+    /// is handed its list rather than reading one itself: this crate has
     /// no SQL of its own.
     pub fn set_unsubscribe_activations(&self, activations: Vec<UnsubscribeActivation>) {
         *self.imp().unsubscribe_activations.borrow_mut() = activations;
@@ -2327,7 +2327,7 @@ impl SettingsPanel {
     /// (#1086).
     ///
     /// The panel writes nothing, the same split every other edit here uses:
-    /// this layer may not link SQLite. `postio-app` persists it and hands
+    /// this layer may not link SQLite. the app persists it and hands
     /// back either a refreshed account list or, when the store refused,
     /// [`set_signature_error`](Self::set_signature_error).
     pub fn connect_signature_saved(&self, handler: impl Fn(AccountId, &SignatureDraft) + 'static) {
@@ -2522,7 +2522,7 @@ impl SettingsPanel {
     /// The panel never connects to anything. Same split as
     /// [`connect_account_edited`](Self::connect_account_edited): this layer
     /// may not link SQLite or open a socket, so it reports the gesture and
-    /// `postio-app` runs `postio_session::reachability::test_connection` and
+    /// the app runs `postio_session::reachability::test_connection` and
     /// hands the answer back through
     /// [`set_connection_status`](Self::set_connection_status).
     pub fn connect_test_connection(&self, handler: impl Fn(AccountId) + 'static) {
@@ -3058,7 +3058,7 @@ impl SettingsPanel {
     /// for the rest of it. This controller is not a composite widget's own
     /// internals the way those two cases were, so it is deferred out of
     /// `build()` on the same precautionary principle rather than because a
-    /// `gtk_suite` regression was pinned on it specifically — a full-suite
+    /// suite regression was pinned on it specifically — a full-suite
     /// crash chased during this same issue turned out to be a pre-existing,
     /// machine-load-dependent flake, reproducible on `main` with none of
     /// this code present, not something this controller's timing caused or

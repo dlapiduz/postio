@@ -9,7 +9,7 @@
 //! `MIN_COMPLETION_PREFIX` nothing is offered and the provider is not even
 //! consulted (#424), so a shorter prefix would prove nothing about matching.
 //! The threshold itself, and taking a suggestion by click or by Return, are
-//! covered in `gtk_suite/gtk_composer_recipient_select.rs`.
+//! covered in Focus's composer suites.
 //!
 //! `current_entry`'s own splitting rules are unit-tested in
 //! `postio-model`'s `address.rs` with no display; what needs one here is

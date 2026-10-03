@@ -11,7 +11,7 @@
 //! # Why they live in the composition root
 //!
 //! A handler needs the store, and `postio-core` is not allowed to know what
-//! SQLite is. `postio-gtk` is not allowed to either. This crate is the one
+//! SQLite is. The view layer is not allowed to either. This crate is the one
 //! that knows both halves exist, so this is where the verb meets the
 //! database.
 //!
@@ -103,7 +103,7 @@ pub const WIRED: &[CommandId] = &[
 /// a keystroke with no picker behind it, which is the classic app's `s`.
 ///
 /// #493's own scope note: a picker mirroring `ScheduleMenu`
-/// (`crates/postio-gtk/src/composer.rs`) is natural follow-up work once a
+/// (the classic composer's schedule menu) is natural follow-up work once a
 /// single sensible default has proven the rest of the feature out — the same
 /// sequencing #6 already used to split scheduled send from snooze in the
 /// first place. Focus's picker is that work (specs/007-postio-focus research
@@ -1091,7 +1091,7 @@ impl Actions {
     /// Row-selection only, the same way `MessageTarget::Selection` bottoms
     /// out for most verbs: a whole-mailbox snooze would need a
     /// `MessageSet::Snoozed`-shaped bulk predicate of its own, which nothing
-    /// asks for yet (`view_scope` in `postio-app` deliberately does not offer
+    /// asks for yet (the classic app's `view_scope` deliberately did not offer
     /// `Ctrl+A` inside the Snoozed view either, for the same reason).
     ///
     /// Local only — no queue row, no server ever hears about a snooze — so

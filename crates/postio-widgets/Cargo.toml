@@ -59,10 +59,9 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing-subscriber = { workspace = true }
 
-# The shared crate's GTK suite: the custom harness of postio-gtk's gtk_suite
-# and postio-app's app_suite, for their reasons -- GTK initializes on exactly
-# one thread per process (#41), and libtest runs tests on a pool. See
-# tests/widgets_suite/main.rs.
+# The shared crate's GTK suite: a custom harness, for two reasons -- GTK
+# initializes on exactly one thread per process (#41), and libtest runs tests
+# on a pool. See tests/widgets_suite/main.rs.
 [[test]]
 name = "widgets_suite"
 path = "tests/widgets_suite/main.rs"

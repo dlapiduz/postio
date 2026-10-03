@@ -1957,7 +1957,7 @@ fn view_source_fetches_the_raw_message_when_asked_and_not_before() {
     use crate::tests::{eventually, row_titled, server_with_one_message, syncing_world};
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
-    let (client, _events) = world.frontend(ClientKind::Gtk);
+    let (client, _events) = world.frontend(ClientKind::Focus);
     world.host().start_syncing();
     let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
     assert!(mock.body_fetches().is_empty(), "nothing fetched before `v`");

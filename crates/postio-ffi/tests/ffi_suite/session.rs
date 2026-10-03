@@ -93,7 +93,7 @@ fn the_drain_ends_when_the_session_shuts_down() {
 
 #[test]
 fn a_bridge_supplied_session_uses_the_caller_s_runtime() {
-    // `postio-app` builds its own `Bridge` and hands the parts to `Wiring`.
+    // The classic app built its own `Bridge` and handed the parts to `Wiring`.
     // The macOS app does the same through the boundary, so the constructor
     // has to accept an existing runtime rather than insisting on its own.
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");

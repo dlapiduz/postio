@@ -1422,7 +1422,7 @@ pub async fn fetch_body(
 
     // The commit point. `Full` unconditionally, and honestly: whatever the
     // parse could not match to a row is still in the raw blob, which is what
-    // `postio_app::reading::part_bytes` falls back to.
+    // the host's part reader falls back to.
     messages
         .set_body(request.message, &stored, BodyState::Full)
         .await?;
@@ -1808,7 +1808,7 @@ pub(crate) async fn fetch_section(
 /// write `attachments.blob_id` on the receive path. Before it that column was
 /// filled only on the way *out*, by a composer attaching a file, so
 /// `Attachment::is_downloaded` was false for every message that had ever
-/// arrived from a server and `postio_app::reading::part_bytes` re-parsed the
+/// arrived from a server and the part reader re-parsed the
 /// whole raw message to cut one part out of it.
 ///
 /// # Rebuilding an entity from a section

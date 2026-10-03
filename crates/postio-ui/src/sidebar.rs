@@ -6,7 +6,7 @@
 //! answer to "where is my inbox", and the duplicate rule in particular took a
 //! bug report to find (#501).
 //!
-//! It lived in `postio-gtk::sidebar` until #1155, which is where the macOS
+//! It lived in the classic app's sidebar until #1155, which is where the macOS
 //! sidebar could not reach it — so that one sorted alphabetically and drew
 //! `Archive, Archive … Sent, Sent … Trash, Trash`, exactly the failure #501
 //! had already fixed on the other platform. Nothing here touches a toolkit:
@@ -95,7 +95,7 @@ pub struct ViewCounts {
 /// nothing to store — so an unassigned id is what says so. Every mailbox the
 /// sidebar is handed otherwise comes from the store and has one.
 ///
-/// This replaces the negative-id sentinels the GTK feed used to invent
+/// This replaces the negative-id sentinels the classic app's feed used to invent
 /// (`MailboxId::new(-1)` and `-2`). A sentinel is a value that means something
 /// only to whoever remembers it, and the frontend that did not remember —
 /// macOS — simply never had these rows.
@@ -110,7 +110,7 @@ pub fn is_view(mailbox: &Mailbox) -> bool {
 ///
 /// Every frontend needs the same answer, and the one that had to invent it
 /// locally did not: `Flagged` and `Snoozed` were built inside
-/// `postio-gtk::feed`, so the macOS sidebar has never had either row. Building
+/// the classic app's feed, so the macOS sidebar has never had either row. Building
 /// them in the toolkit-free layer both frontends already consume is what makes
 /// "the same account draws the same rows" true rather than aspirational.
 ///
@@ -220,7 +220,7 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
 
 // ── The ordinary folders as a tree ─────────────────────────────────────────
 //
-// Moved out of `postio-gtk::sidebar` by spec 005: the terminal sidebar draws
+// Moved out of the classic app's sidebar by spec 005: the terminal sidebar draws
 // the same hierarchy and folds it with the same command.
 
 /// One row of the ordinary folder tree (#324), positioned in the hierarchy
@@ -322,7 +322,7 @@ fn walk_folder_tree<'a>(
 
 // ── What a row is called, and the number beside it ──────────────────────────
 //
-// Both moved out of `postio-gtk::sidebar` by spec 003, for the reason
+// Both moved out of the classic app's sidebar by spec 003, for the reason
 // `role_order` and `sections` moved in #1155: they are product decisions, not
 // widget details, and the frontend that had to re-derive them did not. The
 // FFI sent `mailbox.name` raw, which is empty for a view row — so even once

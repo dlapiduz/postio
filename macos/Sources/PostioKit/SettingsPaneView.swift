@@ -205,7 +205,7 @@ public struct SettingsPaneView: View {
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
-    /// The macOS half of what `postio_gtk::settings::icon` answers for GTK.
+    /// The macOS half of what the classic app's settings icon lookup answered for GTK.
     ///
     /// Beside the view rather than behind the boundary for the reason that
     /// function records: a symbolic icon name is not an SF Symbol, and the

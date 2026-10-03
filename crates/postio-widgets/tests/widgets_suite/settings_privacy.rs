@@ -2,7 +2,7 @@
 //! managed rather than only enforced.
 //!
 //! `RemoteImageAllowList` already exists and already persists
-//! (`crates/postio-gtk/src/reader/allowlist.rs`) — this is the other half,
+//! (`RemoteImageAllowList`, in the reader) — this is the other half,
 //! the same shape `gtk_settings_accounts.rs` proves for `set_accounts`:
 //! given a list, does the pane draw one row per sender, and does revoking
 //! one actually mutate and save it. Skips without a display. Nothing here

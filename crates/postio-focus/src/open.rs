@@ -1641,8 +1641,7 @@ impl OpenMessage {
 pub const DIALOG_NAME: &str = "focus-open-message";
 
 /// The MIME type the attachment chips hang from: the stored one, or what
-/// the body and the parts imply (the desktop app's rule, `postio-app`'s
-/// `reading::root_type`).
+/// the body and the parts imply.
 fn root_type(stored: Option<&str>, body: &MessageBody, parts: &[Attachment]) -> String {
     if let Some(content_type) = stored {
         return content_type.to_owned();

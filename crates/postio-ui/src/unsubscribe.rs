@@ -6,7 +6,7 @@
 //! Three decisions make that true and none of them is a widget — which list
 //! a message belongs to, whether the reader may offer to leave it at all, and
 //! what the banner says about it — so they live here rather than in either
-//! frontend. The GTK banner (`postio_gtk::reader::banner::UnsubscribeBanner`)
+//! frontend. The GTK banner
 //! and the macOS one call the same three functions, which is ADR 0019 Q6's
 //! answer to a privacy rule forking silently across two readers.
 //!
@@ -46,7 +46,7 @@ pub struct Offer {
 /// `List-Id` (RFC 2919) when the sender set one, and the sender's domain
 /// otherwise — because the fallback is what makes the banner useful on the
 /// bulk mail that does *not* announce itself as a list, which is most of it.
-/// Moved here from `postio-app`'s reading wiring, where it was the only copy
+/// Moved here from the classic app's reading wiring, where it was the only copy
 /// and the macOS reader could not reach it.
 ///
 /// `None` only when a message has neither, which means it has no sender

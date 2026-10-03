@@ -7,7 +7,7 @@
 //!
 //! Everything needed was already built. `postio_sync::StatusTracker` shapes a
 //! committed batch's [`Progress`] into a status and throttles it to 250 ms;
-//! `postio-gtk`'s sidebar renders `syncing 30% · imap` from
+//! the sidebar renders `syncing 30% · imap` from
 //! [`Event::SyncProgress`]. The engine collected every batch's progress into a
 //! `Vec` and folded it into the tracker *after the pass returned*, with one
 //! `Utc::now()` shared by the whole loop — so the tracker's own throttle threw

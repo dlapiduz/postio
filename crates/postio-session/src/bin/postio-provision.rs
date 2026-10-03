@@ -8,8 +8,8 @@
 //! go in and why that order is not negotiable.
 //!
 //! It builds on both platforms because `postio-session` does. The
-//! `postio-app` example this replaces did not: ADR 0019 measured the one
-//! boundary in the workspace, and it falls on `postio-gtk` and `postio-app`,
+//! classic app's example this replaces did not: ADR 0019 measured the one
+//! boundary in the workspace, and it falls on the GTK crates,
 //! which is to say on the only crates a Mac cannot compile.
 //!
 //! # Use

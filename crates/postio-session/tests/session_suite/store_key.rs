@@ -146,7 +146,7 @@ fn the_key_can_be_read_with_no_runtime_running() {
 
 #[test]
 fn a_locked_keyring_means_there_is_no_store_to_open() {
-    // What `postio_app::run` branches on. `open_store` is only reached on the
+    // What the app's startup branches on. `open_store` is only reached on the
     // `Ok` arm, so this is the point at which "a locked keyring means the mail
     // does not open" is decided -- before a `Database` exists, rather than by
     // something downstream noticing later.

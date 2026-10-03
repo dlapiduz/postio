@@ -81,8 +81,7 @@ pub fn install(display: &gdk::Display) -> gtk::CssProvider {
 
 #[cfg(test)]
 mod tests {
-    //! The text guards postio-gtk keeps over `shell.css`, over this sheet:
-    //! these rules were under them while they lived there. Each check is
+    //! Text guards over this sheet. Each check is
     //! shown failing on a sheet that breaks it, so a pass means something.
 
     const SHEET: &str = include_str!("../data/widgets.css");

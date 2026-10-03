@@ -13,7 +13,7 @@
 //! [`sections`] decides what the sheet *contains*, and that is a product
 //! decision every frontend must answer identically — the same argument that
 //! moved the palette matcher (#658), the search chips (#1157) and the one
-//! box's modes here. `postio-gtk`'s `CheatSheet` widget draws these
+//! box's modes here. The classic app's `CheatSheet` widget drew these
 //! sections; a second frontend draws the same ones instead of flattening the
 //! reference into an ungrouped list.
 //!

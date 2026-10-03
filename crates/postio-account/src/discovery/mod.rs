@@ -77,7 +77,7 @@
 //!   and then says nothing is bounded separately, by
 //!   [`DISCOVERY_IO_TIMEOUT`]. What is left unbounded is `connect` on the
 //!   HTTPS path, which keeps the OS default. #57.
-//! * **Nowhere else constructs a [`Probe`].** `crates/postio-app/src/onboarding.rs`
+//! * **Nowhere else constructs a [`Probe`].** `postio-host`'s onboarding
 //!   is the only production call site (`grep -rn 'Probe::new\|Probe::with_options'`
 //!   outside `tests/` and doc examples finds exactly that one line); every
 //!   other match is a test or the doc example above.

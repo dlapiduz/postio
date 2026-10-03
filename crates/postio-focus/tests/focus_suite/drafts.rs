@@ -1,13 +1,12 @@
-//! Drafts, across the two desktop apps (US3 scenario 3, US11 scenario 3;
-//! T080, and T064's draft half): `Esc` closes Focus's composer and keeps the
-//! draft locally, and a draft left in either app opens for editing in the
-//! other, over one store.
+//! Drafts, across apps (US3 scenario 3, US11 scenario 3; T080, and T064's
+//! draft half): `Esc` closes Focus's composer and keeps the draft locally,
+//! and a draft left in Focus or the terminal opens for editing in the other,
+//! over one store.
 //!
-//! The classic app's side is the client it reads and writes through --
-//! `ClientKind::Gtk`, connected to the host Focus opened -- since Focus may
-//! not depend on `postio-gtk` even for a test (`across_apps.rs` says the
-//! same). What it does with a Drafts row is what its window does: list the
-//! Drafts folder, and open the draft behind the row.
+//! The terminal's side is the client it reads and writes through --
+//! `ClientKind::Tui`, connected to the host Focus opened (`across_apps.rs`
+//! does the same). What it does with a Drafts row is what the terminal
+//! does: list the Drafts folder, and open the draft behind the row.
 
 use adw::prelude::*;
 use postio_client::Client;
@@ -18,22 +17,22 @@ use postio_model::{Draft, EmailAddress, ListScope, MailboxId, MailboxRole, Messa
 use crate::compose::field;
 use crate::support::{self, Fixture};
 
-/// The Drafts folder's id, as the classic app finds it.
-async fn drafts_folder(classic: &Client, fixture: &Fixture) -> MailboxId {
-    classic
+/// The Drafts folder's id, as the terminal finds it.
+async fn drafts_folder(terminal: &Client, fixture: &Fixture) -> MailboxId {
+    terminal
         .mailboxes(fixture.account.id)
         .await
-        .expect("the classic app reads the folders")
+        .expect("the terminal reads the folders")
         .iter()
         .find(|folder| folder.role == MailboxRole::Drafts)
         .expect("a Drafts folder")
         .id
 }
 
-/// The rows in Drafts, as the classic app lists them: each message and its
+/// The rows in Drafts, as the terminal lists them: each message and its
 /// subject.
-async fn drafts_listed(classic: &Client, drafts: MailboxId) -> Vec<(MessageId, String)> {
-    match classic
+async fn drafts_listed(terminal: &Client, drafts: MailboxId) -> Vec<(MessageId, String)> {
+    match terminal
         .list_page(PageRequest {
             scope: ListScope::Mailbox(drafts),
             offset: 0,
@@ -56,12 +55,12 @@ async fn drafts_listed(classic: &Client, drafts: MailboxId) -> Vec<(MessageId, S
                 )
             })
             .collect(),
-        Err(error) => panic!("the classic app could not list Drafts: {error}"),
+        Err(error) => panic!("the terminal could not list Drafts: {error}"),
     }
 }
 
 /// A fixture with a Drafts folder and one conversation, Focus open over it,
-/// and the classic app's client beside it.
+/// and the terminal's client beside it.
 async fn both_apps() -> (Fixture, postio_focus::window::FocusWindow, Client) {
     let fixture = Fixture::empty().await;
     {
@@ -75,7 +74,7 @@ async fn both_apps() -> (Fixture, postio_focus::window::FocusWindow, Client) {
     window.present();
     let session =
         postio_focus::startup::adopt(&window, fixture.host(), &postio_config::Config::default());
-    let classic = session.host().connect(ClientKind::Gtk);
+    let terminal = session.host().connect(ClientKind::Tui);
     support::keep(session);
     assert!(
         crate::settle_until(async || support::subjects(&window) == ["Budget"]).await,
@@ -85,18 +84,18 @@ async fn both_apps() -> (Fixture, postio_focus::window::FocusWindow, Client) {
         crate::settle_until(async || window.composer().is_some()).await,
         "Focus mounted no composer"
     );
-    (fixture, window, classic)
+    (fixture, window, terminal)
 }
 
-/// US3 scenario 3, and US11 scenario 3 from Focus to the classic app.
-pub fn escape_keeps_the_draft_and_the_classic_app_opens_it() {
+/// US3 scenario 3, and US11 scenario 3 from Focus to the terminal.
+pub fn escape_keeps_the_draft_and_the_terminal_opens_it() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
-        let (fixture, window, classic) = both_apps().await;
-        let drafts = drafts_folder(&classic, &fixture).await;
-        assert!(drafts_listed(&classic, drafts).await.is_empty());
+        let (fixture, window, terminal) = both_apps().await;
+        let drafts = drafts_folder(&terminal, &fixture).await;
+        assert!(drafts_listed(&terminal, drafts).await.is_empty());
 
         support::keys(&window, &["c"]);
         assert!(
@@ -113,11 +112,11 @@ pub fn escape_keeps_the_draft_and_the_classic_app_opens_it() {
             "Esc did not close the composer"
         );
 
-        // Kept locally: the classic app lists it in Drafts at once.
+        // Kept locally: the terminal lists it in Drafts at once.
         let listed = std::cell::RefCell::new(Vec::new());
         assert!(
             crate::settle_until(async || {
-                *listed.borrow_mut() = drafts_listed(&classic, drafts).await;
+                *listed.borrow_mut() = drafts_listed(&terminal, drafts).await;
                 listed.borrow().len() == 1
             })
             .await,
@@ -127,11 +126,11 @@ pub fn escape_keeps_the_draft_and_the_classic_app_opens_it() {
         let (row, subject) = listed.borrow()[0].clone();
         assert_eq!(subject, "Q4 headcount");
 
-        // And opens it for editing, as its window does with the row.
-        let draft = classic
+        // And opens it for editing, as the terminal does with the row.
+        let draft = terminal
             .draft_behind(row)
             .await
-            .expect("the classic app reads the draft")
+            .expect("the terminal reads the draft")
             .expect("a local draft behind the row, to edit");
         assert_eq!(draft.subject, "Q4 headcount");
         assert_eq!(
@@ -141,33 +140,33 @@ pub fn escape_keeps_the_draft_and_the_classic_app_opens_it() {
     });
 }
 
-/// US11 scenario 3, from the classic app to Focus: a draft the classic app
+/// US11 scenario 3, from the terminal to Focus: a draft the terminal
 /// kept opens in Focus's composer, and closing it keeps the one draft.
-pub fn a_draft_the_classic_app_kept_opens_in_focus() {
+pub fn a_draft_the_terminal_kept_opens_in_focus() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
-        let (fixture, window, classic) = both_apps().await;
-        let drafts = drafts_folder(&classic, &fixture).await;
+        let (fixture, window, terminal) = both_apps().await;
+        let drafts = drafts_folder(&terminal, &fixture).await;
 
-        // The classic composer's autosave, through its client.
+        // The terminal composer's autosave, through its client.
         let mut kept = Draft::new(fixture.account.id);
         kept.to = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
         kept.subject = "Harbor notes".to_owned();
         kept.body.text = Some("Two comments on the headers.".to_owned());
-        classic
+        terminal
             .save_draft(1, kept)
             .await
-            .expect("the classic app saves its draft");
+            .expect("the terminal saves its draft");
         let listed = std::cell::RefCell::new(Vec::new());
         assert!(
             crate::settle_until(async || {
-                *listed.borrow_mut() = drafts_listed(&classic, drafts).await;
+                *listed.borrow_mut() = drafts_listed(&terminal, drafts).await;
                 listed.borrow().len() == 1
             })
             .await,
-            "the classic app's draft never reached Drafts"
+            "the terminal's draft never reached Drafts"
         );
         let (row, _) = listed.borrow()[0].clone();
 
@@ -190,9 +189,9 @@ pub fn a_draft_the_classic_app_kept_opens_in_focus() {
             "Esc did not close the composer"
         );
         assert!(
-            crate::settle_while(async || drafts_listed(&classic, drafts).await.len() == 1).await,
+            crate::settle_while(async || drafts_listed(&terminal, drafts).await.len() == 1).await,
             "closing a resumed draft must leave the one draft, not a second: {:?}",
-            drafts_listed(&classic, drafts).await
+            drafts_listed(&terminal, drafts).await
         );
     });
 }
@@ -204,15 +203,15 @@ pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
         if !support::display() {
             return;
         }
-        let (fixture, window, classic) = both_apps().await;
+        let (fixture, window, terminal) = both_apps().await;
         let mut kept = Draft::new(fixture.account.id);
         kept.to = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
         kept.subject = "Harbor notes".to_owned();
         kept.body.text = Some("Two comments on the headers.".to_owned());
-        classic
+        terminal
             .save_draft(1, kept)
             .await
-            .expect("the classic app saves its draft");
+            .expect("the terminal saves its draft");
 
         support::keys(&window, &["g", "t"]);
         assert!(

@@ -326,7 +326,7 @@ fn a_bridge_can_be_built_on_a_hub_the_caller_owns() {
 #[test]
 fn bridge_new_still_hands_back_one_working_stream() {
     // The whole compatibility claim of ADR 0013 in one test: `Bridge::new`
-    // keeps its signature and its behaviour, hub or no hub, so postio-gtk and
+    // keeps its signature and its behaviour, hub or no hub, so the classic app and
     // every existing test compile and pass unchanged.
     let (bridge, events) = Bridge::new(echo()).expect("the runtime starts");
     bridge.commands().send(Command::Refresh).expect("running");

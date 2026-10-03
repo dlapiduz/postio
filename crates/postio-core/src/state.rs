@@ -459,7 +459,7 @@ impl AppState {
     /// So an empty selection falls back to the focus. Without that fallback
     /// the daily case — click a message, press `a` — would archive nothing at
     /// all, silently, which is the single most likely way this whole design
-    /// fails. The frontends depend on it: `postio-gtk`'s list deliberately
+    /// fails. The frontends depend on it: the classic app's list deliberately
     /// clears the selection on a plain click for exactly this reason.
     ///
     /// Returns `None` when there is genuinely nothing to act on — no

@@ -1377,7 +1377,7 @@ impl Reader {
 
     /// Called with the list identifier when the unsubscribe banner's button
     /// is activated — the reader only asks; a caller decides what leaving a
-    /// list means (`postio-gtk` has no SQL to log the activation itself).
+    /// list means (this crate has no SQL to log the activation itself).
     pub fn connect_unsubscribe_activated(&self, handler: impl Fn(&str) + 'static) {
         self.on_unsubscribe.borrow_mut().push(Box::new(handler));
     }
@@ -1574,7 +1574,7 @@ impl Switcher {
 /// pane is handed a body and a sender, not a message, so it cannot tell a
 /// second message that happens to compose an identical document from the same
 /// message arriving twice — and those two want opposite answers. That
-/// judgement belongs where message identity exists, in `postio_app::reading`.
+/// judgement belongs where message identity exists, in the app that owns the store.
 fn load_document(canvas: &Canvas<'_>, document: &str) {
     canvas.loads.set(canvas.loads.get() + 1);
     // The single choke point every render passes through, which is what makes

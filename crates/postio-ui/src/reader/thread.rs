@@ -310,7 +310,7 @@ fn quoted(text: &str) -> String {
 ///
 /// The frontend's view of a message -- who, when, whether it is open, and its
 /// body still unsanitised -- which [`compose`] turns into an [`Entry`]. It
-/// lived in `postio-gtk`'s reader, and moved here with [`compose`] so the
+/// lived in the classic app's reader, and moved here with [`compose`] so the
 /// macOS pane composes the same document from the same decisions rather than
 /// a second copy of them (#1595).
 ///
@@ -524,7 +524,7 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // user cannot make is not a privacy feature, it is a dead end: blocking
     // without a way to unblock is the feature missing its other half. With
     // JavaScript off, a verb inside the document is a navigation, which
-    // `postio_gtk::reader::view` intercepts by scheme.
+    // the classic app's reader view intercepted by scheme.
     let blocked = match entry.blocked {
         0 => String::new(),
         count => {

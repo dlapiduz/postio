@@ -1,7 +1,7 @@
 //! What moving between messages costs, counted on the Mac as well (#1586).
 //!
 //! `postio_ui::reader::cost` counts rendering surfaces because "how many" is
-//! the same number on any machine and sixteen milliseconds is not. `postio-gtk`
+//! the same number on any machine and sixteen milliseconds is not. The classic app
 //! notes both ends of a surface's life; until this crossed, the macOS reader
 //! noted neither, so the claim was gated on one platform and unmeasured on the
 //! other.
@@ -47,7 +47,7 @@ fn a_render_noted_across_the_boundary_lands_in_the_shared_counter() {
 
 #[test]
 fn the_boundary_reads_back_what_the_shared_counters_hold() {
-    // Noted through `postio_ui` directly -- the way `postio-gtk` notes -- and
+    // Noted through `postio_ui` directly -- the way the classic app noted -- and
     // read through the boundary, so a Swift test asserting on the readers is
     // asserting on the shared numbers and not on a copy.
     postio_ui::reader::cost::note_surface_created();

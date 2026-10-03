@@ -1,11 +1,10 @@
 //! The composer's seams, answered through the store's owner
 //! (specs/007-postio-focus T022, T078; ADR 0041).
 //!
-//! `postio-gtk`, `postio-app` and `postio-focus` each used to answer these
-//! seams for their own window: a save is `Req::SaveDraft`, a send
+//! Each window used to answer these seams for itself: a save is `Req::SaveDraft`, a send
 //! `Req::QueueSend`, and the message that leaves is built by the host from
 //! the draft the composer hands over -- the same draft, from the same
-//! composer, whichever app holds it (FR-050, T081). Nothing here reaches
+//! composer, whichever window holds it (FR-050, T081). Nothing here reaches
 //! `postio-session` or `postio-host` directly; every seam is answered
 //! through [`postio_client::Client`], which is what makes this crate able to
 //! hold it at all (ADR 0043).
@@ -14,7 +13,7 @@
 //! this way before this module existed -- reaching only through the client,
 //! answering the WebKit-facing seams from a cache it fills ahead of time
 //! rather than a blocking read -- and is what this module is built from.
-//! `postio-app`'s classic composer used a different shape for the same
+//! The classic composer used a different shape for the same
 //! seams: `postio_session::blocking::now` for the seams that had to answer
 //! on the spot. Unifying on Focus's shape is what let two of that debt's
 //! three sites disappear rather than move (`check-blocking-now-sites.py`);

@@ -5,7 +5,7 @@
 //! None of that is a toolkit's business — it is a reading of a
 //! [`postio_search::ParsedQuery`] and a sentence about a result set.
 //!
-//! It lived in `postio-gtk::search` until #1157, where the macOS bar could
+//! It lived in the classic app's search until #1157, where the macOS bar could
 //! not reach any of it: the chips, the Backspace rule, the readout wording,
 //! its screen-reader form, and the debounce pacing. A second frontend
 //! re-deriving those would be a second query vocabulary on screen, a second

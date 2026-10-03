@@ -606,7 +606,7 @@ impl Host {
     ///
     /// Engines first: they are the one thing still writing on threads of
     /// their own, and a write torn by the process exit is left for a pre-1.0
-    /// engine to recover (`postio-app`'s `run` says the same, and did this).
+    /// engine to recover (the classic app's startup said the same, and did this).
     pub fn stop(&self) {
         postio_runtime::stop_retained();
         self.close();
@@ -1229,7 +1229,7 @@ impl Inner {
     }
 
     /// An account change, as the desktop's settings make it
-    /// (`postio-app`'s `settings_accounts`). Everyone's sidebar hears of it.
+    /// (the desktop's settings panel, over `AccountOp`). Everyone's sidebar hears of it.
     async fn account(
         &self,
         op: postio_client::protocol::AccountOp,
@@ -1652,7 +1652,7 @@ impl Inner {
     /// Record that the person asked to leave `message`'s list, and name it.
     ///
     /// The list is its `List-Id`, else the sender's domain -- the desktop
-    /// reader's rule (#971), moved here from `postio-app` so every frontend
+    /// reader's rule (#971), moved here from the classic app so every frontend
     /// records it the same way. Only ever answered for a deliberate act.
     async fn unsubscribe(&self, message: postio_model::MessageId) -> Resp {
         use postio_model::listing::StoreError;

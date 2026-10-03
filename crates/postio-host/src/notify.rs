@@ -4,7 +4,7 @@
 //! person is already looking at them, and the words --
 //! `postio_ui::notify::decide`, unchanged, over the rows the store holds.
 //! The app that has the store open asks: the desktop app's window
-//! (`postio-app`'s `Notifier`) and the terminal ([`crate::Host::notification`]).
+//! (its `Notifier`) and the terminal ([`crate::Host::notification`]).
 //! Each only delivers what this answers.
 
 use postio_config::SyncConfig;

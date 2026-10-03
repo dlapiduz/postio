@@ -2,7 +2,7 @@
 //!
 //! `postio-qhz.7`: on a live account with 81,716 messages in the store, the
 //! message list showed nothing. The store, the query and the widget were all
-//! correct — `crates/postio-gtk/src/list.rs` has the whole invalidation
+//! correct — the GTK message list had the whole invalidation
 //! machinery, and it reloads on `Event::MessageListChanged`. It was simply
 //! never told.
 //!

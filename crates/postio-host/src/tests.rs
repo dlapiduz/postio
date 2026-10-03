@@ -543,7 +543,7 @@ fn a_focus_select_all_archives_what_focus_lists_and_never_held_mail() {
 fn what_one_frontend_changed_reaches_the_other() {
     let world = World::new();
     let (terminal, _) = world.frontend(ClientKind::Tui);
-    let (_desktop, desktop_events) = world.frontend(ClientKind::Gtk);
+    let (_desktop, desktop_events) = world.frontend(ClientKind::Focus);
 
     world.send(&terminal, archive());
 
@@ -556,7 +556,7 @@ fn what_one_frontend_changed_reaches_the_other() {
 fn an_undo_offer_is_only_for_the_frontend_that_can_take_it() {
     let world = World::new();
     let (terminal, terminal_events) = world.frontend(ClientKind::Tui);
-    let (_desktop, desktop_events) = world.frontend(ClientKind::Gtk);
+    let (_desktop, desktop_events) = world.frontend(ClientKind::Focus);
 
     world.send(&terminal, archive());
 
@@ -582,7 +582,7 @@ fn an_undo_offer_is_only_for_the_frontend_that_can_take_it() {
 fn undo_takes_back_only_what_this_frontend_did() {
     let world = World::new();
     let (terminal, terminal_events) = world.frontend(ClientKind::Tui);
-    let (desktop, desktop_events) = world.frontend(ClientKind::Gtk);
+    let (desktop, desktop_events) = world.frontend(ClientKind::Focus);
 
     world.send(&terminal, archive());
     world.hear(&terminal_events, |event| {
@@ -888,7 +888,7 @@ fn a_composition_closed_empty_leaves_no_draft() {
 #[test]
 fn a_crashed_session_hands_back_the_draft_being_written_and_a_clean_one_does_not() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
 
     // A store this binary never opened is not a crash.
@@ -930,7 +930,7 @@ fn a_draft_nobody_touched_is_not_recovered_after_a_crash() {
     // empty row for the buffer it holds, so recovering it perpetuates itself,
     // and the client opens on a stale composer at every launch.
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     assert_eq!(world.rt.block_on(client.recover_draft(account)), Ok(None));
 
@@ -954,7 +954,7 @@ fn a_draft_nobody_touched_is_not_recovered_after_a_crash() {
 #[test]
 fn a_file_is_attached_as_the_type_the_frontend_sniffed_and_its_bytes_read_back() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("minutes");
     std::fs::write(&path, b"the minutes, unlabelled").expect("written");
@@ -1257,7 +1257,7 @@ fn a_desktop_add_saves_the_account_and_leaves_its_sync_to_the_app() {
     // dialog through the running window -- so an engine the host started
     // here would be a second one, or one under the wrong window.
     let world = onboarding_world(postio_account::backend::MockBackend::new());
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     world
         .rt
         .block_on(client.add_account_then(
@@ -1342,7 +1342,7 @@ fn a_stopped_discovery_has_stopped_its_connections_when_the_stop_returns() {
     let transport = Held(hanging.clone());
     let world =
         World::configured(move |wiring| wiring.with_discovery(std::sync::Arc::new(transport)));
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let stop = postio_client::protocol::Stop::new();
     let asked = world.rt.spawn({
         let client = client.clone();
@@ -1499,7 +1499,7 @@ fn a_host_over_a_wiring_built_elsewhere_serves_its_store_and_its_news() {
         commands,
     );
     let host = Host::over(wiring);
-    let client = host.connect(ClientKind::Gtk);
+    let client = host.connect(ClientKind::Focus);
     let events = client.events();
 
     let accounts = world.rt.block_on(client.accounts()).expect("accounts");
@@ -1532,7 +1532,7 @@ fn a_host_over_a_wiring_with_one_event_reader_still_serves_its_store() {
         sink,
         commands,
     );
-    let client = Host::over(wiring).connect(ClientKind::Gtk);
+    let client = Host::over(wiring).connect(ClientKind::Focus);
     let accounts = world.rt.block_on(client.accounts()).expect("accounts");
     assert_eq!(accounts.len(), 1);
 }
@@ -1560,7 +1560,7 @@ fn a_reading_pane_reads_everything_it_draws_of_several_messages_in_one_call() {
     // The desktop's pane draws a header, a parts row and a body from one
     // read; a conversation is every member's in one read (#1609).
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let listed = another_message(&world, |message| {
         message.subject = Some("Minutes".into());
         message.list_id = Some("minutes.example.org".into());
@@ -1597,7 +1597,7 @@ fn a_reading_pane_reads_everything_it_draws_of_several_messages_in_one_call() {
 #[test]
 fn the_conversation_after_the_cursor_is_read_ahead_in_one_call() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let later = another_message(&world, |message| {
         message.received_at = Utc::now() + chrono::Duration::minutes(5);
     });
@@ -1643,7 +1643,7 @@ fn the_conversation_after_the_cursor_is_read_ahead_in_one_call() {
 #[test]
 fn an_inline_image_resolves_only_inside_the_message_that_declares_it() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
         .expect("the same blob store");
     let blob = blobs.put(b"\x89PNG a logo").expect("stored");
@@ -1673,7 +1673,7 @@ fn an_inline_image_resolves_only_inside_the_message_that_declares_it() {
 #[test]
 fn saving_every_part_writes_each_and_counts_what_could_not_be() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
         .expect("the same blob store");
     let blob = blobs.put(b"one,two").expect("stored");
@@ -1750,7 +1750,7 @@ fn the_desktop_search_answers_its_hits_with_an_excerpt_then_its_columns() {
     // hit's excerpt, the sender and folder from the index, and a second
     // read for the scope counts beside the results.
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     let matching = an_indexed_message(
         &world,
@@ -1805,7 +1805,7 @@ fn the_desktop_search_answers_its_hits_with_an_excerpt_then_its_columns() {
 #[test]
 fn a_search_preview_reads_the_stored_words_or_nothing() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let with_words = an_indexed_message(&world, "Minutes", "Half past twelve?");
 
     let body = world
@@ -1825,7 +1825,7 @@ fn a_search_preview_reads_the_stored_words_or_nothing() {
 #[test]
 fn messages_dragged_out_are_written_as_the_bytes_the_server_sent_in_one_call() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
         .expect("the same blob store");
     let one = blobs.put(b"Subject: one\r\n\r\nOne.\r\n").expect("stored");
@@ -1858,7 +1858,7 @@ fn the_settings_panel_reads_every_account_with_its_folders_in_one_call() {
     // One call for the whole panel, where the desktop read each account's
     // folders, roles and weight in turn.
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let shown = world
         .rt
         .block_on(client.account_settings(true))
@@ -1892,7 +1892,7 @@ fn the_settings_panel_reads_every_account_with_its_folders_in_one_call() {
 fn an_account_field_edited_in_the_settings_reaches_its_row() {
     use postio_client::protocol::AccountField;
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     world
         .rt
@@ -1920,7 +1920,7 @@ fn signatures_of(world: &World, account: postio_model::AccountId) -> Vec<postio_
 #[test]
 fn a_signature_is_written_refused_by_name_edited_and_removed() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     world
         .rt
@@ -1975,7 +1975,7 @@ fn a_signature_is_written_refused_by_name_edited_and_removed() {
 #[test]
 fn a_rebuild_asked_for_from_the_settings_answers_when_it_is_over() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
@@ -1994,7 +1994,7 @@ fn a_rebuild_asked_for_from_the_settings_answers_when_it_is_over() {
 fn the_egress_log_is_read_newest_first() {
     use postio_model::egress::{EgressEvent, EgressOutcome, EgressSubsystem};
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         let log = postio_storage::repository::EgressLogRepository::new(&connection);
@@ -2024,7 +2024,7 @@ fn the_egress_log_is_read_newest_first() {
 #[test]
 fn the_privacy_pane_reads_its_log_and_its_count_in_one_call() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     another_message(&world, |message| message.read_receipt_requested = true);
     world.rt.block_on(async {
@@ -2054,7 +2054,7 @@ fn the_privacy_pane_reads_its_log_and_its_count_in_one_call() {
 #[test]
 fn skipping_a_folders_backfill_answers_the_folders_as_they_now_stand() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let folders = world
         .rt
         .block_on(client.set_backfill_excluded(world.inbox, true))
@@ -2073,13 +2073,13 @@ fn skipping_a_folders_backfill_answers_the_folders_as_they_now_stand() {
 #[test]
 fn the_orientation_is_unseen_until_it_is_retired() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     assert!(!world.rt.block_on(client.orientation_seen()).expect("asked"));
     world
         .rt
         .block_on(client.retire_orientation())
         .expect("retired");
-    let (later, _) = world.frontend(ClientKind::Gtk);
+    let (later, _) = world.frontend(ClientKind::Focus);
     assert!(
         world.rt.block_on(later.orientation_seen()).expect("asked"),
         "every later run, whichever frontend asks"
@@ -2089,7 +2089,7 @@ fn the_orientation_is_unseen_until_it_is_retired() {
 #[test]
 fn an_account_a_frontend_proved_is_saved_by_the_host() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     world
         .rt
         .block_on(client.save_account(
@@ -2108,7 +2108,7 @@ fn an_account_a_frontend_proved_is_saved_by_the_host() {
 #[test]
 fn a_browser_sign_in_a_frontend_completed_is_saved_with_its_endpoints() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let mut signed_in = submission("");
     signed_in.oauth_client = Some(postio_ui::onboarding::OAuthClientSubmission {
         client_id: "postio-test".into(),
@@ -2301,7 +2301,7 @@ pub(crate) fn eventually<T>(world: &World, mut read: impl FnMut() -> Option<T>) 
 #[test]
 fn the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up() {
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     // A body on disk the index never heard of: stored, not indexed.
     let message = another_message(&world, |message| {
         message.subject = Some("Minutes".into());
@@ -2477,7 +2477,7 @@ fn messages_with_blobs(world: &World, count: u8, size: usize) -> Vec<postio_mode
 fn a_storage_ceiling_evicts_the_oldest_blobs_over_it_and_keeps_what_fits() {
     // `Req::StorageCeiling`: `[storage] max_bytes` changed in a frontend.
     let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let written = messages_with_blobs(&world, 3, 40_000);
     let blobs = world.host().wiring().blobs.clone();
 
@@ -2509,7 +2509,7 @@ fn start_syncing_asked_twice_gives_the_account_one_engine() {
     // later asks again: the account still gets one engine.
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     let running = || {
         world
             .host()
@@ -2655,7 +2655,7 @@ fn a_host_that_never_enables_focus_mode_files_nothing() {
     let world = syncing_world(mock.clone());
     let probe = std::sync::Arc::new(FilingProbe::default());
     let _setup = crate::FocusSetup::default().filing(probe.clone());
-    let (client, _) = world.frontend(ClientKind::Gtk);
+    let (client, _) = world.frontend(ClientKind::Focus);
     assert!(!world.host().focus_enabled());
     world.host().start_syncing();
     eventually(&world, || row_titled(&world, &client, "Tide gate"));

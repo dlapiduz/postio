@@ -4,7 +4,7 @@
 //! parses or writes TOML** applies here exactly as it does to the settings
 //! panes (ADR 0031): what crosses is a list of rows and four verbs, and the
 //! file is read, patched and written on this side by
-//! [`postio_ui::saved_search`] — the same code `postio-gtk` runs, so a search
+//! [`postio_ui::saved_search`] — the same code the classic app ran, so a search
 //! saved on a Mac and one saved on Linux are the same edit.
 //!
 //! # Why these take a path rather than the file's text

@@ -2,14 +2,14 @@
 //!
 //! # Why it is here rather than in a frontend
 //!
-//! `postio-gtk::finder` is one box with several modes: typing searches mail,
+//! The classic app's finder is one box with several modes: typing searches mail,
 //! and a prefix in an empty box switches to running a command, going to a
 //! folder, labelling the selection or finding a correspondent. Which
 //! questions the box answers, and which character asks each, are product
 //! decisions — not drawing — and ADR 0019 forbids a second frontend
 //! re-deriving those. The palette's matcher moved here for that reason in
 //! #658 and the search chips in #1157; this is the third instance of the
-//! same move, and it leaves `postio-gtk` the rendering.
+//! same move, and it leaves the frontend the rendering.
 //!
 //! # Why it is a table rather than a `match`
 //!
@@ -52,7 +52,7 @@ pub struct FinderMode {
 /// Every mode, in the order the hint and the cheat sheet list them.
 ///
 /// Search first because it is what the box does with no prefix at all; the
-/// rest in the order `postio-gtk::finder` has always listed them.
+/// rest in the order the classic app's finder always listed them.
 pub const MODES: &[FinderMode] = &[
     FinderMode {
         prefix: None,

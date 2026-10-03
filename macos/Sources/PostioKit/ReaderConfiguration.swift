@@ -2,7 +2,7 @@ import WebKit
 
 /// The hardened configuration a message body is rendered under.
 ///
-/// Every setting here has a counterpart in `postio-gtk`'s `hardened_settings()`,
+/// Every setting here had a counterpart in the classic app's `hardened_settings()`,
 /// and the reason each exists is the same: **JavaScript being off does not
 /// automatically close the surfaces JavaScript would have used.** WebGL and
 /// WebRTC run without a `<script>` tag executing, and the storage APIs persist

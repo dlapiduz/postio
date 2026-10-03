@@ -5,7 +5,7 @@
 //! edits by hand, and a second writer with its own idea of key order and
 //! comment survival would rewrite work nobody asked it to touch. So the
 //! boundary carries *values*, and every write goes back through
-//! `postio_config`'s `patch_*` functions — the same ones `postio-gtk` uses,
+//! `postio_config`'s `patch_*` functions — the same ones the classic app used,
 //! with the same format-preserving tests behind them.
 //!
 //! # Why a patch takes the text back

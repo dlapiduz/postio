@@ -88,8 +88,8 @@ async fn a_large_seed_leaves_counts_the_triggers_maintained() {
 #[tokio::test]
 async fn a_seeded_inbox_is_not_empty() {
     // The property the application actually depends on, stated plainly: a
-    // seeded store has mail *and says so*. `postio-app`'s `tests/wiring.rs`
-    // asserts the window lists it; this asserts the store it lists from is
+    // seeded store has mail *and says so*. the app's wiring tests
+    // assert the window lists it; this asserts the store it lists from is
     // not lying about being empty.
     let database = test_support::memory().await;
     let report = seed_small(&database, 11).await;

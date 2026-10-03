@@ -12,7 +12,7 @@
 //! distinguishes the cases that call for different actions — a rejected
 //! password, a TLS failure, a timeout, a port that answers but is not IMAP —
 //! and turning those into sentences is a rule, not a rendering, so it lives
-//! here rather than in each frontend. The wording is `postio-app`'s own,
+//! here rather than in each frontend. The wording is the classic app's own,
 //! moved: it knows the one thing the error cannot, which is that a provider
 //! refusing an ordinary account password says only "rejected".
 //!
@@ -188,7 +188,7 @@ pub async fn set_display_name(
 
 /// Turn a backend error into something the user can act on.
 ///
-/// Moved from `postio-app::onboarding`, which had it for the same button on
+/// Moved from the classic app's onboarding, which had it for the same button on
 /// the other platform. The interesting case is the first: a provider that
 /// refuses ordinary account passwords says only that the credentials were
 /// rejected, and somebody who has typed their Apple ID password has no way

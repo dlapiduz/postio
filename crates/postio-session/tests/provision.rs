@@ -12,7 +12,7 @@
 //! has to make the same two writes onboarding makes.
 //!
 //! **The order of those two writes is the whole of the risk**, and it is
-//! recorded in `postio-app`'s own `persist`: the credential first, then the
+//! recorded in `onboarding::persist`: the credential first, then the
 //! row. 0.1.0 did it the other way and `postio-67` is what that cost — a
 //! keyring write that failed after the row was committed left an account with
 //! no reachable password, which could not sync, could not authenticate, and
@@ -94,7 +94,7 @@ async fn a_keyring_that_refuses_leaves_no_account_behind() {
     // password is a state the application cannot get out of: it will not
     // sync, and its existence is what stops onboarding running again.
     //
-    // The example this replaced (`postio-app/examples/provision.rs`) wrote
+    // The example this replaced (the classic app's provision example) wrote
     // the row first and the credential second, so a locked keyring left
     // exactly that wreck behind.
     let database = test_support::temp().await;

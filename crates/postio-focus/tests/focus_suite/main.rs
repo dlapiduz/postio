@@ -1,6 +1,5 @@
-//! One binary for Postio Focus's GTK cases -- the custom harness of
-//! postio-app's `app_suite` and postio-widgets' `widgets_suite`, for the same
-//! two reasons:
+//! One binary for Postio Focus's GTK cases -- a custom harness, as
+//! postio-widgets' `widgets_suite` is, for two reasons:
 //!
 //!   * GTK may be initialized from exactly one thread per process (#41), and
 //!     libtest runs `#[test]` functions on a thread pool;
@@ -941,24 +940,24 @@ const CASES: &[(&str, fn())] = &[
         remind_on_send::mod_h_in_the_composer_sets_a_reminder_that_sending_keeps as fn(),
     ),
     (
-        "one_composer::the_same_content_from_either_app_leaves_as_the_same_message",
-        one_composer::the_same_content_from_either_app_leaves_as_the_same_message as fn(),
+        "one_composer::the_same_content_from_either_composer_leaves_as_the_same_message",
+        one_composer::the_same_content_from_either_composer_leaves_as_the_same_message as fn(),
     ),
     (
-        "drafts::escape_keeps_the_draft_and_the_classic_app_opens_it",
-        drafts::escape_keeps_the_draft_and_the_classic_app_opens_it as fn(),
+        "drafts::escape_keeps_the_draft_and_the_terminal_opens_it",
+        drafts::escape_keeps_the_draft_and_the_terminal_opens_it as fn(),
     ),
     (
-        "drafts::a_draft_the_classic_app_kept_opens_in_focus",
-        drafts::a_draft_the_classic_app_kept_opens_in_focus as fn(),
+        "drafts::a_draft_the_terminal_kept_opens_in_focus",
+        drafts::a_draft_the_terminal_kept_opens_in_focus as fn(),
     ),
     (
         "compose::reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote",
         compose::reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote as fn(),
     ),
     (
-        "across_apps::what_focus_archives_the_classic_app_sees_archived",
-        across_apps::what_focus_archives_the_classic_app_sees_archived as fn(),
+        "across_apps::what_focus_archives_the_terminal_sees_archived",
+        across_apps::what_focus_archives_the_terminal_sees_archived as fn(),
     ),
     (
         "store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone",
@@ -1365,7 +1364,7 @@ where
 /// On **this** thread, because everything in it touches GTK; on a
 /// multi-threaded runtime, because a synchronous store read reached from
 /// inside it (`block_in_place`) panics on a current-thread one. One runtime
-/// per thread, not per case. See app_suite's `gtk_case` for the whole story.
+/// per thread, not per case.
 pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
     thread_local! {
         static RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()

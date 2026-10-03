@@ -1,7 +1,7 @@
 //! Message bodies, in both directions.
 //!
 //! A mail client reads bodies and writes them, and until now only the reading
-//! half existed — inside `postio-gtk`, beside the `WebView` that consumes it.
+//! half existed — inside the classic app, beside the `WebView` that consumes it.
 //! That put the one allowlist Postio has in the frontend, where a second
 //! frontend could not reach it and where the *outgoing* half would have had
 //! to grow a second copy. Two allowlists that must agree forever, with no
@@ -29,7 +29,7 @@
 //! # What is deliberately *not* here
 //!
 //! The `WebView`, the `postio-cid:` scheme handler and the remote-image
-//! banner stay in `postio-gtk`. They are WebKit, and WebKit is the frontend's
+//! banner stay in the frontend. They are WebKit, and WebKit is the frontend's
 //! business. What crosses the boundary is the string this crate produces.
 //!
 //! [issue #30]: https://github.com/dlapiduz/postio/issues/30

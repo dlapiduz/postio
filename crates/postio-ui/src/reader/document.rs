@@ -4,7 +4,7 @@
 //! The highest risk in a second frontend is that the privacy invariants
 //! silently fork: two readers, two content security policies, two link
 //! policies, drifting invisibly until somebody's mail phones home. The
-//! structural answer is here — `postio-gtk`'s WebKitGTK view and a macOS
+//! structural answer is here — the classic app's WebKitGTK view and a macOS
 //! `WKWebView` do not *agree* on the CSP, they **call the same function**.
 //! What stays behind in each frontend is toolkit glue: how to hand this
 //! string to a web view, nothing about what the string says.
@@ -392,15 +392,15 @@ pub struct Face {
 /// the type system rather than of a handler remembering to check. Nothing
 /// here is a path, so there is no traversal to get wrong.
 ///
-/// The bytes have one owner (#799): `postio-gtk`'s Pango integration
-/// (`fonts::install_into`) reads them from here rather than keeping a second
+/// The bytes have one owner (#799): the classic app's Pango integration
+/// (`fonts::install_into`) read them from here rather than keeping a second
 /// copy in its own `GResource` bundle.
 ///
 /// `static`, not `const`: a `const` is re-evaluated at every use site, so a
 /// second crate reading `FACES` would get its own freshly promoted copy of
 /// every byte array — the exact duplication this table exists to remove, just
 /// moved from the `GResource` bundle into the linker's `.rodata` instead. A
-/// `static` has one address for the life of the binary, so `postio-gtk`
+/// `static` has one address for the life of the binary, so the classic app
 /// referencing it costs a pointer, not 909 KB.
 ///
 /// Provenance — <https://github.com/google/fonts>, `main`, fetched 2026-08-22:

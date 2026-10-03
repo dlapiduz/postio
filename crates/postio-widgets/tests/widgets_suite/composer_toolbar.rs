@@ -219,7 +219,7 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
 /// registry command rather than a path of its own.
 ///
 /// Everything behind it already worked — the command, its `mod+shift+a`
-/// binding, the file chooser, the drop target, and `postio-app`'s
+/// binding, the file chooser, the drop target, and the
 /// blob-store write. What was missing was any way to *find* it, which made
 /// the honest answer to "how do I attach a file" a keybinding you had to
 /// already know.

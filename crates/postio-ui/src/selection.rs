@@ -230,7 +230,7 @@ impl SelectionState {
 ///
 /// Rather than guess at a correction, the summary stops claiming a count and
 /// says what it left out instead. The *why* is already on screen a few pixels
-/// above, in `postio_gtk::list_state`'s `Partial` banner; this names the same
+/// above, in the classic app's list state `Partial` banner; this names the same
 /// accounts in the same words — [`crate::format::names`] — so the two read as
 /// one statement rather than two.
 ///

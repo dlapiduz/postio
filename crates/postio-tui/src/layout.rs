@@ -5,8 +5,7 @@
 //! widening it again brings the sidebar back if it was open, because being
 //! open is the user's and fitting is the terminal's.
 //!
-//! The widths are this one table, as the desktop app's are one table in
-//! `postio-gtk::shell` (`contracts/tui-surface.md` §Layout).
+//! The widths are this one table (`contracts/tui-surface.md` §Layout).
 
 /// One of the three panes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

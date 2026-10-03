@@ -13,7 +13,7 @@ import PostioFFI
 /// **A missing cursor is a real answer.** Aiming at nothing does nothing;
 /// falling back to "the first account" would remove somebody's mail on a
 /// keystroke aimed at no row at all, which is the reasoning ADR 0005 Q6c
-/// gives and the one `postio-gtk`'s `focused_account` follows.
+/// gives and the one the classic app's `focused_account` followed.
 @MainActor
 @Observable
 public final class SettingsAccounts {

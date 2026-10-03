@@ -3,7 +3,7 @@
 //! Every layer under this one passed while the image did not appear, which is
 //! the shape of bug `mailbox_roles.rs` and `cid_scoping.rs` both name.
 //! `postio-body` proved `cid:` survives sanitisation, `postio-ui` proved the
-//! CSP allows the local scheme, `postio-gtk`'s reader test proved the WebView
+//! CSP allows the local scheme, the classic reader's test proved the WebView
 //! asks for all three ids, and `cid_scoping.rs` proved resolution is scoped to
 //! the open message — and none of them could see that nothing ever fetched the
 //! part's bytes, or that the id the IMAP path stored had angle brackets round

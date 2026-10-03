@@ -162,7 +162,7 @@ fn every_command_with_a_default_key_reports_it() {
 
 #[test]
 fn starting_the_log_seeds_a_config_file_when_there_is_none() {
-    // `postio-app` has seeded one since it had a settings surface; macOS
+    // The classic app had seeded one since it had a settings surface; macOS
     // never did, so the Config file pane opened on a blank buffer — which is
     // precisely what `docs/config.md` promises does not happen. Found by
     // clicking on it.

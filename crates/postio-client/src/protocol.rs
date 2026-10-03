@@ -24,11 +24,9 @@ use postio_model::{Account, Draft, DraftId};
 /// log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClientKind {
-    /// The GTK desktop app.
-    Gtk,
     /// `postio-tui`.
     Tui,
-    /// Postio Focus, the other desktop app (spec 007).
+    /// Postio, the desktop app: Focus (spec 007).
     Focus,
     /// The macOS frontend, through `postio-ffi`.
     Ffi,

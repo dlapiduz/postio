@@ -17,7 +17,7 @@ import PostioFFI
 /// worst shape a bug can take here, because an empty folder is a perfectly
 /// ordinary thing to see.
 ///
-/// `postio-gtk`'s `feed.rs::scope_of` is this function on the other side,
+/// The classic app's `feed.rs::scope_of` was this function on the other side,
 /// fallback included.
 public enum SidebarScope {
     /// The scope `row` opens.

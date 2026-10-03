@@ -2,7 +2,7 @@
 //! the policy behind every message list, with no toolkit and no store in it.
 //!
 //! Two frontends page the same [`crate::list::ListWindow`], and each had
-//! its own copy of the policy around it. `postio-gtk`'s feed knew how to
+//! its own copy of the policy around it. The classic app's feed knew how to
 //! turn a page number into a store request or a slice of search hits, what
 //! each scope does with a runtime event (the table below) and how often a
 //! failed page may be asked for again; the macOS boundary re-derived the

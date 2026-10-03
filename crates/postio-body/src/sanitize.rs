@@ -3,7 +3,7 @@
 //! This is defense in depth, not the primary control — the primary control is
 //! that the reader never gives the `WebView` a live path to a remote host in
 //! the first place (`postio-cid:` for inline parts, no scheme at all for
-//! anything else; see `postio_gtk::reader::view`). A bug here should degrade
+//! anything else; see the frontend's reader view). A bug here should degrade
 //! markup, never to a live tracking pixel.
 //!
 //! [`ammonia`] does most of the work from its own defaults: `<script>` is
@@ -141,11 +141,11 @@ pub struct Sanitized {
     pub styles: String,
     /// How many remote (`http`/`https`) references were stripped.
     ///
-    /// `postio_gtk::reader::banner::RemoteImageBanner` uses whether this is
+    /// a frontend's remote-image banner uses whether this is
     /// nonzero to decide whether a message actually has anything for it to
     /// say — a newsletter with no images should not get a "remote images
     /// blocked" banner it can never have anything to show for. The parts
-    /// panel's held-back count (`postio_gtk::parts::PartsPanel::set_held_back`)
+    /// panel's held-back count (the parts panel's `set_held_back`)
     /// uses the number itself.
     pub remote_blocked: u32,
     /// How many of the stripped remote references were **likely trackers**
@@ -579,7 +579,7 @@ pub const REFUSED_UNITS: &[&str] = &[
 /// Sanitize one HTML body for the reading pane.
 ///
 /// `cid:` references become [`CID_SCHEME`] URIs; the reader's renderer
-/// resolves those against the message's local parts, and `postio_gtk::scheme`
+/// resolves those against the message's local parts, and the frontend's URI-scheme handler
 /// does for the composer (a dangling reference resolves to nothing — the corpus has one on purpose).
 pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
     sanitize_body_in(html, remote, None)
@@ -1471,7 +1471,7 @@ pub(crate) fn is_remote(value: &str) -> bool {
 /// RFC 3986's unreserved set passes through unescaped; everything else —
 /// `@`, `%`, whitespace, non-ASCII — is escaped. Content-IDs are usually
 /// plain ASCII already; this is just so a stray odd one cannot produce a
-/// URI `postio_gtk::scheme` parses differently than it means.
+/// URI the frontend's URI-scheme handler parses differently than it means.
 pub(crate) fn percent_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -1485,7 +1485,7 @@ pub(crate) fn percent_encode(value: &str) -> String {
     out
 }
 
-/// The inverse of `percent_encode`, for `postio_gtk::scheme` to recover the
+/// The inverse of `percent_encode`, for the frontend's URI-scheme handler to recover the
 /// `Content-ID` a request named.
 pub fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();

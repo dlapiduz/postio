@@ -23,7 +23,7 @@ pub fn a_repair_arrives_with_the_address_and_the_servers_already_filled_in() {
         return;
     }
 
-    // The servers a configured account already has, as `postio-app` reads
+    // The servers a configured account already has, as the app reads
     // them off the row it is about to ask for a password for.
     let known = Settings {
         imap: Server {

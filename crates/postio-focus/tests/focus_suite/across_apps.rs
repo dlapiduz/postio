@@ -1,11 +1,10 @@
-//! One store, either desktop app (US11 scenario 2, the archive half, T064):
-//! what Focus archives, the classic app sees archived -- at once, through
-//! its own client of the same host.
+//! One store, every app (US11 scenario 2, the archive half, T064): what
+//! Focus archives, another app sees archived -- at once, through its own
+//! client of the same host.
 //!
-//! The classic app's window is `postio-gtk`'s, which Focus may not depend
-//! on even for a test (`check-crate-boundaries.py`), so its side is the
-//! client it reads through: `ClientKind::Gtk`, connected to the host Focus
-//! opened, reading and listening as that window does.
+//! The other app is the terminal, by the client it reads through:
+//! `ClientKind::Tui`, connected to the host Focus opened, reading and
+//! listening as the terminal does.
 
 use postio_client::protocol::ClientKind;
 use postio_model::listing::MailStore as _;
@@ -13,7 +12,7 @@ use postio_model::{ListScope, MailboxRole};
 
 use crate::support::{self, Fixture};
 
-pub fn what_focus_archives_the_classic_app_sees_archived() {
+pub fn what_focus_archives_the_terminal_sees_archived() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -29,24 +28,24 @@ pub fn what_focus_archives_the_classic_app_sees_archived() {
             fixture.host(),
             &postio_config::Config::default(),
         );
-        let classic = session.host().connect(ClientKind::Gtk);
-        let heard = classic.events();
+        let terminal = session.host().connect(ClientKind::Tui);
+        let heard = terminal.events();
         support::keep(session);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Budget"]).await,
             "the inbox never reached the screen"
         );
-        let folders = classic
+        let folders = terminal
             .mailboxes(fixture.account.id)
             .await
-            .expect("the classic app reads the folders");
+            .expect("the terminal reads the folders");
         let archive = folders
             .iter()
             .find(|folder| folder.role == MailboxRole::Archive)
             .expect("an Archive folder")
             .id;
         assert_eq!(
-            classic.list_count(ListScope::Mailbox(archive)).await,
+            terminal.list_count(ListScope::Mailbox(archive)).await,
             Ok(0),
             "nothing archived yet"
         );
@@ -57,7 +56,7 @@ pub fn what_focus_archives_the_classic_app_sees_archived() {
             "Focus did not archive it"
         );
 
-        // The classic app hears it leave the inbox, as its window would.
+        // The terminal hears it leave the inbox, as its list would.
         let removed = std::cell::Cell::new(false);
         let heard_it = crate::settle_until(async || {
             while let Ok(envelope) = heard.try_recv() {
@@ -75,15 +74,15 @@ pub fn what_focus_archives_the_classic_app_sees_archived() {
         .await;
         assert!(
             heard_it,
-            "the classic app was not told the message left the inbox"
+            "the terminal was not told the message left the inbox"
         );
         assert_eq!(
-            classic.list_count(ListScope::Mailbox(archive)).await,
+            terminal.list_count(ListScope::Mailbox(archive)).await,
             Ok(1),
-            "the classic app lists it in Archive"
+            "the terminal lists it in Archive"
         );
         assert_eq!(
-            classic.list_count(ListScope::Mailbox(fixture.inbox)).await,
+            terminal.list_count(ListScope::Mailbox(fixture.inbox)).await,
             Ok(0),
             "and not in the inbox"
         );

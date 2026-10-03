@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 /// Resolution is quadratic in the number of commands: every claim asks every
 /// binding already made whether the key is taken, and each of those questions
 /// goes back to the registry for the holder's contexts. Paying it once is
-/// nothing; `postio-gtk`'s message row paid it per row GTK built, which was
+/// nothing; the classic app's message row paid it per row GTK built, which was
 /// most of the second a folder switch spent rebuilding the list (#1216).
 ///
 /// [`Keymap::defaults`](crate::Keymap::defaults) is the answer for anything

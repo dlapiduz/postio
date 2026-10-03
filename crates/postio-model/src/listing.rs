@@ -403,7 +403,7 @@ pub type Read<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + Send
 /// that.
 ///
 /// A trait rather than a struct so the thing that owns a database and the
-/// thing that draws its rows need not be compiled together. `postio-gtk`
+/// thing that draws its rows need not be compiled together. The classic app
 /// depends on `postio-core`, so anything concrete here would put the
 /// database engine in the view layer's dependency graph — which
 /// `scripts/checks/check-crate-boundaries.py` refuses, and rightly: the view

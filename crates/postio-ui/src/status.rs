@@ -178,7 +178,7 @@ pub fn age(elapsed: Duration) -> String {
 
 // ── Folding events into the line ─────────────────────────────────────────
 //
-// Moved from `postio-gtk::feed` for the terminal frontend, which folds the
+// Moved from the classic app's feed for the terminal frontend, which folds the
 // same events into the same line (specs/005-tui-frontend FR-004): logic two
 // frontends need is written once.
 

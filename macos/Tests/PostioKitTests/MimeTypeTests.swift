@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 
 /// What a picture's bytes say it is (#1571).
 ///
-/// From the bytes rather than the name, for the reason `postio-gtk`'s
-/// composer gives: a `.png` that is really a JPEG would reach the recipient
+/// From the bytes rather than the name, for the reason the classic app's
+/// composer gave: a `.png` that is really a JPEG would reach the recipient
 /// declared wrongly, and the declaration is all their client has to go on.
 @Suite struct MimeTypeTests {
     /// A one-pixel picture, encoded as `type`.

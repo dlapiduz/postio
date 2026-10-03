@@ -112,7 +112,7 @@ public enum Pane: CaseIterable, Sendable {
 ///
 /// Almost everything goes to `invoke`, where the boundary decides whether it
 /// is its own or the engine's. These are the exceptions: each one *is* a
-/// window, and a session cannot present one. `postio-gtk`'s `run_action` makes
+/// window, and a session cannot present one. The classic app's `run_action` made
 /// the same call for the same reason.
 ///
 /// They are named here rather than written as literals at the `switch`,

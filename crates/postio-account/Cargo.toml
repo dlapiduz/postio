@@ -17,7 +17,7 @@ default = ["imap"]
 # Turn it off and what is left is the MailBackend seam, its mock, autoconfig
 # discovery and the keyring. That is all `postio-sync` needs, and it is what
 # keeps a pre-1.0 protocol crate — and the CI rule that bans io-imap from
-# `postio-gtk` — out of everything above this one. See ADR 0001.
+# the view layer — out of everything above this one. See ADR 0001.
 imap = [
     "dep:io-imap",
     "dep:io-sasl",

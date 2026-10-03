@@ -109,7 +109,7 @@ impl ListScope {
     /// names `mailbox` — `None` for [`Arrival::MessagesChanged`], which is
     /// account-wide rather than about one mailbox.
     ///
-    /// The rule, in one sentence (`postio_gtk::feed`'s module docs carry
+    /// The rule, in one sentence (the classic app's feed module docs carried
     /// the full table this answers): a list reacts to an event only when
     /// the event can change its own membership or order, and it inserts at
     /// the top only when its own order guarantees the new rows belong
@@ -126,7 +126,7 @@ impl ListScope {
     /// flag or a snooze changing — is [`Reaction::Reload`] rather than
     /// [`Reaction::Refetch`]: the membership moved, and a page refetch
     /// cannot express a row leaving. [`ListScope::Thread`] never reaches a
-    /// [`Feed`](../../postio_gtk/feed/struct.Feed.html) at all, so every
+    /// a feed at all, so every
     /// arrival is [`Reaction::Ignore`].
     ///
     /// `inbox` is whether `mailbox` is an inbox, when the caller knows --

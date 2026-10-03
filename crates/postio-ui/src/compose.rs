@@ -50,8 +50,8 @@ mod tests {
 /// back, an edit channel carrying `innerHTML`, and a reflection channel
 /// saying what formatting is in force at the caret.
 ///
-/// One copy, because a second one is a second dialect. The GTK reader's
-/// `gtk_editable_dialect.rs` proves the surface emits `<p>` paragraphs and
+/// One copy, because a second one is a second dialect. The classic app's reader
+/// `gtk_editable_dialect.rs` proved the surface emits `<p>` paragraphs and
 /// element-form bold/italic; a macOS surface running a *different* script
 /// would emit `<div>`s and `<span style>`s, `parse` would narrow them to
 /// something else, and the two composers would disagree about what the same
@@ -110,7 +110,7 @@ pub fn markdown_table_js() -> String {
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
 
-    /// `postio-gtk` still `include_str!`s its own copy, because this branch
+    /// The classic app `include_str!`d its own copy, because this branch
     /// is worked from a Mac and `issue-land.sh` will not land a crate whose
     /// gates cannot run there. Until a Linux session points it here, the two
     /// files are pinned to each other: this fails the moment either is
@@ -228,7 +228,7 @@ pub fn link_script(href: &str) -> Option<String> {
 ///
 /// The same shape as [`link_script`], and for its reason: both composers run
 /// this, so an image inserted on a Mac and one inserted on Linux are the same
-/// edit. The caret fallback is the one `postio-gtk`'s editor learned: a
+/// edit. The caret fallback is the one the classic app's editor learned: a
 /// picture can be the first gesture into a fresh body, and `insertHTML`
 /// silently does nothing without a selection.
 pub fn image_script(content_id: &str, alt: &str) -> Option<String> {

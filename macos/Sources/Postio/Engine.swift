@@ -428,8 +428,8 @@ final class Engine {
     /// field reports it as it changes.
     ///
     /// `command_palette` is still handled here and not by the boundary: it
-    /// opens a surface, and a session cannot. `postio-gtk`'s `run_action`
-    /// makes the same call for the same reason.
+    /// opens a surface, and a session cannot. The classic app's `run_action`
+    /// made the same call for the same reason.
     private(set) var finding: FinderBox.Asking?
     /// Which row the keyboard is on.
     private(set) var finderBox = FinderBox()
@@ -842,7 +842,7 @@ final class Engine {
     ///
     /// From `SyncProgress`, which arrives while a pass is in flight and stops
     /// when it is done — the presence of progress is the answer to "is
-    /// anything happening", which is the trap `postio-gtk`'s footer fell into
+    /// anything happening", which is the trap the classic app's footer fell into
     /// by reading a `last_synced_at` that only moves when a pass *completes*.
     private(set) var syncing = false
 
@@ -1736,7 +1736,7 @@ final class Engine {
     ///
     /// Not a `deinit`: that is nonisolated and cannot touch main-actor state.
     /// It has to be called from the application's termination handler, and it
-    /// matters more than it looks — `postio-app` calls the equivalent before
+    /// matters more than it looks — the classic app called the equivalent before
     /// returning because the store is SQLCipher, and dropping an engine at
     /// process exit is exactly when libcrypto goes away underneath a thread
     /// still encrypting a page.

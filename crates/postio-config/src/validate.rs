@@ -350,7 +350,7 @@ fn push(
 /// `[accounts.<id>]` parses and is not read by anything (#470).
 ///
 /// It described a real-looking editing path for an existing account's host,
-/// port, security and display name. `postio-app` takes all of those from
+/// port, security and display name. The classic app took all of those from
 /// SQLite, written once by onboarding, so editing the section saved,
 /// re-parsed without complaint, and changed nothing about the account that
 /// was running. A schema that round-trips and does nothing is worse than no

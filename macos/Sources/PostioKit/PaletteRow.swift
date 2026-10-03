@@ -8,7 +8,7 @@ import PostioFFI
 /// ordered; a second fuzzy match in Swift would mean the same query offers
 /// different things on each platform, which is the drift ADR 0019 exists to
 /// prevent. What is Swift's is turning the match *offsets* into something
-/// AppKit can draw — the same numbers `postio-gtk` turns into Pango bold.
+/// AppKit can draw — the same numbers the classic app turned into Pango bold.
 public enum PaletteRow {
     /// A search excerpt with its matches emphasised.
     ///

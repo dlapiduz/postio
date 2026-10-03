@@ -1,6 +1,6 @@
 //! Toolkit-free presentation logic, shared by every frontend (ADR 0019).
 //!
-//! `postio-gtk` accumulated ~2,850 lines of logic with no toolkit in it —
+//! The classic app accumulated ~2,850 lines of logic with no toolkit in it —
 //! selection semantics, the reader's document assembly, keymap resolution,
 //! design tokens — which a second frontend would otherwise have to
 //! reimplement, fork, or link GTK to borrow. This crate is where that logic

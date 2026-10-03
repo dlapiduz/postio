@@ -3,7 +3,7 @@ import Testing
 
 /// A skip that cannot pass for a test.
 ///
-/// `postio-gtk`'s `gtk_display_required.rs` exists because around 117 test
+/// The classic app's `gtk_display_required.rs` existed because around 117 test
 /// files opened with "no display? skip and return", which is right on a
 /// contributor's headless shell and wrong in CI: with no display every one of
 /// them returned early and reported success, including the accessibility audit

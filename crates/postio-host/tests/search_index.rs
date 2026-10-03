@@ -250,7 +250,7 @@ fn starting_the_idle_passes_indexes_the_header_blocks_already_on_disk() {
         wiring.with_secrets(std::sync::Arc::new(MemorySecretStore::new()))
     })
     .expect("a host");
-    let client = host.connect(ClientKind::Gtk);
+    let client = host.connect(ClientKind::Focus);
 
     // Nobody calls `index_local_headers`: only the host's idle passes do.
     host.start_idle_passes();

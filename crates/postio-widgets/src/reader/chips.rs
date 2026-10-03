@@ -1,8 +1,8 @@
 //! The attachments of an open message, as a row of chips (canvas 1b).
 //!
-//! Moved from postio-gtk's `parts.rs` with the reader that draws them
-//! (ADR 0043; specs/007-postio-focus T019). The tree they are drawn from is
-//! `postio_ui::reader::parts`; the panel they open is the classic app's.
+//! They live with the reader that draws them (ADR 0043;
+//! specs/007-postio-focus T019). The tree they are drawn from is
+//! `postio_ui::reader::parts`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,10 +19,9 @@ type NodeHandler = Box<dyn Fn(&Node)>;
 /// The attachments of an open message, as a row of chips.
 ///
 /// Canvas 1b draws these under the body: what came with the message, named
-/// and sized, before anything is downloaded. They are the way into the
-/// classic app's parts panel (`postio_gtk::parts::PartsPanel`) — a message's
-/// structure is a thing you go and look at, and this is the affordance that
-/// says there is something to look at.
+/// and sized, before anything is downloaded. They are the way into a
+/// message's parts — its structure is a thing you go and look at, and this is
+/// the affordance that says there is something to look at.
 ///
 /// Only parts that hold bytes get a chip. A `multipart/alternative` is real
 /// and appears in the tree, but nobody wants a chip for it.

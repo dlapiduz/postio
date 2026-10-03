@@ -16,7 +16,7 @@ import Testing
 /// zero*: no folder, no error, an empty list, and nothing anywhere saying
 /// the click had been understood as nonsense.
 ///
-/// `postio-gtk`'s `feed.rs::scope_of` is the same function on the other side,
+/// The classic app's `feed.rs::scope_of` was the same function on the other side,
 /// down to the fallback.
 @Suite struct SidebarScopeTests {
     private func row(_ role: MailboxRoleFfi, id: Int64 = 0, account: Int64 = 7) -> MailboxFfi {

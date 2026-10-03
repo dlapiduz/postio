@@ -1,5 +1,5 @@
-//! Dragging mail out produces files, and produces them *late* (T245; ported
-//! from `postio-gtk`'s `drag_out` suite, whose provider moved here).
+//! Dragging mail out produces files, and produces them *late* (T245; the
+//! provider lives here).
 //!
 //! The laziness is the whole design and it is invisible from the outside: a
 //! provider that writes five hundred `.eml` files at drag start and one that

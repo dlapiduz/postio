@@ -261,7 +261,7 @@ public struct ReaderView: NSViewRepresentable {
 /// A reader's web view, which counts its own life (#1586).
 ///
 /// Every web view the reader creates is one of these, so its lifetime **is**
-/// the reader's surface count, noted into the counters `postio-gtk` notes
+/// the reader's surface count, noted into the counters the classic app noted
 /// into. Counted from the view's own `init` and `deinit` rather than from
 /// `makeNSView` and `dismantleNSView`: what costs is the content process
 /// behind a web view, and that can go when the view does — which is when ARC

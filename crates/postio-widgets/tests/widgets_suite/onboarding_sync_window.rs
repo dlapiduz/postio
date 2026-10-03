@@ -4,9 +4,9 @@
 //! Its own file with one test function, for the same reason
 //! `gtk_onboarding.rs` gives: two `#[test]`s here would race `adw::init()`.
 //!
-//! `postio-app`'s `write_sync_window` — whether the chosen window actually
-//! reaches `SyncConfig.initial_sync_messages` — is proven in
-//! `postio-app`'s own wiring test; this proves only what a display can:
+//! `write_sync_window` — whether the chosen window actually
+//! reaches `SyncConfig.initial_sync_messages` — is proven in the
+//! presenter's own tests (`present/onboarding.rs`); this proves only what a display can:
 //! that the step renders, that picking a window updates the estimate, and
 //! that `Start sync` fires with the picker's own selection.
 

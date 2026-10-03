@@ -1,7 +1,7 @@
 //! The local store, read directly off the database engine.
 //!
 //! The half of [`super`] that owns a database. Behind the `runtime` feature
-//! because `postio-gtk` depends on `postio-core` and must not have the engine
+//! because the view layer depends on `postio-core` and must not have the engine
 //! anywhere in its dependency graph; whatever assembles the running
 //! application turns the feature on, and the view layer never does.
 

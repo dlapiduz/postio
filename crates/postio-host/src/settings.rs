@@ -1,6 +1,6 @@
 //! The desktop's settings panels, answered for any frontend.
 //!
-//! Moved from `postio-app`'s `settings_accounts`, `settings_privacy`,
+//! Moved from the classic app's `settings_accounts`, `settings_privacy`,
 //! `settings_egress`, `sidebar_backfill` and `orientation`
 //! (`specs/005-tui-frontend` T018). Each read the store itself, a repository
 //! at a time; each read is one request here, and a panel that read several

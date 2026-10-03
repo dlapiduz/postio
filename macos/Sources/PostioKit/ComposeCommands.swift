@@ -10,7 +10,7 @@ import PostioFFI
 /// palette, and reached **nothing**. The composer itself was real the whole
 /// time — `ComposeModel` could already apply a mark, attach a file and send.
 /// What was missing was anything that turned an id into a call.
-/// `postio-gtk`'s composer does it with `connect_command`; this is that, for
+/// The classic app's composer did it with `connect_command`; this is that, for
 /// a frontend whose composer is a window rather than a pane.
 ///
 /// # Why a frontend answers these at all

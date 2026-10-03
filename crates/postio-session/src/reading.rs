@@ -1,6 +1,6 @@
 //! Reading a message's body, and resolving the parts it references.
 //!
-//! Moved here from `postio-app` (#608). Both halves are the *reading* side of
+//! Moved here from the classic app (#608). Both halves are the *reading* side of
 //! the reader path, and neither is glue: they are judgement earned from bugs,
 //! and a second copy on the macOS side would reproduce the bugs rather than
 //! the behaviour -- which is what ADR 0019 Q6 exists to prevent.

@@ -1,7 +1,7 @@
 //! Adding an account: the probe's reading, the proof, and the two writes.
 //!
 //! The first-run screen's half that talks to servers and the store, with
-//! nothing a toolkit names. It was `postio-app`'s until the terminal needed
+//! nothing a toolkit names. It was the classic app's until the terminal needed
 //! the same first run (specs/005-tui-frontend T016): the same probe options,
 //! the same proof in the same order, the same sentences for the same
 //! failures, the same credential-first write. The desktop calls it; the
@@ -44,7 +44,7 @@ pub fn probe_options() -> ProbeOptions {
 
 /// What the screen should show for `report`.
 ///
-/// Split out of the desktop's `probe` (`postio-app`) so it can be driven
+/// Split out of the classic app's `probe` so it can be driven
 /// without a network: the mapping is where a discovery becomes a sentence,
 /// and it is the half that had the bug.
 pub fn status_for(report: &DiscoveryReport) -> Status {

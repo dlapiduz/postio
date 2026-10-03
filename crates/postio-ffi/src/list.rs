@@ -149,7 +149,7 @@ pub struct RowFfi {
     /// Who is in the conversation, elided: `Tessa, Mara, Pinepoint`.
     ///
     /// Empty on a message row, and that is how the two are told apart — the
-    /// same rule `postio_gtk::list::Row` states about its own participants.
+    /// same rule the classic app's list row stated about its own participants.
     /// Already shortened here rather than crossing as a list of addresses,
     /// because how a crowd of names is shortened is a decision both frontends
     /// have to make the same way (`postio_ui::conversation::participants`),
@@ -199,7 +199,7 @@ impl From<MessageSummary> for RowFfi {
             // `display()`, not `to_string()`. The second is the RFC form,
             // `Ada Lovelace <ada@example.com>`, and a list drawing it spends
             // the whole line on an address nobody reads and truncates the
-            // name. `postio-gtk`'s row calls `display()`; this called the
+            // name. The classic app's row called `display()`; this called the
             // other one, so the two frontends drew different senders for the
             // same message (#1150) -- on a field whose doc comment says
             // "already rendered for display".

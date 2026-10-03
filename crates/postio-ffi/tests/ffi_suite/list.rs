@@ -38,7 +38,7 @@ async fn seeded(count: u32) -> (std::sync::Arc<Session>, ScopeFfi) {
 async fn a_flag_change_reaches_the_row_on_screen() {
     // The engine writes to the store and says `MessagesChanged`: the same
     // rows in the same order, so the boundary re-reads the page holding them
-    // in place -- `postio_ui::paging`'s table, the one `postio-gtk`'s feed
+    // in place -- `postio_ui::paging`'s table, the one the classic app's feed
     // follows. Before that table crossed the boundary, an event whose count
     // had not moved did nothing at all, and a flag set on macOS stayed
     // undrawn until something else happened to reload the list.
@@ -270,7 +270,7 @@ async fn mail_arriving_into_the_open_scope_changes_the_row_count() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_sender_crosses_as_the_name_a_person_reads() {
-    // `EmailAddress::display()`, which is what `postio-gtk`'s row draws --
+    // `EmailAddress::display()`, which is what the classic app's row drew --
     // not `to_string()`, which is the RFC form `Name <addr>`. The boundary
     // used the second, so the macOS list drew
     // `Fidelity Investments <Fidelity.Investments@...` where the GTK list

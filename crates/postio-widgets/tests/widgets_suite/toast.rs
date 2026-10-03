@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! Gdk-ERROR **: gdk_display_manager_get() was called before gtk_init()
-//! postio_gtk-... (signal: 6, SIGABRT)
+//! widgets_suite-... (signal: 6, SIGABRT)
 //! ```
 //!
 //! Cargo gives every integration test *binary* its own process — but not

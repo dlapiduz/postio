@@ -4,8 +4,8 @@
 //! `postio-host` -- which is what let this module move behind
 //! `postio-widgets` at all (ADR 0043).
 //!
-//! `postio-app`'s own `app_suite::send_wiring` proves the classic window's
-//! `ctrl+Return` reaches this. This is the presenter on its own: a bare
+//! The app's own wiring tests prove its window's `ctrl+Return` reaches
+//! this. This is the presenter on its own: a bare
 //! `Composer`, wired through a scripted `Client`, with no window at all.
 
 use std::sync::{Arc, Mutex};
@@ -45,7 +45,7 @@ impl Transport for Scripted {
     }
 }
 
-/// `ctrl+Return`'s claim (`app_suite::send_wiring`), for the presenter alone:
+/// `ctrl+Return`'s claim (proven in the app's wiring), for the presenter alone:
 /// filling the fields and dispatching `Send` on a bare composer, wired
 /// through the shared presenter and nothing else, queues the draft through
 /// the client -- with the recipient and subject that were typed -- and

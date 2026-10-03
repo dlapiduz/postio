@@ -7,7 +7,7 @@
 //!
 //! # Why it is its own crate
 //!
-//! `postio-app` used to be both this and the GTK binary, which meant
+//! The classic app used to be both this and the GTK binary, which meant
 //! `actions.rs` — the whole verb vocabulary, with not one line of toolkit in
 //! it — linked GTK. `ARCHITECTURE.md` listed that under known gaps with the
 //! consequence spelled out: **no headless frontend is possible.**
@@ -29,15 +29,15 @@
 //!
 //! ```text
 //!   postio-session   store, runtime, engines, verbs. No toolkit.
-//!         └── postio-app   the GTK binary. Adds a window and nothing else.
+//!         └── the desktop app   the GTK binary. Adds a window and nothing else.
 //! ```
 //!
 //! # What is *not* here
 //!
 //! The presenters that join the two halves — the composer's storage wiring,
 //! the reading pane's body loads, onboarding, notifications — stay in
-//! `postio-app`, because each of them names a widget. The line is not "does it
-//! touch the store" but "does it touch a toolkit": `postio-app` is what is
+//! the frontends, because each of them names a widget. The line is not "does it
+//! touch the store" but "does it touch a toolkit": the frontend is what is
 //! left once that line is drawn, and it is smaller than it looks.
 
 pub mod actions;
@@ -205,7 +205,7 @@ pub use postio_storage::key::STORE_KEY_ENTRY;
 /// can have been encrypted under an empty key, so the store behind it is
 /// either absent or already unopenable. Treating it as a first run is what
 /// gives a half-finished first run a way out, and it is the same tolerance
-/// [`postio_app::startup_route`] extends to an empty password.
+/// the classic app's startup route extended to an empty password.
 ///
 /// # No plaintext fallback
 ///
@@ -216,7 +216,6 @@ pub use postio_storage::key::STORE_KEY_ENTRY;
 /// routed to the surface that asks the user to unlock it rather than to
 /// onboarding, which would ask them to set up an account they already have.
 ///
-/// [`postio_app::startup_route`]: https://github.com/dlapiduz/postio
 /// [`SecretError::Locked`]: postio_account::secret::SecretError::Locked
 pub async fn store_key(
     secrets: &dyn postio_account::secret::SecretStore,
@@ -391,9 +390,9 @@ impl Wiring {
     /// Everything the panes need, over an already-open store.
     ///
     /// `runtime`, `events` and `commands` come from the `Bridge` that
-    /// `postio_app::run` builds at startup; a test supplies its own, which is
+    /// the app's startup builds; a test supplies its own, which is
     /// the whole point of this being constructible from outside. Not a link:
-    /// `postio-app` depends on this crate and not the other way round, which
+    /// the frontend depends on this crate and not the other way round, which
     /// is the split, and rustdoc cannot resolve upward.
     pub fn new(
         database: Store,
@@ -506,7 +505,7 @@ impl Wiring {
 /// that will not start — which was right while the store was optional. ADR
 /// 0014 ended that: the store is encrypted, its key is in the keyring, and
 /// there is no degraded mode to fall back to. So the honest answer is a
-/// sentence, and `postio_app::run` puts it on a screen with a retry.
+/// sentence, and the app puts it on a screen with a retry.
 pub async fn open_store(
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Store, BlobStore), String> {
@@ -1176,7 +1175,7 @@ const INDEX_BODY_DEBOUNCE: Duration = Duration::from_millis(500);
 /// the event hub does.
 ///
 /// Both composition roots spawn one, with `wiring.events.subscribe(..)`:
-/// `postio-app` on the window's hub, and the macOS boundary on its own --
+/// the desktop app on the window's hub, and the macOS boundary on its own --
 /// which never had a body indexer at all, and relied on the fetch to write
 /// the row. `events` is `None` for a sink with no hub behind it (a test's
 /// plain channel): the catch-up pass still runs, and nothing wakes it after.

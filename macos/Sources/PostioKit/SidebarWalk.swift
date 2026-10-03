@@ -13,7 +13,7 @@ import PostioFFI
 ///
 /// # The rules are GTK's, and so are the reasons
 ///
-/// `postio_gtk::sidebar::Sidebar::step` has had them since it had a tree:
+/// The classic app's sidebar step had them since it had a tree:
 ///
 /// - **One list across every section.** The sidebar looks like one column, so
 ///   `j` crosses from the last favourite into the first account folder

@@ -12,7 +12,7 @@
 //! *values* is `postio_config`'s job, and writing them is its `patch_*`
 //! functions'.
 //!
-//! What does **not** live here is anything a toolkit names: `postio-gtk`
+//! What does **not** live here is anything a toolkit names: the classic app
 //! keeps its own `icon` beside this, because a GTK symbolic icon name is not
 //! an SF Symbol and neither frontend should carry the other's.
 
@@ -34,7 +34,7 @@ pub enum Section {
     /// The remote-image allow-list (#871) and what has been unsubscribed
     /// from — never a `config.toml` table at all, unlike every other pane
     /// here: it is view state, kept in its own `$XDG_STATE_HOME` key-file
-    /// (see `postio_gtk::reader::RemoteImageAllowList`, which owns the file;
+    /// (see the classic app's reader remote-image allow-list, which owns the file;
     /// not linkable from here — this crate is below the frontends, not beside
     /// them).
     Privacy,

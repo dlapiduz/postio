@@ -290,7 +290,7 @@ async fn search_never_crosses_accounts() {
 /// so it could reconstruct one -- it is a rusqlite-only leaf and
 /// `check-crate-boundaries.py` keeps it that way -- the excerpt is cut by
 /// `postio_search::highlight::snippet` from the body text, by whoever can
-/// read it. `postio_app::search` is that caller.
+/// read it. The session layer's search is that caller.
 #[tokio::test]
 async fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() {
     let database = test_support::memory().await;

@@ -8,10 +8,9 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
-# The app is a library with a thin binary over it, as postio-app is: a
-# composition root that only launching the binary can reach is one nothing
-# can check (postio-app's `lib.rs` tells that story). `tests/focus_suite`
-# drives the same startup the binary runs.
+# The app is a library with a thin binary over it: a composition root that
+# only launching the binary can reach is one nothing can check.
+# `tests/focus_suite` drives the same startup the binary runs.
 [lib]
 path = "src/lib.rs"
 
@@ -45,7 +44,7 @@ glib = { version = "0.22.9", features = ["v2_72"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 # The binary's allocator: `postio` is Focus now, and the engine's page cache
 # and fts index churn small allocations on the hot path, which is why the
-# shipped binary has used mimalloc (`postio-app`'s `main.rs`). The memory
+# shipped binary has used mimalloc. The memory
 # measurements (#1606) measure the heap under it too.
 mimalloc = "0.1"
 pango = { version = "0.22.9", features = ["v1_56"] }
@@ -117,9 +116,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
 postio-focus = { path = ".", features = ["demo"] }
 postio-storyboard.workspace = true
 
-# Focus's GTK suite: the custom harness of postio-app's app_suite, for its
-# reasons -- GTK initializes on exactly one thread per process (#41), and
-# libtest runs tests on a pool. See tests/focus_suite/main.rs.
+# Focus's GTK suite: a custom harness, for two reasons -- GTK initializes on
+# exactly one thread per process (#41), and libtest runs tests on a pool. See
+# tests/focus_suite/main.rs.
 # Needs the seeded store and the demo module, which are behind `demo`.
 [[example]]
 name = "shot"

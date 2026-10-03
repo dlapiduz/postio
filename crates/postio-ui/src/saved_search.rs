@@ -7,7 +7,7 @@
 //! four edits to `config.toml`: save the query that is showing, rename the
 //! row it made, move it among its neighbours, remove it.
 //!
-//! None of those four is a widget. All four lived in `postio-gtk::config`
+//! None of those four is a widget. All four lived in the classic app's config
 //! anyway — read the file fresh, mutate the `[filters]` table, patch it back,
 //! repaint the sidebar — which is why the macOS search surface could draw a
 //! *Save search as folder* affordance, leave it enabled, and have it do

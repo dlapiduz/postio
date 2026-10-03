@@ -1,7 +1,7 @@
 //! A message's parts, and getting an attachment's bytes out of one.
 //!
-//! The surface #1572 is about. On Linux this is `postio-gtk`'s parts panel
-//! and `postio-app`'s byte-fetching half; on macOS there was nothing at all,
+//! The surface #1572 is about. On Linux this was the classic app's parts panel
+//! and the classic app's byte-fetching half; on macOS there was nothing at all,
 //! which meant an attachment that arrived on a Mac could not be saved by any
 //! route — no panel, no menu item, and no call under either.
 //!

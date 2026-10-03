@@ -250,7 +250,7 @@ pub enum UiEvent {
 ///
 /// The four are drawn differently and mean different things: a completion may
 /// offer to be taken back, a refusal is a quiet hint rather than an alarm,
-/// and a failure is the one that has to be hard to miss. `postio-gtk` draws
+/// and a failure is the one that has to be hard to miss. The classic app drew
 /// each with its own toast, which is the shape this is named after.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum NoticeKindFfi {

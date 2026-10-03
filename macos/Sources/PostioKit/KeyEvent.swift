@@ -7,8 +7,8 @@ import PostioFFI
 /// There is no keymap here, no table of what `a` does, no notion of a
 /// sequence: `postio_ui::keymap` owns all of that for both frontends, and
 /// this hands it the character the key would type, the key's name when it
-/// types none, and the modifiers held. `postio-gtk`'s `Chord::from_key_event`
-/// is the same twenty lines over GDK.
+/// types none, and the modifiers held. The classic app's `Chord::from_key_event`
+/// was the same twenty lines over GDK.
 ///
 /// Kept apart from the monitor that installs it because this is the half with
 /// decisions in it, and a decision that needs a running application and a real

@@ -15,7 +15,7 @@
 //! overrides together and knows every command.
 //!
 //! Binding syntax is deliberately untyped at this layer — the keymap resolver
-//! in `postio-gtk` parses `"a"`, `"A"`, `"ctrl+k"`, `"g s"` — so a binding for a
+//! in a frontend parses `"a"`, `"A"`, `"ctrl+k"`, `"g s"` — so a binding for a
 //! command this version does not know is preserved rather than dropped.
 
 use std::collections::BTreeMap;
@@ -35,7 +35,7 @@ pub const MODIFIERS: &[&str] = &[
 
 /// Multi-character key names Postio understands, beyond single characters.
 ///
-/// These are GDK key names, which is what the keymap resolver in `postio-gtk`
+/// These are GDK key names, which is what the keymap resolver in a frontend
 /// looks up, spelled case-insensitively here because people type `escape`.
 pub const KEY_NAMES: &[&str] = &[
     "return",

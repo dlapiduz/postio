@@ -1,7 +1,7 @@
 //! Every command reaches something, or this says which ones do not.
 //!
-//! `postio-gtk` has had this sweep since #756 —
-//! `app_suite/command_wiring.rs` — and its `KNOWN_ORPHANS` list is empty
+//! The classic app had had this sweep since #756 —
+//! the classic app's command-wiring test — and its `KNOWN_ORPHANS` list is empty
 //! because the sweep has existed long enough to have emptied it. macOS had
 //! nothing of the kind, which is how a build shipped where `refresh` was in
 //! the File menu, bound to `F5` and `R`, listed in the palette, and answered
@@ -41,7 +41,7 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// a place orphans go to be forgotten — which is exactly what happened
 /// without a sweep at all.
 ///
-/// **Empty**, as `app_suite/command_wiring.rs`'s is: every command reaches a
+/// **Empty**, as the classic app's command-wiring test's is: every command reaches a
 /// handler, a window or this boundary, or is scoped away from the Mac by
 /// `postio_core::registry::offered_on`. A new entry here is a regression
 /// with an issue number, not a place to park one.

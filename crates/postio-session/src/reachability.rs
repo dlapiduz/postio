@@ -37,7 +37,7 @@
 //! It runs when somebody presses a button, which is `ARCHITECTURE.md` §11's
 //! test for anything that leaves the machine. The connectors are arguments
 //! rather than constructed here, so the tests in the default suite reach no
-//! network at all — the same reason `postio_app::onboarding::probe` takes its
+//! network at all — the same reason the classic app's onboarding probe took its
 //! transport (#282).
 
 use std::sync::Arc;

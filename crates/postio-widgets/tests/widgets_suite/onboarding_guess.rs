@@ -2,7 +2,7 @@
 //!
 //! `postio-69`: a domain that publishes no autoconfig — every custom domain,
 //! which is exactly the person least able to answer — got five empty boxes.
-//! `postio-app` now runs the probe with `guess_common_names` on, so the
+//! The app now runs the probe with `guess_common_names` on, so the
 //! report carries an `imap.<domain>` / `smtp.<domain>` suggestion. This is
 //! the other end of that: the suggestion has to *arrive in the form*, and it
 //! has to arrive as a starting point rather than as a discovery.

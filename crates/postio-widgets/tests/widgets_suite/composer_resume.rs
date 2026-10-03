@@ -10,8 +10,8 @@
 //! because a retained draft is autosaved and — since #166 — is itself a row in
 //! that folder. Nothing is lost by swapping to another one and back.
 //!
-//! What this cannot prove is where the draft came from; that is `postio-app`'s
-//! `tests/resume_draft.rs`, which activates a real row over a real store.
+//! What this cannot prove is where the draft came from; that is Focus's job to
+//! prove, by activating a real row over a real store.
 
 use crate::support_compose::Window;
 use crate::support_compose::composer;

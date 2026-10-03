@@ -4,9 +4,9 @@
 //! ADR 0005 Q6b retired `[accounts]` from `config.toml` -- an account is
 //! database state, not preference -- so this is not a `[table]` pane like
 //! `[ui]`/`[sync]`/`[filters]`: there is no buffer to patch. The panel only
-//! reports what changed (`connect_account_edited`); `settings_accounts.rs`
-//! in `postio-app` is what actually writes it, the same split
-//! `connect_account_enabled_changed`/`connect_account_action` already use.
+//! reports what changed (`connect_account_edited`); the settings presenter
+//! is what writes it, the same split `connect_account_enabled_changed` and
+//! `connect_account_action` already use.
 //! Skips without a display. Nothing here touches the network.
 
 use std::cell::RefCell;
@@ -495,7 +495,7 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
 pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
     // The three states the acceptance names, and the one it forbids: a
     // spinner that stops silently. The panel does not connect to anything --
-    // `settings_accounts.rs` in `postio-app` runs the probe, exactly as it
+    // the app runs the probe, exactly as it
     // does for every other edit here -- so this drives the button and then
     // hands the panel each answer by hand.
     let Some((window, panel)) = panel_with_account() else {

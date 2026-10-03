@@ -1932,8 +1932,8 @@ impl Composer {
     // -- Mounting -------------------------------------------------------------
 
     /// Puts the composer in `host`, and wires its keys, its action and its
-    /// command broadcast through it (T023): `postio_gtk::composer::mount` is this
-    /// for the classic window, in postio-gtk.
+    /// command broadcast through it (T023): Focus's composer dialog is the
+    /// host that mounts it.
     pub fn mount_on(&self, host: Rc<dyn ComposerHost>) {
         self.imp().host.replace(Some(Rc::clone(&host)));
         host.install(self);

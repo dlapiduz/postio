@@ -54,7 +54,7 @@ public struct MailNotification: Equatable, Sendable {
 /// Deciding whether new mail is worth interrupting somebody for.
 ///
 /// The decision is the engine's — `postio_ui::notify`, reached through the
-/// boundary's `decideNotification` — so this and `postio-app` cannot drift on
+/// boundary's `decideNotification` — so this and the classic app could not drift on
 /// when to suppress, what id coalesces, or where a click lands. This is a
 /// shim that speaks the boundary's records in this module's vocabulary;
 /// delivery is `MailNotifications`, a thin wrapper over it, because

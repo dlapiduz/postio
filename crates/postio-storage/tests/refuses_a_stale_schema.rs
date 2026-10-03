@@ -8,7 +8,7 @@
 //! column added since:
 //!
 //! ```text
-//! ERROR postio_app::commands: command failed
+//! ERROR postio::commands: command failed
 //!   engine: Parse error: no such column: body_parsed_with
 //! WARN  postio_runtime::engine: cannot top up the backfill for a folder
 //!   error=engine: Parse error: no such column: body_parsed_with

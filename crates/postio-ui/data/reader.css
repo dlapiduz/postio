@@ -1,12 +1,12 @@
 /* Postio's reading-pane stylesheet, injected into the `WebView` that
- * renders a message body (crates/postio-gtk/src/reader/view.rs).
+ * renders a message body (the classic app's reader view).
  *
  * This is NOT the GTK stylesheet tokens.css/shell.css are. A `WebView` has
  * its own CSS engine with no notion of GTK's style context, so the
  * `--postio-*` custom properties tokens.css defines are invisible here.
  * Structure only, below: every colour is a `var(--r-*)` reference, and those
  * variables are generated from the same design tokens by
- * `crates/postio-gtk/src/tokens.rs::generate_reader` into the checked-in
+ * the classic app's token generator into the checked-in
  * `data/reader-tokens.css`, loaded into this document ahead of this file
  * (see `reader_css` in view.rs). Retune the design system, rebuild, and both
  * sheets follow — the pipeline #296 fixed. A drift test

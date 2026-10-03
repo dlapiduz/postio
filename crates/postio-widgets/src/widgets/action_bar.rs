@@ -214,7 +214,7 @@ impl ActionBar {
 ///
 /// A free function, decoupled from the widgets [`ActionBar::set_keymap`]
 /// updates from it, so a rebind reaching a bar is testable without a display
-/// — the same split `postio_gtk::row`'s `hints_for` makes for the focused row.
+/// — the same split the focused row's hints make.
 pub fn keys(actions: &[Action], keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
     actions
         .iter()

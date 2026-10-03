@@ -4,7 +4,7 @@
 //! I/O of any kind — only value types and the logic that belongs to them
 //! (flag canonicalization, special-use resolution, subject normalization).
 //! `postio-storage` persists these types, `postio-account` translates the wire into
-//! them, `postio-gtk` renders them, and none of that leaks back here. That is
+//! them, frontends render them, and none of that leaks back here. That is
 //! what lets a second protocol or a second frontend be added without reshaping
 //! the model, and CI enforces it.
 //!

@@ -1,6 +1,6 @@
 //! The reader's cost counters, for a frontend that owns its own web views.
 //!
-//! `postio-gtk` notes a surface's creation and release, and each document it
+//! The classic app noted a surface's creation and release, and each document it
 //! hands to one, by calling [`postio_ui::reader::cost`] directly. The macOS
 //! reader is a `WKWebView` this crate never sees, so those notes have to cross
 //! (#1586) — and they cross into **the same counters**, not a second set: the

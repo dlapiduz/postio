@@ -41,7 +41,7 @@ pub(crate) fn positions(positions: &[usize]) -> Vec<u32> {
 ///
 /// The palette's matcher over the names the sidebar draws, so `wd` finds
 /// `wayland-devel` here exactly as `cp` finds "Command palette" in `>`.
-/// GTK's `postio_gtk::finder::folders` is the same rule over its own rows.
+/// The classic app's finder was the same rule over its own rows.
 /// Views (Flagged, Snoozed) are not folders to go to, and a container that
 /// holds no mail is not either.
 pub(crate) fn folders(mailboxes: &[crate::MailboxFfi], query: &str) -> FinderAnswerFfi {

@@ -169,7 +169,7 @@ fn exclude_self_and_seen(
 /// markup into text needs a parser, `postio-body` is where that lives, and
 /// `postio-body` depends on *this* crate — so reaching for it here would be a
 /// cycle. A caller that has both converts first and hands the text down;
-/// `postio_gtk::composer::quotable` is the one that does. Before it existed,
+/// The composer's quoting is the one that does. Before it existed,
 /// an HTML-only message quoted as an attribution line with nothing under it.
 fn quote_body(source: &Message) -> String {
     let attribution = attribution(source);

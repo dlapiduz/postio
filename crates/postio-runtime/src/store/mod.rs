@@ -2,7 +2,7 @@
 //!
 //! # Why this is here and not in the frontend
 //!
-//! `postio-gtk` must not depend on the database engine — CI enforces it — so
+//! The view layer must not depend on the database engine — CI enforces it — so
 //! the view layer cannot read `postio-storage` itself. It also must never
 //! *wait* on a read: every widget is main-thread only, and a query that
 //! blocked the main loop would cost frames on the one interaction that happens

@@ -4,13 +4,13 @@
 //! # Where this ends and the toolkit begins
 //!
 //! [`ListWindow<T>`] owns the bookkeeping **and the resident rows**. What
-//! stays with the toolkit — `postio-gtk`'s `MessageList`, and eventually
+//! stays with the toolkit — the GTK message list, and eventually
 //! macOS's own thin wrapper — is row identity as *its* toolkit understands
 //! it, change notification (`GListModel::items_changed`,
 //! `NSTableView::reloadData(forRowIndexes:)`), and any re-entrancy rule a
 //! toolkit's own contract imposes (GTK's `GListModel::item()` must not be
 //! mutated mid-call; `NSTableView` has no such rule, so that guard is
-//! `postio-gtk`'s alone to keep — see its own module docs).
+//! a GTK frontend's alone to keep — see its own module docs).
 //!
 //! `ListScope` — which mailbox, or which smart folder — deliberately does
 //! **not** move here either. `ListWindow` has no idea what a scope is; it
@@ -39,7 +39,7 @@
 //! invalidate anything holding onto it — and that behaviour must not be
 //! re-derived by a second frontend. [`ListRow::reconcile`] carries it: the
 //! default takes the incoming value, which is right for a plain value type,
-//! and `postio-gtk` overrides it to update the existing object in place and
+//! and the classic app overrode it to update the existing object in place and
 //! hand that back.
 //!
 //! # Every method returns what changed
@@ -56,7 +56,7 @@
 //! **No method on [`ListWindow`] may be fallible, blocking, or async** —
 //! `NSTableView`'s row callback runs on the main thread in microseconds and
 //! must never `await`, and none of the methods here do. The corollary is
-//! `postio-gtk`'s to keep, not this module's: `ListWindow` must never be
+//! a GTK frontend's to keep, not this module's: `ListWindow` must never be
 //! called from inside `GListModel::item()` while that call is still
 //! answering, because a page source is free to answer synchronously and
 //! this module has no way to know it is being asked from inside a read.

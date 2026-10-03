@@ -15,7 +15,7 @@
 //! Stated rather than left as a gap somebody has to rediscover.
 //!
 //! One test function for both, and deliberately: each needs a real composer
-//! and a real composer is a `WebView`, which is the resource `gtk_suite` is
+//! and a real composer is a `WebView`, which is a resource the GTK suites are
 //! already short of (#957). Two assertions about the same question do not
 //! need two processes.
 //!

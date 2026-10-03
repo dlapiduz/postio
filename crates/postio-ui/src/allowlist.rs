@@ -7,7 +7,7 @@
 //!
 //! # Why it is here rather than in a frontend
 //!
-//! `postio-gtk` has had one since `postio-xxz`, written against `glib`'s key
+//! The classic app had had one since `postio-xxz`, written against `glib`'s key
 //! file and `$XDG_STATE_HOME`. Neither exists on macOS, and a second
 //! implementation of a *privacy* rule is the one place ADR 0019 Q6's risk is
 //! least acceptable: two allow lists means two answers to "may this sender
@@ -185,7 +185,7 @@ fn domain_of(address: &str) -> Option<String> {
         .filter(|domain| !domain.is_empty())
 }
 
-/// The key-file group the desktop app's old allow list kept its senders in.
+/// The key-file group the classic app's old allow list kept its senders in.
 const LEGACY_GROUP: &str = "AlwaysAllow";
 
 /// The section a sender's chosen treatment lives under: the address is the
@@ -199,7 +199,7 @@ const TREATMENT_SECTION: &str = "Treatment";
 /// frontend reads and writes (#1273). Two allow lists meant two answers to
 /// "may this sender see me", and that is the least acceptable place for the
 /// two to drift: the wrong answer is silent and remote. The shell stays
-/// because the call sites in `postio-gtk` and `postio-tui` speak this
+/// because the call sites in the frontends and `postio-tui` speak this
 /// vocabulary -- `senders`, `save`, `path` -- and rewriting them to say the
 /// same things differently would be churn without a reader.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -327,7 +327,7 @@ impl RemoteImageAllowList {
     /// `$XDG_STATE_HOME/postio/remote-images.ini`.
     ///
     /// `$XDG_STATE_HOME`, else `~/.local/state`: where GLib's
-    /// `user_state_dir` puts it, so the desktop app finds the file it wrote.
+    /// `user_state_dir` puts it, so the classic app finds the file it wrote.
     pub fn path() -> PathBuf {
         let state = std::env::var_os("XDG_STATE_HOME")
             .filter(|dir| !dir.is_empty())
@@ -378,11 +378,11 @@ fn treatments_in(text: &str) -> BTreeMap<String, Treatment> {
     treatments
 }
 
-/// The desktop app's old `[AlwaysAllow]` key file, if that is what `text` is.
+/// The classic app's old `[AlwaysAllow]` key file, if that is what `text` is.
 ///
 /// Read without GLib: for one group of boolean keys the format is a few
 /// lines of text, and reading it here is what lets a frontend with no GLib
-/// keep the grants the desktop app made.
+/// keep the grants the classic app made.
 fn from_key_file(text: &str) -> Option<AllowList> {
     let mut in_group = false;
     let mut list = AllowList::new();

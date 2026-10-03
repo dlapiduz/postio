@@ -3,12 +3,12 @@
 //! The mirror of [`crate::reader`], and deliberately so. The reader's document
 //! — stylesheet, ground colour, content policy, wrapping — lives here rather
 //! than in a frontend because two frontends would otherwise each answer the
-//! question and drift; `postio-gtk`'s reader module says as much where it
-//! re-exports it, *"one implementation for every frontend… what remains in
+//! question and drift; the classic app's reader said as much where it
+//! re-exported it, *"one implementation for every frontend… what remains in
 //! this file is webkit6 glue"*.
 //!
 //! The editing surface had no such module, and no stylesheet at all: its
-//! document was assembled inline in `postio-gtk` as a bare
+//! document was assembled inline in the classic app as a bare
 //! `<body contenteditable="true">`, so it rendered in the engine's defaults
 //! while everything around it used the application's tokens — the wrong
 //! typeface, the wrong size, and a white page in dark mode. That is what this

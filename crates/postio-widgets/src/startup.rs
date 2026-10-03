@@ -65,17 +65,17 @@ pub enum Phase {
     /// attributed to GTK.
     Store,
     /// The keyring has answered and the window is about to be pointed at the
-    /// store: `postio_app::feed_the_window` has been entered.
+    /// store: the app has begun feeding the window.
     ///
     /// Everything between [`Window`](Phase::Window) and here is the crossing
-    /// `postio_app::open_or_onboard` describes — a D-Bus round trip to the
+    /// the app makes when it opens the store or onboards — a D-Bus round trip to the
     /// keyring, asked on the runtime and answered back on the main context.
     /// It is the one part of this stretch that is *not* the main thread's
     /// own work, and telling it apart from what follows is the whole reason
     /// it is a phase.
     Account,
     /// The panes are pointed at the store and every gesture has a handler:
-    /// `postio_app::feed_the_window` has returned.
+    /// the app has finished feeding the window.
     ///
     /// Synchronous main-thread work, all of it, and therefore work the first
     /// frame is waiting on. #1479 split this off because the trace could say

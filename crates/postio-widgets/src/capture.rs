@@ -1,16 +1,13 @@
 //! Render a window to a texture, and say so when it cannot be done.
 //!
-//! Shared by both desktop apps (ADR 0043): each has a `shot` example that
-//! renders a screen to a PNG, and Focus's may not reach into `postio-gtk`
-//! (specs/007-postio-focus FR-007). This is `postio-gtk`'s `capture`
-//! module, copied whole so both shots answer to one account of #809's
-//! lessons; that crate's copy becomes a re-export of this one.
+//! Shared by the desktop app's tools (ADR 0043): its `shot` example renders
+//! a screen to a PNG (specs/007-postio-focus FR-007), and this module holds
+//! the one account of #809's lessons.
 //!
 //! # Why this is in a library rather than in the tool that uses it
 //!
-//! There were three copies of it — `postio-app`'s `shot` example,
-//! `postio-gtk`'s `surface` example, and `gtk_focus_visible`'s `pixels` —
-//! and the two that write PNGs made the *caller* settle the window first, by
+//! There were three copies of it — two examples and `gtk_focus_visible`'s
+//! `pixels` — and the two that write PNGs made the *caller* settle the window first, by
 //! counting eight frames, before asking for the picture.
 //!
 //! A frame count is not a condition. Eight frames on an idle workstation is a

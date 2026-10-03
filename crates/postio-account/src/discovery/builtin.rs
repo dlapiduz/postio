@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn the_named_providers_the_first_run_screen_has_to_cover_are_in_the_table() {
         // These were a second, hardcoded table in
-        // `postio-app/examples/provision.rs::known` -- the same data in two
+        // the classic app's provision example's `known` -- the same data in two
         // places, only one of which the onboarding screen could reach.
         // Issue #69 asks for one table both callers use.
         for (domain, imap, smtp) in [

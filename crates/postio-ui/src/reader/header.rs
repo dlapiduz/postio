@@ -2,7 +2,7 @@
 //! how a sender reads, how a recipient list joins, what a missing subject
 //! says, and how an opened message is dated.
 //!
-//! These were four private functions inside `postio-gtk`'s
+//! These were four private functions inside the classic app's
 //! `reader/message_header.rs`, which is precisely the shape ADR 0019 warns
 //! about: the header is the surface where two frontends disagreeing is most
 //! visible to a user, because it is where they read the sender's name before
@@ -198,7 +198,7 @@ impl ReaderAction {
 
     /// What the button is labelled.
     ///
-    /// `const`, because `postio-gtk`'s `ACTIONS` is a `const` array and a
+    /// `const`, because the classic app's `ACTIONS` was a `const` array and a
     /// label it could not read at compile time would have to be written
     /// again there — which is the duplication this list exists to prevent.
     pub const fn title(self) -> &'static str {

@@ -7,10 +7,10 @@
 //! 50-message one: a few hundred rows resident, and the rest a page request
 //! away.
 //!
-//! This was postio-gtk's `MessageList`, and every behaviour below was proven
-//! there. Both desktop apps draw a list this way, over different rows -- the
-//! classic app's messages and conversations, Focus's conversations, digests
-//! and reminders -- so the model is generic over what a position holds:
+//! This began as the classic app's `MessageList`, and every behaviour below
+//! was proven there. A list is drawn this way over different rows --
+//! messages, conversations, digests and reminders -- so the model is generic
+//! over what a position holds:
 //!
 //! * [`ModelRow`] is the item a view binds: a `GObject` standing for one
 //!   position, filled in place when its page arrives.

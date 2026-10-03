@@ -231,7 +231,7 @@ impl CommandSender {
 }
 
 /// Commands a [`CommandSender`] queued, for a frontend that runs them
-/// somewhere other than a [`Bridge`] of its own: `postio-app` hands its window
+/// somewhere other than a [`Bridge`] of its own: the classic app handed its window
 /// a sender and passes each command to `postio-client` (ADR 0041).
 #[derive(Debug)]
 pub struct CommandReceiver(async_channel::Receiver<Queued>);

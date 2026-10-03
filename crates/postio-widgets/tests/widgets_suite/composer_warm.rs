@@ -11,7 +11,7 @@
 //! Warming it is the same answer the reader got: do the first load early, on
 //! an idle turn of the main loop, when nobody is waiting. What this file
 //! asserts is that the mechanism exists and reports honestly; that the *app*
-//! actually calls it is `postio-app`'s job to prove, because a warm-up wired
+//! actually calls it is the app's job to prove, because a warm-up wired
 //! to nothing is exactly the shape of #327.
 //!
 //! Skips without a display. Nothing here touches the network -- the editor's

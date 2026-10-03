@@ -9,7 +9,7 @@
 //! rule is **semantics**, not presentation, and every frontend has to reach
 //! the same answer or `a` means different things on different platforms.
 //!
-//! It used to live in `postio-app`, coupled to GTK — reaching for widget
+//! It used to live in the classic app, coupled to GTK — reaching for widget
 //! focus and walking a `GtkListModel` — which meant the macOS boundary had no
 //! way to turn `"archive"` into a [`Command`] without writing a **second**
 //! mapping. Two mappings would give the two frontends different ideas of what
@@ -131,7 +131,7 @@ pub struct Aim<'a> {
 /// silently claims to have done something.
 ///
 /// The one rule every frontend has to reach the same answer to (#670): moved
-/// here from `postio-app` once `postio-model::ListScope` gave `postio-core`
+/// here from the classic app once `postio-model::ListScope` gave `postio-core`
 /// something to apply the rule to. `ViewScope`'s smaller variant set stays —
 /// see `docs/engineering-notes.md`'s "Six types are called *Scope*" — this
 /// is the function that produces it.
@@ -719,7 +719,7 @@ mod tests {
 
     // -- what the mirror puts into app state ----------------------------
     //
-    // Moved here from `postio-app` with the rule itself: these assert
+    // Moved here from the classic app with the rule itself: these assert
     // against `SharedState::resolve`, which is core, and they were only
     // ever in a GTK crate because GTK was what called them. They now run
     // with no display, on any host.

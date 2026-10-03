@@ -3,7 +3,7 @@
 //! The conversation surfaces — the list row that stands for a thread, and the
 //! pane that stacks its messages (ADR 0015) — draw the same facts twice, and
 //! decided them twice: who is in a conversation was worked out inside a
-//! `postio-gtk` widget, which made it unreachable from a second frontend and
+//! GTK widget, which made it unreachable from a second frontend and
 //! provable only with a display.
 //!
 //! These are rules, not pixels, so they live here. What the widgets keep is
@@ -234,7 +234,7 @@ fn month(at: DateTime<Local>) -> String {
 /// What the conversation rules need to know about a message.
 ///
 /// A trait rather than a row type, because the two frontends carry different
-/// rows — `postio_gtk::list::Row` holds `EmailAddress`es and a GTK frontend's
+/// rows — the classic app's list row held `EmailAddress`es and a GTK frontend's
 /// concerns, the FFI's `RowFfi` holds what crosses a C ABI — and neither is
 /// something this crate should own. What the rules actually read is three
 /// facts, and both rows have them.
@@ -332,7 +332,7 @@ pub fn arrange<T: ConversationMessage + Clone>(
 ///
 /// # One answer, both frontends
 ///
-/// The rule was a function over `postio_gtk`'s own row while GTK was the only
+/// The rule was a function over the GTK app's own row while GTK was the only
 /// frontend. The macOS pane asks the same question across the FFI (#1263),
 /// and two implementations of FR-015 would be two products — so it is generic
 /// over [`ConversationMessage`] and lives here, where neither toolkit can
@@ -359,7 +359,7 @@ pub fn opening_focus<T: ConversationMessage>(messages: &[T]) -> Option<usize> {
 ///
 /// This is the **stacked** pane's rule, and it is the macOS pane's. GTK draws
 /// a conversation as one document now (ADR 0032) and asks
-/// `postio_gtk::conversation::expanded_in_document` instead, where every
+/// the classic app's conversation view kept its own copy instead, where every
 /// message is open because a collapsed one saves no web process; the stacked
 /// path it keeps is what its widget-level tests drive.
 ///

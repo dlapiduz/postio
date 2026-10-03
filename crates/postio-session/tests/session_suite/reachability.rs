@@ -9,7 +9,7 @@
 //!
 //! Nothing here reaches the network. The connectors are arguments to
 //! `test_connection` for exactly that reason — the same shape
-//! `postio_app::onboarding::probe` took after #282, where the only way to
+//! the classic app's onboarding probe took after #282, where the only way to
 //! reach the code was to dial out and so none of it was covered.
 
 use std::sync::Arc;

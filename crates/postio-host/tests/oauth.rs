@@ -2,7 +2,7 @@
 //!
 //! Its own binary because the provider it signs in with is a user-overlay
 //! row, and the provider table is computed once per process from the
-//! environment (`postio-app/tests/oauth_signin.rs` says why at length).
+//! environment (the classic app's OAuth sign-in test said why at length).
 //!
 //! What it proves: the consent URL comes back to the frontend in full, and
 //! nothing is opened or fetched until the person acts -- the host's browser

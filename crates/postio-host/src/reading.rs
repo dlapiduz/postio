@@ -1,6 +1,6 @@
 //! What a reading pane draws of a message, read for every frontend.
 //!
-//! Moved from `postio-app`'s reading pane (`specs/005-tui-frontend` T018):
+//! Moved from the classic app's reading pane (`specs/005-tui-frontend` T018):
 //! the desktop read a message's body, its row and its send state on one
 //! connection per message, and a conversation's members on one reader turn
 //! (#1609). The store's owner does both now, and a frontend asks once.

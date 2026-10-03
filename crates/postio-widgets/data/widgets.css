@@ -1,6 +1,6 @@
-/* The controls both desktop apps draw (ADR 0043), dressed once.
+/* The controls the desktop app draws (ADR 0043), dressed once.
  *
- * These rules moved here from postio-gtk's shell.css with the widgets that
+ * These rules live here with the widgets that
  * wear them (specs/007-postio-focus research R1): the key hints, the four
  * kinds of button, the chips, the action bar and the one-line notice.
  * `postio_widgets::widgets` is the code.
@@ -14,7 +14,7 @@
  * specificity only inside one provider (`postio_widgets::style` says more).
  *
  * TYPE IS IN `rem`, NEVER `px`: a font size in px ignores GNOME's
- * text-scaling setting (postio-gtk's shell.css says why at length).
+ * text-scaling setting (GNOME's scaling applies to rem, not px).
  *
  * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent.
  *
@@ -267,10 +267,9 @@ menubutton.postio-icon-button > button:checked {
 }
 
 /* ── The account form and what it is built from (T165) ─────────────────
-   Moved from postio-gtk's shell.css with `postio_widgets::onboarding` and
-   the widgets it draws with, in their original order: both desktop apps
-   open the form, the classic app for first run, a new account and a new
-   password, Focus from its sign-in banner. */
+   Lives here with `postio_widgets::onboarding` and the widgets it draws
+   with: the form opens for first run, a new account and a new password,
+   and from Focus's sign-in banner. */
 
 /* ── The plate (`widgets::plate`) ────────────────────────────────────
    The surface an overlay is drawn on: the cheat sheet, the parts panel, the

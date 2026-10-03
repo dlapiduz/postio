@@ -15,7 +15,7 @@ use postio_model::EmailAddress;
 
 /// Canvas 1b's row geometry for one density, in logical pixels.
 ///
-/// Type and colour come from the cascade — `postio-gtk`'s own private
+/// Type and colour come from the cascade — the classic app's own private
 /// `row::Palette` reads them off the style context, which is why there is
 /// nothing to link to from here. This is the layout the snapshot arranges
 /// them in, which a hand-drawn widget owns the way a `GtkBox` owns its

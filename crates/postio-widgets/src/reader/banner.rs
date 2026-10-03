@@ -269,7 +269,7 @@ impl Default for DecodeNotice {
 /// activation log outlives the reader), so it cannot be markup inside the
 /// document either. Unlike the other two it takes no local action of its
 /// own — leaving a list is a write to storage this crate cannot reach
-/// (`postio-gtk` has no SQL), so it only asks; whoever wires the reader
+/// (this crate has no SQL), so it only asks; whoever wires the reader
 /// decides what "asked" means. Whether the activation also sends the real
 /// RFC 8058 request is #972, deliberately not this one.
 pub struct UnsubscribeBanner {

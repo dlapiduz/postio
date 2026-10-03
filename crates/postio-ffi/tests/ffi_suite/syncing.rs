@@ -33,7 +33,7 @@ async fn a_store_with_no_accounts_starts_nothing_and_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn starting_twice_is_harmless() {
-    // `postio-app`'s own comment records that a second `start_syncing` used
+    // The classic app's own comment recorded that a second `start_syncing` used
     // to run a duplicate pass. An application lifecycle will call this twice
     // — a window reopening, a wake from sleep — and doubling the engines
     // would double every connection to the server.

@@ -471,7 +471,7 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
 #[tokio::test]
 async fn a_resync_that_finds_new_mail_announces_it() {
     // postio-du6: `Event::NewMail` existed, was consumed by
-    // `postio_gtk::feed`, and nothing ever emitted it -- the trigger a
+    // the classic app's feed, and nothing ever emitted it -- the trigger a
     // desktop notification needs simply never fired.
     let database = test_support::memory().await;
     let account =
@@ -1504,7 +1504,7 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
 
 #[tokio::test]
 async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
-    // #109: `postio-app::seed_the_backfill` sends a job the instant
+    // #109: the classic app's backfill seeding sent a job the instant
     // `Engine::spawn` returns, so a job is reliably already queued by the
     // time an account's engine's own loop runs for the first time. Before
     // this was fixed, the very first connection attempt happened only on

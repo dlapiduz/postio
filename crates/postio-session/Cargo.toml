@@ -24,7 +24,7 @@ postio-jmap.workspace = true
 postio-gmail.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
-# The database half. This crate is where SQLite is allowed; postio-gtk is
+# The database half. This crate is where SQLite is allowed; the view layer is
 # guarded against it and so is postio-core.
 postio-runtime.workspace = true
 postio-search.workspace = true

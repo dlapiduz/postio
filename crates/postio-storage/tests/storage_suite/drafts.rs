@@ -1384,7 +1384,7 @@ async fn a_drafts_row_leads_back_to_the_draft_it_is_listing() {
 #[tokio::test]
 async fn a_message_that_is_not_a_drafts_row_leads_nowhere() {
     // Another client's draft, which has no local buffer to open. What happens
-    // then is `postio-app`'s decision; what is certain here is that there is
+    // then is the frontend's decision; what is certain here is that there is
     // nothing to find — including when its row number happens to be a draft's
     // id, which is the coincidence a link keyed on the wrong column survives.
     let database = test_support::memory().await;

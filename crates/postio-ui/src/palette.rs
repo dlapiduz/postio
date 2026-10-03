@@ -10,7 +10,7 @@
 //!
 //! # Why it is here rather than in a frontend
 //!
-//! It was `postio-gtk`'s until #658. Nothing in the matching, the ranking or
+//! It was the classic app's until #658. Nothing in the matching, the ranking or
 //! the context filter is about a toolkit — they are product decisions, and
 //! ADR 0019 Q5 named this among what a second frontend must share rather than
 //! re-derive. **Swift must not write its own fuzzy match**: the ranking is
@@ -19,7 +19,7 @@
 //!
 //! What each frontend keeps is the *drawing*. [`Entry::positions`] are byte
 //! indices into the title, deliberately, rather than pre-escaped markup —
-//! `postio-gtk` turns them into Pango bold and Swift builds an
+//! The classic app turned them into Pango bold and Swift builds an
 //! `AttributedString` from the same numbers.
 //!
 //! # Two halves

@@ -1,6 +1,6 @@
 //! Messages written out as `.eml` files, for dragging out of a frontend.
 //!
-//! Moved from `postio-app`'s export (`specs/005-tui-frontend` T018): an
+//! Moved from the classic app's export (`specs/005-tui-frontend` T018): an
 //! `.eml` file *is* the raw RFC 5322 source, which the sync engine has
 //! already put in the blob store as `messages.raw_blob_id`, so an export is
 //! a copy, not a serialisation. What each file is called is the frontend's

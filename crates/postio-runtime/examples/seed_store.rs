@@ -7,7 +7,7 @@
 //! ```sh
 //! cargo run -p postio-runtime --example seed_store -- /tmp/postio.db 20000
 //! POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 \
-//!   POSTIO_STARTUP_EXIT=1 cargo run -p postio-app
+//!   POSTIO_STARTUP_EXIT=1 cargo run -p postio-focus
 //! ```
 //!
 //! It is a development tool, not part of the application: examples are not
@@ -28,21 +28,21 @@ async fn main() {
         .and_then(|value| value.parse().ok())
         .unwrap_or(20_000);
 
-    // A blob directory beside it, the way `postio-app` lays them out, so a
+    // A blob directory beside it, the way the app lays them out, so a
     // store seeded here is one the application can open unchanged.
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
 
     // The store is encrypted under the key in the keyring (ADR 0014), and a
-    // store seeded under any other key is one `postio-app` cannot open — which
+    // store seeded under any other key is one the app cannot open — which
     // would make this tool useless for the thing it exists for.
     let store_key = match read_store_key().await {
         Some(key) => key,
         None => {
             eprintln!(
                 "cannot read this installation's store key. Unlock the keyring, \n\
-                 and run postio-app once if it has never run: the key is minted \n\
+                 and run the app once if it has never run: the key is minted \n\
                  on first start and this tool deliberately never mints one."
             );
             std::process::exit(1);

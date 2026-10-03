@@ -69,7 +69,7 @@ use postio_sync::backfill::Outcome;
 /// composition root, which depends on `postio-sync` anyway, and a second
 /// enum saying the same thing is a second enum to keep in step. The *frontend*
 /// never sees these — this whole module is behind the `runtime` feature, which
-/// `postio-gtk` cannot enable.
+/// the view layer cannot enable.
 pub use postio_sync::{Blocker, Link, NetworkState};
 
 use postio_core::Event;
@@ -953,7 +953,7 @@ fn run(
 
             // Attempt the first connection right now, rather than waiting for
             // `ticker`'s first tick to win a race against whatever else is
-            // ready: `postio-app::seed_the_backfill` sends a job the instant
+            // ready: the classic app's backfill seeding sent a job the instant
             // `Engine::spawn` returns, so a job was already queued by the
             // time this loop ever ran for the first time, and `select!`
             // gives no guarantee about which of two simultaneously-ready
@@ -1801,7 +1801,7 @@ async fn discover(parts: &EngineParts, store: &Store) {
 ///
 /// `backfill::seed` asks for the newest `seed_batch` messages of one folder
 /// that are still missing a body. That is a batch, and it was being used as a
-/// horizon: `postio-app` seeded every folder once at startup and nothing in
+/// horizon: the classic app seeded every folder once at startup and nothing in
 /// the workspace ever called it again, so when those drained the background
 /// lane had nothing to do for the rest of the process. Every message below
 /// the first batch of its folder waited to be opened, and paid a round trip

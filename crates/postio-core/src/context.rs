@@ -11,7 +11,7 @@
 //! Availability is not key routing. A command being available in
 //! [`Context::Search`] says the user can reach it there; whether a bare letter
 //! key reaches it, or is swallowed as typed text by a focused entry, is the
-//! keymap resolver's decision in `postio-gtk`.
+//! keymap resolver's decision in the frontend.
 
 use std::fmt;
 use std::str::FromStr;

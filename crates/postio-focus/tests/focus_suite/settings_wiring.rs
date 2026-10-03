@@ -1,9 +1,9 @@
 //! The classic app's settings wiring cases, ported to Focus (T234): the
 //! shared settings window over a real store, through Focus's host, with
-//! each change asserted in the store and on screen. Their classic
-//! originals are `postio-app`'s `settings_accounts_wiring`,
+//! each change asserted in the store and on screen. Their
+//! classic originals (`settings_accounts_wiring`,
 //! `settings_credential_wiring`, `settings_reindex_wiring`, `egress_wiring`
-//! and `read_receipt_wiring`; `signature_default_wiring` and
+//! and `read_receipt_wiring`) are gone with that app; `signature_default_wiring` and
 //! `sidebar_backfill_wiring` are ported in `settings.rs`, where a signature
 //! made in Settings signs the next message and a folder's check skips its
 //! backfill.

@@ -19,7 +19,7 @@ import PostioFFI
 /// marked read in one folder can change a badge two accounts away if it was
 /// in the unified scope.
 ///
-/// `postio-gtk`'s `feed.rs` states the same rule in the same words, and the
+/// The classic app's `feed.rs` stated the same rule in the same words, and the
 /// two are supposed to stay the same — a sidebar that updates on Linux and
 /// not on macOS is the drift ADR 0019 Q6 is about. It is not *shared* code,
 /// because the two frontends receive different event types across different

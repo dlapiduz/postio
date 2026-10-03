@@ -9,7 +9,7 @@ import PostioFFI
 /// when the remembered one is gone, and where to put a window that was saved
 /// on a display nobody has any more.
 ///
-/// `postio-gtk/src/state.rs` is the Linux half of this. It is not shared,
+/// The classic app's window-state code was the Linux half of this. It was not shared,
 /// deliberately — a saved GTK pane position is not a saved `NSSplitView`
 /// width, and the *storage* is where the two platforms genuinely differ. What
 /// is shared is the idea that the last folder is application state rather than

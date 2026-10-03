@@ -1,9 +1,8 @@
 //! The composer's seams, answered through Focus's client (ADR 0041).
 //!
-//! Most of these are exactly the classic app's own seams, in
-//! `postio-app`'s `compose.rs` -- which Focus may not depend on -- and both
-//! now call the one implementation, `postio_widgets::present::compose`
-//! (`shared` below; specs/007-postio-focus T022). What is Focus's own is its
+//! Most of these are the shared seams, answered by the one implementation,
+//! `postio_widgets::present::compose` (`shared` below; specs/007-postio-focus
+//! T022). What is Focus's own is its
 //! dialog's chrome: [`resume`]'s and [`autosave`]'s notes go to the frame's
 //! subtitle rather than a toast or a status line, and [`reply_source`]
 //! additionally reads the thread's labels and draws them (R15), which
@@ -48,8 +47,8 @@ pub fn wire(
     glib::spawn_future_local(async move {
         if let Some(composer) = identities_composer.upgrade() {
             // Focus has no conversation pane and marks nothing from the
-            // account row's own use of it (that is `postio-app`'s), so the
-            // account this answers with goes nowhere else.
+            // account row's own use of it, so the account this answers with goes
+            // nowhere else.
             // POSTIO-GLIB-SAFE: `install_identities` awaits one client call,
             // a oneshot receive; the host answers on its own runtime.
             shared::install_identities(&composer, &identities_client, account).await;

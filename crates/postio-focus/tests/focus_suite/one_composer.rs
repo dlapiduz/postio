@@ -1,13 +1,11 @@
 //! Focus has no composer of its own (US3 scenario 2, FR-050; T081): the
-//! same content written in Focus and in the classic app leaves as the same
-//! message, byte for byte.
+//! same content written in Focus and in the shared composer mounted
+//! anywhere else leaves as the same message, byte for byte.
 //!
-//! The classic app's side is its composer -- `postio_widgets::composer::
-//! Composer`, the one widget both apps mount -- on a host of this test's own,
-//! sending as `postio-app`'s `install_send` does: the draft the composer
-//! hands over, queued through a `ClientKind::Gtk` client of the same host.
-//! Focus may not depend on `postio-app` even for a test, so its seam is
-//! restated here; what is compared is what the host queued for each, built
+//! The other side is the shared composer -- `postio_widgets::composer::
+//! Composer` -- on a bare host of this test's own, sending through a
+//! `ClientKind::Test` client of the same host: the draft the composer hands
+//! over, queued. What is compared is what the host queued for each, built
 //! into the message the drainer would send.
 
 use std::cell::RefCell;
@@ -27,7 +25,7 @@ use crate::support::{self, Fixture};
 /// Who hears the commands a host dispatches.
 type Handlers = RefCell<Vec<Box<dyn Fn(CommandId)>>>;
 
-/// A host with nothing of either app in it: a window and a box.
+/// A host with nothing of Focus in it: a window and a box.
 struct Bare {
     window: gtk::Window,
     pane: gtk::Box,
@@ -75,9 +73,9 @@ impl ComposerHost for Bare {
     }
 }
 
-/// The Outbox's rows, as the classic app lists them.
-async fn outbox(classic: &Client, fixture: &Fixture) -> Vec<MessageId> {
-    match classic
+/// The Outbox's rows, as the second client lists them.
+async fn outbox(second: &Client, fixture: &Fixture) -> Vec<MessageId> {
+    match second
         .list_page(PageRequest {
             scope: ListScope::Outbox(fixture.account.id),
             offset: 0,
@@ -114,7 +112,7 @@ fn leaving(draft: &Draft, identity: &Identity) -> String {
         .join("\n")
 }
 
-pub fn the_same_content_from_either_app_leaves_as_the_same_message() {
+pub fn the_same_content_from_either_composer_leaves_as_the_same_message() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -134,7 +132,7 @@ pub fn the_same_content_from_either_app_leaves_as_the_same_message() {
             fixture.host(),
             &postio_config::Config::default(),
         );
-        let classic = session.host().connect(ClientKind::Gtk);
+        let second = session.host().connect(ClientKind::Test);
         support::keep(session);
         assert!(
             crate::settle_until(async || window.composer().is_some()).await,
@@ -156,7 +154,7 @@ pub fn the_same_content_from_either_app_leaves_as_the_same_message() {
         let focus_composer = window.composer().expect("Focus's composer");
         assert!(
             focus_composer.is_ancestor(&dialog),
-            "the composer on screen is the classic app's widget"
+            "the composer on screen is the shared widget"
         );
         write(&focus_composer);
         support::press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
@@ -166,57 +164,57 @@ pub fn the_same_content_from_either_app_leaves_as_the_same_message() {
             focus_composer.status()
         );
         assert!(
-            crate::settle_until(async || outbox(&classic, &fixture).await.len() == 1).await,
+            crate::settle_until(async || outbox(&second, &fixture).await.len() == 1).await,
             "Focus's message never reached the Outbox"
         );
-        let from_focus = outbox(&classic, &fixture).await[0];
+        let from_focus = outbox(&second, &fixture).await[0];
 
-        // The classic app writes the same, and sends as its seam does.
+        // The bare host's composer writes the same, and sends through its client.
         let host_window = gtk::Window::new();
         host_window.set_default_size(900, 700);
         let pane = gtk::Box::new(gtk::Orientation::Vertical, 0);
         host_window.set_child(Some(&pane));
         host_window.present();
-        let classic_composer = Composer::new();
-        classic_composer.mount_on(Rc::new(Bare {
+        let other_composer = Composer::new();
+        other_composer.mount_on(Rc::new(Bare {
             window: host_window.clone(),
             pane,
             commands: RefCell::default(),
         }));
-        classic_composer.set_account(fixture.account.id);
-        classic_composer.connect_send({
-            let classic = classic.clone();
-            let composer = classic_composer.downgrade();
+        other_composer.set_account(fixture.account.id);
+        other_composer.connect_send({
+            let second = second.clone();
+            let composer = other_composer.downgrade();
             move |draft| {
                 if let Some(composer) = composer.upgrade() {
-                    drop(classic.queue_send(composer.generation(), draft.clone(), None));
+                    drop(second.queue_send(composer.generation(), draft.clone(), None));
                 }
             }
         });
-        classic_composer.dispatch(CommandId::Compose);
-        write(&classic_composer);
-        classic_composer.dispatch(CommandId::Send);
+        other_composer.dispatch(CommandId::Compose);
+        write(&other_composer);
+        other_composer.dispatch(CommandId::Send);
         assert!(
-            crate::settle_until(async || outbox(&classic, &fixture).await.len() == 2).await,
-            "the classic app's message never reached the Outbox"
+            crate::settle_until(async || outbox(&second, &fixture).await.len() == 2).await,
+            "the bare host's message never reached the Outbox"
         );
-        let from_classic = *outbox(&classic, &fixture)
+        let from_other = *outbox(&second, &fixture)
             .await
             .iter()
             .find(|row| **row != from_focus)
-            .expect("the classic app's row");
+            .expect("the bare host's row");
 
         let identity = Identity::new(fixture.account.id, fixture.account.address.clone());
-        let focus_draft = classic
+        let focus_draft = second
             .draft_behind(from_focus)
             .await
             .expect("a read")
             .expect("Focus's queued draft");
-        let classic_draft = classic
-            .draft_behind(from_classic)
+        let other_draft = second
+            .draft_behind(from_other)
             .await
             .expect("a read")
-            .expect("the classic app's queued draft");
+            .expect("the bare host's queued draft");
         let focus_bytes = leaving(&focus_draft, &identity);
         // Not two empty messages that happen to agree: each line written is
         // in what leaves.
@@ -232,8 +230,8 @@ pub fn the_same_content_from_either_app_leaves_as_the_same_message() {
         }
         assert_eq!(
             focus_bytes,
-            leaving(&classic_draft, &identity),
-            "the same content leaves as the same message from either app"
+            leaving(&other_draft, &identity),
+            "the same content leaves as the same message from either composer"
         );
     });
 }

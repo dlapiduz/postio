@@ -7,7 +7,7 @@
 //! "you have not looked at this", and a client that marks on arrival destroys
 //! it the first time somebody scrolls a mailbox end to end.
 //!
-//! It lived in `postio-gtk::list_view` until #1159, which is where the macOS
+//! It lived in the classic app's list_view until #1159, which is where the macOS
 //! frontend could not reach it — so that one marked nothing at all, ever, and
 //! a Mac's inbox count never moved. A second implementation would have been a
 //! second answer to "how long is long enough", on the one rule where being

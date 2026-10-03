@@ -2,7 +2,7 @@
 //! and which state the screen is in.
 //!
 //! Canvas 3e's shapes, with nothing a toolkit names. They lived in
-//! `postio-gtk::onboarding` until the terminal needed the same screen: the
+//! the classic app's onboarding until the terminal needed the same screen: the
 //! same states in the same order, the same sentences, the same sync-window
 //! choices. The desktop re-exports them from here.
 
