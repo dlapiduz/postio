@@ -308,6 +308,11 @@ impl UnsubscribeBanner {
         }
     }
 
+    /// The key `Unsubscribe` announces, from the live keymap.
+    pub fn set_action_key(&self, key: Option<&str>) {
+        self.notice.set_action_key(key);
+    }
+
     /// The banner's text, for tests.
     pub fn label(&self) -> String {
         self.notice.text()

@@ -202,3 +202,86 @@ pub fn the_body_starts_at_the_same_place_whoever_the_message_went_to() {
 
     window.close();
 }
+
+/// Every widget under `root` wearing `class`.
+fn with_class(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
+    let mut found = Vec::new();
+    if root.has_css_class(class) {
+        found.push(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(current) = child {
+        found.extend(with_class(&current, class));
+        child = current.next_sibling();
+    }
+    found
+}
+
+/// The cap `notice`'s action button draws, or `None` when it draws none.
+fn action_cap(reader: &Reader, notice: &str) -> Option<String> {
+    let caps = with_class(&reader.widget(), &format!("{notice}-action-hint"));
+    let cap = caps
+        .first()
+        .unwrap_or_else(|| panic!("{notice} has no action button"));
+    cap.is_visible().then(|| {
+        cap.downcast_ref::<gtk::Label>()
+            .expect("a cap is a label")
+            .label()
+            .to_string()
+    })
+}
+
+/// A notice's action is a button like every other, so it carries its key
+/// inside it (T219): `U` on Unsubscribe and `i i` on Show images, from the
+/// keymap, so a rebind reaches the cap the moment it reaches the keyboard.
+/// Both frontends' readers are this one, so the open message and the pane
+/// draw the same cap.
+pub fn every_notice_action_carries_its_key() {
+    let Some((window, reader, _dir)) = reader_in_a_window() else {
+        return;
+    };
+    header(&reader);
+    reader.render(&plain("a list message"), Some("ada@example.com"));
+    reader.set_unsubscribe(Some("list.example.com"));
+    lay_out();
+    assert!(
+        reader.unsubscribe_banner_visible(),
+        "the list's notice is not on screen, so its cap proves nothing"
+    );
+    let caps = || {
+        [
+            (
+                "Unsubscribe",
+                action_cap(&reader, "postio-unsubscribe-banner"),
+            ),
+            ("Show images", action_cap(&reader, "postio-remote-banner")),
+        ]
+    };
+    assert_eq!(
+        caps(),
+        [
+            ("Unsubscribe", Some("U".to_owned())),
+            ("Show images", Some("i i".to_owned())),
+        ],
+        "a notice's button without its key"
+    );
+
+    let mut overrides = postio_config::KeyBindings::default();
+    overrides
+        .overrides_mut()
+        .insert("unsubscribe".to_owned(), "g u".to_owned());
+    overrides
+        .overrides_mut()
+        .insert("show_images".to_owned(), "I".to_owned());
+    reader.set_keymap(&postio_core::Keymap::resolve(&overrides));
+    assert_eq!(
+        caps(),
+        [
+            ("Unsubscribe", Some("g u".to_owned())),
+            ("Show images", Some("I".to_owned())),
+        ],
+        "a rebind reaches the keyboard and not the notice"
+    );
+
+    window.close();
+}

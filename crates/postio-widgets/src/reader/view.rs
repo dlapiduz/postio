@@ -429,11 +429,16 @@ impl Reader {
             crate::widgets::NoticeBar::new("view-reveal-symbolic", "postio-reader-view-notice");
         reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
         reader_notice.set_action(Some("View original"));
-        reader_notice.set_action_key(
-            postio_core::Keymap::resolve(&Default::default())
-                .binding(postio_core::CommandId::ViewOriginal),
-        );
         let unsubscribe_banner = Rc::new(UnsubscribeBanner::new());
+        // Every notice's button carries its key inside it, as every action
+        // button does (T219): from the registry's defaults until an owner
+        // hands over its keymap, never a blank cap.
+        notice_keys(
+            &postio_core::Keymap::resolve(&Default::default()),
+            &banner,
+            &reader_notice,
+            &unsubscribe_banner,
+        );
         let actions = super::actions::new_for(verbs.received);
         // One bar per verb set `ReaderAction::for_send_state` can return.
         // Exactly one is visible, and for `Sending` none is: cancelling is
@@ -1732,11 +1737,15 @@ impl Reader {
         self.actions.set_keymap(keymap);
         self.queued_actions.set_keymap(keymap);
         self.stopped_actions.set_keymap(keymap);
-        // The notice's own cap, from the same keymap. Written down here it
-        // would go on saying `C-o` after a rebind moved the key, which is the
-        // drift `KeycapButton` exists to end (#1002).
-        self.reader_notice
-            .set_action_key(keymap.binding(postio_core::CommandId::ViewOriginal));
+        // The notices' own caps, from the same keymap. Written down here
+        // they would go on saying `C-o` after a rebind moved the key, which
+        // is the drift `KeycapButton` exists to end (#1002).
+        notice_keys(
+            keymap,
+            &self.banner,
+            &self.reader_notice,
+            &self.unsubscribe_banner,
+        );
         if let Some(line) = self.place.line.borrow().as_ref() {
             line.set_key(keymap.binding(postio_core::CommandId::SwitchTreatment));
         }
@@ -2589,6 +2598,22 @@ fn compose_thread_document(
         originals,
         &mut renders.borrow_mut(),
     )
+}
+
+/// Give each notice's action the key `keymap` binds to it: Show images,
+/// View original and Unsubscribe. One place, so a notice cannot be built --
+/// or rebound -- without its cap, which is how Unsubscribe came to be the
+/// one keycap-button in the open message drawn with no key (T261).
+fn notice_keys(
+    keymap: &postio_core::Keymap,
+    banner: &RemoteImageBanner,
+    reader_notice: &crate::widgets::NoticeBar,
+    unsubscribe_banner: &UnsubscribeBanner,
+) {
+    use postio_core::CommandId;
+    banner.set_action_key(keymap.binding(CommandId::ShowImages));
+    reader_notice.set_action_key(keymap.binding(CommandId::ViewOriginal));
+    unsubscribe_banner.set_action_key(keymap.binding(CommandId::Unsubscribe));
 }
 
 /// Re-render whatever is in `open` at `remote`'s policy, and put the banner

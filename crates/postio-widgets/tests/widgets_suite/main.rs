@@ -852,6 +852,10 @@ const CASES: &[(&str, fn())] = &[
         reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to as fn(),
     ),
     (
+        "reader_notices::every_notice_action_carries_its_key",
+        reader_notices::every_notice_action_carries_its_key as fn(),
+    ),
+    (
         "reader_corpus::the_reader_renders_and_hardens_the_corpus",
         reader_corpus::the_reader_renders_and_hardens_the_corpus as fn(),
     ),
