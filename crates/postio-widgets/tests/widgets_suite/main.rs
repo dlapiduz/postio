@@ -1,6 +1,5 @@
-//! One binary for the GTK cases of the crate both desktop apps draw with
-//! (ADR 0043) -- the custom harness of postio-gtk's `gtk_suite` and
-//! postio-app's `app_suite`, for the same two reasons:
+//! One binary for the GTK cases of the crate the desktop app draws with
+//! (ADR 0043), under a custom harness, for two reasons:
 //!
 //!   * GTK may be initialized from exactly one thread per process (#41), and
 //!     libtest runs `#[test]` functions on a thread pool;
@@ -9,8 +8,7 @@
 //!
 //! So: `harness = false`, one `adw::init`, every case a plain `pub fn` in
 //! `widgets_suite/`, run in sequence under `catch_unwind` so one failure does
-//! not hide the rest. See crates/postio-gtk/tests/gtk_suite/main.rs for the
-//! whole rationale.
+//! not hide the rest.
 //!
 //! **A new case is a module here and a row in `CASES`.** `--list` and name
 //! filtering behave enough like libtest for `cargo test`, nextest and the
@@ -50,6 +48,7 @@ mod composer_size;
 mod composer_toolbar;
 mod composer_tracking_notice;
 mod composer_warm;
+mod display_required;
 mod drag_out;
 mod editable_dialect;
 mod editor_appearance;
@@ -118,6 +117,10 @@ mod widgets_css;
 const IGNORED: &[&str] = &[]; // nothing held out
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "display_required::ci_has_a_display_to_run_the_gtk_suites_on",
+        display_required::ci_has_a_display_to_run_the_gtk_suites_on as fn(),
+    ),
     (
         "storyboard_outline::the_focused_widgets_bounds_are_drawn_over",
         storyboard_outline::the_focused_widgets_bounds_are_drawn_over as fn(),
