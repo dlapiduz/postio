@@ -7,6 +7,11 @@
 //! second. Both run Focus's own `startup::open`, over `Opener::at` a scratch
 //! store with an in-memory keyring -- everything `app.rs`'s `activate`
 //! handler does except the one line that calls it.
+//!
+//! The store is a fresh one, so its open is the slowest thing a case here
+//! waits on: the app answers over a channel and depends on no clock, and
+//! the cases wait for the answer under [`crate::STORE_OPEN`] rather than
+//! the ordinary ten seconds.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -83,7 +88,7 @@ pub fn the_store_opens_behind_a_window_that_is_already_up() {
             },
         );
         assert!(
-            crate::settle_until(async || opened.borrow().is_some()).await,
+            crate::settle_until_within(crate::STORE_OPEN, async || opened.borrow().is_some()).await,
             "the store never landed, so the thread, the channel or the assembly \
              on the main context is not joined up"
         );
@@ -155,7 +160,7 @@ pub fn the_store_starts_opening_before_there_is_a_window() {
             },
         );
         assert!(
-            crate::settle_until(async || opened.borrow().is_some()).await,
+            crate::settle_until_within(crate::STORE_OPEN, async || opened.borrow().is_some()).await,
             "the window never received the store the early open was making"
         );
         assert_eq!(

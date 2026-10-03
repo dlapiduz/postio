@@ -1314,8 +1314,23 @@ where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    let deadline =
-        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    settle_until_within(std::time::Duration::from_secs(10), done).await
+}
+
+/// How long a store's first open may take: creating the encrypted file,
+/// running every migration and building the search index. About six
+/// seconds on an idle workstation, which leaves [`settle_until`]'s ten no
+/// room for a loaded one; a store that never opens still fails, just later.
+pub const STORE_OPEN: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// [`settle_until`], for a wait whose work takes longer than ordinary:
+/// gives up after `base`, scaled by `POSTIO_TEST_PATIENCE`.
+pub async fn settle_until_within<F, Fut>(base: std::time::Duration, done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(base);
     while std::time::Instant::now() < deadline {
         settle();
         if done().await {
