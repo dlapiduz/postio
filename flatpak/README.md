@@ -6,11 +6,9 @@ the manifest a Flathub submission would use as-is.
 The app it builds is Focus (`specs/007-postio-focus`, decision C27): the
 `postio-focus` crate's `postio` binary, under the app id `dev.postio.Postio`,
 with one desktop entry, `dev.postio.Postio.desktop`, which registers both
-`mailto:` and `postio://` links, and the metainfo beside it. The retired
-three-pane app (`postio-app`'s `postio-classic`) is no longer in the
-package; it builds from source until it is removed. `packaging.rs` in
-`postio-focus`'s tests holds the manifest, the entry, the metainfo and the
-release's check of the bundle to one another.
+`mailto:` and `postio://` links, and the metainfo beside it. `packaging.rs`
+in `postio-focus`'s tests holds the manifest, the entry, the metainfo and
+the release's check of the bundle to one another.
 
 `dev.postio.PostioTui.json` builds the terminal frontend, `postio-tui`,
 against the plain freedesktop runtime: no GTK and no WebKit, which is most of
@@ -137,9 +135,8 @@ own icon set from it. For a while it was kept out, because the compose step
 failed to read it (`file-read-error`) and that was taken for the runtime
 lacking an SVG loader. It was the file: an image loader sniffs the first 257
 bytes for `<svg` before it trusts the extension, and the icon opened with a
-680-byte comment. `desktop_entry.rs` in `postio-gtk`'s logic suite now
-asserts the tag sits inside that window for every bundled SVG, and that the
-manifest installs both files.
+680-byte comment. `packaging.rs` in `postio-focus`'s tests now asserts the
+tag sits inside that window for every bundled SVG.
 
 Regenerate the PNG if the SVG ever changes:
 

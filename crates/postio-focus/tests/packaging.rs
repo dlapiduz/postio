@@ -378,6 +378,53 @@ fn the_release_checks_the_bundle_carries_postio() {
     );
 }
 
+/// Every SVG the package installs says it is one where a format sniffer
+/// looks.
+///
+/// An image loader does not trust the file extension; it reads the first
+/// bytes and asks shared-mime-info what they are. The rule for SVG is `<svg`
+/// within the first 257 bytes: `/usr/share/mime/magic` matches it at offset 0
+/// with a 256-byte range. A file whose opening tag sits behind a long comment
+/// header is, to that sniffer, not an image at all: gdk-pixbuf through glycin
+/// says "Couldn't recognize the image file format", GNOME Shell draws nothing
+/// where the app icon should be, and `appstreamcli compose` reports a
+/// `file-read-error` for the same file. The shipped app icon once carried a
+/// 680-byte provenance comment before its `<svg>`, and each of those was
+/// diagnosed as something else.
+#[test]
+fn every_bundled_svg_is_recognised_where_a_sniffer_looks() {
+    const SNIFF_WINDOW: usize = 257;
+
+    fn svgs(dir: &Path, found: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|error| panic!("{dir:?}: {error}")) {
+            let path = entry.expect("a directory entry").path();
+            if path.is_dir() {
+                svgs(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "svg") {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    svgs(&root().join("crates/postio-widgets/data/icons"), &mut found);
+    assert!(!found.is_empty(), "the package should carry the icon SVGs");
+
+    let unrecognised: Vec<&PathBuf> = found
+        .iter()
+        .filter(|path| {
+            let bytes = std::fs::read(path).expect("the icon should be readable");
+            let head = &bytes[..bytes.len().min(SNIFF_WINDOW)];
+            !head.windows(4).any(|window| window == b"<svg")
+        })
+        .collect();
+    assert!(
+        unrecognised.is_empty(),
+        "`<svg` is not within the first {SNIFF_WINDOW} bytes of {unrecognised:#?}: an \
+         image loader sniffing the content will not recognise these as SVG, and \
+         the shell draws a missing icon as nothing"
+    );
+}
+
 fn which(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
