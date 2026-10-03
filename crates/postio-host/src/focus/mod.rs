@@ -3,9 +3,10 @@
 //!
 //! Focus's rules act only while Focus runs (FR-134). Mail another app files
 //! lands in the inbox as it always has, and Focus sorts it when it next
-//! opens. So the host has a mode, and only `postio-focus` calls
-//! [`Host::enable_focus`]: the classic app and the terminal never do, and
-//! nothing here runs while either of them holds the store. The mode
+//! opens. So the host has a mode, and only the Focus apps -- `postio-focus`
+//! and `postio-tui`, which is Focus in character cells (C29) -- call
+//! [`Host::enable_focus`]: the classic app never does, and nothing here runs
+//! while it holds the store. The mode
 //! installs three things:
 //!
 //! 1. **A filing pass** in every sync engine, through the wiring's
@@ -68,6 +69,17 @@ pub struct FocusSetup {
 }
 
 impl FocusSetup {
+    /// Focus mode as `focus` says, writing the person's corrections to
+    /// `config_path` when there is one: the one setup both apps build, at
+    /// startup and again when `[focus]` changes.
+    pub fn from_config(focus: FocusConfig, config_path: Option<&std::path::Path>) -> Self {
+        let setup = FocusSetup::default().with_config(focus);
+        match config_path {
+            Some(path) => setup.with_config_path(path.to_path_buf()),
+            None => setup,
+        }
+    }
+
     /// Focus mode as `config` -- the `[focus]` section -- says: whether mail
     /// is filed away, whom never to, and the digest rules.
     pub fn with_config(mut self, config: FocusConfig) -> Self {
@@ -168,10 +180,10 @@ impl Host {
 
     /// Turn on Focus's pipeline in this process (spec 007).
     ///
-    /// Called by `postio-focus` at startup, after the host starts and
-    /// before [`Host::start_syncing`], and by nothing else: the classic app
-    /// and the terminal never call it, so none of this runs while they hold
-    /// the store. The filing pass reaches every engine, running or to come,
+    /// Called by `postio-focus` and `postio-tui` at startup, after the host
+    /// starts and before [`Host::start_syncing`], and by nothing else: the
+    /// classic app never calls it, so none of this runs while it holds the
+    /// store. The filing pass reaches every engine, running or to come,
     /// before its next pass starts.
     ///
     /// A second call changes the filing pass and answers the tasks the

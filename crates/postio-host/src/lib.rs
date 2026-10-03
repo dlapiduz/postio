@@ -561,6 +561,11 @@ impl Host {
         &self.inner.wiring
     }
 
+    /// Whether Focus mode has been switched on ([`Host::enable_focus`]).
+    pub fn focus_enabled(&self) -> bool {
+        self.inner.focus.lock().expect("never poisoned").is_some()
+    }
+
     /// Start a sync engine for every enabled account, on the host's runtime.
     ///
     /// Sync runs while the app that opened the store runs, and stops with

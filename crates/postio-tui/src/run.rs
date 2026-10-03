@@ -59,6 +59,47 @@ pub fn open(
     })
 }
 
+/// Switch Focus mode on in `host`, as `config`'s `[focus]` says (FR-186).
+///
+/// The terminal is Focus in character cells (C29), so it runs Focus's engine
+/// while it holds the store: after the store opens and before the first
+/// sync, so the filing pass is in every engine before its first pass. The
+/// setup is the one `postio-focus` builds.
+pub fn engage_focus(
+    host: &Host,
+    config: &postio_config::Config,
+    config_path: Option<&std::path::Path>,
+) -> postio_host::FocusHandle {
+    host.enable_focus(postio_host::FocusSetup::from_config(
+        config.focus.clone(),
+        config_path,
+    ))
+}
+
+/// Apply `[focus]` to `host` again whenever the file at `path` changes it.
+/// `None` when the file cannot be watched: edits then wait for a restart.
+/// Dropping the watcher stops it; it holds the host no longer than it lives.
+pub fn follow_focus_config(
+    host: &Arc<Host>,
+    path: &std::path::Path,
+) -> Option<postio_config::watch::ConfigWatcher> {
+    let mut service = postio_core::ConfigService::load(path);
+    let host = Arc::downgrade(host);
+    postio_config::watch::ConfigWatcher::new(path, move |checked| {
+        let update = service.apply(checked);
+        if update.changed.focus
+            && let Some(host) = host.upgrade()
+        {
+            host.enable_focus(postio_host::FocusSetup::from_config(
+                service.config().focus.clone(),
+                Some(service.path()),
+            ));
+        }
+    })
+    .inspect_err(|error| tracing::warn!(%error, "config will not be watched; edits need a restart"))
+    .ok()
+}
+
 /// Say each wait to `write` as a line, unless it reads the same as the one
 /// before: the keyring and the store are two waits with one sentence.
 fn saying(write: impl Fn(&str)) -> impl Fn(postio_ui::list_state::Waiting) {
@@ -120,6 +161,12 @@ pub fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Focus's engine before anything could sync (FR-186).
+    let _focus = engage_focus(&host, &config, config_path.as_deref());
+    let host = Arc::new(host);
+    let _focus_follow = config_path
+        .as_deref()
+        .and_then(|path| follow_focus_config(&host, path));
     host.start_syncing();
     host.start_idle_passes_after(IDLE_PASSES_AFTER_OPENING);
     let client = host.connect(ClientKind::Tui).with_state(state.clone());

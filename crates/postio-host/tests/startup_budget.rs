@@ -9,9 +9,10 @@
 //! An app draws its first usable frame once it has opened the store in its
 //! own process -- the file, with the schema and search-index checks
 //! `open_store_at` makes -- started the host over it, connected its client,
-//! and read through that client the accounts, the account's folders and the
-//! inbox's first page: what `postio-tui`'s `run` and `first_scope` and its
-//! first `Open` do, and what the desktop app's `open_the_store` does before
+//! switched Focus mode on before anything could sync (the terminal is
+//! Focus, FR-186), connected its client, and read through that client the
+//! accounts, the account's folders and the inbox's first page: what
+//! `postio-tui`'s `run` and `first_scope` and its first `Open` do, and what the desktop app's `open_the_store` does before
 //! its list reads.
 //!
 //! Two waits are deliberately in neither number. The keyring round trip is a
@@ -23,7 +24,7 @@
 use std::time::{Duration, Instant};
 
 use postio_client::protocol::ClientKind;
-use postio_host::Host;
+use postio_host::{FocusSetup, Host};
 use postio_model::listing::{MailStore, PageRequest};
 use postio_model::mailbox::MailboxRole;
 use postio_model::{ListScope, MailboxId};
@@ -94,6 +95,9 @@ fn an_app_reaches_its_first_usable_frame_within_the_budget() {
     let start = Instant::now();
     let (database, blobs) = open();
     let host = Host::start(database, blobs, |wiring| wiring).expect("a host");
+    // As `run` does, before the first sync and with `[focus]` as the file
+    // says it.
+    let focus = host.enable_focus(FocusSetup::from_config(Default::default(), None));
     let client = host.connect(ClientKind::Tui);
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -111,5 +115,6 @@ fn an_app_reaches_its_first_usable_frame_within_the_budget() {
     assert!(took < BUDGET, "a start took {took:?}");
 
     drop(client);
+    drop(focus);
     host.stop();
 }

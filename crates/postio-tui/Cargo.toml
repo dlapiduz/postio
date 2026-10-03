@@ -67,5 +67,6 @@ unicode-width = "0.2"
 postio-tui = { path = ".", features = ["test-support"] }
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
+postio-test-support.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net"] }

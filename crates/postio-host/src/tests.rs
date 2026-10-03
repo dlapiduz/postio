@@ -2636,6 +2636,7 @@ fn focus_mode_files_what_an_incremental_pass_brings_and_nothing_a_first_sync_doe
         "the account's engine files"
     );
     assert!(focus.running(), "the body stage and the due timer run");
+    assert!(world.host().focus_enabled());
 
     deliver_and_refresh(&world, &mock, &client);
     assert_eq!(
@@ -2647,13 +2648,15 @@ fn focus_mode_files_what_an_incremental_pass_brings_and_nothing_a_first_sync_doe
 
 #[test]
 fn a_host_that_never_enables_focus_mode_files_nothing() {
-    // The classic app and the terminal: the same store, the same sync and
-    // the same arrival, and no call to `enable_focus`.
+    // The classic app: the same store, the same sync and the same arrival,
+    // and no call to `enable_focus`. (The terminal is Focus too, and makes
+    // the call: postio-tui's `focus_engine` suite.)
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
     let probe = std::sync::Arc::new(FilingProbe::default());
     let _setup = crate::FocusSetup::default().filing(probe.clone());
     let (client, _) = world.frontend(ClientKind::Gtk);
+    assert!(!world.host().focus_enabled());
     world.host().start_syncing();
     eventually(&world, || row_titled(&world, &client, "Tide gate"));
 

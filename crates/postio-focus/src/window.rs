@@ -3058,7 +3058,7 @@ impl FocusWindow {
             .and_then(|patched| postio_config::Config::write_text_to_path(&patched, &path));
         let said = match written {
             Ok(()) => {
-                self.set_saved_searches(crate::startup::saved_searches(&config));
+                self.set_saved_searches(postio_session::focus::saved_searches(&config));
                 format!("Saved \u{201c}{query}\u{201d}")
             }
             Err(error) => {

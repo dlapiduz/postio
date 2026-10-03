@@ -106,14 +106,14 @@ impl Session {
                 window.set_keymap(service.keymap().clone());
             }
             if update.changed.filters {
-                window.set_saved_searches(saved_searches(service.config()));
+                window.set_saved_searches(postio_session::focus::saved_searches(service.config()));
             }
             if update.changed.sync {
                 host.notify_with(service.config().sync.clone());
             }
             if update.changed.focus {
                 let focus = service.config().focus.clone();
-                host.enable_focus(setup(focus.clone(), Some(service.path())));
+                host.enable_focus(FocusSetup::from_config(focus.clone(), Some(service.path())));
                 window.set_focus_config(focus);
             }
             // What used to wait for a restart (T235).
@@ -147,28 +147,6 @@ impl Session {
     }
 }
 
-/// The pinned saved searches `config` holds, in the order `Alt+1`-`Alt+4`
-/// take them: each name as the person called it, and its query.
-pub(crate) fn saved_searches(config: &postio_config::Config) -> Vec<(String, String)> {
-    config
-        .ordered_filter_keys()
-        .into_iter()
-        .filter_map(|key| {
-            let filter = config.filters.get(&key)?;
-            Some((filter.name.clone().unwrap_or(key), filter.query.clone()))
-        })
-        .collect()
-}
-
-/// Focus mode as `focus` says, writing its corrections to `config_path`.
-fn setup(focus: postio_config::FocusConfig, config_path: Option<&std::path::Path>) -> FocusSetup {
-    let setup = FocusSetup::default().with_config(focus);
-    match config_path {
-        Some(path) => setup.with_config_path(path.to_path_buf()),
-        None => setup,
-    }
-}
-
 /// Take a host over an open store and show its inbox in `window`.
 ///
 /// Focus mode first, before anything could sync: the filing pass has to be
@@ -193,12 +171,12 @@ pub fn adopt_at(
     }
     // Focus's corrections (stop markers, never-filter, digest rules) are
     // written to this file: the host has to know where it is.
-    let focus = host.enable_focus(setup(config.focus.clone(), config_path));
+    let focus = host.enable_focus(FocusSetup::from_config(config.focus.clone(), config_path));
     let host = std::rc::Rc::new(host);
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
     window.set_focus_config(config.focus.clone());
-    window.set_saved_searches(saved_searches(config));
+    window.set_saved_searches(postio_session::focus::saved_searches(config));
     window.set_compose_config(config.compose.clone());
     window.set_reader_config(&config.reader);
     window.set_remote_runtime(host.runtime());
