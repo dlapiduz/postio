@@ -1,16 +1,22 @@
-# Opening a hit from the search results reads that message (#961, #767, #1526).
+# Opening a hit from the search results reads that message (#961, #767,
+# #1526).
 #
 # The defects: search ignored the account scope, opening a hit reached an
 # unwired dispatcher (nothing opened), and a hit was listed once per folder
-# it was filed in. Pinned: the results are 11 distinct hits under "All mail",
-# and `o` on the first puts exactly that message in the reader.
+# it was filed in. On the two-accounts seed, the hits are listed once each,
+# across both accounts, and Return on the first puts exactly that message in
+# the reader.
 #
-# Real routing is not needed: the chain delivers the key to the list, and
-# open_message is the list's own binding.
+# Re-expressed for Focus (T265): the bar lists the hits under its field
+# once Return has run the search; Down highlights the first, and Return
+# opens it over the list, in a fresh window with no cursor row. That last
+# was red when re-expressed -- the bar opened a hit through the list's
+# cursor, so with none nothing opened -- and is fixed beside it. The classic
+# app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#961" }
 proof  = "pinned"
 seed   = "two-accounts"
-design = "05-search"
 
 [[step]]
 command = "search"
@@ -18,15 +24,20 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 
 [[step]]
 type    = "harbour"
-settle  = { until = { rows.count = { changed = true } } }
-check   = { rows.count = 11, cursor.id = "43" }
-expect  = "Eleven hits, each once, with the scope listing All mail and Inbox only."
 
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "list", cursor.index = 0 }
+settle  = { until = { app.focus.bar.messages = 8 } }
+check   = { app.focus.bar.messages = 8, app.focus.bar.heading = "Conversations · 8 matches" }
+expect  = "Eight hits from both accounts, each once."
 
 [[step]]
-command = "open_message"
-check   = { view = "reader", reading.id = "43", keyboard.region = "list", rows.count = 11 }
-expect  = "The reader shows the first hit, the Tide gate interlock proposal, and the results stay listed beside it."
+id      = "hit"
+key     = "Down"
+check   = { app.focus.bar.highlighted = "message", app.focus.bar.highlighted_id = "57" }
+expect  = "The first hit, the Tide gate interlock proposal, is highlighted."
+
+[[step]]
+key     = "Return"
+check   = { view = "reader", keyboard.region = "reader", reading.id = "57", overlay.kind = "none" }
+expect  = "The reader shows the first hit, the Tide gate interlock proposal, over the list."

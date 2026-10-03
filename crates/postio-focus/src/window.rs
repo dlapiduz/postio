@@ -4283,10 +4283,14 @@ impl FocusWindow {
     /// What a row of the bar asked for.
     fn bar_action(&self, action: crate::bar::BarAction) {
         match action {
+            // A hit opens by itself. It was opened through the list's
+            // cursor row first, so a fresh window -- no cursor row until a
+            // key puts one there -- opened nothing at all.
             crate::bar::BarAction::Open { message, subject } => {
-                self.open_message();
-                if let Some(reading) = self.reading() {
+                if let Some(reading) = self.reading_dialog() {
                     reading.show_found(self, message, &subject);
+                    crate::a11y::teach_shortcuts(&reading.view());
+                    crate::motion::keep_to_budget(&reading.view());
                 }
             }
             crate::bar::BarAction::Command(command) => self.act(command),
