@@ -21,12 +21,10 @@
 #   scripts/run-isolated.sh HEAD --inspect  # with the GTK Inspector attached
 #   scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
-#   scripts/run-isolated.sh HEAD --focus    # run Focus, the `postio` binary, instead (spec 007)
-#   scripts/run-isolated.sh HEAD --focus --shot  # render Focus's screen 01 to a PNG
-#   scripts/run-isolated.sh HEAD --focus --install-desktop  # also give Focus its dock icon (see below)
+#   scripts/run-isolated.sh HEAD --install-desktop  # also give Postio its dock icon (see below)
 #
-# Without --focus it builds the retired classic app, `postio-classic`, until
-# it is removed (spec 007 T256); making Focus the default is T254.
+# It runs Postio, the `postio` binary (spec 007). `--focus` is accepted and
+# changes nothing, for commands written before Focus became the one app.
 #   scripts/run-isolated.sh HEAD --reset-store  # set the scratch store aside, start a fresh one
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
@@ -52,7 +50,6 @@ shift || true
 INSPECT=0
 SHOT=0
 PROVISION=0
-FOCUS=0
 INSTALL_DESKTOP=0
 RESET_STORE=0
 for arg in "$@"; do
@@ -60,7 +57,7 @@ for arg in "$@"; do
         --inspect) INSPECT=1 ;;
         --shot) SHOT=1 ;;
         --provision) PROVISION=1 ;;
-        --focus) FOCUS=1 ;;
+        --focus) ;;
         --install-desktop) INSTALL_DESKTOP=1 ;;
         --reset-store) RESET_STORE=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
@@ -140,10 +137,9 @@ if [ "$RESET_STORE" = 1 ]; then
     exec cargo run --release -p postio-session --bin postio-store -- reset
 fi
 
-# Postio Focus (spec 007) is a second app on the same store: the same
-# scratch store and XDG dirs, so an account provisioned above is there too,
-# and one app holds the store at a time (ADR 0041).
-if [ "$FOCUS" = 1 ]; then
+# Postio (spec 007) on the scratch store and XDG dirs above, so an account
+# provisioned with --provision is there too.
+{
     if [ "$SHOT" = 1 ]; then
         OUT="$ROOT/focus-shot-$SHA.png"
         cargo run --release -p postio-focus --example shot -- "$OUT" 01
@@ -155,7 +151,7 @@ if [ "$FOCUS" = 1 ]; then
     # and a default icon name), but a dock or window switcher on Wayland
     # (COSMIC, GNOME) shows the icon of the *desktop entry* the compositor
     # matches to the window's app id, and a plain cargo build installs none.
-    # This puts Focus's entry and the package's icon where the session looks,
+    # This puts Postio's entry and the package's icon where the session looks,
     # under your home only, with Exec= on the isolated binary. Opt-in: it
     # writes outside $ROOT. Remove with the two rm lines it prints.
     if [ "$INSTALL_DESKTOP" = 1 ]; then
@@ -176,20 +172,8 @@ if [ "$FOCUS" = 1 ]; then
         echo "undo: rm $APPS/$ID.desktop $ICONS/scalable/apps/dev.postio.Postio.svg $ICONS/symbolic/apps/dev.postio.Postio-symbolic.svg"
     fi
     # --- end --install-desktop ---------------------------------------------
-    echo "building Postio Focus (first run compiles GTK deps; later runs are incremental)…"
+    echo "building Postio (first run compiles GTK deps; later runs are incremental)…"
     cargo build --release -p postio-focus --bin postio
     echo "running — Ctrl-C to stop"
     exec "$TARGET/release/postio"
-fi
-
-if [ "$SHOT" = 1 ]; then
-    OUT="$ROOT/shot-$SHA.png"
-    cargo run --release -p postio-app --example shot -- "$OUT" demo
-    echo "wrote $OUT"
-    exit 0
-fi
-
-echo "building (first run compiles GTK deps; later runs are incremental)…"
-cargo build --release -p postio-app --bin postio-classic
-echo "running — Ctrl-C to stop"
-exec "$TARGET/release/postio-classic"
+}

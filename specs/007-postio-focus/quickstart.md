@@ -19,7 +19,7 @@ to watch it hold.
   cargo run -p postio-focus
   ```
 
-  `scripts/run-isolated.sh --focus` builds a pinned commit with its own
+  `scripts/run-isolated.sh` builds a pinned commit of Postio with its own
   target directory and a throwaway store.
 
 - **Fixtures only, in anything committed.** Every fixture, screenshot and
