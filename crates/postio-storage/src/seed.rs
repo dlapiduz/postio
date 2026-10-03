@@ -1,10 +1,10 @@
 //! Seeding a store with realistic mail, for screenshots, UI tests and benches.
 //!
-//! `examples/shot.rs` in `postio-gtk` has its own hard-coded demo content today,
-//! which means nothing else — a GTK test, a bench — can render the same
-//! mailbox. This module is the one place that builds one, on top of the
-//! ordinary repositories: an account, a folder tree, and messages filed and
-//! threaded exactly as sync would file them.
+//! This module is the one place that builds a demo mailbox, so a screenshot,
+//! a storyboard, a GTK test and a bench all render the same one: Postio's
+//! `postio_focus::demo` builds its seeds' store halves here. It works on top
+//! of the ordinary repositories: an account, a folder tree, and messages
+//! filed and threaded exactly as sync would file them.
 //!
 //! # Two variants
 //!

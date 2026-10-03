@@ -16,9 +16,12 @@ use crate::format::{Apps, Input, Storyboard};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum App {
-    /// The GTK desktop client.
+    /// The classic GTK app. Only its own runner names it -- no script and
+    /// no storyboard in the catalogue does -- and it goes with that app in
+    /// specs/007-postio-focus T256.
     Classic,
-    /// The GTK client's focus layout (spec 007).
+    /// Postio, the desktop app (spec 007; ADR 0043): the one app storyboards
+    /// play on.
     Focus,
     /// The terminal client.
     Terminal,

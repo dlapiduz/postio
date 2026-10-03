@@ -28,8 +28,8 @@
 //! A seed is a condition of the store ([`Seed`]); a preset is a condition
 //! of the window that no key reaches without a server or a person -- a
 //! Settings section, the account form a provider lookup fills, the page a
-//! locked keyring leaves -- applied by hand after the window is up, as the
-//! classic runner's were. Anything a command reaches is a step instead.
+//! locked keyring leaves -- applied by hand after the window is up.
+//! Anything a command reaches is a step instead.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -282,9 +282,8 @@ fn open_settings(
     Ok(panel)
 }
 
-/// Three accounts and how much mail each holds, hand-fed to Settings as
-/// the classic runner's preset fed its panel: the weights a backfill
-/// measures, which no seed has a server to measure.
+/// Three accounts and how much mail each holds, hand-fed to Settings: the
+/// weights a backfill measures, which no seed has a server to measure.
 fn show_account_weights(panel: &postio_widgets::settings::SettingsPanel) {
     let footprint = |total: u64, attachments: u64, local: u64, complete: bool| {
         postio_core::event::MailFootprint {
@@ -328,7 +327,7 @@ fn show_account_weights(panel: &postio_widgets::settings::SettingsPanel) {
 /// Opens the add-account dialog by its command and puts its screen on the
 /// step `preset` names: a provider found for the address, the browser being
 /// waited on, or how much mail to keep. Each of those needs a server or a
-/// person to reach, so the screen is told, as the classic runner told its.
+/// person to reach, so the screen is told.
 /// The provider is an invented one on a reserved domain: providers are data,
 /// and no picture speaks for a real one.
 fn show_add_account(window: &FocusWindow, preset: Preset) -> Result<(), String> {
@@ -597,7 +596,7 @@ fn deliver_input(
             let context = window.key_context();
             delivered.context = Some(context_name(window));
             // Only what Focus offers is bound, as the resolver it presses
-            // keys through binds it: `*` flags in Classic and is nothing here.
+            // keys through binds it.
             let (keymap, _) = Keymap::from_commands_for(&window.keymap(), Frontend::Focus);
             let binding = context
                 .chain()
@@ -1034,8 +1033,6 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
 /// window: the network (FR-013), the desktop, or a file chooser that would
 /// sit waiting for a person. Reported as skipped, with the reason, so the
 /// list is visible and argued with rather than silently shrinking coverage.
-/// The same list Classic's pass keeps (`postio-app`'s `demo::storyboard`):
-/// what leaves the machine does so from either app.
 pub const NEVER_PRESSED: &[(&str, &str)] = &[
     ("refresh", "syncs, which dials the server"),
     ("retry_send", "sends, which dials the server"),
