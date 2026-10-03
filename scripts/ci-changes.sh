@@ -30,12 +30,12 @@
 # It used to be `macos=yes` whenever `rust=yes`, and that was true of the
 # reasoning but not of the graph (#1449). What the Swift compiles against is
 # generated from `postio-ffi`, so what can change it is `postio-ffi`'s
-# dependency closure -- seventeen of the twenty crates. The other three are
-# `postio-app`, `postio-gtk` and `postio-bench`, and they carry 78 of the last
-# 200 commits on `main`, every one of which started a fourteen-minute job that
-# no binding change could have needed. `scripts/lib/ffi-closure.py` computes
-# the outside set from the manifests each run; the three names are not written
-# down anywhere, here or there, on purpose.
+# dependency closure. The crates outside it -- the desktop app and the
+# widgets it draws with among them -- carried 78 of 200 commits on `main` when
+# this was measured, every one of which started a fourteen-minute job that no
+# binding change could have needed. `scripts/lib/ffi-closure.py` computes the
+# outside set from the manifests each run; the names are not written down
+# anywhere, here or there, on purpose.
 set -euo pipefail
 
 event=${1:-}
@@ -93,7 +93,7 @@ EOF_FILES
 #
 # The bindings the Swift compiles against are generated from `postio-ffi`, so
 # what reaches the Swift compiler is `postio-ffi`'s dependency closure, not
-# "any Rust". Three crates sit outside it -- and they are the most edited in
+# "any Rust". Several crates sit outside it -- and they are the most edited in
 # the repository, which is where the fourteen minutes were going (#1449).
 #
 # `scripts/lib/ffi-closure.py` computes the outside set from the manifests

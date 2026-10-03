@@ -142,12 +142,12 @@ def main() -> int:
     # ── a package narrows the first run and nothing else ─────────────
     with tempfile.TemporaryDirectory() as directory:
         stub_dir = stub(Path(directory), flags=("workspace-passes",))
-        result = run(stub_dir, "ci", "postio-gtk")
+        result = run(stub_dir, "ci", "postio-widgets")
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
         case(
             "a package scopes the first run to that crate",
-            "-p postio-gtk" in calls,
-            f"expected `-p postio-gtk` in the invocation:\n{calls}",
+            "-p postio-widgets" in calls,
+            f"expected `-p postio-widgets` in the invocation:\n{calls}",
         )
         case(
             "a package run does not also ask for the whole workspace",

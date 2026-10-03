@@ -35,14 +35,13 @@
 # whatever profile the run used -- otherwise "it passed alone" would be
 # evidence about a different question than the one that failed.
 #
-# A `package` narrows the first run to one crate -- `postio-gtk`, for the
-# pull-request job that runs the widget suite. The isolated retry is already
-# scoped to one binary and one test, so it needs no narrowing of its own.
+# A `package` narrows the first run to one crate. The isolated retry is
+# already scoped to one binary and one test, so it needs no narrowing of its
+# own.
 #
-# That job wants this for the reason named above: **the GTK editor cases
-# flake on a shared runner often enough to matter.** Two failures of
-# `gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces`
-# in one day, 657 of 658 passing each time, on commits touching no GTK code
+# A retry exists for the reason named above: **the GTK editor cases flake
+# on a shared runner often enough to matter.** Two failures of the markdown
+# editor case in one day, 657 of 658 passing each time, on commits touching no GTK code
 # -- each one a `timed_out ... waiting for the bold run to cross the bridge`
 # on a runner announcing `ZINK: vkCreateInstance failed`. A WebKit message
 # that never arrives on a machine with no GPU is not evidence about the

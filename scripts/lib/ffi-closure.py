@@ -6,15 +6,15 @@ runner. A macOS job is the only thing that compiles the Swift half and proves
 the link, and the Swift compiles against bindings generated from `postio-ffi`
 -- so a Rust change reaches it only if it can reach that crate.
 
-Seventeen of the twenty crates are in `postio-ffi`'s closure. The three that
-are not -- `postio-app`, `postio-gtk`, `postio-bench` -- are also the most
-edited: 78 of the last 200 commits on `main` touched one of them, and every
-one of those started a fourteen-minute macOS job that no binding change could
-possibly have needed (#1449).
+Most of the workspace is in `postio-ffi`'s closure. The crates that are not
+-- the desktop app and the widgets it draws with among them -- are also the
+most edited: when this was measured, 78 of 200 commits on `main` touched
+one, and every one of those started a fourteen-minute macOS job that no
+binding change could possibly have needed (#1449).
 
 # Derived, never listed
 
-The three names are *not* written down here, and must not be. A
+The names are *not* written down here, and must not be. A
 hand-maintained list of "the crates Swift cannot see" fails in the direction
 nobody notices: a crate added to `postio-ffi`'s graph keeps skipping the macOS
 runner because somebody forgot a line, and the branch that breaks the seam is

@@ -9,7 +9,7 @@ against it -- the golden binding table, `docs/keybindings.md`, `[keys]`,
 on an assertion about a table (#1047, and #1003 paid for it twice).
 
 Both directions matter. Too narrow and the class of bug this exists for slips
-through to CI; too wide and every landing that touches `postio-gtk` waits
+through to CI; too wide and every landing that touches a GTK crate waits
 minutes for a suite it did not need.
 
 Usage: scripts/tests/test-full-suite-crates.py
@@ -80,18 +80,18 @@ def main() -> int:
     # ---- and the cost exception ------------------------------------------
 
     case(
-        "postio-gtk's suites are minutes, so a landing does not wait for them",
-        crates=["postio-gtk"],
+        "the desktop app's suites are minutes, so a landing does not wait for them",
+        crates=["postio-focus"],
         expected=[],
     )
     case(
-        "nor postio-app's",
-        crates=["postio-app"],
+        "nor the shared widgets'",
+        crates=["postio-widgets"],
         expected=[],
     )
     case(
         "the expensive ones are dropped and the rest are kept",
-        crates=["postio-app", "postio-core", "postio-gtk", "postio-search"],
+        crates=["postio-core", "postio-focus", "postio-search", "postio-widgets"],
         expected=["postio-core", "postio-search"],
     )
 

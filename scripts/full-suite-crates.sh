@@ -39,16 +39,22 @@
 #
 # Integration-test execution per crate, from CI run 33856312398 (3,578 tests):
 #
-#   postio-gtk      283s      postio-sync      17s     postio-model    5.3s
-#   postio-app      208s      postio-account   15s     postio-ffi      3.5s
-#   postio-storage   76s      postio-index     13s     postio-search   2.1s
-#   postio-runtime   45s      postio-config    12s     postio-body     1.7s
+#   postio-storage   76s      postio-sync      17s     postio-model    5.3s
+#   postio-runtime   45s      postio-account   15s     postio-ffi      3.5s
+#                             postio-index     13s     postio-search   2.1s
+#                             postio-config    12s     postio-body     1.7s
 #                             postio-core     6.3s     postio-smtp     0.9s
+#
+# and the two GTK crates' suites, summed per test on this workstation
+# (2026-10-03, `cargo nextest run -p postio-focus -p postio-widgets`):
+#
+#   postio-focus   ~1000s of tests (focus_suite)
+#   postio-widgets  ~170s of tests (widgets_suite and its unit tests)
 #
 # The gap is wide and lands between `postio-runtime` and `postio-sync`: four
 # crates cost 45s and up, and everything else is under twenty. Those four are
-# the exception; the rest a landing can afford, and CI still runs all of them
-# on the pull request either way.
+# the exception; the rest a landing can afford, and CI runs the GTK crates'
+# suites on every pull request either way.
 set -euo pipefail
 
 # Crates whose integration suites are minutes rather than seconds. See above
@@ -77,7 +83,7 @@ set -euo pipefail
 # only itself. `issue-land.sh` prints the chain's total against the budget on
 # every landing, and names the worst phases when it is over — that is what
 # this list should be updated from, rather than from an impression.
-SLOW="postio-app postio-gtk postio-runtime postio-storage"
+SLOW="postio-focus postio-runtime postio-storage postio-widgets"
 
 if [ "${1:-}" = "--slow" ]; then
     printf '%s\n' $SLOW

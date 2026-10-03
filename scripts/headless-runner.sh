@@ -2,8 +2,8 @@
 # Cargo's test runner: put every test binary on a compositor of its own.
 #
 # Wired up as `runner` in .cargo/config.toml, so plain `cargo test` is headless
-# without anyone remembering a wrapper. postio-gtk has ~20 test binaries that
-# present real windows; on a live session they land on the maintainer's desktop
+# without anyone remembering a wrapper. The GTK suites present real windows;
+# on a live session they land on the maintainer's desktop
 # and steal focus, and one of them opened a save dialog that outlived the run.
 #
 # This sits in front of EVERY binary cargo executes for this target, so its
@@ -19,7 +19,7 @@
 # It fronts `cargo run` too, but passes it through: only cargo's test and
 # bench binaries -- the ones named with the 16-hex metadata suffix, like
 # deps/gtk_list-0123456789abcdef -- are sent to the compositor. A plain-named
-# binary (`cargo run -p postio-app`, an example) is someone launching a
+# binary (`cargo run -p postio-focus`, an example) is someone launching a
 # program to look at it, and gets the real display. #315.
 set -uo pipefail
 
@@ -31,7 +31,7 @@ set -uo pipefail
 # contributor with no mutter should get the skips; a target `.cargo/config.toml`
 # forgot to name should get a hard failure. Without a marker the two are
 # indistinguishable from inside the test binary, which is how the aarch64 gap
-# stayed green. `gtk_display_required.rs` is the reader.
+# stayed green. `widgets_suite`'s `display_required` is the reader.
 export POSTIO_TEST_RUNNER=headless-runner
 
 # `.cargo/config.toml` points TMPDIR at `target/tmp`, relative to the workspace
@@ -156,7 +156,7 @@ if [ ! -S "$SOCKET" ]; then
         # the test binary's -- which is why setting the variable for the
         # tests never silenced it, and why the noise looked like it came from
         # the suite. There is no accessibility bus on a headless runner and
-        # nothing here wants one: `gtk_accessibility.rs` asserts through
+        # nothing here wants one: the accessibility sweep asserts through
         # GTK's own `gtk_test_accessible_*` API, which needs no bridge.
         GTK_A11Y=none NO_AT_BRIDGE=1 \
         setsid mutter --headless --wayland-display="$DISPLAY_NAME" \
@@ -167,7 +167,7 @@ if [ ! -S "$SOCKET" ]; then
         # ordinary case, not a broken one: a CI run failed with mutter's log
         # saying only "Running Mutter … as a Wayland display server" -- it was
         # coming up, and the wait gave up first. Everything then skipped for
-        # want of a display and `gtk_display_required` failed the run, which
+        # want of a display and `display_required` failed the run, which
         # is the loud failure #114 asked for but not for this reason.
         TICKS=$(awk -v factor="${POSTIO_TEST_PATIENCE:-1}" \
             'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", 40 * factor }')
@@ -233,10 +233,10 @@ unset DISPLAY            # or GDK falls back through XWayland to the real sessio
 export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
 
 case "$(basename "${1:-}")" in
-gtk_reader-*|e2e-*|gtk_suite-*|app_suite-*|gtk_editable_dialect-*|gtk_editor*|gtk_composer*|gtk_signature*)
-    # The binaries that talk to WebKit directly: gtk_reader has hung at
-    # least four times, and postio-app's e2e suite builds a full window --
-    # reader included -- around a live engine, so it inherits the risk.
+e2e-*|widgets_suite-*|focus_suite-*)
+    # The binaries that talk to WebKit: the shared widgets' suite drives the
+    # composer's editor, and the desktop app's builds full windows -- the
+    # composer included -- around a live engine, so they inherit the risk.
     # (#272), holding a gate run hostage until a human killed it. Run
     # it under a watchdog: its own process group (so the WebProcess and
     # NetworkProcess children die with it), a hard deadline, and a dump of
@@ -253,10 +253,10 @@ gtk_reader-*|e2e-*|gtk_suite-*|app_suite-*|gtk_editable_dialect-*|gtk_editor*|gt
     # costs is how long a wedged run takes to fail. Sizing it close to the
     # legitimate runtime buys nothing and kills real work.
     #
-    # 300 was chosen when gtk_suite was ~76 cases. #841 consolidated 45 more
-    # into it, and it now takes ~220s on an idle workstation -- inside 300, but
-    # not while a gate run is also compiling. It was killed at 142 passing
-    # cases with nothing wrong.
+    # 300 was chosen when the first GTK suite was ~76 cases. #841 consolidated
+    # 45 more into it, and it then took ~220s on an idle workstation -- inside
+    # 300, but not while a gate run is also compiling. It was killed at 142
+    # passing cases with nothing wrong.
     LIMIT="${POSTIO_TEST_WATCHDOG:-900}"
     LIMIT=$(awk -v base="$LIMIT" -v factor="${POSTIO_TEST_PATIENCE:-1}" \
         'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", base * factor }')

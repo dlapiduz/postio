@@ -106,7 +106,7 @@ RUSTC_STUB = """#!/usr/bin/env bash
 echo "rustc 1.98.0 (stub)"
 """
 
-MEMBERS = ("postio-gtk", "postio-core", "postio-app")
+MEMBERS = ("postio-focus", "postio-core", "postio-widgets")
 
 FAILURES: list[str] = []
 

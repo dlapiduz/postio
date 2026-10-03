@@ -80,7 +80,7 @@ fn check_parsed_invariants(parsed: &ParsedMessage, raw: &[u8]) {
     // `filename="=?utf-8Qa/b.txt"` -- a malformed RFC 2047 word that does not
     // decode, leaving the slash in place -- and that is the parser behaving
     // correctly. `mime::parse` reports the filename the sender wrote; making
-    // it safe to write to disk is `postio_gtk::parts::save_name`'s promise,
+    // it safe to write to disk is `postio_ui::reader::parts::save_name`'s promise,
     // and that is the layer whose tests assert it. Asserting it here would
     // demand that the model launder data it is supposed to report faithfully.
     //

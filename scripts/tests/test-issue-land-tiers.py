@@ -3,7 +3,7 @@
 
 Landing used to run `cargo test -p <crate>` for every crate a branch touched,
 integration binaries included. On this workstation that is the expensive part
-by a wide margin -- a single `postio-app` integration binary is an ~11-minute
+by a wide margin -- a single `postio-widgets` integration binary is an ~11-minute
 compile and link, several sessions share the machine with `jobs = 2`, and
 landing became something you queued for rather than something you did.
 
@@ -97,7 +97,7 @@ RUSTC_STUB = """#!/usr/bin/env bash
 echo "rustc 1.98.0 (stub)"
 """
 
-MEMBERS = ("postio-gtk", "postio-core", "postio-app")
+MEMBERS = ("postio-focus", "postio-core", "postio-widgets")
 
 FAILURES: list[str] = []
 

@@ -7,7 +7,7 @@
 #
 # It is not faster here, and that is not the reason it is wired in. Measured
 # interleaved on an idle box, six rounds, timing the whole `rustc` invocation
-# for the `app_suite` test binary -- the largest in the repository:
+# for the desktop app's test binary -- the largest in the repository:
 #
 #     rust-lld  median 1.235s   maxRSS 734 MB
 #     mold      median 1.16s    maxRSS 469 MB
