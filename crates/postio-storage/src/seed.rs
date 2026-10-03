@@ -45,7 +45,9 @@
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use postio_model::{
     Account, Attachment, BodyState, EmailAddress, Flag, FlagSet, Mailbox, MailboxRole, Message,
-    RfcMessageId, ids::{AccountId, MessageId}, test_corpus,
+    RfcMessageId,
+    ids::{AccountId, MessageId},
+    test_corpus,
 };
 
 use crate::repository::{

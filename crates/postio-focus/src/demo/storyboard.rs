@@ -145,7 +145,10 @@ pub fn runner_info() -> RunnerInfo {
     RunnerInfo {
         app: App::Focus,
         seeds: Seed::ALL.iter().map(|seed| seed.id().to_owned()).collect(),
-        presets: Preset::ALL.iter().map(|preset| preset.id().to_owned()).collect(),
+        presets: Preset::ALL
+            .iter()
+            .map(|preset| preset.id().to_owned())
+            .collect(),
         axes,
     }
 }

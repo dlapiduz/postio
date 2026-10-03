@@ -12,10 +12,9 @@ and the file format is in
 - `mutter` installed. The runner uses the same private headless compositor as
   the tests (`scripts/test-headless.sh --status`).
 
-Every command plays Focus, the one desktop app (ADR 0043), unless `--app`
-names another: since specs/007-postio-focus T265 the runner is
-`postio-focus`'s, and the catalogue is written against Focus's surfaces.
-`--app classic` plays the classic app until T256 removes it.
+Every command plays Postio, the one desktop app (ADR 0043): since
+specs/007-postio-focus T265 the runner is `postio-focus`'s, the catalogue is
+written against its surfaces, and there is no `--app` to choose another.
 
 ## 1. The catalogue loads (sanity tier)
 
@@ -132,20 +131,18 @@ scripts/issue-land.sh --status
 
 Run `/ux-review`, push again, and the summary arrives as a PR comment.
 
-## 7. One storyboard on every app present (US3)
+## 7. Parity across apps (US3)
+
+Parity needs a second runner, and the desktop has one app: the page's parity
+section is empty until the terminal or macOS client gets a runner of its own
+(ADR 0044). `postio-storyboard`'s `parity` tests are what hold it meanwhile:
 
 ```bash
-scripts/storyboards.sh run --app all --only calibration/cal-cheatsheet-lists-keys --calibration
-scripts/storyboards.sh page --open
+cargo test -p postio-storyboard --lib parity
 ```
 
-**Expect:**
-- The parity section shows one row per step, with a column per app present.
-- A shared storyboard with no override on a step where the two observations
-  differ is marked **diverging**.
-
-Until T256 removes it, `all` includes the classic app; a storyboard naming
-`apps = ["focus"]` reads `not applicable` there.
+**Expect** a shared storyboard with no override on a step where two apps'
+observations differ to be marked **diverging**.
 
 ## 8. The screen sweep (FR-030)
 
@@ -155,9 +152,9 @@ scripts/storyboards.sh screens
 
 **Expect** a contact sheet of every `storyboards/screens/*.toml`, filmed on
 Focus in the variants each asks for, with a design on the left where a
-screen names one. The classic canvas's designs are not Focus's, and Focus's
-references are never committed (specs/007-postio-focus/screens.md), so the
-screens cite screens.md's numbers rather than a file.
+screen names one. Postio's design references are never committed
+(specs/007-postio-focus/screens.md), so the screens cite screens.md's
+numbers rather than a file.
 `scripts/screens.sh` no longer exists.
 
 ## 9. Every command does something (US6)
