@@ -330,9 +330,25 @@ fn show_add_account(window: &FocusWindow, preset: Preset) -> Result<(), String> 
     use postio_widgets::onboarding::{BrowserSignIn, Onboarding, Server, Settings, Status};
 
     window.act(CommandId::AddAccount);
+    // The form is in the dialog over the window, not the window's content.
+    let find = || {
+        let dialog = window.add_account_dialog()?;
+        let mut pending: Vec<gtk::Widget> = vec![dialog.upcast()];
+        while let Some(widget) = pending.pop() {
+            if let Ok(screen) = widget.clone().downcast::<Onboarding>() {
+                return Some(screen);
+            }
+            let mut child = widget.first_child();
+            while let Some(next) = child {
+                child = next.next_sibling();
+                pending.push(next);
+            }
+        }
+        None
+    };
     let mut screen = None;
     pump_until(Duration::from_secs(5), || {
-        screen = Onboarding::showing_in(window);
+        screen = find();
         screen.is_some()
     });
     let screen = screen.ok_or("the add-account dialog never opened")?;

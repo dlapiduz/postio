@@ -680,6 +680,44 @@ impl Bar {
             .collect()
     }
 
+    /// The highlighted row, as a storyboard observes it: what kind of row
+    /// it is, and the message it would open when it is one.
+    ///
+    /// The text is the row's own labels, as a person reads it ("Sorted by
+    /// relevance"), and a message's subject.
+    pub fn highlighted(&self) -> Option<(&'static str, Option<MessageId>, String)> {
+        let selected = self.list.selected_row()?;
+        let index = usize::try_from(selected.index()).ok()?;
+        let said = || {
+            let mut said = Vec::new();
+            let mut pending: Vec<gtk::Widget> = vec![selected.clone().upcast()];
+            while let Some(widget) = pending.pop() {
+                if let Some(label) = widget.downcast_ref::<gtk::Label>()
+                    && widget.is_visible()
+                    && !label.text().is_empty()
+                {
+                    said.push(label.text().to_string());
+                }
+                let mut child = widget.last_child();
+                while let Some(next) = child {
+                    child = next.prev_sibling();
+                    pending.push(next);
+                }
+            }
+            said.join(" ")
+        };
+        let rows = self.rows.borrow();
+        Some(match rows.get(index)? {
+            Row::Heading => ("heading", None, said()),
+            Row::Message { message, subject } => ("message", Some(*message), subject.clone()),
+            Row::Command(_) => ("command", None, said()),
+            Row::Place(_, name) => ("place", None, name.clone()),
+            Row::Search => ("search", None, said()),
+            Row::Instead(word) => ("instead", None, word.clone()),
+            Row::Order => ("order", None, said()),
+        })
+    }
+
     /// The chips the words were lowered to.
     pub fn chips(&self) -> Vec<String> {
         let mut said = Vec::new();

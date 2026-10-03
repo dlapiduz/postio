@@ -4821,7 +4821,10 @@ impl FocusWindow {
             .is_some_and(|pane| within(pane.widget().upcast_ref()))
         {
             Region::List
-        } else if dialog.is_none() && !self.is_typing() && self.key_context() == KeyContext::List
+        } else if dialog.is_none()
+            && !self.is_typing()
+            && self.key_context() == KeyContext::List
+            && self.unavailable_reason().is_none()
         {
             // A control in the top bar or the foot strip holds focus, but
             // the window's controller takes every key first (capture
@@ -4833,6 +4836,22 @@ impl FocusWindow {
 
         let field = match region {
             Region::Search | Region::Picker => Some("query".to_owned()),
+            // The composer's field, named as contracts/observation.md names
+            // them: the one the keyboard is in, in its dialog or the pane.
+            Region::Composer => self
+                .compose()
+                .and_then(|compose| compose.composer().focused_field())
+                .map(|field| {
+                    use postio_widgets::composer::Field;
+                    match field {
+                        Field::To => "to",
+                        Field::Cc => "cc",
+                        Field::Bcc => "bcc",
+                        Field::Subject => "subject",
+                        Field::Body => "body",
+                    }
+                    .to_owned()
+                }),
             _ => None,
         };
 
@@ -4912,7 +4931,12 @@ impl FocusWindow {
             undo: imp.toast.offers_undo(),
         };
 
-        let view = if settings {
+        let locked = self.unavailable_reason().is_some();
+        let view = if locked {
+            // The page a store that will not open leaves, a locked keyring
+            // among the reasons: what the window shows instead of mail.
+            View::Locked
+        } else if settings {
             View::Settings
         } else if compose_open {
             View::Composer
@@ -4945,6 +4969,40 @@ impl FocusWindow {
             "focus.bulk".to_owned(),
             serde_json::json!({ "shown": bulk.is_some(), "summary": bulk }),
         );
+        if let Some(bar) = &bar {
+            // What the bar lists, which the list behind it never shows: its
+            // heading, how many messages it found and the row Return runs.
+            // One key each, because a check names an app field by its whole
+            // key (`app.focus.bar.messages`).
+            let highlighted = bar.highlighted();
+            let fields = [
+                ("focus.bar.typed", serde_json::json!(bar.typed())),
+                ("focus.bar.heading", serde_json::json!(bar.heading())),
+                (
+                    "focus.bar.messages",
+                    serde_json::json!(bar.result_subjects().len()),
+                ),
+                (
+                    "focus.bar.highlighted",
+                    serde_json::json!(highlighted.as_ref().map(|(kind, _, _)| *kind)),
+                ),
+                (
+                    "focus.bar.highlighted_id",
+                    serde_json::json!(
+                        highlighted
+                            .as_ref()
+                            .and_then(|(_, id, _)| id.map(|id| id.get().to_string()))
+                    ),
+                ),
+                (
+                    "focus.bar.highlighted_text",
+                    serde_json::json!(highlighted.map(|(_, _, text)| text)),
+                ),
+            ];
+            for (key, value) in fields {
+                app.insert(key.to_owned(), value);
+            }
+        }
         if let Some(digest) = &digest {
             app.insert(
                 "focus.digest_page".to_owned(),
