@@ -46,10 +46,9 @@ defect is invisible again, so it is a boundary, not a nicety.
 
 ## Consequences
 
-- Focus has a runner (`postio-focus`, over `postio-widgets`' GTK half),
-  and it is the desktop app's since the classic app's removal was approved
-  (ADR 0043; specs/007-postio-focus T265); the classic app's runner goes
-  with it. The terminal and macOS apps owe one each before their next
+- The desktop app has one runner (`postio-focus`, over `postio-widgets`'
+  GTK half), and storyboards play on it and nothing else since the classic
+  app's removal was approved (ADR 0043; specs/007-postio-focus T265). The terminal and macOS apps owe one each before their next
   interaction work (FR-031). The terminal's is the cheapest: its update is already pure.
 - `postio-storyboard` is a development crate the shipped frontends never
   depend on; `Observation` lives in `postio-ui`, which they all do.

@@ -74,7 +74,7 @@ These are nested tables shaped like `Observation`. A leaf is one of:
 | `{ one_of = [..] }` | equals any of the values |
 
 A check on a field the app does not observe (`None` by declaration, such as
-`back_depth` on both GTK apps) evaluates to **not applicable**. It is never a
+`back_depth` on the desktop app) evaluates to **not applicable**. It is never a
 pass and never a failure.
 
 ### StepOverride
@@ -89,18 +89,23 @@ pass and never a failure.
 
 ## App, Axis, SeedName, PresetName
 
-- **`App`**: `classic` \| `focus` \| `terminal` \| `macos`.
+- **`App`**: `focus` \| `terminal` \| `macos`. `focus` is Postio, the one
+  desktop app, and the only one with a runner (specs/007-postio-focus
+  T265); the terminal and macOS name theirs when they have one. The format
+  still parses `classic` for the classic app's own runner, which no script
+  reaches; both go with the classic app in T256.
   `provides(App, CommandId)` comes from the registry (R7).
 - **`Axis` and its values.** Each app declares its subset in `runner list`:
 
-  | Axis | Values | Apps |
+  | Axis | Values | Declared by |
   |---|---|---|
-  | `scheme` | `light`, `dark` | both |
-  | `contrast` | `normal`, `high` | both |
-  | `width` | `wide` (1600×900), `normal` (1280×800), `narrow` (900×700) | both |
-  | `density` | `airy`, `comfortable`, `compact` | Classic |
-  | `text` | `100`, `200` | both |
-  | `treatment` | `app`, `paper` | Focus, and Classic once spec 007's treatment lands on `main` |
+  | `scheme` | `light`, `dark` | Postio |
+  | `width` | `wide` (1600×900), `normal` (1280×800), `narrow` (900×700) | Postio |
+  | `text` | `100`, `200` | Postio |
+
+  Postio follows the system's contrast and has one row density
+  (`classic-parity.md` rows 18 and 19), so it declares no `contrast` or
+  `density` axis, and a storyboard that varies one is not applicable.
 
 - **`SeedName`**: listed in research R11. Each app declares which seeds it can
   build.
@@ -142,8 +147,8 @@ This lives in `postio_ui::observe`. It is the same shape for every app
 | `reading.scroll` | `{ offset: u32, max: u32 }`? | Vertical position of the reading surface. |
 | `composer.open` | bool | |
 | `composer.detached` | bool | |
-| `back_depth` | u32? | `None` where the app has no back stack. Both GTK apps today. |
-| `app` | map string → JSON | Namespaced app-specific fields: `classic.pane`, `classic.reader_occupant`, `focus.bulk`, `focus.digest_page`. Shared storyboards may not check them; the lint enforces this. |
+| `back_depth` | u32? | `None` where the app has no back stack, as on the desktop app today. |
+| `app` | map string → JSON | Namespaced app-specific fields: `focus.bulk`, `focus.digest_page`, `focus.bar.typed`, ... (contracts/observation.md). Shared storyboards may not check them; the lint enforces this. |
 
 `Observation` derives `PartialEq`, so divergence (FR-016) is a field-wise
 comparison of the non-informative fields. `keyboard.widget` and `app.*` are

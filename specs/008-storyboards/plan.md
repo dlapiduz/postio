@@ -34,15 +34,13 @@ The spec asks for four things:
   - a **keyboard-reachability** check.
 - **Determinism.** A hermetic re-exec, a frozen clock behind a new
   `postio_ui::clock` seam, embedded fonts only, and animations off (R5).
-- **Two runners, then one.**
-  - **Classic** (`postio-app`) shares `shot`'s setup through a new
-    `postio_app::demo` module. It landed on `main`, and goes with the
-    classic app in T256.
-  - **Focus** (`postio-focus`) was built on a lane and is the runner design
-    review plays on since specs/007-postio-focus T265: `postio_focus::demo`
-    is the one demo store its `shot` and its runner share, with the seeds'
-    store halves in `postio_storage::seed`, and the catalogue is written
-    against Focus's surfaces.
+- **One runner.** Storyboards play on Postio and nothing else
+  (specs/007-postio-focus T265). Its runner is `postio-focus`'s:
+  `postio_focus::demo` is the one demo store its `shot` and its runner
+  share, with the seeds' store halves in `postio_storage::seed`, and the
+  catalogue is written against its surfaces. The classic app's runner,
+  which this plan first built on `main`, is not reachable from the script
+  or the catalogue and goes with the classic app in T256.
 - **`scripts/storyboards.sh` drives everything.** It replaces
   `scripts/screens.sh`, whose table becomes zero-step storyboards (R12).
 - **Base runs.** The branch's storyboards are run against the merge-base's
@@ -104,10 +102,11 @@ definition.
 **Testing**:
 - **Sanity tier** (`cargo test --lib`): `postio-storyboard`,
   `postio-ui::observe` and `postio-ui::clock`.
-- **`gtk_suite`**: the shared GTK half — chain delivery, the outline, settle
-  and reachability.
-- **`app_suite`**: one `storyboards` case for Classic. **`focus_suite`**: the
-  same, on the Focus branch.
+- **`widgets_suite`**: the shared GTK half — chain delivery, the outline,
+  settle and reachability.
+- **`focus_suite`**: a storyboard played and written, the observation,
+  determinism across processes, and (nightly) the whole catalogue and the
+  generated pass.
 - **Script self-tests**: under `scripts/run-self-tests.sh`.
 
 **Target Platform**: Linux, on the private headless mutter compositor the
@@ -161,10 +160,11 @@ window, the clock seam, and the toast's tone and undo accessors.
 - `postio-storyboard` gets a `RULES` row that bans gtk4, the database engines
   and tokio.
 - `postio-ui` stays toolkit-free: `observe` and `clock` are plain data.
-- The GTK half is in `postio-gtk` on `main`, and in `postio-widgets` on Focus,
-  per ADR 0043.
-- Seeds stay in the app crates, behind a `demo` feature.
-- Focus never depends on `postio-gtk`.
+- The GTK half is in `postio-widgets`, per ADR 0043.
+- Seeds stay in the app crate, behind a `demo` feature; their store halves
+  are `postio_storage::seed`'s.
+- Neither `postio-storyboard` nor `postio-focus` depends on `postio-gtk` or
+  `postio-app`.
 
 **Re-check after Phase 1: pass.** The design added one crate, two
 toolkit-free modules and one feature flag (`demo`). None of them crosses a
@@ -192,6 +192,10 @@ specs/008-storyboards/
 ```
 
 ### Source Code (repository root)
+
+As first built on `main`. Since specs/007-postio-focus T265 the GTK half is
+`postio-widgets/src/storyboard/`, the runner is `postio-focus`'s, and the
+suites are `widgets_suite` and `focus_suite`.
 
 ```text
 crates/

@@ -27,34 +27,10 @@ That is why ADR 0044 records them (plan § ADR).
    is shown. They are not inferred from its label (research R6).
 6. **Ids are store ids**, as strings. A seed makes them stable.
 
-## Classic (`postio-gtk::window::Window::observe`, until T256)
-
-| Field | Source |
-|---|---|
-| `view` | `context()` and `reader_occupant()` (`shell.rs:378`): `Conversation` → `conversation`; `Composer` → `composer`; `SearchPreview` → `search`. Settings window open → `settings`. Orientation showing → `first_run`. Locked store → `locked`. Otherwise `list`. |
-| `scope` | `scope()` (`window.rs:3076`), by display name |
-| `keyboard.region` | The focus widget's ancestors. `sidebar`, list view → `list`, reader view → `reader`, conversation → `conversation`, composer → `composer`, finder → `search` or `picker` (mailbox mode), palette, cheat sheet → `cheatsheet`, settings window → `settings`, `adw::AlertDialog` → `dialog`. |
-| `keyboard.field` | `composer().focused_field()` (`composer.rs:897`), when the region is `composer`. `query` when the region is `search`. |
-| `keyboard.typing` | `is_typing()` (`window.rs:2960`, private, so read inside `observe`) |
-| `keyboard.reachable` | The shared GTK half's `reachable(&window)` (research R3) |
-| `cursor.*` | `list().cursor().selected()`, `cursor_id()` (`list_view.rs:357, 914`), and the row's subject |
-| `rows.*` | The list model's `n_items()`, and the first visible row from the list's vadjustment |
-| `selection.count` | `list().selection()` (`list_view.rs:362`) |
-| `overlay.*` | `finder().is_open()` + `mode()` (`finder.rs:578, 588`); `cheatsheet().is_visible()`; palette; any presented `adw::Dialog` |
-| `notice.*` | `toast().showing()` (`toast.rs:74`), plus the new `tone()` and `offers_undo()` |
-| `banner.title` | The connection or sync banner, if one is showing |
-| `reading.id` | `reading()` (`window.rs:1365`) |
-| `reading.focused` | `conversation().focused_index()` (`conversation.rs:2552`) |
-| `reading.scroll` | `reader().view()`'s vadjustment, or the conversation's one-document view |
-| `composer.*` | `has_composer()`, `composer().is_open()`, detached state |
-| `back_depth` | `None` (Classic's Back is a cascade, `window.rs:2732`) |
-| `app.classic.pane` | `shell().focused_pane()` (`shell.rs:554`) |
-| `app.classic.reader_occupant` | `reader_occupant()` |
-
 ## Focus (`postio-focus::window::FocusWindow::observe`)
 
-Focus is the app every storyboard is played on (ADR 0043; specs/007-postio-focus
-T265). The classic app's table above stays until T256 removes it.
+Postio's window is the one every storyboard is played on (ADR 0043;
+specs/007-postio-focus T265).
 
 | Field | Source |
 |---|---|
