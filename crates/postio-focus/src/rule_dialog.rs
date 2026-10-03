@@ -9,7 +9,6 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use chrono::{NaiveTime, Weekday};
 use gtk::glib;
 use postio_client::Client;
 use postio_client::protocol::{DigestRuleDraft, RuleDay};
@@ -27,26 +26,7 @@ pub const DIALOG_NAME: &str = "focus-digest-rule";
 /// The dialog's width (contracts/focus-surface.md).
 const WIDTH: i32 = 620;
 
-/// How far back the preview looks.
-const PREVIEW_DAYS: i64 = 90;
-
-/// The cadences, in the menu's order.
-const CADENCES: [(Cadence, &str); 3] = [
-    (Cadence::Daily, "Daily"),
-    (Cadence::Weekly, "Weekly"),
-    (Cadence::Monthly, "Monthly"),
-];
-
-/// The weekdays, in the menu's order.
-const WEEKDAYS: [Weekday; 7] = [
-    Weekday::Mon,
-    Weekday::Tue,
-    Weekday::Wed,
-    Weekday::Thu,
-    Weekday::Fri,
-    Weekday::Sat,
-    Weekday::Sun,
-];
+use postio_ui::digest::{CADENCES, PREVIEW_DAYS, WEEKDAYS};
 
 type Saved = Rc<dyn Fn(String)>;
 
@@ -121,7 +101,7 @@ impl RuleDialog {
         // for a typed `list:` or query rule, previewed the same way.
         let query_entry = gtk::Entry::new();
         query_entry.set_hexpand(true);
-        query_entry.set_placeholder_text(Some("list:weekly.example.org or a search"));
+        query_entry.set_placeholder_text(Some(digest::QUERY_PLACEHOLDER));
         query_entry.set_visible(false);
         let from_value = gtk::Box::new(gtk::Orientation::Vertical, S1);
         from_value.append(&from);
@@ -343,31 +323,14 @@ impl RuleDialog {
             .map(|sender| sender.display().to_owned())
             .collect();
         self.name.replace(digest::rule_name(&names));
-        self.queries.replace(
-            senders
-                .iter()
-                .map(|sender| format!("from:{}", sender.address.to_lowercase()))
-                .collect(),
-        );
+        self.queries.replace(digest::sender_queries(senders));
         self.replacing.replace(None);
         self.like_this.replace(like_this);
-        self.heading.set_text(if senders.len() > 1 {
-            "Digest these senders"
-        } else {
-            "Digest this sender"
-        });
-        self.show_senders(
-            &senders
-                .iter()
-                .map(|sender| sender.address.to_lowercase())
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
+        self.heading
+            .set_text(digest::new_rule_heading(senders.len()));
+        self.show_senders(&digest::sender_line(senders));
         self.note.set_text(digest::rule_note(senders.len()));
-        self.cadence.set_selected(1);
-        self.weekday.set_selected(6);
-        self.month_day.set_selected(0);
-        self.at.set_text("09:00");
+        self.show_schedule(&digest::Schedule::new_rule());
         self.open(parent);
     }
 
@@ -380,39 +343,28 @@ impl RuleDialog {
         self.replacing.replace(Some(rule.name.clone()));
         self.like_this.replace(None);
         self.heading
-            .set_text(&format!("Digest rule \u{b7} {}", rule.name));
+            .set_text(&digest::edit_rule_heading(&rule.name));
         // A rule whose every query is `from:` reads as senders, editable
         // through the plain label; anything else -- a `list:` or free
         // query -- opens straight into the query entry it was made with.
-        if rule
-            .queries
-            .iter()
-            .all(|query| query.trim().to_lowercase().starts_with("from:"))
-        {
+        if digest::is_sender_rule(&rule.queries) {
             self.show_senders(&rule.queries.join(", "));
         } else {
             self.enter_query_mode(&rule.queries.join(", "));
         }
         self.note.set_text(digest::rule_note(rule.queries.len()));
-        match rule.due() {
-            Ok(Due::Daily { at }) => {
-                self.cadence.set_selected(0);
-                self.at.set_text(&at.format("%H:%M").to_string());
-            }
-            Ok(Due::Weekly { day, at }) => {
-                self.cadence.set_selected(1);
-                let index = WEEKDAYS.iter().position(|each| *each == day).unwrap_or(6);
-                self.weekday.set_selected(index as u32);
-                self.at.set_text(&at.format("%H:%M").to_string());
-            }
-            Ok(Due::Monthly { day, at }) => {
-                self.cadence.set_selected(2);
-                self.month_day.set_selected(day.saturating_sub(1));
-                self.at.set_text(&at.format("%H:%M").to_string());
-            }
-            Err(_) => {}
+        if let Ok(due) = rule.due() {
+            self.show_schedule(&digest::Schedule::of(&due));
         }
         self.open(parent);
+    }
+
+    /// Put `schedule` in the cadence, day and time controls.
+    fn show_schedule(&self, schedule: &digest::Schedule) {
+        self.cadence.set_selected(schedule.cadence as u32);
+        self.weekday.set_selected(schedule.weekday as u32);
+        self.month_day.set_selected(schedule.month_day as u32);
+        self.at.set_text(&schedule.at);
     }
 
     /// Show `text` as the plain-senders "From" line: the label, with the
@@ -443,12 +395,7 @@ impl RuleDialog {
     /// way a sender's `from:` is (US14 scenario 2, ADR 0008: the one query
     /// language).
     fn apply_query(&self, text: &str) {
-        let queries: Vec<String> = text
-            .split(',')
-            .map(str::trim)
-            .filter(|query| !query.is_empty())
-            .map(str::to_owned)
-            .collect();
+        let queries = digest::split_queries(text);
         self.name.replace(queries.join(", "));
         self.queries.replace(queries);
         self.read_preview();
@@ -485,7 +432,7 @@ impl RuleDialog {
             };
             match read {
                 Ok(Some(rule)) => this.enter_query_mode(&rule.queries.join(", ")),
-                Ok(None) => this.say(Some("The model found nothing alike to digest")),
+                Ok(None) => this.say(Some(digest::NOTHING_ALIKE)),
                 Err(error) => this.say(Some(&error.to_string())),
             }
         });
@@ -572,11 +519,7 @@ impl RuleDialog {
         while let Some(child) = self.create_words.first_child() {
             self.create_words.remove(&child);
         }
-        let words = if self.replacing.borrow().is_some() {
-            "Save"
-        } else {
-            "Create"
-        };
+        let words = digest::create_words(self.replacing.borrow().is_some());
         self.create_words.append(&gtk::Label::new(Some(words)));
         if let Some(key) = hints::key(&self.keymap.borrow(), CommandId::PickerConfirm) {
             self.create_words.append(&keyhint::cap(&key));
@@ -590,15 +533,17 @@ impl RuleDialog {
 
     /// The rule as the dialog says it, or why it cannot be one.
     fn draft(&self) -> Result<DigestRuleDraft, String> {
-        let cadence = CADENCES[self.cadence.selected().min(2) as usize].0;
-        let at = NaiveTime::parse_from_str(self.at.text().trim(), "%H:%M")
-            .map_err(|_| "Give the time as 24-hour HH:MM, such as 09:00".to_owned())?;
-        let day = match cadence {
-            Cadence::Daily => None,
-            Cadence::Weekly => Some(RuleDay::Weekday(
-                WEEKDAYS[self.weekday.selected().min(6) as usize],
-            )),
-            Cadence::Monthly => Some(RuleDay::OfMonth(self.month_day.selected().min(27) + 1)),
+        let due = digest::Schedule {
+            cadence: self.cadence.selected() as usize,
+            weekday: self.weekday.selected() as usize,
+            month_day: self.month_day.selected() as usize,
+            at: self.at.text().to_string(),
+        }
+        .due()?;
+        let (cadence, day, at) = match due {
+            Due::Daily { at } => (Cadence::Daily, None, at),
+            Due::Weekly { day, at } => (Cadence::Weekly, Some(RuleDay::Weekday(day)), at),
+            Due::Monthly { day, at } => (Cadence::Monthly, Some(RuleDay::OfMonth(day)), at),
         };
         Ok(DigestRuleDraft {
             name: self.name.borrow().clone(),

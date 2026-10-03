@@ -58,16 +58,8 @@ pub enum DigestAction {
 
 type Handler = Rc<dyn Fn(DigestAction)>;
 
-/// What the window shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DigestPage {
-    /// The summary (screen 22).
-    Summary,
-    /// The plain list of its messages.
-    List,
-    /// The email from a reference (screen 23).
-    Email,
-}
+/// What the window shows (`postio_ui::digest::Page`).
+pub use postio_ui::digest::Page as DigestPage;
 
 /// The window. See the module.
 pub struct DigestWindow {
@@ -475,15 +467,10 @@ impl DigestWindow {
     /// `Tab`: the plain list of messages, or back to the summary -- only
     /// while there is one (FR-175).
     pub fn toggle_summary(&self) {
-        if self.summary.borrow().is_none() {
-            return;
+        let has_summary = self.summary.borrow().is_some();
+        if let Some(next) = self.page.get().toggled(has_summary) {
+            self.show_page(next);
         }
-        let next = match self.page.get() {
-            DigestPage::Summary => DigestPage::List,
-            DigestPage::List => DigestPage::Summary,
-            DigestPage::Email => return,
-        };
-        self.show_page(next);
     }
 
     /// `]` (`by` 1) and `[` (`by` -1): move the focused reference, clamped
@@ -494,12 +481,11 @@ impl DigestWindow {
             .borrow()
             .as_ref()
             .map_or(0, |summary| summary.statements.len());
-        if len == 0 {
+        let Some(next) = postio_ui::digest::step_reference(self.focused_reference.get(), by, len)
+        else {
             return;
-        }
-        let current = self.focused_reference.get().unwrap_or(0) as i32;
-        let next = (current + by).clamp(0, len as i32 - 1);
-        self.focused_reference.set(Some(next as usize));
+        };
+        self.focused_reference.set(Some(next));
         self.show_focused_reference();
     }
 
@@ -507,10 +493,10 @@ impl DigestWindow {
     /// at the same reference (US13 scenario 2). Answers whether it acted,
     /// so a plain `Esc` still closes the window everywhere else.
     pub fn back(&self) -> bool {
-        if self.page.get() != DigestPage::Email {
+        let Some(page) = self.page.get().back() else {
             return false;
-        }
-        self.page.set(DigestPage::Summary);
+        };
+        self.page.set(page);
         self.apply_page();
         true
     }
@@ -602,10 +588,10 @@ impl DigestWindow {
         self.scrolled.set_visible(page == DigestPage::List);
         self.summary_scroll.set_visible(page == DigestPage::Summary);
         self.email_box.set_visible(page == DigestPage::Email);
-        self.sub_row.set_visible(page != DigestPage::Email);
-        self.archive.set_visible(page != DigestPage::Email);
-        self.back_button.set_visible(page == DigestPage::Email);
-        if page != DigestPage::Email {
+        self.sub_row.set_visible(page.shows_header());
+        self.archive.set_visible(page.shows_header());
+        self.back_button.set_visible(!page.shows_header());
+        if page.shows_header() {
             self.show_header();
         }
         if page == DigestPage::Summary {
@@ -621,12 +607,10 @@ impl DigestWindow {
             return;
         };
         let keymap = self.keymap.borrow().clone();
-        let title = match postio_ui::focus_row::digest_title(digest.cadence).split_once(" \u{b7} ")
-        {
-            Some((cadence, _)) => format!("{cadence} \u{b7} {}", digest.rule),
-            None => digest.rule.clone(),
-        };
-        self.title.set_text(&title);
+        self.title.set_text(&postio_ui::digest::window_title(
+            digest.cadence,
+            &digest.rule,
+        ));
         let now = postio_ui::clock::now();
         self.subtitle.set_text(&postio_ui::digest::window_subtitle(
             digest.count,
@@ -637,22 +621,17 @@ impl DigestWindow {
         while let Some(child) = self.archive_words.first_child() {
             self.archive_words.remove(&child);
         }
-        self.archive_words.append(&gtk::Label::new(Some(&format!(
-            "Archive all {}",
-            digest.count
-        ))));
+        self.archive_words
+            .append(&gtk::Label::new(Some(&postio_ui::digest::archive_all(
+                digest.count,
+            ))));
         if let Some(key) = hints::key(&keymap, CommandId::ArchiveThread) {
             self.archive_words.append(&keyhint::cap(&key));
         }
         while let Some(child) = self.rule_line.first_child() {
             self.rule_line.remove(&child);
         }
-        let mut said = String::new();
-        if let Some(when) = self.rule_when.borrow().as_deref() {
-            said.push_str(when);
-            said.push_str(" \u{b7} ");
-        }
-        said.push_str("Edit rule and cadence");
+        let said = postio_ui::digest::rule_line(self.rule_when.borrow().as_deref());
         self.rule_line.append(&gtk::Label::new(Some(&said)));
         if let Some(key) = hints::key(&keymap, CommandId::DigestRule) {
             self.rule_line.append(&keyhint::cap(&key));
@@ -698,11 +677,7 @@ impl DigestWindow {
             window.summary.replace(summary);
             window.focused_reference.set(has_summary.then_some(0));
             window.show_summary();
-            window.page.set(if has_summary {
-                DigestPage::Summary
-            } else {
-                DigestPage::List
-            });
+            window.page.set(DigestPage::opening(has_summary));
             window.apply_page();
         });
     }
@@ -763,38 +738,32 @@ impl DigestWindow {
             return;
         };
         self.tab_row.set_visible(true);
-        let mut last_topic: Option<String> = None;
-        for statement in &summary.statements {
-            if last_topic.as_deref() != Some(statement.topic.as_str()) {
-                let heading = gtk::Label::new(Some(&statement.topic));
-                heading.add_css_class("focus-digest-summary-topic");
-                heading.set_xalign(0.0);
-                self.summary_box.append(&heading);
-                last_topic = Some(statement.topic.clone());
+        for topic in postio_ui::digest::topics(&summary.statements) {
+            let heading = gtk::Label::new(Some(topic.name));
+            heading.add_css_class("focus-digest-summary-topic");
+            heading.set_xalign(0.0);
+            self.summary_box.append(&heading);
+            for statement in topic.statements {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+                row.add_css_class("focus-digest-summary-statement");
+                // Plain text, never markup (FR-174): a model's `<a href=…>` or a
+                // bare URL reads as its own characters, never a live link.
+                let text = gtk::Label::new(Some(&statement.text));
+                text.set_wrap(true);
+                text.set_xalign(0.0);
+                text.set_hexpand(true);
+                row.append(&text);
+                let chip = gtk::Label::new(Some(&statement.reference.number.to_string()));
+                chip.add_css_class("focus-digest-summary-reference");
+                chip.set_valign(gtk::Align::Start);
+                row.append(&chip);
+                self.summary_box.append(&row);
+                self.paragraph_labels.borrow_mut().push(text);
+                self.reference_chips.borrow_mut().push(chip);
             }
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-            row.add_css_class("focus-digest-summary-statement");
-            // Plain text, never markup (FR-174): a model's `<a href=…>` or a
-            // bare URL reads as its own characters, never a live link.
-            let text = gtk::Label::new(Some(&statement.text));
-            text.set_wrap(true);
-            text.set_xalign(0.0);
-            text.set_hexpand(true);
-            row.append(&text);
-            let chip = gtk::Label::new(Some(&statement.reference.number.to_string()));
-            chip.add_css_class("focus-digest-summary-reference");
-            chip.set_valign(gtk::Align::Start);
-            row.append(&chip);
-            self.summary_box.append(&row);
-            self.paragraph_labels.borrow_mut().push(text);
-            self.reference_chips.borrow_mut().push(chip);
         }
         self.summary_box.append(&self.reference_card);
-        let footer = gtk::Label::new(Some(&format!(
-            "Written on this computer by the local model from these {} messages only. \
-             Every statement links to the email it came from.",
-            summary.messages
-        )));
+        let footer = gtk::Label::new(Some(&postio_ui::digest::summary_footer(summary.messages)));
         footer.add_css_class("dim-label");
         footer.add_css_class("focus-digest-summary-footer");
         footer.set_wrap(true);
@@ -846,7 +815,7 @@ impl DigestWindow {
         subject.set_xalign(0.0);
         self.reference_card.append(&subject);
         let hint = gtk::Box::new(gtk::Orientation::Horizontal, S1);
-        hint.append(&gtk::Label::new(Some("open the full email")));
+        hint.append(&gtk::Label::new(Some(postio_ui::digest::OPEN_FULL_EMAIL)));
         let keymap = self.keymap.borrow().clone();
         if let Some(key) = hints::key(&keymap, CommandId::OpenMessage) {
             hint.append(&keyhint::cap(&key));
@@ -907,10 +876,8 @@ impl DigestWindow {
         self.email_body.replace(None);
         self.email_excerpt.replace(excerpt);
         self.reader.view().set_highlight(None);
-        self.banner.set_text(&format!(
-            "Cited as {number} in the summary; the passage is highlighted. \
-             Esc goes back to the summary in this same window."
-        ));
+        self.banner
+            .set_text(&postio_ui::digest::cited_banner(number));
         let index = self.rows.borrow().iter().position(|row| row.id == message);
         let total = self.rows.borrow().len();
         let subject = self
@@ -921,10 +888,8 @@ impl DigestWindow {
             .and_then(|row| row.subject.clone())
             .unwrap_or_default();
         self.title.set_text(&subject);
-        self.subtitle.set_text(&format!(
-            "Source {} of {total}",
-            index.map_or(0, |index| index + 1)
-        ));
+        self.subtitle
+            .set_text(&postio_ui::digest::source_line(index, total));
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
         let generation = self.generation.get() + 1;

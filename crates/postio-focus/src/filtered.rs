@@ -20,9 +20,6 @@ use postio_ui::filtered;
 use postio_widgets::widgets::keyhint::{self, KeyLine};
 use postio_widgets::widgets::space::{S1, S3};
 
-/// How many rows a page reads.
-const PAGE: u32 = 50;
-
 /// What a person asked of the view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilteredAction {
@@ -261,7 +258,7 @@ impl FilteredView {
 
     /// Show the `index`th tab, `0` for All: `1`-`7`.
     pub fn set_tab(&self, index: usize) {
-        if index >= filtered::TABS.len() {
+        if filtered::tab_reason(index).is_none() {
             return;
         }
         self.tab.set(index);
@@ -402,13 +399,15 @@ impl FilteredView {
             self.generation.get()
         };
         self.generation.set(generation);
-        let reason = filtered::TABS[self.tab.get()].0.map(str::to_owned);
+        let reason = filtered::tab_reason(self.tab.get())
+            .flatten()
+            .map(str::to_owned);
         let client = self.client.clone();
         let weak = self.me.borrow().clone();
         self.more.set(false);
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: as `read_tabs`'.
-            let read = client.filtered(reason, offset, PAGE).await;
+            let read = client.filtered(reason, offset, filtered::PAGE).await;
             let Some(view) = weak.upgrade() else {
                 return;
             };
@@ -422,7 +421,7 @@ impl FilteredView {
                     return;
                 }
             };
-            view.more.set(page.len() as u32 == PAGE);
+            view.more.set(filtered::page_is_full(page.len()));
             let focused = view.focused();
             {
                 let mut rows = view.rows.borrow_mut();
@@ -471,7 +470,7 @@ impl FilteredView {
             if let Some(key) =
                 postio_ui::hints::key(&self.keymap.borrow(), filtered::TAB_COMMANDS[index])
             {
-                tab.set_tooltip_text(Some(&format!("{name} ({key})")));
+                tab.set_tooltip_text(Some(&filtered::tab_tooltip(name, &key)));
             }
             let weak = self.me.borrow().clone();
             tab.connect_clicked(move |_| {
@@ -496,19 +495,15 @@ impl FilteredView {
         let today = now.date_naive();
         let restore_key = postio_ui::hints::key(&self.keymap.borrow(), CommandId::RestoreFiltered);
         let rows = self.rows.borrow();
-        let day_of = |row: &FilteredRow| row.at.with_timezone(&chrono::Local).date_naive();
+        let days: Vec<_> = rows
+            .iter()
+            .map(|row| row.at.with_timezone(&chrono::Local).date_naive())
+            .collect();
+        let headings = filtered::day_headings(&days, today);
         let mut shown = Vec::new();
-        let mut day = None;
         for (index, row) in rows.iter().enumerate() {
-            let local = day_of(row);
-            if day != Some(local) {
-                day = Some(local);
-                // "Today · 9": the day, and how many of its rows are here.
-                let count = rows.iter().filter(|other| day_of(other) == local).count();
-                let heading = gtk::Label::new(Some(&format!(
-                    "{} \u{b7} {count}",
-                    postio_ui::focus_row::day_heading(local, today)
-                )));
+            if let Some(said) = &headings[index] {
+                let heading = gtk::Label::new(Some(said));
                 heading.add_css_class("focus-day-heading");
                 heading.add_css_class("focus-filtered-day");
                 heading.set_xalign(0.0);

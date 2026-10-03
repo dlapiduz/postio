@@ -19,11 +19,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use chrono::{Datelike, NaiveDate, Weekday};
+use chrono::NaiveDate;
 use gtk::glib;
 use postio_client::Client;
 use postio_client::protocol::VaultPicture;
 use postio_core::{CommandId, Keymap};
+use postio_ui::capture;
 use postio_ui::hints;
 use postio_vault::{NoteEntry, Project, Reason, Task};
 use postio_widgets::widgets::keyhint;
@@ -33,22 +34,11 @@ use postio_widgets::widgets::{Kind, Size};
 /// The dialog's widget name, so the window can tell it from another.
 pub const DIALOG_NAME: &str = "focus-capture";
 
-/// What is said when `t` or `n` finds no vault to capture into.
-pub const NO_VAULT: &str =
-    "Name a vault under [focus.vault] in config.toml to capture tasks and notes";
+pub use postio_ui::capture::{Mode, NO_VAULT};
 
 /// The sheet's size: screen 25's.
 const WIDTH: i32 = 660;
 const HEIGHT: i32 = 600;
-
-/// A task or a note.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    /// A line in the Obsidian Tasks format.
-    Task,
-    /// An entry appended to a note.
-    Note,
-}
 
 pub use postio_ui::capture::Source;
 
@@ -499,17 +489,15 @@ impl CaptureSheet {
     /// and the preview.
     fn show_mode(&self) {
         let keymap = self.keymap.borrow().clone();
-        let (field, button, preview) = match self.mode.get() {
-            Mode::Task => ("Task", "Add task", "This exact line will be appended"),
-            Mode::Note => ("Note", "Add note", "This exact entry will be appended"),
-        };
+        let mode = self.mode.get();
+        let (field, button, preview) = (mode.field(), mode.button(), mode.preview_title());
         self.field_title.set_text(field);
         self.write.set_child(Some(&keyhint::labelled(
             button,
             hints::key(&keymap, CommandId::CaptureWrite).as_deref(),
         )));
         self.preview_title.set_text(preview);
-        self.due_box.set_visible(self.mode.get() == Mode::Task);
+        self.due_box.set_visible(self.mode.get().has_due());
         self.show_due();
         self.show_preview();
     }
@@ -520,31 +508,9 @@ impl CaptureSheet {
         while let Some(child) = self.picks.first_child() {
             self.picks.remove(&child);
         }
-        let today = postio_ui::clock::now().date_naive();
-        let mut days = vec![today];
-        for weekday in [Weekday::Mon, Weekday::Wed, Weekday::Fri] {
-            days.push(next(today, weekday));
-        }
-        if let Some(due) = self.due.get()
-            && !days.contains(&due)
-        {
-            days.push(due);
-        }
-        days.sort();
         let chosen = self.due.get();
-        let mut picks: Vec<(String, Option<NaiveDate>)> = days
-            .into_iter()
-            .map(|day| {
-                let words = if day == today {
-                    "Today".to_owned()
-                } else {
-                    day.format("%a").to_string()
-                };
-                (words, Some(day))
-            })
-            .collect();
-        picks.push(("None".to_owned(), None));
-        for (words, day) in picks {
+        let picks = capture::quick_picks(postio_ui::clock::now().date_naive(), chosen);
+        for capture::Pick { words, day } in picks {
             let pick = gtk::ToggleButton::with_label(&words);
             // The day chosen is ringed, the rest are quiet (screen 25).
             let kind = if day == chosen {
@@ -565,30 +531,23 @@ impl CaptureSheet {
             });
             self.picks.append(&pick);
         }
-        self.due_day.set_text(&match chosen {
-            Some(day) => day.format("%A, %-d %B %Y").to_string(),
-            None => "No due date".to_owned(),
-        });
+        self.due_day.set_text(&capture::due_label(chosen));
     }
 
     /// The project chosen, why, and where its note is.
     fn show_project(&self) {
         let picture = self.picture.borrow();
         let project = self.project.borrow().clone();
-        let why = picture
+        let named = picture
             .suggestion
             .as_ref()
             .filter(|_| self.suggested.get())
             .map(|suggestion| match &suggestion.reason {
                 // The word as the subject has it, which the vault read
                 // folded: the project's own name says it as written.
-                Reason::NamedInSubject(_) => format!(
-                    "Project \u{b7} suggested: the subject names {}",
-                    suggestion.project.name
-                ),
+                Reason::NamedInSubject(_) => suggestion.project.name.as_str(),
             });
-        self.project_title
-            .set_text(why.as_deref().unwrap_or("Project"));
+        self.project_title.set_text(&capture::project_title(named));
         match project {
             Some(project) => {
                 self.project_name.set_text(&project.name);
@@ -596,9 +555,10 @@ impl CaptureSheet {
                     .set_text(&project.note.display().to_string());
             }
             None => {
-                self.project_name.set_text("Inbox");
-                self.project_note
-                    .set_text(&format!("{} (no project)", picture.tasks_note.display()));
+                self.project_name.set_text(capture::INBOX);
+                self.project_note.set_text(&capture::inbox_note(
+                    &picture.tasks_note.display().to_string(),
+                ));
             }
         }
         drop(picture);
@@ -622,11 +582,11 @@ impl CaptureSheet {
         let mut shown: Vec<Option<Project>> = picture
             .projects
             .iter()
-            .filter(|project| project.name.to_lowercase().contains(&wanted))
+            .filter(|project| capture::project_listed(&project.name, &wanted))
             .cloned()
             .map(Some)
             .collect();
-        if "inbox".contains(&wanted) {
+        if capture::inbox_listed(&wanted) {
             shown.push(None);
         }
         let chosen = self.project.borrow().clone();
@@ -634,8 +594,8 @@ impl CaptureSheet {
             let (name, note) = match project {
                 Some(project) => (project.name.clone(), project.note.display().to_string()),
                 None => (
-                    "Inbox".to_owned(),
-                    format!("{} (no project)", picture.tasks_note.display()),
+                    capture::INBOX.to_owned(),
+                    capture::inbox_note(&picture.tasks_note.display().to_string()),
                 ),
             };
             let count = open(
@@ -650,7 +610,7 @@ impl CaptureSheet {
                 .subtitle(glib::markup_escape_text(&note))
                 .activatable(true)
                 .build();
-            let count = gtk::Label::new(Some(&format!("{count} open")));
+            let count = gtk::Label::new(Some(&capture::open_count(count)));
             count.add_css_class("dim-label");
             row.add_suffix(&count);
             if *project == chosen {
@@ -728,19 +688,9 @@ impl CaptureSheet {
             .project
             .borrow()
             .as_ref()
-            .map_or_else(|| "Inbox".to_owned(), |project| project.name.clone());
-        self.footnote.set_text(&match self.mode.get() {
-            Mode::Task => format!(
-                "Plain markdown, Obsidian Tasks format, written on this computer. It goes in {place}{}.",
-                self.due
-                    .get()
-                    .map(|day| format!(", due {}", day.format("%a")))
-                    .unwrap_or_default()
-            ),
-            Mode::Note => {
-                format!("Plain markdown, written on this computer. It goes in {place}'s note.")
-            }
-        });
+            .map_or_else(|| capture::INBOX.to_owned(), |project| project.name.clone());
+        self.footnote
+            .set_text(&capture::footnote(self.mode.get(), &place, self.due.get()));
     }
 
     /// Append what the sheet shows to the vault, through the host; close
@@ -853,33 +803,5 @@ impl CaptureSheet {
     /// The dialog.
     pub fn dialog(&self) -> &adw::Dialog {
         &self.dialog
-    }
-}
-
-/// The first `weekday` after `today`.
-fn next(today: NaiveDate, weekday: Weekday) -> NaiveDate {
-    let ahead = (7 + weekday.num_days_from_monday() as i64
-        - today.weekday().num_days_from_monday() as i64)
-        % 7;
-    let ahead = if ahead == 0 { 7 } else { ahead };
-    today + chrono::Duration::days(ahead)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_quick_picks_name_the_coming_weekday_never_today() {
-        let saturday = NaiveDate::from_ymd_opt(2026, 9, 26).expect("a day");
-        assert_eq!(
-            next(saturday, Weekday::Wed),
-            NaiveDate::from_ymd_opt(2026, 9, 30).expect("a day")
-        );
-        assert_eq!(
-            next(saturday, Weekday::Sat),
-            NaiveDate::from_ymd_opt(2026, 10, 3).expect("a day"),
-            "a week on, not today"
-        );
     }
 }

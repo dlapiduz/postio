@@ -8,7 +8,7 @@
 //! keyboard sends both here while it is open.
 
 use gtk::prelude::*;
-use postio_core::{CommandId, Keymap};
+use postio_core::Keymap;
 use postio_ui::hints;
 use postio_ui::keymap_sheet::{self, KeyMapRow};
 use postio_widgets::widgets::keyhint;
@@ -17,36 +17,31 @@ use postio_widgets::widgets::space::{S1, S2, S3, S4, S6};
 /// The dialog's size, as screen 20 draws it.
 const WIDTH: i32 = 1100;
 const HEIGHT: i32 = 760;
-/// How many columns the groups are laid out in.
-const COLUMNS: usize = 4;
 
 /// Build the key map for `keymap`.
 pub fn build(keymap: &Keymap) -> adw::Dialog {
-    let title = gtk::Label::new(Some("Keys"));
+    let title = gtk::Label::new(Some(keymap_sheet::TITLE));
     title.add_css_class("focus-keymap-heading");
-    let subtitle = gtk::Label::new(Some(
-        "Single keys act on the focused row, or on the selection if there is one. \
-         On macOS, Ctrl becomes \u{2318}.",
-    ));
+    let subtitle = gtk::Label::new(Some(keymap_sheet::SUBTITLE));
     subtitle.add_css_class("dim-label");
     subtitle.set_xalign(0.0);
     subtitle.set_hexpand(true);
     subtitle.set_wrap(true);
     let close = gtk::Box::new(gtk::Orientation::Horizontal, S1);
     close.set_valign(gtk::Align::Center);
-    let close_keys: Vec<String> = [CommandId::CheatSheet, CommandId::Back]
+    let close_keys: Vec<String> = keymap_sheet::CLOSE_COMMANDS
         .into_iter()
         .filter_map(|command| hints::key(keymap, command))
         .collect();
     for (index, key) in close_keys.iter().enumerate() {
         if index > 0 {
-            let or = gtk::Label::new(Some("or"));
+            let or = gtk::Label::new(Some(keymap_sheet::CLOSE_OR));
             or.add_css_class("dim-label");
             close.append(&or);
         }
         close.append(&keyhint::cap(key));
     }
-    let close_word = gtk::Label::new(Some("close"));
+    let close_word = gtk::Label::new(Some(keymap_sheet::CLOSE_WORD));
     close_word.add_css_class("dim-label");
     close.append(&close_word);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, S3);
@@ -58,37 +53,24 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     header.append(&x);
 
     let map = keymap_sheet::key_map(keymap, postio_core::Frontend::Focus);
-    let total: usize = map.iter().map(|(_, rows)| rows.len() + 2).sum();
-    let per_column = total.div_ceil(COLUMNS);
     let columns = gtk::Box::new(gtk::Orientation::Horizontal, S6);
     columns.set_homogeneous(true);
     columns.set_vexpand(true);
-    let mut column = gtk::Box::new(gtk::Orientation::Vertical, S4);
-    let mut filled = 0;
-    for (group, rows) in &map {
-        // A group stays whole: a column starts afresh rather than split one.
-        if filled > 0
-            && filled + rows.len() + 2 > per_column
-            && columns.observe_children().n_items() + 1 < COLUMNS as u32
-        {
-            columns.append(&column);
-            column = gtk::Box::new(gtk::Orientation::Vertical, S4);
-            filled = 0;
+    let sizes: Vec<usize> = map.iter().map(|(_, rows)| rows.len()).collect();
+    for packed in keymap_sheet::pack_columns(&sizes, keymap_sheet::COLUMNS) {
+        let column = gtk::Box::new(gtk::Orientation::Vertical, S4);
+        for index in packed {
+            let (group, rows) = &map[index];
+            column.append(&group_box(group.title(), rows));
         }
-        column.append(&group_box(group.title(), rows));
-        filled += rows.len() + 2;
+        columns.append(&column);
     }
-    columns.append(&column);
 
-    let rebind = gtk::Label::new(Some(
-        "Rebind anything in ~/.config/postio/config.toml under [keys]",
-    ));
+    let rebind = gtk::Label::new(Some(keymap_sheet::REBIND_FOOTER));
     rebind.add_css_class("dim-label");
     rebind.set_xalign(0.0);
     rebind.set_hexpand(true);
-    let mouse = gtk::Label::new(Some(
-        "The mouse works everywhere: every key has a visible button.",
-    ));
+    let mouse = gtk::Label::new(Some(keymap_sheet::MOUSE_FOOTER));
     mouse.add_css_class("dim-label");
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, S3);
     footer.add_css_class("focus-keymap-footer");
@@ -107,7 +89,7 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     content.append(&footer);
 
     let dialog = adw::Dialog::builder()
-        .title("Keys")
+        .title(keymap_sheet::TITLE)
         .content_width(WIDTH)
         .content_height(HEIGHT)
         .child(&content)

@@ -194,6 +194,313 @@ pub fn remove_body(holds: u32) -> String {
     )
 }
 
+/// What the digest window shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    /// The summary (screen 22).
+    Summary,
+    /// The plain list of its messages.
+    List,
+    /// The email from a reference (screen 23).
+    Email,
+}
+
+impl Page {
+    /// The page a digest opens on: its summary once one is written, the
+    /// plain list until then.
+    pub fn opening(has_summary: bool) -> Page {
+        if has_summary {
+            Page::Summary
+        } else {
+            Page::List
+        }
+    }
+
+    /// `Tab`: the other of summary and list -- only while there is a
+    /// summary (FR-175), and never over an email.
+    pub fn toggled(self, has_summary: bool) -> Option<Page> {
+        match (self, has_summary) {
+            (_, false) | (Page::Email, _) => None,
+            (Page::Summary, true) => Some(Page::List),
+            (Page::List, true) => Some(Page::Summary),
+        }
+    }
+
+    /// `Esc`: from an email, back to the summary; nowhere from the others,
+    /// so a plain `Esc` closes the window.
+    pub fn back(self) -> Option<Page> {
+        (self == Page::Email).then_some(Page::Summary)
+    }
+
+    /// Whether the header's subtitle line and Archive all show.
+    pub fn shows_header(self) -> bool {
+        self != Page::Email
+    }
+}
+
+/// `]` (`by` 1) and `[` (`by` -1): the focused reference after a step,
+/// clamped to the summary's ends; `None` for a summary of no statements.
+pub fn step_reference(current: Option<usize>, by: i32, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let next = (current.unwrap_or(0) as i32 + by).clamp(0, len as i32 - 1);
+    Some(next as usize)
+}
+
+/// The window's title: the cadence and the rule's name -- "Weekly ·
+/// Newsletters" -- or the name alone when the rule's cadence is not known.
+pub fn window_title(cadence: Option<postio_model::listing::Cadence>, rule: &str) -> String {
+    match crate::focus_row::digest_title(cadence).split_once(" \u{b7} ") {
+        Some((cadence, _)) => format!("{cadence} \u{b7} {rule}"),
+        None => rule.to_owned(),
+    }
+}
+
+/// The Archive all button's words: "Archive all 14".
+pub fn archive_all(count: u32) -> String {
+    format!("Archive all {count}")
+}
+
+/// The line under the title that edits the rule: "Weekly, Sunday 09:00 ·
+/// Edit rule and cadence".
+pub fn rule_line(when: Option<&str>) -> String {
+    match when {
+        Some(when) => format!("{when} \u{b7} Edit rule and cadence"),
+        None => "Edit rule and cadence".to_owned(),
+    }
+}
+
+/// A run of a summary's statements under one topic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Topic<'a> {
+    /// The topic's heading.
+    pub name: &'a str,
+    /// Where its first statement is among all of them.
+    pub start: usize,
+    /// Its statements, in reading order.
+    pub statements: &'a [postio_model::summary::SummaryStatement],
+}
+
+/// The summary's statements grouped by topic: consecutive statements of one
+/// topic share one heading, and a topic that comes back gets a heading again.
+pub fn topics(statements: &[postio_model::summary::SummaryStatement]) -> Vec<Topic<'_>> {
+    let mut runs: Vec<Topic<'_>> = Vec::new();
+    for (index, statement) in statements.iter().enumerate() {
+        match runs.last_mut() {
+            Some(run) if run.name == statement.topic => {
+                run.statements = &statements[run.start..=index];
+            }
+            _ => runs.push(Topic {
+                name: &statement.topic,
+                start: index,
+                statements: &statements[index..=index],
+            }),
+        }
+    }
+    runs
+}
+
+/// The line under a summary: where it was written and what it cites.
+pub fn summary_footer(messages: u32) -> String {
+    format!(
+        "Written on this computer by the local model from these {messages} messages only. \
+         Every statement links to the email it came from."
+    )
+}
+
+/// What the focused reference's card offers beside its subject.
+pub const OPEN_FULL_EMAIL: &str = "open the full email";
+
+/// The banner over an email opened from a reference.
+pub fn cited_banner(number: u32) -> String {
+    format!(
+        "Cited as {number} in the summary; the passage is highlighted. \
+         Esc goes back to the summary in this same window."
+    )
+}
+
+/// The email page's subtitle: "Source 2 of 14", `at` being the message's
+/// place among the digest's (`None` when it is not among them).
+pub fn source_line(at: Option<usize>, total: usize) -> String {
+    format!("Source {} of {total}", at.map_or(0, |index| index + 1))
+}
+
+/// How far back the rule dialog's preview looks.
+pub const PREVIEW_DAYS: i64 = 90;
+
+/// The cadences, in the rule dialog's menu order.
+pub const CADENCES: [(postio_model::listing::Cadence, &str); 3] = [
+    (postio_model::listing::Cadence::Daily, "Daily"),
+    (postio_model::listing::Cadence::Weekly, "Weekly"),
+    (postio_model::listing::Cadence::Monthly, "Monthly"),
+];
+
+/// The weekdays, in the rule dialog's menu order.
+pub const WEEKDAYS: [chrono::Weekday; 7] = [
+    chrono::Weekday::Mon,
+    chrono::Weekday::Tue,
+    chrono::Weekday::Wed,
+    chrono::Weekday::Thu,
+    chrono::Weekday::Fri,
+    chrono::Weekday::Sat,
+    chrono::Weekday::Sun,
+];
+
+/// What a new rule starts as: weekly, on Sunday, at 09:00 -- as indices into
+/// [`CADENCES`] and [`WEEKDAYS`], and the first day of the month.
+pub const DEFAULT_CADENCE: usize = 1;
+/// See [`DEFAULT_CADENCE`].
+pub const DEFAULT_WEEKDAY: usize = 6;
+/// See [`DEFAULT_CADENCE`].
+pub const DEFAULT_MONTH_DAY: usize = 0;
+/// See [`DEFAULT_CADENCE`].
+pub const DEFAULT_TIME: &str = "09:00";
+
+/// Said when the time is not 24-hour HH:MM.
+pub const TIME_ERROR: &str = "Give the time as 24-hour HH:MM, such as 09:00";
+
+/// Said when the model found nothing alike to digest.
+pub const NOTHING_ALIKE: &str = "The model found nothing alike to digest";
+
+/// The placeholder in the query entry.
+pub const QUERY_PLACEHOLDER: &str = "list:weekly.example.org or a search";
+
+/// The rule dialog's heading for a new rule from `senders` senders.
+pub fn new_rule_heading(senders: usize) -> &'static str {
+    if senders > 1 {
+        "Digest these senders"
+    } else {
+        "Digest this sender"
+    }
+}
+
+/// The rule dialog's heading for editing `name`.
+pub fn edit_rule_heading(name: &str) -> String {
+    format!("Digest rule \u{b7} {name}")
+}
+
+/// The queries a new rule from `senders` holds: one `from:` each.
+pub fn sender_queries(senders: &[postio_model::EmailAddress]) -> Vec<String> {
+    senders
+        .iter()
+        .map(|sender| format!("from:{}", sender.address.to_lowercase()))
+        .collect()
+}
+
+/// The plain-senders "From" line: their addresses, comma-separated.
+pub fn sender_line(senders: &[postio_model::EmailAddress]) -> String {
+    senders
+        .iter()
+        .map(|sender| sender.address.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Whether a rule reads as senders -- every query is a `from:` -- and so is
+/// edited through the plain line; anything else opens in the query entry.
+pub fn is_sender_rule(queries: &[String]) -> bool {
+    queries
+        .iter()
+        .all(|query| query.trim().to_lowercase().starts_with("from:"))
+}
+
+/// The queries typed into the query entry: one per comma-separated piece.
+pub fn split_queries(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The create button's words: Save while editing, Create for a new rule.
+pub fn create_words(editing: bool) -> &'static str {
+    if editing { "Save" } else { "Create" }
+}
+
+/// The rule dialog's schedule controls, as the menus hold them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Schedule {
+    /// Index into [`CADENCES`].
+    pub cadence: usize,
+    /// Index into [`WEEKDAYS`].
+    pub weekday: usize,
+    /// Index of the day of the month, from 0.
+    pub month_day: usize,
+    /// The time, "HH:MM".
+    pub at: String,
+}
+
+impl Schedule {
+    /// What a new rule starts as.
+    pub fn new_rule() -> Self {
+        Schedule {
+            cadence: DEFAULT_CADENCE,
+            weekday: DEFAULT_WEEKDAY,
+            month_day: DEFAULT_MONTH_DAY,
+            at: DEFAULT_TIME.to_owned(),
+        }
+    }
+
+    /// What editing a rule that is due `due` shows.
+    pub fn of(due: &postio_config::Due) -> Self {
+        use postio_config::Due;
+        let mut shown = Schedule::new_rule();
+        match due {
+            Due::Daily { at } => {
+                shown.cadence = 0;
+                shown.at = at.format("%H:%M").to_string();
+            }
+            Due::Weekly { day, at } => {
+                shown.cadence = 1;
+                shown.weekday = WEEKDAYS.iter().position(|each| each == day).unwrap_or(6);
+                shown.at = at.format("%H:%M").to_string();
+            }
+            Due::Monthly { day, at } => {
+                shown.cadence = 2;
+                shown.month_day = day.saturating_sub(1) as usize;
+                shown.at = at.format("%H:%M").to_string();
+            }
+        }
+        shown
+    }
+
+    /// When the controls say the rule is due, or the sentence saying why
+    /// they do not say it.
+    pub fn due(&self) -> Result<postio_config::Due, String> {
+        use postio_config::Due;
+        let at = chrono::NaiveTime::parse_from_str(self.at.trim(), "%H:%M")
+            .map_err(|_| TIME_ERROR.to_owned())?;
+        Ok(match CADENCES[self.cadence.min(2)].0 {
+            postio_model::listing::Cadence::Daily => Due::Daily { at },
+            postio_model::listing::Cadence::Weekly => Due::Weekly {
+                day: WEEKDAYS[self.weekday.min(6)],
+                at,
+            },
+            postio_model::listing::Cadence::Monthly => Due::Monthly {
+                day: self.month_day.min(27) as u32 + 1,
+                at,
+            },
+        })
+    }
+}
+
+/// The rules list's count: "1 rule", "4 rules".
+pub fn rule_count(count: usize) -> String {
+    if count == 1 {
+        "1 rule".to_owned()
+    } else {
+        format!("{count} rules")
+    }
+}
+
+/// What a rule row's buttons say, with the command each runs.
+pub const RULE_ROW_BUTTONS: [(postio_core::CommandId, &str); 2] = [
+    (postio_core::CommandId::OpenMessage, "Edit"),
+    (postio_core::CommandId::Delete, "Remove"),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +664,120 @@ mod tests {
             "Return edit \u{b7} Delete remove and release \u{b7} Escape inbox"
         );
         assert!(remove_body(1).contains("1 message "));
+    }
+
+    fn statement(topic: &str, number: u32) -> postio_model::summary::SummaryStatement {
+        postio_model::summary::SummaryStatement {
+            topic: topic.to_owned(),
+            text: format!("s{number}"),
+            reference: postio_model::summary::SummaryReference {
+                number,
+                message: postio_model::MessageId::new(i64::from(number)),
+                excerpt: String::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn pages_toggle_only_with_a_summary_and_back_leaves_only_an_email() {
+        assert_eq!(Page::opening(true), Page::Summary);
+        assert_eq!(Page::opening(false), Page::List);
+        assert_eq!(Page::Summary.toggled(true), Some(Page::List));
+        assert_eq!(Page::List.toggled(true), Some(Page::Summary));
+        assert_eq!(Page::List.toggled(false), None);
+        assert_eq!(Page::Email.toggled(true), None);
+        assert_eq!(Page::Email.back(), Some(Page::Summary));
+        assert_eq!(Page::List.back(), None);
+        assert!(!Page::Email.shows_header());
+    }
+
+    #[test]
+    fn stepping_a_reference_clamps_to_the_summarys_ends() {
+        assert_eq!(step_reference(Some(0), -1, 3), Some(0));
+        assert_eq!(step_reference(Some(1), 1, 3), Some(2));
+        assert_eq!(step_reference(Some(2), 1, 3), Some(2));
+        assert_eq!(step_reference(None, 1, 3), Some(1));
+        assert_eq!(step_reference(None, 1, 0), None);
+    }
+
+    #[test]
+    fn statements_group_by_consecutive_topic() {
+        let all = vec![
+            statement("Sync", 1),
+            statement("Sync", 2),
+            statement("Town", 3),
+            statement("Sync", 4),
+        ];
+        let runs = topics(&all);
+        let shape: Vec<(&str, usize, usize)> = runs
+            .iter()
+            .map(|run| (run.name, run.start, run.statements.len()))
+            .collect();
+        assert_eq!(shape, vec![("Sync", 0, 2), ("Town", 2, 1), ("Sync", 3, 1)]);
+    }
+
+    #[test]
+    fn the_digest_windows_words() {
+        use postio_model::listing::Cadence;
+        assert_eq!(
+            window_title(Some(Cadence::Weekly), "Newsletters"),
+            "Weekly \u{b7} Newsletters"
+        );
+        assert_eq!(window_title(None, "Newsletters"), "Newsletters");
+        assert_eq!(archive_all(14), "Archive all 14");
+        assert_eq!(rule_line(None), "Edit rule and cadence");
+        assert_eq!(
+            rule_line(Some("Weekly, Sunday 09:00")),
+            "Weekly, Sunday 09:00 \u{b7} Edit rule and cadence"
+        );
+        assert_eq!(source_line(Some(1), 14), "Source 2 of 14");
+        assert_eq!(source_line(None, 14), "Source 0 of 14");
+        assert!(cited_banner(3).starts_with("Cited as 3 in the summary"));
+        assert_eq!(rule_count(1), "1 rule");
+        assert_eq!(rule_count(4), "4 rules");
+    }
+
+    #[test]
+    fn a_new_rule_is_weekly_on_sunday_at_nine() {
+        let due = Schedule::new_rule().due().expect("a rule");
+        assert_eq!(
+            due,
+            postio_config::Due::Weekly {
+                day: chrono::Weekday::Sun,
+                at: chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_schedule_round_trips_and_a_bad_time_says_so() {
+        let monthly = postio_config::Due::Monthly {
+            day: 15,
+            at: chrono::NaiveTime::from_hms_opt(18, 30, 0).unwrap(),
+        };
+        let shown = Schedule::of(&monthly);
+        assert_eq!(
+            (shown.cadence, shown.month_day, shown.at.as_str()),
+            (2, 14, "18:30")
+        );
+        assert_eq!(shown.due(), Ok(monthly));
+        let mut bad = Schedule::new_rule();
+        bad.at = "nine".into();
+        assert_eq!(bad.due(), Err(TIME_ERROR.to_owned()));
+    }
+
+    #[test]
+    fn senders_make_from_queries_and_anything_else_opens_as_a_query() {
+        let senders = vec![postio_model::EmailAddress::new(
+            Some("Ada"),
+            "Ada@Example.com",
+        )];
+        assert_eq!(sender_queries(&senders), vec!["from:ada@example.com"]);
+        assert_eq!(sender_line(&senders), "ada@example.com");
+        assert!(is_sender_rule(&sender_queries(&senders)));
+        assert!(!is_sender_rule(&["list:weekly.example.org".to_owned()]));
+        assert_eq!(split_queries(" a , ,b "), vec!["a", "b"]);
+        assert_eq!(new_rule_heading(2), "Digest these senders");
+        assert_eq!(create_words(true), "Save");
     }
 }

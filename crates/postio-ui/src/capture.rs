@@ -1,7 +1,7 @@
 //! What a capture -- a task or a note written to the vault from a message --
 //! is made from and what it says, with no toolkit in it.
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate, Weekday};
 use postio_model::MessageId;
 use postio_model::listing::{MarkerKind, MarkerWhen};
 
@@ -64,4 +64,214 @@ pub fn source(
             _ => None,
         }),
     })
+}
+
+/// What is said when `t` or `n` finds no vault to capture into.
+pub const NO_VAULT: &str =
+    "Name a vault under [focus.vault] in config.toml to capture tasks and notes";
+
+/// A task or a note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// A line in the Obsidian Tasks format.
+    Task,
+    /// An entry appended to a note.
+    Note,
+}
+
+impl Mode {
+    /// The field's title.
+    pub fn field(self) -> &'static str {
+        match self {
+            Mode::Task => "Task",
+            Mode::Note => "Note",
+        }
+    }
+
+    /// The write button's words.
+    pub fn button(self) -> &'static str {
+        match self {
+            Mode::Task => "Add task",
+            Mode::Note => "Add note",
+        }
+    }
+
+    /// The preview's title.
+    pub fn preview_title(self) -> &'static str {
+        match self {
+            Mode::Task => "This exact line will be appended",
+            Mode::Note => "This exact entry will be appended",
+        }
+    }
+
+    /// Whether the due row shows: only a task has a day.
+    pub fn has_due(self) -> bool {
+        self == Mode::Task
+    }
+}
+
+/// What the project is called when there is none.
+pub const INBOX: &str = "Inbox";
+
+/// The first `weekday` after `today`, never `today` itself.
+pub fn next_weekday(today: NaiveDate, weekday: Weekday) -> NaiveDate {
+    let ahead = (7 + i64::from(weekday.num_days_from_monday())
+        - i64::from(today.weekday().num_days_from_monday()))
+        % 7;
+    let ahead = if ahead == 0 { 7 } else { ahead };
+    today + chrono::Duration::days(ahead)
+}
+
+/// One quick pick for the due day.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pick {
+    /// What it says: "Today", "Mon", "None".
+    pub words: String,
+    /// The day it chooses; `None` for no due day.
+    pub day: Option<NaiveDate>,
+}
+
+/// The due day's quick picks, in day order: today, the coming Monday,
+/// Wednesday and Friday, the day the mail itself names (`due`) among them
+/// when it is none of those, and last "None".
+pub fn quick_picks(today: NaiveDate, due: Option<NaiveDate>) -> Vec<Pick> {
+    let mut days = vec![today];
+    for weekday in [Weekday::Mon, Weekday::Wed, Weekday::Fri] {
+        days.push(next_weekday(today, weekday));
+    }
+    if let Some(due) = due
+        && !days.contains(&due)
+    {
+        days.push(due);
+    }
+    days.sort();
+    let mut picks: Vec<Pick> = days
+        .into_iter()
+        .map(|day| Pick {
+            words: if day == today {
+                "Today".to_owned()
+            } else {
+                day.format("%a").to_string()
+            },
+            day: Some(day),
+        })
+        .collect();
+    picks.push(Pick {
+        words: "None".to_owned(),
+        day: None,
+    });
+    picks
+}
+
+/// The chosen due day, written out: "Friday, 2 October 2026", or "No due
+/// date".
+pub fn due_label(due: Option<NaiveDate>) -> String {
+    match due {
+        Some(day) => day.format("%A, %-d %B %Y").to_string(),
+        None => "No due date".to_owned(),
+    }
+}
+
+/// The project's title: why it was suggested when the vault's suggestion is
+/// the one on screen (`named_in_subject` is the project the subject names),
+/// otherwise just "Project".
+pub fn project_title(named_in_subject: Option<&str>) -> String {
+    match named_in_subject {
+        Some(name) => format!("Project \u{b7} suggested: the subject names {name}"),
+        None => "Project".to_owned(),
+    }
+}
+
+/// The tasks note's line when there is no project: "path (no project)".
+pub fn inbox_note(tasks_note: &str) -> String {
+    format!("{tasks_note} (no project)")
+}
+
+/// Whether a project called `name` is listed under the filter `wanted`.
+pub fn project_listed(name: &str, wanted: &str) -> bool {
+    name.to_lowercase().contains(&wanted.to_lowercase())
+}
+
+/// Whether the no-project Inbox is listed under the filter `wanted`.
+pub fn inbox_listed(wanted: &str) -> bool {
+    INBOX.to_lowercase().contains(&wanted.to_lowercase())
+}
+
+/// A project row's count: "3 open".
+pub fn open_count(open: usize) -> String {
+    format!("{open} open")
+}
+
+/// The line under the preview: where the capture goes, and when it is due.
+pub fn footnote(mode: Mode, place: &str, due: Option<NaiveDate>) -> String {
+    match mode {
+        Mode::Task => format!(
+            "Plain markdown, Obsidian Tasks format, written on this computer. It goes in {place}{}.",
+            due.map(|day| format!(", due {}", day.format("%a")))
+                .unwrap_or_default()
+        ),
+        Mode::Note => {
+            format!("Plain markdown, written on this computer. It goes in {place}'s note.")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).expect("a day")
+    }
+
+    #[test]
+    fn the_quick_picks_name_the_coming_weekday_never_today() {
+        assert_eq!(
+            next_weekday(day(2026, 9, 26), Weekday::Wed),
+            day(2026, 9, 30)
+        );
+        assert_eq!(
+            next_weekday(day(2026, 9, 26), Weekday::Sat),
+            day(2026, 10, 3),
+            "a week on, not today"
+        );
+    }
+
+    #[test]
+    fn the_mails_own_day_joins_the_picks_in_order_and_none_comes_last() {
+        let saturday = day(2026, 9, 26);
+        let words = |due| {
+            quick_picks(saturday, due)
+                .into_iter()
+                .map(|pick| pick.words)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(words(None), ["Today", "Mon", "Wed", "Fri", "None"]);
+        assert_eq!(
+            words(Some(day(2026, 9, 29))),
+            ["Today", "Mon", "Tue", "Wed", "Fri", "None"]
+        );
+        assert_eq!(
+            words(Some(day(2026, 9, 28))),
+            ["Today", "Mon", "Wed", "Fri", "None"]
+        );
+    }
+
+    #[test]
+    fn the_sheets_words() {
+        assert_eq!(due_label(None), "No due date");
+        assert_eq!(due_label(Some(day(2026, 10, 2))), "Friday, 2 October 2026");
+        assert_eq!(project_title(None), "Project");
+        assert!(project_title(Some("Garden")).ends_with("the subject names Garden"));
+        assert_eq!(open_count(3), "3 open");
+        assert!(project_listed("Garden", "GAR"));
+        assert!(inbox_listed("in"));
+        assert!(!inbox_listed("zzz"));
+        assert_eq!(
+            footnote(Mode::Task, "Garden", Some(day(2026, 10, 2))),
+            "Plain markdown, Obsidian Tasks format, written on this computer. It goes in Garden, due Fri."
+        );
+        assert_eq!(Mode::Note.button(), "Add note");
+        assert!(!Mode::Note.has_due());
+    }
 }

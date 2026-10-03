@@ -328,6 +328,54 @@ pub fn key_map(
         .collect()
 }
 
+/// The key map's title.
+pub const TITLE: &str = "Keys";
+
+/// The line beside the title.
+pub const SUBTITLE: &str = "Single keys act on the focused row, or on the selection if there is one. \
+     On macOS, Ctrl becomes \u{2318}.";
+
+/// The footer's line about rebinding.
+pub const REBIND_FOOTER: &str = "Rebind anything in ~/.config/postio/config.toml under [keys]";
+
+/// The footer's line about the mouse.
+pub const MOUSE_FOOTER: &str = "The mouse works everywhere: every key has a visible button.";
+
+/// What the keys that close it are followed by, and joined with.
+pub const CLOSE_WORD: &str = "close";
+/// See [`CLOSE_WORD`].
+pub const CLOSE_OR: &str = "or";
+
+/// The commands whose keys close the key map.
+pub const CLOSE_COMMANDS: [postio_core::CommandId; 2] = [
+    postio_core::CommandId::CheatSheet,
+    postio_core::CommandId::Back,
+];
+
+/// How many columns the groups are laid out in.
+pub const COLUMNS: usize = 4;
+
+/// Which groups go in which column: `sizes` is each group's row count, a
+/// group stays whole, and a column is started afresh rather than split one
+/// once it would pass an even share (a group is its rows and a heading
+/// with its gap).
+pub fn pack_columns(sizes: &[usize], columns: usize) -> Vec<Vec<usize>> {
+    let weight = |rows: usize| rows + 2;
+    let total: usize = sizes.iter().map(|rows| weight(*rows)).sum();
+    let per_column = total.div_ceil(columns.max(1));
+    let mut packed: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut filled = 0;
+    for (index, rows) in sizes.iter().enumerate() {
+        if filled > 0 && filled + weight(*rows) > per_column && packed.len() < columns {
+            packed.push(Vec::new());
+            filled = 0;
+        }
+        packed.last_mut().expect("a column").push(index);
+        filled += weight(*rows);
+    }
+    packed
+}
+
 #[cfg(test)]
 mod tests {
     use postio_core::{Frontend, Keymap, registry};
@@ -453,5 +501,17 @@ mod tests {
         );
         assert!(rows.contains(&CommandId::ToggleHasAction.into()));
         assert!(rows.contains(&CommandId::Undo.into()));
+    }
+
+    #[test]
+    fn groups_stay_whole_and_columns_share_the_rows() {
+        assert_eq!(
+            pack_columns(&[4, 4, 4, 4], 4),
+            vec![vec![0], vec![1], vec![2], vec![3]]
+        );
+        assert_eq!(pack_columns(&[10], 4), vec![vec![0]]);
+        let packed = pack_columns(&[2, 2, 2, 2, 2, 2], 4);
+        assert!(packed.len() <= 4);
+        assert_eq!(packed.concat(), vec![0, 1, 2, 3, 4, 5]);
     }
 }

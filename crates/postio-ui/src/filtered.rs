@@ -3,6 +3,7 @@
 //! The view is `postio-focus`'s; the words are here, where a test holds
 //! them.
 
+use chrono::NaiveDate;
 use postio_core::{CommandId, Keymap};
 
 use crate::hints::{self, Hint};
@@ -126,6 +127,46 @@ pub fn footer(keymap: &Keymap) -> Vec<Hint> {
     said
 }
 
+/// How many rows a page of Filtered reads.
+pub const PAGE: u32 = 50;
+
+/// Whether a page of `read` rows was full, so there may be more.
+pub fn page_is_full(read: usize) -> bool {
+    read as u32 == PAGE
+}
+
+/// The reason a tab narrows to: `Some(None)` for All, `None` for a tab
+/// that does not exist.
+pub fn tab_reason(index: usize) -> Option<Option<&'static str>> {
+    TABS.get(index).map(|(reason, _)| *reason)
+}
+
+/// A tab's tooltip: its name and the key that shows it.
+pub fn tab_tooltip(name: &str, key: &str) -> String {
+    format!("{name} ({key})")
+}
+
+/// The heading each row of Filtered sits under: `Some` for the first row of
+/// each local day -- "Today · 9", the day and how many of its rows are
+/// here -- and `None` for the rest. `days` is each row's local day, newest
+/// first.
+pub fn day_headings(days: &[NaiveDate], today: NaiveDate) -> Vec<Option<String>> {
+    let mut previous = None;
+    days.iter()
+        .map(|day| {
+            if previous == Some(*day) {
+                return None;
+            }
+            previous = Some(*day);
+            let count = days.iter().filter(|other| *other == day).count();
+            Some(format!(
+                "{} \u{b7} {count}",
+                crate::focus_row::day_heading(*day, today)
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +211,27 @@ mod tests {
             said,
             "R restore + never filter sender \u{b7} 1\u{2013}7 reason tabs \u{b7} Return open \u{b7} g i inbox"
         );
+    }
+
+    #[test]
+    fn a_page_is_full_at_fifty_and_tabs_name_their_reason() {
+        assert!(page_is_full(50));
+        assert!(!page_is_full(49));
+        assert_eq!(tab_reason(0), Some(None));
+        assert!(matches!(tab_reason(1), Some(Some(_))));
+        assert_eq!(tab_reason(7), None);
+        assert_eq!(tab_tooltip("Spam", "3"), "Spam (3)");
+    }
+
+    #[test]
+    fn each_day_gets_one_heading_with_its_count() {
+        let day = |d| NaiveDate::from_ymd_opt(2026, 10, d).unwrap();
+        let headings = day_headings(&[day(2), day(2), day(1)], day(2));
+        assert_eq!(
+            headings[0].as_deref(),
+            Some("Today \u{b7} Friday 2 October \u{b7} 2")
+        );
+        assert_eq!(headings[1], None);
+        assert!(headings[2].as_deref().unwrap().ends_with("\u{b7} 1"));
     }
 }

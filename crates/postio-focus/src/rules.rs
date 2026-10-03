@@ -308,11 +308,7 @@ impl RulesView {
         let rules = self.rules.borrow();
         let holds = self.holds.borrow();
         let rule_count = rules.len();
-        self.count.set_text(&if rule_count == 1 {
-            "1 rule".to_owned()
-        } else {
-            format!("{rule_count} rules")
-        });
+        self.count.set_text(&digest::rule_count(rule_count));
         self.empty.set_visible(rules.is_empty());
         let keymap = self.keymap.borrow();
         let now = postio_ui::clock::now();
@@ -335,10 +331,7 @@ impl RulesView {
             let actions = gtk::Box::new(gtk::Orientation::Horizontal, S1);
             actions.add_css_class("focus-rules-actions");
             actions.set_visible(false);
-            for (command, words) in [
-                (CommandId::OpenMessage, "Edit"),
-                (CommandId::Delete, "Remove"),
-            ] {
+            for (command, words) in digest::RULE_ROW_BUTTONS {
                 let button = gtk::Button::new();
                 button.add_css_class("flat");
                 button.set_valign(gtk::Align::Center);
