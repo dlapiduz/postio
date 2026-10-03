@@ -280,4 +280,3 @@ fn the_type_roles_are_named_sizes() {
         );
     }
 }
-

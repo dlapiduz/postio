@@ -22,7 +22,10 @@ pub fn exactly_one_pane_is_ever_on_screen() {
         return;
     };
 
-    for section in Section::ALL.into_iter().filter(|section| panel.shown(*section)) {
+    for section in Section::ALL
+        .into_iter()
+        .filter(|section| panel.shown(*section))
+    {
         panel.show_section(section);
         pump();
 
@@ -77,7 +80,10 @@ pub fn the_frame_is_identical_on_every_pane() {
     // panel's chrome drift from section to section.
     let header = panel.header_bar();
     let mut footers = Vec::new();
-    for section in Section::ALL.into_iter().filter(|section| panel.shown(*section)) {
+    for section in Section::ALL
+        .into_iter()
+        .filter(|section| panel.shown(*section))
+    {
         panel.show_section(section);
         pump();
         assert_eq!(
