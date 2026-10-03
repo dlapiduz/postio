@@ -2780,7 +2780,7 @@ impl App {
             .get(index)
             .map(|saved| saved.query.clone())
         else {
-            return self.say(&format!("No saved search {} is pinned", index + 1));
+            return self.say(&postio_ui::focus_target::no_saved_search(index));
         };
         self.search = Some(SearchBar {
             input: tui_input::Input::default().with_value(query),
