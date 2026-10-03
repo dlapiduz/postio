@@ -32,8 +32,8 @@ use postio_model::DraftState;
 use postio_ui::focus_row::{MAX_PILLS, count_badge, marker_line};
 use postio_ui::label_colour::{Rgb, label_colour};
 
-use super::item::FocusRow;
 use super::model::RowObject;
+use postio_ui::focus_list::FocusRow;
 
 /// What a row drew in its last snapshot: every text it laid out, in order,
 /// each label pill with its colour, and whether it was drawn bold. What a
@@ -986,7 +986,7 @@ impl RowWidget {
     /// holds -- the stack in the gutter, "Weekly · digest", "Newsletters ·
     /// 14 messages", who it is from or its summary's opening, its count and
     /// when it came due.
-    fn draw_digest(&self, snapshot: &gtk::Snapshot, digest: &super::item::Digest) {
+    fn draw_digest(&self, snapshot: &gtk::Snapshot, digest: &postio_ui::focus_list::Digest) {
         let palette = Palette::of(self);
         let width = self.width() as f32;
         let middle = self.one_line() / 2.0;

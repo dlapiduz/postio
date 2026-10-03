@@ -24,6 +24,7 @@ pub mod filtered;
 pub mod finder;
 pub mod focus;
 pub mod focus_dialog;
+pub mod focus_list;
 pub mod focus_row;
 pub mod focus_state;
 pub mod format;

@@ -17,7 +17,7 @@ use postio_ui::list::ListRow;
 use postio_ui::list::PAGE_SIZE;
 use postio_widgets::list_model::{ModelRow, Windowed, WindowedModel};
 
-use super::item::FocusRow;
+use postio_ui::focus_list::{FocusRow, day_of};
 
 mod imp {
     use super::*;
@@ -184,11 +184,6 @@ impl ModelRow for RowObject {
     fn id_of(data: &FocusRow) -> MessageId {
         data.id()
     }
-}
-
-/// The local day a row's mail arrived on: what its heading names.
-pub fn day_of(row: &FocusRow) -> chrono::NaiveDate {
-    row.at().with_timezone(&chrono::Local).date_naive()
 }
 
 impl FocusList {

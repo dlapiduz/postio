@@ -3,13 +3,12 @@
 
 pub mod feed;
 pub mod heading;
-pub mod item;
 pub mod model;
 pub mod pane;
 pub mod row;
 
 pub use feed::Feed;
-pub use item::{Conversation, Digest, FocusRow};
 pub use model::{FocusList, RowObject};
 pub use pane::ListPane;
+pub use postio_ui::focus_list::{Conversation, Digest, FocusRow};
 pub use row::RowWidget;

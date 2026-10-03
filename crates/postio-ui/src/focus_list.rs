@@ -1,11 +1,19 @@
-//! What one position of Focus's list stands for, with no toolkit in it.
+//! What one position of Focus's list stands for, and how the pages the store
+//! returns become those rows, with no toolkit in it.
+//!
+//! The desktop's list and the terminal's both read pages through the client
+//! and hand them here: the label merge, the surfaced splice and the day a
+//! row sits under are one policy, not one per frontend.
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::{DeliveryId, MessageId, ReminderId, ThreadId};
+use postio_model::listing::MessageSummary;
 use postio_model::listing::{
     Cadence, MarkerKind, MarkerSummary, MarkerWhen, Surfaced, ThreadSummary,
 };
 use postio_model::{EmailAddress, Label};
+
+use crate::surfaced::Slot;
 
 /// One row of Focus's list.
 ///
@@ -55,7 +63,7 @@ pub struct Conversation {
     /// What the list read: the newest message, the counts, the marker.
     pub summary: ThreadSummary,
     /// Its labels, in the order they were made: the first two are its
-    /// pills (`postio_ui::focus_row::MAX_PILLS`).
+    /// pills (`crate::focus_row::MAX_PILLS`).
     pub labels: Vec<Label>,
 }
 
@@ -189,6 +197,84 @@ impl FocusRow {
     }
 }
 
+/// The local day a row's mail arrived on: what its heading names.
+pub fn day_of(row: &FocusRow) -> chrono::NaiveDate {
+    row.at().with_timezone(&chrono::Local).date_naive()
+}
+
+/// A page of conversations as rows: each summary with its labels, read in
+/// one round trip for the whole page (`labelled` is every `(thread, label)`
+/// pair the page's threads hold, copies included).
+///
+/// A row holds each label once, in the order they were read, whichever of
+/// its folded copies carried it.
+pub fn conversations(
+    summaries: Vec<ThreadSummary>,
+    mut labelled: Vec<(ThreadId, Label)>,
+) -> Vec<FocusRow> {
+    summaries
+        .into_iter()
+        .map(|summary| {
+            let mine: Vec<ThreadId> = summary
+                .id
+                .into_iter()
+                .chain(summary.copies.iter().copied())
+                .collect();
+            let mut labels: Vec<Label> = Vec::new();
+            labelled.retain(|(thread, label)| {
+                if !mine.contains(thread) {
+                    return true;
+                }
+                if !labels.iter().any(|held| held.id == label.id) {
+                    labels.push(label.clone());
+                }
+                false
+            });
+            FocusRow::Conversation(Conversation { summary, labels })
+        })
+        .collect()
+}
+
+/// The threads a page of summaries needs labels for: each one's own and
+/// its folded copies'.
+pub fn label_threads(summaries: &[ThreadSummary]) -> Vec<ThreadId> {
+    summaries
+        .iter()
+        .flat_map(|row| row.id.into_iter().chain(row.copies.iter().copied()))
+        .collect()
+}
+
+/// A message listed on its own -- a draft -- as the one-message
+/// conversation a row draws.
+pub fn lone(message: MessageSummary) -> ThreadSummary {
+    ThreadSummary {
+        id: message.thread,
+        subject: message.subject.clone(),
+        participants: message.from.iter().cloned().collect(),
+        message_count: 1,
+        unread_count: u32::from(!message.seen),
+        flagged: message.flagged,
+        has_attachments: message.has_attachments,
+        last_at: message.received_at,
+        marker: None,
+        copies: Vec::new(),
+        representative: message,
+    }
+}
+
+/// A page's rows in order: each slot of a spliced page filled from the
+/// surfaced rows or the stored conversations it names. A slot naming a row
+/// that is not there is skipped.
+pub fn place(slots: &[Slot], surfaced: &[FocusRow], stored: &[FocusRow]) -> Vec<FocusRow> {
+    slots
+        .iter()
+        .filter_map(|slot| match slot {
+            Slot::Surfaced(index) => surfaced.get(*index).cloned(),
+            Slot::Stored(index) => stored.get(*index).cloned(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -252,5 +338,77 @@ mod tests {
             cancelled: false,
         });
         assert!(FocusRow::conversation(marked).two_lines());
+    }
+
+    fn label(id: i64) -> Label {
+        let mut label = Label::new(postio_model::ids::AccountId::new(1), format!("l{id}"));
+        label.id = postio_model::ids::LabelId::new(id);
+        label
+    }
+
+    #[test]
+    fn a_row_holds_each_label_once_across_its_copies() {
+        let mut folded = conversation(1, Some(3));
+        folded.copies = vec![ThreadId::new(9)];
+        let other = conversation(2, Some(4));
+        let rows = conversations(
+            vec![folded, other],
+            vec![
+                (ThreadId::new(3), label(1)),
+                (ThreadId::new(4), label(2)),
+                (ThreadId::new(9), label(1)),
+                (ThreadId::new(9), label(5)),
+            ],
+        );
+        let labels = |row: &FocusRow| {
+            row.as_conversation()
+                .expect("a conversation")
+                .labels
+                .iter()
+                .map(|label| label.id.get())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labels(&rows[0]), vec![1, 5]);
+        assert_eq!(labels(&rows[1]), vec![2]);
+    }
+
+    #[test]
+    fn a_page_is_labelled_for_every_thread_it_folds() {
+        let mut folded = conversation(1, Some(3));
+        folded.copies = vec![ThreadId::new(9)];
+        assert_eq!(
+            label_threads(&[folded, conversation(2, None)]),
+            vec![ThreadId::new(3), ThreadId::new(9)]
+        );
+    }
+
+    #[test]
+    fn a_draft_is_a_conversation_of_one() {
+        let message = conversation(5, None).representative;
+        let lone = lone(message);
+        assert_eq!(lone.message_count, 1);
+        assert_eq!(lone.unread_count, 1);
+        assert!(lone.marker.is_none());
+    }
+
+    #[test]
+    fn a_spliced_page_reads_surfaced_and_stored_rows_in_slot_order() {
+        let surfaced = vec![FocusRow::conversation(conversation(100, Some(100)))];
+        let stored = vec![
+            FocusRow::conversation(conversation(1, Some(1))),
+            FocusRow::conversation(conversation(2, Some(2))),
+        ];
+        let rows = place(
+            &[
+                Slot::Stored(0),
+                Slot::Surfaced(0),
+                Slot::Stored(1),
+                Slot::Stored(7),
+            ],
+            &surfaced,
+            &stored,
+        );
+        let ids: Vec<i64> = rows.iter().map(|row| row.id().get()).collect();
+        assert_eq!(ids, vec![1, 100, 2]);
     }
 }

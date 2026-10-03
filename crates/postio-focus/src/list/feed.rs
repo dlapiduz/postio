@@ -21,11 +21,11 @@ use postio_model::listing::{ListPage, MailStore, PageRequest};
 use postio_model::mailbox::MailboxRole;
 use postio_model::{FocusScope, ListScope};
 use postio_ui::paging::{Fetch, Paging, Plan};
-use postio_ui::surfaced::{Slot, Spliced};
+use postio_ui::surfaced::Spliced;
 use postio_widgets::list_model::{PageSource, WindowedModel};
 
-use super::item::FocusRow;
 use super::model::FocusList;
+use postio_ui::focus_list::{self, FocusRow};
 
 /// The list, and where its pages come from.
 #[derive(Clone)]
@@ -281,55 +281,19 @@ impl Inner {
                 Ok(ListPage::Threads(answer)) => {
                     // The page's label pills, for every row at once: one
                     // round trip, one statement at the store (T043).
-                    let threads: Vec<_> = answer
-                        .rows
-                        .iter()
-                        .flat_map(|row| row.id.into_iter().chain(row.copies.iter().copied()))
-                        .collect();
+                    let threads = focus_list::label_threads(&answer.rows);
                     // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
                     // answers on its own runtime (ADR 0041).
-                    let mut labelled = match client.thread_labels(threads).await {
+                    let labelled = match client.thread_labels(threads).await {
                         Ok(labelled) => labelled,
                         Err(error) => {
                             tracing::warn!(page, %error, "Focus could not read a page's labels");
                             Vec::new()
                         }
                     };
-                    let stored: Vec<FocusRow> = answer
-                        .rows
-                        .into_iter()
-                        .map(|summary| {
-                            let mine: Vec<_> = summary
-                                .id
-                                .into_iter()
-                                .chain(summary.copies.iter().copied())
-                                .collect();
-                            let mut labels = Vec::new();
-                            labelled.retain(|(thread, label)| {
-                                if mine.contains(thread) {
-                                    if !labels
-                                        .iter()
-                                        .any(|held: &postio_model::Label| held.id == label.id)
-                                    {
-                                        labels.push(label.clone());
-                                    }
-                                    false
-                                } else {
-                                    true
-                                }
-                            });
-                            FocusRow::Conversation(super::item::Conversation { summary, labels })
-                        })
-                        .collect();
+                    let stored = focus_list::conversations(answer.rows, labelled);
                     let placed = self.spliced.borrow().page(start, count, answer.total);
-                    let rows: Vec<FocusRow> = placed
-                        .slots
-                        .iter()
-                        .filter_map(|slot| match slot {
-                            Slot::Surfaced(index) => surfaced.get(*index).cloned(),
-                            Slot::Stored(index) => stored.get(*index).cloned(),
-                        })
-                        .collect();
+                    let rows = focus_list::place(&placed.slots, &surfaced, &stored);
                     let total = self.spliced.borrow().total(answer.total);
                     if generation == self.list.generation() {
                         self.stored.set(answer.total);
@@ -346,7 +310,7 @@ impl Inner {
                     let rows: Vec<FocusRow> = answer
                         .rows
                         .into_iter()
-                        .map(|message| FocusRow::conversation(lone(message)))
+                        .map(|message| FocusRow::conversation(focus_list::lone(message)))
                         .collect();
                     if generation == self.list.generation() {
                         self.stored.set(answer.total);
@@ -373,23 +337,5 @@ impl Inner {
         for handler in self.on_filled.borrow().iter() {
             handler();
         }
-    }
-}
-
-/// A message listed on its own -- a draft -- as the one-message
-/// conversation a row draws.
-fn lone(message: postio_model::listing::MessageSummary) -> postio_model::listing::ThreadSummary {
-    postio_model::listing::ThreadSummary {
-        id: message.thread,
-        subject: message.subject.clone(),
-        participants: message.from.iter().cloned().collect(),
-        message_count: 1,
-        unread_count: u32::from(!message.seen),
-        flagged: message.flagged,
-        has_attachments: message.has_attachments,
-        last_at: message.received_at,
-        marker: None,
-        copies: Vec::new(),
-        representative: message,
     }
 }
