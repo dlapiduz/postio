@@ -11,7 +11,7 @@
 //!
 //! `state` is what is open over the mail: `reading` (the first message), `search`, `palette`, `keys` (the
 //! cheat sheet), `compose`, `undo` (an undo offer on the status line),
-//! `error`, `selected` (rows 2-4 marked, the cursor on row 3), or `nocolor`
+//! `error`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
@@ -336,7 +336,7 @@ fn main() {
                 }),
             );
         }
-        "selected" | "selected-nocolor" => {
+        "selected" | "bulk" | "selected-nocolor" => {
             // Rows 2-4 marked, and the cursor back on row 3, inside them.
             for step in ['j', 'x', 'j', 'x', 'j', 'x', 'k'] {
                 key(&mut app, KeyCode::Char(step), KeyModifiers::NONE);

@@ -1443,6 +1443,11 @@ impl App {
         &self.selection
     }
 
+    /// What the bulk bar says is selected, when anything is.
+    pub fn selection_summary(&self) -> Option<String> {
+        postio_ui::selection::summary(&self.selection.selection(), Some(self.total()), &[])
+    }
+
     /// A mouse event, on what it landed on: the same things the keys do.
     fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
         use crate::view::hit::Target;
@@ -3223,6 +3228,8 @@ impl App {
         let command = postio_core::aim::command_for(id, &aim);
         let (quiet, _) = postio_core::bridge::event_channel();
         postio_core::aim::mirror(&self.state, &quiet, &aim);
+        // What was selected has been acted on: the selection lets go.
+        self.selection.clear();
         vec![Effect::Send(command)]
     }
 

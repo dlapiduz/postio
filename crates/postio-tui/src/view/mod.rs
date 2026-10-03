@@ -2,6 +2,7 @@
 //!
 //! Nothing here decides anything about mail; it draws what `App` holds.
 
+pub mod bottom;
 pub mod cheatsheet;
 pub mod composer;
 pub mod first_run;
@@ -143,17 +144,27 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             cheatsheet::draw(frame, area, &sections, theme);
             hits.add(area, hit::Target::Overlay);
         }
-        status_line(frame, window.bottom, app, tab, theme);
+        status_line(frame, window.bottom, app, tab, theme, &mut hits);
     }
     hits
 }
 
-/// The bottom line: what just happened -- a failure marked `✕` in the error
-/// colour, a success `✓` in the success colour with its undo key in the
-/// accent -- and a draft left open.
-fn status_line(frame: &mut Frame, area: Rect, app: &App, tab: bool, theme: &Theme) {
-    use crate::app::Tone;
+/// The bottom line: the bulk bar while anything is selected; otherwise what
+/// just happened -- a failure marked `✕` in the error colour, a success `✓`
+/// in the success colour with its undo key in the accent -- and a draft left
+/// open.
+fn status_line(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    tab: bool,
+    theme: &Theme,
+    hits: &mut hit::Hits,
+) {
     use ratatui::text::Span;
+    if !tab && bottom::bulk_bar(frame, area, app, theme, hits) {
+        return;
+    }
     let mut spans: Vec<Span> = Vec::new();
     if app.composer_detached() && !tab {
         spans.push(Span::styled(
@@ -164,35 +175,11 @@ fn status_line(frame: &mut Frame, area: Rect, app: &App, tab: bool, theme: &Them
             theme.style(Role::Text),
         ));
     }
-    if let Some(notice) = app.notice() {
+    if app.notice().is_some() {
         if !spans.is_empty() {
             spans.push(Span::styled(" · ", theme.style(Role::Dim)));
         }
-        match app.notice_tone() {
-            Tone::Failed => spans.push(Span::styled("✕ ", theme.style(Role::Error))),
-            Tone::Worked => spans.push(Span::styled("✓ ", theme.style(Role::Success))),
-            Tone::Plain => {}
-        }
-        let text = match app.notice_tone() {
-            Tone::Failed => theme.style(Role::Error),
-            _ => theme.style(Role::Text),
-        };
-        let offer = app
-            .notice_undo()
-            .map(|key| format!(" — {key} to undo"))
-            .filter(|offer| notice.ends_with(offer.as_str()));
-        match (offer, app.notice_undo()) {
-            (Some(offer), Some(key)) => {
-                spans.push(Span::styled(
-                    notice[..notice.len() - offer.len()].to_owned(),
-                    text,
-                ));
-                spans.push(Span::styled(" — ", theme.style(Role::Dim)));
-                spans.push(Span::styled(key.to_owned(), theme.style(Role::Accent)));
-                spans.push(Span::styled(" to undo", theme.style(Role::Dim)));
-            }
-            _ => spans.push(Span::styled(notice.to_owned(), text)),
-        }
+        spans.extend(bottom::notice_spans(app, theme));
     }
     let width = usize::from(area.width);
     let left = Line::from(spans);
