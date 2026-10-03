@@ -77,6 +77,7 @@ pub fn places() -> Places {
         ],
         counts: Vec::new(),
         saved: Vec::new(),
+        features: Default::default(),
     }
 }
 
@@ -215,15 +216,46 @@ pub fn label(id: i64, name: &str) -> postio_model::Label {
 /// The Focus inbox opened over exactly `rows`, and its pages served from
 /// them: `Row::from` each, as a page arriving does.
 pub fn show_focus(app: &mut App, rows: Vec<postio_ui::focus_list::FocusRow>) {
+    show_scope(app, postio_model::FocusScope::Inbox, rows);
+}
+
+/// Focus's `scope` opened over exactly `rows`, and its pages served.
+pub fn show_scope(
+    app: &mut App,
+    scope: postio_model::FocusScope,
+    rows: Vec<postio_ui::focus_list::FocusRow>,
+) {
     let rows: Vec<Row> = rows.into_iter().map(Row::from).collect();
     let effects = update(
         app,
         Input::Opened {
-            scope: ListScope::Focus(postio_model::FocusScope::Inbox),
+            scope: ListScope::Focus(scope),
             total: rows.len() as u32,
         },
     );
     serve_with(app, effects, |position| rows[position as usize].clone());
+}
+
+/// What the strip counts in the inbox of the drawing: 312 conversations, 41
+/// of them unread, 7 with a marker, 186 filtered today.
+pub fn drawing_counts() -> postio_client::protocol::FocusCounts {
+    postio_client::protocol::FocusCounts {
+        conversations: 312,
+        unread: 41,
+        has_action: 7,
+        filtered_today: 186,
+    }
+}
+
+/// Places for an account with filtering on and four digest rules.
+pub fn places_with_features() -> Places {
+    Places {
+        features: crate::places::Features {
+            filtering: true,
+            digest_rules: 4,
+        },
+        ..places()
+    }
 }
 
 /// The host says the Inbox (id 1) has `total` rows.

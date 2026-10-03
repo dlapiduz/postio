@@ -61,12 +61,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         first_run::draw(frame, area, run, theme);
     } else {
         let window = app.window();
-        topbar::draw(frame, window.top, app, theme);
+        topbar::draw(frame, window.top, app, theme, &mut hits);
         // A draft in a tab of its own has the whole screen between the top
         // bar and the bottom line while it is in front.
         let tab = app.composer_detached() && app.focus() == Focus::Composer;
         if !tab {
-            strip::draw(frame, window.strip, app, theme);
+            strip::draw(frame, window.strip, app, theme, &mut hits);
         }
         let below = window.strip.y + u16::from(!tab);
         let body = Rect::new(
@@ -148,21 +148,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
     hits
 }
 
-/// The status line: what just happened on the left -- a failure marked `✕`
-/// in the error colour, a success `✓` in the success colour with its undo
-/// key in the accent -- and how many conversations are listed on the right,
-/// with the sync state.
+/// The bottom line: what just happened -- a failure marked `✕` in the error
+/// colour, a success `✓` in the success colour with its undo key in the
+/// accent -- and a draft left open.
 fn status_line(frame: &mut Frame, area: Rect, app: &App, tab: bool, theme: &Theme) {
     use crate::app::Tone;
     use ratatui::text::Span;
-    let count = match app.total() {
-        1 => "1 conversation".to_owned(),
-        total => format!("{total} conversations"),
-    };
-    let right = match app.sync_line() {
-        Some(sync) => format!("{sync} · {count}"),
-        None => count,
-    };
     let mut spans: Vec<Span> = Vec::new();
     if app.composer_detached() && !tab {
         spans.push(Span::styled(
@@ -206,7 +197,6 @@ fn status_line(frame: &mut Frame, area: Rect, app: &App, tab: bool, theme: &Them
     let width = usize::from(area.width);
     let left = Line::from(spans);
     let used = left.width();
-    let right_width = unicode_width::UnicodeWidthStr::width(right.as_str());
     if used > width {
         // Too long for the line: the words, cut, without their colours.
         let words: String = left
@@ -221,13 +211,6 @@ fn status_line(frame: &mut Frame, area: Rect, app: &App, tab: bool, theme: &Them
         return;
     }
     frame.render_widget(left, area);
-    if used + right_width + 3 <= width {
-        let x = area.x + u16::try_from(width - right_width).unwrap_or(0);
-        frame.render_widget(
-            Line::styled(right, theme.style(Role::Dim)),
-            Rect::new(x, area.y, u16::try_from(right_width).unwrap_or(0), 1),
-        );
-    }
 }
 
 /// `text`, cut to at most `width` terminal columns, ending in `…` when cut.
@@ -638,7 +621,7 @@ mod tests {
         );
         assert!(bar.contains("1 hit · 7 ms · still syncing"), "{bar}");
         assert!(
-            !bar.contains("Search all mail"),
+            !bar.contains("go to a folder"),
             "the query replaces the placeholder: {bar}"
         );
     }
@@ -748,9 +731,9 @@ mod tests {
         let app = with_places((160, 16));
         let drawn = screen(160, 16, &app);
         let top = drawn.lines().next().expect("a top row");
-        assert!(top.contains("Search all mail"), "{top}");
+        assert!(top.contains("Search mail, go to a folder"), "{top}");
         assert!(top.contains("? keys"), "{top}");
-        assert!(top.contains("c compose"), "{top}");
+        assert!(top.contains("Compose c"), "{top}");
 
         let mut bindings = postio_config::KeyBindings::default();
         bindings
@@ -766,8 +749,8 @@ mod tests {
         let rebound = with_places_and_keys((160, 16), &bindings);
         let drawn = screen(160, 16, &rebound);
         let top = drawn.lines().next().expect("a top row");
-        assert!(top.contains(&format!("{compose} compose")), "{top}");
-        assert!(!top.contains("c compose"), "{top}");
+        assert!(top.contains(&format!("Compose {compose}")), "{top}");
+        assert!(!top.contains("Compose c"), "{top}");
     }
 
     #[test]
@@ -1379,10 +1362,7 @@ mod tests {
     fn the_window_is_a_top_bar_a_strip_and_rows_with_no_sidebar_at_120_by_36() {
         let drawn = window_of((120, 36));
         let lines: Vec<&str> = drawn.lines().collect();
-        assert!(
-            lines[0].contains("Search all mail"),
-            "the top bar:\n{drawn}"
-        );
+        assert!(lines[0].contains("Search mail"), "the top bar:\n{drawn}");
         assert!(
             lines[1].trim_start().starts_with("Inbox"),
             "the strip is under it:\n{drawn}"

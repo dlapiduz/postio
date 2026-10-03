@@ -475,6 +475,15 @@ pub struct App {
     spliced: Spliced,
     /// What the strip counts, once read.
     counts: Option<postio_client::protocol::FocusCounts>,
+    /// The message the cursor stays on when the has-action filter swaps the
+    /// list under it, until the new list's first page lands.
+    keep: Option<postio_model::MessageId>,
+    /// Which of Focus's features `config.toml` has in use.
+    features: crate::places::Features,
+    /// The accounts whose connection has been heard of.
+    tracked: Vec<postio_model::AccountId>,
+    /// When mail last arrived, as far as is known.
+    last_synced: Option<chrono::DateTime<chrono::Utc>>,
     /// The list being shown.
     scope: Option<ListScope>,
     /// The lists opened before this one, newest last, for `prev_view`.
@@ -564,6 +573,32 @@ pub struct Placement {
     pub surfaced: Vec<FocusRow>,
     /// Their positions.
     pub spliced: Spliced,
+}
+
+/// What the strip says, with no drawing in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Strip {
+    /// The place's name.
+    pub place: postio_ui::terminal::SafeText,
+    /// `312 · 41 unread`.
+    pub counts: String,
+    /// The has-action toggle, in Focus's inbox.
+    pub toggle: Option<Toggle>,
+    /// `Showing 7 of 312 · ! again to show all`, while the filter is on.
+    pub showing: Option<String>,
+    /// `186 filtered today`, while filtering is on and has filed anything.
+    pub filtered: Option<String>,
+    /// `4 digest rules`, while there are rules.
+    pub rules: Option<String>,
+}
+
+/// The has-action toggle: its words and whether it is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toggle {
+    /// `Has action · 7`.
+    pub label: String,
+    /// Whether the filter is on.
+    pub on: bool,
 }
 
 /// What fills the window's body.
@@ -822,6 +857,10 @@ impl App {
             surfaced: Vec::new(),
             spliced: Spliced::default(),
             counts: None,
+            keep: None,
+            features: crate::places::Features::default(),
+            tracked: Vec::new(),
+            last_synced: None,
             scope: None,
             notice: None,
             notice_tone: Tone::Plain,
@@ -891,24 +930,6 @@ impl App {
     /// What the reader shows: the message, and its rendered body.
     pub fn reading(&self) -> Option<&crate::conversation::Reading> {
         self.reading.as_ref()
-    }
-
-    /// What the status line says about the connection of the account on
-    /// screen: `offline`, `syncing`, `idle` -- the desktop's own words.
-    pub fn sync_line(&self) -> Option<String> {
-        let (state, detail) = self.sync_lines()?;
-        Some(format!("{state} · {detail}"))
-    }
-
-    /// The same as two lines, as the desktop's sync label has it:
-    /// `idle · imap`, then `last sync 12s`.
-    pub fn sync_lines(&self) -> Option<(String, String)> {
-        let account = self.account_here()?;
-        Some(
-            self.trackers
-                .status(account)
-                .lines(std::time::Instant::now()),
-        )
     }
 
     /// Which account `scope` belongs to.
@@ -1484,6 +1505,8 @@ impl App {
                     vec![Effect::Redraw]
                 }
                 Target::Overlay => Vec::new(),
+                // A control is its command, the same as its key.
+                Target::Command(id) => self.command(id),
                 // A button is its command, the same as its key.
                 Target::ComposerAction(id) => {
                     if self.composer.is_none() {
@@ -2456,6 +2479,75 @@ impl App {
         self.state.clone()
     }
 
+    /// Whether the has-action filter is on.
+    pub fn has_action(&self) -> bool {
+        self.scope == Some(ListScope::Focus(postio_model::FocusScope::HasAction))
+    }
+
+    /// What the strip says about the place on screen.
+    pub fn strip(&self) -> Strip {
+        let focus = matches!(
+            self.scope,
+            Some(ListScope::Focus(
+                postio_model::FocusScope::Inbox | postio_model::FocusScope::HasAction
+            ))
+        );
+        let counts = match (self.scope, self.counts) {
+            (Some(ListScope::Focus(_)), Some(counts)) => {
+                postio_ui::focus_row::strip_counts(counts.conversations, counts.unread)
+            }
+            (Some(ListScope::Mailbox(id)), _) => {
+                let unread = self
+                    .places
+                    .folders
+                    .iter()
+                    .find(|folder| folder.id == id)
+                    .map_or(0, |folder| folder.counts.unread);
+                postio_ui::focus_row::strip_counts(self.list.total(), unread)
+            }
+            _ => postio_ui::focus_row::strip_counts(self.list.total(), 0),
+        };
+        let has_action = self.counts.map(|counts| counts.has_action);
+        let toggle = focus.then(|| Toggle {
+            label: postio_ui::focus_row::has_action_label(has_action),
+            on: self.has_action(),
+        });
+        let showing = match (self.has_action(), self.counts) {
+            (true, Some(counts)) => Some(postio_ui::focus_row::showing(
+                counts.has_action,
+                counts.conversations,
+                self.hint(postio_core::CommandId::ToggleHasAction)
+                    .as_deref(),
+            )),
+            _ => None,
+        };
+        let filtered = self
+            .counts
+            .filter(|_| focus && self.features.filtering)
+            .map(|counts| counts.filtered_today)
+            .filter(|count| *count > 0)
+            .map(postio_ui::filtered::today);
+        let rules = (focus && self.features.digest_rules > 0)
+            .then(|| postio_ui::focus_row::digest_rules(self.features.digest_rules));
+        Strip {
+            place: self.place_name(),
+            counts,
+            toggle,
+            showing,
+            filtered,
+            rules,
+        }
+    }
+
+    /// What the top bar's sync label says: where every account whose
+    /// connection has been heard of stands, and when mail last arrived.
+    pub fn sync_label(&self) -> postio_ui::focus_state::SyncLabel {
+        postio_ui::focus_state::sync_label_here(
+            &self.trackers.statuses(&self.tracked),
+            self.last_synced,
+        )
+    }
+
     /// What the strip calls the place on screen.
     pub fn place_name(&self) -> postio_ui::terminal::SafeText {
         match self.scope {
@@ -2513,6 +2605,14 @@ impl App {
             return None;
         }
         let row = self.row_at(position)?;
+        if self.has_action() {
+            // One heading over the whole list, not a day's.
+            return (position == 0).then(|| {
+                Heading::Text(postio_ui::focus_row::has_action_label(
+                    self.counts.map(|counts| counts.has_action),
+                ))
+            });
+        }
         let day = row.day();
         let starts = position == top
             || position
@@ -2784,6 +2884,7 @@ impl App {
             }
             // The folders box is the finder's `#` until the places box
             // replaces it (T319).
+            "toggle_has_action" => return self.toggle_has_action(),
             "go_to_folders" => return self.open_palette(Finding::Folders),
             "search" => return self.open_search(),
             "command_palette" => return self.open_palette(Finding::Commands),
@@ -2898,6 +2999,23 @@ impl App {
                 encoding_problems: false,
             }),
         )
+    }
+
+    /// `!`: narrow Focus's inbox to the rows with a marker, or back. The
+    /// selection goes, since what it named may not be shown; the cursor
+    /// stays on the same message when that message is still shown.
+    fn toggle_has_action(&mut self) -> Vec<Effect> {
+        use postio_model::FocusScope;
+        let scope = match self.scope {
+            Some(ListScope::Focus(FocusScope::Inbox)) => FocusScope::HasAction,
+            Some(ListScope::Focus(FocusScope::HasAction)) => FocusScope::Inbox,
+            _ => return Vec::new(),
+        };
+        self.keep = self.cursor_message();
+        self.selection.clear();
+        // Narrowing is not going somewhere else: `prev_view` skips it.
+        self.going_back = true;
+        vec![Effect::Open(ListScope::Focus(scope)), Effect::Redraw]
     }
 
     /// Open `scope`.
@@ -3293,8 +3411,22 @@ impl App {
     /// to.
     fn fill_places(&mut self, contents: &crate::places::Places) -> Vec<Effect> {
         self.places = contents.clone();
+        self.features = contents.features;
         self.folders = contents.folders.clone();
         self.accounts = contents.accounts.clone();
+        if self.last_synced.is_none() {
+            self.last_synced = contents
+                .folders
+                .iter()
+                .filter(|folder| {
+                    contents
+                        .accounts
+                        .iter()
+                        .any(|account| account.enabled && account.id == folder.account_id)
+                })
+                .filter_map(|folder| folder.last_synced_at)
+                .max();
+        }
         for account in &contents.accounts {
             self.trackers.note_last_sync(account.id, &contents.folders);
         }
@@ -3475,6 +3607,18 @@ impl App {
         // Every event is offered to the status line first: an error is both
         // something to say and the reason a failing account's line gives.
         let moved = self.trackers.apply(event, self.account);
+        if let Event::ConnectionChanged { account, .. }
+        | Event::SyncProgress { account, .. }
+        | Event::BackfillProgress { account, .. } = event
+            && !self.tracked.contains(account)
+        {
+            self.tracked.push(*account);
+        }
+        if let Event::SyncProgress { done, total, .. } = event
+            && done >= total
+        {
+            self.last_synced = Some(chrono::Utc::now());
+        }
         match event {
             Event::ActionCompleted {
                 description,
@@ -3626,6 +3770,12 @@ impl App {
                 if delivered.stale {
                     Vec::new()
                 } else {
+                    // The cursor goes back to the message `!` left it on.
+                    if let Some(message) = self.keep.take()
+                        && let Some(position) = self.list.position_of(message)
+                    {
+                        self.move_to(position);
+                    }
                     // Rows that landed may be taller than the guess the view
                     // was placed by.
                     self.reveal();
@@ -4533,7 +4683,6 @@ pub(crate) mod tests {
         "back_to_words",
         "go_to_filtered",
         "go_to_digest_rules",
-        "toggle_has_action",
         "picker_choose_1",
         "picker_choose_2",
         "picker_choose_3",
@@ -6755,23 +6904,49 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_status_line_says_offline_until_the_host_says_otherwise() {
+    fn the_sync_label_follows_what_the_host_says_of_the_accounts() {
+        use postio_core::{ConnectionState, Event};
+        let account = postio_model::AccountId::new(1);
         let mut app = app((160, 40));
         update(&mut app, Input::Places(places()));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        let line = app.sync_line().expect("a line for the account on screen");
-        assert!(line.starts_with("offline"), "{line}");
-
+        assert_eq!(app.sync_label().text, "Not synced yet");
         update(
             &mut app,
-            Input::Host(postio_core::Event::ConnectionChanged {
-                account: postio_model::AccountId::new(1),
-                state: postio_core::ConnectionState::Online,
+            Input::Host(Event::ConnectionChanged {
+                account,
+                state: ConnectionState::Offline,
             }),
         );
-        let line = app.sync_line().unwrap();
-        assert!(line.starts_with("idle"), "{line}");
+        assert_eq!(app.sync_label().text, "Offline");
+        update(
+            &mut app,
+            Input::Host(Event::ConnectionChanged {
+                account,
+                state: ConnectionState::Online,
+            }),
+        );
+        update(
+            &mut app,
+            Input::Host(Event::SyncProgress {
+                account,
+                done: 3,
+                total: 9,
+            }),
+        );
+        assert_eq!(app.sync_label().text, "Syncing 3 of 9");
+        update(
+            &mut app,
+            Input::Host(Event::SyncProgress {
+                account,
+                done: 9,
+                total: 9,
+            }),
+        );
+        assert!(
+            app.sync_label().text.starts_with("Synced "),
+            "{:?}",
+            app.sync_label()
+        );
     }
 
     fn reads(effects: &[Effect]) -> usize {

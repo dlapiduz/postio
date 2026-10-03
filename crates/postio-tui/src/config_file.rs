@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::places::Saved;
+use crate::places::{Features, Saved};
 
 /// Where `config.toml` is.
 pub fn path() -> Option<PathBuf> {
@@ -20,9 +20,32 @@ pub fn text(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+/// What the terminal reads from `config.toml`: the pinned saved searches and
+/// which of Focus's features are in use.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Read {
+    /// The pinned saved searches, in the finder's order.
+    pub saved: Vec<Saved>,
+    /// Which of Focus's features are in use.
+    pub features: Features,
+}
+
+impl Read {
+    /// What `config` says.
+    pub fn of(config: &postio_config::Config) -> Read {
+        Read {
+            saved: pinned(config),
+            features: Features {
+                filtering: config.focus.filtering,
+                digest_rules: config.focus.digests.len(),
+            },
+        }
+    }
+}
+
 /// Add `query` to `[filters]` at `path` as a pinned saved search, as the
 /// desktop's Ctrl+S does, and answer the pinned searches now.
-pub fn save_search(path: &Path, query: &str) -> Result<Vec<Saved>, String> {
+pub fn save_search(path: &Path, query: &str) -> Result<Read, String> {
     rewrite(path, |config| {
         config.save_filter(query);
     })
@@ -33,14 +56,14 @@ pub fn save_search(path: &Path, query: &str) -> Result<Vec<Saved>, String> {
 fn rewrite(
     path: &Path,
     change: impl FnOnce(&mut postio_config::Config),
-) -> Result<Vec<Saved>, String> {
+) -> Result<Read, String> {
     let original = text(path);
     let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
     change(&mut config);
     let patched = postio_config::patch_filters(&original, &config.filters)
         .map_err(|error| error.to_string())?;
     postio_config::Config::write_text_to_path(&patched, path).map_err(|error| error.to_string())?;
-    Ok(pinned(&config))
+    Ok(Read::of(&config))
 }
 
 /// The pinned saved searches in `config`, in the finder's order -- the
@@ -60,10 +83,10 @@ pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
         .collect()
 }
 
-/// The pinned saved searches as the file at `path` says now.
-pub fn pinned_at(path: &Path) -> Option<Vec<Saved>> {
+/// What the file at `path` says now.
+pub fn read_at(path: &Path) -> Option<Read> {
     let text = std::fs::read_to_string(path).ok()?;
-    Some(pinned(&postio_config::Config::from_toml_str(&text).ok()?))
+    Some(Read::of(&postio_config::Config::from_toml_str(&text).ok()?))
 }
 
 #[cfg(test)]
@@ -87,8 +110,8 @@ mod tests {
         .expect("watching");
 
         let pinned = save_search(&path, "from:ada is:unread").expect("saved");
-        assert_eq!(pinned.len(), 1);
-        assert_eq!(pinned[0].query, "from:ada is:unread");
+        assert_eq!(pinned.saved.len(), 1);
+        assert_eq!(pinned.saved[0].query, "from:ada is:unread");
 
         let checked = heard
             .recv_timeout(Duration::from_secs(10))

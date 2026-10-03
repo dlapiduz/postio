@@ -25,6 +25,18 @@ pub struct Places {
     pub counts: Vec<(AccountId, ViewCounts)>,
     /// The saved searches pinned in `config.toml`.
     pub saved: Vec<Saved>,
+    /// Which of Focus's features `config.toml` has in use.
+    pub features: Features,
+}
+
+/// Which of Focus's features are in use, for the strip's counts: a count
+/// shows only while its feature is (C10).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Features {
+    /// Whether filtering is on, so "N filtered today" means something.
+    pub filtering: bool,
+    /// How many digest rules there are.
+    pub digest_rules: usize,
 }
 
 /// A saved search from `config.toml`'s `[filters]`.
@@ -179,6 +191,7 @@ mod tests {
                     ..Default::default()
                 },
             )],
+            features: Features::default(),
             saved: vec![Saved {
                 key: "unread-from-ada".into(),
                 name: "Unread from Ada".into(),

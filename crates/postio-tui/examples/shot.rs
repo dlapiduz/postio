@@ -12,7 +12,7 @@
 //! `state` is what is open over the mail: `reading` (the first message), `search`, `palette`, `keys` (the
 //! cheat sheet), `compose`, `undo` (an undo offer on the status line),
 //! `error`, `selected` (rows 2-4 marked, the cursor on row 3), or `nocolor`
-//! and `selected-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
+//! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
 
@@ -46,7 +46,11 @@ fn main() {
         postio_tui::places::Places {
             accounts: vec![test_support::account()],
             folders: vec![
-                test_support::folder(1, "INBOX", MailboxRole::Inbox, 3),
+                {
+                    let mut inbox = test_support::folder(1, "INBOX", MailboxRole::Inbox, 3);
+                    inbox.last_synced_at = Some(test_support::local(23, 11, 9));
+                    inbox
+                },
                 test_support::folder(2, "Archive", MailboxRole::Archive, 0),
                 test_support::folder(3, "Sent", MailboxRole::Sent, 0),
                 test_support::folder(4, "Drafts", MailboxRole::Drafts, 0),
@@ -64,6 +68,10 @@ fn main() {
             ],
             counts: Vec::new(),
             saved: Vec::new(),
+            features: postio_tui::places::Features {
+                filtering: true,
+                digest_rules: 4,
+            },
         },
     );
 
@@ -154,6 +162,7 @@ fn main() {
         ]
     };
     test_support::show_focus(&mut app, rows);
+    update(&mut app, Input::FocusCounts(test_support::drawing_counts()));
 
     // The first message open, for `reading`; otherwise the list.
     if state == "reading" {
@@ -333,6 +342,36 @@ fn main() {
                 key(&mut app, KeyCode::Char(step), KeyModifiers::NONE);
             }
             if state == "selected-nocolor" {
+                colour = Colour::None;
+            }
+        }
+        "has-action" | "has-action-nocolor" => {
+            // The toggle on: the list narrowed to the rows with a marker.
+            key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
+            let marked: Vec<_> = (0..2)
+                .map(|_| ())
+                .enumerate()
+                .map(|(at, _)| {
+                    postio_ui::focus_list::FocusRow::conversation(test_support::marked(
+                        test_support::conversation(
+                            at as i64 + 1,
+                            ["Grace Oyelaran", "Ada Moreno"][at],
+                            ["Invitation: Harbor design review", "Re: Atlas Q3 budget"][at],
+                            "",
+                            test_support::local(23, 11, 2),
+                        ),
+                        postio_model::listing::MarkerSummary {
+                            kind: postio_model::listing::MarkerKind::Question,
+                            when: None,
+                            excerpt: Some("Can you approve these by Friday?".into()),
+                            answer: None,
+                            cancelled: false,
+                        },
+                    ))
+                })
+                .collect();
+            test_support::show_scope(&mut app, postio_model::FocusScope::HasAction, marked);
+            if state == "has-action-nocolor" {
                 colour = Colour::None;
             }
         }

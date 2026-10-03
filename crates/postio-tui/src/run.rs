@@ -21,7 +21,6 @@ use postio_client::protocol::ClientKind;
 use postio_host::Host;
 use postio_model::ListScope;
 use postio_model::listing::{MailStore, PageRequest};
-use postio_model::mailbox::MailboxRole;
 use postio_ui::paging::Fetch;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -199,14 +198,14 @@ pub fn run() -> ExitCode {
     };
     session.publish();
 
-    let saved = crate::config_file::pinned(&config);
+    let read = crate::config_file::Read::of(&config);
     let outcome = runtime.block_on(main_loop(
         &host,
         client,
         keys,
         theme,
         state,
-        saved,
+        read,
         config.tui.preview,
         &mut session,
     ));
@@ -226,17 +225,6 @@ pub fn run() -> ExitCode {
     }
 }
 
-/// The first list: the first enabled account's inbox.
-async fn first_scope(client: &Client) -> Option<ListScope> {
-    let accounts = client.accounts().await.ok()?;
-    let account = accounts.into_iter().find(|account| account.enabled)?;
-    let folders = client.mailboxes(account.id).await.ok()?;
-    let inbox = folders
-        .iter()
-        .find(|folder| folder.role == MailboxRole::Inbox)?;
-    Some(ListScope::Mailbox(inbox.id))
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn main_loop(
     host: &Host,
@@ -244,7 +232,7 @@ async fn main_loop(
     keys: Keys,
     theme: Theme,
     state: postio_core::SharedState,
-    saved: Vec<crate::places::Saved>,
+    config: crate::config_file::Read,
     preview: postio_config::Preview,
     session: &mut Session,
 ) -> io::Result<()> {
@@ -266,7 +254,7 @@ async fn main_loop(
     let senders = Senders {
         inputs,
         drafts,
-        saved,
+        config,
         host,
         attention: std::sync::Mutex::new(postio_ui::notify::Attention::default()),
     };
@@ -412,8 +400,8 @@ async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
 struct Senders<'a> {
     inputs: async_channel::Sender<Input>,
     drafts: async_channel::Sender<Effect>,
-    /// The pinned saved searches' names, for the places.
-    saved: Vec<crate::places::Saved>,
+    /// What `config.toml` said at startup, for the places.
+    config: crate::config_file::Read,
     /// The store's host, which decides whether new mail is worth saying.
     host: &'a Host,
     /// What the person is looking at, so mail arriving in the folder
@@ -482,14 +470,12 @@ async fn drive(
 
     // What is where on the screen, as last drawn: what a click lands on.
     let mut hits = crate::view::hit::Hits::default();
-    let contents = places_contents(client, senders.saved.clone()).await;
-    let _ = update(app, Input::Places(contents));
-    if let Some(scope) = first_scope(client).await {
-        let total = client.list_count(scope).await.unwrap_or(0);
-        let effects = update(app, Input::Opened { scope, total });
-        if let Flow::Quit = perform(client, app, terminal, theme, senders, effects, &mut hits)? {
-            return Ok(());
-        }
+    let contents = places_contents(client, senders.config.clone()).await;
+    // The first list is opened by what the places say: Focus's inbox, once
+    // there is an account to show.
+    let effects = update(app, Input::Places(contents));
+    if let Flow::Quit = perform(client, app, terminal, theme, senders, effects, &mut hits)? {
+        return Ok(());
     }
     hits = draw(terminal, app, theme)?;
 
@@ -624,7 +610,7 @@ async fn drive(
 /// views draw.
 async fn places_contents(
     client: &Client,
-    saved: Vec<crate::places::Saved>,
+    config: crate::config_file::Read,
 ) -> crate::places::Places {
     let accounts = client.accounts().await.unwrap_or_default();
     let mut folders = Vec::new();
@@ -648,7 +634,8 @@ async fn places_contents(
         accounts,
         folders,
         counts,
-        saved,
+        saved: config.saved,
+        features: config.features,
     }
 }
 
@@ -725,7 +712,7 @@ fn perform(
     let Senders {
         inputs,
         drafts,
-        saved,
+        config,
         attention,
         ..
     } = senders;
@@ -1139,8 +1126,8 @@ fn perform(
                     .await
                     .unwrap_or_else(|error| Err(error.to_string()));
                     match saved {
-                        Ok(names) => {
-                            let contents = places_contents(&client, names).await;
+                        Ok(read) => {
+                            let contents = places_contents(&client, read).await;
                             let _ = inputs.send(Input::Places(contents)).await;
                         }
                         Err(reason) => {
@@ -1170,11 +1157,11 @@ fn perform(
                 let inputs = inputs.clone();
                 // Read again: a search saved since startup is in the file,
                 // not in what was read then.
-                let saved = crate::config_file::path()
-                    .and_then(|path| crate::config_file::pinned_at(&path))
-                    .unwrap_or_else(|| saved.to_vec());
+                let read = crate::config_file::path()
+                    .and_then(|path| crate::config_file::read_at(&path))
+                    .unwrap_or_else(|| config.clone());
                 tokio::spawn(async move {
-                    let contents = places_contents(&client, saved).await;
+                    let contents = places_contents(&client, read).await;
                     let _ = inputs.send(Input::Places(contents)).await;
                 });
             }

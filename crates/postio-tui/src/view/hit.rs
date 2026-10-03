@@ -23,6 +23,9 @@ pub enum Target {
     ComposerAction(&'static str),
     /// One of a search's facets, by its place in the row.
     Facet(usize),
+    /// A control of the window that runs a command, by its id: the top bar's
+    /// and the strip's.
+    Command(&'static str),
     /// Something drawn over everything else: clicks there land on nothing
     /// underneath.
     Overlay,
