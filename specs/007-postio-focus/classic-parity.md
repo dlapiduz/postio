@@ -148,8 +148,8 @@ retired". They are copied here so the table can be read alone.
 - **T248** A failing account named, with its reason and a retry.
 - **T261** Unsubscribe in the open message.
 - **T262** A missing credential offers the credential form.
-- **T263** Rows grow with the text scale.
-- **T264** A destroyed window frees its composer.
+- **T263** Rows grow with the text scale (done).
+- **T264** A destroyed window frees its composer (done).
 
 ## The retirement, in order
 
@@ -291,7 +291,7 @@ suites.
 | `search_index`, idle passes after the first frame | `idle_passes` |
 | `startup_repair` | `startup_repair` (T262) |
 | `gtk_accessibility.rs` | `a11y_sweep`: every Focus surface has roles and names, and 200% text stays usable; rows grow with the type (T263) |
-| `window_teardown`, `gtk_window_teardown` | `window_teardown`; a mounted composer outliving its window is held out (T264) |
+| `window_teardown`, `gtk_window_teardown` | `window_teardown`; a mounted composer is freed with its window (T264) |
 | `second_activate_wiring` | `desktop::a_second_activate_has_one_window_and_starts_sync_once` |
 | `unsubscribe_wiring` | `unsubscribe`: the digest's `U` is logged and listed; the open message's notice is logged and listed too (T261) |
 | `gtk_store_opening` (2 of 3) | `store_opening`; the third ("a key for mail says why it cannot run yet") goes, since Focus's wait plate says it |

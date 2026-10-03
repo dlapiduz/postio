@@ -111,6 +111,14 @@ impl Compose {
             composer,
             move |_| composer.dispatch(CommandId::Back)
         ));
+        // The composer holds its host, and the host's slot holds the
+        // composer: a cycle that outlives the window unless it is cut when
+        // the window is destroyed (T264).
+        window.connect_destroy(glib::clone!(
+            #[weak]
+            composer,
+            move |_| composer.unmount()
+        ));
         let resume = seams::wire(&composer, &frame, client, account, current);
         let remind = WhenPicker::new(&keymap, When::Remind);
         remind.connect_chosen(glib::clone!(

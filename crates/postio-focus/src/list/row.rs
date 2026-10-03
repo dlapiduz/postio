@@ -246,6 +246,18 @@ mod imp {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             self.obj().draw(snapshot);
         }
+
+        /// The row's height follows the text scale, and a change to it is
+        /// a system setting: say so, or the measured height is kept.
+        fn system_setting_changed(&self, setting: &gtk::SystemSetting) {
+            self.parent_system_setting_changed(setting);
+            if matches!(
+                *setting,
+                gtk::SystemSetting::Dpi | gtk::SystemSetting::FontName
+            ) {
+                self.obj().queue_resize();
+            }
+        }
     }
 }
 

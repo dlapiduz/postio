@@ -2013,14 +2013,33 @@ impl Composer {
         )));
 
         host.composing(false, &host.keymap());
+        // Weak: these live on the composer, and a strong host here would
+        // keep the host (and the widget it holds) alive as long as the
+        // composer, which is itself in the host's widgets.
         self.connect_opened({
-            let host = Rc::clone(&host);
-            move || host.composing(true, &host.keymap())
+            let host = Rc::downgrade(&host);
+            move || {
+                if let Some(host) = host.upgrade() {
+                    host.composing(true, &host.keymap());
+                }
+            }
         });
         self.connect_closed({
-            let host = Rc::clone(&host);
-            move |_outcome| host.composing(false, &host.keymap())
+            let host = Rc::downgrade(&host);
+            move |_outcome| {
+                if let Some(host) = host.upgrade() {
+                    host.composing(false, &host.keymap());
+                }
+            }
         });
+    }
+
+    /// Let go of the host. A host that keeps the composer's widget alive (a
+    /// dialog's slot) and is kept alive by the composer is a reference
+    /// cycle; whoever owns the host calls this when it is torn down, and the
+    /// composer is freed with it.
+    pub fn unmount(&self) {
+        self.imp().host.take();
     }
 
     /// What holds this composer, once mounted.
