@@ -122,10 +122,108 @@ pub fn row_from(id: i64, from: &str, subject: &str, preview: &str, when: DateTim
         preview: SafeText::new(preview),
         when,
         unread: false,
-        flagged: false,
         attachment: false,
         count: 1,
+        kind: crate::row::Kind::Message,
+        marker: None,
+        labels: Vec::new(),
+        send_state: None,
     }
+}
+
+/// A moment on `day` of September 2026 at `hour:minute` by the clock of the
+/// machine the test runs on, so the day a row sits under does not depend on
+/// where that is.
+pub fn local(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+    Local
+        .with_ymd_and_hms(2026, 9, day, hour, minute, 0)
+        .unwrap()
+        .with_timezone(&Utc)
+}
+
+/// A conversation of the Inbox: message and thread both numbered `id`.
+pub fn conversation(
+    id: i64,
+    from: &str,
+    subject: &str,
+    preview: &str,
+    when: DateTime<Utc>,
+) -> postio_model::listing::ThreadSummary {
+    use postio_model::ThreadId;
+    use postio_model::listing::{MessageSummary, ThreadSummary};
+    let sender = EmailAddress::new(
+        Some(from.to_owned()),
+        format!(
+            "{}@example.com",
+            from.split(' ').next().unwrap_or(from).to_lowercase()
+        ),
+    );
+    ThreadSummary {
+        id: Some(ThreadId::new(id)),
+        representative: MessageSummary {
+            id: MessageId::new(id),
+            thread: Some(ThreadId::new(id)),
+            from: Some(sender.clone()),
+            subject: Some(subject.to_owned()),
+            preview: Some(preview.to_owned()),
+            received_at: when,
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: None,
+            send_at: None,
+            has_attachments: false,
+            thread_count: 1,
+        },
+        subject: Some(subject.to_owned()),
+        participants: vec![sender],
+        message_count: 1,
+        unread_count: 0,
+        flagged: false,
+        has_attachments: false,
+        last_at: when,
+        marker: None,
+        copies: Vec::new(),
+    }
+}
+
+/// `conversation`, unread.
+pub fn unread(
+    mut summary: postio_model::listing::ThreadSummary,
+) -> postio_model::listing::ThreadSummary {
+    summary.unread_count = 1;
+    summary.representative.seen = false;
+    summary
+}
+
+/// `conversation`, with `marker`.
+pub fn marked(
+    mut summary: postio_model::listing::ThreadSummary,
+    marker: postio_model::listing::MarkerSummary,
+) -> postio_model::listing::ThreadSummary {
+    summary.marker = Some(marker);
+    summary
+}
+
+/// A label of the account, with no colour of its own.
+pub fn label(id: i64, name: &str) -> postio_model::Label {
+    let mut label = postio_model::Label::new(AccountId::new(1), name);
+    label.id = postio_model::ids::LabelId::new(id);
+    label
+}
+
+/// The Focus inbox opened over exactly `rows`, and its pages served from
+/// them: `Row::from` each, as a page arriving does.
+pub fn show_focus(app: &mut App, rows: Vec<postio_ui::focus_list::FocusRow>) {
+    let rows: Vec<Row> = rows.into_iter().map(Row::from).collect();
+    let effects = update(
+        app,
+        Input::Opened {
+            scope: ListScope::Focus(postio_model::FocusScope::Inbox),
+            total: rows.len() as u32,
+        },
+    );
+    serve_with(app, effects, |position| rows[position as usize].clone());
 }
 
 /// The host says the Inbox (id 1) has `total` rows.
@@ -155,6 +253,7 @@ pub fn serve_with(app: &mut App, effects: Vec<Effect>, row_at: impl Fn(u32) -> R
             generation,
             page,
             fetch: Fetch::Scope(request),
+            ..
         } = effect
         {
             fetched += 1;

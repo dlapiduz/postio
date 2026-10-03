@@ -23,11 +23,11 @@ pub mod first_run;
 pub mod input;
 pub mod layout;
 pub mod paths;
+pub mod places;
 pub mod reader;
 pub mod row;
 pub mod run;
 pub mod settings;
-pub mod places;
 pub mod term;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

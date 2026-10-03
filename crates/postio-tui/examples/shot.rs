@@ -16,117 +16,17 @@
 //!
 //! Every name and address is fictional and on a reserved domain.
 
-use chrono::{Duration, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyModifiers};
 use postio_model::mailbox::MailboxRole;
 use postio_model::{AccountId, EmailAddress, MailboxId, MessageId};
 use postio_tui::app::{App, Effect, Input, update};
 use postio_tui::caps::{Background, Colour};
-use postio_tui::row::Row;
 use postio_tui::test_support;
 use postio_tui::theme::Theme;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
-
-const MESSAGES: &[(&str, &str, &str, bool, bool, bool)] = &[
-    (
-        "Mira Castell",
-        "Tide gate interlock report",
-        "The overnight run held at 0.4 mm; I've attached the logs and",
-        true,
-        true,
-        true,
-    ),
-    (
-        "Tove Arnlund",
-        "Re: The analytical engine's second table",
-        "Agreed on the ordering. One thought on the carries before we",
-        true,
-        false,
-        false,
-    ),
-    (
-        "Ines Okonkwo-Hale",
-        "Trajectory numbers for Thursday",
-        "Rechecked by hand -- the margins are wider than the model says",
-        false,
-        false,
-        true,
-    ),
-    (
-        "Joss Remy",
-        "Reading group: morphogenesis",
-        "Next week's paper is short. Bring questions about the reaction",
-        false,
-        false,
-        false,
-    ),
-    (
-        "Petra Vancel",
-        "Priority display, revised",
-        "The alarm path now drops the lowest-priority jobs first; see",
-        true,
-        false,
-        false,
-    ),
-    (
-        "Oren Baptiste",
-        "On the cruelty of teaching",
-        "A draft, for your comments. I would rather hear the objections",
-        false,
-        true,
-        false,
-    ),
-    (
-        "Nell Ashgrove",
-        "Spanning tree, the poem",
-        "It rhymes, mostly. The algorithm is less forgiving than the",
-        false,
-        false,
-        false,
-    ),
-    (
-        "Wren Hallory",
-        "Substitution, again",
-        "Your counter-example is a good one, and I think it is about",
-        false,
-        false,
-        false,
-    ),
-    (
-        "Dora Quimby",
-        "Compiler meeting moved to 3pm",
-        "Same room. Coffee will be there early this time, I promise",
-        false,
-        false,
-        false,
-    ),
-    (
-        "Silas Fenwold",
-        "Errata, volume 4B",
-        "Two cheques in the post. The second one is for the index,",
-        false,
-        false,
-        false,
-    ),
-    (
-        "Lark Imrie",
-        "Frequency hopping patent notes",
-        "Scanned the originals; the piano-roll figures are legible",
-        false,
-        false,
-        true,
-    ),
-    (
-        "Teodor Pask",
-        "Lambda notation question",
-        "Is the quote form necessary here, or is it only a",
-        false,
-        false,
-        false,
-    ),
-];
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -167,26 +67,93 @@ fn main() {
         },
     );
 
-    let now = Utc.with_ymd_and_hms(2026, 9, 24, 15, 0, 0).unwrap();
-    let rows: Vec<Row> = MESSAGES
-        .iter()
-        .enumerate()
-        .map(
-            |(at, (from, subject, preview, unread, flagged, attachment))| Row {
-                unread: *unread,
-                flagged: *flagged,
-                attachment: *attachment,
-                ..test_support::row_from(
-                    at as i64 + 1,
-                    from,
-                    subject,
-                    preview,
-                    now - Duration::hours(at as i64 * 7 + 1),
-                )
-            },
-        )
-        .collect();
-    test_support::show_rows(&mut app, &rows);
+    // The inbox of terminal.md's drawing: an unread invitation with a pill,
+    // a digest, a busy conversation, a read one and one from yesterday.
+    let rows = {
+        use postio_model::listing::{Cadence, MarkerKind, MarkerSummary, MarkerWhen};
+        use postio_ui::focus_list::{Conversation, Digest, FocusRow};
+        let pills = |summary, names: &[&str]| {
+            FocusRow::Conversation(Conversation {
+                summary,
+                labels: names
+                    .iter()
+                    .enumerate()
+                    .map(|(at, name)| test_support::label(at as i64 + 1, name))
+                    .collect(),
+            })
+        };
+        let invite = MarkerSummary {
+            kind: MarkerKind::Invite,
+            when: Some(MarkerWhen::Event {
+                starts_at: test_support::local(29, 10, 0),
+                ends_at: test_support::local(29, 10, 45),
+            }),
+            excerpt: None,
+            answer: None,
+            cancelled: false,
+        };
+        let question = MarkerSummary {
+            kind: MarkerKind::Question,
+            when: None,
+            excerpt: Some(
+                "Can you approve these by Friday so finance can close the quarter?".into(),
+            ),
+            answer: None,
+            cancelled: false,
+        };
+        let mut atlas = test_support::unread(test_support::marked(
+            test_support::conversation(
+                3,
+                "Ada Moreno",
+                "Re: Atlas Q3 budget, final numbers",
+                "Hi, the final Q3 numbers are in and the totals match what we discussed",
+                test_support::local(23, 11, 51),
+            ),
+            question,
+        ));
+        atlas.message_count = 3;
+        atlas.has_attachments = true;
+        vec![
+            pills(
+                test_support::unread(test_support::marked(
+                    test_support::conversation(
+                        1,
+                        "Grace Oyelaran",
+                        "Invitation: Harbor design review",
+                        "Tue 29 Sep 10:00-10:45, Room 3B, bring the harbor survey",
+                        test_support::local(23, 11, 2),
+                    ),
+                    invite,
+                )),
+                &["Harbor"],
+            ),
+            FocusRow::Digest(Digest {
+                delivery: postio_model::ids::DeliveryId::new(1),
+                rule: "Newsletters".into(),
+                cadence: Some(Cadence::Weekly),
+                count: 14,
+                senders: Vec::new(),
+                summary_line: Some("Summary of 14 messages from 6 senders: rail".into()),
+                at: test_support::local(23, 11, 0),
+            }),
+            pills(atlas, &["Atlas"]),
+            FocusRow::conversation(test_support::conversation(
+                4,
+                "Tomás Reyes",
+                "Atlas staffing plan for Q4",
+                "Sharing the draft before Monday's sync",
+                test_support::local(23, 10, 40),
+            )),
+            FocusRow::conversation(test_support::conversation(
+                5,
+                "Marco Ruiz",
+                "Cabinet order: please sign",
+                "Attached the final order",
+                test_support::local(22, 14, 31),
+            )),
+        ]
+    };
+    test_support::show_focus(&mut app, rows);
 
     // The first message open, for `reading`; otherwise the list.
     if state == "reading" {
@@ -375,7 +342,7 @@ fn main() {
 
     let (theme, _) = Theme::new(colour, Background::Dark, &Default::default());
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    let local = chrono::Local.from_utc_datetime(&now.naive_utc());
+    let local = test_support::now();
     terminal
         .draw(|frame| {
             postio_tui::view::draw(frame, &app, &theme, local);

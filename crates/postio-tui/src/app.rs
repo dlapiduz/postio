@@ -15,13 +15,15 @@
 
 use crossterm::event::KeyEvent;
 use postio_model::ListScope;
+use postio_ui::focus_list::FocusRow;
 use postio_ui::keymap::{KeyContext, Outcome};
 use postio_ui::list::ListWindow;
 use postio_ui::paging::{Fetch, Page, Paging};
+use postio_ui::surfaced::Spliced;
 
 use crate::input::Keys;
 use crate::row::Row;
-use crate::view::list::Visible;
+use crate::view::list::{Heading, Visible};
 use postio_body::replying::ReplyKind;
 
 /// What the mouse did, resolved against the last frame drawn.
@@ -217,6 +219,11 @@ pub enum Input {
     },
     /// What the places hold, read afresh.
     Places(crate::places::Places),
+    /// What Focus's inbox surfaces among its conversations, read afresh:
+    /// fired reminders and digest deliveries.
+    Surfaced(Vec<postio_model::listing::Surfaced>),
+    /// What the strip counts, read after a page landed.
+    FocusCounts(postio_client::protocol::FocusCounts),
     /// A list was counted again, after an event said it changed.
     Recounted {
         /// Which list.
@@ -250,6 +257,10 @@ pub enum Effect {
     Open(ListScope),
     /// Read the places again and answer with [`Input::Places`].
     RefreshPlaces,
+    /// Read what Focus's inbox surfaces and answer with [`Input::Surfaced`].
+    ReadSurfaced,
+    /// Read the strip's counts and answer with [`Input::FocusCounts`].
+    ReadFocusCounts,
     /// Count a list again and answer with [`Input::Recounted`].
     Recount(ListScope),
     /// Leave the list this message came from; answer with
@@ -429,6 +440,9 @@ pub enum Effect {
         page: u32,
         /// What to read.
         fetch: Fetch,
+        /// Where Focus's surfaced rows sit among the page's positions, when
+        /// the list has them.
+        placement: Option<Placement>,
     },
 }
 
@@ -454,6 +468,13 @@ pub struct App {
     state: postio_core::SharedState,
     /// What is marked.
     selection: postio_ui::selection::SelectionState,
+    /// The rows Focus's inbox surfaces among its conversations, in the order
+    /// the host gave them.
+    surfaced: Vec<FocusRow>,
+    /// Where they sit.
+    spliced: Spliced,
+    /// What the strip counts, once read.
+    counts: Option<postio_client::protocol::FocusCounts>,
     /// The list being shown.
     scope: Option<ListScope>,
     /// The lists opened before this one, newest last, for `prev_view`.
@@ -533,6 +554,16 @@ pub struct App {
     first_run: Option<crate::first_run::FirstRun>,
     /// The settings, while they are open.
     settings: Option<crate::settings::Settings>,
+}
+
+/// The surfaced rows of Focus's inbox and where they sit: what turns the
+/// store's conversations into a page of positions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Placement {
+    /// The rows, in the order the host gave them.
+    pub surfaced: Vec<FocusRow>,
+    /// Their positions.
+    pub spliced: Spliced,
 }
 
 /// What fills the window's body.
@@ -788,6 +819,9 @@ impl App {
             top: 0,
             state: postio_core::SharedState::default(),
             selection: postio_ui::selection::SelectionState::new(),
+            surfaced: Vec::new(),
+            spliced: Spliced::default(),
+            counts: None,
             scope: None,
             notice: None,
             notice_tone: Tone::Plain,
@@ -869,7 +903,7 @@ impl App {
     /// The same as two lines, as the desktop's sync label has it:
     /// `idle · imap`, then `last sync 12s`.
     pub fn sync_lines(&self) -> Option<(String, String)> {
-        let account = self.account?;
+        let account = self.account_here()?;
         Some(
             self.trackers
                 .status(account)
@@ -1397,7 +1431,11 @@ impl App {
                     self.focus = Focus::List;
                     let message = self.list.peek(position);
                     match (ctrl, shift, message) {
-                        (true, _, Some(message)) => self.selection.toggle(message),
+                        (true, _, Some(_)) => {
+                            if let Some(message) = self.selectable(position) {
+                                self.selection.toggle(message);
+                            }
+                        }
                         (false, true, Some(_)) => {
                             // Every row from the anchor -- where the marking
                             // started, else the cursor -- to the one clicked.
@@ -1522,11 +1560,11 @@ impl App {
 
     /// Scroll the list by `lines`, keeping the cursor on a row in view.
     fn scroll_list(&mut self, lines: isize) {
-        let height = self.list_height().max(1);
-        let last_top = self.list.total().saturating_sub(height);
+        let last_top = self.top_for_bottom(self.list.total().saturating_sub(1));
         let top = i64::from(self.top) + lines as i64;
         self.top = u32::try_from(top.clamp(0, i64::from(last_top))).unwrap_or(0);
-        self.cursor = self.cursor.clamp(self.top, self.top + height - 1);
+        let shown = self.fit_from(self.top).max(1);
+        self.cursor = self.cursor.clamp(self.top, self.top + shown - 1);
     }
 
     /// Scroll what is being read by `lines`.
@@ -2450,31 +2488,97 @@ impl App {
         self.list.total()
     }
 
-    /// How many list rows fit: the list's rows, less a search's facets
-    /// while they are shown, three lines to a row.
-    pub fn list_height(&self) -> u32 {
+    /// The lines the list may use: its rows, less a search's facets while
+    /// they are shown.
+    fn list_lines(&self) -> u16 {
         let facets = u16::from(
             self.search
                 .as_ref()
                 .is_some_and(|bar| bar.outcome.is_some()),
         );
-        u32::from(self.window().list.height.saturating_sub(facets) / crate::view::list::LINES)
+        self.window().list.height.saturating_sub(facets)
+    }
+
+    /// The row at `position`, when its page is here.
+    pub fn row_at(&self, position: u32) -> Option<&Row> {
+        self.list.resident_at(position)
+    }
+
+    /// The heading that starts at `position` in a view whose first position
+    /// is `top`: the day its mail arrived on, where that is not the day of
+    /// the row before it. The first row in view always has one. Search
+    /// results are ranked, not dated, and have none.
+    fn heading_at(&self, position: u32, top: u32) -> Option<Heading> {
+        if self.paging.showing_results() {
+            return None;
+        }
+        let row = self.row_at(position)?;
+        let day = row.day();
+        let starts = position == top
+            || position
+                .checked_sub(1)
+                .and_then(|before| self.row_at(before))
+                .is_some_and(|before| before.day() != day);
+        starts.then_some(Heading::Day(day))
+    }
+
+    /// How many lines the row at `position` takes with the heading that
+    /// starts there, as the view from `top` draws them. A row whose page is
+    /// still on its way is one line.
+    fn lines_at(&self, position: u32, top: u32) -> u16 {
+        crate::view::list::lines_of(self.row_at(position))
+            + u16::from(self.heading_at(position, top).is_some())
+    }
+
+    /// How many rows, from position `top`, fit in the list: at least one.
+    /// Only the rows in view are read.
+    fn fit_from(&self, top: u32) -> u32 {
+        let room = self.list_lines();
+        let mut used = 0u16;
+        let mut shown = 0u32;
+        for position in top..self.list.total() {
+            let lines = self.lines_at(position, top);
+            if used.saturating_add(lines) > room {
+                break;
+            }
+            used += lines;
+            shown += 1;
+        }
+        shown.max(1)
+    }
+
+    /// The first position of a view that ends with `cursor` at its foot, as
+    /// well as the rows here say: walked back from the cursor, each row
+    /// with the heading it would start.
+    fn top_for_bottom(&self, cursor: u32) -> u32 {
+        let room = self.list_lines();
+        let mut top = cursor;
+        let mut used = crate::view::list::lines_of(self.row_at(cursor)) + 1;
+        while top > 0 {
+            let before = top - 1;
+            let heading = self.heading_at(before, before).is_some();
+            let lines = crate::view::list::lines_of(self.row_at(before)) + u16::from(heading);
+            if used.saturating_add(lines) > room {
+                break;
+            }
+            used += lines;
+            top = before;
+        }
+        top
     }
 
     /// The rows in view, for drawing. Reads only what is resident.
     pub fn visible(&self) -> Vec<Visible<'_>> {
-        let end = (self.top + self.list_height()).min(self.list.total());
+        let end = (self.top + self.fit_from(self.top)).min(self.list.total());
         (self.top..end)
-            .map(|position| Visible {
-                row: self
-                    .list
-                    .peek(position)
-                    .and_then(|message| self.list.row_of(message)),
-                cursor: position == self.cursor,
-                selected: self
-                    .list
-                    .peek(position)
-                    .is_some_and(|message| self.selection.contains(message)),
+            .map(|position| {
+                let row = self.row_at(position);
+                Visible {
+                    row,
+                    cursor: position == self.cursor,
+                    selected: row.is_some_and(|row| self.selection.contains(row.id)),
+                    heading: self.heading_at(position, self.top),
+                }
             })
             .collect()
     }
@@ -2483,17 +2587,47 @@ impl App {
     fn move_to(&mut self, position: u32) {
         let last = self.list.total().saturating_sub(1);
         self.cursor = position.min(last);
-        let height = self.list_height().max(1);
         if self.cursor < self.top {
             self.top = self.cursor;
-        } else if self.cursor >= self.top + height {
-            self.top = self.cursor + 1 - height;
+        } else if self.cursor >= self.top + self.fit_from(self.top) {
+            self.top = self.top_for_bottom(self.cursor);
         }
+        self.reveal();
+    }
+
+    /// Scroll just far enough that the cursor's row is in view: rows that
+    /// landed since may be taller than the guess the view was placed by.
+    fn reveal(&mut self) {
+        let last = self.list.total().saturating_sub(1);
+        self.cursor = self.cursor.min(last);
+        if self.cursor < self.top {
+            self.top = self.cursor;
+            return;
+        }
+        while self.top < self.cursor && self.cursor >= self.top + self.fit_from(self.top) {
+            self.top += 1;
+        }
+    }
+
+    /// The effect that reads `page`, with the surfaced rows it is placed
+    /// among when this is Focus's inbox.
+    fn fetch_of(&self, generation: u64, page: u32) -> Option<Effect> {
+        let fetch = self.paging.fetch_for(page)?;
+        let placement = (self.splices() && matches!(fetch, Fetch::Scope(_))).then(|| Placement {
+            surfaced: self.surfaced.clone(),
+            spliced: self.spliced.clone(),
+        });
+        Some(Effect::Fetch {
+            generation,
+            page,
+            fetch,
+            placement,
+        })
     }
 
     /// Ask for every page in view that is neither here nor on its way.
     fn fetches(&mut self) -> Vec<Effect> {
-        let end = (self.top + self.list_height()).min(self.list.total());
+        let end = (self.top + self.fit_from(self.top)).min(self.list.total());
         let mut wanted = Vec::new();
         for position in self.top..end {
             if let Some(postio_ui::list::Lookup::Missing { request }) = self.list.row_at(position) {
@@ -2503,14 +2637,49 @@ impl App {
         let generation = self.list.generation();
         wanted
             .into_iter()
-            .filter_map(|page| {
-                self.paging.fetch_for(page).map(|fetch| Effect::Fetch {
-                    generation,
-                    page,
-                    fetch,
-                })
-            })
+            .filter_map(|page| self.fetch_of(generation, page))
             .collect()
+    }
+
+    /// Whether the list on screen has surfaced rows spliced among its
+    /// conversations: Focus's own inbox, and not a search's results.
+    fn splices(&self) -> bool {
+        self.scope == Some(ListScope::Focus(postio_model::FocusScope::Inbox))
+            && !self.paging.showing_results()
+    }
+
+    /// How many conversations the store holds for the list on screen, which
+    /// is its length without the rows spliced among them.
+    fn stored_total(&self) -> u32 {
+        let spliced = if self.splices() {
+            self.spliced.len()
+        } else {
+            0
+        };
+        self.list.total().saturating_sub(spliced)
+    }
+
+    /// The length of the list on screen over `stored` conversations.
+    fn total_over(&self, stored: u32) -> u32 {
+        if self.splices() {
+            self.spliced.total(stored)
+        } else {
+            stored
+        }
+    }
+
+    /// Whether the list on screen is Focus's inbox, for what its strip
+    /// counts.
+    fn in_focus(&self) -> bool {
+        matches!(self.scope, Some(ListScope::Focus(_)))
+    }
+
+    /// The message at `position`, when its row is here and may be selected:
+    /// a digest stands for many messages and selection skips it.
+    fn selectable(&self, position: u32) -> Option<postio_model::MessageId> {
+        self.row_at(position)
+            .filter(|row| row.kind != crate::row::Kind::Digest)
+            .map(|row| row.id)
     }
 
     /// The message the cursor is on, if its row is here.
@@ -2532,7 +2701,7 @@ impl App {
             "first_message" => self.move_to(0),
             "last_message" => self.move_to(last),
             "toggle_selection" => {
-                if let Some(message) = self.cursor_message() {
+                if let Some(message) = self.selectable(self.cursor) {
                     self.selection.toggle(message);
                 }
             }
@@ -2609,7 +2778,7 @@ impl App {
                 return vec![Effect::Redraw];
             }
             "compose" => {
-                if let Some(account) = self.account {
+                if let Some(account) = self.account_here() {
                     return self.compose(postio_model::Draft::new(account));
                 }
             }
@@ -2758,6 +2927,8 @@ impl App {
             // Views, not folders (ADR 0036): opened by their role.
             MailboxRole::Flagged => Some(ListScope::Flagged(account)),
             MailboxRole::Snoozed => Some(ListScope::Snoozed(account)),
+            // Focus's inbox is every account's, as one.
+            MailboxRole::Inbox => Some(ListScope::Focus(postio_model::FocusScope::Inbox)),
             role => self
                 .folders
                 .iter()
@@ -2864,10 +3035,16 @@ impl App {
     /// Aim a verb at what the user is looking at, and send it as it is.
     fn send_aimed(&mut self, id: postio_core::CommandId) -> Vec<Effect> {
         let selection = self.selection.selection();
+        let reachable: Vec<postio_model::AccountId> = self
+            .accounts
+            .iter()
+            .filter(|account| account.enabled)
+            .map(|account| account.id)
+            .collect();
         let aim = postio_core::aim::Aim {
             scope: self
                 .scope
-                .and_then(|scope| postio_core::aim::view_scope(scope, &[])),
+                .and_then(|scope| postio_core::aim::view_scope(scope, &reachable)),
             selection: &selection,
             cursor: self.cursor_message(),
             rows: &self.list,
@@ -2965,6 +3142,10 @@ impl App {
         let Some(row) = self.list.row_of(message) else {
             return Vec::new();
         };
+        if row.kind == crate::row::Kind::Digest {
+            // A digest opens in its own window (T323), not as a message.
+            return Vec::new();
+        }
         match row.thread {
             Some(thread) if row.is_thread && row.count > 1 => {
                 self.reading = Some(crate::conversation::Reading {
@@ -3142,13 +3323,15 @@ impl App {
         let mut effects = vec![Effect::Redraw];
         if self.scope.is_none()
             && self.first_run.is_none()
-            && let Some(inbox) = contents
+            && contents
                 .folders
                 .iter()
-                .find(|folder| folder.role == postio_model::mailbox::MailboxRole::Inbox)
+                .any(|folder| folder.role == postio_model::mailbox::MailboxRole::Inbox)
         {
-            // The first account's mail, once there is some to show.
-            effects.push(Effect::Open(ListScope::Mailbox(inbox.id)));
+            // Every account's inbox, as one, once there is some to show.
+            effects.push(Effect::Open(ListScope::Focus(
+                postio_model::FocusScope::Inbox,
+            )));
         }
         effects
     }
@@ -3320,7 +3503,13 @@ impl App {
         if matches!(event, Event::MailboxesChanged { .. }) {
             return vec![Effect::RefreshPlaces];
         }
-        match self.paging.plan(event) {
+        // What is surfaced may have moved with the mail -- an archived
+        // reminder's row goes with its conversation -- so it is read again
+        // whenever the list is.
+        let rereads = self.splices()
+            && (matches!(event, Event::SurfacedChanged)
+                || self.paging.plan(event) != postio_ui::paging::Plan::Ignore);
+        let mut effects = match self.paging.plan(event) {
             postio_ui::paging::Plan::Ignore => Vec::new(),
             postio_ui::paging::Plan::InsertAtTop(count) => {
                 if self.list.inserted_at_top(count) {
@@ -3333,23 +3522,48 @@ impl App {
             postio_ui::paging::Plan::Refetch(messages) => {
                 let generation = self.list.generation();
                 let pages = self.list.pages_holding(messages);
-                pages
+                let pending: Vec<u32> = pages
                     .into_iter()
                     .filter(|page| self.list.note_pending(*page))
-                    .filter_map(|page| {
-                        self.paging.fetch_for(page).map(|fetch| Effect::Fetch {
-                            generation,
-                            page,
-                            fetch,
-                        })
-                    })
+                    .collect();
+                pending
+                    .into_iter()
+                    .filter_map(|page| self.fetch_of(generation, page))
                     .collect()
             }
             postio_ui::paging::Plan::Reload => self
                 .scope
                 .map(|scope| vec![Effect::Recount(scope)])
                 .unwrap_or_default(),
+        };
+        if rereads {
+            effects.push(Effect::ReadSurfaced);
         }
+        effects
+    }
+
+    /// Focus's surfaced rows were read: place them, and read the list again
+    /// under them.
+    fn surfaced_read(&mut self, read: &[postio_model::listing::Surfaced]) -> Vec<Effect> {
+        let stored = self.stored_total();
+        let mut rows = Vec::new();
+        let mut positions = Vec::new();
+        for surfaced in read {
+            if let Some(row) = FocusRow::surfaced(surfaced) {
+                positions.push(surfaced.position());
+                rows.push(row);
+            }
+        }
+        self.surfaced = rows;
+        self.spliced = Spliced::new(&positions);
+        if !self.splices() {
+            // Read for the inbox that is about to open.
+            return Vec::new();
+        }
+        self.list.invalidate();
+        let _ = self.list.set_total(self.spliced.total(stored));
+        self.reveal();
+        vec![Effect::Redraw]
     }
 
     /// A list was counted again after it changed: keep the scroll, drop what
@@ -3359,9 +3573,11 @@ impl App {
             return Vec::new();
         }
         self.list.invalidate();
-        let _ = self.list.set_total(total);
+        let _ = self.list.set_total(self.total_over(total));
         self.move_to(self.cursor);
-        vec![Effect::Redraw]
+        let mut effects = vec![Effect::Redraw];
+        effects.extend(self.in_focus().then_some(Effect::ReadFocusCounts));
+        effects
     }
 
     /// A list opened: show it from the top.
@@ -3384,10 +3600,16 @@ impl App {
         self.account = self.account_of(scope);
         // A selection is relative to the list it was made in.
         self.selection.clear();
-        self.list.reset(total);
+        if !self.splices() {
+            self.surfaced.clear();
+            self.spliced = Spliced::default();
+        }
+        self.list.reset(self.total_over(total));
         self.cursor = 0;
         self.top = 0;
-        vec![Effect::Redraw]
+        let mut effects = vec![Effect::Redraw];
+        effects.extend(self.in_focus().then_some(Effect::ReadFocusCounts));
+        effects
     }
 
     /// A page arrived, or did not.
@@ -3404,7 +3626,12 @@ impl App {
                 if delivered.stale {
                     Vec::new()
                 } else {
-                    vec![Effect::Redraw]
+                    // Rows that landed may be taller than the guess the view
+                    // was placed by.
+                    self.reveal();
+                    let mut effects = vec![Effect::Redraw];
+                    effects.extend(self.in_focus().then_some(Effect::ReadFocusCounts));
+                    effects
                 }
             }
             Err(reason) => {
@@ -3710,6 +3937,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         }
         Input::Body { message, answer } => app.show(message, answer),
         Input::Conversation { thread, members } => app.conversation(thread, members),
+        Input::Surfaced(read) => app.surfaced_read(&read),
+        Input::FocusCounts(counts) => {
+            app.counts = Some(counts);
+            vec![Effect::Redraw]
+        }
         Input::Recounted { scope, total } => app.recounted(scope, total),
         Input::Page {
             generation,
@@ -3747,18 +3979,193 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_list_holds_as_many_rows_as_fit_under_the_top_bar() {
+    fn the_list_holds_as_many_rows_as_fit_between_the_strip_and_the_bottom_line() {
         // 42 rows: the top bar, the strip and the bottom line take three,
-        // and each list row three more -- two of words and a faint rule.
-        assert_eq!(app((160, 42)).list_height(), 13);
-        assert_eq!(app((160, 16)).list_height(), 4);
-        let mut app = app((160, 16));
+        // the first day's heading one, and each plain row is one line.
+        let mut app = app((160, 42));
         let opening = open_list(&mut app, 100);
         serve(&mut app, opening);
         assert_eq!(
             app.visible().len(),
-            4,
+            38,
             "the rows drawn are the rows that fit"
+        );
+    }
+
+    #[test]
+    fn rows_with_a_marker_take_two_lines_and_fewer_of_them_fit() {
+        use crate::test_support::{conversation, local, marked, show_focus};
+        use postio_model::listing::{MarkerKind, MarkerSummary};
+        use postio_ui::focus_list::FocusRow;
+        let marker = MarkerSummary {
+            kind: MarkerKind::Question,
+            when: None,
+            excerpt: Some("Can you?".into()),
+            answer: None,
+            cancelled: false,
+        };
+        let mut app = app((60, 12));
+        let rows = (0..20)
+            .map(|id| {
+                FocusRow::conversation(marked(
+                    conversation(id + 1, "Ada", "Question", "", local(23, 9, 0)),
+                    marker.clone(),
+                ))
+            })
+            .collect();
+        show_focus(&mut app, rows);
+        // Nine lines for the list: a heading, then two lines to a row.
+        assert_eq!(app.visible().len(), 4);
+        for _ in 0..10 {
+            update(&mut app, press('j'));
+        }
+        assert_eq!(app.cursor(), 10);
+        let visible = app.visible();
+        assert!(
+            visible.iter().any(|row| row.cursor),
+            "the cursor stays in view as the view scrolls by rows of two lines"
+        );
+    }
+
+    fn focus_inbox() -> ListScope {
+        ListScope::Focus(postio_model::FocusScope::Inbox)
+    }
+
+    fn surfaced_digest(position: u32) -> postio_model::listing::Surfaced {
+        postio_model::listing::Surfaced::Digest {
+            delivery: postio_model::ids::DeliveryId::new(1),
+            rule: "Newsletters".into(),
+            cadence: None,
+            count: 14,
+            senders: Vec::new(),
+            summary_line: None,
+            at: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
+            position,
+        }
+    }
+
+    #[test]
+    fn the_inbox_reads_its_counts_when_it_opens_and_when_a_page_lands() {
+        let mut app = app((120, 30));
+        let opened = update(
+            &mut app,
+            Input::Opened {
+                scope: focus_inbox(),
+                total: 3,
+            },
+        );
+        assert!(opened.contains(&Effect::ReadFocusCounts), "{opened:?}");
+        let fetch = opened
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Fetch {
+                    generation, page, ..
+                } => Some((*generation, *page)),
+                _ => None,
+            })
+            .expect("the first page is asked for");
+        let landed = update(
+            &mut app,
+            Input::Page {
+                generation: fetch.0,
+                page: fetch.1,
+                rows: Ok(Page {
+                    total: 3,
+                    rows: vec![row(0), row(1), row(2)],
+                }),
+            },
+        );
+        assert!(landed.contains(&Effect::ReadFocusCounts), "{landed:?}");
+        // A folder is not Focus's inbox: nothing to count.
+        let folder = open_list(&mut app, 3);
+        assert!(!folder.contains(&Effect::ReadFocusCounts), "{folder:?}");
+    }
+
+    #[test]
+    fn surfaced_rows_are_placed_among_the_conversations_and_ride_with_each_fetch() {
+        let mut app = app((120, 30));
+        update(
+            &mut app,
+            Input::Opened {
+                scope: focus_inbox(),
+                total: 2,
+            },
+        );
+        assert_eq!(app.total(), 2);
+        let effects = update(&mut app, Input::Surfaced(vec![surfaced_digest(1)]));
+        assert_eq!(app.total(), 3, "the digest is a row of the list");
+        let placement = effects.iter().find_map(|effect| match effect {
+            Effect::Fetch { placement, .. } => placement.clone(),
+            _ => None,
+        });
+        assert_eq!(
+            placement.map(|placement| placement.spliced.len()),
+            Some(1),
+            "the page is read with the digest's place: {effects:?}"
+        );
+        // A folder is not spliced into.
+        let folder = open_list(&mut app, 4);
+        assert_eq!(app.total(), 4);
+        assert!(
+            folder.iter().all(|effect| !matches!(
+                effect,
+                Effect::Fetch {
+                    placement: Some(_),
+                    ..
+                }
+            )),
+            "{folder:?}"
+        );
+    }
+
+    #[test]
+    fn surfaced_rows_are_read_again_only_for_the_inbox_that_shows_them() {
+        use postio_core::Event;
+        let mut app = app((120, 30));
+        update(
+            &mut app,
+            Input::Opened {
+                scope: focus_inbox(),
+                total: 2,
+            },
+        );
+        let effects = update(&mut app, Input::Host(Event::SurfacedChanged));
+        assert!(effects.contains(&Effect::ReadSurfaced), "{effects:?}");
+        open_list(&mut app, 2);
+        let effects = update(&mut app, Input::Host(Event::SurfacedChanged));
+        assert!(!effects.contains(&Effect::ReadSurfaced), "{effects:?}");
+    }
+
+    #[test]
+    fn selection_skips_a_digest() {
+        let mut app = app((120, 30));
+        update(
+            &mut app,
+            Input::Opened {
+                scope: focus_inbox(),
+                total: 1,
+            },
+        );
+        let effects = update(&mut app, Input::Surfaced(vec![surfaced_digest(0)]));
+        let digest = postio_ui::focus_list::FocusRow::surfaced(&surfaced_digest(0)).unwrap();
+        crate::test_support::serve_with(&mut app, effects, |position| match position {
+            0 => crate::row::Row::from(digest.clone()),
+            other => row(other),
+        });
+        assert_eq!(
+            app.row_at(0).map(|row| row.kind),
+            Some(crate::row::Kind::Digest)
+        );
+        update(&mut app, press('x'));
+        assert!(
+            app.selection().selection().is_empty(),
+            "x on a digest marks nothing"
+        );
+        update(&mut app, press('j'));
+        update(&mut app, press('x'));
+        assert!(
+            !app.selection().selection().is_empty(),
+            "x on a message marks it"
         );
     }
 
@@ -4182,7 +4589,8 @@ pub(crate) mod tests {
         );
         assert_eq!(
             opens(&app.command("go_to_inbox")),
-            vec![ListScope::Mailbox(MailboxId::new(1))]
+            vec![ListScope::Focus(postio_model::FocusScope::Inbox)],
+            "the inbox is every account's, as one"
         );
         // No Sent folder in this account: said, not sent to nothing.
         let effects = app.command("go_to_sent");
@@ -5916,7 +6324,9 @@ pub(crate) mod tests {
         update(&mut app, Input::Places(an_empty_store()));
         let effects = update(&mut app, Input::Places(places()));
         assert!(
-            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(1)))),
+            effects.contains(&Effect::Open(ListScope::Focus(
+                postio_model::FocusScope::Inbox
+            ))),
             "{effects:?}"
         );
         assert!(app.first_run().is_none());

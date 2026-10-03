@@ -129,6 +129,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                     app.top(),
                     theme,
                     now,
+                    &|command| app.hint(command),
                     &mut hits,
                 );
             }
@@ -885,15 +886,14 @@ mod tests {
             .at(x, u16::try_from(y).unwrap())
             .expect("something is there");
         assert_eq!(hit.target, hit::Target::Row(2));
-        // A row is two lines and the rule under them, and a click on any of
-        // the three is on it.
+        // A plain row is one line, and a click on it is on it.
         let lines_of_row_2 = (0..16u16)
             .filter(|row| {
                 hits.at(x, *row)
                     .is_some_and(|hit| hit.target == hit::Target::Row(2))
             })
             .count();
-        assert_eq!(lines_of_row_2, 3, "all of the row's lines are the row");
+        assert_eq!(lines_of_row_2, 1, "a plain row is one line");
     }
 
     #[test]
@@ -1154,7 +1154,6 @@ mod tests {
     fn an_opened_message_fills_the_body() {
         use chrono::Utc;
         use postio_ui::paging::Page;
-        use postio_ui::terminal::SafeText;
         let mut app = with_places((160, 12));
         let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
         let effects = update(&mut app, Input::Opened { scope, total: 1 });
@@ -1168,18 +1167,9 @@ mod tests {
             })
             .expect("the first page is asked for");
         let row = crate::row::Row {
-            id: postio_model::MessageId::new(7),
-            thread: None,
-            is_thread: false,
-            from: SafeText::new("Ada Lovelace"),
-            address: None,
-            subject: SafeText::new("Engine notes"),
-            preview: SafeText::new(""),
-            when: Utc::now(),
             unread: true,
-            flagged: false,
-            attachment: false,
-            count: 1,
+            address: None,
+            ..crate::test_support::row_from(7, "Ada Lovelace", "Engine notes", "", Utc::now())
         };
         update(
             &mut app,
@@ -1226,7 +1216,6 @@ mod tests {
     fn the_reader_is_headed_by_who_wrote_to_whom_and_when_and_offers_its_keys() {
         use chrono::Utc;
         use postio_ui::paging::Page;
-        use postio_ui::terminal::SafeText;
         let mut app = with_places((160, 20));
         let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
         let effects = update(&mut app, Input::Opened { scope, total: 1 });
@@ -1239,20 +1228,13 @@ mod tests {
                 _ => None,
             })
             .expect("the first page is asked for");
-        let row = crate::row::Row {
-            id: postio_model::MessageId::new(7),
-            thread: None,
-            is_thread: false,
-            from: SafeText::new("Ada Lovelace"),
-            address: Some("ada@example.com".into()),
-            subject: SafeText::new("Engine notes"),
-            preview: SafeText::new(""),
-            when: Utc.with_ymd_and_hms(2026, 9, 22, 9, 14, 0).unwrap(),
-            unread: false,
-            flagged: false,
-            attachment: false,
-            count: 1,
-        };
+        let row = crate::test_support::row_from(
+            7,
+            "Ada Lovelace",
+            "Engine notes",
+            "",
+            Utc.with_ymd_and_hms(2026, 9, 22, 9, 14, 0).unwrap(),
+        );
         update(
             &mut app,
             Input::Page {
@@ -1406,9 +1388,10 @@ mod tests {
             "the strip is under it:\n{drawn}"
         );
         assert!(
-            lines[2].contains("Ada"),
-            "rows start under the strip:\n{drawn}"
+            lines[2].contains("Sunday 20 September"),
+            "the day's heading starts the list:\n{drawn}"
         );
+        assert!(lines[3].contains("Ada"), "rows follow it:\n{drawn}");
         assert!(drawn.contains("Message 5"), "{drawn}");
         for gone in ["ada@example.com", "Archive", "Saved searches"] {
             assert!(!drawn.contains(gone), "no sidebar, but {gone}:\n{drawn}");
@@ -1429,7 +1412,8 @@ mod tests {
             lines[1].trim_start().starts_with("Inbox"),
             "the strip:\n{drawn}"
         );
-        assert!(lines[2].contains("Ada"), "a row:\n{drawn}");
+        assert!(lines[2].contains("Sunday"), "the heading:\n{drawn}");
+        assert!(lines[3].contains("Ada"), "a row:\n{drawn}");
         assert!(!drawn.contains("ada@example.com"), "no sidebar:\n{drawn}");
     }
 

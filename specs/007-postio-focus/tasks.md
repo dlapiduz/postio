@@ -537,7 +537,7 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 
 ### Surfaces
 
-- [ ] T309 [US16] The inbox (scenario 1): open `FocusScope::Inbox`, spliced digest and reminder rows, labels and `focus_counts`, re-read on `SurfacedChanged`; one- and two-line rows, marks, pills, trailing column and day headings as terminal.md draws them. Test first on the rendered screen
+- [X] T309 [US16] The inbox (scenario 1): open `FocusScope::Inbox`, spliced digest and reminder rows, labels and `focus_counts`, re-read on `SurfacedChanged`; one- and two-line rows, marks, pills, trailing column and day headings as terminal.md draws them. Test first on the rendered screen Done: `Effect::Fetch` carries the surfaced rows' `Placement`, so the executor places them and reads each page's labels once; `Enter` on a digest waits for T323
 - [ ] T310 [US16] Markers and their actions: the second line, `y`/`Y` answering, `e`, `s`, `t` with a vault, `-` dismiss, an answered or past invitation's status (scenario 3)
 - [ ] T311 [US16] The strip and top bar: place name, counts, `!` with its accent and "Showing", filtered and rule counts, the sync label and `? keys`
 - [ ] T312 [US16] Selection and the bulk bar: `x`, `J`/`K`, `X` as a predicate (C19), `Esc`, the bar's verbs (scenario 4)
