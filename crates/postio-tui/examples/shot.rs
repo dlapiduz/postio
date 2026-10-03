@@ -10,7 +10,7 @@
 //! ```
 //!
 //! `state` is what is open over the mail: `reading` (the first message), `search`, `palette`, `keys` (the
-//! cheat sheet), `compose`, `undo` (an undo offer on the status line),
+//! cheat sheet), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
@@ -318,7 +318,7 @@ fn main() {
                 },
             );
         }
-        "undo" => {
+        "undo" | "toast" => {
             update(
                 &mut app,
                 Input::Host(postio_core::Event::ActionCompleted {

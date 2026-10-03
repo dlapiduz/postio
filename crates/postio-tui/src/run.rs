@@ -944,6 +944,13 @@ fn perform(
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");
                 }
             }
+            Effect::ExpireNotice { generation, after } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs.send(Input::NoticeDue { generation }).await;
+                });
+            }
             Effect::Autosave { generation, edit } => {
                 let inputs = inputs.clone();
                 tokio::spawn(async move {

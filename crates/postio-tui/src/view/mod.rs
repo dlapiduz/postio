@@ -162,10 +162,11 @@ fn status_line(
     hits: &mut hit::Hits,
 ) {
     use ratatui::text::Span;
+    use unicode_width::UnicodeWidthStr;
     if !tab && bottom::bulk_bar(frame, area, app, theme, hits) {
         return;
     }
-    let mut spans: Vec<Span> = Vec::new();
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
     if app.composer_detached() && !tab {
         spans.push(Span::styled(
             match app.hint(postio_core::CommandId::Compose) {
@@ -175,11 +176,16 @@ fn status_line(
             theme.style(Role::Text),
         ));
     }
-    if app.notice().is_some() {
-        if !spans.is_empty() {
+    let mut undo = None;
+    if let Some(toast) = bottom::toast(app, theme) {
+        if spans.len() > 1 {
             spans.push(Span::styled(" · ", theme.style(Role::Dim)));
         }
-        spans.extend(bottom::notice_spans(app, theme));
+        let before: usize = spans.iter().map(|span| span.content.width()).sum();
+        undo = toast
+            .undo
+            .map(|undo| before + undo.start..before + undo.end);
+        spans.extend(toast.spans);
     }
     let width = usize::from(area.width);
     let left = Line::from(spans);
@@ -198,6 +204,9 @@ fn status_line(
         return;
     }
     frame.render_widget(left, area);
+    if let Some(undo) = undo {
+        bottom::toast_target(hits, area.x, area.y, &undo);
+    }
 }
 
 /// `text`, cut to at most `width` terminal columns, ending in `…` when cut.
@@ -1285,8 +1294,8 @@ mod tests {
             }),
         );
         let (text, cells, theme) = status_of(&app, Colour::TrueColor);
-        assert!(text.starts_with("✕ The server refused the move"), "{text}");
-        assert_eq!(cells[2].fg, theme.style(Role::Error).fg.unwrap(), "{text}");
+        assert!(text.starts_with(" ✕ The server refused the move"), "{text}");
+        assert_eq!(cells[3].fg, theme.style(Role::Error).fg.unwrap(), "{text}");
 
         update(
             &mut app,
@@ -1297,10 +1306,10 @@ mod tests {
         );
         let (text, cells, theme) = status_of(&app, Colour::TrueColor);
         assert!(
-            text.starts_with("✓ Archived 1 message — ctrl+z to undo"),
+            text.starts_with(" ✓ Archived 1 message · Undo ctrl+z"),
             "{text}"
         );
-        assert_eq!(cells[0].fg, theme.style(Role::Success).fg.unwrap());
+        assert_eq!(cells[1].fg, theme.style(Role::Success).fg.unwrap());
         let characters: Vec<char> = text.chars().collect();
         let key = characters
             .windows(6)
@@ -1315,7 +1324,7 @@ mod tests {
         }
         // Without colour the marks still say it.
         let (text, _, _) = status_of(&app, Colour::None);
-        assert!(text.starts_with('✓'), "{text}");
+        assert!(text.starts_with(" ✓"), "{text}");
     }
 
     #[test]

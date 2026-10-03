@@ -14,6 +14,11 @@ use postio_model::ids::{DraftId, MessageId, ThreadId};
 
 use crate::focus_list::FocusRow;
 
+/// How long a toast stays before it goes, in seconds: long enough to read the
+/// sentence and reach for Undo, far short of the undo stack's own expiry, so
+/// Undo keeps working once the toast has gone.
+pub const TOAST_SECONDS: u32 = 8;
+
 /// Said when a send verb names a message that is no draft on its way.
 pub const NOT_BEING_SENT: &str = "That message is not one being sent";
 

@@ -28,12 +28,25 @@ pub fn cap(key: &str) -> String {
     }
 }
 
-/// What the toast says, as spans: the mark, the words, and the key that
-/// undoes what they report.
-pub fn notice_spans(app: &App, theme: &Theme) -> Vec<Span<'static>> {
-    let Some(notice) = app.notice() else {
-        return Vec::new();
-    };
+/// The toast as it is drawn: `✓ Archived 3 messages · Undo ctrl+z`, or
+/// `✕` and the words of a failure, and where Undo is within it.
+pub struct Toast {
+    /// The mark, the words and the undo offer.
+    pub spans: Vec<Span<'static>>,
+    /// The columns, within the spans, that a click undoes from.
+    pub undo: Option<std::ops::Range<usize>>,
+}
+
+impl Toast {
+    /// How wide it is.
+    pub fn width(&self) -> usize {
+        self.spans.iter().map(|span| span.content.width()).sum()
+    }
+}
+
+/// What the toast says, or `None` when there is none.
+pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
+    let notice = app.notice()?;
     let mut spans = Vec::new();
     match app.notice_tone() {
         Tone::Failed => spans.push(Span::styled("✕ ", theme.style(Role::Error))),
@@ -44,23 +57,17 @@ pub fn notice_spans(app: &App, theme: &Theme) -> Vec<Span<'static>> {
         Tone::Failed => theme.style(Role::Error),
         _ => theme.style(Role::Text),
     };
-    let offer = app
-        .notice_undo()
-        .map(|key| format!(" — {key} to undo"))
-        .filter(|offer| notice.ends_with(offer.as_str()));
-    match (offer, app.notice_undo()) {
-        (Some(offer), Some(key)) => {
-            spans.push(Span::styled(
-                notice[..notice.len() - offer.len()].to_owned(),
-                text,
-            ));
-            spans.push(Span::styled(" — ", theme.style(Role::Dim)));
-            spans.push(Span::styled(key.to_owned(), theme.style(Role::Accent)));
-            spans.push(Span::styled(" to undo", theme.style(Role::Dim)));
-        }
-        _ => spans.push(Span::styled(notice.to_owned(), text)),
+    spans.push(Span::styled(notice.to_owned(), text));
+    let mut undo = None;
+    if let Some(key) = app.notice_undo() {
+        spans.push(Span::styled(" · ", theme.style(Role::Dim)));
+        let from: usize = spans.iter().map(|span| span.content.width()).sum();
+        spans.push(Span::styled("Undo ", theme.style(Role::Dim)));
+        spans.push(Span::styled(cap(key), theme.style(Role::Accent)));
+        let to: usize = spans.iter().map(|span| span.content.width()).sum();
+        undo = Some(from..to);
     }
-    spans
+    Some(Toast { spans, undo })
 }
 
 /// One thing on the bar: its spans and the command a click on it runs.
@@ -130,15 +137,15 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
             .iter()
             .map(|item| verb(app, theme, item.command, item.label)),
     );
-    let mut right = if app.notice().is_some() {
-        notice_spans(app, theme)
-    } else {
-        selection_keys(app, theme)
+    let toast = toast(app, theme);
+    let mut right = match &toast {
+        Some(toast) => toast.spans.clone(),
+        None => selection_keys(app, theme),
     };
     let right_width = |spans: &[Span]| spans.iter().map(|span| span.content.width()).sum::<usize>();
     // Narrowing: the keys go first, then the last verbs; a toast keeps its
     // end of the line and gives up verbs before it is cut.
-    let is_toast = app.notice().is_some();
+    let is_toast = toast.is_some();
     let used = |left: &[Piece], right: &[Span]| {
         1 + left.iter().map(Piece::width).sum::<usize>()
             + GAP * left.len().saturating_sub(1)
@@ -160,6 +167,9 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
         let words: String = right.iter().map(|span| span.content.as_ref()).collect();
         right = vec![Span::styled(fit(&words, room), theme.style(Role::Text))];
     }
+    let toast_whole = toast
+        .as_ref()
+        .is_some_and(|toast| toast.width() == right_width(&right));
     let mut x = area.x + 1;
     for piece in left {
         let w = u16::try_from(piece.width()).unwrap_or(u16::MAX);
@@ -176,8 +186,21 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
     if w > 0 {
         let at = (area.x + area.width).saturating_sub(w + 1);
         frame.render_widget(Line::from(right), Rect::new(at, area.y, w, 1));
+        if let Some(undo) = toast.filter(|_| toast_whole).and_then(|toast| toast.undo) {
+            toast_target(hits, at, area.y, &undo);
+        }
     }
     true
+}
+
+/// Undo is a click for the command its key runs.
+pub fn toast_target(hits: &mut Hits, x: u16, y: u16, undo: &std::ops::Range<usize>) {
+    let from = x + u16::try_from(undo.start).unwrap_or(0);
+    let width = u16::try_from(undo.len()).unwrap_or(0);
+    hits.add(
+        Rect::new(from, y, width, 1),
+        Target::Command(CommandId::Undo.as_str()),
+    );
 }
 
 /// The gap between two things on the bar.
@@ -362,6 +385,81 @@ mod tests {
         assert!(line.contains("1 selected"), "{drawn}");
         assert!(line.contains("Archived 3 messages"), "{drawn}");
         assert!(!line.contains("J K extend"), "{drawn}");
+    }
+
+    fn done(app: &mut App, description: &str, undoable: bool) {
+        update(
+            app,
+            crate::app::Input::Host(postio_core::Event::ActionCompleted {
+                description: description.into(),
+                undoable,
+            }),
+        );
+    }
+
+    #[test]
+    fn a_toast_is_a_mark_the_words_and_the_undo_key_and_says_so_without_colour() {
+        let mut app = inbox((120, 24));
+        done(&mut app, "Archived 3 messages", true);
+        let drawn = screen(120, 24, &app);
+        assert_eq!(
+            bottom(&drawn).trim_end(),
+            " ✓ Archived 3 messages · Undo ctrl+z",
+            "{drawn}"
+        );
+        done(&mut app, "Label added", false);
+        let drawn = screen(120, 24, &app);
+        assert_eq!(bottom(&drawn).trim_end(), " ✓ Label added", "{drawn}");
+        update(
+            &mut app,
+            crate::app::Input::Host(postio_core::Event::CommandRejected {
+                command: postio_core::CommandId::Archive.into(),
+                reason: "Nothing to archive".into(),
+            }),
+        );
+        let drawn = screen(120, 24, &app);
+        assert_eq!(
+            bottom(&drawn).trim_end(),
+            " ✕ Nothing to archive",
+            "{drawn}"
+        );
+    }
+
+    #[test]
+    fn a_click_on_the_toasts_undo_undoes() {
+        let mut app = inbox((120, 24));
+        done(&mut app, "Archived 3 messages", true);
+        let drawn = screen(120, 24, &app);
+        let line = bottom(&drawn);
+        let x = u16::try_from(line[..line.find("Undo").unwrap()].chars().count()).unwrap();
+        let hit = hits_of(120, 24, &app).at(x, 23).expect("Undo is a target");
+        let effects = update(
+            &mut app,
+            crate::app::Input::Pointer(crate::app::Pointer::Click {
+                hit,
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        assert!(
+            effects.contains(&crate::app::Effect::Send(postio_core::Command::Undo)),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn beside_the_bulk_bar_the_toast_keeps_its_undo_at_the_right_end() {
+        let mut app = inbox((140, 24));
+        update(&mut app, press('x'));
+        done(&mut app, "Archived 3 messages", true);
+        let drawn = screen(140, 24, &app);
+        let line = bottom(&drawn);
+        assert!(line.contains("1 selected"), "{drawn}");
+        assert!(
+            line.trim_end()
+                .ends_with("✓ Archived 3 messages · Undo ctrl+z"),
+            "{drawn}"
+        );
     }
 
     #[test]

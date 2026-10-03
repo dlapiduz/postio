@@ -125,6 +125,11 @@ pub enum Input {
     /// The host answered an [`Effect::Unsubscribe`]: the list's name, or
     /// why not.
     Unsubscribed(Result<String, String>),
+    /// An [`Effect::ExpireNotice`]'s time is up.
+    NoticeDue {
+        /// Which notice it was asked for.
+        generation: u64,
+    },
     /// An [`Effect::Autosave`]'s time is up.
     AutosaveDue {
         /// Which composition asked.
@@ -293,6 +298,13 @@ pub enum Effect {
     Launch(std::path::PathBuf),
     /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
+    /// Ask for [`Input::NoticeDue`] after `after`: the toast's time.
+    ExpireNotice {
+        /// Which notice, so a newer one is not taken down by an older timer.
+        generation: u64,
+        /// How long it stays.
+        after: std::time::Duration,
+    },
     /// Ask again for [`Input::AutosaveDue`] after [`AUTOSAVE`].
     Autosave {
         /// Which composition.
@@ -450,6 +462,10 @@ pub enum Effect {
 /// composer's autosave interval.
 pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// How long a toast stays on the bottom line.
+pub const TOAST: std::time::Duration =
+    std::time::Duration::from_secs(postio_ui::focus_target::TOAST_SECONDS as u64);
+
 /// How many lines one turn of the wheel scrolls.
 const WHEEL: isize = 3;
 
@@ -497,6 +513,11 @@ pub struct App {
     notice_tone: Tone,
     /// The key the notice offers undo on, when it offers it.
     notice_undo: Option<String>,
+    /// Which notice is on the line: a timer is for one of them.
+    notice_generation: u64,
+    /// An answer to an invitation was sent, and its toast is the next one:
+    /// it lasts as long as the reply waits.
+    answering: bool,
     /// Where the keyboard is.
     focus: Focus,
     /// The folders, views and saved searches the finder and `g o` read.
@@ -865,6 +886,8 @@ impl App {
             notice: None,
             notice_tone: Tone::Plain,
             notice_undo: None,
+            notice_generation: 0,
+            answering: false,
             focus: Focus::List,
             places: crate::places::Places::default(),
             privacy: None,
@@ -2476,10 +2499,28 @@ impl App {
 
     /// [`App::say`], as news of `tone`, offering undo on `undo`.
     fn say_as(&mut self, tone: Tone, sentence: &str, undo: Option<String>) -> Vec<Effect> {
+        self.say_for(tone, sentence, undo, TOAST)
+    }
+
+    /// [`App::say_as`], staying `after` rather than the toast's own time.
+    fn say_for(
+        &mut self,
+        tone: Tone,
+        sentence: &str,
+        undo: Option<String>,
+        after: std::time::Duration,
+    ) -> Vec<Effect> {
         self.notice = Some(postio_ui::terminal::SafeText::new(sentence).to_string());
         self.notice_tone = tone;
         self.notice_undo = undo;
-        vec![Effect::Redraw]
+        self.notice_generation += 1;
+        vec![
+            Effect::ExpireNotice {
+                generation: self.notice_generation,
+                after,
+            },
+            Effect::Redraw,
+        ]
     }
 
     /// What kind of news the status line's notice is.
@@ -3167,6 +3208,7 @@ impl App {
         id: postio_core::CommandId,
     ) -> Vec<Effect> {
         let message = Some(message);
+        self.answering = true;
         vec![Effect::Send(match id {
             postio_core::CommandId::DeclineInvite => {
                 postio_core::Command::DeclineInvite { message }
@@ -3684,18 +3726,24 @@ impl App {
                 description,
                 undoable,
             } => {
-                return match (undoable, self.keys.key_for(KeyContext::List, "undo")) {
-                    (true, Some(key)) => {
-                        let sentence = format!("{description} — {key} to undo");
-                        self.say_as(Tone::Worked, &sentence, Some(key))
-                    }
-                    _ => self.say_as(Tone::Worked, description, None),
+                // An answer's Undo works while its reply waits, so its toast
+                // stays exactly that long (FR-102).
+                let after = if std::mem::take(&mut self.answering) {
+                    postio_session::actions::RSVP_WINDOW
+                } else {
+                    TOAST
                 };
+                let key = self
+                    .keys
+                    .key_for(KeyContext::List, "undo")
+                    .filter(|_| *undoable);
+                return self.say_for(Tone::Worked, description, key, after);
             }
             Event::UndoPerformed { description } => {
                 return self.say_as(Tone::Worked, description, None);
             }
             Event::CommandRejected { reason, .. } => {
+                self.answering = false;
                 return self.say_as(Tone::Failed, reason, None);
             }
             Event::Error { message, .. } => return self.say_as(Tone::Failed, message, None),
@@ -3909,6 +3957,14 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Ok(path) => app.say(&format!("Saved {}", path.display())),
             Err(reason) => app.say(&reason),
         },
+        Input::NoticeDue { generation } => {
+            if generation == app.notice_generation && app.notice.take().is_some() {
+                app.notice_undo = None;
+                vec![Effect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
         Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
         Input::SignatureSaved(saved) => match saved {
             // The account list carries the signatures; read it again.
@@ -4512,7 +4568,8 @@ pub(crate) mod tests {
                 undoable: true,
             }),
         );
-        assert_eq!(app.notice(), Some("Archived 12 messages — ctrl+z to undo"));
+        assert_eq!(app.notice(), Some("Archived 12 messages"));
+        assert_eq!(app.notice_undo(), Some("ctrl+z"));
 
         let effects = update(&mut app, key(KeyCode::Char('z'), KeyModifiers::CONTROL));
         assert!(
@@ -4526,6 +4583,85 @@ pub(crate) mod tests {
             }),
         );
         assert_eq!(app.notice(), Some("Unarchived 12 messages"));
+    }
+
+    fn expiring(effects: &[Effect]) -> Vec<(u64, std::time::Duration)> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::ExpireNotice { generation, after } => Some((*generation, *after)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn archived(app: &mut App, description: &str) -> Vec<Effect> {
+        update(
+            app,
+            Input::Host(postio_core::Event::ActionCompleted {
+                description: description.into(),
+                undoable: true,
+            }),
+        )
+    }
+
+    #[test]
+    fn a_toast_stays_eight_seconds_and_ctrl_z_undoes_after_it_has_gone() {
+        let mut app = app((120, 30));
+        let opening = open_list(&mut app, 10);
+        serve(&mut app, opening);
+        let effects = archived(&mut app, "Archived 3 messages");
+        let [(generation, after)] = expiring(&effects)[..] else {
+            panic!("one timer for the toast: {effects:?}");
+        };
+        assert_eq!(after, std::time::Duration::from_secs(8));
+        assert_eq!(
+            after.as_secs(),
+            u64::from(postio_ui::focus_target::TOAST_SECONDS)
+        );
+
+        update(&mut app, Input::NoticeDue { generation });
+        assert_eq!(app.notice(), None, "gone after its time");
+        let effects = update(&mut app, key(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert!(
+            effects.contains(&Effect::Send(postio_core::Command::Undo)),
+            "the host keeps the stack: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_newer_toast_replaces_the_one_before_and_the_old_timer_does_not_take_it_down() {
+        let mut app = app((120, 30));
+        let opening = open_list(&mut app, 10);
+        serve(&mut app, opening);
+        let first = expiring(&archived(&mut app, "Archived 1 message"))[0].0;
+        let second = expiring(&archived(&mut app, "Archived 2 messages"))[0].0;
+        assert_ne!(first, second);
+        update(&mut app, Input::NoticeDue { generation: first });
+        assert_eq!(app.notice(), Some("Archived 2 messages"));
+        update(&mut app, Input::NoticeDue { generation: second });
+        assert_eq!(app.notice(), None);
+    }
+
+    #[test]
+    fn an_answer_to_an_invitation_keeps_its_undo_for_as_long_as_the_reply_waits() {
+        let mut app = app((120, 30));
+        let opening = open_list(&mut app, 10);
+        serve(&mut app, opening);
+        let sent = update(&mut app, press('y'));
+        assert!(
+            sent.iter().any(|effect| matches!(effect, Effect::Send(_))),
+            "{sent:?}"
+        );
+        let effects = archived(&mut app, "Accepted Harbor design review");
+        assert_eq!(
+            expiring(&effects)[0].1,
+            postio_session::actions::RSVP_WINDOW,
+            "{effects:?}"
+        );
+        // The next toast is an ordinary one again.
+        let effects = archived(&mut app, "Archived 1 message");
+        assert_eq!(expiring(&effects)[0].1, std::time::Duration::from_secs(8));
     }
 
     #[test]
