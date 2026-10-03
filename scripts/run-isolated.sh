@@ -23,8 +23,7 @@
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
 #   scripts/run-isolated.sh HEAD --install-desktop  # also give Postio its dock icon (see below)
 #
-# It runs Postio, the `postio` binary (spec 007). `--focus` is accepted and
-# changes nothing, for commands written before Focus became the one app.
+# It runs Postio, the `postio` binary.
 #   scripts/run-isolated.sh HEAD --reset-store  # set the scratch store aside, start a fresh one
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
@@ -57,7 +56,6 @@ for arg in "$@"; do
         --inspect) INSPECT=1 ;;
         --shot) SHOT=1 ;;
         --provision) PROVISION=1 ;;
-        --focus) ;;
         --install-desktop) INSTALL_DESKTOP=1 ;;
         --reset-store) RESET_STORE=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
@@ -141,7 +139,7 @@ fi
 # provisioned with --provision is there too.
 {
     if [ "$SHOT" = 1 ]; then
-        OUT="$ROOT/focus-shot-$SHA.png"
+        OUT="$ROOT/shot-$SHA.png"
         cargo run --release -p postio-focus --example shot -- "$OUT" 01
         echo "wrote $OUT"
         exit 0

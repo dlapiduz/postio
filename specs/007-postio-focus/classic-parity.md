@@ -191,8 +191,8 @@ not before:
   330 unit tests and `app_suite`'s ~200s;
 - "Integration suites run under nextest", which cites `app_suite`'s 200s → 20s;
 - "Tests are headless automatically", which names `cargo run -p postio-app`;
-- "To see the app", where `scripts/run-isolated.sh` builds the classic app
-  unless given `--focus`, and `cargo run -p postio-app`;
+- "To see the app", which names `cargo run -p postio-app` (`scripts/run-isolated.sh`
+  already runs Postio);
 - "To prove a change reaches the running app", which names
   `crates/postio-app/tests/app_suite/`, `wiring.rs`, `keystroke.rs`,
   `click_preview.rs`, `CASES`, `IGNORED` and `list_contract.rs`. Focus's
