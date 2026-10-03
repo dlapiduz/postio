@@ -477,6 +477,34 @@ fn pump(duration: Duration) {
 
 /// Applies what of the variant a window can take: scheme, size, text scale.
 /// Returns the requested axes this runner does not have.
+/// What GTK would otherwise draw by the clock: animations, and the overlay
+/// scrollbar's indicator. The indicator shows when a list scrolls and hides
+/// once it has been still for a while, so whether a frame caught it
+/// depended on how long the step took -- the same step filmed two ways
+/// under load (storyboard_determinism). It is a transient, never what a
+/// person settles on, so frames leave it out.
+fn hold_still() {
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_enable_animations(false);
+    }
+    thread_local! {
+        static HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if HIDDEN.get() {
+        return;
+    }
+    if let Some(display) = gtk::gdk::Display::default() {
+        let provider = gtk::CssProvider::new();
+        provider.load_from_string("scrollbar.overlay-indicator { opacity: 0; }");
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
+        );
+        HIDDEN.set(true);
+    }
+}
+
 fn apply_variant(variant: &BTreeMap<String, String>) -> ((i32, i32), Vec<String>) {
     let scheme = match variant.get("scheme").map(String::as_str) {
         Some("dark") => adw::ColorScheme::ForceDark,
@@ -879,9 +907,7 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
             .expect("a fixed instant")
             .with_timezone(&chrono::Local),
     );
-    if let Some(settings) = gtk::Settings::default() {
-        settings.set_gtk_enable_animations(false);
-    }
+    hold_still();
     let (size, ignored) = apply_variant(&options.variant);
     played.ignored_axes = ignored;
     played
@@ -1230,9 +1256,7 @@ async fn fresh(setup: &[&str]) -> Option<Started> {
             .expect("a fixed instant")
             .with_timezone(&chrono::Local),
     );
-    if let Some(settings) = gtk::Settings::default() {
-        settings.set_gtk_enable_animations(false);
-    }
+    hold_still();
     let (size, _) = apply_variant(&BTreeMap::new());
     let started = acting(Seed::Small, size, "every-command").await.ok()?;
     deliver::drain();
@@ -1244,6 +1268,18 @@ async fn fresh(setup: &[&str]) -> Option<Started> {
             Delivery::Chain,
         );
         pump(Duration::from_millis(200));
+    }
+    // The composer's body is an editor that paints and listens only once its
+    // script has loaded (#1716): judged before that, any press "changes" the
+    // frame as the editor finishes drawing, and the composer's gaps flicker
+    // between stale and no effect from one pass to the next.
+    if started.window.observe().composer.open
+        && let Some(composer) = started.window.composer()
+    {
+        pump_until(Duration::from_secs(5), || {
+            composer.test_body_eval("window.postioEditorReady === true ? 'ready' : ''") == "ready"
+        });
+        pump(Duration::from_millis(300));
     }
     Some(started)
 }
