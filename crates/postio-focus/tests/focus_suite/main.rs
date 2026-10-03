@@ -101,6 +101,8 @@ mod state;
 mod store_in_use;
 mod store_opening;
 mod store_unavailable;
+mod storyboard_catalogue;
+mod storyboard_determinism;
 mod storyboards;
 mod support;
 mod surfaced;
@@ -670,6 +672,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "storyboards::a_storyboard_plays_on_focus_and_writes_its_run",
         storyboards::a_storyboard_plays_on_focus_and_writes_its_run as fn(),
+    ),
+    (
+        "storyboard_determinism::two_processes_film_a_storyboard_identically",
+        storyboard_determinism::two_processes_film_a_storyboard_identically as fn(),
+    ),
+    (
+        "storyboard_catalogue::the_catalogue_holds_on_focus",
+        storyboard_catalogue::the_catalogue_holds_on_focus as fn(),
     ),
     (
         "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",
