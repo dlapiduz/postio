@@ -58,6 +58,12 @@ already are.
 | GTK half, shared by both GTK apps: chain delivery, typing, frame sampling, focus outline, settle detection, keyboard reachability | **`postio-gtk::storyboard`** on `main`. On `feature/postio-focus` it moves to `postio-widgets` by a pure `git mv`. | `capture.rs` is already in `postio-gtk` on `main` and in `postio-widgets` on Focus (focus: `crates/postio-widgets/src/capture.rs`). ADR 0043 puts GTK code that both apps share in `postio-widgets`, and Focus may not depend on `postio-gtk`. |
 | Each app's `observe()` and runner | **Classic**: `Window::observe()` in `postio-gtk`, and the runner in `postio-app` as `examples/storyboard.rs` plus an `app_suite` case. **Focus**: `FocusWindow::observe()` in `postio-focus`, and `examples/storyboard.rs` plus a `focus_suite` case. | `observe()` must read the private `key_context()` and `is_typing()` (`window.rs:2960, 2990`; focus: `window.rs:729`), so it is a method on the window itself. The runner needs a seeded store, which only the app crates may hold (`check-crate-boundaries.py`; `shot.rs` doc § "Why this lives in postio-app"). |
 
+**Since specs/007-postio-focus T265** the GTK half is `postio_widgets::storyboard`
+(the `git mv` above, onto this line), and Focus's runner is the one review
+plays on; the classic app's `observe()` and runner go with it in T256. Focus's
+runner lives in `postio-focus` behind its `demo` feature, the crate over
+Focus's window, beside the one demo store its `shot` uses (R11).
+
 **`postio-storyboard`'s dependencies.** `postio-core` (commands, registry,
 `Keymap`), `postio-config` (`expand_mod`), `postio-ui` (`Observation`,
 chords), `serde`, `toml`, `serde_json` and `blake3`. All of these are already

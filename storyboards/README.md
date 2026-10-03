@@ -6,6 +6,15 @@ every step, and records where the keyboard, the cursor and the overlays are.
 A design/UX reviewer that did not build the change judges the filmstrips
 before the maintainer sees them.
 
-This README becomes the living reference to the format when the runner lands
-(`specs/008-storyboards`, T040). Until then the design record is
-`specs/008-storyboards/contracts/storyboard-format.md`.
+The storyboards here are played on Focus, the one desktop app (ADR 0043):
+its runner is `postio-focus`'s `storyboard` example over the demo store in
+`postio_focus::demo`, driven by `scripts/storyboards.sh`, and the catalogue
+was re-expressed against Focus's surfaces when the classic app's removal was
+approved (specs/007-postio-focus T265). A storyboard names `apps = ["focus"]`
+when its checks are Focus's own; the classic app reads those as not
+applicable until T256 removes it.
+
+The format's design record is
+`specs/008-storyboards/contracts/storyboard-format.md`, the runner's
+`specs/008-storyboards/contracts/runner.md`, and what each field of an
+observation means on Focus `specs/008-storyboards/contracts/observation.md`.

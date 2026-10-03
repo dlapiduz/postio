@@ -7,13 +7,31 @@ is the interface, and the other two are its parts.
 
 ## The runner (one per app)
 
-Classic's runner is built from `postio-app`; Focus's is built from
-`postio-focus`.
+Focus is the one desktop app (ADR 0043), and its runner is the one design
+review plays on: `postio_focus::demo::storyboard`, over the demo store
+`postio_focus::demo` shares with `shot`, built as `postio-focus`'s
+`storyboard` example (specs/007-postio-focus T265). The GTK half it drives
+the window with -- chain delivery, typing, reachability, settling, the
+outline -- is `postio_widgets::storyboard`. The classic app's runner
+(`postio-app`) is still built until T256 removes it.
 
 ```text
-cargo run -p postio-app --example storyboard --features demo -- <subcommand>
 cargo run -p postio-focus --example storyboard --features demo -- <subcommand>
+cargo run -p postio-app --example storyboard --features demo -- <subcommand>   # until T256
 ```
+
+**Seeds and presets.** Focus's runner builds every seed the catalogue names
+but `first-run`, whose orientation strip Focus dropped (`classic-parity.md`
+row 12): `small` (today's inbox), `empty`, `long-newsletter`, `long-thread`,
+`thirty-threads`, `two-accounts`, `outbox`, `draft-left-over` and
+`backfilling`. The store halves of the shared ones are
+`postio_storage::seed`'s. Its presets are the window conditions no key
+reaches without a server or a person: `settings` and `settings/<section>`
+(every section Focus shows), `settings/account-form`,
+`settings/signature-editor`, `settings/account-weights`,
+`add-account/{route,browser,syncwindow}` and `locked`. Its variant axes are
+`scheme`, `width` and `text`; Focus has no `contrast` or `density`
+(`classic-parity.md` rows 18 and 19).
 
 | Subcommand | Does | Output |
 |---|---|---|
@@ -58,7 +76,7 @@ moved or cached intact (research R8).
 ## `scripts/storyboards.sh`
 
 ```text
-scripts/storyboards.sh run     [--app classic|focus|all] [--only <glob>] [--variants] [--no-frames]
+scripts/storyboards.sh run     [--app focus|classic|all] [--only <glob>] [--variants] [--no-frames]
                                [--delivery chain|direct] [--calibration]
 scripts/storyboards.sh bundle  --acceptance <file> [--calibration]   # what a reviewer reads
 scripts/storyboards.sh tool    <postio-storyboard arguments>          # the pure tool, built
@@ -70,6 +88,10 @@ scripts/storyboards.sh lint                          # load and lint the whole c
 scripts/storyboards.sh coverage [--app ...]          # every-command, per app
 ```
 
+- **`--app` is Focus unless it says otherwise**, for every subcommand that
+  plays: `run`, `base`, `screens` and `coverage`. `classic` plays the classic
+  runner until T256 removes it; `all` plays every runner whose crate is on
+  the branch.
 - **There is no `--changed`.** A selection by changed crates would select,
   for a GTK app, every storyboard applying to it -- a shared type's callers
   are not knowable from a diff (#419) -- so the flag could never narrow
@@ -117,10 +139,11 @@ an inactive window draws in GTK's backdrop style.
 | Suite | Case | Runs |
 |---|---|---|
 | `postio-storyboard` lib tests (sanity tier) | `the_catalogue_loads_and_lints` | the lint over `storyboards/` |
-| `postio-app` `app_suite` | `storyboards` | `run --no-frames` over every Classic storyboard, default variant |
-| `postio-focus` `focus_suite` | `storyboards` | the same for Focus (on `feature/postio-focus`) |
-| nightly | `coverage` | `every-command` for each app, measured |
+| `postio-widgets` `widgets_suite` | `storyboard_*` (19) | the GTK half: chain delivery, typing, reachability, settling, the outline |
+| `postio-focus` `focus_suite` | `storyboards`, `observe`, `storyboard_determinism` | a run is pressed, checked and written; the window says where everything is; two processes film one storyboard identically |
+| `postio-focus` `focus_suite`, nightly | `storyboard_catalogue`, `every_command` | the whole catalogue holds on Focus; every bound command shows or is a listed gap (`POSTIO-MEASUREMENT`) |
+| `postio-app` `app_suite` | the classic app's five | the same for the classic app, until T256 removes it |
 
-One case per suite leaves each harness's `--list` output unchanged
-(CLAUDE.md, the harness's contract). A failing storyboard is named in that
-case's panic message, with the step and the check.
+A failing storyboard is named in the catalogue case's panic message, with
+the step and the check. A storyboard whose defect is still open (`proof =
+"open"`) is red by design and counts as expected there.

@@ -24,8 +24,9 @@ The spec asks for four things:
 - **One new shared type, `postio_ui::observe::Observation`.** Every frontend
   fills it from accessors it already has. Two small gaps get closed: the
   toast's tone and its undo flag (R6).
-- **A shared GTK half.** It lives in `postio-gtk::storyboard` on `main`, and
-  moves to `postio-widgets` on Focus's branch. It provides:
+- **A shared GTK half.** It lived in `postio-gtk::storyboard` on `main`, and
+  is `postio_widgets::storyboard` now (specs/007-postio-focus T265). It
+  provides:
   - **chain delivery**: keys go through every key controller along the real
     focus chain. This is Focus's T195 test helper, promoted (R3).
   - **settle sampling**, which reports jumps and blanks (R4);
@@ -33,11 +34,15 @@ The spec asks for four things:
   - a **keyboard-reachability** check.
 - **Determinism.** A hermetic re-exec, a frozen clock behind a new
   `postio_ui::clock` seam, embedded fonts only, and animations off (R5).
-- **Two runners.**
+- **Two runners, then one.**
   - **Classic** (`postio-app`) shares `shot`'s setup through a new
-    `postio_app::demo` module. It lands on `main`.
-  - **Focus** (`postio-focus`) is built on `feature/postio-focus` as a lane.
-    It stays there until the maintainer lands that branch.
+    `postio_app::demo` module. It landed on `main`, and goes with the
+    classic app in T256.
+  - **Focus** (`postio-focus`) was built on a lane and is the runner design
+    review plays on since specs/007-postio-focus T265: `postio_focus::demo`
+    is the one demo store its `shot` and its runner share, with the seeds'
+    store halves in `postio_storage::seed`, and the catalogue is written
+    against Focus's surfaces.
 - **`scripts/storyboards.sh` drives everything.** It replaces
   `scripts/screens.sh`, whose table becomes zero-step storyboards (R12).
 - **Base runs.** The branch's storyboards are run against the merge-base's

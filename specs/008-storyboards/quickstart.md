@@ -11,7 +11,11 @@ and the file format is in
   tree as CLAUDE.md describes.
 - `mutter` installed. The runner uses the same private headless compositor as
   the tests (`scripts/test-headless.sh --status`).
-- For the Focus scenarios, a worktree of a lane on `feature/postio-focus`.
+
+Every command plays Focus, the one desktop app (ADR 0043), unless `--app`
+names another: since specs/007-postio-focus T265 the runner is
+`postio-focus`'s, and the catalogue is written against Focus's surfaces.
+`--app classic` plays the classic app until T256 removes it.
 
 ## 1. The catalogue loads (sanity tier)
 
@@ -19,31 +23,33 @@ and the file format is in
 scripts/storyboards.sh lint
 ```
 
-**Expect** every storyboard listed with the apps it applies to. On `main`,
-Focus-only storyboards read `focus: not present on this branch`. The command
-exits 0.
+**Expect** every storyboard listed with the apps it applies to: nearly all
+name `apps = ["focus"]`. The command exits 0.
 
 **Negative check.** Add `source` to nothing, or put an address on a real
 domain, and the lint fails, naming the file and the field.
 
-## 2. One storyboard, filmed on Classic (US1)
+## 2. One storyboard, filmed on Focus (US1)
 
 ```bash
-scripts/storyboards.sh run --app classic --only list/archive-walks-down
+scripts/storyboards.sh run --only list/cursor-and-selection-look-different
 scripts/storyboards.sh page --open
 ```
 
 **Expect:**
 - The filmstrip shows frames `00` to `0n`.
 - Each outlined frame names `list` as the region holding the keyboard.
-- Each step shows its observation and its checks.
-- The cursor check on the archive step passes, because `proof = "pinned"`
-  for #1687 (research R0).
+- Each step shows its observation and its checks, all passing: `proof =
+  "pinned"` for #753 (research R0).
+
+`list/archive-walks-down` is the red counterpart: `proof = "open"` on
+#1746, Focus's own form of #1687, so its cursor checks fail by design until
+that lands.
 
 **Determinism (SC-003).** Run it twice, then compare:
 
 ```bash
-diff <(jq -S 'del(.commit, .steps[].settle.ms)' Design/review/<branch>/runs/classic/archive-walks-down/default/run.json) \
+diff <(jq -S 'del(.commit, .steps[].settle.ms)' Design/review/<branch>/runs/focus/cursor-and-selection-look-different/default/run.json) \
      <(jq -S 'del(.commit, .steps[].settle.ms)' <second run>/run.json)
 ```
 
@@ -58,8 +64,8 @@ On a branch that fixes an open interaction defect, write the storyboard
 first, then run:
 
 ```bash
-scripts/storyboards.sh base --app classic
-scripts/storyboards.sh run  --app classic --only <the new storyboard>
+scripts/storyboards.sh base
+scripts/storyboards.sh run  --only <the new storyboard>
 scripts/storyboards.sh page --open
 ```
 
@@ -71,7 +77,7 @@ scripts/storyboards.sh page --open
 ## 4. Chain delivery sees a swallowed key (US1, research R3)
 
 ```bash
-cargo test -p postio-gtk --test gtk_suite storyboard_chain_delivery
+cargo nextest run -p postio-widgets --test widgets_suite storyboard_chain_delivery
 ```
 
 **Expect:** a key reaches the window from inside a list; a dialog over the
@@ -84,7 +90,7 @@ field activates it, mirroring GTK's own binding.
 and that disagreement is evidence: #1748's `K` in the reading pane is
 dropped along the focus chain and accepted-but-inert handed straight to the
 window. A step marked `routing = "real"` reads `not covered` in both, never
-`passed` (`sidebar/shift-tab-from-reader-returns-to-row`).
+`passed`.
 
 ## 5. A review before the maintainer (US2)
 
@@ -111,7 +117,8 @@ with the result shown in the page header.
 
 ## 6. The landing warning (FR-023)
 
-On a branch that changes `crates/postio-gtk` with no current review, land:
+On a branch that changes `crates/postio-focus` or `crates/postio-widgets`
+with no current review, land:
 
 ```bash
 scripts/issue-land.sh --detach
@@ -125,19 +132,20 @@ scripts/issue-land.sh --status
 
 Run `/ux-review`, push again, and the summary arrives as a PR comment.
 
-## 7. One storyboard on both apps (US3), from a Focus lane
+## 7. One storyboard on every app present (US3)
 
 ```bash
-scripts/storyboards.sh run --app all --only list/archive-walks-down
+scripts/storyboards.sh run --app all --only calibration/cal-cheatsheet-lists-keys --calibration
 scripts/storyboards.sh page --open
 ```
 
 **Expect:**
-- The parity section shows one row per step, with columns `classic` and
-  `focus`.
-- The `focus` column uses its override's `expect`.
+- The parity section shows one row per step, with a column per app present.
 - A shared storyboard with no override on a step where the two observations
   differ is marked **diverging**.
+
+Until T256 removes it, `all` includes the classic app; a storyboard naming
+`apps = ["focus"]` reads `not applicable` there.
 
 ## 8. The screen sweep (FR-030)
 
@@ -145,25 +153,30 @@ scripts/storyboards.sh page --open
 scripts/storyboards.sh screens
 ```
 
-**Expect** the same contact sheet `screens.sh` produced: design on the left,
-the app on the right, for every `storyboards/screens/*.toml`.
+**Expect** a contact sheet of every `storyboards/screens/*.toml`, filmed on
+Focus in the variants each asks for, with a design on the left where a
+screen names one. The classic canvas's designs are not Focus's, and Focus's
+references are never committed (specs/007-postio-focus/screens.md), so the
+screens cite screens.md's numbers rather than a file.
 `scripts/screens.sh` no longer exists.
 
 ## 9. Every command does something (US6)
 
 ```bash
-scripts/storyboards.sh coverage --app classic
+scripts/storyboards.sh coverage
 ```
 
 **Expect** `coverage.json` with no `no_effect` entries outside
-`storyboards/gaps/classic.toml`, and no `stale_gap` entries.
+`storyboards/gaps/focus.toml`, and no `stale_gap` entries.
 
 ## 10. The suites
 
 ```bash
 cargo test -p postio-storyboard --lib                 # lint and the pure logic, in seconds
-cargo nextest run -p postio-app --test app_suite storyboards
+cargo nextest run -p postio-widgets --test widgets_suite storyboard   # the GTK half
+cargo nextest run -p postio-focus --test focus_suite storyboard observe
+cargo nextest run -p postio-focus --test focus_suite --profile nightly storyboard_catalogue every_command
 ```
 
-**Expect** both to pass. A failing storyboard is named in the case's message,
-with its step and check.
+**Expect** all to pass. A failing storyboard is named in the catalogue
+case's message, with its step and check.

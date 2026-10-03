@@ -46,8 +46,12 @@ What this spec adds:
 - **A reviewer** that did not write the change.
 - **One page for the maintainer**, showing what changed.
 
-It covers the two GTK apps: Classic (`postio-app`) and Focus (`postio-focus`,
-spec 007). The terminal and macOS apps are later phases. Nothing in the format
+It covered the two GTK apps: Classic (`postio-app`) and Focus (`postio-focus`,
+spec 007). Focus is now the one desktop app (ADR 0043), and the maintainer
+kept this feature by rebuilding its runner over Focus (2026-10-02,
+specs/007-postio-focus T265): the runner, the demo store and the catalogue
+are Focus's, and the classic app's runner goes with it in T256. The terminal
+and macOS apps are later phases. Nothing in the format
 may assume a toolkit, so they can join without rewriting a single storyboard.
 
 ### What this spec inherits
