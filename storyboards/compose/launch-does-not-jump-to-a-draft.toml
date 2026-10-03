@@ -2,20 +2,24 @@
 #
 # The defect: with an unsent draft in the store, the window showed the
 # inbox and then jumped to the draft (or opened a reply on it) a moment
-# later, and the pane offered Reply on a draft. Fixed before storyboards
-# existed, so this is pinned: after the window has had time to jump, the
-# view is still the inbox's first real message, and no composer is open.
+# later. After the window has had time to jump, it is still the inbox and
+# no composer is open.
+#
+# Re-expressed for Focus (T265): Focus opens nothing at launch, so the
+# checks are that the view is still the inbox's list with no composer. The
+# classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1177" }
 proof  = "pinned"
 seed   = "draft-left-over"
 
 [[step]]
 id      = "launch"
-wait    = { until = { reading.id = "12" } }
-check   = { composer.open = false, keyboard.region = "list", cursor.index = 0 }
-expect  = "The inbox is showing, with its first message in the pane. The left-over draft is in Drafts, not on the screen."
+wait    = { ms = 200 }
+check   = { composer.open = false, keyboard.region = "list", view = "list", scope = "Inbox" }
+expect  = "The inbox is showing. The left-over draft is in Drafts, not on the screen."
 
 [[step]]
 wait    = { ms = 1500 }
-check   = { composer.open = false, keyboard.region = "list", cursor.index = 0, reading.id = { same_as = "launch" } }
-expect  = "Nothing has moved on its own: no composer, no jump to the draft, the same message in the pane."
+check   = { composer.open = false, keyboard.region = "list", view = "list", scope = "Inbox", rows.count = { same_as = "launch" } }
+expect  = "Nothing has moved on its own: no composer, no jump to the draft."

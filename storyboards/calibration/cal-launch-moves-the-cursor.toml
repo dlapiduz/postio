@@ -1,6 +1,10 @@
 # must_pass: the twin of cal-launch-types-into-search.
+# Re-expressed for Focus (T265): its ground truth, with the classic app
+# removed by T256.
+apps        = ["focus"]
 source      = { kind = "issue", ref = "#1473" }
 calibration = "must_pass"
+
 [[step]]
 key    = "j"
-expect = "The list cursor moves down one row; the search field stays empty."
+expect = "The cursor ring appears on the first row of the list; nothing is typed anywhere."

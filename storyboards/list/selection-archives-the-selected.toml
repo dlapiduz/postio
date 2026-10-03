@@ -5,16 +5,25 @@
 # position). Three rows are selected with `x` on the two-accounts seed, then
 # archived; exactly those three leave, the selection clears, and the list
 # does not lose any other row.
+#
+# Re-expressed for Focus (T265): Focus starts with no cursor row, so `j`
+# comes before the first `x`, and its one inbox across accounts lists both
+# accounts' mail (78 rows). The classic app it was written against is
+# removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#468" }
 proof  = "pinned"
 seed   = "two-accounts"
-design = "01-inbox-reading"
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 0, rows.count = 78 }
 
 [[step]]
 id      = "first"
 command = "toggle_selection"
-check   = { keyboard.region = "list", selection.count = 1, rows.count = 34 }
-expect  = "The first row is marked as selected, distinct from the cursor."
+check   = { selection.count = 1 }
+expect  = "The first row is marked as selected, distinct from the cursor ring, and the bulk bar appears."
 
 [[step]]
 command = "next_message"
@@ -31,12 +40,13 @@ check   = { selection.count = 2 }
 
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "toggle_selection"
-check   = { selection.count = 3, rows.count = 34 }
-expect  = "Three rows are selected: the first, the third and the fourth."
+check   = { selection.count = 3, rows.count = 78 }
+expect  = "Three rows are selected: the first, the third and the fourth. The bulk bar says three."
 
 [[step]]
 command = "archive"
-check   = { keyboard.region = "list", selection.count = 0, rows.count = 31, notice.undo = true }
-expect  = "The three selected rows are gone, the other 31 are all still there, and undo is offered."
+check   = { keyboard.region = "list", selection.count = 0, rows.count = 75, notice.undo = true }
+expect  = "The three selected rows are gone, the other 75 are all still there, the bulk bar is gone, and undo is offered."

@@ -1,10 +1,14 @@
-# Return from the search field hands the keyboard to the hits (#693).
+# Return from the search field reaches the hits (#693, #1252).
 #
-# #693 asked for Return or Tab; the search command bar (spec 003) has since
-# given Tab to refining -- the field's footer reads "Return open · Tab
-# refine" -- so Return is the handoff. #1252 is the same handoff flaking on
-# CI; chain delivery passes the key through every controller on the real
-# focus chain, which is what that flake was about.
+# #693 asked for the keyboard to move from the query to the hits; #1252 was
+# the same handoff flaking. Chain delivery passes the key through every
+# controller on the real focus chain, which is what that flake was about.
+#
+# Re-expressed for Focus (T265): Return in the bar runs the search and
+# lists the hits under the field, which keeps the keyboard; the arrows walk
+# the hits from there, Down to the first. The classic app it was written
+# against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#693" }
 proof  = "pinned"
 
@@ -13,16 +17,14 @@ command = "search"
 
 [[step]]
 type    = "harbour"
-settle  = { until = { rows.count = { changed = true } } }
 
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "list", keyboard.typing = false, keyboard.reachable = true, cursor.index = 0 }
-expect  = "The keyboard is on the first result, and the search field keeps the query."
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+check   = { keyboard.region = "search", keyboard.typing = true, keyboard.reachable = true, overlay.kind = "finder" }
+expect  = "Return runs the search; the hits are listed in the bar and the field keeps the keyboard and the query."
 
-# In Focus, Return in the bar runs the search and lists the matches in the
-# bar; the keyboard stays in the field, and the arrows walk the matches. There
-# is no list to hand it to, and no first result under the inbox's cursor.
-[app.focus.step.3]
-check  = { keyboard.region = "search", keyboard.typing = true, keyboard.reachable = true, overlay.kind = "finder" }
-expect = "Return runs the search; the matches are listed in the bar and the field keeps the keyboard."
+[[step]]
+key     = "Down"
+check   = { keyboard.region = "search", keyboard.reachable = true, app.focus.bar.highlighted = "message" }
+expect  = "Down reaches the first hit, highlighted, with the query still in the field."

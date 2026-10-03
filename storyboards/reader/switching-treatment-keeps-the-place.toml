@@ -38,19 +38,19 @@ command = "next_message"
 [[step]]
 command = "open_message"
 settle  = { until = { view = "reader" } }
-check   = { view = "reader", reading.id = "89", reading.scroll.offset = 0 }
+check   = { view = "reader", reading.id = "90", reading.scroll.offset = 0 }
 
 [[step]]
 id      = "top"
 command = "switch_treatment"
 settle  = { watch_ms = 600 }
-check   = { view = "reader", reading.id = "89", reading.scroll.offset = 0 }
+check   = { view = "reader", reading.id = "90", reading.scroll.offset = 0 }
 expect  = "The message is drawn the other way, and the column stays at the top of the body: it is not scrolled to put a line at the top."
 
 [[step]]
 command = "switch_treatment"
 settle  = { watch_ms = 600 }
-check   = { view = "reader", reading.id = "89", reading.scroll.offset = 0 }
+check   = { view = "reader", reading.id = "90", reading.scroll.offset = 0 }
 expect  = "Switched back, and still at the top."
 
 [[step]]
@@ -63,5 +63,5 @@ expect  = "The message is scrolled a page down."
 [[step]]
 command = "switch_treatment"
 settle  = { watch_ms = 600 }
-check   = { view = "reader", reading.id = "89" }
+check   = { view = "reader", reading.id = "90" }
 expect  = "The message is drawn the other way and the reader is still a page or so down the text, not thrown back to the top or to a sentence."

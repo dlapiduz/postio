@@ -1,18 +1,27 @@
-# A draft in the Drafts folder offers Continue, not Reply (#1212, #1444).
+# A draft offers to be finished, not replied to (#1212, #1444).
 #
-# The defect: the pane offered Reply on an unsent draft, as if it were
+# The defect: the reader offered Reply on an unsent draft, as if it were
 # somebody else's mail, and the draft's own verbs were lost. Opening it
 # should resume writing it.
+#
+# Re-expressed for Focus (T265): `g t` lists Drafts, `j` puts the cursor on
+# the left-over draft, and Return opens it in the composer (US11 scenario
+# 3). The classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1212" }
 proof  = "pinned"
 seed   = "draft-left-over"
 
 [[step]]
 command = "go_to_drafts"
+check   = { scope = "Drafts", keyboard.region = "list" }
+
+[[step]]
+command = "next_message"
 check   = { cursor.subject = "Notes for Thursday", keyboard.region = "list" }
 expect  = "Drafts lists the left-over draft, Notes for Thursday, under the cursor."
 
 [[step]]
 command = "open_message"
-check   = { composer.open = true }
+check   = { composer.open = true, view = "composer" }
 expect  = "Opening the draft puts it back in the composer, where it can be finished. It is not shown as received mail with a Reply button."

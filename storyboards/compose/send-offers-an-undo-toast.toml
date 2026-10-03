@@ -1,16 +1,19 @@
 # Sending offers an Undo toast for as long as the send can be taken back
-# (#1481).
+# (#1481, #1752).
 #
 # The decision on #1481 gave a send its own window, "Sent -- Undo", live
 # while the queue still holds the operation, calling the cancel path that
-# reopening already uses. The mechanism landed; the toast is the part the
-# decision left as ready. Open until it ships: after `send`, the notice
-# must offer Undo.
+# reopening already uses. The toast is the part never built: Focus's send
+# closes the composer and says nothing. Open until #1752 ships.
+#
+# Re-expressed for Focus (T265): `j` puts the cursor on the row Reply
+# answers. The classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1752" }
 proof  = "open"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
+command = "next_message"
 
 [[step]]
 command = "reply"

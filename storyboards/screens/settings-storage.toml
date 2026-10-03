@@ -1,4 +1,8 @@
-# The screen `settings-storage`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "22-settings-panes" }
-design = "22-settings-panes"
+# Settings, Sync and storage, each folder's backfill.
+#
+# Re-expressed for Focus (T265): the classic canvas design it was compared
+# with is the classic app's, which T256 removes; Focus's references are
+# never committed (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 41" }
 preset = "settings/storage"

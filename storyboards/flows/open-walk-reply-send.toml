@@ -1,39 +1,43 @@
-# A ux-architect §4 flow, red on #1748 (J/K cannot walk the conversation from the keyboard) until it lands.
 # The reading walk: open, walk the thread, reply, send, leave
 # (ux-architect §4).
 #
-# `Enter` opens the thread in the reading pane, `J`/`K` walk its messages,
-# `e` replies to the one in focus, `Ctrl+Enter` sends, `Esc` returns. Each
-# step asks the §4 questions: where am I, did the app tell me, did I lose
+# `Return` opens the thread over the list, `[`/`]` step its messages, `e`
+# replies to the one shown, `Ctrl+Return` sends, `Esc` returns. Each step
+# asks the §4 questions: where am I, did the app tell me, did I lose
 # anything. The runner has no network, so `send` only queues.
 #
-# The J/K steps are red while J and K never reach the conversation (see
-# conversation/j-k-walk-the-messages); the rest of the walk is the flow.
-source = { kind = "issue", ref = "#1748" }
-proof  = "open"
+# Re-expressed for Focus (T265): its open message shows one message and
+# steps the thread with `[` and `]` (C2, FR-037), where the classic app's
+# `J`/`K` never reached the conversation (#1748). The classic app it was
+# written against is removed by T256.
+apps   = ["focus"]
+source = { kind = "flow", ref = "ux-architect §4" }
 seed   = "long-thread"
 
 [[step]]
+command = "next_message"
+
+[[step]]
 id      = "open"
-wait    = { until = { reading.id = "7" } }
-check   = { reading.focused = 6, composer.open = false }
-expect  = "The thread is open in the reading pane on its newest message, with the list beside it."
+command = "open_message"
+check   = { view = "reader", reading.id = "7", composer.open = false }
+expect  = "The thread is open over the list on its newest message."
 
 [[step]]
 command = "prev_in_conversation"
-check   = { reading.focused = 5 }
-expect  = "K moves the focus to the previous message and the pane follows."
+check   = { reading.id = "6" }
+expect  = "`[` shows the message before it."
 
 [[step]]
 command = "next_in_conversation"
-check   = { reading.focused = 6 }
-expect  = "J moves it back."
+check   = { reading.id = "7" }
+expect  = "`]` moves back."
 
 [[step]]
 id      = "reply"
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }
-expect  = "The reply takes the reading pane, its recipient filled in, the caret in the body."
+expect  = "The reply opens, its recipient filled in, the caret in the body."
 
 [[step]]
 type    = "Thanks, that works for me."
@@ -41,10 +45,10 @@ type    = "Thanks, that works for me."
 [[step]]
 id      = "send"
 command = "send"
-check   = { composer.open = false }
-expect  = "The composer closes and the conversation is back where it was. The app says the message went (or is queued); silence here is the failure."
+check   = { composer.open = false, view = "reader", reading.id = { same_as = "open" } }
+expect  = "The composer closes and the message is back where it was. The app says the message went (or is queued); silence here is the failure."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, reading.id = { same_as = "open" } }
-expect  = "Escape leaves the thread to the list without losing the place; the reading pane did not blank."
+check   = { composer.open = false, view = "list", keyboard.region = "list", cursor.index = 0 }
+expect  = "Escape leaves the message to the list without losing the place."

@@ -1,16 +1,20 @@
 # A sent message can be taken back while it is still queued (#1481).
 #
-# The decision on #1481 was that the registry promised `u` for a send and
-# could not keep it, so a send is reversible "for a window" through its own
-# affordance rather than the undo stack: the message waits in the Outbox,
-# and opening it cancels the send and hands the draft back (6f4db057). This
-# is that path, pinned. The runner has no network, and `send` only queues,
-# which is what this needs.
+# The decision on #1481 was that a send is reversible "for a window"
+# through its own affordance rather than the undo stack: the message waits
+# in the Outbox, and cancelling its send hands the draft back. The runner has
+# no network, and `send` only queues, which is what this needs.
+#
+# Re-expressed for Focus (T265): the Outbox is a place in `g o`, a queued
+# message opens to be read with the verbs that settle it (T239), and Cancel
+# send takes it out of the Outbox and back to Drafts. The classic app it was
+# written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1481" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
+command = "next_message"
 
 [[step]]
 command = "reply"
@@ -22,28 +26,31 @@ type    = "Thanks, looks fine."
 [[step]]
 id      = "sent"
 command = "send"
-check   = { composer.open = false }
-expect  = "The composer closes. The Outbox in the sidebar now shows 1."
+check   = { composer.open = false, keyboard.region = "list" }
+expect  = "The composer closes and the list is back."
 
 [[step]]
 command = "go_to_folders"
+check   = { overlay.kind = "picker", keyboard.region = "picker" }
 
 [[step]]
-key     = "j"
+type    = "Outbox"
+
 [[step]]
-key     = "j"
-[[step]]
-key     = "j"
-[[step]]
-key     = "j"
-check   = { rows.count = 1 }
+key     = "Return"
+check   = { scope = "Outbox", rows.count = 1 }
 expect  = "The Outbox lists the reply, queued and not yet sent."
 
 [[step]]
-command = "cycle_pane"
-check   = { keyboard.region = "list" }
+command = "next_message"
 
 [[step]]
 command = "open_message"
-check   = { composer.open = true }
-expect  = "Opening the queued message cancels its send and the composer comes back with the reply; a toast says the send was cancelled and the draft is being edited again."
+check   = { view = "reader", composer.open = false }
+expect  = "The queued reply opens to be read, offering Cancel send, Retry send and Edit rather than Reply."
+
+[[step]]
+command = "cancel_send"
+settle  = { until = { rows.count = 0 } }
+check   = { scope = "Outbox", rows.count = 0 }
+expect  = "The send is cancelled: the message leaves the Outbox, and the app says it is a draft again."

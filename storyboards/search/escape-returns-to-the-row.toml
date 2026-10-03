@@ -1,20 +1,28 @@
-# Escape from search puts the keyboard back on the row it left (6eadd8e2).
+# Escape from search puts the keyboard back on the row it left (6eadd8e2,
+# #1744).
 #
 # 6eadd8e2 fixed the keyboard half: Escape closed the search and left focus
-# in the field. The cursor half is #1744: once the live search has replaced
-# the list's rows, Escape brings the folder back with the cursor on row 0.
-# Red until #1744 lands.
+# in the field. The cursor half was #1744 in the classic app, where the
+# search replaced the list's rows and Escape brought the folder back with the
+# cursor on row 0.
+#
+# Re-expressed for Focus (T265), where it holds: its bar never replaces the
+# list's rows, so the cursor is where the person left it. Three `j` put it
+# on index 2. The classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1744" }
-proof  = "open"
+proof  = "pinned"
 
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
+
 [[step]]
-id      = "fifth"
+id      = "third"
 command = "next_message"
-check   = { cursor.index = 3 }
+check   = { cursor.index = 2 }
 
 [[step]]
 command = "search"
@@ -22,20 +30,9 @@ check   = { keyboard.region = "search" }
 
 [[step]]
 type    = "tide"
-settle  = { until = { rows.count = { changed = true } } }
-check   = { rows.count = { changed = true } }
+check   = { rows.count = { unchanged = true } }
 
 [[step]]
 command = "back"
-check   = { keyboard.region = "list", overlay.kind = "none", cursor.index = { same_as = "fifth" } }
-expect  = "The keyboard is back on the row it left, with that row still under the cursor."
-
-# Focus has no cursor row until a key puts one there, so three `j` leave it
-# on index 2, and its bar does not narrow the inbox behind it, so the row
-# count never changes while the query is typed. The check at the end is the
-# same: the cursor is where it was.
-[app.focus.step.fifth]
-check = { cursor.index = 2 }
-
-[app.focus.step.5]
-check = { rows.count = { unchanged = true } }
+check   = { keyboard.region = "list", overlay.kind = "none", cursor.index = { same_as = "third" }, cursor.id = { same_as = "third" } }
+expect  = "The keyboard is back on the row it left, with that row still under the cursor ring."

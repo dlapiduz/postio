@@ -1,20 +1,18 @@
-# The window opens with the keyboard on the first message (#1473).
+# The window opens with the keyboard on the list (#1473).
 #
 # The defect: the window opened with the keyboard in the search field, so
 # `j`, `a` and `?` typed letters into it. If the keyboard starts anywhere but
-# the list, `j` lands in the search field and the first check fails.
+# the list, `j` lands in a text field and the first check fails.
+#
+# Re-expressed for Focus (T265): Focus opens with no cursor row (its list is
+# windowed, and the cursor is a row a key puts there), so the first `j` puts
+# the cursor on the first row, index 0. The classic app it was written
+# against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1473" }
 proof  = "pinned"
-design = "01-inbox-reading"
 
 [[step]]
 key    = "j"
-check  = { keyboard.region = "list", keyboard.typing = false, overlay.kind = "none", cursor.index = 1 }
-expect = "The first key moves the cursor down a row; nothing is typed anywhere."
-
-# Focus opens with no cursor row at all (its list is windowed, and the
-# cursor is a row a key puts there), so the first `j` lands on the first row,
-# index 0, rather than moving down from it.
-[app.focus.step.1]
 check  = { keyboard.region = "list", keyboard.typing = false, overlay.kind = "none", cursor.index = 0 }
-expect = "The first key puts the cursor on the first row; nothing is typed anywhere."
+expect = "The first key puts the cursor ring on the first row; nothing is typed anywhere."

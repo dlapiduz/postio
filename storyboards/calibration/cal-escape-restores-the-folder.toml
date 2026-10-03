@@ -1,13 +1,20 @@
 # must_pass: the twin of cal-escape-keeps-the-hits.
+# Re-expressed for Focus (T265): its ground truth, with the classic app
+# removed by T256.
+apps        = ["focus"]
 source      = { kind = "issue", ref = "#1474" }
 calibration = "must_pass"
+
 [[step]]
 command = "search"
+
 [[step]]
 type    = "harbour"
-settle  = { until = { rows.count = { changed = true } } }
+
 [[step]]
 key     = "Return"
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+
 [[step]]
 command = "back"
-expect  = "After Escape the list is the Inbox again, with every row back and the search field empty."
+expect  = "After Escape the command bar is gone and the Inbox is as it was, every row there."

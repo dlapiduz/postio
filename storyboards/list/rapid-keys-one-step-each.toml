@@ -4,27 +4,36 @@
 # redrew, so five presses moved the cursor by fewer than five rows. No waits
 # between the steps: the runner presses them back to back, and the last
 # check pins the exact row.
+#
+# Re-expressed for Focus (T265): Focus starts with no cursor row, so five
+# `j` land on the fifth row, index 4. The classic app it was written against
+# is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1609" }
 proof  = "pinned"
 seed   = "thirty-threads"
-design = "01-inbox-reading"
 
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
-check   = { keyboard.region = "list", cursor.index = 5 }
-expect  = "Five presses, five rows: the cursor is on the sixth message."
+check   = { keyboard.region = "list", cursor.index = 4 }
+expect  = "Five presses, five rows: the cursor ring is on the fifth conversation."
 
 [[step]]
 command = "prev_message"
+
 [[step]]
 command = "prev_message"
-check   = { keyboard.region = "list", cursor.index = 3 }
+check   = { keyboard.region = "list", cursor.index = 2 }
 expect  = "Two presses back, two rows up."

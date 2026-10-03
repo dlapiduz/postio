@@ -2,20 +2,20 @@
 #
 # The defect: the caret offset for "none" and for "at the start" were the
 # same number, so a reply's caret could sit below the quote and typing went
-# where the person was not looking. Typing goes where the caret is, so the
-# caret is what the frame has to show.
+# where the person was not looking. The caret's offset is not an observed
+# field, so this is judged from the frame: the empty first line the caret
+# sits on must be above the "wrote:" line.
 #
-# The caret's offset is not an observed field, and the runner's editor does
-# not paint typed text, so this is judged from the frame alone: the empty
-# first line the caret sits on must be above the "wrote:" line.
+# Re-expressed for Focus (T265): `j` puts the cursor on the row Reply
+# answers. The classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "commit", ref = "15192fb5" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
+command = "next_message"
 
 [[step]]
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }
 expect  = "The caret is on an empty line above the quoted message."
-

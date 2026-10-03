@@ -3,24 +3,31 @@
 # The defect: a selected row and the cursor row were drawn identically, so
 # after `x` on one row and moving down you could not tell which rows an
 # archive would act on. Selection state is checked exactly (one selected,
-# cursor three rows away); the reviewer judges the look on the frame.
+# the cursor three rows away); the reviewer judges the look on the frame,
+# where Focus also shows the bulk bar.
 #
-# Not expressible yet: the other half of #753 (the inbox reveals new mail
-# when at the top) needs an `event = "new_mail"` step, which the runner does
-# not support. Recorded in the lane report; add it when `new_mail` lands.
+# Re-expressed for Focus (T265): Focus starts with no cursor row, so `j`
+# first puts the cursor on the first row for `x` to select. The classic app
+# it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#753" }
 proof  = "pinned"
-design = "01-inbox-reading"
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 0, selection.count = 0 }
 
 [[step]]
 command = "toggle_selection"
 check   = { keyboard.region = "list", cursor.index = 0, selection.count = 1 }
-expect  = "The first row is selected."
+expect  = "The first row is selected, and the bulk bar says one is."
 
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
 check   = { cursor.index = 3, selection.count = 1 }

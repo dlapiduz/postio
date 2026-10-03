@@ -1,3 +1,9 @@
-# The screen `backfill`, carried over from the old screen sweep's table (FR-030).
+# The inbox with a backfill in flight: the top bar's sync label says how far
+# it has got (#411).
+#
+# Re-expressed for Focus (T265): the classic canvas design it was compared
+# with is the classic app's, which T256 removes; Focus's references are
+# never committed (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
 source = { kind = "design", ref = "none" }
-seed = "backfilling"
+seed   = "backfilling"

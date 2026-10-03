@@ -1,14 +1,18 @@
-# `g s` (go_to_flagged) opens the Flagged list with its flagged mail.
+# Go to Flagged lists the flagged mail (#1747, T257).
 #
-# Found while filming #813: the sidebar's own count says Flagged has 9, and
-# walking there with j lists 9 rows, but the go_to_flagged chord shows
-# "Flagged is empty" with 0 rows. Open until the chord and the sidebar row
-# load the same list (#1747).
+# In the classic app the go_to_flagged chord showed "Flagged is empty" while
+# its sidebar counted nine (#1747). In Focus `g *` lists flagged mail (C13,
+# T257): the small seed's eight flagged conversations, with no flag mark on
+# the rows.
+#
+# Re-expressed for Focus (T265), where it holds: pinned. The classic app
+# #1747 was found in is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1747" }
-proof  = "open"
+proof  = "pinned"
 
 [[step]]
 command = "go_to_flagged"
-settle  = { until = { rows.count = 9 } }
-check   = { rows.count = 9 }
-expect  = "The Flagged list shows the nine flagged conversations the sidebar counts."
+settle  = { until = { rows.count = 8 } }
+check   = { scope = "Flagged", rows.count = 8, keyboard.region = "list" }
+expect  = "The Flagged list shows the eight flagged conversations, and the header says Flagged."

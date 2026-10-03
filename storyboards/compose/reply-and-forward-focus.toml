@@ -2,13 +2,18 @@
 #
 # The defect: Forward opened with the keyboard in the body, where there is
 # no recipient yet, and Reply did nothing at all unless the row had first
-# been activated. Here the cursor is on a row that was never opened.
+# been opened. Here the cursor is on a row that was never opened.
+#
+# Re-expressed for Focus (T265): `j` puts the cursor on the first row, which
+# Reply and Forward answer from the list. The classic app it was written
+# against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#690" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
-check   = { cursor.index = 0 }
+command = "next_message"
+check   = { cursor.index = 0, view = "list" }
 
 [[step]]
 command = "reply"

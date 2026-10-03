@@ -1,27 +1,34 @@
-# Triage: j a j a u (ux-architect §4).
+# Triage: j a j a u (ux-architect §4, #1746).
 #
 # Walk down, archive, walk, archive, change your mind. Each archive must
 # say what happened and offer undo; the cursor stays on the row that took
 # the archived one's place; `u` brings the last one back. The thirty-thread
 # seed is long enough that nothing runs out.
-source = { kind = "flow", ref = "ux-architect §4" }
+#
+# Re-expressed for Focus (T265): its cursor starts on no row, so `j` puts
+# it on index 0. Red on #1746 until it lands: the archived row's cursor is
+# not handed to the row below. The classic app it was written against is
+# removed by T256.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1746" }
+proof  = "open"
 seed   = "thirty-threads"
 
 [[step]]
 id      = "j1"
 command = "next_message"
-check   = { cursor.index = 1, keyboard.region = "list" }
+check   = { cursor.index = 0, keyboard.region = "list" }
 
 [[step]]
 id      = "a1"
 command = "archive"
 check   = { cursor.index = { same_as = "j1" }, notice.undo = true, rows.count = { changed = true } }
-expect  = "The row goes, the next one is under the cursor, and a toast offers Undo."
+expect  = "The row goes, the next one is under the cursor ring, and a toast offers Undo."
 
 [[step]]
 id      = "j2"
 command = "next_message"
-check   = { cursor.index = 2 }
+check   = { cursor.index = 1 }
 
 [[step]]
 id      = "a2"

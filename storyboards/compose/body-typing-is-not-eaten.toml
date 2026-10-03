@@ -6,14 +6,18 @@
 # reply, and later single keys stopped working at random. Typed text must
 # go into the body and nothing else.
 #
-# The runner's editor does not paint typed text in the frame yet, so this
-# pins what the keys did NOT do: no second composer, no archive, no cursor
-# move, the body still holding the keyboard.
+# This pins what the keys did NOT do: no second composer, no archive, no
+# cursor move, the body still holding the keyboard.
+#
+# Re-expressed for Focus (T265): `j` first puts the cursor on the row Reply
+# answers. The classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#602" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
+command = "next_message"
+check   = { cursor.index = 0 }
 
 [[step]]
 command = "reply"

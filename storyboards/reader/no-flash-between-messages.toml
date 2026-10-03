@@ -1,27 +1,40 @@
 # The reading pane does not flash between messages (d1ddd2dc, #749, #947).
 #
 # The defect: moving from message to message reloaded the whole document,
-# so the pane went black or blank between them (reopened as a maybe-
-# regression during backfill) and a hold on `j` strobed. Pinned: the pane
-# shows the cursor's own message after every step, and the runner fails the
-# storyboard itself if any frame in between is blank.
-apps   = ["classic"]   # the reading pane; Focus has none, it opens a dialog
+# so the pane went black or blank between them and a hold on `j` strobed.
+# The pane shows the cursor's own message after every step, and the runner
+# fails the storyboard itself if any frame in between is blank.
+#
+# Re-expressed for Focus (T265) in its own reading pane (T232): `F8` opens
+# messages beside the list, `Return` opens the cursor's row there, and from
+# then on the pane follows the cursor. The walk starts on the third row,
+# past the digest row, which opens its own window rather than the pane.
+# The classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "commit", ref = "d1ddd2dc" }
 proof  = "pinned"
 
 [[step]]
-id      = "one"
-command = "next_message"
-check   = { reading.id = { changed = true }, cursor.index = 1 }
-expect  = "The next message replaces the last in place, with no flash."
+command = "toggle_reading_pane"
 
 [[step]]
 command = "next_message"
-check   = { reading.id = { changed = true }, cursor.index = 2 }
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "open_message"
+check   = { view = "reader", reading.id = { changed = true }, cursor.index = 2 }
+expect  = "The message opens in the pane beside the list."
 
 [[step]]
 command = "next_message"
 check   = { reading.id = { changed = true }, cursor.index = 3 }
+expect  = "The next message replaces the last in place, with no flash."
 
 [[step]]
 command = "next_message"
@@ -32,10 +45,6 @@ command = "next_message"
 check   = { reading.id = { changed = true }, cursor.index = 5 }
 
 [[step]]
-command = "next_message"
-check   = { reading.id = { changed = true }, cursor.index = 6 }
-
-[[step]]
 command = "prev_message"
-check   = { reading.id = { changed = true }, cursor.index = 5 }
+check   = { reading.id = { changed = true }, cursor.index = 4 }
 expect  = "Walking back is as steady as walking forward."

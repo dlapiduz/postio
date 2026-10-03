@@ -1,32 +1,29 @@
 # Opening a conversation lands on its newest message (#1385, #1372).
 #
-# The defect: the one-document pane opened on the oldest message, so a
-# person arriving at a long thread read it from the top when what they came
-# for was the newest. The rail's read-mark and the scroll then fought each
-# other. The focused message is the last of the seven (index 6), and the
-# pane is scrolled to it: the long-thread document is only a little taller
-# than the pane, so landing on the newest message is landing at the end,
-# where Page Down has nowhere to go.
+# The defect: the conversation opened on its oldest message, so a person
+# arriving at a long thread read it from the top when what they came for was
+# the newest. In the classic app's one-document pane the fix set the focus
+# and not the scroll (#1385, reopened).
 #
-# Open again: the fix set the focus and not the scroll -- the rail said
-# "7 of 7 in view" over a pane showing messages 1 to 4 -- and this
-# storyboard checked only the focus, so it passed (#1385, reopened).
+# Re-expressed for Focus (T265), where it holds: Focus's open message shows
+# one message, and Return on a thread shows its newest, message 7 of the
+# long-thread seed, and nothing moves once it has. The classic app it was
+# written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1385" }
-proof  = "open"
+proof  = "pinned"
 seed   = "long-thread"
 
 [[step]]
+command = "next_message"
+
+[[step]]
 id      = "open"
-wait    = { until = { reading.id = "7" } }
-check   = { reading.id = "7", reading.focused = 6 }
-expect  = "The conversation fills the reading pane with its newest message focused, and the rail marks 7 of 7."
+command = "open_message"
+check   = { view = "reader", reading.id = "7" }
+expect  = "The conversation opens on its newest message, 7 of 7."
 
 [[step]]
 wait    = { ms = 600 }
-check   = { reading.id = "7", reading.focused = 6 }
-expect  = "Nothing moves on its own once the pane has settled: no scroll, no jump to another message."
-
-[[step]]
-command = "scroll_reader_down"
-check   = { reading.scroll.offset = { unchanged = true }, reading.id = "7" }
-expect  = "Page Down has nowhere to go: the newest message, at the end of the thread, is already what the pane shows."
+check   = { reading.id = "7", reading.scroll = { same_as = "open" } }
+expect  = "Nothing moves on its own once the message has settled: no scroll, no jump to another message."

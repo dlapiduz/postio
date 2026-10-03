@@ -35,16 +35,16 @@ command = "next_message"
 [[step]]
 command = "open_message"
 settle  = { until = { view = "reader" } }
-check   = { view = "reader", reading.id = "89" }
+check   = { view = "reader", reading.id = "90" }
 
 [[step]]
 command = "more_actions"
-check   = { view = "reader", reading.id = "89" }
+check   = { view = "reader", reading.id = "90" }
 expect  = "More's menu is open under its button: Label, Move, Delete, each with its key."
 
 [[step]]
 key     = "Escape"
-check   = { view = "reader", reading.id = "89", keyboard.region = "reader" }
+check   = { view = "reader", reading.id = "90", keyboard.region = "reader" }
 expect  = "Escape closes the menu only. The message is still open and the keyboard is back on the More button."
 
 [[step]]

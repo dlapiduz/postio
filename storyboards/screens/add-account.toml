@@ -1,4 +1,9 @@
-# The screen `add-account`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "14-add-account" }
-design = "14-add-account"
+# The add-account dialog, a provider found for the address typed: the form
+# `add_account` opens, its lookup answered by hand (no server to ask).
+#
+# Re-expressed for Focus (T265): the classic canvas design it was compared
+# with is the classic app's, which T256 removes; Focus's references are
+# never committed (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "none" }
 preset = "add-account/route"

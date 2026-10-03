@@ -1,34 +1,34 @@
-# The Outbox reader does not offer Reply, Forward or Unsubscribe (#1523-#1525).
+# A message on its way out does not offer Reply (#1523-#1525, #1749).
 #
 # The defect: opening a message queued to send showed the reader's verbs
 # for mail somebody else sent, so `e` composed a reply to your own mail
 # still on its way out. The key has to refuse with a notice instead.
-# Open: Reply on the Outbox's message still opens a composer (reply to
-# yourself, with the quote header already typed). The check is the intent.
+# Open: `e` on the Outbox's message still opens a composer (#1749).
+#
+# Re-expressed for Focus (T265): the Outbox is a place in `g o`, and the
+# key is pressed on its one row. The classic app it was written against is
+# removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1749" }
 proof  = "open"
 seed   = "outbox"
 
 [[step]]
 command = "go_to_folders"
-check   = { keyboard.region = "sidebar" }
+check   = { keyboard.region = "picker" }
 
 [[step]]
-key     = "j"
+type    = "Outbox"
+
 [[step]]
-key     = "j"
-[[step]]
-key     = "j"
+key     = "Return"
+check   = { scope = "Outbox", rows.count = 1 }
 
 [[step]]
 id      = "outbox"
-key     = "j"
+command = "next_message"
 check   = { rows.count = 1, cursor.index = 0 }
 expect  = "The Outbox lists the one message queued to send."
-
-[[step]]
-command = "cycle_pane"
-check   = { keyboard.region = "list" }
 
 [[step]]
 command = "reply"

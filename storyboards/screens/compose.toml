@@ -1,5 +1,11 @@
-# The screen `compose`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "03-compose" }
-design = "03-compose"
+# A new message: the composer dialog over the list (screen 05).
+#
+# Re-expressed for Focus (T265): the classic canvas design it was compared
+# with is the classic app's, which T256 removes; Focus's references are
+# never committed (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 05" }
+
 [[step]]
 command = "compose"
+check   = { composer.open = true, keyboard.field = "to" }

@@ -27,7 +27,7 @@ command = "next_message"
 [[step]]
 command = "open_message"
 settle  = { until = { view = "reader" } }
-check   = { view = "reader", reading.id = "89", keyboard.region = "reader", rows.count = 60 }
+check   = { view = "reader", reading.id = "90", keyboard.region = "reader", rows.count = 60 }
 expect  = "The message is open, its action row showing Delete with the cap `Del`."
 
 [[step]]

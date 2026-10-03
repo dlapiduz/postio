@@ -1,28 +1,41 @@
 # Search results can be switched between relevance and date order (#499).
 #
 # The defect: the results header showed a "Relevance" chip whose chevron did
-# nothing, and there was no key. `toggle_result_order` is the keyboard path;
-# the order is read off the first row, which must change.
+# nothing, and there was no key. `toggle_result_order` is the keyboard path.
+#
+# Re-expressed for Focus (T265): the bar lists its order as a row ("Sorted
+# by relevance"), and `O` switches it once the arrows have chosen a result
+# (before that `O` is a letter, T241). The order row is what is read back.
+# The classic app it was written against is removed by T256.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#499" }
 proof  = "pinned"
-design = "05-search"
 
 [[step]]
 command = "search"
+
 [[step]]
 type    = "harbour"
-settle  = { until = { rows.count = { changed = true } } }
-check   = { rows.count = 11, cursor.id = "43" }
+
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "list" }
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+check   = { keyboard.region = "search", app.focus.bar.highlighted = "order" }
+
+[[step]]
+id      = "relevance"
+key     = "Down"
+check   = { app.focus.bar.highlighted = "message" }
+
 [[step]]
 command = "toggle_result_order"
-settle  = { until = { cursor.id = "30" } }
-check   = { keyboard.region = "list", rows.count = 11, cursor.id = "30" }
-expect  = "The same eleven hits, now newest first, and the chip in the header says so."
+check   = { keyboard.region = "search", app.focus.bar.highlighted = "order", app.focus.bar.messages = { same_as = "relevance" } }
+expect  = "The same hits, now newest first, and the order row says so."
+
+[[step]]
+key     = "Down"
+
 [[step]]
 command = "toggle_result_order"
-settle  = { until = { cursor.id = "43" } }
-check   = { rows.count = 11, cursor.id = "43" }
+check   = { app.focus.bar.highlighted = "order", app.focus.bar.messages = { same_as = "relevance" } }
 expect  = "Back to relevance order."
