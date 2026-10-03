@@ -53,7 +53,7 @@ const WIDE: u16 = 100;
 const SENDER_WIDE: u16 = 20;
 const SENDER_NARROW: u16 = 16;
 /// The room the right edge keeps.
-const MARGIN: usize = 1;
+const MARGIN: usize = 0;
 
 /// How many lines `row` takes: one, or two with a marker. A row not here yet
 /// is one.
@@ -237,11 +237,9 @@ fn first_line<'a>(
         ));
     }
     if !row.preview.as_str().is_empty() && left >= 4 {
-        spans.push(Span::styled(
-            format!(" {}", fit(row.preview.as_str(), left - 1)),
-            theme.style(Role::Dim),
-        ));
-        left = 0;
+        let first = format!(" {}", fit(row.preview.as_str(), left - 1));
+        left -= first.width();
+        spans.push(Span::styled(first, theme.style(Role::Dim)));
     }
     spans.push(Span::raw(" ".repeat(left + 2)));
     spans.push(Span::styled(
@@ -470,6 +468,28 @@ mod tests {
         );
         assert!(lines[9].contains("Marco Ruiz"), "{drawn}");
         assert!(!drawn.contains('─'), "no rule between rows:\n{drawn}");
+    }
+
+    #[test]
+    fn the_trailing_column_ends_at_the_right_edge_on_short_rows_and_long() {
+        for width in [50u16, 80, 120, 200] {
+            let drawn = screen(width, 36, &inbox((width, 36)));
+            let mut seen = 0;
+            for line in drawn.lines().filter(|line| {
+                ["Grace", "Weekly", "Ada Moreno", "Tomás", "Marco"]
+                    .iter()
+                    .any(|who| line.contains(who))
+            }) {
+                seen += 1;
+                assert_eq!(
+                    line.trim_end().chars().count(),
+                    usize::from(width),
+                    "the time ends at column {} on every row ({width} wide):\n{drawn}",
+                    width - 1
+                );
+            }
+            assert!(seen >= 5, "{drawn}");
+        }
     }
 
     #[test]
