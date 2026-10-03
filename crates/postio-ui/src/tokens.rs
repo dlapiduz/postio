@@ -583,8 +583,7 @@ pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenE
 /// `--r-*` custom properties `data/reader.css`'s structural rules reference.
 ///
 /// A `WebView` has its own CSS engine with no notion of the GTK style
-/// context `--postio-*` variables live on (see [`generate`]'s module docs),
-/// so this emits literal values — the same parser and the same tint/ramp
+/// context `--postio-*` variables live on, so this emits literal values — the same parser and the same tint/ramp
 /// math, mapped onto the reader's own, smaller role set. Unlike GTK, WebKit
 /// honours `@media (prefers-color-scheme: dark)` directly, so the reader
 /// needs no `postio-dark` class equivalent.

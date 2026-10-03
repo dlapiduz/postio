@@ -18,7 +18,7 @@
 //!   notes in the configured projects folder, and one is suggested for a
 //!   capture with the reason why.
 //! - **Finished tasks are read back** -- `- [x] … ✅ YYYY-MM-DD` -- so Focus
-//!   can show "Task in <project> · due <day>" on a row and offer to archive
+//!   can show "Task in `<project>` · due `<day>`" on a row and offer to archive
 //!   the conversation once the task is ticked.
 //!
 //! It is plain file access: no network, no plugin, no store and no toolkit,

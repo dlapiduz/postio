@@ -10,7 +10,7 @@
 //! offline, and genuinely-empty against a body that will not decode. Issue
 //! #70 Cause A was all of them rendering as one blank column.
 //!
-//! [`cid_source`] carries a security property in fifteen lines: a
+//! [`resolve_cid`] carries a security property in a few lines: a
 //! `Content-ID` resolves only within the message that declares it, so one
 //! sender cannot address another sender's parts.
 //!
@@ -195,8 +195,8 @@ pub async fn load_with_row(
 
 /// One inline part of `message`, by its `Content-ID`.
 ///
-/// The same resolution [`cid_source`] performs, as a plain call — because a
-/// frontend across an FFI cannot hold an `Rc<dyn BlobSource>`, and a second
+/// A plain call rather than an `Rc<dyn BlobSource>` -- because a frontend
+/// across an FFI cannot hold one, and a second
 /// implementation of these six lines would be a second chance to get the
 /// scoping wrong.
 ///

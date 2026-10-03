@@ -512,7 +512,7 @@ pub async fn open_store(
     open_store_at(paths::store_path(), store_key).await
 }
 
-/// What [`open_store_reporting`] is doing right now.
+/// What [`open_store_at_reporting`] is doing right now.
 ///
 /// Three waits, because they are three different promises to somebody
 /// watching a window that is already on screen (#1114): reading the store,
@@ -604,7 +604,7 @@ pub async fn open_store_at(
         .map_err(String::from)
 }
 
-/// [`open_store_at`], saying what it is doing — see [`open_store_reporting`].
+/// [`open_store_at`], saying what it is doing ([`Opening`]).
 pub async fn open_store_at_reporting(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,

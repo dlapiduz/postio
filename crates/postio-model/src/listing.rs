@@ -238,7 +238,7 @@ pub enum Surfaced {
         reminder: crate::ids::ReminderId,
         /// The conversation it is about.
         thread: ThreadId,
-        /// The day it was set: "No reply since <date>".
+        /// The day it was set: "No reply since `<date>`".
         since: DateTime<Utc>,
         /// The conversation's latest message: the row's first line.
         representative: MessageSummary,

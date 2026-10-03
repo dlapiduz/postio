@@ -25,9 +25,8 @@
 //! [`Composer::connect_reply_source`] and [`Composer::connect_opened`] --
 //! which this module does not register, precisely so Focus's dialog frame
 //! can. A composer's seam is a single slot, not a signal several listeners
-//! share, so a seam this module owns cannot also be owned by an app's own
-//! chrome; [`install_reply_source`] is deliberately the plain version both
-//! apps could use unchanged, and Focus keeps its own richer one.
+//! share, so a seam this module owns cannot also be owned by the app's own
+//! chrome: Focus keeps its own reply source.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

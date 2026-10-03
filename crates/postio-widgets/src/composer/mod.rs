@@ -3761,8 +3761,7 @@ const ACTION_BUTTONS: &[(CommandId, &str)] = &[
 ///
 /// A free function, decoupled from the widgets [`Composer::set_keymap`]
 /// updates from it, so a rebind reaching the row is testable without a
-/// display. The same split [`crate::reader::actions`] makes, for the same
-/// reason (#828).
+/// display (#828).
 fn action_hints(keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
     ACTION_BUTTONS
         .iter()

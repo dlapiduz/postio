@@ -151,7 +151,7 @@ fn begins_history(line: &str, next: Option<&str>) -> bool {
             }))
 }
 
-/// Whether `line` introduces somebody else's words: "On <when>, <who>
+/// Whether `line` introduces somebody else's words: "On `<when>`, `<who>`
 /// wrote:".
 fn is_attribution(line: &str) -> bool {
     let lower = line.to_lowercase();

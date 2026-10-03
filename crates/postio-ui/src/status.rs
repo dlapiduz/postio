@@ -245,9 +245,8 @@ impl Trackers {
 
     /// What `account`'s line should say.
     ///
-    /// An account nothing has been heard about is offline — the same default
-    /// [`postio_core::AppState::connection`] gives, and for the same reason:
-    /// silence is not a claim that the server is reachable.
+    /// An account nothing has been heard about is offline: silence is not a
+    /// claim that the server is reachable.
     pub fn status(&self, account: AccountId) -> SyncStatus {
         self.per_account
             .get(&account)
