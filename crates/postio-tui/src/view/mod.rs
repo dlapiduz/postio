@@ -325,62 +325,26 @@ mod tests {
     use super::*;
     use crate::app::{Input, update};
     use crate::caps::{Background, Colour};
-    use crate::input::Keys;
-
-    fn screen(width: u16, height: u16, app: &App) -> String {
-        let theme = Theme::new(Colour::None, Background::Unknown, &Default::default()).0;
-        let now = chrono::Local
-            .with_ymd_and_hms(2026, 9, 23, 12, 0, 0)
-            .unwrap();
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                draw(frame, app, &theme, now);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        (0..buffer.area.height)
-            .map(|y| {
-                (0..buffer.area.width)
-                    .map(|x| buffer[(x, y)].symbol().to_owned())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
+    use crate::test_support::{
+        app_with_keys, buffer, hits_of, places, saved_search, screen, seed_places,
+    };
 
     fn with_sidebar(size: (u16, u16)) -> App {
         with_sidebar_and_keys(size, &Default::default())
     }
 
+    /// Mail from one account with an Inbox of four unread and a saved search.
     fn with_sidebar_and_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) -> App {
-        use postio_model::mailbox::{Mailbox, MailboxRole};
-        let keys = Keys::new(&postio_core::Keymap::resolve(bindings)).0;
-        let mut app = App::new(size, keys);
-        let mut account = postio_model::Account::new(
-            "ada",
-            postio_model::EmailAddress::new(None::<String>, "ada@example.com"),
-        );
-        account.id = postio_model::AccountId::new(1);
-        account.enabled = true;
-        let mut inbox = Mailbox::new(account.id, "INBOX", None);
-        inbox.id = postio_model::MailboxId::new(1);
-        inbox.role = MailboxRole::Inbox;
-        inbox.selectable = true;
-        inbox.counts.unread = 4;
-        update(
-            &mut app,
-            Input::Sidebar(crate::sidebar::Contents {
-                accounts: vec![account],
-                folders: vec![inbox],
-                counts: Vec::new(),
-                saved: vec![crate::sidebar::Saved {
-                    key: "unread-from-ada".into(),
-                    name: "Unread from Ada".into(),
-                    query: "from:ada is:unread".into(),
-                }],
-            }),
-        );
+        let mut app = app_with_keys(size, bindings);
+        let mut contents = places();
+        contents.folders.truncate(1);
+        contents.folders[0].counts.unread = 4;
+        contents.saved = vec![saved_search(
+            "unread-from-ada",
+            "Unread from Ada",
+            "from:ada is:unread",
+        )];
+        seed_places(&mut app, contents);
         app
     }
 
@@ -561,20 +525,6 @@ mod tests {
         update(&mut app, Input::Paste("~/fixture.pdf".into()));
         let screen = screen(160, 16, &app);
         assert!(screen.contains("Attach: ~/fixture.pdf"), "{screen}");
-    }
-
-    fn buffer(width: u16, height: u16, app: &App) -> ratatui::buffer::Buffer {
-        let theme = Theme::new(Colour::None, Background::Unknown, &Default::default()).0;
-        let now = chrono::Local
-            .with_ymd_and_hms(2026, 9, 23, 12, 0, 0)
-            .unwrap();
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                draw(frame, app, &theme, now);
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
     }
 
     fn writing_bold(app: &mut App) {
@@ -952,19 +902,6 @@ mod tests {
         screen(width, height, app)
     }
 
-    fn hits_of(width: u16, height: u16, app: &App) -> hit::Hits {
-        let theme = Theme::new(Colour::None, Background::Unknown, &Default::default()).0;
-        let now = chrono::Local
-            .with_ymd_and_hms(2026, 9, 23, 12, 0, 0)
-            .unwrap();
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        let mut hits = hit::Hits::default();
-        terminal
-            .draw(|frame| hits = draw(frame, app, &theme, now))
-            .unwrap();
-        hits
-    }
-
     #[test]
     fn a_click_on_the_third_list_row_is_that_row() {
         // T070.
@@ -984,7 +921,7 @@ mod tests {
                 _ => None,
             })
             .expect("a page asked for");
-        let rows = (0..5).map(crate::app::tests::row).collect();
+        let rows = (0..5).map(crate::test_support::row).collect();
         update(
             &mut app,
             Input::Page {
@@ -1083,8 +1020,7 @@ mod tests {
     fn an_empty_store_opens_on_the_first_run() {
         // T084: the empty-store screen.
         use crossterm::event::{KeyCode, KeyEvent};
-        let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
-        let mut app = App::new((120, 30), keys);
+        let mut app = crate::test_support::app((120, 30));
         update(
             &mut app,
             Input::Sidebar(crate::sidebar::Contents::default()),
@@ -1280,8 +1216,7 @@ mod tests {
     #[test]
     fn a_browser_sign_in_shows_the_whole_address_and_what_it_allows() {
         use crossterm::event::{KeyCode, KeyEvent};
-        let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
-        let mut app = App::new((100, 40), keys);
+        let mut app = crate::test_support::app((100, 40));
         update(
             &mut app,
             Input::Sidebar(crate::sidebar::Contents::default()),

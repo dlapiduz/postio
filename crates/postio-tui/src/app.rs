@@ -3914,84 +3914,13 @@ pub(crate) mod tests {
     use chrono::{TimeZone, Utc};
     use crossterm::event::{KeyCode, KeyEventKind, KeyEventState, KeyModifiers};
     use postio_model::{MailboxId, MessageId};
-    use postio_ui::terminal::SafeText;
 
     use super::*;
     use crate::layout::Pane;
-
-    fn app(size: (u16, u16)) -> App {
-        let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
-        App::new(size, keys)
-    }
-
-    fn press(c: char) -> Input {
-        Input::Key(KeyEvent {
-            code: KeyCode::Char(c),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-    }
-
-    pub(crate) fn row(position: u32) -> Row {
-        Row {
-            id: MessageId::new(i64::from(position) + 1),
-            thread: None,
-            is_thread: false,
-            from: SafeText::new("Ada"),
-            address: Some("ada@example.com".into()),
-            subject: SafeText::new(&format!("Message {position}")),
-            preview: SafeText::new(""),
-            when: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
-            unread: false,
-            flagged: false,
-            attachment: false,
-            count: 1,
-        }
-    }
-
-    /// Answer every fetch the way the host would, with rows for its range;
-    /// return how many fetches there were.
-    fn serve(app: &mut App, effects: Vec<Effect>) -> usize {
-        let mut fetched = 0;
-        let mut pending = effects;
-        while let Some(effect) = pending.pop() {
-            if let Effect::Fetch {
-                generation,
-                page,
-                fetch: Fetch::Scope(request),
-            } = effect
-            {
-                fetched += 1;
-                let rows = (request.offset..request.offset + request.limit)
-                    .filter(|position| *position < app.total())
-                    .map(row)
-                    .collect();
-                pending.extend(update(
-                    app,
-                    Input::Page {
-                        generation,
-                        page,
-                        rows: Ok(Page {
-                            total: app.total(),
-                            rows,
-                        }),
-                    },
-                ));
-            }
-        }
-        fetched
-    }
-
-    fn opened(app: &mut App, total: u32) -> Vec<Effect> {
-        update(
-            app,
-            Input::Opened {
-                scope: ListScope::Mailbox(MailboxId::new(1)),
-                total,
-            },
-        )
-    }
+    use crate::test_support::{
+        alt, app, click, ctrl, key, open_list, places, press, reader_text, row, serve, type_text,
+        wheel,
+    };
 
     #[test]
     fn a_resize_changes_what_is_shown_and_asks_the_host_nothing() {
@@ -4019,7 +3948,7 @@ pub(crate) mod tests {
         assert_eq!(app((160, 42)).list_height(), 13);
         assert_eq!(app((160, 16)).list_height(), 4);
         let mut app = app((160, 16));
-        let opening = opened(&mut app, 100);
+        let opening = open_list(&mut app, 100);
         serve(&mut app, opening);
         assert_eq!(
             app.visible().len(),
@@ -4031,7 +3960,7 @@ pub(crate) mod tests {
     #[test]
     fn opening_a_list_asks_only_for_the_pages_in_view() {
         let mut app = app((120, 30));
-        let effects = opened(&mut app, 100_000);
+        let effects = open_list(&mut app, 100_000);
         let pages: Vec<u32> = effects
             .iter()
             .filter_map(|effect| match effect {
@@ -4053,7 +3982,7 @@ pub(crate) mod tests {
         // shares, so a fast scroll does not stall at a boundary -- and
         // walking 500 rows reads the pages those rows are on and no more.
         let mut app = app((120, 30));
-        let opening = opened(&mut app, 100_000);
+        let opening = open_list(&mut app, 100_000);
         serve(&mut app, opening);
         let mut reads = 0;
         for _ in 0..500 {
@@ -4074,7 +4003,7 @@ pub(crate) mod tests {
     #[test]
     fn the_cursor_stops_at_either_end() {
         let mut app = app((120, 30));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('k'));
         assert_eq!(app.cursor(), 0);
@@ -4100,7 +4029,7 @@ pub(crate) mod tests {
     fn a_verb_acts_on_what_is_marked_not_where_the_cursor_is() {
         // US1 scenario 3: three marked, the cursor on a fourth.
         let mut app = app((120, 30));
-        let opening = opened(&mut app, 10);
+        let opening = open_list(&mut app, 10);
         serve(&mut app, opening);
         for position in [1, 2, 3] {
             mark(&mut app, position);
@@ -4127,7 +4056,7 @@ pub(crate) mod tests {
     #[test]
     fn with_nothing_marked_a_verb_acts_on_the_cursor_row() {
         let mut app = app((120, 30));
-        let opening = opened(&mut app, 10);
+        let opening = open_list(&mut app, 10);
         serve(&mut app, opening);
         update(&mut app, press('j'));
         update(&mut app, press('a'));
@@ -4141,7 +4070,7 @@ pub(crate) mod tests {
     #[test]
     fn marked_rows_are_drawn_as_marked() {
         let mut app = app((120, 30));
-        let opening = opened(&mut app, 10);
+        let opening = open_list(&mut app, 10);
         serve(&mut app, opening);
         mark(&mut app, 2);
         let visible = app.visible();
@@ -4152,7 +4081,7 @@ pub(crate) mod tests {
     #[test]
     fn an_undoable_action_is_announced_and_ctrl_z_sends_undo() {
         let mut app = app((120, 30));
-        let opening = opened(&mut app, 10);
+        let opening = open_list(&mut app, 10);
         serve(&mut app, opening);
         update(
             &mut app,
@@ -4180,7 +4109,7 @@ pub(crate) mod tests {
     #[test]
     fn a_list_the_host_changed_is_counted_again_and_reread() {
         let mut app = app((120, 30));
-        let opening = opened(&mut app, 10);
+        let opening = open_list(&mut app, 10);
         serve(&mut app, opening);
         let scope = ListScope::Mailbox(MailboxId::new(1));
         let effects = update(
@@ -4206,7 +4135,7 @@ pub(crate) mod tests {
     fn in_the_composer_a_letter_is_typed_not_run() {
         // T053: `a` is Archive in the list and a letter in the composer.
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
         assert_eq!(app.focus(), Focus::Composer);
@@ -4230,7 +4159,7 @@ pub(crate) mod tests {
     fn a_reply_opens_filled_and_escape_goes_back_to_the_same_row() {
         // US3 scenario 1.
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('j'));
         let row = app.cursor();
@@ -4273,8 +4202,8 @@ pub(crate) mod tests {
     #[test]
     fn a_new_message_starts_empty_from_the_account_on_screen() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('c'));
         let composer = app.composer().expect("composing");
@@ -4327,17 +4256,17 @@ pub(crate) mod tests {
         // whether the keyboard is still in the bar or has gone down to the
         // results with Enter.
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         update(&mut app, press('/'));
-        typing(&mut app, "ada");
+        type_text(&mut app, "ada");
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.search_query(), None, "Escape in the bar leaves it");
         assert_eq!(app.focus(), Focus::List);
 
         update(&mut app, press('/'));
-        typing(&mut app, "ada");
+        type_text(&mut app, "ada");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::List, "Enter goes down to the results");
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
@@ -4353,7 +4282,7 @@ pub(crate) mod tests {
         // It fell through to the dispatcher, which answered that it was not
         // wired up; opening is the reader's own business.
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let effects = app.command("open_message");
         assert!(
@@ -4431,8 +4360,8 @@ pub(crate) mod tests {
     #[test]
     fn the_go_to_keys_open_the_accounts_folder_with_that_role() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let account = postio_model::AccountId::new(1);
         assert_eq!(
@@ -4465,8 +4394,8 @@ pub(crate) mod tests {
         // specs/007-postio-focus T162: the one keymap's two new
         // destinations, by role, as the classic app's `act` reaches them.
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let account = postio_model::AccountId::new(1);
 
@@ -4492,7 +4421,7 @@ pub(crate) mod tests {
         // searches by their place in the sidebar, as activating the line
         // does; a place with nothing pinned is said, as on the desktop.
         let mut app = app((160, 40));
-        let mut contents = sidebar_contents();
+        let mut contents = places();
         contents.saved = vec![
             crate::sidebar::Saved {
                 key: "unread-from-ada".into(),
@@ -4506,7 +4435,7 @@ pub(crate) mod tests {
             },
         ];
         update(&mut app, Input::Sidebar(contents));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         let effects = update(&mut app, key(KeyCode::Char('2'), KeyModifiers::ALT));
@@ -4525,8 +4454,8 @@ pub(crate) mod tests {
     #[test]
     fn previous_view_goes_back_where_the_list_was() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let account = postio_model::AccountId::new(1);
         update(
@@ -4545,7 +4474,7 @@ pub(crate) mod tests {
     #[test]
     fn next_scope_walks_each_account_then_all_of_them() {
         use postio_model::mailbox::{Mailbox, MailboxRole};
-        let mut contents = sidebar_contents();
+        let mut contents = places();
         let mut second = contents.accounts[0].clone();
         second.id = postio_model::AccountId::new(2);
         second.address = postio_model::EmailAddress::new(None::<String>, "bea@example.com");
@@ -4557,7 +4486,7 @@ pub(crate) mod tests {
         contents.folders.push(inbox);
         let mut app = app((160, 40));
         update(&mut app, Input::Sidebar(contents));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let mut walked = Vec::new();
         for _ in 0..3 {
@@ -4611,7 +4540,7 @@ pub(crate) mod tests {
         }
         campaign.push_str("</td></tr></table></td></tr></table>");
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let message = MessageId::new(1);
@@ -4641,8 +4570,8 @@ pub(crate) mod tests {
     fn run_anywhere(id: &str, spec: &postio_core::registry::CommandSpec) -> Vec<Effect> {
         use postio_core::Context;
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         if spec.contexts == Context::Composer.as_set() {
@@ -4811,7 +4740,7 @@ pub(crate) mod tests {
     fn enter_on_a_row_in_drafts_reopens_the_draft() {
         use postio_model::mailbox::{Mailbox, MailboxRole};
         let mut app = app((160, 40));
-        let mut contents = sidebar_contents();
+        let mut contents = places();
         let mut drafts = Mailbox::new(postio_model::AccountId::new(1), "Drafts", None);
         drafts.id = MailboxId::new(9);
         drafts.role = MailboxRole::Drafts;
@@ -5037,16 +4966,12 @@ pub(crate) mod tests {
         ))
     }
 
-    fn typing(app: &mut App, text: &str) -> Vec<Effect> {
-        text.chars().flat_map(|c| update(app, press(c))).collect()
-    }
-
     #[test]
     fn typing_a_recipient_offers_the_contacts_it_could_be() {
         // T055, at the desktop's threshold of four characters (#424).
         let mut app = app((160, 40));
         composing(&mut app);
-        let effects = typing(&mut app, "ada@");
+        let effects = type_text(&mut app, "ada@");
         let asked: Vec<_> = effects
             .iter()
             .filter_map(|effect| match effect {
@@ -5084,7 +5009,7 @@ pub(crate) mod tests {
     fn an_answer_for_what_is_no_longer_typed_is_not_offered() {
         let mut app = app((160, 40));
         composing(&mut app);
-        typing(&mut app, "ada@e");
+        type_text(&mut app, "ada@e");
         update(
             &mut app,
             Input::Recipients {
@@ -5099,7 +5024,7 @@ pub(crate) mod tests {
     fn escape_puts_suggestions_away_before_it_leaves() {
         let mut app = app((160, 40));
         composing(&mut app);
-        typing(&mut app, "ada@");
+        type_text(&mut app, "ada@");
         update(
             &mut app,
             Input::Recipients {
@@ -5140,7 +5065,7 @@ pub(crate) mod tests {
         let mut app = app((160, 40));
         composing(&mut app);
         in_the_body(&mut app);
-        typing(&mut app, "See attached");
+        type_text(&mut app, "See attached");
 
         let dropped = format!("{} '{}'", one.display(), two.display());
         let effects = update(&mut app, Input::Paste(dropped));
@@ -5232,7 +5157,7 @@ pub(crate) mod tests {
         update(&mut app, key(KeyCode::Char('a'), KeyModifiers::ALT));
         assert_eq!(app.path_prompt(), Some(""), "the prompt is open");
 
-        typing(&mut app, &format!("{}/fix", dir.path().display()));
+        type_text(&mut app, &format!("{}/fix", dir.path().display()));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         let completed = dir.path().join("fixture.pdf").display().to_string();
         assert_eq!(app.path_prompt(), Some(completed.as_str()));
@@ -5301,15 +5226,11 @@ pub(crate) mod tests {
         );
     }
 
-    fn alt(c: char) -> Input {
-        key(KeyCode::Char(c), KeyModifiers::ALT)
-    }
-
     #[test]
     fn a_popped_out_draft_keeps_its_id_and_the_reader_comes_back() {
         // T063 (FR-003): the desktop's composer window is a tab here.
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
         draft.id = postio_model::DraftId::new(5);
@@ -5367,7 +5288,7 @@ pub(crate) mod tests {
         let mut app = app((160, 40));
         composing(&mut app);
         in_the_body(&mut app);
-        let effects = typing(&mut app, "Here is the photo: ");
+        let effects = type_text(&mut app, "Here is the photo: ");
         assert_eq!(reads_the_clipboard(&effects), 0);
         let effects = update(&mut app, Input::Paste("some words".into()));
         assert_eq!(
@@ -5383,7 +5304,7 @@ pub(crate) mod tests {
         let mut app = app((160, 40));
         composing(&mut app);
         in_the_body(&mut app);
-        typing(&mut app, "Photo: ");
+        type_text(&mut app, "Photo: ");
         let effects = update(&mut app, alt('g'));
         assert_eq!(reads_the_clipboard(&effects), 1, "{effects:?}");
 
@@ -5448,7 +5369,7 @@ pub(crate) mod tests {
     fn a_search_is_scoped_and_refined_from_its_facets_without_retyping() {
         use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('/'));
         let mut latest = 0;
@@ -5549,7 +5470,7 @@ pub(crate) mod tests {
     fn a_search_runs_on_every_key_and_a_half_typed_operator_is_no_error() {
         // US4 scenario 1.
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('/'));
         assert_eq!(app.focus(), Focus::Search);
@@ -5611,10 +5532,10 @@ pub(crate) mod tests {
     }
 
     fn showing_results(app: &mut App) {
-        let opening = opened(app, 3);
+        let opening = open_list(app, 3);
         serve(app, opening);
         update(app, press('/'));
-        let asked = typing(app, "tide");
+        let asked = type_text(app, "tide");
         let sequence = searches(&asked).last().unwrap().0;
         update(
             app,
@@ -5656,10 +5577,10 @@ pub(crate) mod tests {
     #[test]
     fn a_palette_opened_in_the_search_bar_offers_the_searchs_commands() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('/'));
-        typing(&mut app, "tide");
+        type_text(&mut app, "tide");
         update(&mut app, ctrl('k'));
         let titles: Vec<String> = app
             .palette()
@@ -5675,7 +5596,7 @@ pub(crate) mod tests {
     #[test]
     fn backspace_takes_a_whole_chip_and_escape_puts_the_folder_back() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('/'));
         for c in "tide from:ada".chars() {
@@ -5702,16 +5623,12 @@ pub(crate) mod tests {
         assert!(effects.contains(&Effect::Recount(scope)), "{effects:?}");
     }
 
-    fn ctrl(c: char) -> Input {
-        key(KeyCode::Char(c), KeyModifiers::CONTROL)
-    }
-
     #[test]
     fn the_palette_lists_what_this_context_reaches_with_keys_this_terminal_sends() {
         // T066: the rows are postio_ui::palette::entries, and each shows the
         // chord a legacy terminal can deliver.
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, ctrl('k'));
         assert_eq!(app.focus(), Focus::Palette);
@@ -5744,10 +5661,10 @@ pub(crate) mod tests {
     #[test]
     fn a_palette_row_runs_where_the_palette_was_opened() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, ctrl('k'));
-        typing(&mut app, "archive");
+        type_text(&mut app, "archive");
         assert_eq!(app.palette().unwrap().rows[0].title, "Archive");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
@@ -5768,8 +5685,8 @@ pub(crate) mod tests {
     #[test]
     fn the_search_bars_prefixes_reach_the_palette_and_the_folders() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         update(&mut app, press('/'));
@@ -5782,7 +5699,7 @@ pub(crate) mod tests {
         update(&mut app, press('#'));
         let folders = app.palette().expect("# goes to a folder");
         assert_eq!(folders.marker, "#");
-        typing(&mut app, "arch");
+        type_text(&mut app, "arch");
         assert_eq!(app.palette().unwrap().rows[0].title, "Archive");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
@@ -5807,8 +5724,8 @@ pub(crate) mod tests {
     #[test]
     fn the_plus_prefix_puts_a_label_on_the_selection() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         update(&mut app, press('/'));
@@ -5822,7 +5739,7 @@ pub(crate) mod tests {
             &mut app,
             Input::Labels(vec![labelled(7, "Work"), labelled(8, "Receipts")]),
         );
-        typing(&mut app, "rec");
+        type_text(&mut app, "rec");
         assert_eq!(app.palette().unwrap().rows[0].title, "Receipts");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(
@@ -5838,8 +5755,8 @@ pub(crate) mod tests {
         // A label of `None` means "ask": sent as it is, the dispatcher
         // refuses it with "Pick a label to add".
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         let effects = update(&mut app, press('l'));
@@ -5857,8 +5774,8 @@ pub(crate) mod tests {
     #[test]
     fn move_asks_which_folder_and_moves_rather_than_opening_it() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         let effects = update(&mut app, press('m'));
@@ -5869,7 +5786,7 @@ pub(crate) mod tests {
             "{effects:?}"
         );
         assert_eq!(app.palette().expect("the folder picker").marker, "#");
-        typing(&mut app, "arch");
+        type_text(&mut app, "arch");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects.iter().any(|effect| matches!(
@@ -5890,8 +5807,8 @@ pub(crate) mod tests {
     #[test]
     fn the_at_prefix_finds_a_correspondent_and_searches_their_mail() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         update(&mut app, press('/'));
@@ -5918,7 +5835,7 @@ pub(crate) mod tests {
                 contact("Grace Hopper", "grace@example.test"),
             ]),
         );
-        typing(&mut app, "gh");
+        type_text(&mut app, "gh");
         assert_eq!(app.palette().unwrap().rows[0].title, "Grace Hopper");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::Search, "back in the bar, to build on");
@@ -5932,35 +5849,12 @@ pub(crate) mod tests {
         assert_eq!(asked, ["from:grace@example.test"]);
     }
 
-    fn click(target: crate::view::hit::Target, ctrl: bool, shift: bool) -> Input {
-        Input::Pointer(Pointer::Click {
-            hit: crate::view::hit::Hit {
-                target,
-                column: 0,
-                row: 0,
-            },
-            ctrl,
-            shift,
-        })
-    }
-
-    fn wheel(target: crate::view::hit::Target, down: bool) -> Input {
-        Input::Pointer(Pointer::Wheel {
-            hit: crate::view::hit::Hit {
-                target,
-                column: 0,
-                row: 0,
-            },
-            down,
-        })
-    }
-
     #[test]
     fn a_click_moves_the_cursor_and_ctrl_or_shift_select_without_moving_the_reader() {
         // US5 scenario 1.
         use crate::view::hit::Target;
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 8);
+        let opening = open_list(&mut app, 8);
         serve(&mut app, opening);
 
         let effects = update(&mut app, click(Target::Row(2), false, false));
@@ -6001,8 +5895,8 @@ pub(crate) mod tests {
     fn a_click_in_the_sidebar_opens_that_folder() {
         use crate::view::hit::Target;
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let (lines, _) = app.sidebar();
         let archive = lines
@@ -6021,7 +5915,7 @@ pub(crate) mod tests {
         // US5 scenario 2.
         use crate::view::hit::Target;
         let mut app = app((160, 20));
-        let opening = opened(&mut app, 200);
+        let opening = open_list(&mut app, 200);
         serve(&mut app, opening);
         let reading = crate::conversation::Reading {
             row: MessageId::new(1),
@@ -6130,7 +6024,7 @@ pub(crate) mod tests {
         // US5 scenario 3.
         use crate::view::hit::Target;
         let mut app = app((160, 40)).with_mouse(false);
-        let opening = opened(&mut app, 8);
+        let opening = open_list(&mut app, 8);
         serve(&mut app, opening);
         let effects = update(&mut app, click(Target::Row(4), false, false));
         assert!(effects.is_empty(), "{effects:?}");
@@ -6182,7 +6076,7 @@ pub(crate) mod tests {
         use postio_ui::onboarding::{Status, SyncWindow};
         let mut app = app((160, 40));
         update(&mut app, Input::Sidebar(an_empty_store()));
-        typing(&mut app, "ada@example.test");
+        type_text(&mut app, "ada@example.test");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects.contains(&Effect::Discover("ada@example.test".into())),
@@ -6194,7 +6088,7 @@ pub(crate) mod tests {
             &mut app,
             Input::Discovered(Ok(Status::Found(discovered_settings()))),
         );
-        typing(&mut app, "correct horse");
+        type_text(&mut app, "correct horse");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let submitted = effects
             .iter()
@@ -6218,7 +6112,7 @@ pub(crate) mod tests {
             app.first_run().unwrap().status().message(),
             Some("The server rejected that.")
         );
-        typing(&mut app, "!");
+        type_text(&mut app, "!");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects
@@ -6241,7 +6135,7 @@ pub(crate) mod tests {
     fn once_there_is_an_account_its_inbox_opens() {
         let mut app = app((160, 40));
         update(&mut app, Input::Sidebar(an_empty_store()));
-        let effects = update(&mut app, Input::Sidebar(sidebar_contents()));
+        let effects = update(&mut app, Input::Sidebar(places()));
         assert!(
             effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(1)))),
             "{effects:?}"
@@ -6253,8 +6147,8 @@ pub(crate) mod tests {
     fn a_second_account_is_added_from_the_mail_and_can_be_left() {
         use postio_ui::onboarding::Status;
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
         update(&mut app, key(KeyCode::Char('n'), KeyModifiers::ALT));
@@ -6265,8 +6159,8 @@ pub(crate) mod tests {
 
         // Mail keeps arriving while the address is typed; it does not close
         // what was asked for.
-        typing(&mut app, "grace@example.test");
-        update(&mut app, Input::Sidebar(sidebar_contents()));
+        type_text(&mut app, "grace@example.test");
+        update(&mut app, Input::Sidebar(places()));
         assert_eq!(app.focus(), Focus::FirstRun, "still asking");
 
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
@@ -6277,7 +6171,7 @@ pub(crate) mod tests {
     #[test]
     fn a_click_on_a_folders_mark_folds_it_without_opening_it() {
         let mut app = app((160, 40));
-        let mut contents = sidebar_contents();
+        let mut contents = places();
         let account = contents.accounts[0].id;
         let parent = MailboxId::new(76);
         let mut archives = postio_model::mailbox::Mailbox::new(account, "Archives", Some('/'));
@@ -6315,8 +6209,8 @@ pub(crate) mod tests {
     }
 
     fn in_settings(app: &mut App) {
-        update(app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(app, 3);
+        update(app, Input::Sidebar(places()));
+        let opening = open_list(app, 3);
         serve(app, opening);
         update(app, key(KeyCode::Char(','), KeyModifiers::ALT));
         assert_eq!(app.focus(), Focus::Settings);
@@ -6362,13 +6256,13 @@ pub(crate) mod tests {
     fn an_accounts_signatures_are_edited_added_renamed_and_deleted() {
         use postio_model::{Signature, SignatureId};
         let mut app = app((160, 40));
-        let mut contents = sidebar_contents();
+        let mut contents = places();
         let account = contents.accounts[0].id;
         let mut work = Signature::new("Work", "Ada\nThe Engine Room");
         work.id = SignatureId::new(5);
         contents.accounts[0].signatures = vec![work];
         update(&mut app, Input::Sidebar(contents));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, key(KeyCode::Char(','), KeyModifiers::ALT));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
@@ -6391,7 +6285,7 @@ pub(crate) mod tests {
         // n: a name, then the editor on nothing yet.
         update(&mut app, press('n'));
         assert_eq!(app.focus(), Focus::Palette);
-        typing(&mut app, "Home");
+        type_text(&mut app, "Home");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects.contains(&Effect::EditSignature {
@@ -6410,7 +6304,7 @@ pub(crate) mod tests {
         for _ in 0.."Work".len() {
             update(&mut app, key(KeyCode::Backspace, KeyModifiers::NONE));
         }
-        typing(&mut app, "Office");
+        type_text(&mut app, "Office");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects.contains(&Effect::SaveSignature {
@@ -6516,7 +6410,7 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(roles, ["Sent", "Archive", "Drafts", "Trash", "Junk"]);
 
-        typing(&mut app, "arch");
+        type_text(&mut app, "arch");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let folders: Vec<String> = app
             .palette()
@@ -6528,7 +6422,7 @@ pub(crate) mod tests {
         assert_eq!(folders[0], "Automatic");
         assert!(folders.contains(&"Archive".to_owned()), "{folders:?}");
 
-        typing(&mut app, "archive");
+        type_text(&mut app, "archive");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects.contains(&Effect::Send(postio_core::Command::MapMailboxRole {
@@ -6609,7 +6503,7 @@ pub(crate) mod tests {
         use postio_ui::onboarding::{BrowserSignIn, Status};
         let mut app = app((160, 40));
         update(&mut app, Input::Sidebar(an_empty_store()));
-        typing(&mut app, "ada@example.test");
+        type_text(&mut app, "ada@example.test");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let mut settings = discovered_settings();
         settings.oauth_sign_in = true;
@@ -6618,7 +6512,7 @@ pub(crate) mod tests {
             app.first_run().unwrap().field(),
             crate::first_run::Field::ClientId
         );
-        typing(&mut app, "postio-test");
+        type_text(&mut app, "postio-test");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let begun = effects
             .iter()
@@ -6674,12 +6568,12 @@ pub(crate) mod tests {
         use postio_ui::onboarding::{BrowserSignIn, Status};
         let mut app = app((160, 40));
         update(&mut app, Input::Sidebar(an_empty_store()));
-        typing(&mut app, "ada@example.test");
+        type_text(&mut app, "ada@example.test");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let mut settings = discovered_settings();
         settings.oauth_sign_in = true;
         update(&mut app, Input::Discovered(Ok(Status::Found(settings))));
-        typing(&mut app, "postio-test");
+        type_text(&mut app, "postio-test");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         update(&mut app, Input::Consent(Ok(BrowserSignIn::default())));
         let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
@@ -6711,47 +6605,12 @@ pub(crate) mod tests {
         assert_eq!(app.notice(), Some("Nothing selected"));
     }
 
-    fn sidebar_contents() -> crate::sidebar::Contents {
-        use postio_model::mailbox::{Mailbox, MailboxRole};
-        let mut account = postio_model::Account::new(
-            "ada",
-            postio_model::EmailAddress::new(None::<String>, "ada@example.com"),
-        );
-        account.id = postio_model::AccountId::new(1);
-        account.enabled = true;
-        let folder = |id, name: &str, role| {
-            let mut folder = Mailbox::new(account.id, name, None);
-            folder.id = MailboxId::new(id);
-            folder.role = role;
-            folder.selectable = true;
-            folder
-        };
-        crate::sidebar::Contents {
-            accounts: vec![account.clone()],
-            folders: vec![
-                folder(1, "INBOX", MailboxRole::Inbox),
-                folder(2, "Archive", MailboxRole::Archive),
-            ],
-            counts: Vec::new(),
-            saved: Vec::new(),
-        }
-    }
-
-    fn key(code: KeyCode, modifiers: KeyModifiers) -> Input {
-        Input::Key(KeyEvent {
-            code,
-            modifiers,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-    }
-
     #[test]
     fn the_sidebar_cursor_starts_on_the_list_being_shown() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 3);
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
-        update(&mut app, Input::Sidebar(sidebar_contents()));
+        update(&mut app, Input::Sidebar(places()));
         let (lines, at) = app.sidebar();
         assert_eq!(lines[at].opens, Some(ListScope::Mailbox(MailboxId::new(1))));
     }
@@ -6759,8 +6618,8 @@ pub(crate) mod tests {
     #[test]
     fn the_status_line_says_offline_until_the_host_says_otherwise() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(sidebar_contents()));
-        let opening = opened(&mut app, 3);
+        update(&mut app, Input::Sidebar(places()));
+        let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let line = app.sync_line().expect("a line for the account on screen");
         assert!(line.starts_with("offline"), "{line}");
@@ -6796,7 +6655,7 @@ pub(crate) mod tests {
     #[test]
     fn scrolling_reads_no_body_and_resting_reads_one() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 50);
+        let opening = open_list(&mut app, 50);
         serve(&mut app, opening);
         let mut asked_to_rest = Vec::new();
         for _ in 0..10 {
@@ -6815,7 +6674,7 @@ pub(crate) mod tests {
     #[test]
     fn a_body_that_arrives_is_drawn_in_the_reader() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 5);
+        let opening = open_list(&mut app, 5);
         serve(&mut app, opening);
         let message = row(0).id;
         update(&mut app, Input::Rested(message));
@@ -6853,7 +6712,7 @@ pub(crate) mod tests {
     #[test]
     fn a_body_for_a_row_already_left_is_not_drawn() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 5);
+        let opening = open_list(&mut app, 5);
         serve(&mut app, opening);
         update(&mut app, press('j'));
         update(
@@ -6871,7 +6730,7 @@ pub(crate) mod tests {
     }
 
     fn reading_a_long_quoted_reply(app: &mut App) {
-        let opening = opened(app, 5);
+        let opening = open_list(app, 5);
         serve(app, opening);
         let message = row(0).id;
         update(app, Input::Rested(message));
@@ -6893,22 +6752,6 @@ pub(crate) mod tests {
                 }),
             },
         );
-    }
-
-    fn reader_text(app: &App) -> String {
-        app.reading()
-            .unwrap()
-            .layout(chrono::Local::now())
-            .0
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.to_string())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 
     #[test]
@@ -6955,7 +6798,7 @@ pub(crate) mod tests {
 
     /// A list of one conversation row, three messages long, being read.
     fn reading_a_conversation(app: &mut App) -> Vec<Effect> {
-        let effects = opened(app, 1);
+        let effects = open_list(app, 1);
         let (generation, page) = effects
             .iter()
             .find_map(|effect| match effect {
@@ -7093,7 +6936,7 @@ pub(crate) mod tests {
     #[test]
     fn blocked_remote_images_are_counted_and_i_a_trusts_the_sender_everywhere() {
         let mut app = app((160, 40));
-        let opening = opened(&mut app, 5);
+        let opening = open_list(&mut app, 5);
         serve(&mut app, opening);
         let message = row(0).id;
         update(&mut app, Input::Rested(message));
@@ -7152,7 +6995,7 @@ pub(crate) mod tests {
     fn a_messages_parts_are_listed_and_a_written_one_is_launched() {
         let mut app =
             app((160, 40)).with_downloads(std::path::PathBuf::from("/home/ada/Downloads"));
-        let effects = opened(&mut app, 1);
+        let effects = open_list(&mut app, 1);
         let (generation, page) = effects
             .iter()
             .find_map(|effect| match effect {
@@ -7241,7 +7084,7 @@ pub(crate) mod tests {
     #[test]
     fn a_page_that_failed_is_asked_for_again() {
         let mut app = app((120, 30));
-        let effects = opened(&mut app, 100);
+        let effects = open_list(&mut app, 100);
         let Some(Effect::Fetch {
             generation, page, ..
         }) = effects

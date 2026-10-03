@@ -15,6 +15,10 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+# The harness in `test_support`, for the `shot` example.
+test-support = []
+
 [dependencies]
 async-channel = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
@@ -59,6 +63,8 @@ tracing = { workspace = true }
 unicode-width = "0.2"
 
 [dev-dependencies]
+# The `shot` example drives the app through the same harness the tests use.
+postio-tui = { path = ".", features = ["test-support"] }
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 tempfile = { workspace = true }

@@ -17,16 +17,14 @@
 //! Every name and address is fictional and on a reserved domain.
 
 use chrono::{Duration, TimeZone, Utc};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use postio_model::mailbox::{Mailbox, MailboxRole};
-use postio_model::{AccountId, EmailAddress, ListScope, MailboxId, MessageId};
+use crossterm::event::{KeyCode, KeyModifiers};
+use postio_model::mailbox::MailboxRole;
+use postio_model::{AccountId, EmailAddress, MailboxId, MessageId};
 use postio_tui::app::{App, Effect, Input, update};
 use postio_tui::caps::{Background, Colour};
-use postio_tui::input::Keys;
 use postio_tui::row::Row;
+use postio_tui::test_support;
 use postio_tui::theme::Theme;
-use postio_ui::paging::Fetch;
-use postio_ui::terminal::SafeText;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
@@ -139,38 +137,26 @@ fn main() {
     let height: u16 = args.next().and_then(|a| a.parse().ok()).unwrap_or(42);
     let state = args.next().unwrap_or_default();
 
-    let keys = Keys::new(&postio_core::Keymap::resolve(&Default::default())).0;
     let mut allowed = postio_ui::allowlist::RemoteImageAllowList::default();
     allowed.allow("newsletter@example.org");
-    let mut app = App::new((width, height), keys).with_allowlist(allowed);
+    let mut app = test_support::app((width, height)).with_allowlist(allowed);
 
-    let mut account =
-        postio_model::Account::new("Ada", EmailAddress::new(None::<String>, "ada@example.com"));
-    account.id = AccountId::new(1);
-    account.enabled = true;
-    let folder = |id: i64, name: &str, role: MailboxRole, unread: u32| {
-        let mut folder = Mailbox::new(account.id, name, None);
-        folder.id = MailboxId::new(id);
-        folder.role = role;
-        folder.selectable = true;
-        folder.counts.unread = unread;
-        folder
-    };
-    update(
+    test_support::seed_places(
         &mut app,
-        Input::Sidebar(postio_tui::sidebar::Contents {
-            accounts: vec![account.clone()],
+        postio_tui::sidebar::Contents {
+            accounts: vec![test_support::account()],
             folders: vec![
-                folder(1, "INBOX", MailboxRole::Inbox, 3),
-                folder(2, "Archive", MailboxRole::Archive, 0),
-                folder(3, "Sent", MailboxRole::Sent, 0),
-                folder(4, "Drafts", MailboxRole::Drafts, 0),
-                folder(5, "Trash", MailboxRole::Trash, 0),
-                folder(6, "Projects", MailboxRole::Regular, 2),
-                folder(7, "Reading group", MailboxRole::Regular, 0),
+                test_support::folder(1, "INBOX", MailboxRole::Inbox, 3),
+                test_support::folder(2, "Archive", MailboxRole::Archive, 0),
+                test_support::folder(3, "Sent", MailboxRole::Sent, 0),
+                test_support::folder(4, "Drafts", MailboxRole::Drafts, 0),
+                test_support::folder(5, "Trash", MailboxRole::Trash, 0),
+                test_support::folder(6, "Projects", MailboxRole::Regular, 2),
+                test_support::folder(7, "Reading group", MailboxRole::Regular, 0),
                 {
                     // A folder nested under another, as a server reports it.
-                    let mut year = folder(8, "Projects/2026", MailboxRole::Regular, 1);
+                    let mut year =
+                        test_support::folder(8, "Projects/2026", MailboxRole::Regular, 1);
                     year.name = "2026".into();
                     year.parent_id = Some(MailboxId::new(6));
                     year
@@ -178,7 +164,7 @@ fn main() {
             ],
             counts: Vec::new(),
             saved: Vec::new(),
-        }),
+        },
     );
 
     let now = Utc.with_ymd_and_hms(2026, 9, 24, 15, 0, 0).unwrap();
@@ -187,111 +173,58 @@ fn main() {
         .enumerate()
         .map(
             |(at, (from, subject, preview, unread, flagged, attachment))| Row {
-                id: MessageId::new(at as i64 + 1),
-                thread: None,
-                is_thread: false,
-                from: SafeText::new(from),
-                address: Some(format!(
-                    "{}@example.com",
-                    from.split(' ').next().unwrap().to_lowercase()
-                )),
-                subject: SafeText::new(subject),
-                preview: SafeText::new(preview),
-                when: now - Duration::hours(at as i64 * 7 + 1),
                 unread: *unread,
                 flagged: *flagged,
                 attachment: *attachment,
-                count: 1,
+                ..test_support::row_from(
+                    at as i64 + 1,
+                    from,
+                    subject,
+                    preview,
+                    now - Duration::hours(at as i64 * 7 + 1),
+                )
             },
         )
         .collect();
-    let total = rows.len() as u32;
-    let mut pending = update(
-        &mut app,
-        Input::Opened {
-            scope: ListScope::Mailbox(MailboxId::new(1)),
-            total,
-        },
-    );
-    while let Some(effect) = pending.pop() {
-        if let Effect::Fetch {
-            generation,
-            page,
-            fetch: Fetch::Scope(request),
-        } = effect
-        {
-            let page_rows = rows
-                .iter()
-                .skip(request.offset as usize)
-                .take(request.limit as usize)
-                .cloned()
-                .collect();
-            pending.extend(update(
-                &mut app,
-                Input::Page {
-                    generation,
-                    page,
-                    rows: Ok(postio_ui::paging::Page {
-                        total,
-                        rows: page_rows,
-                    }),
-                },
-            ));
-        }
-    }
+    test_support::show_rows(&mut app, &rows);
 
     // The first message open in the reader.
-    let first = MessageId::new(1);
-    update(&mut app, Input::Rested(first));
-    update(
+    test_support::open_message(
         &mut app,
-        Input::Addressed {
-            message: first,
-            to: vec![
-                EmailAddress::new(Some("Tove Arnlund"), "tove@example.com"),
-                EmailAddress::new(None::<String>, "gate-team@example.org"),
-            ],
-        },
-    );
-    update(
-        &mut app,
-        Input::Body {
-            message: first,
-            answer: Ok(postio_client::protocol::Body::Ready {
-                body: postio_model::MessageBody {
-                    text: None,
-                    html: Some(
-                        "<p>Hi Tove,</p>\
-                         <p>The overnight run held the gate at <strong>0.4 mm</strong>, well inside \
-                         tolerance. Three things worth a look before Thursday:</p>\
-                         <ul><li>the interlock fired twice at 03:10, both times on the east sensor;</li>\
-                         <li>the second pump took <em>eleven seconds</em> longer to settle;</li>\
-                         <li>the logs are attached, and the raw traces are on the <a href=\"https://example.com/traces\">shared drive</a>.</li></ul>\
-                         <p>Can we go through them on Thursday?</p><p>Mira</p>\
-                         <blockquote>On Tuesday, Tove wrote:<br>Could you run it overnight with the new \
-                         sensor firmware?</blockquote>"
-                            .into(),
-                    ),
-                },
-                encoding_problems: false,
-            }),
+        MessageId::new(1),
+        vec![
+            EmailAddress::new(Some("Tove Arnlund"), "tove@example.com"),
+            EmailAddress::new(None::<String>, "gate-team@example.org"),
+        ],
+        postio_model::MessageBody {
+            text: None,
+            html: Some(
+                "<p>Hi Tove,</p>\
+                 <p>The overnight run held the gate at <strong>0.4 mm</strong>, well inside \
+                 tolerance. Three things worth a look before Thursday:</p>\
+                 <ul><li>the interlock fired twice at 03:10, both times on the east sensor;</li>\
+                 <li>the second pump took <em>eleven seconds</em> longer to settle;</li>\
+                 <li>the logs are attached, and the raw traces are on the <a href=\"https://example.com/traces\">shared drive</a>.</li></ul>\
+                 <p>Can we go through them on Thursday?</p><p>Mira</p>\
+                 <blockquote>On Tuesday, Tove wrote:<br>Could you run it overnight with the new \
+                 sensor firmware?</blockquote>"
+                    .into(),
+            ),
         },
     );
 
     let key = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {
-        update(app, Input::Key(KeyEvent::new(code, modifiers)));
+        update(app, test_support::key(code, modifiers));
     };
     // Type `text`, and answer which search it asked last, if any.
     let typed = |app: &mut App, text: &str| {
-        let mut asked = None;
-        for c in text.chars() {
-            for effect in update(app, Input::Key(KeyEvent::from(KeyCode::Char(c)))) {
-                if let Effect::Search { sequence, .. } = effect {
-                    asked = Some(sequence);
-                }
-            }
-        }
-        asked
+        test_support::type_text(app, text)
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::Search { sequence, .. } => Some(sequence),
+                _ => None,
+            })
+            .next_back()
     };
     let mut colour = Colour::TrueColor;
     match state.as_str() {
