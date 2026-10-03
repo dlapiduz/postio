@@ -4865,6 +4865,7 @@ dependencies = [
  "postio-session",
  "postio-smtp",
  "postio-storage",
+ "postio-storyboard",
  "postio-sync",
  "postio-test-support",
  "postio-ui",

@@ -17,6 +17,131 @@
 
 #![allow(missing_docs)]
 
+pub mod storyboard;
+
+/// A condition of the store, named as every app names it
+/// (specs/008-storyboards R11): something no step can produce, such as
+/// thirty conversations or a draft left over from yesterday.
+///
+/// The bases decide what mail the store holds; the rest add one thing to
+/// [`Seed::Small`]'s inbox. `first-run` is not here: the classic app's
+/// orientation strip it showed is one Focus dropped (`classic-parity.md`
+/// row 12), and Focus's own first run is the store with no account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seed {
+    /// Today's inbox over the storage seed: the default.
+    Small,
+    /// An account with its folders and no mail in the inbox.
+    Empty,
+    /// The small seed with the row screen 04 opens refiled as a long
+    /// newsletter that paints its own page: a message tall enough to
+    /// scroll, with a treatment `O` can switch.
+    LongNewsletter,
+    /// One conversation of seven messages, the last two unread.
+    LongThread,
+    /// Thirty-six conversations in the inbox.
+    ThirtyThreads,
+    /// The small seed and a second account beside the first.
+    TwoAccounts,
+    /// The small seed and one message queued to send, never sent.
+    Outbox,
+    /// The small seed and one draft saved and walked away from.
+    DraftLeftOver,
+    /// The small seed with a backfill in flight, said through the host's
+    /// events as the engine says it.
+    Backfilling,
+}
+
+impl Seed {
+    /// Every seed Focus can build.
+    pub const ALL: [Seed; 9] = [
+        Seed::Small,
+        Seed::Empty,
+        Seed::LongNewsletter,
+        Seed::LongThread,
+        Seed::ThirtyThreads,
+        Seed::TwoAccounts,
+        Seed::Outbox,
+        Seed::DraftLeftOver,
+        Seed::Backfilling,
+    ];
+
+    /// The name a storyboard uses.
+    pub fn id(self) -> &'static str {
+        match self {
+            Seed::Small => "small",
+            Seed::Empty => "empty",
+            Seed::LongNewsletter => "long-newsletter",
+            Seed::LongThread => "long-thread",
+            Seed::ThirtyThreads => "thirty-threads",
+            Seed::TwoAccounts => "two-accounts",
+            Seed::Outbox => "outbox",
+            Seed::DraftLeftOver => "draft-left-over",
+            Seed::Backfilling => "backfilling",
+        }
+    }
+
+    /// The seed a storyboard's name stands for.
+    pub fn from_id(id: &str) -> Option<Seed> {
+        Seed::ALL.into_iter().find(|seed| seed.id() == id)
+    }
+}
+
+/// A store seeded as `seed` asks, and the account its mail is in.
+///
+/// The store half only: a backfill in flight is an event, which
+/// [`storyboard`] says once the host is up.
+pub async fn seeded(seed: Seed) -> (Store, AccountId) {
+    match seed {
+        Seed::Empty => empty_demo().await,
+        Seed::LongThread | Seed::ThirtyThreads => {
+            let shape = if seed == Seed::LongThread {
+                postio_storage::seed::LONG_THREAD
+            } else {
+                postio_storage::seed::THIRTY_THREADS
+            };
+            let database = postio_storage::test_support::memory().await;
+            let report = postio_storage::seed::seed_conversations(&database, 11, shape).await;
+            postio_storage::seed::stamp_synced(&database, &report, today()).await;
+            let connection = database.connect().await.expect("a connection");
+            postio_index::index::ensure_schema(&connection)
+                .await
+                .expect("the search index");
+            drop(connection);
+            (database, report.account.id)
+        }
+        Seed::Small
+        | Seed::LongNewsletter
+        | Seed::TwoAccounts
+        | Seed::Outbox
+        | Seed::DraftLeftOver
+        | Seed::Backfilling => {
+            let (database, account) = demo().await;
+            match seed {
+                Seed::LongNewsletter => treatment_demo(&database, account, "30").await,
+                Seed::TwoAccounts => {
+                    let second = postio_storage::seed::seed_extra_account(
+                        &database,
+                        "Home",
+                        "home@example.net",
+                        12,
+                    )
+                    .await;
+                    postio_storage::seed::stamp_synced(&database, &second, today()).await;
+                }
+                Seed::Outbox => {
+                    postio_storage::seed::queue_one_to_send(&database, account, today()).await;
+                }
+                Seed::DraftLeftOver => {
+                    postio_storage::seed::leave_a_draft(&database, account).await;
+                }
+                _ => {}
+            }
+            (database, account)
+        }
+    }
+}
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Local, TimeZone, Utc};

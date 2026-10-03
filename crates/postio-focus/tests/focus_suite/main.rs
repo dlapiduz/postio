@@ -46,6 +46,7 @@ mod drafts;
 mod drag_out;
 mod e2e;
 mod empty;
+mod every_command;
 mod filtered;
 mod first_run;
 mod harness;
@@ -100,6 +101,7 @@ mod state;
 mod store_in_use;
 mod store_opening;
 mod store_unavailable;
+mod storyboards;
 mod support;
 mod surfaced;
 mod treatments;
@@ -660,6 +662,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps",
         open_keys::the_arrows_and_paging_keys_scroll_the_open_message_in_steps as fn(),
+    ),
+    (
+        "every_command::every_bound_command_shows_or_is_a_listed_gap",
+        every_command::every_bound_command_shows_or_is_a_listed_gap as fn(),
+    ),
+    (
+        "storyboards::a_storyboard_plays_on_focus_and_writes_its_run",
+        storyboards::a_storyboard_plays_on_focus_and_writes_its_run as fn(),
     ),
     (
         "observe::the_window_says_where_the_keyboard_cursor_and_notices_are",
