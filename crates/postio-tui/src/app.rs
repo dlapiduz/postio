@@ -20,7 +20,6 @@ use postio_ui::list::ListWindow;
 use postio_ui::paging::{Fetch, Page, Paging};
 
 use crate::input::Keys;
-use crate::layout::{self, Requested, Shown};
 use crate::row::Row;
 use crate::view::list::Visible;
 use postio_body::replying::ReplyKind;
@@ -37,13 +36,6 @@ pub enum Pointer {
         /// Whether Shift was held: extend, rather than move.
         shift: bool,
     },
-    /// The button moved while held down, now over this column.
-    Drag {
-        /// The column the pointer is over.
-        column: u16,
-    },
-    /// The button came up.
-    Release,
     /// A turn of the wheel.
     Wheel {
         /// What was under the pointer.
@@ -105,8 +97,6 @@ pub enum Input {
     },
     /// The host said something happened.
     Host(postio_core::Event),
-    /// The cursor has rested on `message` since [`Effect::Rest`] asked.
-    Rested(postio_model::MessageId),
     /// A conversation asked for by [`Effect::ReadConversation`] arrived.
     Conversation {
         /// Which.
@@ -225,8 +215,8 @@ pub enum Input {
         /// Whether it was written to be opened.
         open: bool,
     },
-    /// What the sidebar holds, read afresh.
-    Sidebar(crate::sidebar::Contents),
+    /// What the places hold, read afresh.
+    Places(crate::places::Places),
     /// A list was counted again, after an event said it changed.
     Recounted {
         /// Which list.
@@ -252,16 +242,14 @@ pub enum Effect {
     Redraw,
     /// Leave.
     Quit,
-    /// Wait [`READ_REST`], then answer with [`Input::Rested`].
-    Rest(postio_model::MessageId),
     /// Read a conversation and answer with [`Input::Conversation`].
     ReadConversation(postio_model::ThreadId),
     /// Read a body and answer with [`Input::Body`].
     ReadBody(postio_model::MessageId),
     /// Open a list: count it and answer with [`Input::Opened`].
     Open(ListScope),
-    /// Read the sidebar's contents again and answer with [`Input::Sidebar`].
-    RefreshSidebar,
+    /// Read the places again and answer with [`Input::Places`].
+    RefreshPlaces,
     /// Count a list again and answer with [`Input::Recounted`].
     Recount(ListScope),
     /// Leave the list this message came from; answer with
@@ -394,8 +382,6 @@ pub enum Effect {
     AddAccount(Box<postio_ui::onboarding::Submission>),
     /// Save how far back the first sync reaches.
     SaveSyncWindow(postio_ui::onboarding::SyncWindow),
-    /// Remember the layout for the next run.
-    SaveLayout(crate::state::TerminalState),
     /// Read the privacy pane's log: what left this machine.
     ReadPrivacy,
     /// Hand a signature's text to the person's editor, then save what it
@@ -446,13 +432,6 @@ pub enum Effect {
     },
 }
 
-/// How long the cursor must rest on a row before its body is read.
-///
-/// A keystroke reads no body -- `j` held down is a scroll, and reading each
-/// row it passes would be a body per keystroke for mail nobody looked at
-/// (Principle V). Short enough that stopping on a row reads as immediate.
-pub const READ_REST: std::time::Duration = std::time::Duration::from_millis(120);
-
 /// How long the typing has to pause before a draft is saved: the desktop
 /// composer's autosave interval.
 pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -460,16 +439,9 @@ pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500)
 /// How many lines one turn of the wheel scrolls.
 const WHEEL: isize = 3;
 
-/// The narrowest the reading pane may be dragged.
-const MINIMUM_READER: u16 = 24;
-
-/// The narrowest the rest of the screen may be left by a drag.
-const MINIMUM_LIST: u16 = 40;
-
 /// Everything the terminal frontend knows.
 pub struct App {
     size: (u16, u16),
-    requested: Requested,
     keys: Keys,
     list: ListWindow<Row>,
     paging: Paging,
@@ -497,10 +469,8 @@ pub struct App {
     notice_undo: Option<String>,
     /// Where the keyboard is.
     focus: Focus,
-    /// The sidebar's lines.
-    sidebar: Vec<crate::sidebar::Line>,
-    /// What the sidebar was last built from, to build it again folded.
-    sidebar_contents: crate::sidebar::Contents,
+    /// The folders, views and saved searches the finder and `g o` read.
+    places: crate::places::Places,
     /// The privacy pane's log, once read.
     privacy: Option<Privacy>,
     /// What the palette is naming, while it is.
@@ -509,8 +479,6 @@ pub struct App {
     labels: Vec<postio_model::Label>,
     /// The account's correspondents, as the finder's `@` offers them.
     correspondents: Vec<postio_model::Contact>,
-    /// The sidebar line the keyboard is on.
-    sidebar_cursor: usize,
     /// Each account's sync status, folded from the host's events.
     trackers: postio_ui::status::Trackers,
     /// Which account the list on screen belongs to.
@@ -519,8 +487,6 @@ pub struct App {
     folders: Vec<postio_model::mailbox::Mailbox>,
     /// The message the reader shows, and how.
     reading: Option<crate::conversation::Reading>,
-    /// The message the cursor was last seen resting towards.
-    resting: Option<postio_model::MessageId>,
     /// The first reader line in view.
     reader_top: usize,
     /// Where saved parts go.
@@ -561,16 +527,23 @@ pub struct App {
     /// A link clicked once: shown in full, and opened by a second click
     /// on it (US2 scenario 4).
     armed_link: Option<String>,
-    /// The layout remembered between runs: the dragged divider.
-    layout: crate::state::TerminalState,
-    /// Whether the divider is being dragged.
-    dragging: bool,
     /// Whether the mouse is listened to (`[tui].mouse`).
     mouse: bool,
     /// The first run, while there is no account yet.
     first_run: Option<crate::first_run::FirstRun>,
     /// The settings, while they are open.
     settings: Option<crate::settings::Settings>,
+}
+
+/// What fills the window's body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Front {
+    /// Day headings and rows.
+    List,
+    /// The open message.
+    Reader,
+    /// The draft being written.
+    Composer,
 }
 
 /// What kind of news a notice is: the status line marks each with more
@@ -779,8 +752,6 @@ pub enum Focus {
     /// The message list.
     #[default]
     List,
-    /// The sidebar.
-    Sidebar,
     /// The reading pane.
     Reader,
     /// The composer, in the reading pane.
@@ -810,7 +781,6 @@ impl App {
     pub fn new(size: (u16, u16), keys: Keys) -> App {
         App {
             size,
-            requested: Requested::default(),
             keys,
             list: ListWindow::new(),
             paging: Paging::default(),
@@ -823,18 +793,15 @@ impl App {
             notice_tone: Tone::Plain,
             notice_undo: None,
             focus: Focus::List,
-            sidebar: Vec::new(),
-            sidebar_contents: crate::sidebar::Contents::default(),
+            places: crate::places::Places::default(),
             privacy: None,
             renaming: None,
-            sidebar_cursor: 0,
             trackers: postio_ui::status::Trackers::default(),
             account: None,
             folders: Vec::new(),
             history: Vec::new(),
             going_back: false,
             reading: None,
-            resting: None,
             reader_top: 0,
             allowlist: postio_ui::allowlist::RemoteImageAllowList::default(),
             downloads: std::path::PathBuf::from("."),
@@ -854,8 +821,6 @@ impl App {
             enhanced_keys: false,
             cheatsheet: None,
             armed_link: None,
-            layout: crate::state::TerminalState::default(),
-            dragging: false,
             mouse: true,
             first_run: None,
             settings: None,
@@ -901,7 +866,7 @@ impl App {
         Some(format!("{state} · {detail}"))
     }
 
-    /// The same as two lines, as the foot of the desktop's sidebar has it:
+    /// The same as two lines, as the desktop's sync label has it:
     /// `idle · imap`, then `last sync 12s`.
     pub fn sync_lines(&self) -> Option<(String, String)> {
         let account = self.account?;
@@ -950,10 +915,15 @@ impl App {
         self.detached
     }
 
-    /// Whether the reading pane shows what is being read, rather than the
-    /// draft.
-    pub fn showing_reader(&self) -> bool {
-        self.composer.is_none() || self.detached
+    /// What fills the window's body: the list, or, in front of it, the
+    /// message being read or the draft being written.
+    pub fn front(&self) -> Front {
+        let at = self.palette.as_ref().map_or(self.focus, |open| open.from);
+        match at {
+            Focus::Composer if self.composer.is_some() => Front::Composer,
+            Focus::Reader if self.reading.is_some() => Front::Reader,
+            _ => Front::List,
+        }
     }
 
     /// The draft being written, if one is.
@@ -975,7 +945,6 @@ impl App {
             crate::composer::Composer::new(self.compositions, draft).with_identities(identities),
         );
         self.focus = Focus::Composer;
-        self.requested.front = crate::layout::Pane::Reader;
         self.detached = false;
         // Side by side is shown from the start; the toggle starts on the text.
         self.previewing = self.preview == postio_config::Preview::Split;
@@ -1003,7 +972,6 @@ impl App {
         }
         self.detached = false;
         self.focus = Focus::List;
-        self.requested.front = crate::layout::Pane::List;
         effects.push(Effect::Redraw);
         effects
     }
@@ -1022,7 +990,6 @@ impl App {
             }
         }
         self.focus = Focus::List;
-        self.requested.front = crate::layout::Pane::List;
         effects.push(Effect::Redraw);
         effects
     }
@@ -1194,7 +1161,7 @@ impl App {
         &self.allowlist
     }
 
-    /// The accounts the settings list, in the sidebar's order.
+    /// The accounts the settings list, in the order the host gives them.
     pub fn accounts(&self) -> &[postio_model::Account] {
         &self.accounts
     }
@@ -1395,7 +1362,7 @@ impl App {
                 self.focus = Focus::List;
                 vec![
                     Effect::SaveSyncWindow(window),
-                    Effect::RefreshSidebar,
+                    Effect::RefreshPlaces,
                     Effect::Redraw,
                 ]
             }
@@ -1409,21 +1376,11 @@ impl App {
         self
     }
 
-    /// The same app, laid out as a previous run left it.
-    pub fn with_layout(mut self, layout: crate::state::TerminalState) -> App {
-        self.layout = layout;
-        self
-    }
-
-    /// The reading pane's width, once the divider has been dragged.
-    pub fn reader_columns(&self) -> Option<u16> {
-        self.layout.reader_columns
-    }
-
-    /// Put `reading` in the reader, as a message arriving would.
+    /// Put `reading` in the reader, as opening a message would.
     #[cfg(test)]
     pub(crate) fn set_reading_for_tests(&mut self, reading: crate::conversation::Reading) {
         self.reading = Some(reading);
+        self.focus = Focus::Reader;
     }
 
     /// What is marked.
@@ -1464,22 +1421,6 @@ impl App {
                     vec![Effect::Redraw]
                 }
                 Target::Facet(index) => self.choose_facet(index),
-                Target::Sidebar(index) => {
-                    self.focus = Focus::Sidebar;
-                    self.sidebar_cursor = index;
-                    // The mark folds; so does anywhere on a container that
-                    // has nothing to open.
-                    if let Some(line) = self.sidebar.get(index)
-                        && line.folds.is_some()
-                        && (line.opens.is_none()
-                            || hit.column == crate::view::sidebar::mark_column(line.depth))
-                    {
-                        return self.toggle_folder();
-                    }
-                    // Landing on it by the mouse does what landing on it by
-                    // the keys does.
-                    self.walk_sidebar(0)
-                }
                 Target::Reader(line) => {
                     if self.reading.is_none() {
                         return Vec::new();
@@ -1504,10 +1445,6 @@ impl App {
                     }
                     vec![Effect::Redraw]
                 }
-                Target::Divider => {
-                    self.dragging = true;
-                    Vec::new()
-                }
                 Target::Overlay => Vec::new(),
                 // A button is its command, the same as its key.
                 Target::ComposerAction(id) => {
@@ -1518,28 +1455,6 @@ impl App {
                     self.composer_command(id)
                 }
             },
-            Pointer::Drag { column } => {
-                if !self.dragging {
-                    return Vec::new();
-                }
-                // The divider is the reading pane's first column, so the pane
-                // is what is right of the pointer. Never so narrow that either
-                // pane stops being one.
-                let widest = self.size.0.saturating_sub(MINIMUM_LIST).max(MINIMUM_READER);
-                let columns = self
-                    .size
-                    .0
-                    .saturating_sub(column)
-                    .clamp(MINIMUM_READER, widest);
-                self.layout.reader_columns = Some(columns);
-                vec![Effect::Redraw]
-            }
-            Pointer::Release => {
-                if !std::mem::take(&mut self.dragging) {
-                    return Vec::new();
-                }
-                vec![Effect::SaveLayout(self.layout.clone()), Effect::Redraw]
-            }
             Pointer::Wheel { hit, down } => {
                 let lines: isize = if down { WHEEL } else { -WHEEL };
                 match hit.target {
@@ -1667,7 +1582,6 @@ impl App {
             Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
             Focus::Settings => postio_core::Context::Accounts,
             Focus::Search => postio_core::Context::Search,
-            Focus::Sidebar => postio_core::Context::Sidebar,
             Focus::Reader => postio_core::Context::Reader,
             Focus::Composer => postio_core::Context::Composer,
         }
@@ -1771,30 +1685,32 @@ impl App {
             }
             Finding::Folders | Finding::MoveTo => {
                 let moving = state.finding == Finding::MoveTo;
-                let mut found: Vec<(i32, PaletteRow, PaletteAction)> = self
-                    .sidebar
-                    .iter()
-                    .filter_map(|line| {
-                        let scope = line.opens?;
-                        // A move goes to a folder, not to a view over several.
-                        let action = match scope {
-                            ListScope::Mailbox(mailbox) if moving => PaletteAction::MoveTo(mailbox),
-                            _ if moving => return None,
-                            scope => PaletteAction::Open(scope),
-                        };
-                        let title = line.label.as_str().to_owned();
-                        let matched = postio_ui::palette::score(query.trim(), &title)?;
-                        Some((
-                            matched.score,
-                            PaletteRow {
-                                title,
-                                chord: None,
-                                positions: matched.positions,
-                            },
-                            action,
-                        ))
-                    })
-                    .collect();
+                let mut found: Vec<(i32, PaletteRow, PaletteAction)> =
+                    crate::places::entries(&self.places)
+                        .iter()
+                        .filter_map(|line| {
+                            let scope = line.opens?;
+                            // A move goes to a folder, not to a view over several.
+                            let action = match scope {
+                                ListScope::Mailbox(mailbox) if moving => {
+                                    PaletteAction::MoveTo(mailbox)
+                                }
+                                _ if moving => return None,
+                                scope => PaletteAction::Open(scope),
+                            };
+                            let title = line.label.as_str().to_owned();
+                            let matched = postio_ui::palette::score(query.trim(), &title)?;
+                            Some((
+                                matched.score,
+                                PaletteRow {
+                                    title,
+                                    chord: None,
+                                    positions: matched.positions,
+                                },
+                                action,
+                            ))
+                        })
+                        .collect();
                 found.sort_by_key(|(score, ..)| std::cmp::Reverse(*score));
                 found
                     .into_iter()
@@ -2338,7 +2254,6 @@ impl App {
         self.composer = None;
         self.asked_at = None;
         self.focus = Focus::List;
-        self.requested.front = crate::layout::Pane::List;
         vec![
             Effect::QueueSend {
                 generation,
@@ -2438,16 +2353,10 @@ impl App {
         postio_ui::terminal::deliverable_binding(self.keys.keymap(), command, self.enhanced_keys)
     }
 
-    /// The sidebar's lines, and which one the keyboard would be on.
-    pub fn sidebar(&self) -> (&[crate::sidebar::Line], usize) {
-        (&self.sidebar, self.sidebar_cursor)
-    }
-
     /// The keymap context the keyboard is in.
     fn key_context(&self) -> KeyContext {
         match self.focus {
             Focus::List => KeyContext::List,
-            Focus::Sidebar => KeyContext::Sidebar,
             // As the desktop reading pane is: a conversation of several is
             // where `J`/`K` walk messages and `O` expands; a message on its
             // own is the reader, where `p` shows its parts.
@@ -2509,14 +2418,26 @@ impl App {
         self.state.clone()
     }
 
-    /// What the user asked to see.
-    pub fn requested(&self) -> Requested {
-        self.requested
+    /// What the strip calls the place on screen.
+    pub fn place_name(&self) -> postio_ui::terminal::SafeText {
+        match self.scope {
+            Some(scope) => crate::places::name_of(&self.places, scope),
+            None => postio_ui::terminal::SafeText::new(""),
+        }
     }
 
-    /// What the terminal has room for.
-    pub fn shown(&self) -> Shown {
-        layout::shown(self.size.0, self.size.1, self.requested)
+    /// Whether the terminal has room for the window; when it has not, the
+    /// screen says so and draws nothing else.
+    pub fn fits(&self) -> bool {
+        crate::layout::fits(self.size.0, self.size.1)
+    }
+
+    /// The window's rows at this size.
+    pub fn window(&self) -> crate::layout::Window {
+        crate::layout::window(
+            ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1),
+            false,
+        )
     }
 
     /// The row the keyboard is on.
@@ -2529,21 +2450,15 @@ impl App {
         self.list.total()
     }
 
-    /// How many list rows fit: the screen but for its top bar and status
-    /// line, and a search's facets while they are shown, three lines to a
-    /// row.
+    /// How many list rows fit: the list's rows, less a search's facets
+    /// while they are shown, three lines to a row.
     pub fn list_height(&self) -> u32 {
         let facets = u16::from(
             self.search
                 .as_ref()
                 .is_some_and(|bar| bar.outcome.is_some()),
         );
-        u32::from(
-            self.size
-                .1
-                .saturating_sub(crate::layout::CHROME_ROWS + facets)
-                / crate::layout::LIST_ROW_LINES,
-        )
+        u32::from(self.window().list.height.saturating_sub(facets) / crate::view::list::LINES)
     }
 
     /// The rows in view, for drawing. Reads only what is resident.
@@ -2677,14 +2592,13 @@ impl App {
             }
             // Opening is the reader's own business, not a store verb: the
             // row under the cursor is read if it is not already, and the
-            // keyboard goes into it (in front, where only one pane fits).
+            // keyboard goes into it.
             "open_message" => {
                 let Some(message) = self.cursor_message() else {
                     return Vec::new();
                 };
-                let mut effects = self.rested(message);
+                let mut effects = self.open_reading(message);
                 self.focus = Focus::Reader;
-                self.requested.front = crate::layout::Pane::Reader;
                 effects.push(Effect::Redraw);
                 return effects;
             }
@@ -2692,9 +2606,6 @@ impl App {
             // composer already open: it goes back to it.
             "compose" if self.composer.is_some() => {
                 self.focus = Focus::Composer;
-                if !self.detached {
-                    self.requested.front = crate::layout::Pane::Reader;
-                }
                 return vec![Effect::Redraw];
             }
             "compose" => {
@@ -2702,7 +2613,9 @@ impl App {
                     return self.compose(postio_model::Draft::new(account));
                 }
             }
-            "go_to_folders" => self.focus = Focus::Sidebar,
+            // The folders box is the finder's `#` until the places box
+            // replaces it (T319).
+            "go_to_folders" => return self.open_palette(Finding::Folders),
             "search" => return self.open_search(),
             "command_palette" => return self.open_palette(Finding::Commands),
             "cheat_sheet" => self.cheatsheet = Some(self.focus),
@@ -2726,7 +2639,7 @@ impl App {
                     && !query.is_empty()
                 {
                     let query = query.to_owned();
-                    let mut effects = self.say(&format!("Saved “{query}” to the sidebar"));
+                    let mut effects = self.say(&format!("Saved “{query}” to the saved searches"));
                     effects.insert(0, Effect::SaveSearch(query));
                     return effects;
                 }
@@ -2818,15 +2731,8 @@ impl App {
         )
     }
 
-    /// Open `scope`, with the sidebar's cursor on the line that opens it.
+    /// Open `scope`.
     fn open_there(&mut self, scope: ListScope) -> Vec<Effect> {
-        if let Some(line) = self
-            .sidebar
-            .iter()
-            .position(|line| line.opens == Some(scope))
-        {
-            self.sidebar_cursor = line;
-        }
         vec![Effect::Open(scope), Effect::Redraw]
     }
 
@@ -2864,22 +2770,18 @@ impl App {
         }
     }
 
-    /// The saved search pinned `index`th in the sidebar, run as activating
-    /// its line runs it: `alt+1`...`alt+4`, as the desktop's are (specs/007-
-    /// postio-focus T162). A place with nothing pinned in it is said.
+    /// The saved search pinned `index`th, run as the finder runs it:
+    /// `alt+1`...`alt+4`, as the desktop's are (specs/007-postio-focus
+    /// T162). A place with nothing pinned in it is said.
     fn pinned_search(&mut self, index: usize) -> Vec<Effect> {
-        let Some(line) = self
-            .sidebar
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| line.searches.is_some())
-            .map(|(line, _)| line)
-            .nth(index)
+        let Some(query) = self
+            .places
+            .saved
+            .get(index)
+            .map(|saved| saved.query.clone())
         else {
             return self.say(&format!("No saved search {} is pinned", index + 1));
         };
-        self.sidebar_cursor = line;
-        let query = self.sidebar[line].searches.clone().unwrap_or_default();
         self.search = Some(SearchBar {
             input: tui_input::Input::default().with_value(query),
             ..SearchBar::default()
@@ -3052,11 +2954,12 @@ impl App {
         }
     }
 
-    /// The cursor stayed: read what it is on, if the reader is not already.
-    fn rested(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
-        let here = self.cursor_message() == Some(message);
+    /// Open `message` for reading: its body is read now, and its
+    /// conversation when it has several messages (FR-195). Nothing is read
+    /// by the cursor passing over a row.
+    pub fn open_reading(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
         let shown = self.reading.as_ref().map(|reading| reading.row) == Some(message);
-        if !here || shown {
+        if shown {
             return Vec::new();
         }
         let Some(row) = self.list.row_of(message) else {
@@ -3205,17 +3108,10 @@ impl App {
         effects
     }
 
-    /// Take in the sidebar's contents, keeping the cursor on the list shown.
-    fn fill_sidebar(&mut self, contents: &crate::sidebar::Contents) -> Vec<Effect> {
-        // The line the keyboard is on, while it is on the sidebar: a refresh
-        // leaves it there rather than jumping back to the open list.
-        let here = (self.focus == Focus::Sidebar)
-            .then(|| self.sidebar.get(self.sidebar_cursor))
-            .flatten()
-            .filter(|line| !line.heading)
-            .map(|line| (line.opens, line.searches.clone(), line.folds));
-        self.sidebar = crate::sidebar::lines(contents, &self.layout.collapsed_folders);
-        self.sidebar_contents = contents.clone();
+    /// Take in the places, keeping the account the list on screen belongs
+    /// to.
+    fn fill_places(&mut self, contents: &crate::places::Places) -> Vec<Effect> {
+        self.places = contents.clone();
         self.folders = contents.folders.clone();
         self.accounts = contents.accounts.clone();
         for account in &contents.accounts {
@@ -3224,19 +3120,6 @@ impl App {
         if let Some(scope) = self.scope {
             self.account = self.account_of(scope);
         }
-        self.sidebar_cursor = here
-            .and_then(|here| {
-                self.sidebar
-                    .iter()
-                    .position(|line| (line.opens, line.searches.clone(), line.folds) == here)
-            })
-            .or_else(|| {
-                self.sidebar
-                    .iter()
-                    .position(|line| line.opens.is_some() && line.opens == self.scope)
-            })
-            .or_else(|| self.sidebar.iter().position(|line| line.opens.is_some()))
-            .unwrap_or(0);
         if contents.accounts.is_empty() {
             // No account: the first screen offers to add one rather than
             // showing an empty shell (US7 scenario 1).
@@ -3399,66 +3282,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// Fold or unfold the folder under the sidebar cursor, and remember it.
-    fn toggle_folder(&mut self) -> Vec<Effect> {
-        let Some(folder) = self
-            .sidebar
-            .get(self.sidebar_cursor)
-            .and_then(|line| line.folds)
-        else {
-            return Vec::new();
-        };
-        let collapsed = &mut self.layout.collapsed_folders;
-        if !collapsed.remove(&folder) {
-            collapsed.insert(folder);
-        }
-        self.sidebar =
-            crate::sidebar::lines(&self.sidebar_contents, &self.layout.collapsed_folders);
-        self.sidebar_cursor = self
-            .sidebar
-            .iter()
-            .position(|line| line.folds == Some(folder))
-            .unwrap_or(0);
-        vec![Effect::SaveLayout(self.layout.clone()), Effect::Redraw]
-    }
-
-    /// Move the sidebar cursor by `step` rows that open something, and open
-    /// what it lands on -- as the desktop sidebar opens a folder when the
-    /// selection moves to it.
-    fn walk_sidebar(&mut self, step: isize) -> Vec<Effect> {
-        let openable: Vec<usize> = self
-            .sidebar
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| {
-                line.opens.is_some() || line.searches.is_some() || line.folds.is_some()
-            })
-            .map(|(index, _)| index)
-            .collect();
-        let Some(here) = openable
-            .iter()
-            .position(|index| *index >= self.sidebar_cursor)
-        else {
-            return Vec::new();
-        };
-        let there = here.saturating_add_signed(step).min(openable.len() - 1);
-        self.sidebar_cursor = openable[there];
-        if let Some(query) = self.sidebar[self.sidebar_cursor].searches.clone() {
-            // A saved search is a search: the bar holds its query, and the
-            // results take the list, from the same executor the desktop's
-            // saved search runs through.
-            self.search = Some(SearchBar {
-                input: tui_input::Input::default().with_value(query),
-                ..SearchBar::default()
-            });
-            return self.run_search();
-        }
-        match self.sidebar[self.sidebar_cursor].opens {
-            Some(scope) if Some(scope) != self.scope => vec![Effect::Redraw, Effect::Open(scope)],
-            _ => vec![Effect::Redraw],
-        }
-    }
-
     /// The host said something happened.
     ///
     /// What a command said about itself goes on the status line; what
@@ -3495,7 +3318,7 @@ impl App {
             return vec![Effect::Redraw];
         }
         if matches!(event, Event::MailboxesChanged { .. }) {
-            return vec![Effect::RefreshSidebar];
+            return vec![Effect::RefreshPlaces];
         }
         match self.paging.plan(event) {
             postio_ui::paging::Plan::Ignore => Vec::new(),
@@ -3628,8 +3451,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         },
         Input::Opened { scope, total } => app.open(scope, total),
         Input::Host(event) => app.hear(&event),
-        Input::Sidebar(contents) => app.fill_sidebar(&contents),
-        Input::Rested(message) => app.rested(message),
+        Input::Places(contents) => app.fill_places(&contents),
         Input::Parts { message, parts } => {
             if let (Ok(parts), Some(reading)) = (parts, app.reading.as_mut())
                 && let Some(member) = reading
@@ -3653,7 +3475,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
         Input::SignatureSaved(saved) => match saved {
             // The account list carries the signatures; read it again.
-            Ok(()) => vec![Effect::RefreshSidebar, Effect::Redraw],
+            Ok(()) => vec![Effect::RefreshPlaces, Effect::Redraw],
             Err(reason) => app.say(&reason),
         },
         Input::Privacy { log, connections } => {
@@ -3767,7 +3589,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 Ok(()) => app.say("Saved — config.toml is read again"),
                 Err(reason) => app.say(&format!("The editor did not save: {reason}")),
             };
-            effects.push(Effect::RefreshSidebar);
+            effects.push(Effect::RefreshPlaces);
             effects
         }
         Input::Paste(pasted) => app.paste(&pasted),
@@ -3896,16 +3718,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         } => app.page(generation, page, rows),
     };
     effects.extend(app.fetches());
-    // The cursor landed on a different message: rest, then read it. Asked
-    // after every input rather than only after a keystroke, because a row can
-    // arrive under a still cursor -- a page landing, a list opening.
-    let under = app.cursor_message();
-    if under != app.resting {
-        app.resting = under;
-        if let Some(message) = under {
-            effects.push(Effect::Rest(message));
-        }
-    }
     effects
 }
 
@@ -3916,7 +3728,6 @@ pub(crate) mod tests {
     use postio_model::{MailboxId, MessageId};
 
     use super::*;
-    use crate::layout::Pane;
     use crate::test_support::{
         alt, app, click, ctrl, key, open_list, places, press, reader_text, row, serve, type_text,
         wheel,
@@ -3925,26 +3736,20 @@ pub(crate) mod tests {
     #[test]
     fn a_resize_changes_what_is_shown_and_asks_the_host_nothing() {
         let mut app = app((160, 40));
-        let asked = app.requested();
 
-        let effects = update(&mut app, Input::Resize(60, 30));
+        let effects = update(&mut app, Input::Resize(40, 30));
 
         assert_eq!(effects, vec![Effect::Redraw], "a redraw and nothing else");
-        assert_eq!(app.shown(), Shown::Panes(vec![Pane::List]));
-        assert_eq!(app.requested(), asked, "what was asked for is untouched");
+        assert!(!app.fits(), "below 50 columns the window does not fit");
 
         update(&mut app, Input::Resize(160, 40));
-        assert_eq!(
-            app.shown(),
-            Shown::Panes(vec![Pane::Sidebar, Pane::List, Pane::Reader]),
-            "widening brings the sidebar back"
-        );
+        assert!(app.fits(), "widening brings it back");
     }
 
     #[test]
     fn the_list_holds_as_many_rows_as_fit_under_the_top_bar() {
-        // 42 rows: the top bar and the status line take two, and each list
-        // row three more -- two of words and a faint rule.
+        // 42 rows: the top bar, the strip and the bottom line take three,
+        // and each list row three more -- two of words and a faint rule.
         assert_eq!(app((160, 42)).list_height(), 13);
         assert_eq!(app((160, 16)).list_height(), 4);
         let mut app = app((160, 16));
@@ -4202,7 +4007,7 @@ pub(crate) mod tests {
     #[test]
     fn a_new_message_starts_empty_from_the_account_on_screen() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, press('c'));
@@ -4360,7 +4165,7 @@ pub(crate) mod tests {
     #[test]
     fn the_go_to_keys_open_the_accounts_folder_with_that_role() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let account = postio_model::AccountId::new(1);
@@ -4394,7 +4199,7 @@ pub(crate) mod tests {
         // specs/007-postio-focus T162: the one keymap's two new
         // destinations, by role, as the classic app's `act` reaches them.
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let account = postio_model::AccountId::new(1);
@@ -4418,23 +4223,22 @@ pub(crate) mod tests {
     #[test]
     fn alt_and_a_number_runs_that_pinned_saved_search_or_says_none_is_there() {
         // specs/007-postio-focus T162: `alt+1`...`alt+4` run the saved
-        // searches by their place in the sidebar, as activating the line
-        // does; a place with nothing pinned is said, as on the desktop.
+        // searches by their place in the pinned list; a place with nothing pinned is said, as on the desktop.
         let mut app = app((160, 40));
         let mut contents = places();
         contents.saved = vec![
-            crate::sidebar::Saved {
+            crate::places::Saved {
                 key: "unread-from-ada".into(),
                 name: "Unread from Ada".into(),
                 query: "from:ada is:unread".into(),
             },
-            crate::sidebar::Saved {
+            crate::places::Saved {
                 key: "tides".into(),
                 name: "Tides".into(),
                 query: "subject:tide".into(),
             },
         ];
-        update(&mut app, Input::Sidebar(contents));
+        update(&mut app, Input::Places(contents));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
@@ -4454,7 +4258,7 @@ pub(crate) mod tests {
     #[test]
     fn previous_view_goes_back_where_the_list_was() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let account = postio_model::AccountId::new(1);
@@ -4485,7 +4289,7 @@ pub(crate) mod tests {
         contents.accounts.push(second);
         contents.folders.push(inbox);
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(contents));
+        update(&mut app, Input::Places(contents));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let mut walked = Vec::new();
@@ -4570,7 +4374,7 @@ pub(crate) mod tests {
     fn run_anywhere(id: &str, spec: &postio_core::registry::CommandSpec) -> Vec<Effect> {
         use postio_core::Context;
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
@@ -4746,7 +4550,7 @@ pub(crate) mod tests {
         drafts.role = MailboxRole::Drafts;
         drafts.selectable = true;
         contents.folders.push(drafts);
-        update(&mut app, Input::Sidebar(contents));
+        update(&mut app, Input::Places(contents));
         let opening = update(
             &mut app,
             Input::Opened {
@@ -5253,10 +5057,7 @@ pub(crate) mod tests {
             saves(&effects).len() == 1,
             "saved on the way out of the tab: {effects:?}"
         );
-        assert!(
-            app.showing_reader(),
-            "the reading pane is the reader's again"
-        );
+        assert_eq!(app.front(), Front::List, "the mail is in front again");
 
         update(&mut app, press('c'));
         assert_eq!(
@@ -5272,7 +5073,7 @@ pub(crate) mod tests {
 
         update(&mut app, alt('o'));
         assert!(!app.composer_detached(), "and the same key puts it back");
-        assert!(!app.showing_reader());
+        assert_eq!(app.front(), Front::Composer);
     }
 
     fn reads_the_clipboard(effects: &[Effect]) -> usize {
@@ -5685,7 +5486,7 @@ pub(crate) mod tests {
     #[test]
     fn the_search_bars_prefixes_reach_the_palette_and_the_folders() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
@@ -5724,7 +5525,7 @@ pub(crate) mod tests {
     #[test]
     fn the_plus_prefix_puts_a_label_on_the_selection() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
@@ -5755,7 +5556,7 @@ pub(crate) mod tests {
         // A label of `None` means "ask": sent as it is, the dispatcher
         // refuses it with "Pick a label to add".
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
@@ -5774,7 +5575,7 @@ pub(crate) mod tests {
     #[test]
     fn move_asks_which_folder_and_moves_rather_than_opening_it() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
@@ -5807,7 +5608,7 @@ pub(crate) mod tests {
     #[test]
     fn the_at_prefix_finds_a_correspondent_and_searches_their_mail() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
@@ -5860,10 +5661,7 @@ pub(crate) mod tests {
         let effects = update(&mut app, click(Target::Row(2), false, false));
         assert_eq!(app.cursor(), 2);
         assert_eq!(app.focus(), Focus::List);
-        assert!(
-            rests(&effects).contains(&MessageId::new(3)),
-            "the reader follows: {effects:?}"
-        );
+        assert_eq!(reads(&effects), 0, "a click on a row reads nothing");
 
         update(&mut app, click(Target::Row(4), false, true));
         assert_eq!(
@@ -5888,25 +5686,6 @@ pub(crate) mod tests {
         assert!(
             app.selection().contains(MessageId::new(3)),
             "and keeps what was marked"
-        );
-    }
-
-    #[test]
-    fn a_click_in_the_sidebar_opens_that_folder() {
-        use crate::view::hit::Target;
-        let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        let (lines, _) = app.sidebar();
-        let archive = lines
-            .iter()
-            .position(|line| line.label.as_str() == "Archive")
-            .expect("listed");
-        let effects = update(&mut app, click(Target::Sidebar(archive), false, false));
-        assert!(
-            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
-            "{effects:?}"
         );
     }
 
@@ -6039,8 +5818,8 @@ pub(crate) mod tests {
         assert!(app.selection().contains(MessageId::new(3)));
     }
 
-    fn an_empty_store() -> crate::sidebar::Contents {
-        crate::sidebar::Contents::default()
+    fn an_empty_store() -> crate::places::Places {
+        crate::places::Places::default()
     }
 
     fn discovered_settings() -> postio_ui::onboarding::Settings {
@@ -6065,7 +5844,7 @@ pub(crate) mod tests {
     fn with_no_account_the_first_screen_offers_to_add_one() {
         // US7 scenario 1.
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(an_empty_store()));
+        update(&mut app, Input::Places(an_empty_store()));
         assert_eq!(app.focus(), Focus::FirstRun);
         assert!(app.first_run().is_some());
     }
@@ -6075,7 +5854,7 @@ pub(crate) mod tests {
         // US7 and T085.
         use postio_ui::onboarding::{Status, SyncWindow};
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(an_empty_store()));
+        update(&mut app, Input::Places(an_empty_store()));
         type_text(&mut app, "ada@example.test");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
@@ -6127,15 +5906,15 @@ pub(crate) mod tests {
             effects.contains(&Effect::SaveSyncWindow(SyncWindow::LastMonth)),
             "{effects:?}"
         );
-        assert!(effects.contains(&Effect::RefreshSidebar), "{effects:?}");
+        assert!(effects.contains(&Effect::RefreshPlaces), "{effects:?}");
         assert!(app.first_run().is_none(), "on to the mail");
     }
 
     #[test]
     fn once_there_is_an_account_its_inbox_opens() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(an_empty_store()));
-        let effects = update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(an_empty_store()));
+        let effects = update(&mut app, Input::Places(places()));
         assert!(
             effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(1)))),
             "{effects:?}"
@@ -6147,7 +5926,7 @@ pub(crate) mod tests {
     fn a_second_account_is_added_from_the_mail_and_can_be_left() {
         use postio_ui::onboarding::Status;
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
 
@@ -6160,7 +5939,7 @@ pub(crate) mod tests {
         // Mail keeps arriving while the address is typed; it does not close
         // what was asked for.
         type_text(&mut app, "grace@example.test");
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         assert_eq!(app.focus(), Focus::FirstRun, "still asking");
 
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
@@ -6168,48 +5947,8 @@ pub(crate) mod tests {
         assert_eq!(app.focus(), Focus::List);
     }
 
-    #[test]
-    fn a_click_on_a_folders_mark_folds_it_without_opening_it() {
-        let mut app = app((160, 40));
-        let mut contents = places();
-        let account = contents.accounts[0].id;
-        let parent = MailboxId::new(76);
-        let mut archives = postio_model::mailbox::Mailbox::new(account, "Archives", Some('/'));
-        archives.id = parent;
-        let mut child = postio_model::mailbox::Mailbox::new(account, "Archives/2024", Some('/'));
-        child.id = MailboxId::new(77);
-        child.parent_id = Some(parent);
-        contents.folders.extend([archives, child]);
-        update(&mut app, Input::Sidebar(contents));
-        let row = app
-            .sidebar
-            .iter()
-            .position(|line| line.folds == Some(parent))
-            .unwrap();
-
-        let effects = update(
-            &mut app,
-            Input::Pointer(Pointer::Click {
-                hit: crate::view::hit::Hit {
-                    target: crate::view::hit::Target::Sidebar(row),
-                    column: crate::view::sidebar::mark_column(0),
-                    row: 0,
-                },
-                ctrl: false,
-                shift: false,
-            }),
-        );
-        assert!(app.layout.collapsed_folders.contains(&parent));
-        assert!(
-            !effects.iter().any(
-                |effect| matches!(effect, Effect::Open(ListScope::Mailbox(id)) if *id == parent)
-            ),
-            "{effects:?}"
-        );
-    }
-
     fn in_settings(app: &mut App) {
-        update(app, Input::Sidebar(places()));
+        update(app, Input::Places(places()));
         let opening = open_list(app, 3);
         serve(app, opening);
         update(app, key(KeyCode::Char(','), KeyModifiers::ALT));
@@ -6261,7 +6000,7 @@ pub(crate) mod tests {
         let mut work = Signature::new("Work", "Ada\nThe Engine Room");
         work.id = SignatureId::new(5);
         contents.accounts[0].signatures = vec![work];
-        update(&mut app, Input::Sidebar(contents));
+        update(&mut app, Input::Places(contents));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         update(&mut app, key(KeyCode::Char(','), KeyModifiers::ALT));
@@ -6502,7 +6241,7 @@ pub(crate) mod tests {
         // US7 scenario 2.
         use postio_ui::onboarding::{BrowserSignIn, Status};
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(an_empty_store()));
+        update(&mut app, Input::Places(an_empty_store()));
         type_text(&mut app, "ada@example.test");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let mut settings = discovered_settings();
@@ -6567,7 +6306,7 @@ pub(crate) mod tests {
     fn escape_gives_up_a_browser_sign_in() {
         use postio_ui::onboarding::{BrowserSignIn, Status};
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(an_empty_store()));
+        update(&mut app, Input::Places(an_empty_store()));
         type_text(&mut app, "ada@example.test");
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let mut settings = discovered_settings();
@@ -6584,12 +6323,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_composer_takes_the_reading_pane_on_a_narrow_terminal() {
+    fn the_composer_fills_the_body_and_the_list_returns_when_it_closes() {
         let mut app = app((70, 30));
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
-        assert_eq!(app.shown(), Shown::Panes(vec![Pane::Reader]));
+        assert_eq!(app.front(), Front::Composer);
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.shown(), Shown::Panes(vec![Pane::List]));
+        assert_eq!(app.front(), Front::List);
     }
 
     #[test]
@@ -6606,19 +6345,9 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_sidebar_cursor_starts_on_the_list_being_shown() {
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, Input::Sidebar(places()));
-        let (lines, at) = app.sidebar();
-        assert_eq!(lines[at].opens, Some(ListScope::Mailbox(MailboxId::new(1))));
-    }
-
-    #[test]
     fn the_status_line_says_offline_until_the_host_says_otherwise() {
         let mut app = app((160, 40));
-        update(&mut app, Input::Sidebar(places()));
+        update(&mut app, Input::Places(places()));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         let line = app.sync_line().expect("a line for the account on screen");
@@ -6635,16 +6364,6 @@ pub(crate) mod tests {
         assert!(line.starts_with("idle"), "{line}");
     }
 
-    fn rests(effects: &[Effect]) -> Vec<MessageId> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::Rest(message) => Some(*message),
-                _ => None,
-            })
-            .collect()
-    }
-
     fn reads(effects: &[Effect]) -> usize {
         effects
             .iter()
@@ -6653,22 +6372,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn scrolling_reads_no_body_and_resting_reads_one() {
+    fn scrolling_reads_no_body_and_opening_reads_one() {
         let mut app = app((160, 40));
         let opening = open_list(&mut app, 50);
         serve(&mut app, opening);
-        let mut asked_to_rest = Vec::new();
         for _ in 0..10 {
             let effects = update(&mut app, press('j'));
             assert_eq!(reads(&effects), 0, "a keystroke reads no body");
-            asked_to_rest.extend(rests(&effects));
         }
-        // Every rest but the last is for a row the cursor has left.
-        let mut read = 0;
-        for message in asked_to_rest {
-            read += reads(&update(&mut app, Input::Rested(message)));
-        }
-        assert_eq!(read, 1, "only the row the cursor stopped on is read");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            effects
+                .iter()
+                .filter(|effect| matches!(effect, Effect::ReadBody(_)))
+                .count(),
+            1,
+            "only the row opened is read: {effects:?}"
+        );
     }
 
     #[test]
@@ -6677,7 +6397,7 @@ pub(crate) mod tests {
         let opening = open_list(&mut app, 5);
         serve(&mut app, opening);
         let message = row(0).id;
-        update(&mut app, Input::Rested(message));
+        app.open_reading(message);
         update(
             &mut app,
             Input::Body {
@@ -6733,7 +6453,7 @@ pub(crate) mod tests {
         let opening = open_list(app, 5);
         serve(app, opening);
         let message = row(0).id;
-        update(app, Input::Rested(message));
+        app.open_reading(message);
         let mut text = String::from("Top line\n");
         for n in 0..80 {
             text.push_str(&format!("line {n}\n"));
@@ -6824,7 +6544,7 @@ pub(crate) mod tests {
                 }),
             },
         );
-        let effects = update(app, Input::Rested(MessageId::new(3)));
+        let effects = app.open_reading(MessageId::new(3));
         assert!(
             effects.contains(&Effect::ReadConversation(postio_model::ThreadId::new(9))),
             "a conversation row asks for its messages: {effects:?}"
@@ -6939,7 +6659,7 @@ pub(crate) mod tests {
         let opening = open_list(&mut app, 5);
         serve(&mut app, opening);
         let message = row(0).id;
-        update(&mut app, Input::Rested(message));
+        app.open_reading(message);
         update(
             &mut app,
             Input::Body {
@@ -7019,7 +6739,7 @@ pub(crate) mod tests {
             },
         );
         let message = row(0).id;
-        update(&mut app, Input::Rested(message));
+        app.open_reading(message);
         let effects = update(
             &mut app,
             Input::Body {

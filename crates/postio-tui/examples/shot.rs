@@ -9,7 +9,7 @@
 //! magick /tmp/tui.svg /tmp/tui.png
 //! ```
 //!
-//! `state` is what is open over the mail: `search`, `palette`, `keys` (the
+//! `state` is what is open over the mail: `reading` (the first message), `search`, `palette`, `keys` (the
 //! cheat sheet), `compose`, `undo` (an undo offer on the status line),
 //! `error`, `selected` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! and `selected-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
@@ -143,7 +143,7 @@ fn main() {
 
     test_support::seed_places(
         &mut app,
-        postio_tui::sidebar::Contents {
+        postio_tui::places::Places {
             accounts: vec![test_support::account()],
             folders: vec![
                 test_support::folder(1, "INBOX", MailboxRole::Inbox, 3),
@@ -188,8 +188,9 @@ fn main() {
         .collect();
     test_support::show_rows(&mut app, &rows);
 
-    // The first message open in the reader.
-    test_support::open_message(
+    // The first message open, for `reading`; otherwise the list.
+    if state == "reading" {
+        test_support::open_message(
         &mut app,
         MessageId::new(1),
         vec![
@@ -212,6 +213,11 @@ fn main() {
             ),
         },
     );
+        update(
+            &mut app,
+            test_support::key(KeyCode::Enter, KeyModifiers::NONE),
+        );
+    }
 
     let key = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {
         update(app, test_support::key(code, modifiers));

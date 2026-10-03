@@ -27,8 +27,7 @@ pub mod reader;
 pub mod row;
 pub mod run;
 pub mod settings;
-pub mod sidebar;
-pub mod state;
+pub mod places;
 pub mod term;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

@@ -31,22 +31,13 @@ pub fn draw(
     now: DateTime<Local>,
     hits: &mut Hits,
 ) {
-    // A rule between the list and the reader, whether or not anything is
-    // being read, so the panes keep their shape.
-    for y in area.y..area.y + area.height {
-        frame.render_widget(
-            Line::styled("│", theme.style(Role::Dim)),
-            Rect::new(area.x, y, 1, 1),
-        );
-    }
     let Some(reading) = app.reading() else {
         return;
     };
-    hits.add(Rect::new(area.x, area.y, 1, area.height), Target::Divider);
     let inner = Rect::new(
-        area.x + 1 + PAD,
+        area.x + PAD,
         area.y + 1,
-        area.width.saturating_sub(1 + 2 * PAD),
+        area.width.saturating_sub(2 * PAD),
         area.height.saturating_sub(1),
     );
     if inner.width == 0 || inner.height == 0 {

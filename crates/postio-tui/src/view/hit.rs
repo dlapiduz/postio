@@ -12,8 +12,6 @@ use ratatui::layout::Rect;
 pub enum Target {
     /// A row of the list, by position in the list.
     Row(u32),
-    /// A line of the sidebar, by index.
-    Sidebar(usize),
     /// A line of what is being read, by index into its lines; `None` for the
     /// reader's header.
     Reader(Option<usize>),
@@ -25,8 +23,6 @@ pub enum Target {
     ComposerAction(&'static str),
     /// One of a search's facets, by its place in the row.
     Facet(usize),
-    /// The line between the list and the reading pane, for dragging.
-    Divider,
     /// Something drawn over everything else: clicks there land on nothing
     /// underneath.
     Overlay,

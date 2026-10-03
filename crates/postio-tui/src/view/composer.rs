@@ -28,15 +28,8 @@ pub fn draw(
     theme: &Theme,
     hits: &mut Hits,
 ) {
-    hits.add(Rect::new(area.x, area.y, 1, area.height), Target::Divider);
-    for y in area.y..area.y + area.height {
-        frame.render_widget(
-            Line::styled("│", theme.style(Role::Dim)),
-            Rect::new(area.x, y, 1, 1),
-        );
-    }
     let area = Rect::new(
-        area.x + 2,
+        area.x + 1,
         area.y,
         area.width.saturating_sub(2),
         area.height,

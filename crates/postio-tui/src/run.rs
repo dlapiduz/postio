@@ -244,7 +244,7 @@ async fn main_loop(
     keys: Keys,
     theme: Theme,
     state: postio_core::SharedState,
-    saved: Vec<crate::sidebar::Saved>,
+    saved: Vec<crate::places::Saved>,
     preview: postio_config::Preview,
     session: &mut Session,
 ) -> io::Result<()> {
@@ -258,7 +258,6 @@ async fn main_loop(
         .with_downloads(downloads())
         .with_preview(preview)
         .with_enhanced_keys(enhanced_keys)
-        .with_layout(crate::state::TerminalState::load())
         .with_mouse(session.has(Mode::Mouse));
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
@@ -327,17 +326,6 @@ fn pointer(
     hits: &crate::view::hit::Hits,
 ) -> Option<crate::app::Pointer> {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
-    // A drag and a release are about where the button went down, not about
-    // what is under the pointer now.
-    match mouse.kind {
-        MouseEventKind::Drag(MouseButton::Left) => {
-            return Some(crate::app::Pointer::Drag {
-                column: mouse.column,
-            });
-        }
-        MouseEventKind::Up(MouseButton::Left) => return Some(crate::app::Pointer::Release),
-        _ => {}
-    }
     let hit = hits.at(mouse.column, mouse.row)?;
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => Some(crate::app::Pointer::Click {
@@ -424,8 +412,8 @@ async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
 struct Senders<'a> {
     inputs: async_channel::Sender<Input>,
     drafts: async_channel::Sender<Effect>,
-    /// The pinned saved searches' names, for the sidebar.
-    saved: Vec<crate::sidebar::Saved>,
+    /// The pinned saved searches' names, for the places.
+    saved: Vec<crate::places::Saved>,
     /// The store's host, which decides whether new mail is worth saying.
     host: &'a Host,
     /// What the person is looking at, so mail arriving in the folder
@@ -494,8 +482,8 @@ async fn drive(
 
     // What is where on the screen, as last drawn: what a click lands on.
     let mut hits = crate::view::hit::Hits::default();
-    let contents = sidebar_contents(client, senders.saved.clone()).await;
-    let _ = update(app, Input::Sidebar(contents));
+    let contents = places_contents(client, senders.saved.clone()).await;
+    let _ = update(app, Input::Places(contents));
     if let Some(scope) = first_scope(client).await {
         let total = client.list_count(scope).await.unwrap_or(0);
         let effects = update(app, Input::Opened { scope, total });
@@ -632,12 +620,12 @@ async fn drive(
     }
 }
 
-/// What the sidebar holds: every account, its folders, and the counts its
+/// What the places hold: every account, its folders, and the counts its
 /// views draw.
-async fn sidebar_contents(
+async fn places_contents(
     client: &Client,
-    saved: Vec<crate::sidebar::Saved>,
-) -> crate::sidebar::Contents {
+    saved: Vec<crate::places::Saved>,
+) -> crate::places::Places {
     let accounts = client.accounts().await.unwrap_or_default();
     let mut folders = Vec::new();
     let mut counts = Vec::new();
@@ -656,7 +644,7 @@ async fn sidebar_contents(
         ));
         folders.extend(theirs);
     }
-    crate::sidebar::Contents {
+    crate::places::Places {
         accounts,
         folders,
         counts,
@@ -758,7 +746,7 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    // Done needs no word: every sidebar hears of the change.
+                    // Done needs no word: every list of places hears of the change.
                     if let Err(error) = client.account(op).await {
                         let _ = inputs
                             .send(Input::Host(postio_core::Event::Error {
@@ -879,13 +867,6 @@ fn perform(
                     // depth picked, not the account (as on the desktop).
                     if let Err(error) = postio_ui::onboarding::write_sync_window(window) {
                         tracing::warn!(%error, "could not save the sync window");
-                    }
-                });
-            }
-            Effect::SaveLayout(layout) => {
-                tokio::task::spawn_blocking(move || {
-                    if let Err(error) = layout.save() {
-                        tracing::info!(%error, "could not remember the layout");
                     }
                 });
             }
@@ -1046,13 +1027,6 @@ fn perform(
                     let _ = inputs.send(resume(&client, message).await).await;
                 });
             }
-            Effect::Rest(message) => {
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(crate::app::READ_REST).await;
-                    let _ = inputs.send(Input::Rested(message)).await;
-                });
-            }
             Effect::ReadConversation(thread) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
@@ -1119,8 +1093,8 @@ fn perform(
                     .unwrap_or_else(|error| Err(error.to_string()));
                     match saved {
                         Ok(names) => {
-                            let contents = sidebar_contents(&client, names).await;
-                            let _ = inputs.send(Input::Sidebar(contents)).await;
+                            let contents = places_contents(&client, names).await;
+                            let _ = inputs.send(Input::Places(contents)).await;
                         }
                         Err(reason) => {
                             tracing::warn!(%reason, "could not save the search");
@@ -1144,7 +1118,7 @@ fn perform(
                     }
                 });
             }
-            Effect::RefreshSidebar => {
+            Effect::RefreshPlaces => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 // Read again: a search saved since startup is in the file,
@@ -1153,8 +1127,8 @@ fn perform(
                     .and_then(|path| crate::config_file::pinned_at(&path))
                     .unwrap_or_else(|| saved.to_vec());
                 tokio::spawn(async move {
-                    let contents = sidebar_contents(&client, saved).await;
-                    let _ = inputs.send(Input::Sidebar(contents)).await;
+                    let contents = places_contents(&client, saved).await;
+                    let _ = inputs.send(Input::Places(contents)).await;
                 });
             }
             Effect::Recount(scope) => {

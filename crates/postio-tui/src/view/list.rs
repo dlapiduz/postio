@@ -31,7 +31,7 @@ pub struct Visible<'a> {
 }
 
 /// Lines per row.
-pub const LINES: u16 = crate::layout::LIST_ROW_LINES;
+pub const LINES: u16 = 3;
 /// Width of the date column.
 const DATE: usize = 9;
 /// Where the sender and the subject start: after the cursor's bar, the

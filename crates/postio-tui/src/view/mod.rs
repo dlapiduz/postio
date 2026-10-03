@@ -11,20 +11,16 @@ pub mod palette;
 pub mod reader;
 pub mod search;
 pub mod settings;
-pub mod sidebar;
+pub mod strip;
 pub mod topbar;
 pub mod wrap;
 
 use chrono::{DateTime, Local};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::text::Line;
 
-use crate::app::{App, Focus};
-use crate::layout::{Pane, Shown};
-
-/// The sidebar's width in columns.
-const SIDEBAR: u16 = 26;
+use crate::app::{App, Focus, Front};
 use crate::theme::{Role, Theme};
 
 /// The composer's buttons, each with the key this terminal can send for
@@ -48,153 +44,105 @@ fn composer_actions(app: &App) -> Vec<composer::Action> {
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -> hit::Hits {
     let mut hits = hit::Hits::default();
     let area = frame.area();
-    match app.shown() {
-        Shown::TooSmall { needs } => {
-            let sentence = format!("Terminal too small: needs {}×{}", needs.0, needs.1);
-            let line = Line::styled(
-                fit(&sentence, usize::from(area.width)),
-                theme.style(Role::Warning),
-            );
-            frame.render_widget(line, Rect::new(area.x, area.y, area.width, 1));
+    if !app.fits() {
+        let needs = crate::layout::MINIMUM;
+        let sentence = format!("Terminal too small: needs {}×{}", needs.0, needs.1);
+        let line = Line::styled(
+            fit(&sentence, usize::from(area.width)),
+            theme.style(Role::Warning),
+        );
+        frame.render_widget(line, Rect::new(area.x, area.y, area.width, 1));
+    } else if app.settings().is_some() && app.first_run().is_none() {
+        settings::draw(frame, area, app, theme);
+        if let Some(open) = app.palette() {
+            palette::draw(frame, area, &open, theme);
         }
-        Shown::Panes(_) if app.settings().is_some() && app.first_run().is_none() => {
-            settings::draw(frame, area, app, theme);
-            if let Some(open) = app.palette() {
-                palette::draw(frame, area, &open, theme);
+    } else if let Some(run) = app.first_run() {
+        first_run::draw(frame, area, run, theme);
+    } else {
+        let window = app.window();
+        topbar::draw(frame, window.top, app, theme);
+        // A draft in a tab of its own has the whole screen between the top
+        // bar and the bottom line while it is in front.
+        let tab = app.composer_detached() && app.focus() == Focus::Composer;
+        if !tab {
+            strip::draw(frame, window.strip, app, theme);
+        }
+        let below = window.strip.y + u16::from(!tab);
+        let body = Rect::new(
+            area.x,
+            below,
+            area.width,
+            window.bottom.y.saturating_sub(below),
+        );
+        match app.front() {
+            Front::Composer if app.composer().is_some() => {
+                if let Some(writing) = app.composer() {
+                    composer::draw(
+                        frame,
+                        body,
+                        writing,
+                        app.preview_shown(),
+                        app.focus() == Focus::Composer
+                            && app.scheduling().is_none()
+                            && app.path_prompt().is_none(),
+                        &composer_actions(app),
+                        theme,
+                        &mut hits,
+                    );
+                    if let Some(times) = app.scheduling() {
+                        composer::draw_schedule(frame, body, times, theme, now);
+                    }
+                    if let Some(typed) = app.path_prompt() {
+                        composer::draw_path_prompt(frame, body, typed, theme);
+                    }
+                }
             }
-        }
-        Shown::Panes(_) if app.first_run().is_some() => {
-            if let Some(run) = app.first_run() {
-                first_run::draw(frame, area, run, theme);
-            }
-        }
-        Shown::Panes(panes) => {
-            let [top, body, status] = Layout::vertical([
-                Constraint::Length(1),
-                Constraint::Min(1),
-                Constraint::Length(1),
-            ])
-            .areas(area);
-            topbar::draw(frame, top, app, theme);
-            let widths: Vec<Constraint> = panes
-                .iter()
-                .map(|pane| match pane {
-                    Pane::Sidebar => Constraint::Length(SIDEBAR),
-                    Pane::List => Constraint::Min(40),
-                    Pane::Reader => match app.reader_columns() {
-                        Some(columns) => Constraint::Length(columns),
-                        None => Constraint::Percentage(45),
-                    },
-                })
-                .collect();
-            let areas = Layout::horizontal(widths).split(body);
-            // A draft in a tab of its own has the whole screen while it is
-            // in front, as the desktop's composer window would.
-            let tab = app.composer_detached() && app.focus() == Focus::Composer;
-            let drawn: &[Pane] = if tab { &[] } else { &panes };
-            if tab && let Some(writing) = app.composer() {
-                composer::draw(
+            // T315: the open message becomes the overlay frame; until then
+            // it fills the body.
+            Front::Reader => reader::draw(frame, body, app, theme, now, &mut hits),
+            _ => {
+                // A search's facets take the list's first line.
+                let facets = app.facets();
+                let list = if facets.is_empty() || window.list.height < 2 {
+                    window.list
+                } else {
+                    search::draw_facets(
+                        frame,
+                        Rect::new(window.list.x, window.list.y, window.list.width, 1),
+                        &facets,
+                        app.facets_note(),
+                        theme,
+                        &mut hits,
+                    );
+                    Rect::new(
+                        window.list.x,
+                        window.list.y + 1,
+                        window.list.width,
+                        window.list.height - 1,
+                    )
+                };
+                list::draw(
                     frame,
-                    body,
-                    writing,
-                    app.preview_shown(),
-                    app.scheduling().is_none() && app.path_prompt().is_none(),
-                    &composer_actions(app),
+                    list,
+                    &app.visible(),
+                    app.top(),
                     theme,
+                    now,
                     &mut hits,
                 );
-                if let Some(times) = app.scheduling() {
-                    composer::draw_schedule(frame, body, times, theme, now);
-                }
-                if let Some(typed) = app.path_prompt() {
-                    composer::draw_path_prompt(frame, body, typed, theme);
-                }
             }
-            for (pane, area) in drawn.iter().zip(areas.iter()) {
-                match pane {
-                    Pane::Sidebar => {
-                        let (lines, cursor) = app.sidebar();
-                        sidebar::draw(
-                            frame,
-                            *area,
-                            lines,
-                            cursor,
-                            app.focus() == Focus::Sidebar,
-                            app.sync_lines(),
-                            theme,
-                            &mut hits,
-                        );
-                    }
-                    Pane::List => {
-                        // A search's facets take the list's first line.
-                        let facets = app.facets();
-                        let area = if facets.is_empty() || area.height < 2 {
-                            *area
-                        } else {
-                            search::draw_facets(
-                                frame,
-                                Rect::new(area.x, area.y, area.width, 1),
-                                &facets,
-                                app.facets_note(),
-                                theme,
-                                &mut hits,
-                            );
-                            Rect::new(area.x, area.y + 1, area.width, area.height - 1)
-                        };
-                        list::draw(
-                            frame,
-                            area,
-                            &app.visible(),
-                            app.top(),
-                            theme,
-                            now,
-                            &mut hits,
-                        );
-                    }
-                    Pane::Reader => {
-                        if let Some(writing) = app.composer().filter(|_| !app.showing_reader()) {
-                            composer::draw(
-                                frame,
-                                *area,
-                                writing,
-                                app.preview_shown(),
-                                app.focus() == Focus::Composer
-                                    && app.scheduling().is_none()
-                                    && app.path_prompt().is_none(),
-                                &composer_actions(app),
-                                theme,
-                                &mut hits,
-                            );
-                            if let Some(times) = app.scheduling() {
-                                composer::draw_schedule(frame, *area, times, theme, now);
-                            }
-                            if let Some(typed) = app.path_prompt() {
-                                composer::draw_path_prompt(frame, *area, typed, theme);
-                            }
-                        } else {
-                            reader::draw(frame, *area, app, theme, now, &mut hits);
-                        }
-                    }
-                }
-            }
-            // Over everything: a click there lands on nothing underneath.
-            if let Some(open) = app.palette() {
-                palette::draw(frame, area, &open, theme);
-                hits.add(area, hit::Target::Overlay);
-            }
-            if let Some(sections) = app.cheat_sheet() {
-                cheatsheet::draw(frame, area, &sections, theme);
-                hits.add(area, hit::Target::Overlay);
-            }
-            status_line(
-                frame,
-                status,
-                app,
-                tab,
-                !drawn.contains(&Pane::Sidebar),
-                theme,
-            );
         }
+        // Over everything: a click there lands on nothing underneath.
+        if let Some(open) = app.palette() {
+            palette::draw(frame, area, &open, theme);
+            hits.add(area, hit::Target::Overlay);
+        }
+        if let Some(sections) = app.cheat_sheet() {
+            cheatsheet::draw(frame, area, &sections, theme);
+            hits.add(area, hit::Target::Overlay);
+        }
+        status_line(frame, window.bottom, app, tab, theme);
     }
     hits
 }
@@ -202,22 +150,15 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
 /// The status line: what just happened on the left -- a failure marked `✕`
 /// in the error colour, a success `✓` in the success colour with its undo
 /// key in the accent -- and how many conversations are listed on the right,
-/// with the sync state when no sidebar is there to carry it.
-fn status_line(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    tab: bool,
-    no_sidebar: bool,
-    theme: &Theme,
-) {
+/// with the sync state.
+fn status_line(frame: &mut Frame, area: Rect, app: &App, tab: bool, theme: &Theme) {
     use crate::app::Tone;
     use ratatui::text::Span;
     let count = match app.total() {
         1 => "1 conversation".to_owned(),
         total => format!("{total} conversations"),
     };
-    let right = match app.sync_line().filter(|_| no_sidebar) {
+    let right = match app.sync_line() {
         Some(sync) => format!("{sync} · {count}"),
         None => count,
     };
@@ -329,12 +270,12 @@ mod tests {
         app_with_keys, buffer, hits_of, places, saved_search, screen, seed_places,
     };
 
-    fn with_sidebar(size: (u16, u16)) -> App {
-        with_sidebar_and_keys(size, &Default::default())
+    fn with_places(size: (u16, u16)) -> App {
+        with_places_and_keys(size, &Default::default())
     }
 
     /// Mail from one account with an Inbox of four unread and a saved search.
-    fn with_sidebar_and_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) -> App {
+    fn with_places_and_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) -> App {
         let mut app = app_with_keys(size, bindings);
         let mut contents = places();
         contents.folders.truncate(1);
@@ -350,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_composer_draws_its_fields_and_body_in_the_reading_pane() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
         draft.to = vec![postio_model::EmailAddress::new(
             None::<String>,
@@ -375,7 +316,7 @@ mod tests {
 
     #[test]
     fn a_reply_shows_its_quote_folded_under_the_body() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         let found = crate::composer::tests::a_message_and_its_account();
         app.compose(postio_body::replying::reply_draft(
             postio_body::replying::ReplyKind::Reply,
@@ -391,7 +332,7 @@ mod tests {
     fn the_composer_shows_how_to_send_with_a_key_this_terminal_delivers() {
         // Nothing on screen said how to send, and the desktop's Ctrl+Return
         // is, in many terminals, the terminal's own fullscreen.
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
         let screen = screen(160, 16, &app);
         let foot = screen
@@ -419,7 +360,7 @@ mod tests {
     #[test]
     fn the_schedule_picker_lists_its_times_by_number() {
         use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
         draft.to = vec![postio_model::EmailAddress::new(
             None::<String>,
@@ -455,7 +396,7 @@ mod tests {
 
     #[test]
     fn recipient_suggestions_are_listed_under_the_field_and_harmless() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
         for c in "ada@".chars() {
             update(
@@ -488,7 +429,7 @@ mod tests {
 
     #[test]
     fn a_drafts_files_are_listed_with_their_sizes() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
         let mut pdf = postio_model::Attachment::new(
             postio_model::MessageId::UNASSIGNED,
@@ -513,7 +454,7 @@ mod tests {
 
     #[test]
     fn the_path_prompt_is_drawn_while_it_is_open() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
         update(
             &mut app,
@@ -537,7 +478,7 @@ mod tests {
     fn the_preview_shows_bold_where_the_source_says_so() {
         // T057, toggle mode: one key swaps the text for the message as it
         // will arrive.
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         writing_bold(&mut app);
         update(
             &mut app,
@@ -586,7 +527,7 @@ mod tests {
 
     #[test]
     fn split_mode_shows_the_text_and_the_preview_side_by_side() {
-        let mut app = with_sidebar((160, 16)).with_preview(postio_config::tui::Preview::Split);
+        let mut app = with_places((160, 16)).with_preview(postio_config::tui::Preview::Split);
         writing_bold(&mut app);
         let screen = screen(160, 16, &app);
         assert!(screen.contains("**bold**"), "{screen}");
@@ -596,7 +537,9 @@ mod tests {
     #[test]
     fn a_detached_draft_has_the_screen_and_the_mail_says_it_is_open() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
+        let opening = crate::test_support::open_list(&mut app, 3);
+        crate::test_support::serve(&mut app, opening);
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
         draft.subject = "Tide gate".into();
         app.compose(draft);
@@ -623,7 +566,7 @@ mod tests {
 
     #[test]
     fn a_whole_operator_is_marked_bold_and_a_half_typed_one_is_not() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         for c in "/from:ada is:".chars() {
             update(
                 &mut app,
@@ -654,7 +597,7 @@ mod tests {
 
     #[test]
     fn the_search_field_in_the_top_bar_holds_the_query_and_its_readout() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         update(
             &mut app,
             Input::Key(crossterm::event::KeyEvent::from(
@@ -703,7 +646,7 @@ mod tests {
     fn a_searchs_facets_sit_over_its_results_and_take_a_click() {
         use crossterm::event::{KeyCode, KeyEvent};
         use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('/'))));
         let sequence = update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('t'))))
             .iter()
@@ -801,7 +744,7 @@ mod tests {
 
     #[test]
     fn the_top_bar_offers_search_and_its_hints_come_from_the_keymap() {
-        let app = with_sidebar((160, 16));
+        let app = with_places((160, 16));
         let drawn = screen(160, 16, &app);
         let top = drawn.lines().next().expect("a top row");
         assert!(top.contains("Search all mail"), "{top}");
@@ -819,7 +762,7 @@ mod tests {
             false,
         )
         .expect("still bound");
-        let rebound = with_sidebar_and_keys((160, 16), &bindings);
+        let rebound = with_places_and_keys((160, 16), &bindings);
         let drawn = screen(160, 16, &rebound);
         let top = drawn.lines().next().expect("a top row");
         assert!(top.contains(&format!("{compose} compose")), "{top}");
@@ -829,7 +772,7 @@ mod tests {
     #[test]
     fn the_palette_draws_its_rows_with_their_keys() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = with_sidebar((160, 24));
+        let mut app = with_places((160, 24));
         update(
             &mut app,
             Input::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
@@ -855,7 +798,7 @@ mod tests {
     fn the_cheat_sheet_shows_every_section_and_binding() {
         // T067.
         use crossterm::event::{KeyCode, KeyEvent};
-        let mut app = with_sidebar((200, 90));
+        let mut app = with_places((200, 90));
         update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('?'))));
         let screen = screen(200, 90, &app);
         let keymap = postio_core::Keymap::resolve(&Default::default());
@@ -906,7 +849,7 @@ mod tests {
     fn a_click_on_the_third_list_row_is_that_row() {
         // T070.
         use postio_ui::paging::Page;
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         let effects = update(
             &mut app,
             Input::Opened {
@@ -953,78 +896,12 @@ mod tests {
         assert_eq!(lines_of_row_2, 3, "all of the row's lines are the row");
     }
 
-    fn divider(hits: &hit::Hits, width: u16, height: u16) -> u16 {
-        (0..width)
-            .find(|x| {
-                (0..height).any(|y| {
-                    hits.at(*x, y)
-                        .is_some_and(|hit| hit.target == hit::Target::Divider)
-                })
-            })
-            .expect("a divider")
-    }
-
-    fn reading_something(app: &mut App) {
-        app.set_reading_for_tests(crate::conversation::Reading {
-            row: postio_model::MessageId::new(1),
-            members: vec![crate::conversation::tests::member_with_lines(1, 3)],
-            current: 0,
-        });
-    }
-
-    #[test]
-    fn dragging_the_divider_widens_the_list_and_the_width_is_remembered() {
-        // T074.
-        use crate::app::Pointer;
-        let mut app = with_sidebar((160, 16));
-        reading_something(&mut app);
-        let hits = hits_of(160, 16, &app);
-        let before = divider(&hits, 160, 16);
-        let press = hits.at(before, 3).expect("the divider is there");
-        update(
-            &mut app,
-            Input::Pointer(Pointer::Click {
-                hit: press,
-                ctrl: false,
-                shift: false,
-            }),
-        );
-        update(
-            &mut app,
-            Input::Pointer(Pointer::Drag { column: before + 5 }),
-        );
-        update(
-            &mut app,
-            Input::Pointer(Pointer::Drag {
-                column: before + 10,
-            }),
-        );
-        let effects = update(&mut app, Input::Pointer(Pointer::Release));
-        let after = divider(&hits_of(160, 16, &app), 160, 16);
-        assert_eq!(after, before + 10, "the list is ten columns wider");
-        let saved = effects
-            .iter()
-            .find_map(|effect| match effect {
-                crate::app::Effect::SaveLayout(state) => Some(state.clone()),
-                _ => None,
-            })
-            .expect("the width is saved when the drag ends");
-
-        // A restart with what was saved draws the same.
-        let mut again = with_sidebar((160, 16)).with_layout(saved);
-        reading_something(&mut again);
-        assert_eq!(divider(&hits_of(160, 16, &again), 160, 16), after);
-    }
-
     #[test]
     fn an_empty_store_opens_on_the_first_run() {
         // T084: the empty-store screen.
         use crossterm::event::{KeyCode, KeyEvent};
         let mut app = crate::test_support::app((120, 30));
-        update(
-            &mut app,
-            Input::Sidebar(crate::sidebar::Contents::default()),
-        );
+        update(&mut app, Input::Places(crate::places::Places::default()));
         let first = screen(120, 30, &app);
         for wanted in ["Add your first account", "1 / 3", "Address"] {
             assert!(first.contains(wanted), "{wanted} missing:\n{first}");
@@ -1097,7 +974,7 @@ mod tests {
     #[test]
     fn the_settings_show_every_section_and_the_accounts() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = with_sidebar((160, 30));
+        let mut app = with_places((160, 30));
         update(
             &mut app,
             Input::Key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::ALT)),
@@ -1130,14 +1007,14 @@ mod tests {
     #[test]
     fn an_accounts_signatures_are_listed_with_what_each_key_does() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = with_sidebar((160, 30));
+        let mut app = with_places((160, 30));
         let mut account = app.accounts()[0].clone();
         let mut work = postio_model::Signature::new("Work", "Ada\nThe Engine Room");
         work.id = postio_model::SignatureId::new(5);
         account.signatures = vec![work];
         update(
             &mut app,
-            Input::Sidebar(crate::sidebar::Contents {
+            Input::Places(crate::places::Places {
                 accounts: vec![account],
                 ..Default::default()
             }),
@@ -1164,7 +1041,7 @@ mod tests {
     #[test]
     fn the_privacy_section_shows_what_left_this_machine() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = with_sidebar((160, 30));
+        let mut app = with_places((160, 30));
         update(
             &mut app,
             Input::Key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::ALT)),
@@ -1217,10 +1094,7 @@ mod tests {
     fn a_browser_sign_in_shows_the_whole_address_and_what_it_allows() {
         use crossterm::event::{KeyCode, KeyEvent};
         let mut app = crate::test_support::app((100, 40));
-        update(
-            &mut app,
-            Input::Sidebar(crate::sidebar::Contents::default()),
-        );
+        update(&mut app, Input::Places(crate::places::Places::default()));
         for c in "ada@example.test".chars() {
             update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
         }
@@ -1266,7 +1140,7 @@ mod tests {
 
     #[test]
     fn a_hostile_subject_in_the_composer_reaches_the_screen_harmless() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
         // What a reply copies from the message it answers.
         draft.subject = "Re: \u{1b}]0;pwned\u{7}\u{1b}[2J".into();
@@ -1277,101 +1151,11 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_terminal_draws_the_sidebar_beside_the_list() {
-        let app = with_sidebar((160, 12));
-        let screen = screen(160, 12, &app);
-        for wanted in ["Inbox", "Flagged", "Snoozed", "Unread from Ada"] {
-            assert!(screen.contains(wanted), "{wanted} missing:\n{screen}");
-        }
-        // A heading is set in capitals, as the canvas sets it.
-        assert!(
-            screen.contains("SAVED SEARCHES"),
-            "the saved searches' heading is missing:\n{screen}"
-        );
-        assert!(
-            screen
-                .lines()
-                .any(|line| line.contains("Inbox") && line.contains('4')),
-            "{screen}"
-        );
-    }
-
-    #[test]
-    fn the_sidebar_is_headed_by_the_account_and_marks_the_open_folder() {
-        let app = with_sidebar((160, 16));
-        let screen = screen(160, 16, &app);
-        let sidebar: Vec<String> = screen
-            .lines()
-            .map(|line| line.chars().take(26).collect())
-            .collect();
-        assert!(
-            sidebar
-                .iter()
-                .any(|line| line.replace(' ', "").contains("ADA@EXAMPLE.COM")),
-            "the account's address heads its folders:\n{screen}"
-        );
-        let inbox = sidebar
-            .iter()
-            .find(|line| line.contains("Inbox"))
-            .unwrap_or_else(|| panic!("no Inbox:\n{screen}"));
-        assert!(
-            inbox.starts_with('▌'),
-            "the open folder has a bar: {inbox:?}"
-        );
-        assert!(
-            inbox.trim_end_matches('│').trim_end().ends_with('4'),
-            "its count at the right: {inbox:?}"
-        );
-        // Every row between the top bar and the status line.
-        assert!(
-            sidebar[1..sidebar.len() - 1]
-                .iter()
-                .all(|line| line.ends_with('│')),
-            "a rule keeps the sidebar apart:\n{screen}"
-        );
-    }
-
-    #[test]
-    fn the_sync_state_sits_at_the_foot_of_the_sidebar() {
-        let inbox = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
-        let mut app = with_sidebar((160, 16));
-        update(
-            &mut app,
-            Input::Opened {
-                scope: inbox,
-                total: 0,
-            },
-        );
-        let (state, detail) = app.sync_lines().expect("an account is shown");
-        let screen = screen(160, 16, &app);
-        let lines: Vec<&str> = screen.lines().collect();
-        let foot = |line: &str| line.chars().take(26).collect::<String>();
-        assert!(foot(lines[13]).contains(&state), "{screen}");
-        assert!(foot(lines[14]).contains(&detail), "{screen}");
-        assert!(
-            !lines[15].contains(&state),
-            "not on the status line as well:\n{screen}"
-        );
-
-        // Without the sidebar, the status line still says it.
-        let mut narrow = with_sidebar((100, 16));
-        update(
-            &mut narrow,
-            Input::Opened {
-                scope: inbox,
-                total: 0,
-            },
-        );
-        let screen = screen_of_size(&narrow, 100, 16);
-        assert!(screen.lines().last().unwrap().contains(&state), "{screen}");
-    }
-
-    #[test]
-    fn the_message_under_the_cursor_is_read_beside_the_list() {
+    fn an_opened_message_fills_the_body() {
         use chrono::Utc;
         use postio_ui::paging::Page;
         use postio_ui::terminal::SafeText;
-        let mut app = with_sidebar((160, 12));
+        let mut app = with_places((160, 12));
         let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
         let effects = update(&mut app, Input::Opened { scope, total: 1 });
         let (generation, page) = effects
@@ -1408,7 +1192,14 @@ mod tests {
                 }),
             },
         );
-        update(&mut app, Input::Rested(postio_model::MessageId::new(7)));
+        app.open_reading(postio_model::MessageId::new(7));
+        update(
+            &mut app,
+            crate::test_support::key(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+        );
         update(
             &mut app,
             Input::Body {
@@ -1426,12 +1217,8 @@ mod tests {
         assert!(screen.contains("The analytical engine"), "{screen}");
         assert_eq!(
             screen.matches("Engine notes").count(),
-            2,
-            "the subject is in the list and heads the reader:\n{screen}"
-        );
-        assert!(
-            screen.contains("│  Engine notes"),
-            "a divider keeps the panes apart:\n{screen}"
+            1,
+            "the open message fills the body and its subject heads it:\n{screen}"
         );
     }
 
@@ -1440,7 +1227,7 @@ mod tests {
         use chrono::Utc;
         use postio_ui::paging::Page;
         use postio_ui::terminal::SafeText;
-        let mut app = with_sidebar((160, 20));
+        let mut app = with_places((160, 20));
         let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
         let effects = update(&mut app, Input::Opened { scope, total: 1 });
         let (generation, page) = effects
@@ -1477,7 +1264,14 @@ mod tests {
                 }),
             },
         );
-        update(&mut app, Input::Rested(postio_model::MessageId::new(7)));
+        app.open_reading(postio_model::MessageId::new(7));
+        update(
+            &mut app,
+            crate::test_support::key(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+        );
         update(
             &mut app,
             Input::Addressed {
@@ -1489,11 +1283,7 @@ mod tests {
             },
         );
         let screen = screen(160, 20, &app);
-        let reader: Vec<String> = screen
-            .lines()
-            // What is right of the list's rule.
-            .map(|line| line.rsplit('│').next().unwrap_or_default().to_owned())
-            .collect();
+        let reader: Vec<String> = screen.lines().map(str::to_owned).collect();
         let at = |needle: &str| {
             reader
                 .iter()
@@ -1534,7 +1324,7 @@ mod tests {
 
     #[test]
     fn the_status_line_marks_what_failed_and_what_worked_and_the_undo_key() {
-        let mut app = with_sidebar((160, 16));
+        let mut app = with_places((160, 16));
         update(
             &mut app,
             Input::Host(postio_core::Event::Error {
@@ -1581,7 +1371,7 @@ mod tests {
         // One paragraph far wider than the reading pane: every word of it
         // must be on screen, none cut at the pane's right edge.
         let words: Vec<String> = (0..60).map(|n| format!("w{n:02}")).collect();
-        let mut app = with_sidebar((160, 30));
+        let mut app = with_places((160, 30));
         app.set_reading_for_tests(crate::conversation::Reading {
             row: postio_model::MessageId::new(1),
             members: vec![crate::conversation::tests::member_saying(
@@ -1596,10 +1386,57 @@ mod tests {
         }
     }
 
+    fn window_of(size: (u16, u16)) -> String {
+        let mut app = with_places(size);
+        let opening = crate::test_support::open_list(&mut app, 6);
+        crate::test_support::serve(&mut app, opening);
+        screen(size.0, size.1, &app)
+    }
+
     #[test]
-    fn a_narrower_terminal_leaves_the_sidebar_out() {
-        let app = with_sidebar((100, 12));
-        let screen = screen(100, 12, &app);
-        assert!(!screen.contains("Snoozed"), "{screen}");
+    fn the_window_is_a_top_bar_a_strip_and_rows_with_no_sidebar_at_120_by_36() {
+        let drawn = window_of((120, 36));
+        let lines: Vec<&str> = drawn.lines().collect();
+        assert!(
+            lines[0].contains("Search all mail"),
+            "the top bar:\n{drawn}"
+        );
+        assert!(
+            lines[1].trim_start().starts_with("Inbox"),
+            "the strip is under it:\n{drawn}"
+        );
+        assert!(
+            lines[2].contains("Ada"),
+            "rows start under the strip:\n{drawn}"
+        );
+        assert!(drawn.contains("Message 5"), "{drawn}");
+        for gone in ["ada@example.com", "Archive", "Saved searches"] {
+            assert!(!drawn.contains(gone), "no sidebar, but {gone}:\n{drawn}");
+        }
+        assert!(
+            lines.iter().all(|line| !line.contains('│')),
+            "no pane rule:\n{drawn}"
+        );
+    }
+
+    #[test]
+    fn the_window_keeps_its_rows_at_the_minimum_size() {
+        let drawn = window_of((50, 12));
+        let lines: Vec<&str> = drawn.lines().collect();
+        assert_eq!(lines.len(), 12);
+        assert!(lines[0].contains("Search"), "the top bar:\n{drawn}");
+        assert!(
+            lines[1].trim_start().starts_with("Inbox"),
+            "the strip:\n{drawn}"
+        );
+        assert!(lines[2].contains("Ada"), "a row:\n{drawn}");
+        assert!(!drawn.contains("ada@example.com"), "no sidebar:\n{drawn}");
+    }
+
+    #[test]
+    fn below_the_minimum_the_screen_says_so_and_draws_nothing_else() {
+        let drawn = window_of((49, 12));
+        assert!(drawn.contains("Terminal too small: needs 50×12"), "{drawn}");
+        assert!(!drawn.contains("Message 0"), "{drawn}");
     }
 }

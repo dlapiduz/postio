@@ -25,8 +25,8 @@ use ratatui::backend::TestBackend;
 use crate::app::{App, Effect, Input, Pointer, update};
 use crate::caps::{Background, Colour};
 use crate::input::Keys;
+use crate::places::{Places, Saved};
 use crate::row::Row;
-use crate::sidebar::{Contents, Saved};
 use crate::theme::Theme;
 use crate::view::{draw, hit};
 
@@ -68,8 +68,8 @@ pub fn folder(id: i64, name: &str, role: MailboxRole, unread: u32) -> Mailbox {
 }
 
 /// An Inbox (id 1) and an Archive (id 2), as the places a small mailbox has.
-pub fn places() -> Contents {
-    Contents {
+pub fn places() -> Places {
+    Places {
         accounts: vec![account()],
         folders: vec![
             folder(1, "INBOX", MailboxRole::Inbox, 0),
@@ -90,8 +90,8 @@ pub fn saved_search(key: &str, name: &str, query: &str) -> Saved {
 }
 
 /// Tell `app` about `contents`.
-pub fn seed_places(app: &mut App, contents: Contents) {
-    update(app, Input::Sidebar(contents));
+pub fn seed_places(app: &mut App, contents: Places) {
+    update(app, Input::Places(contents));
 }
 
 // -- Lists -----------------------------------------------------------------
@@ -187,7 +187,7 @@ pub fn show_rows(app: &mut App, rows: &[Row]) {
 /// The message `message` open and read: the cursor rests on it, its
 /// recipients are known and its body has arrived.
 pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, body: MessageBody) {
-    update(app, Input::Rested(message));
+    app.open_reading(message);
     update(app, Input::Addressed { message, to });
     update(
         app,

@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::sidebar::Saved;
+use crate::places::Saved;
 
 /// Where `config.toml` is.
 pub fn path() -> Option<PathBuf> {
@@ -43,7 +43,7 @@ fn rewrite(
     Ok(pinned(&config))
 }
 
-/// The pinned saved searches in `config`, in the sidebar's order -- the
+/// The pinned saved searches in `config`, in the finder's order -- the
 /// one a reorder on either app writes.
 pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
     config
