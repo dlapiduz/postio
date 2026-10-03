@@ -31,12 +31,37 @@ pub struct Places {
 
 /// Which of Focus's features are in use, for the strip's counts: a count
 /// shows only while its feature is (C10).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Features {
     /// Whether filtering is on, so "N filtered today" means something.
     pub filtering: bool,
     /// How many digest rules there are.
     pub digest_rules: usize,
+    /// The digest rules, for when the next digest comes.
+    pub digests: Rules,
+    /// Where `[focus] reading` opens a message.
+    pub reading: postio_config::Reading,
+    /// Whether `[focus.vault]` is configured, so a to-do offers Task.
+    pub capture: bool,
+}
+
+/// The digest rules as the file has them. Equal when they are written the
+/// same: no rule holds a number that is not equal to itself.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Rules(pub Vec<postio_config::DigestRule>);
+
+impl Eq for Rules {}
+
+impl Features {
+    /// What the empty inbox is told of `[focus]`.
+    pub fn focus(&self) -> postio_config::FocusConfig {
+        postio_config::FocusConfig {
+            filtering: self.filtering,
+            digests: self.digests.0.clone(),
+            reading: self.reading,
+            ..Default::default()
+        }
+    }
 }
 
 /// A saved search from `config.toml`'s `[filters]`.

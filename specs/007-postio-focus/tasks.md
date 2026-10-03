@@ -542,7 +542,7 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 - [X] T311 [US16] The strip and top bar: place name, counts, `!` with its accent and "Showing", filtered and rule counts, the sync label and `? keys` Done: every strip and top-bar item is a `Target::Command` click; the sync label folds the tracked accounts' events and the folders' last sync
 - [X] T312 [US16] Selection and the bulk bar: `x`, `J`/`K`, `X` as a predicate (C19), `Esc`, the bar's verbs (scenario 4)
 - [X] T313 [US16] The bottom line's toast with Undo, 8 s, beside the bulk bar
-- [ ] T314 [US16] States: the banner (`focus_state::banner`) with its action, first sync's progress, the empty inbox
+- [X] T314 [US16] States: the banner (`focus_state::banner`) with its action, first sync's progress, the empty inbox
 - [ ] T315 [US16] The open message frame (scenario 2, FR-195): header, steps, position, action row and More, the column and its rhythm, the action card and the quote's highlight, attachments, the fold line, `j`/`k`, `[`/`]`, `o`, `v`, read on dwell, `Esc` back to the same row; the list dimmed behind
 - [ ] T316 [US16] Reading beside the list, `F8` and `[focus] reading`, from 128 columns
 - [ ] T317 [US16] The composer in the frame; detach to the whole screen (FR-196); reply, reply all and forward; Send later; Remind `ctrl+h`

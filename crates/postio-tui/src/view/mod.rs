@@ -12,6 +12,7 @@ pub mod palette;
 pub mod reader;
 pub mod search;
 pub mod settings;
+pub mod state;
 pub mod strip;
 pub mod topbar;
 pub mod wrap;
@@ -76,6 +77,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             area.width,
             window.bottom.y.saturating_sub(below),
         );
+        if let (Some(row), Some(banner)) = (window.banner, app.banner()) {
+            state::banner(frame, row, &banner, app, theme, &mut hits);
+        }
         match app.front() {
             Front::Composer if app.composer().is_some() => {
                 if let Some(writing) = app.composer() {
@@ -123,16 +127,20 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                         window.list.height - 1,
                     )
                 };
-                list::draw(
-                    frame,
-                    list,
-                    &app.visible(),
-                    app.top(),
-                    theme,
-                    now,
-                    &|command| app.hint(command),
-                    &mut hits,
-                );
+                if let Some(said) = app.empty_inbox(now) {
+                    state::empty(frame, list, &said, theme, &mut hits);
+                } else {
+                    list::draw(
+                        frame,
+                        list,
+                        &app.visible(),
+                        app.top(),
+                        theme,
+                        now,
+                        &|command| app.hint(command),
+                        &mut hits,
+                    );
+                }
             }
         }
         // Over everything: a click there lands on nothing underneath.

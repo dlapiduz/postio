@@ -11,7 +11,7 @@
 //!
 //! `state` is what is open over the mail: `reading` (the first message), `search`, `palette`, `keys` (the
 //! cheat sheet), `compose`, `undo` or `toast` (an undo offer on the bottom line),
-//! `error`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
+//! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
@@ -48,7 +48,8 @@ fn main() {
             folders: vec![
                 {
                     let mut inbox = test_support::folder(1, "INBOX", MailboxRole::Inbox, 3);
-                    inbox.last_synced_at = Some(test_support::local(23, 11, 9));
+                    inbox.last_synced_at =
+                        (state != "first-sync").then(|| test_support::local(23, 11, 9));
                     inbox
                 },
                 test_support::folder(2, "Archive", MailboxRole::Archive, 0),
@@ -71,6 +72,7 @@ fn main() {
             features: postio_tui::places::Features {
                 filtering: true,
                 digest_rules: 4,
+                ..Default::default()
             },
         },
     );
@@ -373,6 +375,41 @@ fn main() {
             test_support::show_scope(&mut app, postio_model::FocusScope::HasAction, marked);
             if state == "has-action-nocolor" {
                 colour = Colour::None;
+            }
+        }
+        "offline" | "first-sync" | "sign-in" | "empty" => {
+            use postio_core::{ConnectionState, Event, FailureReason};
+            let account = AccountId::new(1);
+            let mut connected = |state| {
+                update(
+                    &mut app,
+                    Input::Host(Event::ConnectionChanged { account, state }),
+                );
+            };
+            match state.as_str() {
+                "offline" => connected(ConnectionState::Offline),
+                "sign-in" => connected(ConnectionState::Failing {
+                    reason: FailureReason::Auth,
+                }),
+                _ => connected(ConnectionState::Online),
+            }
+            let progress = |app: &mut App, done, total| {
+                update(
+                    app,
+                    Input::Host(Event::SyncProgress {
+                        account,
+                        done,
+                        total,
+                    }),
+                );
+            };
+            match state.as_str() {
+                "first-sync" => progress(&mut app, 3_200, 8_400),
+                "empty" => {
+                    progress(&mut app, 8_400, 8_400);
+                    test_support::show_focus(&mut app, Vec::new());
+                }
+                _ => {}
             }
         }
         "nocolor" => colour = Colour::None,

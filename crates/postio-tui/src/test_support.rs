@@ -54,6 +54,7 @@ pub fn account() -> Account {
     let mut account = Account::new("ada", EmailAddress::new(None::<String>, "ada@example.com"));
     account.id = AccountId::new(1);
     account.enabled = true;
+    account.incoming.host = "imap.example.com".into();
     account
 }
 
@@ -253,6 +254,7 @@ pub fn places_with_features() -> Places {
         features: crate::places::Features {
             filtering: true,
             digest_rules: 4,
+            ..Default::default()
         },
         ..places()
     }

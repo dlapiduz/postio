@@ -240,6 +240,12 @@ pub struct SyncLabel {
     pub icon: &'static str,
 }
 
+/// "Syncing 1,200 of 8,400": how far a pass has come, as the sync label and
+/// the first-sync banner say it.
+pub fn syncing(done: u32, total: u32) -> String {
+    format!("Syncing {} of {}", count(done), count(total))
+}
+
 /// The sync label for `statuses`, as of `now`: when mail last arrived is
 /// said as a clock time in `zone`, `last_synced` being the newest of the
 /// accounts' last completed syncs.
@@ -272,7 +278,7 @@ where
         let done = passes.iter().map(|(done, _)| done).sum();
         let total = passes.iter().map(|(_, total)| total).sum();
         return SyncLabel {
-            text: format!("Syncing {} of {}", count(done), count(total)),
+            text: syncing(done, total),
             icon: "emblem-synchronizing-symbolic",
         };
     }
@@ -548,6 +554,12 @@ mod tests {
     const AUTH: ConnectionState = ConnectionState::Failing {
         reason: FailureReason::Auth,
     };
+
+    #[test]
+    fn syncing_counts_with_separators() {
+        assert_eq!(syncing(3, 9), "Syncing 3 of 9");
+        assert_eq!(syncing(1_200, 8_400), "Syncing 1,200 of 8,400");
+    }
 
     #[test]
     fn a_rejected_password_comes_first_then_offline_then_a_first_sync() {

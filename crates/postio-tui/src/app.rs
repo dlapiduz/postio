@@ -2613,6 +2613,54 @@ impl App {
         )
     }
 
+    /// The one banner under the strip, when there is one: a refused
+    /// password, an account that cannot sync, no network, or a first sync.
+    pub fn banner(&self) -> Option<postio_ui::focus_state::Banner> {
+        let facts: Vec<postio_ui::focus_state::AccountFacts> = self
+            .accounts
+            .iter()
+            .filter(|account| account.enabled)
+            .map(|account| postio_ui::focus_state::AccountFacts {
+                id: account.id,
+                server: account.incoming.host.clone(),
+                address: account.address.address.clone(),
+                name: if account.display_name.is_empty() {
+                    account.address.address.clone()
+                } else {
+                    account.display_name.clone()
+                },
+            })
+            .collect();
+        postio_ui::focus_state::banner(&self.trackers.statuses(&self.tracked), &facts)
+    }
+
+    /// What the list's place says while Focus's inbox has no conversations
+    /// and the has-action filter is off; nothing otherwise.
+    pub fn empty_inbox(
+        &self,
+        now: chrono::DateTime<chrono::Local>,
+    ) -> Option<postio_ui::focus_state::EmptyInbox> {
+        if self.scope != Some(ListScope::Focus(postio_model::FocusScope::Inbox))
+            || self.list.total() > 0
+        {
+            return None;
+        }
+        let filtered = self.counts.map_or(0, |counts| counts.filtered_today);
+        let saying = postio_ui::focus_state::inbox_saying(
+            &self.trackers.statuses(&self.tracked),
+            self.last_synced,
+        );
+        Some(
+            postio_ui::focus_state::empty_inbox(
+                &self.features.focus(),
+                filtered,
+                self.keys.keymap(),
+                &now,
+            )
+            .saying(&saying, self.keys.keymap(), &chrono::Local),
+        )
+    }
+
     /// What the strip calls the place on screen.
     pub fn place_name(&self) -> postio_ui::terminal::SafeText {
         match self.scope {
@@ -2631,7 +2679,7 @@ impl App {
     pub fn window(&self) -> crate::layout::Window {
         crate::layout::window(
             ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1),
-            false,
+            self.banner().is_some(),
         )
     }
 
@@ -3030,6 +3078,18 @@ impl App {
                         postio_core::CommandId::DeclineInvite
                     };
                     return self.answer(message, command);
+                }
+            }
+            // The banner's button: sign in again to the account it names.
+            "update_credential" => {
+                if let Some(postio_ui::focus_state::Banner::SignIn { address, .. }) = self.banner()
+                    && let Some(account) = self
+                        .accounts
+                        .iter()
+                        .find(|account| account.address.address.eq_ignore_ascii_case(&address))
+                {
+                    self.first_run = Some(crate::first_run::FirstRun::repair(account));
+                    self.focus = Focus::FirstRun;
                 }
             }
             "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
@@ -3513,7 +3573,7 @@ impl App {
     /// to.
     fn fill_places(&mut self, contents: &crate::places::Places) -> Vec<Effect> {
         self.places = contents.clone();
-        self.features = contents.features;
+        self.features = contents.features.clone();
         self.folders = contents.folders.clone();
         self.accounts = contents.accounts.clone();
         if self.last_synced.is_none() {

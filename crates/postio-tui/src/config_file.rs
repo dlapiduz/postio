@@ -38,6 +38,9 @@ impl Read {
             features: Features {
                 filtering: config.focus.filtering,
                 digest_rules: config.focus.digests.len(),
+                digests: crate::places::Rules(config.focus.digests.clone()),
+                reading: config.focus.reading,
+                capture: config.focus.vault.is_some(),
             },
         }
     }
@@ -53,10 +56,7 @@ pub fn save_search(path: &Path, query: &str) -> Result<Read, String> {
 
 /// Change the filters in the file at `path` with `change`, leaving the rest
 /// of it as it was.
-fn rewrite(
-    path: &Path,
-    change: impl FnOnce(&mut postio_config::Config),
-) -> Result<Read, String> {
+fn rewrite(path: &Path, change: impl FnOnce(&mut postio_config::Config)) -> Result<Read, String> {
     let original = text(path);
     let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
     change(&mut config);
