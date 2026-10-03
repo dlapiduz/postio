@@ -45,7 +45,7 @@
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use postio_model::{
     Account, Attachment, BodyState, EmailAddress, Flag, FlagSet, Mailbox, MailboxRole, Message,
-    RfcMessageId, ids::MessageId, test_corpus,
+    RfcMessageId, ids::{AccountId, MessageId}, test_corpus,
 };
 
 use crate::repository::{
@@ -94,6 +94,18 @@ const SMALL_SPREAD_DAYS: i64 = 45;
 /// a realistic number of distinct days, not six weeks compressed into 100k
 /// rows a millisecond apart.
 const LARGE_SPREAD_DAYS: i64 = 730;
+
+/// The conversation lengths of a storyboard's `thirty-threads` seed, for
+/// [`seed_conversations`]: thirty-six threads, mostly single messages, some
+/// exchanges, one of five (specs/008-storyboards R11).
+pub const THIRTY_THREADS: &[usize] = &[
+    1, 2, 1, 1, 3, 1, 1, 2, 1, 1, 1, 4, 1, 2, 1, 1, 1, 3, 1, 1, 2, 1, 1, 1, 5, 1, 1, 2, 1, 1, 1, 3,
+    1, 1, 2, 1,
+];
+
+/// The one conversation of a storyboard's `long-thread` seed, for
+/// [`seed_conversations`]: seven messages, the last two unread.
+pub const LONG_THREAD: &[usize] = &[7];
 
 /// How many messages one write transaction holds, for [`seed_large`].
 ///
@@ -969,6 +981,67 @@ impl Rng {
     fn chance(&mut self, percent: u32) -> bool {
         self.below(100) < percent
     }
+}
+
+/// Stamps every folder `report` created as synced at `at`.
+///
+/// A seed has never talked to a server, so every folder says `never
+/// synced`; a picture of an ordinary day wants one that has.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn stamp_synced(database: &Store, report: &SeedReport, at: DateTime<Utc>) {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let repository = MailboxRepository::new(&connection);
+    for mailbox in &report.mailboxes {
+        let mut mailbox = mailbox.clone();
+        mailbox.last_synced_at = Some(at);
+        repository
+            .update(&mailbox)
+            .await
+            .expect("stamp a seeded folder");
+    }
+}
+
+/// Queues one message to send and leaves it unsent: the Outbox's one row
+/// (spec 003 FR-012), queued at `at`.
+///
+/// Through [`DraftRepository::queue_send`](crate::repository::DraftRepository::queue_send),
+/// which is what a composer's Send calls, so the row and its count are read
+/// back out of the store as they are for a real send. Nothing drains it.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn queue_one_to_send(database: &Store, account: AccountId, at: DateTime<Utc>) {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let drafts = crate::repository::DraftRepository::new(&connection);
+    let mut draft = postio_model::Draft::new(account);
+    draft.subject = "Re: maildir index rebuild is O(n²)".to_owned();
+    draft.to = vec![EmailAddress::new(Some("Lena Tomlin"), "lena@example.com")];
+    draft.body.text = Some("Confirmed on 0.4.1 — sending the trace now.".to_owned());
+    drafts.save(&mut draft).await.expect("the draft saves");
+    drafts
+        .queue_send(&mut draft, at)
+        .await
+        .expect("the send queues");
+}
+
+/// Saves one draft and walks away from it: never queued, so it is a draft
+/// someone left rather than a message on its way out.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn leave_a_draft(database: &Store, account: AccountId) {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let drafts = crate::repository::DraftRepository::new(&connection);
+    let mut draft = postio_model::Draft::new(account);
+    draft.subject = "Notes for Thursday".to_owned();
+    draft.to = vec![EmailAddress::new(Some("Nadia Okafor"), "nadia@example.org")];
+    draft.body.text = Some("Agenda so far: the index rebuild, then the release.".to_owned());
+    drafts.save(&mut draft).await.expect("the draft saves");
 }
 
 #[cfg(test)]

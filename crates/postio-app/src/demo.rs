@@ -35,8 +35,7 @@ use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::window::Window;
 use postio_model::ids::{AccountId, MailboxId};
 use postio_session::Wiring;
-use postio_storage::repository::MailboxRepository;
-use postio_storage::seed::SeedReport;
+use postio_storage::seed::{LONG_THREAD, SeedReport, THIRTY_THREADS};
 
 use crate::{Wired, feed_the_window};
 
@@ -45,16 +44,9 @@ fn clock_utc() -> chrono::DateTime<chrono::Utc> {
     postio_ui::clock::now().to_utc()
 }
 
-/// The conversation lengths of the `thirty-threads` seed: thirty-six threads,
-/// mostly single messages, some exchanges, one of five.
-const THIRTY_THREADS: &[usize] = &[
-    1, 2, 1, 1, 3, 1, 1, 2, 1, 1, 1, 4, 1, 2, 1, 1, 1, 3, 1, 1, 2, 1, 1, 1, 5, 1, 1, 2, 1, 1, 1, 3,
-    1, 1, 2, 1,
-];
-
-/// The one conversation of the `long-thread` seed: seven messages, the last
-/// two unread.
-const LONG_THREAD: &[usize] = &[7];
+// The `thirty-threads` and `long-thread` shapes, the outbox and the left-over
+// draft are `postio_storage::seed`'s, which Focus's demo builds from too
+// (specs/007-postio-focus T265).
 
 /// A condition of the store, named neutrally so more than one application can
 /// answer to it.
@@ -385,20 +377,7 @@ pub async fn seed_store(database: &postio_storage::Store, options: &DemoOptions)
     // Nothing drains it: a shot renders a window rather than running a
     // client, so the message stays where the picture wants it.
     if options.has(Seed::Outbox) {
-        let connection = database.connect().await.expect("a connection");
-        let drafts = postio_storage::repository::DraftRepository::new(&connection);
-        let mut draft = postio_model::Draft::new(account);
-        draft.subject = "Re: maildir index rebuild is O(n²)".to_owned();
-        draft.to = vec![postio_model::EmailAddress::new(
-            Some("Lena Tomlin"),
-            "lena@example.com",
-        )];
-        draft.body.text = Some("Confirmed on 0.4.1 — sending the trace now.".to_owned());
-        drafts.save(&mut draft).await.expect("the draft saves");
-        drafts
-            .queue_send(&mut draft, clock_utc())
-            .await
-            .expect("the send queues");
+        postio_storage::seed::queue_one_to_send(database, account, clock_utc()).await;
     }
 
     // An unsent draft already in the store at launch: saved and never queued,
@@ -406,16 +385,7 @@ pub async fn seed_store(database: &postio_storage::Store, options: &DemoOptions)
     // way out. The sidebar's Drafts row and its count are read back out of the
     // store, as the Outbox's are.
     if options.has(Seed::DraftLeftOver) {
-        let connection = database.connect().await.expect("a connection");
-        let drafts = postio_storage::repository::DraftRepository::new(&connection);
-        let mut draft = postio_model::Draft::new(account);
-        draft.subject = "Notes for Thursday".to_owned();
-        draft.to = vec![postio_model::EmailAddress::new(
-            Some("Nadia Okafor"),
-            "nadia@example.org",
-        )];
-        draft.body.text = Some("Agenda so far: the index rebuild, then the release.".to_owned());
-        drafts.save(&mut draft).await.expect("the draft saves");
+        postio_storage::seed::leave_a_draft(database, account).await;
     }
     report
 }
@@ -511,17 +481,8 @@ pub async fn populate(window: &Window, options: &DemoOptions) -> Option<&'static
 /// hand-rolled source stamped this on the way past; now that the folders come
 /// out of the store, the store is where it has to be stamped.
 pub async fn stamp_as_just_synced(database: &postio_storage::Store, report: &SeedReport) {
-    let connection = database.connect().await.expect("a checked-out connection");
-    let repository = MailboxRepository::new(&connection);
     let synced = clock_utc() - chrono::Duration::seconds(12);
-    for mailbox in &report.mailboxes {
-        let mut mailbox = mailbox.clone();
-        mailbox.last_synced_at = Some(synced);
-        repository
-            .update(&mailbox)
-            .await
-            .expect("stamp a seeded folder");
-    }
+    postio_storage::seed::stamp_synced(database, report, synced).await;
 }
 
 /// Block until the list actually holds its first page of mail.
