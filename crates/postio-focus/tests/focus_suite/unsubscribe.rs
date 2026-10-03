@@ -28,15 +28,36 @@ Content-Type: text/plain; charset=utf-8\r\n\
 \r\n\
 Nothing much happened\r\n";
 
-/// Store `NEWSLETTER` in the fixture's inbox as a message with a body.
+/// Personal mail: no `List-Id`, no `List-Unsubscribe`.
+const PERSONAL: &[u8] = b"From: Grace Hopper <grace@friends.example.net>\r\n\
+To: Ada Lovelace <ada@example.com>\r\n\
+Subject: Lunch on Friday?\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Are you free\r\n";
+
+/// Store `NEWSLETTER` in the fixture's inbox as a message with a body, one
+/// that carries a `List-Unsubscribe` (its promoted headers say so, as sync
+/// files them).
 async fn file_the_newsletter(fixture: &Fixture) {
+    file(fixture, NEWSLETTER, true).await;
+}
+
+/// Store `raw` in the fixture's inbox with a body; `offered` is what its
+/// promoted `List-Unsubscribe` flag says.
+async fn file(fixture: &Fixture, raw: &[u8], offered: bool) {
     let connection = fixture.database.connect().await.expect("a connection");
     let repository = MessageRepository::new(&connection);
-    let parsed = postio_model::mime::parse(NEWSLETTER);
+    let parsed = postio_model::mime::parse(raw);
     let body = parsed.body.clone();
     let encoding_problems = parsed.encoding_problems;
     let mut message = parsed.into_message(fixture.account.id, fixture.inbox, chrono::Utc::now());
     message.sync.body_state = BodyState::Full;
+    message.promoted = Some(postio_model::promoted::PromotedHeaders {
+        unsubscribe_offered: offered,
+        automation: 0,
+    });
     let id = repository.create(&mut message).await.expect("a message");
     repository
         .set_body(
@@ -164,5 +185,41 @@ pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         privacy_lists_an_activation(&window).await;
+    });
+}
+
+/// Personal mail opens with no unsubscribe band, and `U` still leaves the
+/// sender's domain: the band is for list mail, the key is not (T261).
+pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        file(&fixture, PERSONAL, false).await;
+        let (window, _client) = fixture.open().await;
+
+        support::keys(&window, &["j", "Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        assert!(
+            crate::settle_until(async || reading.is_open() && reading.body_text().contains("free"))
+                .await,
+            "the message never rendered"
+        );
+        crate::settle();
+        assert!(
+            !reading.reader().unsubscribe_banner_visible(),
+            "personal mail carries no unsubscribe band"
+        );
+
+        support::keys(&window, &["U"]);
+        assert!(
+            crate::settle_until(async || logged(&fixture).await.len() == 1).await,
+            "`U` on a message with no band did nothing"
+        );
+        assert_eq!(
+            logged(&fixture).await[0].list_identifier,
+            "friends.example.net"
+        );
     });
 }

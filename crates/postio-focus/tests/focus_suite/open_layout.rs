@@ -38,6 +38,23 @@ async fn every_block(fixture: &Fixture) -> MessageId {
     latest
 }
 
+/// The list the layout's mail comes from: list mail carries the unsubscribe
+/// notice, personal mail does not (T261).
+const LIST: &str = "harbor.example.com";
+
+/// Make `message` list mail, so it opens with the notice.
+async fn on_a_list(fixture: &Fixture, message: MessageId) {
+    let connection = fixture.database.connect().await.expect("a connection");
+    let repository = MessageRepository::new(&connection);
+    let mut row = repository
+        .get(message)
+        .await
+        .expect("the message reads")
+        .expect("the message is there");
+    row.list_id = Some(LIST.to_owned());
+    repository.update(&mut row).await.expect("listed");
+}
+
 /// Address `message` as the handoff's sample is, and attach its two files
 /// when `attached`.
 async fn dress(fixture: &Fixture, message: MessageId, attached: bool) {
@@ -54,6 +71,7 @@ async fn dress(fixture: &Fixture, message: MessageId, attached: bool) {
         EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com"),
     ];
     row.cc = vec![EmailAddress::new(Some("Grace Okafor"), "grace@example.com")];
+    row.list_id = Some(LIST.to_owned());
     if attached {
         for (n, (name, size)) in [
             ("Harbor-API-v3.pdf", 212_000),
@@ -169,9 +187,9 @@ fn near(a: f32, b: f32) -> bool {
     (a - b).abs() <= 1.0
 }
 
-/// The reader's notice on screen under `root`. The fixtures' mail is from a
-/// sender with a domain, so it carries the unsubscribe notice, as nearly
-/// every message does (#971, T261).
+/// The reader's notice on screen under `root`. The fixtures' mail is list
+/// mail (`dress` gives it a `List-Id`), so it carries the unsubscribe
+/// notice, which personal mail does not (T261).
 fn the_notice(root: &impl IsA<gtk::Widget>) -> gtk::Widget {
     let shown: Vec<gtk::Widget> = support::with_class(root, "postio-notice")
         .into_iter()
@@ -827,6 +845,7 @@ pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
                 )
                 .await;
             fixture.write_html_body(message, &office_html()).await;
+            on_a_list(&fixture, message).await;
             if card {
                 fixture.ask(message, "Building access").await;
             }

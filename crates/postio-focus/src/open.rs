@@ -1274,11 +1274,14 @@ impl OpenMessage {
                     reader.set_encoding_problems(encoding_problems);
                     // After `render_prepared`, which clears it: the notice
                     // belongs to this message. The shared rule names the
-                    // list and withholds it from mail on its way out.
+                    // list and withholds it from mail on its way out; the band
+                    // is for list mail only (`List-Id` or `List-Unsubscribe`),
+                    // while `U` is not (`FocusWindow::act`).
                     let offer = reading.row.as_deref().and_then(|row| {
-                        postio_ui::unsubscribe::offer(
+                        postio_ui::unsubscribe::banner(
                             reading.send_state,
                             row.list_id.as_deref(),
+                            row.promoted.map(|said| said.unsubscribe_offered),
                             &row.from,
                         )
                     });

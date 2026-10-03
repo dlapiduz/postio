@@ -202,6 +202,10 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "unsubscribe::personal_mail_has_no_unsubscribe_band_but_u_still_works",
+        unsubscribe::personal_mail_has_no_unsubscribe_band_but_u_still_works as fn(),
+    ),
+    (
         "store_opening::a_start_past_its_budget_says_what_it_is_waiting_on",
         store_opening::a_start_past_its_budget_says_what_it_is_waiting_on as fn(),
     ),

@@ -1115,7 +1115,8 @@ impl FocusWindow {
                 | CommandId::ZoomOut
                 | CommandId::ZoomReset
                 | CommandId::ShowImages
-                | CommandId::AlwaysShowImages),
+                | CommandId::AlwaysShowImages
+                | CommandId::Unsubscribe),
             ) => self.act(id),
             Ok(CommandId::DismissMarker) => self.dismiss_marker(),
             Ok(CommandId::MoreActions) => reading.show_more(),
@@ -1711,7 +1712,18 @@ impl FocusWindow {
                     }
                 }
             }
-            CommandId::ShowImages | CommandId::AlwaysShowImages | CommandId::Unsubscribe => {
+            // `U` leaves the list on any message the shared rule allows, band
+            // or not: the band only shows for list mail (T261), the key is
+            // not tied to it.
+            CommandId::Unsubscribe => {
+                if let Some(reading) = self.reading().filter(|reading| reading.is_open())
+                    && postio_ui::reader::header::ReaderAction::unsubscribable(reading.send_state())
+                    && let Some(message) = reading.shown()
+                {
+                    self.unsubscribe(message);
+                }
+            }
+            CommandId::ShowImages | CommandId::AlwaysShowImages => {
                 if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
                     reading.reader().run_banner_command(id);
                 }
