@@ -71,7 +71,7 @@ command from inside a text field.
 | `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader (not the terminal) |  | `zoom_out` |
 | `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader (not the terminal) |  | `zoom_reset` |
 | `O` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
-| `I` | Hide or show the conversation rail | Conversation (not Postio Focus) |  | `toggle_rail` |
+| `I` | Hide or show the conversation rail | Conversation (macOS) |  | `toggle_rail` |
 | `e` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
 | `E` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
@@ -96,7 +96,7 @@ command from inside a text field.
 | `F8` | Read beside the list or over it | List (Postio Focus) |  | `toggle_reading_pane` |
 | `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
-| `ctrl+BackSpace` | Back to words | Search (Postio Focus) |  | `back_to_words` |
+| `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search (Postio Focus) |  | `back_to_words` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
 | `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
@@ -127,7 +127,7 @@ command from inside a text field.
 | `i i` | Show remote images | List, conversation, reader |  | `show_images` |
 | `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
 | `U` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
-| `ctrl+b` | Toggle sidebar | List, conversation, reader, folder list (not Postio Focus) |  | `toggle_sidebar` |
+| `ctrl+b` | Toggle sidebar | List, conversation, reader, folder list (macOS) |  | `toggle_sidebar` |
 | `g o` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list, digest, Filtered view |  | `go_to_inbox` |
 | `g t` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |
@@ -142,15 +142,15 @@ command from inside a text field.
 | `alt+3` | Saved search 3 | List, conversation, reader, search, folder list |  | `saved_search_3` |
 | `alt+4` | Saved search 4 | List, conversation, reader, search, folder list |  | `saved_search_4` |
 | `!` | Show only what has an action | List (Postio Focus) |  | `toggle_has_action` |
-| `tab` | Next pane | List, conversation, reader, folder list (not Postio Focus) |  | `cycle_pane` |
-| `shift+tab` | Previous pane | List, conversation, reader, folder list (not Postio Focus) |  | `cycle_pane_back` |
-| `j` or `Down` | Next folder | Folder list (not Postio Focus) |  | `next_folder` |
-| `k` or `Up` | Previous folder | Folder list (not Postio Focus) |  | `prev_folder` |
-| `space` | Expand or collapse folder | Folder list (not Postio Focus) |  | `toggle_folder` |
-| `r` | Rename saved search | Folder list (not Postio Focus) |  | `rename_saved_search` |
-| `shift+Up` | Move saved search up | Folder list (not Postio Focus) |  | `move_saved_search_up` |
-| `shift+Down` | Move saved search down | Folder list (not Postio Focus) |  | `move_saved_search_down` |
-| `Delete` | Delete saved search | Folder list (not Postio Focus) | Asks first | `delete_saved_search` |
+| `tab` | Next pane | List, conversation, reader, folder list (macOS) |  | `cycle_pane` |
+| `shift+tab` | Previous pane | List, conversation, reader, folder list (macOS) |  | `cycle_pane_back` |
+| `j` or `Down` | Next folder | Folder list (macOS) |  | `next_folder` |
+| `k` or `Up` | Previous folder | Folder list (macOS) |  | `prev_folder` |
+| `space` | Expand or collapse folder | Folder list (macOS) |  | `toggle_folder` |
+| `r` | Rename saved search | Folder list (macOS) |  | `rename_saved_search` |
+| `shift+Up` | Move saved search up | Folder list (macOS) |  | `move_saved_search_up` |
+| `shift+Down` | Move saved search down | Folder list (macOS) |  | `move_saved_search_down` |
+| `Delete` | Delete saved search | Folder list (macOS) | Asks first | `delete_saved_search` |
 | `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
 | `Delete` | Remove account | Account list | Undoable | `remove_account` |
 | `c` | Update account credential | Account list |  | `update_credential` |
@@ -159,14 +159,14 @@ command from inside a text field.
 | `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` | Refresh | List, conversation, reader |  | `refresh` |
-| `p` | Show message parts | Reader (not Postio Focus) |  | `open_parts` |
-| `j` or `Down` | Next part | Parts panel (not Postio Focus) |  | `next_part` |
-| `k` or `Up` | Previous part | Parts panel (not Postio Focus) |  | `prev_part` |
-| `Return` | Open part | Parts panel (not Postio Focus) |  | `open_part` |
-| `s` | Save part | Parts panel (not Postio Focus) |  | `save_part` |
-| `S` | Save all parts | Parts panel (not Postio Focus) |  | `save_all_parts` |
-| `x` | Open part externally | Parts panel (not Postio Focus) |  | `open_part_externally` |
-| `H` | Render part once | Parts panel (not Postio Focus) |  | `render_part_once` |
+| `p` | Show message parts | Reader (macOS) |  | `open_parts` |
+| `j` or `Down` | Next part | Parts panel (macOS) |  | `next_part` |
+| `k` or `Up` | Previous part | Parts panel (macOS) |  | `prev_part` |
+| `Return` | Open part | Parts panel (macOS) |  | `open_part` |
+| `s` | Save part | Parts panel (macOS) |  | `save_part` |
+| `S` | Save all parts | Parts panel (macOS) |  | `save_all_parts` |
+| `x` | Open part externally | Parts panel (macOS) |  | `open_part_externally` |
+| `H` | Render part once | Parts panel (macOS) |  | `render_part_once` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
 | `1` | Choose option 1 | Picker (Postio Focus) |  | `picker_choose_1` |
@@ -192,7 +192,7 @@ command from inside a text field.
 | `n` | Capture a note… | List, conversation, reader, capture sheet (Postio Focus) |  | `capture_note` |
 | `ctrl+p` | Change project | Capture sheet (Postio Focus) |  | `capture_change_project` |
 | `alt+s` | Use the subject instead | Capture sheet (Postio Focus) |  | `capture_use_subject` |
-| `ctrl+Return` | Add to the vault | Capture sheet (Postio Focus) |  | `capture_write` |
+| `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet (Postio Focus) |  | `capture_write` |
 | `L` | Digest mail like this | List (Postio Focus) |  | `digest_like_this` |
 
 ## The one box

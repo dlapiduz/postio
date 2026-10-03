@@ -10,7 +10,7 @@
 # cursor move, the body still holding the keyboard.
 #
 # Re-expressed for Focus (T265): `j` first puts the cursor on the row Reply
-# answers. The classic app it was written against is removed by T256.
+# answers.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#602" }
 proof  = "pinned"

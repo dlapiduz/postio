@@ -86,7 +86,7 @@ mod reader_notices;
 mod reader_scroll;
 mod reader_teardown;
 mod reader_treatment;
-mod reader_verbs;
+mod reader_under_header;
 mod recipient_chips;
 mod segmented;
 mod settings_account_detail;
@@ -223,12 +223,8 @@ const CASES: &[(&str, fn())] = &[
         reader_treatment::a_reader_that_draws_no_treatments_answers_app_colours as fn(),
     ),
     (
-        "reader_verbs::a_header_can_leave_the_subject_to_its_surface",
-        reader_verbs::a_header_can_leave_the_subject_to_its_surface as fn(),
-    ),
-    (
-        "reader_verbs::a_card_placed_under_the_header_sits_between_it_and_the_body",
-        reader_verbs::a_card_placed_under_the_header_sits_between_it_and_the_body as fn(),
+        "reader_under_header::a_card_placed_under_the_header_sits_between_it_and_the_body",
+        reader_under_header::a_card_placed_under_the_header_sits_between_it_and_the_body as fn(),
     ),
     (
         "quote_folds::a_quote_is_folded_behind_its_line_count_and_opens_when_clicked",
@@ -298,10 +294,6 @@ const CASES: &[(&str, fn())] = &[
         widgets_css::the_shared_sheet_brings_the_shared_metrics as fn(),
     ),
     (
-        "reader_verbs::a_reader_draws_the_verbs_it_is_given_and_none_when_given_none",
-        reader_verbs::a_reader_draws_the_verbs_it_is_given_and_none_when_given_none as fn(),
-    ),
-    (
         "list_model_generic::a_list_of_another_row_type_is_windowed_filled_and_refreshed",
         list_model_generic::a_list_of_another_row_type_is_windowed_filled_and_refreshed as fn(),
     ),
@@ -321,15 +313,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "present_reading::fetched_images_come_back_under_the_documents_spelling",
         present_reading::fetched_images_come_back_under_the_documents_spelling as fn(),
-    ),
-    (
-        "present_reading::a_cid_reference_resolves_through_the_client_for_the_message_on_screen",
-        present_reading::a_cid_reference_resolves_through_the_client_for_the_message_on_screen
-            as fn(),
-    ),
-    (
-        "present_reading::nothing_showing_resolves_to_nothing_without_asking_the_host",
-        present_reading::nothing_showing_resolves_to_nothing_without_asking_the_host as fn(),
     ),
     (
         "capture::a_window_the_compositor_never_showed_is_an_error",
@@ -784,8 +767,8 @@ const CASES: &[(&str, fn())] = &[
         body_view_select::clicking_a_fold_opens_it as fn(),
     ),
     (
-        "body_view_select::the_rail_follows_the_snapshot",
-        body_view_select::the_rail_follows_the_snapshot as fn(),
+        "body_view_select::a_page_is_one_real_page",
+        body_view_select::a_page_is_one_real_page as fn(),
     ),
     (
         "body_view_theme::a_theme_change_re_renders_once_and_keeps_the_place",
@@ -802,10 +785,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "reader_fallback::a_message_past_its_deadline_shows_its_own_text",
         reader_fallback::a_message_past_its_deadline_shows_its_own_text as fn(),
-    ),
-    (
-        "reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text",
-        reader_fallback::a_conversation_past_its_deadline_shows_each_messages_text as fn(),
     ),
     (
         "reader_fonts::the_faces_are_the_readers_own_and_not_carried_by_the_document",
@@ -982,10 +961,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "small_widgets::the_blocked_images_notice_counts_and_elides",
         small_widgets::the_blocked_images_notice_counts_and_elides as fn(),
-    ),
-    (
-        "small_widgets::every_chip_measures_the_same_height",
-        small_widgets::every_chip_measures_the_same_height as fn(),
     ),
     (
         "checkrow::showing_the_files_value_is_not_changing_it",

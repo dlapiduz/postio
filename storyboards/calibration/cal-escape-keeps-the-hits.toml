@@ -1,6 +1,4 @@
 # must_fail: #1474 stated as the intent. Escape really closes the bar.
-# Re-expressed for Focus (T265): its ground truth, with the classic app
-# removed by T256.
 apps        = ["focus"]
 source      = { kind = "issue", ref = "#1474" }
 calibration = "must_fail"

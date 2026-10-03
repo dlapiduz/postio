@@ -6,8 +6,7 @@
 # no composer is open.
 #
 # Re-expressed for Focus (T265): Focus opens nothing at launch, so the
-# checks are that the view is still the inbox's list with no composer. The
-# classic app it was written against is removed by T256.
+# checks are that the view is still the inbox's list with no composer.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1177" }
 proof  = "pinned"

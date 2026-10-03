@@ -2,17 +2,15 @@
 """Refuse a new `blocking::now` in the frontend (#1608).
 
 `postio_session::blocking::now` drives a future to completion on the thread
-that calls it. In the desktop crates -- `postio-app`, `postio-gtk`, the shared
-`postio-widgets` (ADR 0043) and `postio-focus` -- that thread is the GTK main
-thread, and the futures were store reads and writes: a reply read two cold
+that calls it. In the desktop crates -- the app, `postio-focus`, and
+`postio-widgets`, which holds what it draws (ADR 0043) -- that thread is the
+GTK main thread, and the futures were store reads and writes: a reply read two cold
 connections and decoded a body before the composer opened, and every
 autosave tick waited on the write permit behind whatever unit a background
 sync was committing. CLAUDE.md's rule is that the UI never awaits the
 network; this is the same rule for the store.
 
-One use is legitimate by construction: WebKit's `cid:` resolver is a
-synchronous foreign callback that cannot be made async. The rest are debt:
-settings panels, startup, export, onboarding. They are listed below with
+What is left is debt: the settings presenters. They are listed below with
 how many each file holds, and the list may only shrink.
 
 # The rule
@@ -40,12 +38,9 @@ import json
 import sys
 from pathlib import Path
 
-# The crates whose code runs on the GTK main thread: both desktop apps, and
-# the crate holding what both of them draw (ADR 0043; specs/007-postio-focus
-# R1).
+# The crates whose code runs on the GTK main thread: the desktop app, and the
+# crate holding what it draws (ADR 0043; specs/007-postio-focus R1).
 ROOTS = [
-    "crates/postio-app/src",
-    "crates/postio-gtk/src",
     "crates/postio-widgets/src",
     "crates/postio-focus/src",
 ]
@@ -53,22 +48,8 @@ NEEDLE = "blocking::now("
 
 # file -> how many `blocking::now(` calls it may hold. May only shrink.
 ALLOWED = {
-    "crates/postio-app/src/add_account.rs": 1,
-    "crates/postio-app/src/lib.rs": 1,
-    "crates/postio-app/src/onboarding.rs": 1,
-    "crates/postio-app/src/orientation.rs": 2,
-    "crates/postio-app/src/search.rs": 1,
-    "crates/postio-app/src/settings_credential.rs": 1,
-    "crates/postio-app/src/sidebar_backfill.rs": 1,
-    # present::reading::cid_source: WebKit's `cid:` resolver is a synchronous
-    # foreign callback that cannot be made async -- the one legitimate site
-    # above's own doc names (specs/007-postio-focus T022). It moved here from
-    # `postio-app/src/reading.rs`, through `postio_core::blocking::now`
-    # instead of `postio_session`'s, because this crate may not depend on
-    # `postio-session` (ADR 0043).
-    "crates/postio-widgets/src/present/reading.rs": 1,
-    # The settings presenters, moved from postio-app with their debt
-    # (specs/007-postio-focus T233): accounts 9 and the credential's 1.
+    # The settings presenters, and their debt (specs/007-postio-focus T233):
+    # accounts 9 and the credential's 1.
     "crates/postio-widgets/src/present/settings/accounts.rs": 10,
     "crates/postio-widgets/src/present/settings/egress.rs": 1,
     "crates/postio-widgets/src/present/settings/privacy.rs": 1,
@@ -128,7 +109,7 @@ def main(argv: list[str]) -> int:
         print(
             "\n`blocking::now` in the frontend runs a future on the GTK main\n"
             "thread. Read on the runtime and hand the answer back over a\n"
-            "channel instead (see `compose::install_reply_source`, #1608)."
+            "channel instead, as #1608 did."
         )
         return 1
     print(f"blocking-now check passed ({sum(found.values())} site(s) in {len(found)} file(s), all listed).")

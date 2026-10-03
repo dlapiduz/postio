@@ -47,7 +47,6 @@ impl NoticeMenuItem {
 /// A one-line notice: icon, text, an optional action, an optional overflow.
 pub struct NoticeBar {
     root: gtk::Box,
-    icon: gtk::Image,
     label: gtk::Label,
     action: Rc<KeycapButton>,
     menu: gtk::MenuButton,
@@ -112,7 +111,6 @@ impl NoticeBar {
 
         Rc::new(Self {
             root,
-            icon,
             label,
             action,
             menu,
@@ -151,11 +149,6 @@ impl NoticeBar {
         self.label.label().to_string()
     }
 
-    /// Swap the icon — the same notice reporting a different state.
-    pub fn set_icon(&self, icon_name: &str) {
-        self.icon.set_icon_name(Some(icon_name));
-    }
-
     /// Give the notice its one action, or `None` to take it away.
     pub fn set_action(&self, label: Option<&str>) {
         match label {
@@ -170,12 +163,6 @@ impl NoticeBar {
     /// The key shown on the action, from the keymap rather than a literal.
     pub fn set_action_key(&self, key: Option<&str>) {
         self.action.set_key(key);
-    }
-
-    /// Whether the action can be pressed. A notice keeps its shape when its
-    /// action is unavailable rather than losing a button.
-    pub fn set_action_sensitive(&self, sensitive: bool) {
-        self.action.set_sensitive(sensitive);
     }
 
     /// The action button, for a test that wants to read its label or cap.

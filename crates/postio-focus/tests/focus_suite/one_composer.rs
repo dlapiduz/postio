@@ -73,8 +73,6 @@ impl ComposerHost for Bare {
     fn keymap(&self) -> Keymap {
         Keymap::defaults().clone()
     }
-    fn composing(&self, _open: bool, _keymap: &Keymap) {}
-    fn adopt(&self, _window: &gtk::Window) {}
 }
 
 /// The Outbox's rows, as the classic app lists them.

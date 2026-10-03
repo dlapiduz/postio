@@ -720,7 +720,7 @@ source  = { kind = "issue", ref = "#1687" }
 proof   = "pinned"
 seed    = "thirty-threads"
 preset  = "settings/account-form"
-apps    = ["classic", "focus"]
+apps    = ["terminal", "focus"]
 vary    = { scheme = ["light", "dark"], width = ["wide", "narrow"] }
 design  = "01-inbox-reading"
 routing = "chain"
@@ -772,7 +772,7 @@ skip = { reason = "Focus has no `x` selection mode; it selects with space" }
         assert_eq!(board.proof, Some(Proof::Pinned));
         assert_eq!(board.seed(), "thirty-threads");
         assert_eq!(board.preset.as_deref(), Some("settings/account-form"));
-        assert_eq!(board.apps, Apps::Named(vec![App::Classic, App::Focus]));
+        assert_eq!(board.apps, Apps::Named(vec![App::Terminal, App::Focus]));
         assert_eq!(board.vary["scheme"], ["light", "dark"]);
         assert_eq!(board.vary["width"], ["wide", "narrow"]);
         assert_eq!(board.design.as_deref(), Some("01-inbox-reading"));

@@ -69,13 +69,13 @@ def weaken_the_floor(tmp: Path) -> None:
 
 def weaken_an_exception(tmp: Path) -> None:
     """An audited crate quietly allowing unsafe outright."""
-    p = tmp / "crates" / "postio-gtk" / "Cargo.toml"
+    p = tmp / "crates" / "postio-account" / "Cargo.toml"
     p.write_text(p.read_text().replace('unsafe_code = "deny"', 'unsafe_code = "allow"'))
 
 
 def exception_stops_declaring(tmp: Path) -> None:
     """An exception with no [lints.rust] table at all inherits nothing."""
-    p = tmp / "crates" / "postio-app" / "Cargo.toml"
+    p = tmp / "crates" / "postio-config" / "Cargo.toml"
     text = p.read_text()
     head = text.split("[lints.rust]")[0]
     p.write_text(head)
@@ -84,7 +84,7 @@ def exception_stops_declaring(tmp: Path) -> None:
 def drop_clippy_floor(tmp: Path) -> None:
     """An exception crate that keeps its unsafe deny but drops the clippy
     floor -- the silent hole this check was extended to close."""
-    p = tmp / "crates" / "postio-gtk" / "Cargo.toml"
+    p = tmp / "crates" / "postio-account" / "Cargo.toml"
     text = p.read_text()
     # Remove the whole [lints.clippy] block (to the next section or EOF).
     marker = "[lints.clippy]"

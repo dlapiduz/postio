@@ -7,7 +7,7 @@
 # sits on must be above the "wrote:" line.
 #
 # Re-expressed for Focus (T265): `j` puts the cursor on the row Reply
-# answers. The classic app it was written against is removed by T256.
+# answers.
 apps   = ["focus"]
 source = { kind = "commit", ref = "15192fb5" }
 proof  = "pinned"

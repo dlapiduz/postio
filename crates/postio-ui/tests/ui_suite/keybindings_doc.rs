@@ -73,7 +73,7 @@ fn which_apps(requires: RequirementSet) -> &'static str {
     } else if requires.contains(Requirement::Graphical) {
         " (not the terminal)"
     } else if requires.contains(Requirement::ThreePane) {
-        " (not Postio Focus)"
+        " (macOS)"
     } else {
         ""
     }

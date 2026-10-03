@@ -212,23 +212,6 @@ impl Outcome {
             unreachable: Vec::new(),
         }
     }
-
-    /// The same outcome, carrying the accounts a search could not reach.
-    pub fn with_unreachable(mut self, unreachable: Vec<String>) -> Self {
-        self.unreachable = unreachable;
-        self
-    }
-
-    /// The same outcome, with the corpus caveat also raised when an account
-    /// in scope is mid-rebuild (#981).
-    ///
-    /// Only ever turns `corpus_complete` off, never back on: the executor's
-    /// own answer already accounts for backfill, and a rebuild finishing is
-    /// not proof a backfill did too.
-    pub fn with_reindexing(mut self, reindexing: bool) -> Self {
-        self.corpus_complete &= !reindexing;
-        self
-    }
 }
 
 /// The readout, as the canvas writes it: `14 hits · 11 ms`.

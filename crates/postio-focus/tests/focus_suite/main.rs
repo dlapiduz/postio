@@ -996,10 +996,6 @@ const CASES: &[(&str, fn())] = &[
         one_keymap::no_default_key_means_two_things_and_each_app_runs_the_same_key as fn(),
     ),
     (
-        "one_keymap::the_classic_app_s_defaults_are_the_one_keymap_s",
-        one_keymap::the_classic_app_s_defaults_are_the_one_keymap_s as fn(),
-    ),
-    (
         "reload::a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map",
         reload::a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map as fn(),
     ),

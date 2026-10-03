@@ -10,18 +10,17 @@
 //!
 //! # Structured panes patch, they never reserialize
 //!
-//! [`Section::Filters`] and [`Section::Appearance`] are *forms* over the same file —
-//! not the raw-text exception the rest of this doc describes. Building one
+//! [`Section::Filters`], Composing and Sync & storage are *forms* over the
+//! same file — not the raw-text exception the rest of this doc describes. Building one
 //! by serializing a whole `postio_config::Config` back through
 //! [`postio_config::Config::to_toml_string`] would reorder every key and drop
 //! every comment in the file, not only in the one table the pane owns (see
 //! that method's own doc comment: unknown keys survive, but there is no
 //! promise about layout) — which is exactly the trap a raw-text view avoids
 //! by construction and a naive form would fall straight into. So a structured
-//! pane never reserializes: [`patch_filters`] and [`patch_ui`] rewrite only
+//! pane never reserializes: [`patch_filters`] and its siblings rewrite only
 //! their own table with `toml_edit`'s format-preserving document model
-//! ([`SettingsPanel::apply_filters_mutation`],
-//! [`SettingsPanel::apply_ui_mutation`]), and the result is written into
+//! ([`SettingsPanel::apply_filters_mutation`]), and the result is written into
 //! *this* buffer, so it reaches disk through the exact same debounced write
 //! every raw edit already does. `[keys]` and `[filters]`'s advanced escape
 //! hatch stay on the raw view below until their own issues convert them the
@@ -53,15 +52,13 @@
 //! watcher, and the app's config follower reports every reload here, not
 //! only the ones this widget's own buffer caused.
 //!
-//! # Both desktop apps
+//! # In Focus
 //!
-//! The classic app opens the panel in a window of its own and Focus in its
-//! dialog (ADR 0043; specs/007-postio-focus T233, T234). What differs
-//! between them is said to the panel, never decided inside it:
-//! [`SettingsPanel::set_frontend`] picks the sections and the commands the
-//! Keyboard section lists, and [`SettingsPanel::set_row_height_probe`] lends
-//! Appearance the app's own row to measure. Its presenters, which join it to
-//! the store's host, are [`crate::present::settings`].
+//! Focus opens the panel in its dialog (ADR 0043; specs/007-postio-focus
+//! T233, T234). It shows the sections Focus shows ([`Section::shown_in`]) --
+//! every one but Appearance, whose `[ui]` keys Focus does not honour -- and
+//! the Keyboard section lists the commands Focus offers. Its presenters,
+//! which join it to the store's host, are [`crate::present::settings`].
 //!
 //! # What this module does not do
 //!
@@ -81,10 +78,7 @@ use gtk::{glib, pango};
 use postio_config::compose::SignaturePlacement;
 use postio_config::filters::{FilterConfig, Reorder};
 use postio_config::sync::{AttachmentFetch, CheckForMail};
-use postio_config::{
-    Config, Density, SyncConfig, Theme, patch_compose, patch_filters, patch_keys, patch_sync,
-    patch_ui,
-};
+use postio_config::{Config, SyncConfig, patch_compose, patch_filters, patch_keys, patch_sync};
 use postio_core::CommandId;
 use postio_model::ids::SignatureId;
 use postio_model::{Account, AccountId, MailboxRole, UnsubscribeActivation};
@@ -109,23 +103,10 @@ const WRITE_DEBOUNCE: Duration = Duration::from_millis(250);
 /// survives pressing the segment it is already on.
 const POLL_EVERY_FIVE_MINUTES: u64 = 300;
 
-/// How wide a row is measured at when the Appearance pane asks how tall the
-/// chosen density makes one.
-///
-/// The list is windowed and its real width varies with the window, but row
-/// height does not depend on width until the subject has to wrap, and it
-/// never wraps — it ellipsizes. So any realistic width gives the same
-/// answer, and a fixed one keeps the figure from flickering as the window
-/// is dragged.
-const DENSITY_PROBE_WIDTH: i32 = 360;
-
 /// How wide the sidebar is — fixed, never negotiable, so the pane beside it
 /// starts in the same place on all eight sections. That fixity is most of
 /// what makes the navigation model legible (#1179).
 pub const NAV_WIDTH: i32 = 214;
-
-/// How tall the body (sidebar plus pane) is at its smallest.
-pub const BODY_HEIGHT: i32 = 330;
 
 /// How far a pane's content sits in from the frame. One number, applied by
 /// `.postio-settings-pane-body` in CSS and by the two panes that build a
@@ -180,9 +161,9 @@ type AccountEnabledHandler = Box<dyn Fn(AccountId, bool)>;
 ///
 /// An account is database state, not `config.toml` preference (ADR 0005
 /// Q6b), so this panel cannot patch a buffer the way [`Section::Filters`]
-/// and [`Section::Appearance`] do — it only reports what changed, the same split
-/// [`AccountAction`] already uses, and `postio-app`'s `settings_accounts`
-/// module is what actually calls `AccountRepository::update`.
+/// does — it only reports what changed, the same split [`AccountAction`]
+/// already uses, and the settings presenter
+/// ([`crate::present::settings`]) is what has the host write it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountEdit {
     /// The name shown in the sidebar and this row.
@@ -510,7 +491,7 @@ fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
 // The widget
 // ---------------------------------------------------------------------------
 
-/// Appearance's controls, held so the pane can be *updated* from a fresh
+/// Sync & storage's controls, held so the pane can be *updated* from a fresh
 /// read of the file rather than rebuilt from one.
 ///
 /// The old panel rebuilt every row on every change, because a `DropDown`
@@ -518,21 +499,6 @@ fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
 /// that apart from a person choosing something. `SegmentedControl` and
 /// `CheckRow` both know the difference, so the widgets can outlive the
 /// value they show.
-pub struct AppearanceControls {
-    /// System, light or dark.
-    pub theme: SegmentedControl,
-    /// Airy, snug or compact rows.
-    pub density: SegmentedControl,
-    /// `26px rows · 41 per screen` — what the density choice above actually
-    /// costs, in the units a person is choosing between.
-    pub density_stat: gtk::Label,
-    /// Whether a hovered row shows its action icons.
-    pub hover_actions: CheckRow,
-    /// Whether rows show the sender's initials.
-    pub sender_avatars: CheckRow,
-}
-
-/// Sync & storage's controls, held for the same reason.
 pub struct SyncControls {
     /// IMAP IDLE, polling, or only on request.
     pub check_for_mail: SegmentedControl,
@@ -617,16 +583,6 @@ mod imp {
         /// The footer's `Open in $EDITOR` cap, held so a keymap change can
         /// put the live key on it.
         pub editor_button: OnceCell<std::rc::Rc<crate::widgets::KeycapButton>>,
-        /// How tall the message list is, so Appearance can say how many rows
-        /// of the chosen density fit in one. Zero means nobody has said.
-        pub list_viewport: Cell<i32>,
-        /// How tall the app's message row is at a density and a width
-        /// (`set_row_height_probe`).
-        #[allow(clippy::type_complexity)]
-        pub row_height: RefCell<Option<Box<dyn Fn(Density, i32) -> i32>>>,
-        /// The app the panel is drawn in (`set_frontend`): which sections
-        /// and which commands' keys it shows. `None` shows everything.
-        pub frontend: Cell<Option<postio_core::Frontend>>,
         /// Whether the panes are narrow enough that two columns stack
         /// (`set_narrow`).
         pub narrow: Cell<bool>,
@@ -642,21 +598,19 @@ mod imp {
         pub accounts_pane: gtk::Box,
         pub filters_pane: gtk::Box,
         pub composing_pane: gtk::Box,
-        pub appearance_pane: gtk::Box,
         pub keyboard_pane: gtk::Box,
         pub sync_pane: gtk::Box,
         pub privacy_pane: gtk::Box,
         pub config_pane: gtk::Box,
-        /// Appearance's controls, built on first draw and updated after —
-        /// never rebuilt. Rebuilding was the old panel's way around a
+        /// Sync & storage's controls, built on first draw and updated after
+        /// — never rebuilt. Rebuilding was the old panel's way around a
         /// control that reported its own repopulation as a change, and
         /// `SegmentedControl`/`CheckRow` do not have that problem.
         ///
-        /// Lazily, though, and for #873's reason: `Window::new` constructs
-        /// this panel while it is still wiring its own shortcut controllers,
-        /// and building certain controls there was found to corrupt keyboard
-        /// routing for the rest of that window's life.
-        pub appearance: OnceCell<AppearanceControls>,
+        /// Lazily, though, and for #873's reason: building certain controls
+        /// while the host window is still wiring its own shortcut
+        /// controllers was found to corrupt keyboard routing for the rest of
+        /// that window's life.
         pub sync_controls: OnceCell<SyncControls>,
         pub composing_controls: OnceCell<ComposingControls>,
         pub tag: gtk::Label,
@@ -876,21 +830,16 @@ mod imp {
                 nav_query: RefCell::new(String::new()),
                 command: RefCell::new(Vec::new()),
                 editor_button: OnceCell::new(),
-                list_viewport: Cell::new(0),
-                row_height: RefCell::default(),
-                frontend: Cell::new(None),
                 narrow: Cell::new(false),
                 folders: RefCell::default(),
                 backfill_handlers: RefCell::default(),
                 accounts_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 filters_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 composing_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
-                appearance_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 keyboard_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 sync_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 privacy_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 config_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
-                appearance: OnceCell::new(),
                 sync_controls: OnceCell::new(),
                 composing_controls: OnceCell::new(),
                 tag: gtk::Label::new(None),
@@ -1034,7 +983,6 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         self.redraw_sync();
-        self.redraw_ui();
         self.redraw_keys();
         if postio_config::validate::check_str(&text)
             .validation
@@ -1070,16 +1018,8 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         self.redraw_sync();
-        self.redraw_ui();
         self.redraw_keys();
         self.schedule_write();
-    }
-
-    /// The footer line exactly as shown: the validity line, or — after
-    /// [`SettingsPanel::revert`] — the confirmation that replaces it until
-    /// the next edit. A test seam, in the same spirit as [`SettingsPanel::set_text`].
-    pub fn footer_text(&self) -> String {
-        self.imp().status.label().to_string()
     }
 
     /// Whether the buffer's current text is usable as written — what the
@@ -2150,7 +2090,7 @@ impl SettingsPanel {
     /// Rebuilds the Mailboxes group for the account whose detail is open.
     ///
     /// Fresh widgets on every open rather than kept ones: the folders differ
-    /// per account, and this is the same trade `redraw_ui` makes -- a handful
+    /// per account, and this is the same trade `redraw_sync` makes -- a handful
     /// of widgets against having to reconcile two lists that can differ in
     /// length. It is also where the #873 rule lands: a `gtk::DropDown` is
     /// built here, reached only from `open_account_detail`, and never while
@@ -2804,15 +2744,20 @@ impl SettingsPanel {
         }
     }
 
-    /// Rebuilds `[sync]`'s five rows from the buffer's current text — the
-    /// same fresh-widgets-each-time shape [`redraw_filters`](Self::redraw_filters)
-    /// and [`redraw_ui`](Self::redraw_ui) use.
     /// Draws Sync & storage from the buffer's current `[sync]`.
     ///
-    /// Same build-once-then-update shape as
-    /// [`redraw_ui`](Self::redraw_ui).
+    /// Builds the controls the first time and only *updates* them after —
+    /// the old pane rebuilt every row on every change, because a `DropDown`
+    /// being repopulated fires `selected-notify` and there was no telling
+    /// that apart from a person choosing something.
+    /// [`SegmentedControl::set_selected`] and [`CheckRow::set_active`] both
+    /// know the difference (#1179).
     fn redraw_sync(&self) {
-        // Controls first — see `redraw_ui` for why.
+        // The controls come first and unconditionally. A file that does not
+        // parse is a file whose *values* cannot be read — it is not a
+        // reason for this pane to have nothing in it, and one unknown
+        // variant three tables away used to empty the whole thing while the
+        // footer, correctly, explained why (#1179).
         let controls = self.ensure_sync_controls();
         let Ok(config) = Config::from_toml_str(&self.text()) else {
             return;
@@ -2902,8 +2847,13 @@ impl SettingsPanel {
         }
     }
 
-    /// Builds Sync & storage's controls once — see
-    /// [`ensure_appearance`](Self::ensure_appearance) for why lazily.
+    /// Builds Sync & storage's controls once, and returns them thereafter.
+    ///
+    /// Lazily, and for #873's reason: building certain controls while the
+    /// host window is still wiring its own shortcut controllers turned out
+    /// to corrupt keyboard routing for the rest of its life. Every pane here
+    /// populates on first draw instead, which is after that construction has
+    /// finished.
     ///
     /// # Where the poll interval went
     ///
@@ -3091,9 +3041,8 @@ impl SettingsPanel {
             return;
         };
         clear_rows(&imp.keys_list);
-        let frontend = imp.frontend.get();
         for spec in postio_core::registry::all()
-            .filter(|spec| frontend.is_none_or(|app| spec.requires.offered_by(app)))
+            .filter(|spec| spec.requires.offered_by(postio_core::Frontend::Focus))
         {
             imp.keys_list.append(&self.key_row(spec, &config.keys));
         }
@@ -3343,204 +3292,9 @@ impl SettingsPanel {
         self.resolve_capture(keyval, state);
     }
 
-    /// Rebuilds `[ui]`'s six rows from the buffer's current text — the same
-    /// shape [`redraw_filters`](Self::redraw_filters) uses, and for the same
-    /// reason: fresh widgets each time means the initial value never fires
-    /// its own change handler (set before connect, the way `account_row`'s
-    /// switch already does), so there is no separate "is this a programmatic
-    /// update" guard to keep in step.
-    /// Draws Appearance from the buffer's current `[ui]`.
-    ///
-    /// Builds the controls the first time and only *updates* them after —
-    /// the old pane rebuilt every row on every change, because a `DropDown`
-    /// being repopulated fires `selected-notify` and there was no telling
-    /// that apart from a person choosing something.
-    /// [`SegmentedControl::set_selected`] and [`CheckRow::set_active`] both
-    /// know the difference (#1179).
-    fn redraw_ui(&self) {
-        // The controls come first and unconditionally. A file that does not
-        // parse is a file whose *values* cannot be read — it is not a
-        // reason for this pane to have nothing in it, and one unknown
-        // variant three tables away used to empty the whole thing while the
-        // footer, correctly, explained why (#1179).
-        let controls = self.ensure_appearance();
-        let Ok(config) = Config::from_toml_str(&self.text()) else {
-            return;
-        };
-        controls.theme.set_selected(match config.ui.theme {
-            Theme::System => 0,
-            Theme::Light => 1,
-            Theme::Dark => 2,
-        });
-        controls.density.set_selected(match config.ui.density {
-            Density::Airy => 0,
-            Density::Comfortable => 1,
-            Density::Compact => 2,
-        });
-        controls
-            .density_stat
-            .set_label(&self.density_stat_text(config.ui.density));
-        controls
-            .hover_actions
-            .set_active(config.ui.show_hover_actions);
-        controls.sender_avatars.set_active(config.ui.sender_avatars);
-    }
-
-    /// What the chosen density actually costs, in the units a person is
-    /// choosing between: `40px rows · 18 per screen`.
-    ///
-    /// **Measured, not tabulated.** The height comes from the app's own row,
-    /// laid out at this density with a representative message in it
-    /// ([`SettingsPanel::set_row_height_probe`]), because that is the only
-    /// number that stays true when the row's anatomy or the font changes; a
-    /// constant here would be a second source of truth that nothing keeps in
-    /// step. The row is the app's, not this crate's, so the app measures it.
-    ///
-    /// The per-screen figure needs the height of the list the rows go in,
-    /// which this widget cannot see — the app hands it over
-    /// ([`SettingsPanel::set_list_viewport_height`]). Without either the line
-    /// says only what it knows, rather than dividing by a guess.
-    fn density_stat_text(&self, density: Density) -> String {
-        let measured = self
-            .imp()
-            .row_height
-            .borrow()
-            .as_ref()
-            .map(|probe| probe(density, DENSITY_PROBE_WIDTH).max(1));
-        let Some(height) = measured else {
-            return String::new();
-        };
-        match self.imp().list_viewport.get() {
-            viewport if viewport > 0 => {
-                format!("{height}px rows · {} per screen", viewport / height)
-            }
-            _ => format!("{height}px rows"),
-        }
-    }
-
-    /// How tall the app's message row is at a density and a width: what the
-    /// Appearance pane's density line measures with.
-    pub fn set_row_height_probe(&self, probe: impl Fn(Density, i32) -> i32 + 'static) {
-        self.imp().row_height.replace(Some(Box::new(probe)));
-    }
-
-    /// How tall the message list is, so the density line can say how many
-    /// rows fit in it. Zero means "not known yet", and the line says less
-    /// rather than guessing.
-    pub fn set_list_viewport_height(&self, height: i32) {
-        self.imp().list_viewport.set(height);
-        if let Some(controls) = self.imp().appearance.get() {
-            let density = Config::from_toml_str(&self.text())
-                .map(|config| config.ui.density)
-                .unwrap_or_default();
-            controls
-                .density_stat
-                .set_label(&self.density_stat_text(density));
-        }
-    }
-
-    /// Builds Appearance's controls once, and returns them thereafter.
-    ///
-    /// Lazily, and for #873's reason: `Window::new` constructs this panel
-    /// while it is still wiring its own shortcut controllers, and building
-    /// certain controls in that window turned out to corrupt keyboard
-    /// routing for the rest of its life. Every pane here populates on first
-    /// draw instead, which is after that construction has finished.
-    fn ensure_appearance(&self) -> &AppearanceControls {
-        let imp = self.imp();
-        if let Some(controls) = imp.appearance.get() {
-            return controls;
-        }
-
-        let theme = SegmentedControl::new("Theme", &["System", "Light", "Dark"]);
-        theme.connect_selected(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |index| {
-                let theme = match index {
-                    1 => Theme::Light,
-                    2 => Theme::Dark,
-                    _ => Theme::System,
-                };
-                panel.apply_ui_mutation(move |ui| ui.theme = theme);
-            }
-        ));
-
-        let density = SegmentedControl::new("Row density", &["Airy", "Snug", "Compact"]);
-        density.connect_selected(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |index| {
-                let density = match index {
-                    1 => Density::Comfortable,
-                    2 => Density::Compact,
-                    _ => Density::Airy,
-                };
-                panel.apply_ui_mutation(move |ui| ui.density = density);
-            }
-        ));
-
-        let density_stat = stat_line("");
-
-        let hover_actions = CheckRow::new("Hover action icons");
-        hover_actions.connect_toggled(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |active| panel.apply_ui_mutation(move |ui| ui.show_hover_actions = active)
-        ));
-        let sender_avatars = CheckRow::new("Sender avatars");
-        sender_avatars.connect_toggled(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |active| panel.apply_ui_mutation(move |ui| ui.sender_avatars = active)
-        ));
-
-        let left = SettingsGroup::new();
-        left.section("Theme");
-        left.control(theme.widget());
-        left.section("Row density");
-        left.control(density.widget()).note(&density_stat);
-
-        let right = SettingsGroup::new();
-        right.section("Message list");
-        let checks = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
-        checks.append(hover_actions.widget());
-        checks.append(sender_avatars.widget());
-        right.control(&checks);
-
-        let columns = two_columns(left.widget(), right.widget());
-        stack_columns(&columns, imp.narrow.get());
-        imp.appearance_pane.append(&columns);
-
-        let _ = imp.appearance.set(AppearanceControls {
-            theme,
-            density,
-            density_stat,
-            hover_actions,
-            sender_avatars,
-        });
-        imp.appearance.get().expect("just set")
-    }
-
-    /// Applies `mutate` to the buffer's current `[ui]` state and writes the
-    /// result back into the buffer, the same way
-    /// [`apply_filters_mutation`](Self::apply_filters_mutation) does for
-    /// `[filters]`.
-    fn apply_ui_mutation(&self, mutate: impl FnOnce(&mut postio_config::UiConfig)) {
-        let original = self.text();
-        let Ok(mut config) = Config::from_toml_str(&original) else {
-            return;
-        };
-        mutate(&mut config.ui);
-        match patch_ui(&original, &config.ui) {
-            Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [ui]: {error}"),
-        }
-    }
-
     /// Draws Composing from the buffer's current `[compose]`.
     fn redraw_compose(&self) {
-        // Controls first — see `redraw_ui` for why.
+        // Controls first — see `redraw_sync` for why.
         let controls = self.ensure_composing();
         let Ok(config) = Config::from_toml_str(&self.text()) else {
             return;
@@ -3558,7 +3312,7 @@ impl SettingsPanel {
     }
 
     /// Builds Composing's controls once — see
-    /// [`ensure_appearance`](Self::ensure_appearance) for why lazily.
+    /// [`ensure_sync_controls`](Self::ensure_sync_controls) for why lazily.
     fn ensure_composing(&self) -> &ComposingControls {
         let imp = self.imp();
         if let Some(controls) = imp.composing_controls.get() {
@@ -3913,7 +3667,6 @@ impl SettingsPanel {
         // Panes that build their controls on first draw (#873) draw here,
         // which is the first moment one of them is actually looked at.
         match section {
-            Section::Appearance => self.redraw_ui(),
             Section::Sync => self.redraw_sync(),
             Section::Composing => self.redraw_compose(),
             Section::Keyboard => {
@@ -3960,8 +3713,8 @@ impl SettingsPanel {
     /// Narrows the sidebar to the sections a query matches.
     ///
     /// Matching is over the section's own name and the words its pane is
-    /// about, not over the controls themselves: a person typing "dark" wants
-    /// to be *taken to* Appearance, and a filter that hid every control but
+    /// about, not over the controls themselves: a person typing "idle" wants
+    /// to be *taken to* Sync & storage, and a filter that hid every control but
     /// one would leave them looking at a pane with a hole in it.
     fn apply_search(&self, query: &str) {
         *self.imp().nav_query.borrow_mut() = query.trim().to_lowercase();
@@ -3984,24 +3737,6 @@ impl SettingsPanel {
         query.split_whitespace().all(|word| haystack.contains(word))
     }
 
-    /// Draw the panel for `frontend`: the sections it shows
-    /// ([`Section::shown_in`]) and the commands the Keyboard section lists,
-    /// which are the ones that app offers. A panel never told shows all of
-    /// both.
-    pub fn set_frontend(&self, frontend: postio_core::Frontend) {
-        let imp = self.imp();
-        imp.frontend.set(Some(frontend));
-        imp.nav.invalidate_filter();
-        if !self.shown(self.current_section())
-            && let Some(first) = Section::ALL
-                .into_iter()
-                .find(|section| self.shown(*section))
-        {
-            self.show_section(first);
-        }
-        self.redraw_visible_pane();
-    }
-
     /// Stack each pane's two columns into one, for a host too narrow to
     /// give each half room: Focus's dialog, at most 820 wide.
     pub fn set_narrow(&self, narrow: bool) {
@@ -4012,8 +3747,8 @@ impl SettingsPanel {
         // Narrow, the panel is as wide as the pane on screen needs, not the
         // widest of them all.
         imp.stack.set_hhomogeneous(!narrow);
-        for pane in [&imp.sync_pane, &imp.appearance_pane] {
-            let mut child = pane.first_child();
+        {
+            let mut child = imp.sync_pane.first_child();
             while let Some(widget) = child {
                 if let Some(row) = widget
                     .downcast_ref::<gtk::Box>()
@@ -4026,12 +3761,10 @@ impl SettingsPanel {
         }
     }
 
-    /// Whether this panel shows `section` at all.
+    /// Whether this panel shows `section` at all: every section Focus
+    /// shows ([`Section::shown_in`]).
     pub fn shown(&self, section: Section) -> bool {
-        self.imp()
-            .frontend
-            .get()
-            .is_none_or(|frontend| section.shown_in(frontend))
+        section.shown_in(postio_core::Frontend::Focus)
     }
 
     /// Runs `handler` with a folder and whether its backfill is now skipped,
@@ -4534,7 +4267,7 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         // Accounts is where the window opens, per the drawing. Deliberately
-        // *not* redraw_ui()/redraw_sync() here: `Window::new` constructs
+        // *not* redraw_sync() here: `Window::new` constructs
         // this panel as a hidden child while it is still wiring its own
         // shortcut controllers, and building certain controls mid-
         // construction was found to corrupt keyboard routing for the rest
@@ -4681,7 +4414,6 @@ impl SettingsPanel {
             (Section::Accounts, &imp.accounts_pane),
             (Section::Filters, &imp.filters_pane),
             (Section::Composing, &imp.composing_pane),
-            (Section::Appearance, &imp.appearance_pane),
             (Section::Keyboard, &imp.keyboard_pane),
             (Section::Sync, &imp.sync_pane),
             (Section::Privacy, &imp.privacy_pane),
@@ -4694,7 +4426,7 @@ impl SettingsPanel {
             // height less 80, and one column of Sync & storage is taller.
             if matches!(
                 section,
-                Section::Composing | Section::Appearance | Section::Sync | Section::Privacy
+                Section::Composing | Section::Sync | Section::Privacy
             ) {
                 let scroller = gtk::ScrolledWindow::builder()
                     .hscrollbar_policy(gtk::PolicyType::Never)
@@ -4774,7 +4506,6 @@ impl SettingsPanel {
     /// 250ms write debounce turns into a stutter.
     fn redraw_visible_pane(&self) {
         match self.imp().current.get() {
-            Section::Appearance => self.redraw_ui(),
             Section::Sync => self.redraw_sync(),
             Section::Composing => self.redraw_compose(),
             Section::Keyboard => {

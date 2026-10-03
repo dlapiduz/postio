@@ -8,8 +8,7 @@
 #
 # Re-expressed for Focus (T265): its open message shows one message and
 # steps the thread with `[` and `]` (C2, FR-037), where the classic app's
-# `J`/`K` never reached the conversation (#1748). The classic app it was
-# written against is removed by T256.
+# `J`/`K` never reached the conversation (#1748).
 apps   = ["focus"]
 source = { kind = "flow", ref = "ux-architect §4" }
 seed   = "long-thread"

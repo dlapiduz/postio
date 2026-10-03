@@ -12,7 +12,7 @@ use gtk::prelude::*;
 use postio_model::message::MessageBody;
 use postio_render::{FallbackReason, Outcome};
 use postio_widgets::body_view::BodyView;
-use postio_widgets::reader::{Reader, RemoteImageAllowList, Verbs};
+use postio_widgets::reader::{Reader, RemoteImageAllowList};
 
 use crate::support::{content, until};
 
@@ -65,14 +65,13 @@ const WORDS: &str = "The survey starts Monday at the north gate, and the crew \
 /// A reader as Focus's open message has one: flowing in a column, drawing
 /// treatments when `treated`, in a window `width` wide.
 fn reader(name: &str, treated: bool, width: i32) -> (gtk::Window, Reader) {
-    let reader = Reader::with_verbs(
+    let reader = Reader::with_allowlist(
         Rc::new(|_content_id: &str| None),
         RemoteImageAllowList::default(),
         std::env::temp_dir().join(format!(
             "postio-fallback-{name}-{}.json",
             std::process::id()
         )),
-        Verbs::NONE,
     );
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)

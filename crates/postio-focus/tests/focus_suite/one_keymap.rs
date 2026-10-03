@@ -7,7 +7,7 @@
 
 use std::time::Instant;
 
-use postio_core::{ActionId, CommandId, Context, ContextSet, Frontend, Keymap, registry};
+use postio_core::{ActionId, Context, ContextSet, Frontend, Keymap, registry};
 use postio_ui::keymap::{Chord, KeyContext, Outcome, Resolver};
 
 use crate::support;
@@ -37,12 +37,7 @@ fn context_of(contexts: ContextSet) -> KeyContext {
         .unwrap_or(KeyContext::Global)
 }
 
-const APPS: [Frontend; 4] = [
-    Frontend::Classic,
-    Frontend::Terminal,
-    Frontend::Focus,
-    Frontend::Macos,
-];
+const APPS: [Frontend; 3] = [Frontend::Terminal, Frontend::Focus, Frontend::Macos];
 
 pub fn a_registered_command_reaches_the_key_map_with_its_key() {
     crate::gtk_case(async {
@@ -115,28 +110,4 @@ pub fn no_default_key_means_two_things_and_each_app_runs_the_same_key() {
         }
     }
     assert!(checked > 200, "only {checked} keys were checked");
-}
-
-pub fn the_classic_app_s_defaults_are_the_one_keymap_s() {
-    let keymap = Keymap::defaults();
-    let (mut resolver, _) = Resolver::from_commands_for(keymap, Frontend::Classic);
-    assert_eq!(
-        press(&mut resolver, "s", KeyContext::List),
-        Outcome::Command(CommandId::Snooze.as_str().into()),
-        "s snoozes"
-    );
-    assert_eq!(
-        press(&mut resolver, "ctrl+z", KeyContext::List),
-        Outcome::Command(CommandId::Undo.as_str().into()),
-        "ctrl+z undoes"
-    );
-    let keyless: Vec<&str> = registry::all()
-        .filter(|spec| spec.requires.offered_by(Frontend::Classic))
-        .filter(|spec| keymap.binding(spec.id).is_none())
-        .map(|spec| spec.id.as_str())
-        .collect();
-    assert!(
-        keyless.is_empty(),
-        "every command the classic app has still has a key: {keyless:?}"
-    );
 }

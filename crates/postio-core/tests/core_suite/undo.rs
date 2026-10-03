@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::{CommandError, Dispatcher};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
-use postio_core::{AppState, Command, CommandId, ConnectionState, Event, MessageTarget};
-use postio_model::{AccountId, MailboxId, MessageId};
+use postio_core::{Command, CommandId, Event, MessageTarget};
+use postio_model::{MailboxId, MessageId};
 
 const INBOX: MailboxId = MailboxId::new(7);
 
@@ -302,10 +302,6 @@ fn archiving_twelve_messages_then_undoing_restores_all_twelve() {
     });
     // Nothing here reaches a server, and nothing awaits one: undo is a local
     // operation with a remote tail, so it works offline by construction.
-    assert_eq!(
-        AppState::new().connection(AccountId::new(1)),
-        ConnectionState::Offline
-    );
 
     let archiving = Arc::clone(&mail);
     let undoing = Arc::clone(&mail);

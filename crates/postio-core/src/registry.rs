@@ -121,13 +121,11 @@ pub enum Requirement {
     /// (specs/007-postio-focus research R4). The one keymap reserves their
     /// keys in every app; only Focus offers them.
     Focus,
-    /// The frontend has to be one of the three-pane apps -- the classic
-    /// desktop app and macOS -- because the command works on what they have
-    /// and Postio Focus, in either toolkit, does not: a folder sidebar, panes
-    /// to move between, the parts panel, and flags. Focus shows one list and
-    /// opens mail in dialogs, and "Has action" plays the part flags play
-    /// (specs/007-postio-focus, spec C13). The one keymap keeps these keys
-    /// free in Focus.
+    /// The frontend has to be the three-pane app -- macOS -- because the
+    /// command works on what it has and Postio Focus, in either toolkit, does
+    /// not: a folder sidebar, panes to move between and the parts panel.
+    /// Focus shows one list and opens mail in dialogs (specs/007-postio-focus).
+    /// The one keymap keeps these keys free in Focus.
     ThreePane,
 }
 
@@ -242,11 +240,9 @@ impl RequirementSet {
 /// all, and that is a [`Requirement`] evaluated against this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Frontend {
-    /// The classic GTK desktop app.
-    Classic,
     /// The terminal app (spec 005).
     Terminal,
-    /// Postio Focus (spec 007).
+    /// Postio, the desktop app: Focus (spec 007).
     Focus,
     /// The macOS app.
     Macos,
@@ -273,7 +269,7 @@ pub struct Availability {
 
 impl Availability {
     /// The ordinary state: this scope, with the mail open behind it, in the
-    /// classic app.
+    /// desktop app.
     ///
     /// What every surface that has been fed is in, and what a test asserting
     /// about scope alone means. Another app sets
@@ -282,7 +278,7 @@ impl Availability {
         Availability {
             scope,
             store_open: true,
-            frontend: Frontend::Classic,
+            frontend: Frontend::Focus,
         }
     }
 }
@@ -296,7 +292,7 @@ impl Requirement {
             Requirement::Terminal => state.frontend == Frontend::Terminal,
             Requirement::Graphical => state.frontend != Frontend::Terminal,
             Requirement::Focus => matches!(state.frontend, Frontend::Focus | Frontend::Terminal),
-            Requirement::ThreePane => matches!(state.frontend, Frontend::Classic | Frontend::Macos),
+            Requirement::ThreePane => state.frontend == Frontend::Macos,
         }
     }
 }
@@ -619,8 +615,8 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::NextInConversation,
         title: "Next message in conversation",
         // `]` and `[`: `j` walks the list of conversations, and these walk
-        // the messages of the one that is open -- in the classic pane, and
-        // in Focus's reading dialog, which steps through the thread
+        // the messages of the one that is open -- in the macOS pane, and in
+        // Focus's reading dialog, which steps through the thread
         // (specs/007-postio-focus contracts/keymap.md). `J`/`K` extend the
         // list's selection.
         default_binding: "]",
@@ -1613,9 +1609,8 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::GoToFolders,
         title: "Go to folders",
         // `g` is already the "go to" prefix — `g g` is the first message — so
-        // "go to folders" reads as one idiom rather than a second one. The
-        // classic app puts the keyboard in its folder list; Focus opens its
-        // folders popover. `g f` is Focus's Filtered.
+        // "go to folders" reads as one idiom rather than a second one. Focus
+        // opens its folders popover. `g f` is Focus's Filtered.
         default_binding: "g o",
         alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
@@ -1930,8 +1925,8 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &[],
         contexts: ctx(&[Context::Sidebar]),
         // Deleting a saved search is a config-file edit with no undo stack
-        // to reach (see `postio-gtk::config::request_delete`'s doc comment),
-        // so like `DiscardDraft` this asks first rather than offering undo.
+        // to reach, so like `DiscardDraft` this asks first rather than
+        // offering undo.
         destructive: true,
         recovery: Recovery::Confirm,
         requires: THREE_PANE_MAIL,
@@ -2059,9 +2054,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Refresh,
         title: "Refresh",
-        // Also the retry for the empty and error states in
-        // `postio-gtk::list_state`: "retry now" and "check for new mail now"
-        // are the same command from the user's chair. `R` was its second key
+        // Also the retry for the empty and error states: "retry now" and
+        // "check for new mail now" are the same command from the user's
+        // chair. `R` was its second key
         // until the one keymap gave it to restoring from Filtered.
         default_binding: "F5",
         alternate_bindings: &[],

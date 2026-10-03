@@ -534,20 +534,6 @@ pub enum Opening {
     Indexing,
 }
 
-/// [`open_store`], saying what it is doing as it goes.
-///
-/// `report` runs on the calling thread, before the wait it names. Postio
-/// opens its store on a thread of its own now, with a window already on
-/// screen, so these are the sentences that window has to show — see
-/// `postio_gtk::list_state::Waiting`, which is the same four waits minus the
-/// keyring read, which happens before this is called at all.
-pub async fn open_store_reporting(
-    store_key: &postio_storage::key::StoreKey,
-    report: &dyn Fn(Opening),
-) -> Result<(Store, BlobStore), Refusal> {
-    open_store_at_reporting(paths::store_path(), store_key, report).await
-}
-
 /// Why the store did not open, and what would get past it.
 ///
 /// The sentence alone was not enough to draw the screen with: "Try again"
@@ -1862,29 +1848,6 @@ pub async fn reindex_account(
         );
     }
     Ok(done)
-}
-
-/// The account a message with no origin comes from: the one marked default,
-/// or the first enabled one when nobody has marked any.
-///
-/// The reader of #960's marker, and the whole of its fence (#1161): this is
-/// consulted for a new message and for a `mailto:` link, and for nothing
-/// else. A reply comes from the account that received the mail, which
-/// `postio_model::reply` already decides; the sidebar opens on
-/// [`first_account`] whatever is marked, because which account is shown
-/// first is not what the marker means. A marked account that has been
-/// disabled is not marked for this purpose either -- `enabled` holds only
-/// the accounts that sync, in creation order -- so the fallback is the same
-/// as no marker at all.
-///
-/// Over a list the caller already holds rather than a read of its own: the
-/// window reads its accounts once, from the host, and answers every question
-/// about them from that one read.
-pub fn composing_account(enabled: &[postio_model::Account]) -> Option<&postio_model::Account> {
-    enabled
-        .iter()
-        .find(|account| account.is_default)
-        .or_else(|| enabled.first())
 }
 
 /// The account to open, if the store holds one.

@@ -7,9 +7,6 @@
 # takes its place, so the cursor is gone and the next `a` archives nothing.
 # Red until #1746 lands. Focus starts with no cursor row, so the two `j`
 # leave it on index 0 and then 1.
-#
-# Re-expressed for Focus (T265): the classic app it was written against is
-# removed by T256.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
 proof  = "open"

@@ -243,8 +243,8 @@ impl Key {
 
     /// The keysym name of this key: `question` for `?`, `Return` for Return,
     /// the character itself for a letter or digit. The inverse of [`parse`]'s
-    /// alias tables, and the spelling X11 and `gtk_accelerator_parse` accept
-    /// -- which is what the GTK frontend renders menu accelerators with.
+    /// alias tables, and the spelling X11 and `gdk::Key::from_name` accept
+    /// -- which is how the storyboard runner turns a chord into a key press.
     ///
     /// [`parse`]: Chord::from_platform_key
     pub fn keysym_name(&self) -> String {
@@ -803,30 +803,6 @@ impl Keymap {
     }
 }
 
-/// The chord currently bound to a command, for rendering a native
-/// accelerator — GTK's menu `accel`, AppKit's `NSMenuItem` key equivalent.
-///
-/// A native menu is not in any one context, so a [`KeyContext::Global`]
-/// binding wins; otherwise the first context binding stands in. Only a
-/// single-chord binding qualifies: `g g` cannot be drawn as an accelerator,
-/// and showing its first half would be a lie. `None` means the menu item
-/// simply shows no key.
-pub fn trigger_for_command(keymap: &Keymap, command: &str) -> Option<Chord> {
-    let mut fallback = None;
-    for (context, binding, bound) in keymap.entries() {
-        if bound != command || binding.len() != 1 {
-            continue;
-        }
-        if context == KeyContext::Global {
-            return Some(binding.first().clone());
-        }
-        if fallback.is_none() {
-            fallback = Some(binding.first().clone());
-        }
-    }
-    fallback
-}
-
 enum Match<'a> {
     Exact(&'a str),
     Prefix,
@@ -857,9 +833,6 @@ pub struct Resolver {
     pending: Vec<Chord>,
     /// When the pending sequence stops being pending.
     expires_at: Option<Instant>,
-    /// The app whose commands are bound, when it is one app's; `None` binds
-    /// every command. Remembered so a reload binds the same ones.
-    frontend: Option<postio_core::Frontend>,
 }
 
 impl Resolver {
@@ -870,7 +843,6 @@ impl Resolver {
             timeout: CHORD_TIMEOUT,
             pending: Vec::new(),
             expires_at: None,
-            frontend: None,
         }
     }
 
@@ -893,28 +865,7 @@ impl Resolver {
     ) -> (Self, Vec<String>) {
         let (keymap, problems) = Keymap::from_commands_for(commands, frontend);
         let problems = Self::all_problems(commands, &keymap, problems);
-        let resolver = Self {
-            frontend: Some(frontend),
-            ..Self::new(keymap)
-        };
-        (resolver, problems)
-    }
-
-    /// Rebuilds the table after `config.toml` changed, without a restart.
-    ///
-    /// Called when a reload reports `ConfigChange { keys: true }`. Returns the
-    /// problems to report — core's first, since "`y` is already bound to
-    /// `flag`" is what the user needs to hear, and this crate's parse failures
-    /// after.
-    ///
-    /// Everything downstream — the palette, the cheat sheet, the key hints —
-    /// reads [`postio_core::Keymap`] directly and so follows on its own; this
-    /// is only the half that has to be reparsed into chords.
-    pub fn apply_commands(&mut self, commands: &postio_core::Keymap) -> Vec<String> {
-        let (keymap, problems) = Keymap::build(commands, self.frontend);
-        let problems = Self::all_problems(commands, &keymap, problems);
-        self.set_keymap(keymap);
-        problems
+        (Self::new(keymap), problems)
     }
 
     /// `commands.problems()`, this crate's own parse failures, and any

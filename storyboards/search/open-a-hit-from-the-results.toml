@@ -7,12 +7,11 @@
 # across both accounts, and Return on the first puts exactly that message in
 # the reader.
 #
-# Re-expressed for Focus (T265): the bar lists the hits under its field
-# once Return has run the search; Down highlights the first, and Return
-# opens it over the list, in a fresh window with no cursor row. That last
-# was red when re-expressed -- the bar opened a hit through the list's
-# cursor, so with none nothing opened -- and is fixed beside it. The classic
-# app it was written against is removed by T256.
+# Re-expressed for Focus (T265): the bar lists the hits under its field once
+# Return has run the search; Down highlights the first, and Return opens it
+# over the list, in a fresh window with no cursor row. That last was red
+# when re-expressed -- the bar opened a hit through the list's cursor, so
+# with none nothing opened -- and is fixed beside it.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#961" }
 proof  = "pinned"

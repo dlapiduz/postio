@@ -16,7 +16,6 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_client::Client;
-use postio_core::Frontend;
 use postio_model::Account;
 use postio_model::ids::AccountId;
 use postio_ui::focus_dialog;
@@ -61,7 +60,6 @@ impl Settings {
     /// presenters.
     pub fn new(client: Client, outside: Rc<dyn Outside>) -> Rc<Settings> {
         let panel = SettingsPanel::new();
-        panel.set_frontend(Frontend::Focus);
         // The message dialog is at most 820 wide, so a pane is at most 606:
         // too narrow for two columns side by side (screens.md, Settings, "One column").
         panel.set_narrow(true);

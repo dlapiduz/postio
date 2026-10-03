@@ -19,9 +19,6 @@
 //! Nothing here touches the network: a mock backend, a temporary store, and a
 //! blob directory beside it.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
 use postio_account::backend::{
     BodyStructure, Disposition, MailBackend, MockBackend, MockMailbox, MockMessage, PartNode,
 };
@@ -167,18 +164,14 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     drop(connection);
 
     // ── and the id in that <img> resolves to real bytes ──────────────────
-    let showing = Rc::new(Cell::new(Some(settled.id)));
-    let source = postio_session::reading::cid_source(
-        move || showing.get(),
-        (*database).clone(),
-        blobs.clone(),
-    );
-
-    let (bytes, mime) = source.resolve("logo@example.com").expect(
-        "the scheme handler got nothing to draw, so the pane shows a broken \
+    let (bytes, mime) =
+        postio_session::reading::resolve_cid(&database, &blobs, settled.id, "logo@example.com")
+            .await
+            .expect(
+                "the scheme handler got nothing to draw, so the pane shows a broken \
          box -- which is #751 exactly: either the bytes were never fetched, \
          or the stored Content-ID still has its angle brackets",
-    );
+            );
     assert_eq!(
         bytes, b"PNGBYTES",
         "the wrong part's bytes reached the pane"
@@ -187,7 +180,9 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
 
     // ── and a cid: the message does not declare still draws nothing ──────
     assert!(
-        source.resolve("missing@example.com").is_none(),
+        postio_session::reading::resolve_cid(&database, &blobs, settled.id, "missing@example.com")
+            .await
+            .is_none(),
         "a dangling cid: must stay a 404; nothing here may reach the network \
          to go looking for it"
     );

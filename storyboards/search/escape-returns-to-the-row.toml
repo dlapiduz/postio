@@ -8,7 +8,7 @@
 #
 # Re-expressed for Focus (T265), where it holds: its bar never replaces the
 # list's rows, so the cursor is where the person left it. Three `j` put it
-# on index 2. The classic app it was written against is removed by T256.
+# on index 2.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1744" }
 proof  = "pinned"

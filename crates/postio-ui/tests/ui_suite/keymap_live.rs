@@ -1,7 +1,8 @@
 //! `[keys]` applies live: edit `config.toml`, press the new key.
 //!
-//! The path is `ConfigService::reload` → `ConfigChange { keys: true }` →
-//! `Resolver::apply_commands`. Everything here drives a real file on disk
+//! The path is `ConfigService::reload` → `ConfigChange { keys: true }` → a
+//! resolver rebuilt from the reloaded keymap, as Focus's `set_keymap` does.
+//! Everything here drives a real file on disk
 //! through the real config service, because the thing being tested is that the
 //! pieces are actually joined up — a unit test of either half would pass with
 //! the wire cut.
@@ -63,8 +64,9 @@ fn editing_the_keys_section_rebinds_immediately() {
 
     assert!(update.applied());
     assert!(update.changed.keys, "the keys section moved");
-    let problems = resolver.apply_commands(service.keymap());
+    let (rebuilt, problems) = Resolver::from_commands(service.keymap());
     assert!(problems.is_empty(), "{problems:?}");
+    resolver = rebuilt;
 
     assert_eq!(
         command(&mut resolver, "a").as_deref(),
@@ -286,27 +288,4 @@ fn a_save_that_changes_nothing_does_not_rebuild_the_keymap() {
         "rebinding on every keystroke of an unrelated edit is visible lag"
     );
     assert!(update.events.is_empty());
-}
-
-#[test]
-fn a_half_typed_sequence_does_not_survive_a_rebind() {
-    let directory = TempDir::new().expect("a temporary directory");
-    let path = write(directory.path(), "");
-    let mut service = ConfigService::load(&path);
-    let (mut resolver, _) = Resolver::from_commands(service.keymap());
-
-    assert_eq!(
-        press(&mut resolver, "g", KeyContext::List),
-        Outcome::Pending("g".to_owned())
-    );
-
-    write(directory.path(), "[keys]\nfirst_message = \"g t\"\n");
-    assert!(service.reload().changed.keys);
-    resolver.apply_commands(service.keymap());
-
-    assert_eq!(
-        resolver.pending(),
-        None,
-        "it was typed against a table that no longer exists"
-    );
 }

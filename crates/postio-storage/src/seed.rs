@@ -136,35 +136,40 @@ fn anchor() -> DateTime<Utc> {
 /// worth panicking on rather than threading a `Result` through every call site
 /// that wants one.
 pub async fn seed_small(database: &Store, seed: u64) -> SeedReport {
-    seed_small_into(database, false, seed).await
-}
+    let connection = database.connect().await.expect("a checked-out connection");
+    let account = seeded_account(&connection).await;
+    let folders = create_folders(&connection, &account).await;
+    let mut rng = Rng::new(seed);
 
-/// [`seed_small`], plus the corpus' own bodies written into `blobs`.
-///
-/// The difference matters to anything that renders a message rather than
-/// listing one. `seed_small` writes only the database and says so honestly
-/// with [`BodyState::NotFetched`], which is the state a real account is in
-/// before its first backfill — so a reader fed from it draws the "still
-/// downloading" plate, never mail. That is right for a test about the plate
-/// and wrong for a screenshot of the reading pane, which was reduced to
-/// handing the reader a body of its own invention and so could not fail when
-/// the path from the store was broken (#596).
-///
-/// The bodies are the fixtures', decoded by the same `mime::parse` the sync
-/// path uses, so what is rendered is what the corpus holds.
-///
-/// # Panics
-///
-/// If a write fails, as [`seed_small`] does.
-pub async fn seed_small_with_bodies(database: &Store, seed: u64) -> SeedReport {
-    seed_small_into(database, true, seed).await
+    let mut message_count = 0;
+    for fixture in test_corpus::all() {
+        let mailbox = weighted_mailbox(&folders, &mut rng);
+        let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
+        let parsed = postio_model::mime::parse(fixture.bytes());
+        let mut message = parsed.into_message(account.id, mailbox.id, received_at);
+        message.account_id = account.id;
+        message.mailbox_id = mailbox.id;
+        message.received_at = received_at;
+        message.date = Some(message.received_at);
+        message.flags = assign_flags(&mut rng, mailbox.role);
+        message.sync.body_state = BodyState::NotFetched;
+
+        file_message(&connection, account.id, message).await;
+        message_count += 1;
+    }
+
+    SeedReport {
+        mailboxes: load_folders(&connection, &account).await,
+        account,
+        message_count,
+    }
 }
 
 /// The seeded account: `test_support::account` plus the identity a real one
 /// always has.
 ///
 /// Onboarding gives every account it creates an identity
-/// (`postio_app::onboarding`), so a seed without one describes a state the
+/// (`postio_session::onboarding`), so a seed without one describes a state the
 /// application cannot produce — and anything resting on it rests on a state
 /// that does not occur. The cost was visible rather than theoretical: a reply
 /// driven through the real path rendered "no identity configured" in its
@@ -194,40 +199,6 @@ async fn seeded_account(connection: &Connection) -> Account {
     account
 }
 
-async fn seed_small_into(database: &Store, with_bodies: bool, seed: u64) -> SeedReport {
-    let connection = database.connect().await.expect("a checked-out connection");
-    let account = seeded_account(&connection).await;
-    let folders = create_folders(&connection, &account).await;
-    let mut rng = Rng::new(seed);
-
-    let mut message_count = 0;
-    for fixture in test_corpus::all() {
-        let mailbox = weighted_mailbox(&folders, &mut rng);
-        let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
-        let parsed = postio_model::mime::parse(fixture.bytes());
-        let body = parsed.body.clone();
-        let mut message = parsed.into_message(account.id, mailbox.id, received_at);
-        message.account_id = account.id;
-        message.mailbox_id = mailbox.id;
-        message.received_at = received_at;
-        message.date = Some(message.received_at);
-        message.flags = assign_flags(&mut rng, mailbox.role);
-        message.sync.body_state = BodyState::NotFetched;
-
-        let id = file_message(&connection, account.id, message).await;
-        if with_bodies {
-            write_body(&connection, id, &body).await;
-        }
-        message_count += 1;
-    }
-
-    SeedReport {
-        mailboxes: load_folders(&connection, &account).await,
-        account,
-        message_count,
-    }
-}
-
 /// Add a second account, with its own folder tree and a share of the corpus.
 ///
 /// [`seed_small`] seeds one account, which is the shape almost everything
@@ -253,7 +224,7 @@ pub async fn seed_extra_account(
     account.incoming.host = "imap.example.net".to_owned();
     account.outgoing.host = "smtp.example.net".to_owned();
     // An identity, because onboarding gives every real account one
-    // (`postio_app::onboarding`) and a seed that does not builds an account
+    // (`postio_session::onboarding`) and a seed that does not builds an account
     // the application itself cannot produce. What that costs is not
     // hypothetical: a reply driven through the real path renders "no identity
     // configured" in its `From` row, so every picture of the composer looks
@@ -1124,38 +1095,6 @@ mod tests {
                 .expect("looking up the reply's thread must not fail"),
             Some(thread_id),
             "a reply fixture must land in its root's thread"
-        );
-    }
-
-    #[tokio::test]
-    async fn seeding_with_bodies_writes_mail_the_reader_can_actually_read() {
-        let database = test_support::memory().await;
-        let report = seed_small_with_bodies(&database, 11).await;
-
-        let connection = database.connect().await.expect("a connection");
-        let repository = MessageRepository::new(&connection);
-        let page = repository
-            .page(&crate::repository::ListQuery::account(report.account.id).limit(u32::MAX))
-            .await
-            .expect("the seeded messages");
-
-        let mut readable = 0;
-        for row in &page {
-            let Some(body) = repository.body(row.id).await.expect("a body record") else {
-                continue;
-            };
-            for text in [body.text, body.html].into_iter().flatten() {
-                assert!(!text.is_empty(), "a body was stored empty");
-                readable += 1;
-            }
-        }
-        // Not merely "some row has a blob id": the point of this seed is that
-        // the bytes are there to be read back, because a reader fed from it
-        // renders mail rather than the "still downloading" plate.
-        assert!(
-            readable > 0,
-            "seeded {} messages and not one had a body that read back",
-            report.message_count
         );
     }
 

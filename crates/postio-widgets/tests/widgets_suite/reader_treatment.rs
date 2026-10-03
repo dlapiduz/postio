@@ -13,7 +13,7 @@ use gtk::prelude::*;
 use postio_body::treatment::Treatment;
 use postio_model::message::MessageBody;
 use postio_model::test_corpus;
-use postio_widgets::reader::{Reader, RemoteImageAllowList, Verbs};
+use postio_widgets::reader::{Reader, RemoteImageAllowList};
 
 use crate::support;
 
@@ -22,14 +22,13 @@ fn newsletter() -> MessageBody {
 }
 
 fn reader(name: &str) -> (gtk::Window, Reader) {
-    let reader = Reader::with_verbs(
+    let reader = Reader::with_allowlist(
         Rc::new(|_content_id: &str| None),
         RemoteImageAllowList::default(),
         std::env::temp_dir().join(format!(
             "postio-treatment-{name}-{}.json",
             std::process::id()
         )),
-        Verbs::NONE,
     );
     let window = gtk::Window::new();
     window.set_default_size(900, 700);

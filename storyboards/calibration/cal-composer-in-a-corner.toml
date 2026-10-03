@@ -1,7 +1,5 @@
 # must_fail: #1195 stated as the intent. The composer really opens as a
 # large dialog over the list.
-# Re-expressed for Focus (T265): its ground truth, with the classic app
-# removed by T256.
 apps        = ["focus"]
 source      = { kind = "issue", ref = "#1195" }
 calibration = "must_fail"

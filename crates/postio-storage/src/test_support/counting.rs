@@ -150,9 +150,6 @@ pub(crate) fn cached(sql: &str) {
 /// compiled in.
 pub fn install(_connection: &crate::Connection) {}
 
-/// Does nothing. See [`install`].
-pub fn install_on(_store: &crate::Store) {}
-
 /// What `body` cost.
 ///
 /// Counts only what happened on *this* thread: the counters are

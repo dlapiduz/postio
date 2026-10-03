@@ -9,7 +9,7 @@ cannot safely act on, because every phishing judgement starts with the sender.
 
 The rule this enforces is #1259's last acceptance line: *anything toolkit-free
 is shared, not duplicated*. It exists because the fix landed in two halves --
-`postio-ui` gained the module on `feature/macos`, and `postio-gtk` kept its own
+`postio-ui` gained the module on `feature/macos`, and the GTK app kept its own
 private copies of all six names, so the same six rules existed twice (#1285).
 
 Two frontends drawing different senders for the same message has already
@@ -17,7 +17,7 @@ happened once here (#1150). A boundary that carries the answer cannot be read
 two ways, and the header is the surface where a disagreement is most visible to
 a user.
 
-The rule holds in every desktop crate: `postio-gtk`, the shared
+The rule holds in every desktop crate: the shared
 `postio-widgets` that holds the reader both desktop apps draw (ADR 0043), and
 `postio-focus`.
 
@@ -34,9 +34,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = "crates/postio-ui/src/reader/header.rs"
-# The crates whose `src/` draws a header: both desktop apps, and the crate
-# holding the reader both of them draw (ADR 0043; specs/007-postio-focus R1).
-CRATES = ("postio-gtk", "postio-widgets", "postio-focus")
+# The crates whose `src/` draws a header: the desktop app, and the crate
+# holding the reader it draws (ADR 0043; specs/007-postio-focus R1).
+CRATES = ("postio-widgets", "postio-focus")
 
 # The toolkit-free *rules* #1285 names. Each is matched as a definition, not a
 # use, so calling through to postio-ui is exactly what this check wants to see.

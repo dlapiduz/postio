@@ -88,22 +88,6 @@ pub struct ViewCounts {
     pub attention: u32,
 }
 
-/// How many of `mailbox`'s messages have stopped and need a person.
-///
-/// `None` for every folder but Drafts, and `None` for a Drafts folder where
-/// nothing needs anybody — a marker that is always drawn is a marker nobody
-/// reads (FR-023).
-///
-/// Separate from [`count_for`] rather than replacing it: the two answer
-/// different questions, and the row draws both. "Drafts 5" says how much is
-/// there; it does not say that one of them failed to send an hour ago.
-pub fn attention_for(mailbox: &Mailbox) -> Option<u32> {
-    if mailbox.role != MailboxRole::Drafts {
-        return None;
-    }
-    (mailbox.counts.attention > 0).then_some(mailbox.counts.attention)
-}
-
 /// Whether `mailbox` is a view over messages filed elsewhere rather than a
 /// folder on the server.
 ///
@@ -336,24 +320,6 @@ fn walk_folder_tree<'a>(
     }
 }
 
-/// Every ancestor of `id`, nearest first, so the caller can open all of them.
-///
-/// A folder selected while an ancestor is collapsed must still be reachable —
-/// see `postio_gtk::sidebar::Sidebar::select` — and this is what tells it which parents to open.
-pub fn ancestors_of(mailboxes: &[Mailbox], id: MailboxId) -> Vec<MailboxId> {
-    let by_id: HashMap<MailboxId, &Mailbox> = mailboxes.iter().map(|m| (m.id, m)).collect();
-    let mut out = Vec::new();
-    let mut current = by_id.get(&id).and_then(|m| m.parent_id);
-    while let Some(parent) = current {
-        if !by_id.contains_key(&parent) {
-            break;
-        }
-        out.push(parent);
-        current = by_id.get(&parent).and_then(|m| m.parent_id);
-    }
-    out
-}
-
 // ── What a row is called, and the number beside it ──────────────────────────
 //
 // Both moved out of `postio-gtk::sidebar` by spec 003, for the reason
@@ -438,69 +404,6 @@ pub fn role_name(role: MailboxRole) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn the_drafts_row_says_how_many_need_a_person() {
-        // FR-022. A Drafts badge of 5 says nothing about whether one of them
-        // failed to send an hour ago. Two numbers: what is there, and what has
-        // stopped and is waiting for you.
-        let account = AccountId::new(1);
-        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
-        drafts.counts = MailboxCounts {
-            total: 4,
-            attention: 2,
-            ..MailboxCounts::default()
-        };
-
-        assert_eq!(
-            count_for(&drafts),
-            Some(4),
-            "the total is what Drafts holds"
-        );
-        assert_eq!(
-            attention_for(&drafts),
-            Some(2),
-            "and separately, how many of them need you"
-        );
-        let _ = account;
-    }
-
-    #[test]
-    fn nothing_needing_a_person_draws_no_attention_mark() {
-        // FR-023. A marker that is always there is a marker nobody reads.
-        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
-        drafts.counts = MailboxCounts {
-            total: 2,
-            attention: 0,
-            ..MailboxCounts::default()
-        };
-        assert_eq!(attention_for(&drafts), None);
-    }
-
-    #[test]
-    fn only_drafts_has_an_attention_count() {
-        // Every other folder's mail arrived; none of it is waiting on the
-        // user to finish or retry something.
-        for role in [
-            MailboxRole::Inbox,
-            MailboxRole::Sent,
-            MailboxRole::Archive,
-            MailboxRole::Junk,
-            MailboxRole::Trash,
-            MailboxRole::Regular,
-        ] {
-            let mut mailbox = folder(9, "Somewhere", role);
-            mailbox.counts = MailboxCounts {
-                total: 3,
-                attention: 3,
-                ..MailboxCounts::default()
-            };
-            assert_eq!(
-                attention_for(&mailbox),
-                None,
-                "{role:?} should not draw an attention count"
-            );
-        }
-    }
 
     // ── The view rows (spec 003, US4) ────────────────────────────────────
 

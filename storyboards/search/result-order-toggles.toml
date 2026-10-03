@@ -6,7 +6,6 @@
 # Re-expressed for Focus (T265): the bar lists its order as a row ("Sorted
 # by relevance"), and `O` switches it once the arrows have chosen a result
 # (before that `O` is a letter, T241). The order row is what is read back.
-# The classic app it was written against is removed by T256.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#499" }
 proof  = "pinned"

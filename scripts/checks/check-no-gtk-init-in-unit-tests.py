@@ -11,10 +11,10 @@ tolerates one — and the loser aborts:
     different threads.
 
     Gdk-ERROR **: gdk_display_manager_get() was called before gtk_init()
-    postio_gtk-... (signal: 6, SIGABRT)
+    (signal: 6, SIGABRT)
 
 Whether it aborts depends on which thread wins and whether a display exists,
-which is why `crates/postio-gtk/src/toast.rs` survived every developer
+which is why a toast's unit tests in the GTK crate survived every developer
 machine and killed the workspace test job the first time a display-less
 runner got far enough to run it. A whole crate's tests died on a signal, so
 the 305 that would have passed were never reported at all.
@@ -27,18 +27,18 @@ display belongs in `tests/`, not in a `#[cfg(test)] mod tests`.
 
 No file under ``crates/*/src`` may initialize GTK inside a test region — a
 `#[test]` function, or anything under `#[cfg(test)]`. Production code is
-untouched: `postio-gtk/src/app.rs` and `postio-app/src/lib.rs` both call
-`adw::init()` on the main thread, which is exactly right.
+untouched: the desktop app's `app.rs` calls `adw::init()` on the main
+thread, which is exactly right.
 
 A crate with no lib target cannot move the test out — an integration test
-under `tests/` has nothing to link against. `postio-app` is in that position
-and keeps exactly one GTK-touching unit test. Such a file carries a
+under `tests/` has nothing to link against. Such a crate may keep exactly
+one GTK-touching unit test, and its file carries a
 ``POSTIO-GTK-INIT:`` line saying so, which is the only way past this check,
 and it is per-file rather than per-crate so the second one has to be argued
 for too.
 
 **The marker clears one init, not the file.** It used to clear the file, and
-a second GTK test duly appeared in `postio-app/src/compose.rs` and panicked
+a second GTK test duly appeared in the same file and panicked
 CI with the exact message quoted above. That is not an argument the marker
 can carry: its whole premise is that one init per process is all there is,
 so a marker covering two concedes the point it was granted for.
@@ -344,8 +344,7 @@ def main() -> int:
             "Ordering will not save it and neither will a mutex: GTK objects\n"
             "belong to the thread that initialized them, so the second test\n"
             "has no thread it may touch them from. Make the new scenario a\n"
-            "function the existing `#[test]` calls. See\n"
-            "`crates/postio-app/src/compose.rs`.",
+            "function the existing `#[test]` calls.",
             file=sys.stderr,
         )
         return 1
@@ -365,11 +364,12 @@ def main() -> int:
         "the crate with it — and whether it aborts depends on which thread\n"
         "wins, so it passes locally and kills CI.\n\n"
         "Move the test to `crates/<crate>/tests/`, where cargo gives it a\n"
-        "process of its own. See `crates/postio-gtk/tests/gtk_toast.rs`.\n\n"
+        "process of its own, or into its custom-harness suite\n"
+        "(`crates/postio-widgets/tests/widgets_suite/`).\n\n"
         "If the crate has no lib target, an integration test has nothing to\n"
         "link against and the test has to stay. Say so in the file, on a\n"
         "line like:\n\n"
-        f"    // {MARKER} `postio-app` is a binary crate, so this cannot\n"
+        f"    // {MARKER} `<crate>` is a binary crate, so this cannot\n"
         "    // move to `tests/`. It is the only GTK-touching test here.\n\n"
         'See CLAUDE.md, "Testing", and issue #41.',
         file=sys.stderr,

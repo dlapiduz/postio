@@ -152,6 +152,7 @@ impl Timeline {
     }
 
     /// Start a timeline from an origin you already have.
+    #[cfg(test)]
     pub fn start_at(origin: Instant) -> Self {
         Self::start_after(origin, None)
     }
@@ -225,6 +226,7 @@ impl Timeline {
     }
 
     /// Whether startup came in under [`BUDGET`]. `None` until the first frame.
+    #[cfg(test)]
     pub fn within_budget(&self) -> Option<bool> {
         Some(self.total()? <= BUDGET)
     }

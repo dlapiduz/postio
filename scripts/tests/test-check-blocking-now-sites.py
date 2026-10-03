@@ -2,9 +2,9 @@
 """Self-test for scripts/checks/check-blocking-now-sites.py.
 
 `blocking::now` in a frontend runs a future on the GTK main thread (#1608).
-Both desktop apps are frontends, and the presenters they share live in the
-shared crate (ADR 0043), so a new call is refused in any of the four crates
-that run on that thread. Throwaway repositories in a temp dir, one per way
+The desktop app is a frontend, and its presenters live in the shared crate
+(ADR 0043), so a new call is refused in either crate that runs on that
+thread. Throwaway repositories in a temp dir, one per way
 the rule holds or breaks, and an assertion for each. The real repository is
 never touched.
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 CHECK = Path(__file__).resolve().parent.parent / "checks" / "check-blocking-now-sites.py"
 FAILURES: list[str] = []
-CRATES = ("postio-app", "postio-gtk", "postio-widgets", "postio-focus")
+CRATES = ("postio-widgets", "postio-focus")
 
 
 def expect(name: str, files: dict[str, str], ok: bool, *seen: str, crates=CRATES) -> None:
@@ -46,17 +46,11 @@ def expect(name: str, files: dict[str, str], ok: bool, *seen: str, crates=CRATES
             FAILURES.append(f"{name}: output lacks {text!r}\n{output}")
 
 
-expect("no call passes", {"crates/postio-gtk/src/window.rs": "fn f() {}"}, True)
+expect("no call passes", {"crates/postio-focus/src/window.rs": "fn f() {}"}, True)
 expect(
     "a comment naming it passes",
-    {"crates/postio-gtk/src/window.rs": "// blocking::now(read) used to be here"},
+    {"crates/postio-focus/src/window.rs": "// blocking::now(read) used to be here"},
     True,
-)
-expect(
-    "a call in the classic app fails",
-    {"crates/postio-app/src/lib.rs": "let x = blocking::now(read());"},
-    False,
-    "crates/postio-app/src/lib.rs: 1 call(s) to blocking::now, 0 allowed",
 )
 expect(
     "a call planted in postio-widgets fails",
@@ -75,7 +69,7 @@ expect(
     {},
     False,
     "crates/postio-focus/src is missing",
-    crates=("postio-app", "postio-gtk", "postio-widgets"),
+    crates=("postio-widgets",),
 )
 
 if FAILURES:

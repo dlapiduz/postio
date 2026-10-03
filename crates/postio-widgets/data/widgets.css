@@ -183,14 +183,10 @@ menubutton.postio-icon-button > button:checked {
   color: var(--postio-ink);
 }
 
-/* ── Chips (`widgets::chip`) ──────────────────────────────────────── */
-/* An offered narrowing. The outline tag from canvas 2b: mono, because it is
-   a token the user could have typed, and hollow rather than filled so it
-   reads as something on offer next to the solid chips already in the query. */
+/* ── Chips ──────────────────────────────────────────────────────── */
 /* Every text chip's box, in one place. A chip class below carries colour
    and face only; the metrics live here and in the three --postio-chip-*
-   tokens, so two chips can no longer disagree about their height. Applied
-   by the constructors in `widgets::chip`, never by hand at a call site. */
+   tokens, so two chips can no longer disagree about their height. */
 .postio-chip-base {
   min-height: var(--postio-chip-height);
   padding: var(--postio-chip-pad-y) var(--postio-chip-pad-x);
@@ -202,25 +198,6 @@ menubutton.postio-icon-button > button:checked {
      base class exists to stop. A chip that wants a visible border recolours
      this one rather than adding its own. */
   border: 1px solid transparent;
-}
-
-.postio-refine-chip {
-  border-color: var(--postio-hairline-strong);
-  background: none;
-  box-shadow: none;
-  color: var(--postio-ink-secondary);
-}
-
-.postio-refine-chip:hover {
-  border-color: var(--postio-accent);
-  background-color: var(--postio-hover-bg);
-  color: var(--postio-accent-text);
-}
-
-.postio-refine-chip:focus {
-  border-color: var(--postio-accent);
-  outline: 2px solid var(--postio-accent);
-  outline-offset: 1px;
 }
 
 /* An operator, drawn as what it is. IBM Plex Mono, because it is syntax. */

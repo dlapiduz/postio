@@ -28,7 +28,7 @@ use postio_core::{CommandId, Keymap};
 use postio_model::{Attachment, MessageBody, MessageId};
 use postio_ui::focus_dialog::{self, rhythm};
 use postio_ui::hints;
-use postio_widgets::reader::{Reader, RemoteImageAllowList, Verbs};
+use postio_widgets::reader::{Reader, RemoteImageAllowList};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::S3;
 use postio_widgets::widgets::{Action, ActionBar, Kind, Size};
@@ -218,7 +218,7 @@ impl OpenMessage {
             let inline = Rc::clone(&inline);
             Rc::new(move |content_id: &str| inline.borrow().get(&cid_key(content_id)).cloned())
         };
-        let reader = Reader::sharing(source, allowlist, Verbs::NONE);
+        let reader = Reader::sharing(source, allowlist);
         // The subject is the column's heading, over the header card.
         reader.header().widget().set_visible(false);
         let header_card = Rc::new(HeaderCard::new());

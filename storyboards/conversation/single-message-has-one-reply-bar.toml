@@ -6,8 +6,8 @@
 # the reader showed the same buttons twice.
 #
 # Re-expressed for Focus (T265): the fourth row of the demo inbox is a
-# single message; `Return` opens it over the list, and its verbs are one
-# row of buttons. The classic app it was written against is removed by T256.
+# single message; `Return` opens it over the list, and its verbs are one row
+# of buttons.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1173" }
 proof  = "pinned"

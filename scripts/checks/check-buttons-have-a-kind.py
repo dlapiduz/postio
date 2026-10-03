@@ -9,8 +9,8 @@ hand, so the next surface picked whichever it had last seen.
 
 `widgets::button::style(widget, Kind, Size)` is the one way now: Primary,
 Secondary, Ghost or Destructive, Small or Regular. This refuses, anywhere in
-the `src/` of a desktop crate -- `postio-gtk`, the shared `postio-widgets`
-(ADR 0043) and `postio-focus` -- outside its `widgets/`, adding the classes
+the `src/` of a desktop crate -- the shared `postio-widgets` (ADR 0043) and
+`postio-focus` -- outside its `widgets/`, adding the classes
 that used to say it: `suggested-action`, `destructive-action`,
 `postio-ghost`, and the retired `postio-settings-primary` and
 `postio-settings-small-button`.
@@ -32,9 +32,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# The crates whose `src/` draws buttons: both desktop apps, and the crate
-# holding what both of them draw (ADR 0043; specs/007-postio-focus R1).
-CRATES = ("postio-gtk", "postio-widgets", "postio-focus")
+# The crates whose `src/` draws buttons: the desktop app, and the crate
+# holding what it draws (ADR 0043; specs/007-postio-focus R1).
+CRATES = ("postio-widgets", "postio-focus")
 
 RAW = re.compile(
     r'add_css_class\(\s*"(suggested-action|destructive-action|postio-ghost|'

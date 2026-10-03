@@ -16,7 +16,7 @@ use std::rc::Rc;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_model::MessageBody;
-use postio_widgets::reader::{Reader, Verbs};
+use postio_widgets::reader::Reader;
 use postio_widgets::settings::SettingsPanel;
 
 use crate::support_reader::pump;
@@ -25,7 +25,7 @@ const SENDER: &str = "ada@example.com";
 
 /// A reader in a window of its own, on the allow list kept at `path`.
 fn reader_at(path: &std::path::Path) -> (gtk::Window, Reader) {
-    let reader = Reader::sharing(Rc::new(|_: &str| None), path, Verbs::STANDARD);
+    let reader = Reader::sharing(Rc::new(|_: &str| None), path);
     let window = gtk::Window::new();
     window.set_default_size(800, 600);
     window.set_child(Some(&reader.widget()));

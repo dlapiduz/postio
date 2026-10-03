@@ -49,8 +49,6 @@ def build_fixture(
     root: Path,
     *,
     core_deps: str = "",
-    gtk_deps: str = "",
-    gtk_dev_deps: str = "",
     session_deps: str = "",
     session_dev_deps: str = "",
     search_deps: str = "",
@@ -63,20 +61,18 @@ def build_fixture(
     ui_deps: str = "",
     widgets_deps: str = "",
     focus_deps: str = "",
+    focus_dev_deps: str = "",
     classify_deps: str = "",
     calendar_deps: str = "",
     ai_deps: str = "",
     vault_deps: str = "",
-    app_deps: str = "",
     storyboard_deps: str = "",
-    include_gtk: bool = True,
+    include_focus: bool = True,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "Cargo.toml").write_text(WORKSPACE_MANIFEST)
     # The crates that carry invariants.
     write_crate(root, "crates", "postio-core", core_deps)
-    if include_gtk:
-        write_crate(root, "crates", "postio-gtk", gtk_deps, gtk_dev_deps)
     write_crate(root, "crates", "postio-session", session_deps, session_dev_deps)
     write_crate(root, "crates", "postio-search", search_deps)
     write_crate(root, "crates", "postio-body", body_deps)
@@ -87,17 +83,16 @@ def build_fixture(
     write_crate(root, "crates", "postio-tui", tui_deps)
     write_crate(root, "crates", "postio-client", client_deps)
     write_crate(root, "crates", "postio-ui", ui_deps)
-    # Postio Focus and what it stands on (specs/007-postio-focus), and the
-    # classic app binary, which the inference-engine ban also covers.
+    # The desktop app and what it stands on (specs/007-postio-focus).
     write_crate(root, "crates", "postio-widgets", widgets_deps)
-    write_crate(root, "crates", "postio-focus", focus_deps)
+    if include_focus:
+        write_crate(root, "crates", "postio-focus", focus_deps, focus_dev_deps)
     write_crate(root, "crates", "postio-classify", classify_deps)
     write_crate(root, "crates", "postio-calendar", calendar_deps)
     # Milestone 2: the client for the person's own model.
     write_crate(root, "crates", "postio-ai", ai_deps)
     # Milestone 3: Obsidian capture.
     write_crate(root, "crates", "postio-vault", vault_deps)
-    write_crate(root, "crates", "postio-app", app_deps)
     # The storyboard tool's pure half (specs/008-storyboards).
     write_crate(root, "crates", "postio-storyboard", storyboard_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
@@ -191,7 +186,7 @@ def main() -> int:
             "clean fixture passes",
             build_fixture(
                 tmp_path / "clean",
-                gtk_deps='postio-core = { path = "../postio-core" }\n',
+                focus_deps='postio-core = { path = "../postio-core" }\n',
             ),
             expected_status=0,
         )
@@ -203,7 +198,7 @@ def main() -> int:
             build_fixture(
                 tmp_path / "core-gtk4",
                 core_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
-                gtk_deps='postio-core = { path = "../postio-core" }\n',
+                focus_deps='postio-core = { path = "../postio-core" }\n',
             ),
             expected_status=1,
             must_mention=("postio-core", "gtk4", "direct"),
@@ -216,7 +211,7 @@ def main() -> int:
                 tmp_path / "core-transitive",
                 core_deps='helper = { path = "../helper" }\n',
                 helper_deps='libadwaita = { path = "../../vendor/libadwaita" }\n',
-                gtk_deps='postio-core = { path = "../postio-core" }\n',
+                focus_deps='postio-core = { path = "../postio-core" }\n',
             ),
             expected_status=1,
             must_mention=("postio-core", "libadwaita", "helper", "transitive"),
@@ -224,40 +219,40 @@ def main() -> int:
 
         # 4. SQL in the view layer.
         check_case(
-            "postio-gtk gains a direct turso dependency",
+            "postio-focus gains a direct turso dependency",
             build_fixture(
-                tmp_path / "gtk-turso",
-                gtk_deps=(
+                tmp_path / "focus-turso",
+                focus_deps=(
                     'postio-core = { path = "../postio-core" }\n'
                     'turso = { path = "../../vendor/turso" }\n'
                 ),
             ),
             expected_status=1,
-            must_mention=("postio-gtk", "turso"),
+            must_mention=("postio-focus", "turso", "direct"),
         )
 
         # 5. Protocol types in the view layer, via a test-only dependency.
         check_case(
-            "postio-gtk gains an io-imap dev-dependency",
+            "postio-focus gains an io-imap dev-dependency",
             build_fixture(
-                tmp_path / "gtk-dev-imap",
-                gtk_deps='postio-core = { path = "../postio-core" }\n',
-                gtk_dev_deps='io-imap = { path = "../../vendor/io-imap" }\n',
+                tmp_path / "focus-dev-imap",
+                focus_deps='postio-core = { path = "../postio-core" }\n',
+                focus_dev_deps='io-imap = { path = "../../vendor/io-imap" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-gtk", "io-imap", "dev-dependency"),
+            must_mention=("postio-focus", "io-imap", "dev-dependency"),
         )
 
         # 6. A guarded crate that vanished must be an error, not a silent pass.
         check_case(
             "a missing guarded crate errors out",
-            build_fixture(tmp_path / "no-gtk-crate", include_gtk=False),
+            build_fixture(tmp_path / "no-focus-crate", include_focus=False),
             expected_status=2,
-            must_mention=("postio-gtk",),
+            must_mention=("postio-focus",),
         )
 
         # 7. postio-session is the composition root without a toolkit, and
-        #    that is the whole reason it was split out of postio-app (#82).
+        #    that is the whole reason it was split out of the desktop app's crate (#82).
         #    A verb added in a hurry that reaches for a widget is exactly how
         #    it would be lost, and it would be lost silently: everything
         #    would still compile and every test would still pass.
@@ -284,7 +279,7 @@ def main() -> int:
             must_mention=("postio-session", "libadwaita"),
         )
 
-        # 9. A test is not an exemption. `postio-app`'s integration tests
+        # 9. A test is not an exemption. The desktop app's integration tests
         #    drive the session crate, and a dev-dependency on the toolkit
         #    would let a "headless" verb be exercised only through GTK.
         check_case(
@@ -402,33 +397,25 @@ def main() -> int:
             must_mention=("postio-ui", "libadwaita"),
         )
 
-        # Postio Focus (specs/007-postio-focus): the new crates' rules.
-        check_case(
-            "postio-focus reaches the classic app's crate",
-            build_fixture(
-                tmp_path / "focus-gtk",
-                focus_deps='postio-gtk = { path = "../postio-gtk" }\n',
-            ),
-            expected_status=1,
-            must_mention=("postio-focus", "postio-gtk"),
-        )
-        check_case(
-            "postio-gtk reaches postio-focus",
-            build_fixture(
-                tmp_path / "gtk-focus",
-                gtk_deps='postio-focus = { path = "../postio-focus" }\n',
-            ),
-            expected_status=1,
-            must_mention=("postio-gtk", "postio-focus"),
-        )
+        # The desktop app (specs/007-postio-focus) and what it draws with.
         check_case(
             "postio-focus may link the store engine, through the host",
             build_fixture(
-                tmp_path / "focus-turso",
-                focus_deps='turso = { path = "../../vendor/turso" }\n',
+                tmp_path / "focus-host-turso",
+                focus_deps='helper = { path = "../helper" }\n',
+                helper_deps='turso = { path = "../../vendor/turso" }\n',
             ),
             expected_status=0,
             must_mention=("postio-focus",),
+        )
+        check_case(
+            "postio-widgets reaches the desktop app",
+            build_fixture(
+                tmp_path / "widgets-focus",
+                widgets_deps='postio-focus = { path = "../postio-focus" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-widgets", "postio-focus"),
         )
         check_case(
             "postio-widgets gains the store engine",
@@ -460,11 +447,11 @@ def main() -> int:
         check_case(
             "an app binary gains an inference engine",
             build_fixture(
-                tmp_path / "app-candle",
-                app_deps='candle-core = { path = "../../vendor/candle-core" }\n',
+                tmp_path / "focus-direct-candle",
+                focus_deps='candle-core = { path = "../../vendor/candle-core" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-app", "candle-core"),
+            must_mention=("postio-focus", "candle-core"),
         )
         check_case(
             "postio-focus reaches an inference engine through another crate",

@@ -4,10 +4,9 @@
 # the same handoff flaking. Chain delivery passes the key through every
 # controller on the real focus chain, which is what that flake was about.
 #
-# Re-expressed for Focus (T265): Return in the bar runs the search and
-# lists the hits under the field, which keeps the keyboard; the arrows walk
-# the hits from there, Down to the first. The classic app it was written
-# against is removed by T256.
+# Re-expressed for Focus (T265): Return in the bar runs the search and lists
+# the hits under the field, which keeps the keyboard; the arrows walk the
+# hits from there, Down to the first.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#693" }
 proof  = "pinned"

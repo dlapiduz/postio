@@ -18,7 +18,6 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_model::message::MessageBody;
 use postio_render::{FallbackReason, Outcome};
-use postio_widgets::reader::view::ThreadMessage;
 use postio_widgets::reader::{Reader, RemoteImageAllowList};
 
 fn reader_in_a_window() -> Option<(gtk::Window, Reader, tempfile::TempDir)> {
@@ -76,51 +75,6 @@ pub fn a_message_past_its_deadline_shows_its_own_text() {
     assert!(
         shown.contains("The survey starts Monday at the north gate."),
         "the message came with a text part, and its fallback shows none of it: {shown:?}"
-    );
-    window.destroy();
-}
-
-pub fn a_conversation_past_its_deadline_shows_each_messages_text() {
-    let Some((window, reader, _dir)) = reader_in_a_window() else {
-        return;
-    };
-    let message = |scope: &str, sender: &str, text: &str| ThreadMessage {
-        scope: scope.to_owned(),
-        sender: sender.to_owned(),
-        address: "ada@example.com".to_owned(),
-        when: "09:14".to_owned(),
-        recipients: String::new(),
-        cc: String::new(),
-        preview: text.to_owned(),
-        expanded: true,
-        absent: false,
-        latest: false,
-        draft: false,
-        mine: false,
-        body: MessageBody {
-            text: Some(text.to_owned()),
-            html: Some(format!("<p style=\"color:#123456\">{text}</p>")),
-        },
-    };
-    reader.view().hold_renders();
-    reader.render_thread(&[
-        message("7", "Ada Norwood", "Can we move the survey to Tuesday?"),
-        message("8", "Grace Hollins", "Tuesday works for the whole crew."),
-    ]);
-    let shown = fallen_back(&reader);
-    reader.view().release_renders();
-    for words in [
-        "Can we move the survey to Tuesday?",
-        "Tuesday works for the whole crew.",
-    ] {
-        assert!(
-            shown.contains(words),
-            "the conversation's fallback leaves out {words:?}: {shown:?}"
-        );
-    }
-    assert!(
-        shown.contains("Grace Hollins"),
-        "the fallback does not say who wrote which message: {shown:?}"
     );
     window.destroy();
 }

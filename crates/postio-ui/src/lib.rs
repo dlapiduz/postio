@@ -13,12 +13,12 @@
 
 pub mod account;
 pub mod allowlist;
+pub mod capture;
 pub mod cheatsheet;
 pub mod clock;
 pub mod command_bar;
 pub mod compose;
 pub mod conversation;
-pub mod capture;
 pub mod digest;
 pub mod dwell;
 pub mod editor;

@@ -5,8 +5,7 @@
 # been opened. Here the cursor is on a row that was never opened.
 #
 # Re-expressed for Focus (T265): `j` puts the cursor on the first row, which
-# Reply and Forward answer from the list. The classic app it was written
-# against is removed by T256.
+# Reply and Forward answer from the list.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#690" }
 proof  = "pinned"

@@ -151,11 +151,6 @@ pub fn links_are_followed_by_pointer_and_keyboard() {
         let launched = launched.clone();
         move |url| launched.borrow_mut().push(url.to_owned())
     });
-    let verbs = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(String, String)>::new()));
-    view.connect_message_verb({
-        let verbs = verbs.clone();
-        move |_, scope, verb| verbs.borrow_mut().push((scope.to_owned(), verb.to_owned()))
-    });
     let doc = view.document().expect("a snapshot");
     // Hover: the tooltip names where the link really goes.
     let plan = doc
@@ -188,25 +183,6 @@ pub fn links_are_followed_by_pointer_and_keyboard() {
     }
     view.activate_focused_link();
     assert_eq!(*launched.borrow(), ["https://example.com/plan"]);
-    // A click on a verb link dispatches the verb for its message.
-    let reply = doc
-        .links
-        .iter()
-        .find(|l| {
-            matches!(
-                l.target,
-                postio_render::LinkTarget::Verb {
-                    verb: postio_render::Verb::Reply,
-                    ..
-                }
-            )
-        })
-        .expect("the reply verb");
-    view.click_select(
-        gtk::graphene::Point::new(reply.rect.center().x as f32, reply.rect.center().y as f32),
-        1,
-    );
-    assert_eq!(*verbs.borrow(), [("7".to_owned(), "reply".to_owned())]);
     window.destroy();
 }
 
@@ -246,10 +222,9 @@ pub fn clicking_a_fold_opens_it() {
     window.destroy();
 }
 
-/// 001 FR-034 to FR-037 without script: the current message is the one
-/// with the most of it on screen, a rail row scrolls its message to the
-/// top, and page down moves one real page.
-pub fn the_rail_follows_the_snapshot() {
+/// 001 FR-037 without script: page down moves one real page, and page up
+/// comes back.
+pub fn a_page_is_one_real_page() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -295,23 +270,7 @@ pub fn the_rail_follows_the_snapshot() {
         postio_ui::reader::document::Sheet::Theme,
     );
     let (window, view) = show(thread);
-    let doc = view.document().expect("a snapshot");
-    let second = doc
-        .messages
-        .iter()
-        .find(|m| m.scope == "11")
-        .expect("message 11")
-        .rect;
-    assert_eq!(view.current_message().as_deref(), Some("7"));
-
-    view.scroll_to_message("11");
     let adjustment = view.vadjustment().expect("scrolled");
-    assert!(
-        (adjustment.value() - second.y0).abs() < 1.0,
-        "message 11 is not at the top"
-    );
-    assert_eq!(view.current_message().as_deref(), Some("11"));
-
     let before = adjustment.value();
     view.page(true);
     assert!(

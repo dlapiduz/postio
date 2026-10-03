@@ -18,8 +18,6 @@ members = [
     "crates/postio-core",
     "crates/postio-runtime",
     "crates/postio-session",
-    "crates/postio-gtk",
-    "crates/postio-app",
     "crates/postio-ffi",
     "crates/postio-bench",
     "crates/postio-test-support",
@@ -72,8 +70,6 @@ default-members = [
     "crates/postio-core",
     "crates/postio-runtime",
     "crates/postio-session",
-    "crates/postio-gtk",
-    "crates/postio-app",
     "crates/postio-bench",
     "crates/postio-test-support",
     "crates/postio-client",
@@ -163,7 +159,6 @@ postio-transport = { path = "crates/postio-transport" }
 postio-sync    = { path = "crates/postio-sync" }
 postio-core    = { path = "crates/postio-core" }
 postio-runtime = { path = "crates/postio-runtime" }
-postio-gtk     = { path = "crates/postio-gtk" }
 postio-focus   = { path = "crates/postio-focus" }
 postio-test-support = { path = "crates/postio-test-support" }
 postio-client = { path = "crates/postio-client" }

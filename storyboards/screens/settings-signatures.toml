@@ -1,8 +1,7 @@
 # Settings, a signature being written.
 #
-# Re-expressed for Focus (T265): the classic canvas design it was compared
-# with is the classic app's, which T256 removes; Focus's references are
-# never committed (specs/007-postio-focus/screens.md records each one).
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
 apps   = ["focus"]
 source = { kind = "design", ref = "none" }
 preset = "settings/signature-editor"

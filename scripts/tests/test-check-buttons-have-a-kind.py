@@ -24,7 +24,7 @@ def expect(name: str, files: dict[str, str], ok: bool, *seen: str, whole: bool =
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         if whole:
-            for crate in ("postio-gtk", "postio-widgets", "postio-focus"):
+            for crate in ("postio-widgets", "postio-focus"):
                 (root / "crates" / crate / "src").mkdir(parents=True)
         for rel, text in files.items():
             path = root / rel
@@ -48,14 +48,7 @@ expect("a retired settings class fails", {"settings.rs": 'b.add_css_class("posti
 expect("widgets/ may", {"widgets/button.rs": 'b.add_css_class("suggested-action");'}, True)
 expect("a comment may", {"header.rs": '// was add_css_class("suggested-action")'}, True)
 
-# Both desktop apps draw buttons, from the shared crate's kinds (ADR 0043).
-expect(
-    "a raw class in the classic app's crate fails",
-    {"crates/postio-gtk/src/header.rs": 'b.add_css_class("suggested-action");'},
-    False,
-    "crates/postio-gtk/src/header.rs:1",
-    whole=True,
-)
+# The desktop app draws buttons, from the shared crate's kinds (ADR 0043).
 expect(
     "a raw class planted in postio-widgets fails",
     {"crates/postio-widgets/src/reader/view.rs": 'b.add_css_class("postio-ghost");'},

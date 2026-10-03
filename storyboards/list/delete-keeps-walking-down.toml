@@ -11,8 +11,7 @@
 # delete nothing. Red until #1746 lands.
 #
 # Re-expressed for Focus (T265): its cursor starts on no row, so two `j`
-# leave it on index 1, and `delete` is Focus's own binding for it. The
-# classic app it was written against is removed by T256.
+# leave it on index 1, and `delete` is Focus's own binding for it.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
 proof  = "open"

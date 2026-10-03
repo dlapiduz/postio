@@ -8,8 +8,7 @@
 #
 # Re-expressed for Focus (T265): Focus starts with no cursor row, so `j`
 # comes before the first `x`, and its one inbox across accounts lists both
-# accounts' mail (78 rows). The classic app it was written against is
-# removed by T256.
+# accounts' mail (78 rows).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#468" }
 proof  = "pinned"

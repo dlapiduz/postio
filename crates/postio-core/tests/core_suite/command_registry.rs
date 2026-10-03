@@ -630,12 +630,12 @@ fn the_vocabulary_before_the_store_is_the_chrome_and_nothing_else() {
     let closed = Availability {
         scope: account,
         store_open: false,
-        frontend: postio_core::Frontend::Classic,
+        frontend: postio_core::Frontend::Macos,
     };
     let open = Availability {
         scope: account,
         store_open: true,
-        frontend: postio_core::Frontend::Classic,
+        frontend: postio_core::Frontend::Macos,
     };
 
     let before: Vec<CommandId> = registry::reachable_in(Context::List, closed)
@@ -696,12 +696,12 @@ fn a_command_can_need_more_than_one_thing_at_once() {
     let unified_and_open = Availability {
         scope: Scope::Unified,
         store_open: true,
-        frontend: postio_core::Frontend::Classic,
+        frontend: postio_core::Frontend::Macos,
     };
     let account_and_closed = Availability {
         scope: Scope::Account(AccountId::new(1)),
         store_open: false,
-        frontend: postio_core::Frontend::Classic,
+        frontend: postio_core::Frontend::Macos,
     };
     for unmet in [unified_and_open, account_and_closed] {
         assert!(
@@ -820,12 +820,7 @@ fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
         frontend,
         ..Availability::open(Scope::Unified)
     };
-    let apps = [
-        Frontend::Classic,
-        Frontend::Terminal,
-        Frontend::Focus,
-        Frontend::Macos,
-    ];
+    let apps = [Frontend::Terminal, Frontend::Focus, Frontend::Macos];
     let offered_to = |requirement| {
         let set = RequirementSet::from_slice(&[requirement]);
         apps.into_iter()
@@ -840,14 +835,14 @@ fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
     assert_eq!(offered_to(Requirement::Terminal), [Frontend::Terminal]);
     assert_eq!(
         offered_to(Requirement::Graphical),
-        [Frontend::Classic, Frontend::Focus, Frontend::Macos],
+        [Frontend::Focus, Frontend::Macos],
         "every app that draws a message as pixels can zoom and darken it"
     );
     assert_eq!(
         offered_to(Requirement::ThreePane),
-        [Frontend::Classic, Frontend::Macos],
-        "a folder sidebar, panes, the parts panel and flags are the three-pane \
-         apps'; Focus, in either toolkit, has one list and dialogs"
+        [Frontend::Macos],
+        "a folder sidebar, panes and the parts panel are the three-pane app's; \
+         Focus, in either toolkit, has one list and dialogs"
     );
     let in_apps = |id| {
         let set = registry::get(id).requires;

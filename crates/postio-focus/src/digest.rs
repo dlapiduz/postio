@@ -27,7 +27,6 @@ use postio_model::MessageId;
 use postio_model::listing::MessageSummary;
 use postio_model::summary::DigestSummary;
 use postio_ui::hints;
-use postio_widgets::reader::Verbs;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3, S4, S6};
 
@@ -113,11 +112,7 @@ pub struct DigestWindow {
 impl DigestWindow {
     /// A closed window, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap, allowlist: &std::path::Path) -> Rc<Self> {
-        let reader = postio_widgets::reader::Reader::sharing(
-            Rc::new(|_: &str| None),
-            allowlist,
-            Verbs::NONE,
-        );
+        let reader = postio_widgets::reader::Reader::sharing(Rc::new(|_: &str| None), allowlist);
         // The X at the right (T192); on the email page a "Summary" button
         // at the left steps back, as Escape does.
         let close = postio_widgets::widgets::close_button();

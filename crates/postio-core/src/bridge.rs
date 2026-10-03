@@ -124,6 +124,9 @@ where
 
 /// Turn an async closure into a [`CommandHandler`].
 ///
+/// What a test builds a bridge from; the host's handler is a
+/// [`Dispatcher`](crate::dispatch::Dispatcher).
+///
 /// ```
 /// use postio_core::bridge::{Bridge, handler_fn};
 /// use postio_core::{Command, Event};
@@ -141,6 +144,7 @@ where
 ///
 /// assert!(matches!(events.try_next(), Some(Event::ActionCompleted { .. })));
 /// ```
+#[doc(hidden)]
 pub fn handler_fn<F, Fut>(handler: F) -> FnHandler<F>
 where
     F: Fn(Command, EventSink) -> Fut + Send + Sync + 'static,

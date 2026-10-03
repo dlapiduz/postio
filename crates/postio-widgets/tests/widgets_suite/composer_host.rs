@@ -85,10 +85,6 @@ impl ComposerHost for TestHost {
     fn keymap(&self) -> Keymap {
         Keymap::defaults().clone()
     }
-
-    fn composing(&self, _open: bool, _keymap: &Keymap) {}
-
-    fn adopt(&self, _window: &gtk::Window) {}
 }
 
 /// Turn the main loop, timers included, until `done` or `within` passes.

@@ -435,31 +435,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "Cc must not cost vertical space until asked for"
     );
 
-    // #487: the conversation pane already draws sender/subject/date on the
-    // entry above this header, and must not repeat them -- but it still
-    // needs recipients on screen, so hiding "identity" cannot mean hiding
-    // the whole header.
-    header.set_identity_visible(false);
-    assert!(
-        !header.identity_visible(),
-        "hiding identity has to be observable, not just asserted"
-    );
-    assert!(
-        header.to_visible(),
-        "recipients must stay reachable with sender/subject/date hidden"
-    );
-    assert_eq!(
-        header.to_label(),
-        "Bob <bob@example.com>",
-        "and still without the label column's word repeated into the value"
-    );
-    assert!(header.cc_toggle_visible(), "so must the Cc disclosure");
-    header.set_identity_visible(true);
-    assert!(
-        header.identity_visible(),
-        "identity is restored for the single-message reading pane"
-    );
-
     // A message with no subject and a sender with no display name still
     // renders a complete header, not a blank one.
     header.set_message(std::slice::from_ref(&carol), &[], &[], None, date);

@@ -6,7 +6,7 @@
 #
 # Re-expressed for Focus (T265): `g t` lists Drafts, `j` puts the cursor on
 # the left-over draft, and Return opens it in the composer (US11 scenario
-# 3). The classic app it was written against is removed by T256.
+# 3).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1212" }
 proof  = "pinned"

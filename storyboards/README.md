@@ -8,11 +8,9 @@ before the maintainer sees them.
 
 The storyboards here play on Postio, the one desktop app (ADR 0043), and on
 nothing else: its runner is `postio-focus`'s `storyboard` example over the
-demo store in `postio_focus::demo`, driven by `scripts/storyboards.sh`, and
-the catalogue was re-expressed against its surfaces when the classic app's
-removal was approved (specs/007-postio-focus T265). A storyboard names
-`apps = ["focus"]` -- the app's name in the format -- when its checks are
-the app's own.
+demo store in `postio_focus::demo`, driven by `scripts/storyboards.sh`. A
+storyboard names `apps = ["focus"]` -- the app's name in the format -- when
+its checks are the app's own.
 
 The format's design record is
 `specs/008-storyboards/contracts/storyboard-format.md`, the runner's

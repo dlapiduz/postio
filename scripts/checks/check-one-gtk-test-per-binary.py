@@ -8,7 +8,7 @@ is this check: cargo gives every integration test *file* its own process, but
 libtest still runs the `#[test]`s **inside** that file on a thread pool. Two
 of them initializing GTK is the same two-threads race, just one level down.
 
-It does not fail honestly. `crates/postio-gtk/tests/gtk_composer_autosave.rs`
+It does not fail honestly. A composer autosave test file in the GTK crate
 held two of them and reported `ok` for both on every run since it was
 written, because the loser takes the `adw::init().is_err()` branch every
 GTK test has:
@@ -35,8 +35,9 @@ why `gtk_shell.rs` legitimately keeps two: one builds a window, the other
 parses the stylesheet as text.
 
 The fix for a violation is not to delete a test. It is to move the cases into
-the custom harness at ``crates/postio-gtk/tests/gtk_suite/``, which exists for
-exactly this (#329): `harness = false`, one `adw::init`, every case a plain
+a crate's custom harness -- ``crates/postio-focus/tests/focus_suite/`` or
+``crates/postio-widgets/tests/widgets_suite/``, which exist for exactly this
+(#329): `harness = false`, one `adw::init`, every case a plain
 `pub fn` run in sequence on the main thread. A case there is a `pub fn`, not a
 `#[test]`, so this check sees nothing to complain about and both cases
 actually run.
@@ -143,9 +144,9 @@ def main() -> int:
             for name in names:
                 print(f"      {name}", file=sys.stderr)
         print(
-            "\nMove the cases into crates/postio-gtk/tests/gtk_suite/ — a custom\n"
-            "harness that runs each as a plain `pub fn`, in sequence, on the one\n"
-            "thread GTK allows. See that directory's main.rs, and #355.",
+            "\nMove the cases into the crate's custom-harness suite (focus_suite,\n"
+            "widgets_suite), which runs each as a plain `pub fn`, in sequence, on\n"
+            "the one thread GTK allows. See its main.rs, and #355.",
             file=sys.stderr,
         )
         return 1

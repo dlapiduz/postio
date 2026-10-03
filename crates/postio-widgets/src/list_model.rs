@@ -106,20 +106,6 @@ pub trait ModelRow: ListRow + IsA<glib::Object> + Clone + 'static {
     }
 }
 
-/// How many `items_changed` this process has emitted from a windowed list.
-///
-/// A diagnostic in the counting idiom `postio_storage::test_support::counting`
-/// uses for SQLite: a number that is the same on every machine, where the
-/// duration it causes is not. `GtkListView` answers each emission by
-/// re-examining the model and rebuilding the widgets it tracks, so what a
-/// navigation costs is roughly linear in this — which is why it is worth
-/// counting rather than timing (#1216).
-pub fn emissions() -> u64 {
-    EMISSIONS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-static EMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// The two signals every windowed list's `GObject` declares, for its
 /// `ObjectImpl::signals`.
 ///
@@ -1024,9 +1010,8 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 }
 
-/// Tell the view that positions changed, and count it.
+/// Tell the view that positions changed.
 fn items_changed<M: WindowedModel>(model: &M, position: u32, removed: u32, added: u32) {
-    EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     model
         .upcast_ref::<gtk::gio::ListModel>()
         .items_changed(position, removed, added);

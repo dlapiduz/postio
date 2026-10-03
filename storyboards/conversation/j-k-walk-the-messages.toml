@@ -6,11 +6,10 @@
 # answered that one. In the classic app `J`/`K` never reached the
 # conversation (#1748).
 #
-# Re-expressed for Focus (T265): Focus shows one message at a time and
-# steps the thread with `[` and `]` (C2, FR-037), so the open message names
-# the message it shows. The seven-message long-thread opens on its newest,
+# Re-expressed for Focus (T265): Focus shows one message at a time and steps
+# the thread with `[` and `]` (C2, FR-037), so the open message names the
+# message it shows. The seven-message long-thread opens on its newest,
 # message 7; `[` steps back, `]` forward, and `e` replies to the one shown.
-# The classic app it was written against is removed by T256.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1386" }
 proof  = "pinned"

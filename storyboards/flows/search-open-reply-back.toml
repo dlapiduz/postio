@@ -6,8 +6,7 @@
 #
 # Re-expressed for Focus (T265): its bar lists the hits under the field and
 # never narrows the inbox, so the inbox's rows are the same at the end as at
-# the start. In the classic app `e` was unbound on an open hit (#1750). The
-# classic app it was written against is removed by T256.
+# the start. In the classic app `e` was unbound on an open hit (#1750).
 apps   = ["focus"]
 source = { kind = "flow", ref = "ux-architect §4" }
 

@@ -7,8 +7,7 @@
 # where Focus also shows the bulk bar.
 #
 # Re-expressed for Focus (T265): Focus starts with no cursor row, so `j`
-# first puts the cursor on the first row for `x` to select. The classic app
-# it was written against is removed by T256.
+# first puts the cursor on the first row for `x` to select.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#753" }
 proof  = "pinned"

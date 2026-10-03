@@ -5,10 +5,9 @@
 # the archived one's place; `u` brings the last one back. The thirty-thread
 # seed is long enough that nothing runs out.
 #
-# Re-expressed for Focus (T265): its cursor starts on no row, so `j` puts
-# it on index 0. Red on #1746 until it lands: the archived row's cursor is
-# not handed to the row below. The classic app it was written against is
-# removed by T256.
+# Re-expressed for Focus (T265): its cursor starts on no row, so `j` puts it
+# on index 0. Red on #1746 until it lands: the archived row's cursor is not
+# handed to the row below.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
 proof  = "open"

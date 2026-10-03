@@ -21,16 +21,6 @@ pub use postio_body::sanitize::RemoteImages;
 use postio_body::treatment::{self, TREATMENT_ATTRIBUTE, Treatment, Trigger};
 use postio_model::message::MessageBody;
 
-/// The security origin every rendered message loads under.
-///
-/// A fixed, non-`http(s)` scheme so a message's content is never same-origin
-/// with any real site — nothing it contains gets that site's cookies, and
-/// nothing on that site sees this page as one of its own frames. Nothing is
-/// ever registered to handle this scheme, so a relative reference a sender
-/// left in place resolves to a fetch that fails closed rather than one that
-/// quietly reaches a host.
-pub const DOCUMENT_BASE_URI: &str = "postio-reader:///";
-
 /// Why the reading pane has no body to draw.
 ///
 /// Issue #70, Cause A: all four of these used to render as a blank pane, so
@@ -474,25 +464,6 @@ pub static FACES: &[Face] = &[
         style: "normal",
         bytes: include_bytes!("../../data/fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf"),
     },
-];
-
-/// Each vendored family's licence text, as `(family, OFL text)` — the same
-/// families [`FACES`] embeds, read from beside them so the licence a family
-/// ships under can never drift from the bytes it names.
-///
-/// `postio-gtk`'s About dialog (`fonts::licenses`) attributes the fonts from
-/// here rather than from a copy that could go stale. `static` for the same
-/// reason as [`FACES`].
-pub static LICENSES: &[(&str, &str)] = &[
-    ("Barlow", include_str!("../../data/fonts/barlow/OFL.txt")),
-    (
-        "Barlow Condensed",
-        include_str!("../../data/fonts/barlow-condensed/OFL.txt"),
-    ),
-    (
-        "IBM Plex Mono",
-        include_str!("../../data/fonts/ibm-plex-mono/OFL.txt"),
-    ),
 ];
 
 /// The face `name` refers to, or `None`.
@@ -1462,27 +1433,6 @@ pub fn prepare_treated(body: &MessageBody, remote: RemoteImages) -> Prepared {
     }
 }
 
-/// Render `body` for the single-message reader ahead of time: the same as
-/// [`prepare`], with no scope stamped on its references, which is what
-/// [`body_html`] draws for one message on its own.
-///
-/// For a worker: the reader-view verdict and the sanitising are the two
-/// html5ever parses a message costs, and the main thread is where neither
-/// belongs -- each is paid on every message the cursor settles on.
-pub fn prepare_message(body: &MessageBody, remote: RemoteImages) -> Prepared {
-    let verdict = suits_reader_view(body);
-    let rendering = opening_rendering();
-    Prepared {
-        scope: String::new(),
-        body: body.clone(),
-        remote,
-        verdict,
-        rendering,
-        rendered: body_html(body, remote, rendering),
-        treated: None,
-    }
-}
-
 /// Render `body` for the message `scope` ahead of time, as a conversation
 /// would draw it by default ([`opening_rendering`]), under `remote`.
 ///
@@ -1702,30 +1652,6 @@ mod render_cache_tests {
             0,
             "an earlier offer was thrown away by a later one"
         );
-    }
-
-    #[test]
-    fn a_message_prepared_for_the_single_reader_is_what_it_would_draw() {
-        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
-        let prepared = prepare_message(&newsletter, RemoteImages::Blocked);
-        let rendering = if suits_reader_view(&newsletter) {
-            Rendering::Reader
-        } else {
-            Rendering::Original
-        };
-        assert_eq!(
-            prepared.verdict_for(&newsletter),
-            Some(rendering == Rendering::Reader)
-        );
-        assert!(prepared.serves(&newsletter, RemoteImages::Blocked, rendering));
-        assert_eq!(
-            *prepared.rendered(),
-            body_html(&newsletter, RemoteImages::Blocked, rendering),
-            "the single reader's references carry no scope, and nor may this"
-        );
-        // Anything else is not what it was prepared for.
-        assert!(!prepared.serves(&newsletter, RemoteImages::Allowed, rendering));
-        assert_eq!(prepared.verdict_for(&body("<p>Other.</p>")), None);
     }
 
     #[test]
@@ -2968,10 +2894,6 @@ mod warming_tests {
         assert!(
             suits_reader_view(&newsletter),
             "the fixture must read as bulk for this to mean anything"
-        );
-        assert_eq!(
-            prepare_message(&newsletter, RemoteImages::Blocked).rendering,
-            Rendering::Original
         );
         assert_eq!(
             prepare("7", &newsletter, RemoteImages::Blocked).rendering,

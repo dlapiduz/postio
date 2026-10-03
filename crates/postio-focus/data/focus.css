@@ -197,18 +197,13 @@ button.postio-button-secondary:hover {
   border-color: var(--postio-hairline-strong);
 }
 
-.postio-refine-chip:hover {
-  border-color: var(--postio-hairline-strong);
-  color: var(--postio-ink);
-}
-
 .postio-chip {
   color: var(--postio-ink);
 }
 
 /* ── Settings, re-dressed for Focus (T234; FR-091, C26) ───────────────
    The shared panel marks its current section, a checked box, a key being
-   rebound and the file's state in the classic app's accent. Focus keeps the
+   rebound and the file's state in the shared tokens' accent. Focus keeps the
    accent for markers, the focus ring and the has-action toggle: the current
    section is the neutral selection a selected row wears, a checked box is
    filled with the ink, and what is wrong with the file is the error colour.

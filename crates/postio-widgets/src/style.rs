@@ -24,12 +24,9 @@ use gtk::{gdk, gio, glib};
 /// Where the shared stylesheet lives in the bundle, as a resource path.
 pub const WIDGETS_CSS: &str = "/dev/postio/Widgets/widgets.css";
 
-/// The shared stylesheet as an `@import` names it.
-pub const WIDGETS_CSS_URL: &str = "resource:///dev/postio/Widgets/widgets.css";
-
 /// The bundled app icon, laid out as `GtkIconTheme` expects a resource path:
 /// `scalable/apps/<name>.svg` beneath this directory.
-pub const ICONS: &str = "/dev/postio/Widgets/icons";
+const ICONS: &str = "/dev/postio/Widgets/icons";
 
 const BUNDLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/postio-widgets.gresource"));
 

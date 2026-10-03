@@ -4,10 +4,10 @@
  * Emitted by: crates/postio-widgets/build.rs via postio_ui::tokens
  * Regenerate: cargo build -p postio-widgets
  *
- * The metrics both desktop apps lay the shared widgets out by: spacing,
+ * The metrics the desktop app lays the shared widgets out by: spacing,
  * radii, chip sizes and type sizes (specs/007-postio-focus research R11).
- * No colour is defined here: each app defines its own, the classic app in
- * its generated tokens.css and Focus from libadwaita's named colours.
+ * No colour is defined here: the app defines its own, from libadwaita's
+ * named colours.
  */
 
 :root {

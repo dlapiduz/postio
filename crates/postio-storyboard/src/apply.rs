@@ -16,10 +16,6 @@ use crate::format::{Apps, Input, Storyboard};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum App {
-    /// The classic GTK app. Only its own runner names it -- no script and
-    /// no storyboard in the catalogue does -- and it goes with that app in
-    /// specs/007-postio-focus T256.
-    Classic,
     /// Postio, the desktop app (spec 007; ADR 0043): the one app storyboards
     /// play on.
     Focus,
@@ -33,7 +29,6 @@ impl std::fmt::Display for App {
     /// The name the storyboard file and `runner list` spell it with.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            App::Classic => "classic",
             App::Focus => "focus",
             App::Terminal => "terminal",
             App::Macos => "macos",
@@ -44,19 +39,17 @@ impl std::fmt::Display for App {
 /// Whether `app` exists on this branch at all. macOS is built elsewhere and
 /// is named in the vocabulary and nothing more (research R7).
 pub fn present(app: App) -> bool {
-    matches!(app, App::Classic | App::Focus | App::Terminal)
+    matches!(app, App::Focus | App::Terminal)
 }
 
 /// Whether `app` offers `command`, by what the registry says its frontend
 /// is offered (`requires.offered_by`): the desktop does not offer what only
-/// the terminal's composer has, Focus has no panes to cycle and Classic has
-/// no has-action toggle. A command the
+/// the terminal's composer has, and Focus has no panes to cycle. A command the
 /// registry offers but the app never wired still counts as provided; that gap
 /// is what the generated pass is for.
 pub fn provides(app: App, command: CommandId) -> bool {
     let requires = registry::get(command).requires;
     match app {
-        App::Classic => requires.offered_by(Frontend::Classic),
         App::Focus => requires.offered_by(Frontend::Focus),
         App::Terminal => requires.offered_by(Frontend::Terminal),
         App::Macos => false,
@@ -295,12 +288,6 @@ mod tests {
             let terminal = spec.requires.contains(Requirement::Terminal);
             let graphical = spec.requires.contains(Requirement::Graphical);
             assert_eq!(
-                provides(App::Classic, spec.id),
-                spec.requires.offered_by(Frontend::Classic),
-                "{}",
-                spec.id.as_str()
-            );
-            assert_eq!(
                 provides(App::Focus, spec.id),
                 spec.requires.offered_by(Frontend::Focus),
                 "{}",
@@ -314,7 +301,7 @@ mod tests {
             );
             // The registry's own answer never contradicts the coarse one.
             if terminal {
-                assert!(!provides(App::Classic, spec.id));
+                assert!(!provides(App::Focus, spec.id));
             }
             if graphical {
                 assert!(!provides(App::Terminal, spec.id));
@@ -326,21 +313,15 @@ mod tests {
     #[test]
     fn focus_provides_what_only_focus_has_and_not_the_panes() {
         assert!(provides(App::Focus, CommandId::ToggleHasAction));
-        assert!(!provides(App::Classic, CommandId::ToggleHasAction));
-        // Three panes are the classic app's alone (classic-parity.md row 1).
+        // Focus has no panes to cycle (classic-parity.md row 1).
         assert!(!provides(App::Focus, CommandId::CyclePane));
-        assert!(provides(App::Classic, CommandId::CyclePane));
         // Flag is every app's since C13.
         assert!(provides(App::Focus, CommandId::Flag));
     }
 
     #[test]
-    fn shared_commands_apply_to_classic_and_focus() {
+    fn shared_commands_apply_to_focus() {
         let board = board("", &["next_message", "back"]).unwrap();
-        assert_eq!(
-            applies(&board, App::Classic, &info(App::Classic)),
-            Applicability::Applies
-        );
         assert_eq!(
             applies(&board, App::Focus, &info(App::Focus)),
             Applicability::Applies
@@ -355,11 +336,11 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_command_does_not_apply_to_classic_and_is_named() {
+    fn a_terminal_command_does_not_apply_to_focus_and_is_named() {
         let command = terminal_only();
         let board = board("", &["next_message", command]).unwrap();
         assert_eq!(
-            applies(&board, App::Classic, &info(App::Classic)),
+            applies(&board, App::Focus, &info(App::Focus)),
             Applicability::NotApplicable(vec![Reason::MissingCommand(command.into())])
         );
         assert_eq!(
@@ -371,18 +352,18 @@ mod tests {
     #[test]
     fn naming_an_app_that_lacks_a_command_is_a_load_error() {
         let command = terminal_only();
-        let error = board("apps = [\"classic\"]\n", &[command])
+        let error = board("apps = [\"focus\"]\n", &[command])
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains(command) && error.contains("classic"),
+            error.contains(command) && error.contains("focus"),
             "{error}"
         );
         // Naming an app that is not built here cannot be checked, so loads.
         assert!(board("apps = [\"macos\"]\n", &[command]).is_ok());
         // A step the app skips does not need the command.
         let text = format!(
-            "apps = [\"classic\"]\n{HEAD}[[step]]\ncommand = \"{command}\"\n[app.classic.step.1]\nskip = {{ reason = \"terminal only\" }}\n"
+            "apps = [\"focus\"]\n{HEAD}[[step]]\ncommand = \"{command}\"\n[app.focus.step.1]\nskip = {{ reason = \"terminal only\" }}\n"
         );
         assert!(parse(&text, Path::new("t.toml")).is_ok());
     }
@@ -391,7 +372,7 @@ mod tests {
     fn a_storyboard_that_does_not_name_the_app_does_not_apply() {
         let board = board("apps = [\"terminal\"]\n", &["back"]).unwrap();
         assert_eq!(
-            applies(&board, App::Classic, &info(App::Classic)),
+            applies(&board, App::Focus, &info(App::Focus)),
             Applicability::NotApplicable(vec![Reason::NotNamed])
         );
     }
@@ -404,7 +385,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            applies(&board, App::Classic, &info(App::Classic)),
+            applies(&board, App::Focus, &info(App::Focus)),
             Applicability::NotApplicable(vec![
                 Reason::MissingSeed("huge".into()),
                 Reason::MissingPreset("add-account/browser".into()),
@@ -416,15 +397,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            applies(&known, App::Classic, &info(App::Classic)),
+            applies(&known, App::Focus, &info(App::Focus)),
             Applicability::Applies
         );
         // The default seed is `small`.
         let plain = self::board("", &["back"]).unwrap();
-        let mut bare = info(App::Classic);
+        let mut bare = info(App::Focus);
         bare.seeds.clear();
         assert_eq!(
-            applies(&plain, App::Classic, &bare),
+            applies(&plain, App::Focus, &bare),
             Applicability::NotApplicable(vec![Reason::MissingSeed("small".into())])
         );
     }
@@ -437,7 +418,7 @@ mod tests {
             Path::new("list/walk.toml"),
         )
         .expect("loads");
-        let mut info = info(App::Classic);
+        let mut info = info(App::Focus);
         info.axes = [
             (
                 "scheme".to_owned(),
@@ -476,7 +457,7 @@ mod tests {
             Path::new("screens/inbox-dark.toml"),
         )
         .expect("loads");
-        let mut info = info(App::Classic);
+        let mut info = info(App::Focus);
         info.axes = [
             (
                 "scheme".to_owned(),
@@ -511,7 +492,7 @@ mod tests {
             Path::new("list/walk.toml"),
         )
         .expect("loads");
-        let mut info = info(App::Classic);
+        let mut info = info(App::Focus);
         info.axes = [(
             "scheme".to_owned(),
             vec!["light".to_owned(), "dark".to_owned()],

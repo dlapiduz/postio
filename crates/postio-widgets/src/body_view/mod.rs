@@ -104,8 +104,6 @@ pub(super) mod imp {
         pub(super) zoom: Cell<u16>,
         /// The next snapshot starts at the top: a new message, not a redraw.
         pub(super) to_top: Cell<bool>,
-        /// The scope `current-message` last reported.
-        pub(super) current: RefCell<Option<String>>,
         /// A pinch in progress: its scale so far, drawn over the snapshot
         /// until it ends and one render takes its place.
         pub(super) pinch: Cell<Option<f64>>,
@@ -174,7 +172,6 @@ pub(super) mod imp {
                 zoom: Cell::new(100),
                 pointer: Cell::new(None),
                 pinch: Cell::new(None),
-                current: RefCell::default(),
                 to_top: Cell::new(false),
                 darkened: RefCell::default(),
                 flow: RefCell::default(),
@@ -253,15 +250,6 @@ pub(super) mod imp {
                     glib::subclass::Signal::builder("zoom-changed").build(),
                     // A snapshot reached the screen.
                     glib::subclass::Signal::builder("rendered").build(),
-                    // The message with most of the view changed: its scope.
-                    glib::subclass::Signal::builder("current-message")
-                        .param_types([String::static_type()])
-                        .build(),
-                    // A verb link was followed: the message's scope, and the
-                    // verb (`reply`, `forward`, `continue`, `allow`).
-                    glib::subclass::Signal::builder("message-verb")
-                        .param_types([String::static_type(), String::static_type()])
-                        .build(),
                 ]
             })
         }
@@ -309,7 +297,6 @@ pub(super) mod imp {
                 adjustment.connect_value_changed(move |_| {
                     if let Some(view) = view.upgrade() {
                         view.queue_draw();
-                        view.report_current_message();
                     }
                 });
             }
@@ -615,21 +602,6 @@ impl BodyView {
         self.imp().launcher.replace(Some(Box::new(launch)));
     }
 
-    /// Call `f` with a message's scope and verb (`reply`, `forward`,
-    /// `continue`, `allow`) when a verb link in it is followed.
-    pub fn connect_message_verb(
-        &self,
-        f: impl Fn(&Self, &str, &str) + 'static,
-    ) -> Option<glib::SignalHandlerId> {
-        Some(self.connect_local("message-verb", false, move |values| {
-            let view = values[0].get::<BodyView>().expect("the signal's own view");
-            let scope = values[1].get::<String>().expect("a scope");
-            let verb = values[2].get::<String>().expect("a verb");
-            f(&view, &scope, &verb);
-            None
-        }))
-    }
-
     /// The pointer is at `at`, in the view's coordinates.
     #[doc(hidden)]
     pub fn hover(&self, at: gtk::graphene::Point) {
@@ -707,9 +679,9 @@ impl BodyView {
                     |_| {},
                 );
             }
-            LinkTarget::Verb { scope, verb } => {
-                self.emit_by_name::<()>("message-verb", &[scope, &verb.name().to_owned()]);
-            }
+            // A verb link belongs to a conversation drawn as one document,
+            // which no Postio window hands this view.
+            LinkTarget::Verb { .. } => {}
             LinkTarget::Fragment { scope, id } => {
                 let Some(document) = self.document() else {
                     return;
@@ -744,47 +716,6 @@ impl BodyView {
         }
     }
 
-    /// The message the rail marks as current: the one with the most of it
-    /// on screen (001 FR-035).
-    pub fn current_message(&self) -> Option<String> {
-        let document = self.document()?;
-        let (top, page) = self.window();
-        let extents: Vec<postio_ui::reader::rail::Extent> = document
-            .messages
-            .iter()
-            .map(|m| postio_ui::reader::rail::Extent {
-                top: m.rect.y0,
-                height: m.rect.height(),
-            })
-            .collect();
-        let at = postio_ui::reader::rail::current(&extents, top, page)?;
-        Some(document.messages[at].scope.clone())
-    }
-
-    /// Tell `current-message` listeners when the message with most of the
-    /// view changes (the rail, 001 FR-035).
-    fn report_current_message(&self) {
-        let now = self.current_message();
-        if now.is_some() && *self.imp().current.borrow() != now {
-            self.imp().current.replace(now.clone());
-            self.emit_by_name::<()>("current-message", &[&now.unwrap_or_default()]);
-        }
-    }
-
-    /// Call `f` with the scope of the message the rail should mark, as the
-    /// view scrolls.
-    pub fn connect_current_message(
-        &self,
-        f: impl Fn(&Self, &str) + 'static,
-    ) -> glib::SignalHandlerId {
-        self.connect_local("current-message", false, move |values| {
-            let view = values[0].get::<BodyView>().expect("the signal's own view");
-            let scope = values[1].get::<String>().expect("a scope");
-            f(&view, &scope);
-            None
-        })
-    }
-
     /// Call `f` each time a snapshot reaches the screen.
     pub fn connect_rendered(&self, f: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
         self.connect_local("rendered", false, move |values| {
@@ -792,16 +723,6 @@ impl BodyView {
             f(&view);
             None
         })
-    }
-
-    /// Scroll `scope`'s message to the top of the view.
-    pub fn scroll_to_message(&self, scope: &str) {
-        let Some(document) = self.document() else {
-            return;
-        };
-        if let Some(message) = document.messages.iter().find(|m| m.scope == scope) {
-            self.scroll_document_to(message.rect.y0);
-        }
     }
 
     /// Scroll one page down (`forward`) or up: the view's own height, or a
@@ -859,7 +780,6 @@ impl BodyView {
         scroller.vadjustment().connect_value_changed(move |_| {
             if let Some(view) = view.upgrade() {
                 view.queue_draw();
-                view.report_current_message();
             }
         });
         self.scroll_sideways();
@@ -1260,7 +1180,6 @@ impl BodyView {
         self.refresh_find();
         self.announce_contents(old_len);
         self.emit_by_name::<()>("rendered", &[]);
-        self.report_current_message();
         self.queue_draw();
     }
 

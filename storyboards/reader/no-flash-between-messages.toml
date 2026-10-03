@@ -9,7 +9,6 @@
 # messages beside the list, `Return` opens the cursor's row there, and from
 # then on the pane follows the cursor. The walk starts on the third row,
 # past the digest row, which opens its own window rather than the pane.
-# The classic app it was written against is removed by T256.
 apps   = ["focus"]
 source = { kind = "commit", ref = "d1ddd2dc" }
 proof  = "pinned"

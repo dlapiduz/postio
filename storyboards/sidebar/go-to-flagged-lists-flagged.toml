@@ -5,8 +5,7 @@
 # T257): the small seed's eight flagged conversations, with no flag mark on
 # the rows.
 #
-# Re-expressed for Focus (T265), where it holds: pinned. The classic app
-# #1747 was found in is removed by T256.
+# Re-expressed for Focus (T265), where it holds: pinned.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1747" }
 proof  = "pinned"

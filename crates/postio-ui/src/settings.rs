@@ -335,8 +335,8 @@ mod tests {
         assert!(
             Section::ALL
                 .into_iter()
-                .all(|section| section.shown_in(postio_core::Frontend::Classic)),
-            "the classic app shows all eight"
+                .all(|section| section.shown_in(postio_core::Frontend::Macos)),
+            "macOS shows all eight"
         );
     }
 

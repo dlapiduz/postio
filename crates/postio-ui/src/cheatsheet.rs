@@ -397,9 +397,8 @@ mod tests {
         };
         let account = Scope::Account(AccountId::new(1));
         let waiting = ids(Availability {
-            scope: account,
             store_open: false,
-            frontend: postio_core::Frontend::Classic,
+            ..Availability::open(account)
         });
         let open = ids(Availability::open(account));
 

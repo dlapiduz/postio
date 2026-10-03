@@ -1,10 +1,9 @@
 //! What the user is looking at: one coherent, authoritative answer.
 //!
-//! The account, the mailbox, the selection, the view and the per-account
-//! connection state live here and nowhere else. Widgets render from these
-//! accessors and repaint from the events these mutations return; a widget that
-//! kept its own copy would be one refresh away from disagreeing with the
-//! database.
+//! The account, the mailbox, the selection and the view live here and
+//! nowhere else. Widgets render from these accessors and repaint from the
+//! events these mutations return; a widget that kept its own copy would be
+//! one refresh away from disagreeing with the database.
 //!
 //! # Every change is an event
 //!
@@ -22,14 +21,13 @@
 //! here and not in the list widget, it survives the widget being rebuilt,
 //! rewindowed or scrolled somewhere else entirely.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use postio_model::{AccountId, DraftId, MailboxId, MessageId, OperationRange, ThreadId};
 use serde::{Deserialize, Serialize};
 
 use crate::bridge::EventSink;
-use crate::{ConnectionState, Context, Event, MessageTarget};
+use crate::{Context, Event, MessageTarget};
 
 /// Which surface the reading pane is showing.
 ///
@@ -340,8 +338,7 @@ pub use postio_model::AccountScope as Scope;
 /// store's owner is another process (ADR 0041), each frontend's command has
 /// to carry its own copy of those four, because each frontend has its own
 /// selection and the host has none. This is that copy, and it is
-/// serialisable. The back stack and connection states stay behind: nothing
-/// aims with them.
+/// serialisable. The back stack stays behind: nothing aims with it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateSnapshot {
     scope: Scope,
@@ -364,7 +361,6 @@ pub struct AppState {
     focus: Option<MessageId>,
     view: ViewMode,
     back: Vec<Frame>,
-    connections: BTreeMap<AccountId, ConnectionState>,
 }
 
 impl AppState {
@@ -529,98 +525,12 @@ impl AppState {
         }
     }
 
-    /// How an account stands with its server. An account nothing has been
-    /// reported about is [`ConnectionState::Offline`]: working locally.
-    pub fn connection(&self, account: AccountId) -> ConnectionState {
-        self.connections
-            .get(&account)
-            .copied()
-            .unwrap_or(ConnectionState::Offline)
-    }
-
-    /// Every account the application has heard about, in a stable order.
-    ///
-    /// `connections` is keyed by [`AccountId`] in a `BTreeMap`, so this is
-    /// ascending id — the order accounts were created in, which does not
-    /// change when one is disabled or when another is added. That stability
-    /// is load-bearing for [`next_scope`](Self::next_scope) and for the
-    /// per-account hue the sidebar draws: a colour a person has learned must
-    /// not move because a later account appeared.
-    pub fn accounts(&self) -> Vec<AccountId> {
-        self.connections.keys().copied().collect()
-    }
-
-    /// Move to the next scope: unified, then each account in turn, and round.
-    ///
-    /// The rule `g a` cycles by, spelled once so a frontend can share it —
-    /// today's GTK frontend does not: `postio_gtk::sidebar::Sidebar::select_next_scope`
-    /// walks the strip's own rows directly and never reaches this (#974), so
-    /// this has no production caller. It is kept, tested and correct for
-    /// whichever caller closes that gap, rather than deleted for being
-    /// unreached today. Cycling rather than a menu because the set is small
-    /// and ordered, and because a keystroke has no argument to name a scope
-    /// with — the sidebar's rows are the surface for going somewhere
-    /// directly.
-    ///
-    /// With no accounts, or exactly one, this is a no-op rather than a
-    /// pointless flicker between "unified" and the only account there is:
-    /// they show the same mail, so switching would be a visible change that
-    /// changes nothing.
-    pub fn next_scope(&mut self) -> Vec<Event> {
-        let accounts = self.accounts();
-        if accounts.len() < 2 {
-            return Vec::new();
-        }
-        match self.scope {
-            Scope::Unified => self.open_account(accounts[0]),
-            Scope::Account(current) => match accounts.iter().position(|id| *id == current) {
-                Some(index) if index + 1 < accounts.len() => self.open_account(accounts[index + 1]),
-                // Past the last account, or an account that has gone away
-                // since the scope was set — both land back at unified, which
-                // is the one scope that is always valid.
-                _ => self.open_unified(),
-            },
-        }
-    }
-
     /// How many steps `Esc` can still unwind.
     pub fn back_depth(&self) -> usize {
         self.back.len()
     }
 
     // -- Mutations -------------------------------------------------------
-
-    /// Open an account, which resets the mailbox and the selection with it.
-    pub fn open_account(&mut self, account: AccountId) -> Vec<Event> {
-        self.commit(|state| {
-            if state.scope == Scope::Account(account) {
-                return;
-            }
-            state.scope = Scope::Account(account);
-            // The old mailbox and rows belong to an account that is no longer
-            // on screen; keeping them would let an action land on a message
-            // the user cannot see.
-            state.viewing = None;
-            state.clear_position();
-        })
-    }
-
-    /// Widen the view to every enabled account.
-    ///
-    /// Drops the mailbox for the same reason [`open_account`](Self::open_account)
-    /// does: a folder belongs to one account, so it cannot survive a view
-    /// that spans them all, and keeping it would let an action land somewhere
-    /// the user can no longer see.
-    pub fn open_unified(&mut self) -> Vec<Event> {
-        self.commit(|state| {
-            if state.scope == Scope::Unified {
-                return;
-            }
-            state.scope = Scope::Unified;
-            state.viewing = None;
-            state.clear_position();
-        })
-    }
 
     /// Open a mailbox in the list, dropping a selection from the old one.
     pub fn open_mailbox(&mut self, mailbox: MailboxId) -> Vec<Event> {
@@ -744,17 +654,6 @@ impl AppState {
         })
     }
 
-    /// Report an account's connection state for the status line.
-    pub fn set_connection(
-        &mut self,
-        account: AccountId,
-        connection: ConnectionState,
-    ) -> Vec<Event> {
-        self.commit(|state| {
-            state.connections.insert(account, connection);
-        })
-    }
-
     // -- Internals -------------------------------------------------------
 
     fn clear_position(&mut self) {
@@ -790,17 +689,11 @@ impl AppState {
     fn diff(&self, next: &AppState) -> Vec<Event> {
         let mut events = Vec::new();
 
-        if self.scope != next.scope
-            && let Some(account) = next.scope.account()
-        {
-            events.push(Event::MailboxesChanged { account });
-        }
         if self.viewing != next.viewing
             && let Some(mailbox) = next.mailbox()
             // A mailbox is only ever selected within an account, so the id
             // here is the mailbox's owner. The let-chain keeps the diff total:
-            // a unified view holds no mailbox (both `open_unified` and
-            // `open_account` clear it), so this emits nothing rather than
+            // a unified view holds no mailbox, so this emits nothing rather than
             // inventing an account for a folder that spans none.
             && let Some(account) = next.scope.account()
         {
@@ -837,15 +730,6 @@ impl AppState {
             events.push(Event::SelectionChanged {
                 selection: next.selected.clone(),
             });
-        }
-
-        for (account, state) in &next.connections {
-            if self.connections.get(account) != Some(state) {
-                events.push(Event::ConnectionChanged {
-                    account: *account,
-                    state: *state,
-                });
-            }
         }
 
         events
@@ -1061,13 +945,12 @@ mod tests {
 
     #[test]
     fn select_all_in_the_unified_view_resolves_to_the_accounts_it_could_show() {
-        // #811. `open_unified` leaves no `ViewScope` behind, so `Ctrl+A` in
-        // the aggregate resolved to nothing and every bulk verb rejected with
-        // "Nothing selected" -- a refusal the user did not earn. The
+        // #811. The unified scope leaves no `ViewScope` behind, so `Ctrl+A`
+        // in the aggregate resolved to nothing and every bulk verb rejected
+        // with "Nothing selected" -- a refusal the user did not earn. The
         // frontend mirrors the view it was actually showing, and the accounts
         // it could show travel with it.
         let mut state = AppState::new();
-        state.open_unified();
         state.open_view(ViewScope::Unified {
             accounts: vec![AccountId::new(1), AccountId::new(2)],
         });

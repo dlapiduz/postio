@@ -120,7 +120,7 @@ pub fn length(key_file: &glib::KeyFile, key: &str, default: i32) -> i32 {
 /// do not share, and a fresh `KeyFile` would silently drop them. A missing
 /// or unreadable file is fine — there is nothing to preserve yet. The
 /// directory is created.
-pub fn open_for_writing(path: &Path) -> Result<glib::KeyFile, glib::Error> {
+fn open_for_writing(path: &Path) -> Result<glib::KeyFile, glib::Error> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             glib::Error::new(

@@ -8,9 +8,8 @@
 # message must be exactly as it was. The run fails on a blank frame, and
 # `reading.id` must be the same before and after.
 #
-# Re-expressed for Focus (T265): its open message shows one message, and
-# its read clock marks it after the dwell (T237). The classic app it was
-# written against is removed by T256.
+# Re-expressed for Focus (T265): its open message shows one message, and its
+# read clock marks it after the dwell (T237).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#797" }
 proof  = "pinned"

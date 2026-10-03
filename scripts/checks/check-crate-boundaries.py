@@ -6,8 +6,11 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-core`` must not depend on ``gtk4``/``libadwaita``. It is the
     UI-agnostic runtime -- commands in, events out -- which is what makes a
     non-GTK frontend possible later.
-  * ``postio-gtk`` must not depend on ``rusqlite``/``turso``/``io-imap``. The view layer
-    does no SQL and speaks no protocol.
+  * ``postio-focus``, the desktop app, must not depend directly on
+    ``rusqlite``/``turso``/``io-imap``: its own code does no SQL and speaks no
+    protocol. It opens the store in its own process through ``postio-host``
+    (ADR 0041), so the engine is in its graph -- transitively, and only
+    there.
   * ``postio-session`` must not depend on ``gtk4``/``libadwaita``. It is the
     composition root without a toolkit -- the store, the runtime, the engines
     and the whole verb vocabulary -- which is what makes a headless frontend
@@ -41,11 +44,8 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
     toolkit is how it would stop being small (``specs/005-tui-frontend``
     FR-051).
   * ``postio-widgets`` must not depend on the store engine, the protocol, the
-    host or either desktop app. It is the GTK both desktop apps draw with
-    (ADR 0043), and it reaches mail only through ``postio-client``.
-  * ``postio-focus`` must not depend on ``postio-gtk`` or ``postio-app``, and
-    ``postio-gtk`` must not depend on ``postio-focus``: neither desktop app
-    stands on the other (``specs/007-postio-focus`` FR-007).
+    host or the desktop app. It is the GTK the desktop app draws with (ADR
+    0043), and it reaches mail only through ``postio-client``.
   * ``postio-classify`` must not link anything that sends mail or reaches the
     network (``specs/007-postio-focus`` FR-132, ADR 0009), and
     ``postio-calendar`` must stay a pure leaf.
@@ -56,8 +56,8 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-vault``, Obsidian capture, must not link a network crate, a
     toolkit or the store engine: it appends markdown to a folder on this
     computer (``specs/007-postio-focus`` FR-180).
-  * No app binary (``postio-app``, ``postio-focus``, ``postio-tui``,
-    ``postio-ffi``) may link an inference engine. The local model is the
+  * No app binary (``postio-focus``, ``postio-tui``, ``postio-ffi``) may link
+    an inference engine. The local model is the
     user's own and optional (``specs/007-postio-focus`` FR-165).
 
 Not enforced here: ADR 0001's rule that ``postio-sync`` never reaches
@@ -77,10 +77,15 @@ Kinds considered:
 
   * normal and build dependencies, transitively, from the guarded crate;
   * dev-dependencies of the guarded crate itself (a test that pulls rusqlite
-    into postio-gtk violates the invariant just as much as the library would),
-    but not dev-dependencies of its dependencies, which are never built --
-    unless the rule says ``"edges": "product"``, as ``postio-render``'s does:
-    its invariant is about what ships, and its tests need a socket.
+    into postio-search violates the invariant just as much as the library
+    would), but not dev-dependencies of its dependencies, which are never
+    built -- unless the rule says ``"edges": "product"``, as
+    ``postio-render``'s does: its invariant is about what ships, and its
+    tests need a socket;
+  * a rule's ``"direct"`` list, by contrast, is checked against the guarded
+    crate's own dependencies only, dev-dependencies included: what its own
+    code may reach for, when the crate stands on something that is allowed
+    the banned crate (the desktop app on the host, which opens the store).
 
 Exit status: 0 clean, 1 violation found, 2 the check itself could not run.
 """
@@ -159,30 +164,38 @@ RULES: dict[str, dict[str, object]] = {
             "postio-runtime",
             "postio-storage",
             "postio-sync",
-            "postio-gtk",
-            "postio-app",
             "postio-focus",
         ],
         "why": (
-            "postio-widgets is the GTK both desktop apps draw with (ADR 0043): "
+            "postio-widgets is the GTK the desktop app draws with (ADR 0043): "
             "the message view, the composer, the small widgets and their "
             "presenters. It reaches mail only through postio-client, so it "
-            "opens no store and speaks no protocol, and it depends on neither "
-            "app, so neither app depends on the other through it."
+            "opens no store and speaks no protocol, and it does not depend on "
+            "the app."
         ),
     },
     "postio-focus": {
-        "banned": [
-            "postio-gtk",
-            "postio-app",
-            *INFERENCE_ENGINES,
+        "banned": [*INFERENCE_ENGINES],
+        "direct": [
+            "rusqlite",
+            "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
+            "io-imap",
         ],
         "why": (
-            "postio-focus opens the store itself when no other Postio has it "
-            "(ADR 0041), so the engine is in its graph on purpose. It draws "
-            "with postio-widgets and never with the classic app's crates "
-            "(specs/007-postio-focus FR-007), and it links no language model "
-            "(FR-165)."
+            "postio-focus is the desktop app's view layer: command down, "
+            "event up. Its own code does no SQL and speaks no protocol -- "
+            "storage goes through postio-storage and mail through the "
+            "MailBackend trait, behind the host it runs in its own process "
+            "(ADR 0041), which is why the engine is in its graph and may be "
+            "there only through that host. It draws with postio-widgets, and "
+            "it links no language model (specs/007-postio-focus FR-165)."
         ),
     },
     "postio-classify": {
@@ -312,15 +325,6 @@ RULES: dict[str, dict[str, object]] = {
             "no toolkit, no store engine"
         ),
     },
-    "postio-app": {
-        "banned": [*INFERENCE_ENGINES],
-        "why": (
-            "specs/007-postio-focus FR-165: no Postio package carries a "
-            "language model or an inference engine. The model is the user's "
-            "own, and optional"
-        ),
-    },
-
     "postio-ui": {
         "banned": [
             "gtk4",
@@ -438,7 +442,7 @@ RULES: dict[str, dict[str, object]] = {
             *INFERENCE_ENGINES,
         ],
         # `rusqlite` is deliberately *not* banned. postio-ffi sits above
-        # postio-session, exactly where postio-app does, and the store is on
+        # postio-session, exactly where the desktop app does, and the store is on
         # the other side of that composition root by design.
         "why": (
             "postio-ffi is the boundary the macOS app talks to (ADR 0019). "
@@ -517,27 +521,8 @@ RULES: dict[str, dict[str, object]] = {
         "why": (
             "postio-core is the UI-agnostic runtime (commands in, events out). "
             "Keeping GTK out of it is what makes a second frontend possible. "
-            "Widgets belong in postio-gtk; glib/gio are fine, gtk4 is not."
-        ),
-    },
-    "postio-gtk": {
-        "banned": [
-            "rusqlite",
-            "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
-            "turso",
-            "turso_core",
-            "io-imap",
-            "postio-focus",
-        ],
-        "why": (
-            "postio-gtk is the view layer: command down, event up. No SQL and "
-            "no protocol. Storage goes through postio-storage and mail through "
-            "the MailBackend trait, both behind postio-core."
+            "Widgets belong in postio-widgets and the desktop app; glib/gio "
+            "are fine, gtk4 is not."
         ),
     },
     # The same list as postio-core's, and deliberately not shared with it: the
@@ -557,7 +542,7 @@ RULES: dict[str, dict[str, object]] = {
         "why": (
             "postio-session is the composition root without a toolkit: the "
             "store, the runtime, the engines and the verb vocabulary. A "
-            "headless frontend links this and not postio-app; the moment a "
+            "headless frontend links this and not the desktop app; the moment a "
             "verb reaches for a widget, the only remaining way to run mail "
             "commands is through GTK -- and ADR 0010's alternative, a second "
             "binary opening SQLite directly, gives the database two writers "
@@ -582,8 +567,8 @@ RULES: dict[str, dict[str, object]] = {
         "why": (
             "postio-search is the query language -- parser, highlighter, "
             "facets -- not the index that executes it. postio-index is the "
-            "FTS5 executor; postio-gtk, postio-runtime and postio-app all "
-            "depend on postio-search directly, so the same query string has "
+            "FTS5 executor; the desktop app, postio-runtime and the terminal "
+            "all depend on postio-search directly, so the same query string has "
             "to mean the same thing in the search bar, the sidebar and "
             "[filters], which only holds if this crate does no SQL of its own."
         ),
@@ -712,7 +697,7 @@ RULES: dict[str, dict[str, object]] = {
         "why": (
             "postio-config parses and validates TOML and watches the file "
             "for live reload. It does no SQL and links no toolkit -- the "
-            "schema is read by postio-core, postio-gtk and postio-app alike, "
+            "schema is read by postio-core, the desktop app and the terminal alike, "
             "and any of them depending on it should not be how SQLite or GTK "
             "quietly reach the other two."
         ),
@@ -759,12 +744,14 @@ def dep_kind_label(kinds: set[str | None]) -> str:
 
 
 def find_violations(
-    meta: dict, crate: str, banned: set[str], own_dev: bool = True
+    meta: dict, crate: str, banned: set[str], own_dev: bool = True, direct_only: bool = False
 ) -> dict[str, list[tuple[str, str]]]:
     """Breadth-first search of `crate`'s dependency closure.
 
     ``own_dev`` walks the guarded crate's own dev-dependencies too; a rule
     with ``"edges": "product"`` turns it off, to guard only what ships.
+    ``direct_only`` looks at the guarded crate's own dependencies and stops
+    there: a rule's ``"direct"`` list.
 
     Returns ``{banned_crate_name: shortest_path}`` where a path is a list of
     ``(crate_name, edge_kind)`` pairs starting at the guarded crate itself.
@@ -816,7 +803,7 @@ def find_violations(
             if name in banned:
                 violations.setdefault(name, next_path)
                 continue  # no need to walk inside a crate that is already banned
-            if pkg_id not in seen:
+            if pkg_id not in seen and not direct_only:
                 seen.add(pkg_id)
                 queue.append((pkg_id, next_path))
 
@@ -852,16 +839,23 @@ def main(argv: list[str] | None = None) -> int:
     failed = False
     for crate, rule in RULES.items():
         banned = set(rule["banned"])  # type: ignore[arg-type]
+        direct = set(rule.get("direct", []))  # type: ignore[arg-type]
         try:
             violations = find_violations(
                 meta, crate, banned, own_dev=rule.get("edges") != "product"
+            )
+            violations.update(
+                find_violations(meta, crate, direct, direct_only=True) if direct else {}
             )
         except CheckError as exc:
             print(f"crate-boundary check: {exc}", file=sys.stderr)
             return 2
 
         if not violations:
-            print(f"ok: {crate} depends on none of: {', '.join(sorted(banned))}")
+            said = f"ok: {crate} depends on none of: {', '.join(sorted(banned))}"
+            if direct:
+                said += f"; and not directly on: {', '.join(sorted(direct))}"
+            print(said)
             continue
 
         failed = True

@@ -30,7 +30,7 @@ const TEMPLATE: &str = include_str!("../templates/page.html");
 #[derive(Debug, Clone)]
 pub struct Filmstrip {
     /// The run's directory relative to the page, with `/` separators, such
-    /// as `runs/classic/archive-walks-down/default`.
+    /// as `runs/terminal/archive-walks-down/default`.
     pub dir: String,
     /// The run.
     pub run: Run,
@@ -428,7 +428,6 @@ pub fn parity_section(parities: &[crate::parity::Parity], runs_prefix: &str) -> 
 
 fn app_name(app: crate::apply::App) -> &'static str {
     match app {
-        crate::apply::App::Classic => "classic",
         crate::apply::App::Focus => "focus",
         crate::apply::App::Terminal => "terminal",
         crate::apply::App::Macos => "macos",
@@ -1010,7 +1009,6 @@ fn delivery(mode: Delivery) -> &'static str {
 
 fn app(run: &Run) -> &'static str {
     match run.app {
-        crate::apply::App::Classic => "classic",
         crate::apply::App::Focus => "focus",
         crate::apply::App::Terminal => "terminal",
         crate::apply::App::Macos => "macos",
@@ -1075,7 +1073,7 @@ mod tests {
                 name: name.into(),
                 hash: "h".into(),
             },
-            app: App::Classic,
+            app: App::Terminal,
             variant: BTreeMap::new(),
             ignored_axes: vec![],
             tree_key: "key".into(),
@@ -1142,7 +1140,7 @@ mod tests {
             vec![step(0, Settle::Settled { ms: 100 }, vec![])],
         );
         for r in [&passed, &uncovered] {
-            RunWriter::new(&root, App::Classic, &r.storyboard.name, &BTreeMap::new())
+            RunWriter::new(&root, App::Terminal, &r.storyboard.name, &BTreeMap::new())
                 .expect("writer")
                 .write(r)
                 .expect("written");
@@ -1158,8 +1156,8 @@ mod tests {
         assert_eq!(
             dirs,
             [
-                "runs/classic/archive-walks-down/default",
-                "runs/classic/tab-cycles-panes/default"
+                "runs/terminal/archive-walks-down/default",
+                "runs/terminal/tab-cycles-panes/default"
             ]
         );
     }
@@ -1169,10 +1167,10 @@ mod tests {
         let (_out, strips) = tree();
         let html = render(&Header::default(), &strips);
         assert!(
-            html.contains("<img src=\"runs/classic/archive-walks-down/default/00.outlined.png\"")
+            html.contains("<img src=\"runs/terminal/archive-walks-down/default/00.outlined.png\"")
         );
         assert!(
-            html.contains("<img src=\"runs/classic/archive-walks-down/default/01.outlined.png\"")
+            html.contains("<img src=\"runs/terminal/archive-walks-down/default/01.outlined.png\"")
         );
         assert!(
             !html.contains("http://") && !html.contains("https://"),
@@ -1237,9 +1235,9 @@ mod tests {
             says: &str,
         ) -> serde_json::Value {
             json!({
-                "storyboard": "archive-walks-down", "step": step, "app": "classic",
+                "storyboard": "archive-walks-down", "step": step, "app": "terminal",
                 "variant": "default",
-                "frame": format!("runs/classic/archive-walks-down/default/0{step}.outlined.png"),
+                "frame": format!("runs/terminal/archive-walks-down/default/0{step}.outlined.png"),
                 "verdict": kind, "severity": severity, "says": says, "rule": "ux-architect §2"
             })
         }
@@ -1255,9 +1253,9 @@ mod tests {
                     verdict("3", "fail", Some("blocker"), "says-openfail"),
                 ],
                 "findings": [{
-                    "storyboard": "archive-walks-down", "step": "0", "app": "classic",
+                    "storyboard": "archive-walks-down", "step": "0", "app": "terminal",
                     "variant": "default",
-                    "frame": "runs/classic/archive-walks-down/default/00.outlined.png",
+                    "frame": "runs/terminal/archive-walks-down/default/00.outlined.png",
                     "severity": "polish", "says": "says-polish", "rule": "canvas 01"
                 }]
             })
@@ -1272,9 +1270,9 @@ mod tests {
             let runs = dir.path().join("runs");
             fixtures::write(
                 &runs,
-                &fixtures::run("archive-walks-down", App::Classic, &[], 4),
+                &fixtures::run("archive-walks-down", App::Terminal, &[], 4),
             );
-            let mut quiet = fixtures::run("tab-cycles-panes", App::Classic, &[], 1);
+            let mut quiet = fixtures::run("tab-cycles-panes", App::Terminal, &[], 1);
             quiet.status = Status::NotCovered {
                 reason: "step 1 needs real input".into(),
             };
@@ -1318,7 +1316,7 @@ mod tests {
             if contests {
                 std::fs::write(
                     bundle_dir.join("contests.toml"),
-                    "[[contest]]\nref = \"archive-walks-down/1/classic/default\"\nreason = \"reason-contest\"\n",
+                    "[[contest]]\nref = \"archive-walks-down/1/terminal/default\"\nreason = \"reason-contest\"\n",
                 )
                 .expect("contests");
             }
@@ -1346,7 +1344,7 @@ mod tests {
             assert!(section.contains("00.outlined.png"), "beside step 0's frame");
             assert!(
                 html.contains(
-                    "href=\"bundle/runs/classic/archive-walks-down/default/00.outlined.png\""
+                    "href=\"bundle/runs/terminal/archive-walks-down/default/00.outlined.png\""
                 ),
                 "each verdict links to its frame"
             );
@@ -1438,9 +1436,9 @@ mod tests {
                 .nth(1)
                 .and_then(|rest| rest.split("\n## ").next())
                 .expect("a Needs you section");
-            assert!(needs.contains("archive-walks-down/1/classic/default"));
+            assert!(needs.contains("archive-walks-down/1/terminal/default"));
             assert!(needs.contains("reason-contest"));
-            assert!(needs.contains("archive-walks-down/2/classic/default"));
+            assert!(needs.contains("archive-walks-down/2/terminal/default"));
             assert!(!needs.contains("says-openfail"));
             assert!(
                 text.contains("archive-walks-down (new): 1 pass, 2 fail, 1 question"),
@@ -1463,7 +1461,7 @@ mod tests {
             let text = summary(&Header::default(), &strips, &reviewed);
             let line = text
                 .lines()
-                .find(|l| l.contains("archive-walks-down/2/classic/default"))
+                .find(|l| l.contains("archive-walks-down/2/terminal/default"))
                 .expect("the question is listed");
             assert!(line.ends_with("The first sentence says it."), "{line}");
         }
@@ -1502,7 +1500,7 @@ mod tests {
         let compared = Compared {
             comparisons: vec![
                 Comparison {
-                    run: "classic/archive-walks-down/default".into(),
+                    run: "terminal/archive-walks-down/default".into(),
                     kind: Kind::Changed,
                     steps: vec![StepDiff {
                         step: 1,
@@ -1513,7 +1511,7 @@ mod tests {
                     seed_changed: false,
                 },
                 Comparison {
-                    run: "classic/tab-cycles-panes/default".into(),
+                    run: "terminal/tab-cycles-panes/default".into(),
                     kind: Kind::Unchanged,
                     steps: vec![],
                     seed_changed: false,
@@ -1524,16 +1522,16 @@ mod tests {
         };
         let html = render_compared(&Header::default(), &strips, None, &compared);
         assert!(
-            html.contains("<img src=\"base/classic/archive-walks-down/default/01.outlined.png\""),
+            html.contains("<img src=\"base/terminal/archive-walks-down/default/01.outlined.png\""),
             "the changed step's base frame sits beside it"
         );
         assert!(
-            !html.contains("base/classic/archive-walks-down/default/00.outlined.png"),
+            !html.contains("base/terminal/archive-walks-down/default/00.outlined.png"),
             "an unchanged step shows no base frame"
         );
         assert!(html.contains("changed: cursor.index"));
         assert!(
-            !html.contains("id=\"runs/classic/tab-cycles-panes/default\""),
+            !html.contains("id=\"runs/terminal/tab-cycles-panes/default\""),
             "an unchanged storyboard is not shown in full"
         );
         assert!(html.contains("1 unchanged against the base: tab-cycles-panes"));
@@ -1551,12 +1549,12 @@ mod tests {
         let parities = [Parity {
             storyboard: "archive-walks-down".into(),
             variant: "default".into(),
-            apps: vec![App::Classic, App::Focus],
+            apps: vec![App::Terminal, App::Focus],
             rows: vec![
                 ParityRow {
                     step: 0,
                     observations: [
-                        (App::Classic, observation(Some(0))),
+                        (App::Terminal, observation(Some(0))),
                         (App::Focus, observation(Some(0))),
                     ]
                     .into(),
@@ -1566,7 +1564,7 @@ mod tests {
                 ParityRow {
                     step: 1,
                     observations: [
-                        (App::Classic, observation(Some(1))),
+                        (App::Terminal, observation(Some(1))),
                         (App::Focus, observation(None)),
                     ]
                     .into(),
@@ -1577,7 +1575,7 @@ mod tests {
         }];
         let html = parity_section(&parities, "runs");
         assert!(
-            html.contains("<img src=\"runs/classic/archive-walks-down/default/01.outlined.png\"")
+            html.contains("<img src=\"runs/terminal/archive-walks-down/default/01.outlined.png\"")
         );
         assert!(
             html.contains("<img src=\"runs/focus/archive-walks-down/default/01.outlined.png\"")
@@ -1597,7 +1595,7 @@ mod tests {
     fn the_sheet_pairs_each_screen_with_its_design_and_names_failures() {
         let mut ok = crate::fixtures::run(
             "inbox-dark",
-            crate::apply::App::Classic,
+            crate::apply::App::Terminal,
             &[("scheme", "dark")],
             1,
         );
@@ -1605,17 +1603,17 @@ mod tests {
             path: "00.png".into(),
             hash: "h".into(),
         });
-        let mut broken = crate::fixtures::run("compose", crate::apply::App::Classic, &[], 1);
+        let mut broken = crate::fixtures::run("compose", crate::apply::App::Terminal, &[], 1);
         broken.status = Status::Error {
             message: "no window".into(),
         };
         let strips = [
             Filmstrip {
-                dir: "runs/classic/inbox-dark/scheme=dark".into(),
+                dir: "runs/terminal/inbox-dark/scheme=dark".into(),
                 run: ok,
             },
             Filmstrip {
-                dir: "runs/classic/compose/default".into(),
+                dir: "runs/terminal/compose/default".into(),
                 run: broken,
             },
         ];
@@ -1630,7 +1628,7 @@ mod tests {
             "design on the left"
         );
         assert!(
-            html.contains("<img src=\"runs/classic/inbox-dark/scheme=dark/00.png\""),
+            html.contains("<img src=\"runs/terminal/inbox-dark/scheme=dark/00.png\""),
             "the app's own frame, unoutlined, on the right"
         );
         assert!(html.contains("scheme=dark"), "the variant is named");

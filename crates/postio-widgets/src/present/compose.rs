@@ -42,7 +42,7 @@ use postio_client::protocol::RecipientDirectory;
 use postio_model::ids::{AccountId, BlobId, MailboxId, MessageId};
 use postio_model::{Account, DraftId, DraftState};
 
-use crate::composer::{Closing, Composer, ReplyAnswer};
+use crate::composer::{Closing, Composer};
 
 /// How many recipient suggestions to offer at once -- a popover, not a list
 /// the user scrolls.
@@ -408,31 +408,6 @@ pub fn install_recipients(composer: &Composer, client: &Client, account: Account
             prefix,
             SUGGESTION_LIMIT,
         )
-    });
-}
-
-/// `e`/`E`/`f` reply to whatever `current` names -- the reading pane's own
-/// record for the classic app, the row the cursor is on for Focus.
-///
-/// This is the plain version: it answers with the reply source and nothing
-/// else. Focus's dialog additionally reads the source's thread labels and
-/// draws them (R15), which needs its own handler -- a composer's seam is one
-/// slot, not a signal several listeners share -- so Focus keeps its own,
-/// fuller `connect_reply_source` rather than calling this.
-pub fn install_reply_source(composer: &Composer, client: &Client, current: Current) {
-    let client = client.clone();
-    composer.connect_reply_source(move |answer: ReplyAnswer| {
-        let Some(message) = current() else {
-            tracing::debug!("reply asked for with no message to answer from");
-            answer(None);
-            return;
-        };
-        let client = client.clone();
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // reads on its own runtime.
-            answer(client.reply_source(message).await.ok().flatten());
-        });
     });
 }
 

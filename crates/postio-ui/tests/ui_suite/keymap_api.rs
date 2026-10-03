@@ -1,11 +1,10 @@
 //! The platform-neutral half of what was the GDK bridge (#568, ADR 0019 Q4).
 //!
 //! `from_platform_key` is asserted against the same table the GDK path uses,
-//! with no toolkit and no display; `trigger_for_command` is what a frontend
-//! renders a native accelerator from.
+//! with no toolkit and no display.
 
 use postio_config::paths::Platform;
-use postio_ui::keymap::{Chord, Key, KeyContext, Keymap, Modifiers, Resolver, trigger_for_command};
+use postio_ui::keymap::{Chord, Key, KeyContext, Keymap, Modifiers, Resolver};
 
 fn chord(text: &str) -> Chord {
     text.parse().expect("a chord")
@@ -53,65 +52,6 @@ fn a_key_this_build_has_no_name_for_is_no_chord() {
         None
     );
     assert_eq!(Chord::from_platform_key(None, None, Modifiers::NONE), None);
-}
-
-#[test]
-fn the_trigger_for_a_command_is_the_chord_its_binding_starts_and_ends_with() {
-    let mut keymap = Keymap::new();
-    keymap.bind(KeyContext::List, "a", "archive").unwrap();
-    keymap
-        .bind(KeyContext::Global, "ctrl+k", "command_palette")
-        .unwrap();
-
-    assert_eq!(
-        trigger_for_command(&keymap, "archive"),
-        Some(Chord::new(Key::Char('a'), Modifiers::NONE))
-    );
-    assert_eq!(
-        trigger_for_command(&keymap, "command_palette"),
-        Some(Chord::new(Key::Char('k'), Modifiers::CTRL))
-    );
-    assert_eq!(trigger_for_command(&keymap, "teleport"), None);
-}
-
-#[test]
-fn a_sequence_is_not_a_trigger() {
-    // `g g` cannot be drawn as a native accelerator; a command bound only to
-    // a sequence has no trigger rather than a misleading first half.
-    let mut keymap = Keymap::new();
-    keymap.bind(KeyContext::List, "g g", "go_to_top").unwrap();
-
-    assert_eq!(trigger_for_command(&keymap, "go_to_top"), None);
-}
-
-#[test]
-fn a_global_binding_wins_over_a_context_one_as_the_trigger() {
-    // A native menu is not in any one context; when a command is bound both
-    // globally and per-context, the global chord is the honest accelerator.
-    let mut keymap = Keymap::new();
-    keymap.bind(KeyContext::List, "x", "do_it").unwrap();
-    keymap.bind(KeyContext::Global, "ctrl+x", "do_it").unwrap();
-
-    assert_eq!(
-        trigger_for_command(&keymap, "do_it"),
-        Some(Chord::new(Key::Char('x'), Modifiers::CTRL))
-    );
-}
-
-#[test]
-fn the_trigger_follows_what_keys_binds() {
-    // The [keys] override wins before the trigger is ever computed — the
-    // accelerator a menu draws is the key that actually works.
-    let mut overrides = postio_config::KeyBindings::default();
-    overrides
-        .overrides_mut()
-        .insert("archive".to_string(), "ctrl+shift+y".to_string());
-    let (keymap, _) = Keymap::from_commands(&postio_core::Keymap::resolve(&overrides));
-
-    assert_eq!(
-        trigger_for_command(&keymap, "archive"),
-        Some(Chord::new(Key::Char('Y'), Modifiers::CTRL))
-    );
 }
 
 #[test]
@@ -242,10 +182,10 @@ fn an_exclamation_mark_parses_by_either_name_and_resolves() {
 
 /// A key the one keymap keeps for another app is bound to nothing here
 /// (specs/007-postio-focus research R4). `y` accepts an invitation in
-/// Focus; in the classic app, the terminal and macOS it has to do nothing
-/// at all -- not reach a command the app never offers, which the dispatcher
-/// would refuse as "not wired up" -- and a command every app has still
-/// answers its key in each.
+/// Focus, and in the terminal, which is Focus drawn in character cells
+/// (C29); in macOS it has to do nothing at all -- not reach a command the app
+/// never offers, which the dispatcher would refuse as "not wired up" -- and a
+/// command every app has still answers its key in each.
 #[test]
 fn a_key_another_app_keeps_is_bound_to_nothing_here() {
     use postio_core::{Context, Frontend, Keymap as Commands};
@@ -258,12 +198,12 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
         resolver.press(&chord(key), KeyContext::from(context), false, now)
     };
 
-    for app in [Frontend::Classic, Frontend::Terminal, Frontend::Macos] {
-        assert_eq!(
-            press(app, Context::List, "y"),
-            Outcome::Unhandled,
-            "{app:?} answered Focus's `y`"
-        );
+    assert_eq!(
+        press(Frontend::Macos, Context::List, "y"),
+        Outcome::Unhandled,
+        "macOS answered Focus's `y`"
+    );
+    for app in [Frontend::Terminal, Frontend::Macos] {
         assert_eq!(
             press(app, Context::List, "a"),
             Outcome::Command("archive".to_owned()),
@@ -278,10 +218,10 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
     assert_eq!(
         press(Frontend::Focus, Context::List, "ctrl+b"),
         Outcome::Unhandled,
-        "Focus answered the three-pane apps' `ctrl+b`"
+        "Focus answered the three-pane app's `ctrl+b`"
     );
     assert_eq!(
-        press(Frontend::Classic, Context::List, "ctrl+b"),
+        press(Frontend::Macos, Context::List, "ctrl+b"),
         Outcome::Command("toggle_sidebar".to_owned())
     );
 }

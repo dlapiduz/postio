@@ -16,7 +16,6 @@
 //! checked rather than assumed. A test that grows one has to move back out, or
 //! it will change what its neighbours see.
 
-mod contrast;
 mod keybindings_doc;
 mod keymap_api;
 mod keymap_defaults;

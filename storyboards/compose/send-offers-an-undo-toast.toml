@@ -7,7 +7,7 @@
 # closes the composer and says nothing. Open until #1752 ships.
 #
 # Re-expressed for Focus (T265): `j` puts the cursor on the row Reply
-# answers. The classic app it was written against is removed by T256.
+# answers.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1752" }
 proof  = "open"

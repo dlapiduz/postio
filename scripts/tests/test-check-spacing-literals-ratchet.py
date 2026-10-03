@@ -43,7 +43,7 @@ def expect_root(name: str, files: dict[str, str], baseline: str, ok: bool, *seen
     """The check over a whole repository: every desktop crate's `src/`."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for crate in ("postio-gtk", "postio-widgets", "postio-focus"):
+        for crate in ("postio-widgets", "postio-focus"):
             (root / "crates" / crate / "src").mkdir(parents=True)
         for rel, text in files.items():
             path = root / rel
@@ -78,17 +78,10 @@ expect(
     "lower the baseline",
 )
 
-# Both desktop apps lay out widgets, and the shared crate holds what both draw
+# The desktop app lays out widgets, and the shared crate holds what it draws
 # (ADR 0043; specs/007-postio-focus R1). A baseline line names a file by its
 # path inside its crate's `src/`, so a file that moves between the crates keeps
 # its line.
-expect_root(
-    "a new literal in the classic app's crate fails",
-    {"crates/postio-gtk/src/header.rs": "w.set_margin_end(8);"},
-    "",
-    False,
-    "crates/postio-gtk/src/header.rs: 1 spacing literals, baseline 0",
-)
 expect_root(
     "a literal planted in postio-widgets fails",
     {"crates/postio-widgets/src/reader/view.rs": "w.set_margin_end(8);"},

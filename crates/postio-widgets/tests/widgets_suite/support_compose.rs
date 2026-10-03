@@ -245,10 +245,6 @@ impl ComposerHost for Host {
     fn keymap(&self) -> Keymap {
         Keymap::defaults().clone()
     }
-
-    fn composing(&self, _open: bool, _keymap: &Keymap) {}
-
-    fn adopt(&self, _window: &gtk::Window) {}
 }
 
 /// A window with a pane for a composer, and a keyboard.
@@ -271,7 +267,7 @@ impl Default for Window {
         let actions = gio::SimpleActionGroup::new();
         window.insert_action_group("win", Some(&actions));
         let (resolver, _problems) =
-            Resolver::from_commands_for(&Keymap::defaults().clone(), Frontend::Classic);
+            Resolver::from_commands_for(&Keymap::defaults().clone(), Frontend::Focus);
         let host = Rc::new(Host {
             window: window.downgrade(),
             pane: pane.downgrade(),

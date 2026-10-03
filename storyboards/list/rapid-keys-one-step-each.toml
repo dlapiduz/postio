@@ -6,8 +6,7 @@
 # check pins the exact row.
 #
 # Re-expressed for Focus (T265): Focus starts with no cursor row, so five
-# `j` land on the fifth row, index 4. The classic app it was written against
-# is removed by T256.
+# `j` land on the fifth row, index 4.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1609" }
 proof  = "pinned"

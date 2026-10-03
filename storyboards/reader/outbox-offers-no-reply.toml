@@ -5,9 +5,8 @@
 # still on its way out. The key has to refuse with a notice instead.
 # Open: `e` on the Outbox's message still opens a composer (#1749).
 #
-# Re-expressed for Focus (T265): the Outbox is a place in `g o`, and the
-# key is pressed on its one row. The classic app it was written against is
-# removed by T256.
+# Re-expressed for Focus (T265): the Outbox is a place in `g o`, and the key
+# is pressed on its one row.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1749" }
 proof  = "open"

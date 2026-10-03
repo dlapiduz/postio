@@ -5,8 +5,7 @@
 # a dialog over the list, and the next key is the test: the list is where
 # the keyboard was when the composer opened, on the row it left.
 #
-# Re-expressed for Focus (T265), where it holds: pinned. The classic app
-# #1751 was found in is removed by T256.
+# Re-expressed for Focus (T265), where it holds: pinned.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1751" }
 proof  = "pinned"

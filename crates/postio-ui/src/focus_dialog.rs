@@ -88,7 +88,7 @@ pub fn column_width(dialog: i32, treatment: Treatment) -> i32 {
 }
 
 /// The narrowest the list gets beside a reading pane (T232): canvas 1b's
-/// list width, the classic app's.
+/// list width.
 pub const LIST_MIN: i32 = 404;
 /// The narrowest reading pane: the app colours column and its inset, so the
 /// column is never squeezed.
@@ -96,8 +96,6 @@ pub const PANE_MIN: i32 = COLUMN_APP_COLOURS + COLUMN_APP_COLOURS_INSET;
 /// The widest reading pane: the dialog at its widest, so a message reads at
 /// the same measure beside the list as over it.
 pub const PANE_MAX: i32 = DIALOG_MAX;
-/// The narrowest window with room for the list and a pane beside it.
-pub const PANE_WINDOW_MIN: i32 = LIST_MIN + PANE_MIN;
 
 /// Where an open message is drawn: over the list, or beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -111,7 +109,7 @@ pub enum Placement {
 
 /// The reading pane's width in a window `window` pixels wide:
 /// `min(820, W - 404)`, or `None` when that would be under 576 -- a window
-/// narrower than [`PANE_WINDOW_MIN`] has no room for one.
+/// narrower than [`LIST_MIN`] and [`PANE_MIN`] together has no room for one.
 pub fn pane_width(window: i32) -> Option<i32> {
     let pane = (window - LIST_MIN).min(PANE_MAX);
     (pane >= PANE_MIN).then_some(pane)
@@ -146,10 +144,9 @@ pub fn opens_to_read(state: Option<postio_model::DraftState>) -> bool {
 /// `OpenMessage` is Edit: for a draft, opening is writing. `Sending` offers
 /// nothing: cancelling is refused once the submission has started, and
 /// retrying would risk a second copy (ADR 0021), so offering either would be
-/// offering a refusal. The same judgement as
-/// [`ReaderAction::for_send_state`](crate::reader::header::ReaderAction::for_send_state),
-/// with Mark as sent drawn for an unconfirmed send rather than left to the
-/// palette, and Edit, since Focus's open message has no composer behind it.
+/// offering a refusal. Mark as sent is drawn for an unconfirmed send rather
+/// than left to the palette, and Edit, since Focus's open message has no
+/// composer behind it.
 pub fn send_verbs(state: Option<postio_model::DraftState>) -> Option<&'static [CommandId]> {
     use CommandId::{CancelSend, MarkSent, OpenMessage, RetrySend};
     use postio_model::DraftState;
@@ -371,7 +368,7 @@ mod tests {
 
     #[test]
     fn a_window_under_980_has_no_pane() {
-        assert_eq!(PANE_WINDOW_MIN, 980);
+        assert_eq!(LIST_MIN + PANE_MIN, 980);
         assert_eq!(pane_width(980), Some(576));
         assert_eq!(pane_width(979), None);
         assert_eq!(pane_width(800), None);

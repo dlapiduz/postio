@@ -459,7 +459,7 @@ mod tests {
     fn bundled() -> (tempfile::TempDir, Review) {
         let dir = tempfile::tempdir().expect("temp");
         let runs = dir.path().join("runs");
-        write(&runs, &run("archive-walks-down", App::Classic, &[], 2));
+        write(&runs, &run("archive-walks-down", App::Terminal, &[], 2));
         let catalogue = dir.path().join("storyboards/list");
         std::fs::create_dir_all(&catalogue).expect("dir");
         std::fs::write(catalogue.join("archive-walks-down.toml"), storyboard(None)).expect("board");
@@ -486,9 +486,9 @@ mod tests {
         json!({
             "storyboard": "archive-walks-down",
             "step": step,
-            "app": "classic",
+            "app": "terminal",
             "variant": "default",
-            "frame": format!("runs/classic/archive-walks-down/default/0{step}.outlined.png"),
+            "frame": format!("runs/terminal/archive-walks-down/default/0{step}.outlined.png"),
             "verdict": kind,
             "says": "The row below takes the cursor.",
             "rule": "ux-architect §2"
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn a_step_written_as_a_number_is_its_index() {
-        // The prompt lists steps as `archive-walks-down / 2 / classic`, and
+        // The prompt lists steps as `archive-walks-down / 2 / terminal`, and
         // a reviewer that writes `"step": 2` means step 2.
         let mut value = complete();
         value["verdicts"][1]["step"] = json!(1);
@@ -552,8 +552,8 @@ mod tests {
     fn a_finding_missing_a_citation_field_is_rejected_by_name() {
         let mut value = complete();
         value["findings"] = json!([{
-            "storyboard": "archive-walks-down", "step": "1", "app": "classic",
-            "frame": "runs/classic/archive-walks-down/default/01.outlined.png",
+            "storyboard": "archive-walks-down", "step": "1", "app": "terminal",
+            "frame": "runs/terminal/archive-walks-down/default/01.outlined.png",
             "severity": "polish", "says": "A clipped label.", "rule": "canvas 01"
         }]);
         let found = rejected(value);
@@ -574,7 +574,7 @@ mod tests {
     fn a_frame_path_absent_from_the_bundle_is_rejected() {
         let mut value = complete();
         value["verdicts"][0]["frame"] =
-            json!("runs/classic/archive-walks-down/default/09.outlined.png");
+            json!("runs/terminal/archive-walks-down/default/09.outlined.png");
         let found = rejected(value);
         assert!(
             found.iter().any(|r| matches!(r,
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(
             found,
             [Rejection::StepWithoutVerdict(
-                "archive-walks-down/1/classic/default".into()
+                "archive-walks-down/1/terminal/default".into()
             )]
         );
     }
@@ -617,8 +617,8 @@ mod tests {
     fn a_finding_without_severity_is_rejected() {
         let mut value = complete();
         value["findings"] = serde_json::from_str(
-            r#"[{"storyboard":"archive-walks-down","step":"1","app":"classic","variant":"default",
-            "frame":"runs/classic/archive-walks-down/default/01.outlined.png",
+            r#"[{"storyboard":"archive-walks-down","step":"1","app":"terminal","variant":"default",
+            "frame":"runs/terminal/archive-walks-down/default/01.outlined.png",
             "says":"A clipped label.","rule":"canvas 01"}]"#,
         )
         .expect("json");
@@ -679,7 +679,7 @@ mod tests {
         std::fs::write(bundle.join("verdicts.json"), value.to_string()).expect("write");
         std::fs::write(
             bundle.join("contests.toml"),
-            "[[contest]]\nref = \"archive-walks-down/1/classic/default\"\nreason = \"The cursor is where the person left it.\"\n",
+            "[[contest]]\nref = \"archive-walks-down/1/terminal/default\"\nreason = \"The cursor is where the person left it.\"\n",
         )
         .expect("contests");
         let review = check(&bundle).expect("complete");
@@ -699,13 +699,13 @@ mod tests {
         std::fs::write(bundle.join("verdicts.json"), complete().to_string()).expect("write");
         std::fs::write(
             bundle.join("contests.toml"),
-            "[[contest]]\nref = \"nope/1/classic/default\"\nreason = \"x\"\n",
+            "[[contest]]\nref = \"nope/1/terminal/default\"\nreason = \"x\"\n",
         )
         .expect("contests");
         assert_eq!(
             check(&bundle).expect_err("dangling"),
             [Rejection::ContestWithoutTarget(
-                "nope/1/classic/default".into()
+                "nope/1/terminal/default".into()
             )]
         );
     }
@@ -716,11 +716,11 @@ mod tests {
             "bundle": { "tree_key": "k", "base": "b" },
             "reviewer": { "agent": "ux-reviewer", "model": "m", "template": "t" },
             "verdicts": [{
-                "storyboard": "s", "step": "archive", "app": "classic", "variant": "default",
+                "storyboard": "s", "step": "archive", "app": "terminal", "variant": "default",
                 "frame": "f", "verdict": "fail", "severity": "wrong", "says": "x", "rule": "r"
             }],
             "findings": [{
-                "storyboard": "s", "step": "archive", "app": "classic", "variant": "scheme=dark",
+                "storyboard": "s", "step": "archive", "app": "terminal", "variant": "scheme=dark",
                 "frame": "f", "severity": "polish", "says": "x", "rule": "r"
             }]
         }))
@@ -737,7 +737,7 @@ mod tests {
                 "bundle": { "tree_key": "k", "base": null },
                 "reviewer": { "agent": "ux-reviewer", "model": "m", "template": "t" },
                 "verdicts": [{
-                    "storyboard": storyboard, "step": "1", "app": "classic",
+                    "storyboard": storyboard, "step": "1", "app": "terminal",
                     "variant": "default", "frame": "runs/x.png",
                     "verdict": "pass", "says": "fine"
                 }],

@@ -2,9 +2,9 @@
 """Self-test for scripts/checks/check-reader-header-has-one-home.py.
 
 The header's toolkit-free rules live in `postio_ui::reader::header`, and a
-desktop crate that defines its own copy of one fails. There are two desktop
-apps now, and the reader both of them draw lives in the shared crate
-(ADR 0043), so a private copy can reappear in any of three crates. Throwaway
+desktop crate that defines its own copy of one fails. The reader the
+desktop app draws lives in the shared crate (ADR 0043), so a private copy
+can reappear in either crate. Throwaway
 repositories in a temp dir, one per way the rule holds or breaks, and an
 assertion for each. The real repository is never touched.
 
@@ -34,7 +34,7 @@ pub fn absolute_date() {}
 def expect(name: str, files: dict[str, str], ok: bool, *seen: str, owner: bool = True) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for crate in ("postio-gtk", "postio-widgets", "postio-focus"):
+        for crate in ("postio-widgets", "postio-focus"):
             (root / "crates" / crate / "src").mkdir(parents=True)
         if owner:
             files = {"crates/postio-ui/src/reader/header.rs": OWNER, **files}
@@ -64,12 +64,6 @@ expect(
     False,
     "crates/postio-ui/src/reader/header.rs is missing",
     owner=False,
-)
-expect(
-    "a private copy in the classic app's crate fails",
-    {"crates/postio-gtk/src/reader/message_header.rs": "fn subject_text() {}"},
-    False,
-    "crates/postio-gtk/src/reader/message_header.rs: defines subject_text",
 )
 expect(
     "a private copy planted in postio-widgets fails",

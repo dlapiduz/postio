@@ -76,30 +76,6 @@ impl SyncStatus {
         )
     }
 
-    /// The detail line with the byte clause the column cannot hold, for the
-    /// tooltip and the accessible description.
-    ///
-    /// The sidebar is 212px by canvas 1b and deliberately fixed, which is
-    /// about 25 monospace characters; `mail 12400 of 81744` is already 19.
-    /// So on that line it is counts or bytes, never both, and #411 settled
-    /// which: a count that climbs answers *"is anything happening"*, which
-    /// is what #74 filed this line for, and a byte figure that sits still
-    /// through a large fetch reads as stalled. Bytes are a cost signal, and
-    /// cost is asked once and deliberately.
-    ///
-    /// They still reach this surface, just not 25 columns of it. A screen
-    /// reader and a hover both get the number, and both get it from here, so
-    /// the two cannot drift.
-    pub fn detail_in_full(&self, now: Instant) -> String {
-        let detail = self.detail_line(now);
-        // Only while a backfill is running: anywhere else there is no count
-        // for the bytes to be a second clause of.
-        match self.filling().and(self.bytes_clause()) {
-            Some(bytes) => format!("{detail} · {bytes}"),
-            None => detail,
-        }
-    }
-
     fn state_word(&self) -> String {
         match self.state {
             ConnectionState::Offline => "offline".to_string(),
@@ -151,35 +127,6 @@ impl SyncStatus {
         }
     }
 
-    /// `890 MB of 1.4 GB`, when there is a measured size worth claiming.
-    ///
-    /// Feeds [`detail_in_full`](Self::detail_in_full) only — the drawn line
-    /// has no room for it (#411).
-    ///
-    /// `None` in the two cases where a size would be a lie rather than a
-    /// number:
-    ///
-    /// * **nothing measured yet** — no footprint has arrived;
-    /// * **an empty account** — `0 B of 0 B` reads as a bug, not as "no mail".
-    ///   An account with nothing in it owes no size claim at all.
-    ///
-    /// While the header pass is still running every figure is a lower bound,
-    /// so the total is written `over 1.4 GB`. Only the total carries the
-    /// hedge: what is already downloaded is known exactly, and hedging it too
-    /// would say the local figure might grow for a different reason than it
-    /// will.
-    fn bytes_clause(&self) -> Option<String> {
-        let footprint = self.footprint.as_ref()?;
-        if footprint.total_bytes == 0 {
-            return None;
-        }
-        Some(format!(
-            "{} of {}",
-            crate::format::human_size(footprint.local_bytes),
-            crate::format::human_size_bound(footprint.total_bytes, footprint.complete),
-        ))
-    }
-
     /// The second line: the reason it is failing, or how long ago it worked.
     ///
     /// The reason wins. "last sync 4h" is not what someone needs to read when
@@ -215,20 +162,6 @@ impl SyncStatus {
             Some(at) => format!("last sync {}", age(now.saturating_duration_since(at))),
             None => "never synced".to_string(),
         }
-    }
-
-    /// How long until the age on the second line would read differently.
-    ///
-    /// `None` when nothing is ticking. The point is to not wake the process up
-    /// once a second forever: seconds only matter while the answer is in
-    /// seconds.
-    pub fn refresh_interval(&self, now: Instant) -> Option<Duration> {
-        let elapsed = now.saturating_duration_since(self.last_sync?);
-        Some(match elapsed.as_secs() {
-            ..60 => Duration::from_secs(1),
-            60..3600 => Duration::from_secs(30),
-            _ => Duration::from_secs(300),
-        })
     }
 }
 

@@ -343,7 +343,7 @@ mod tests {
         let keymap = defaults();
         let listed = entries(&keymap, Context::List, an_account(), "");
         // Reachable for this app: Focus's own commands are rows of the
-        // registry the classic app does not offer.
+        // registry another app does not offer.
         let expected: Vec<ActionId> = registry::reachable_in(Context::List, an_account())
             .map(|spec| spec.id)
             .filter(|id| keymap.offers(*id))
@@ -366,12 +366,12 @@ mod tests {
             frontend: postio_core::Frontend::Terminal,
             ..an_account()
         };
-        let focus = Availability {
-            frontend: postio_core::Frontend::Focus,
+        let macos = Availability {
+            frontend: postio_core::Frontend::Macos,
             ..an_account()
         };
         for spec in registry::all().filter(|spec| keymap.offers(spec.id)) {
-            let reachable = [an_account(), terminal, focus].into_iter().any(|state| {
+            let reachable = [an_account(), terminal, macos].into_iter().any(|state| {
                 Context::ALL.iter().any(|context| {
                     entries(&keymap, *context, state, spec.title)
                         .iter()
@@ -490,9 +490,8 @@ mod tests {
         // that cannot be: pressing Return on a row that does nothing reads
         // as a broken application rather than as an unavailable command.
         let waiting = Availability {
-            scope: Scope::Account(AccountId::new(1)),
             store_open: false,
-            frontend: postio_core::Frontend::Classic,
+            ..Availability::open(Scope::Account(AccountId::new(1)))
         };
         assert!(
             entries(&defaults(), Context::List, waiting, "archive").is_empty(),

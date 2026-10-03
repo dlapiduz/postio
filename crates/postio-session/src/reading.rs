@@ -17,15 +17,13 @@
 //! Toolkit-free, like the rest of this crate: the absent states come from
 //! `postio_ui::reader`, the frontend-independent half of the reader.
 
-use std::rc::Rc;
-
 use postio_model::MessageBody;
 use postio_model::ids::MessageId;
 use postio_runtime::Engine;
 use postio_storage::repository::{DraftRepository, MessageRepository};
 use postio_storage::{BlobStore, Store};
 use postio_ui::reader::document::Absent;
-use postio_ui::reader::parts::{self, BlobSource, Node};
+use postio_ui::reader::parts::{self, Node};
 
 /// A message's text and HTML, if they have been downloaded.
 ///
@@ -193,51 +191,6 @@ pub async fn load_with_row(
         },
         Some(row),
     )
-}
-
-/// Where a rendered message resolves its `cid:` parts from.
-///
-/// # Scoped to one message on purpose
-///
-/// A `Content-ID` is only meaningful inside the message that declares it, so
-/// resolving one globally would let a sender address another sender's parts.
-/// [`BlobSource`] carries no message, so the caller supplies `showing` and
-/// this asks it at the moment the scheme handler runs — which is also what
-/// makes it correct while the pane is changing.
-///
-/// # A part that is not here does not draw
-///
-/// The hardened view has network access off, so a part whose bytes are not
-/// already on this machine resolves to nothing. That is the privacy
-/// commitment working rather than a failure to handle: a remote fetch here
-/// would be the tracking pixel the reader spent so much effort blocking,
-/// arriving through the back door.
-///
-/// Shared with the search preview, which has the same problem with a
-/// different notion of "the message on screen" — hence the closure rather
-/// than a widget.
-/// # Why this blocks
-///
-/// [`BlobSource::resolve`] is synchronous, because WebKit calls it
-/// synchronously while laying out a document: the `cid:` URI has to resolve
-/// to bytes before the image can be placed, and there is nothing to hand a
-/// future to. It was a blocking read before too -- `rusqlite` on this thread
-/// -- so a runtime of its own here is the same work through the async API,
-/// not new work on the frame path.
-///
-/// Through [`crate::blocking::now`], which is the part that is easy to get
-/// half right: a runtime built here and blocked on *panics* when this is
-/// called from a thread that is already a runtime worker, which the
-/// application never is and every test is.
-pub fn cid_source(
-    showing: impl Fn() -> Option<MessageId> + 'static,
-    database: Store,
-    blobs: BlobStore,
-) -> Rc<dyn BlobSource> {
-    Rc::new(move |content_id: &str| {
-        let message = showing()?;
-        crate::blocking::now(resolve_cid(&database, &blobs, message, content_id))
-    })
 }
 
 /// One inline part of `message`, by its `Content-ID`.

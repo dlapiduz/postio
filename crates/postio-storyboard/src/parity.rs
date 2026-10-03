@@ -3,7 +3,7 @@
 //!
 //! A shared storyboard describes one interaction for every app it applies
 //! to. Where an app legitimately behaves differently -- Focus opens a dialog
-//! where Classic fills a pane -- the storyboard says so with an override for
+//! where the terminal fills a pane -- the storyboard says so with an override for
 //! that app and step. Anywhere else, two apps reporting different shared
 //! observations after the same step is a **divergence**: one of them is wrong,
 //! or an override is missing, and either way somebody should look. Side by
@@ -147,29 +147,29 @@ mod tests {
     #[test]
     fn agreeing_apps_do_not_diverge() {
         let runs = [
-            run("walk", App::Classic, &[], 3),
+            run("walk", App::Terminal, &[], 3),
             run("walk", App::Focus, &[], 3),
         ];
         let all = parity(&runs, &board(PLAIN));
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0].apps, [App::Classic, App::Focus]);
+        assert_eq!(all[0].apps, [App::Focus, App::Terminal]);
         assert_eq!(all[0].diverging().count(), 0);
         assert_eq!(all[0].rows.len(), 3);
     }
 
     #[test]
     fn a_different_cursor_diverges_on_that_step() {
-        let classic = run("walk", App::Classic, &[], 3);
+        let terminal = run("walk", App::Terminal, &[], 3);
         let mut focus = run("walk", App::Focus, &[], 3);
         focus.steps[2].observation.cursor.index = None;
-        let all = parity(&[classic, focus], &board(PLAIN));
+        let all = parity(&[terminal, focus], &board(PLAIN));
         let diverging: Vec<usize> = all[0].diverging().map(|row| row.step).collect();
         assert_eq!(diverging, [2]);
     }
 
     #[test]
     fn internals_do_not_diverge() {
-        let classic = run("walk", App::Classic, &[], 2);
+        let terminal = run("walk", App::Terminal, &[], 2);
         let mut focus = run("walk", App::Focus, &[], 2);
         focus.steps[1].observation.keyboard.widget = "FocusWindow/List".into();
         focus.steps[1]
@@ -177,7 +177,7 @@ mod tests {
             .app
             .insert("focus.bulk".into(), serde_json::json!(false));
         assert_eq!(
-            parity(&[classic, focus], &board(PLAIN))[0]
+            parity(&[terminal, focus], &board(PLAIN))[0]
                 .diverging()
                 .count(),
             0
@@ -187,11 +187,11 @@ mod tests {
     #[test]
     fn an_override_explains_a_difference() {
         let text = format!("{PLAIN}[app.focus.step.2]\nexpect = \"Focus differs here\"\n");
-        let classic = run("walk", App::Classic, &[], 3);
+        let terminal = run("walk", App::Terminal, &[], 3);
         let mut focus = run("walk", App::Focus, &[], 3);
         focus.steps[2].observation.cursor.index = None;
         assert_eq!(
-            parity(&[classic, focus], &board(&text))[0]
+            parity(&[terminal, focus], &board(&text))[0]
                 .diverging()
                 .count(),
             0
@@ -201,13 +201,13 @@ mod tests {
     #[test]
     fn a_skipped_step_is_shown_as_skipped_not_diverging() {
         let text = format!("{PLAIN}[app.focus.step.1]\nskip = {{ reason = \"no such key\" }}\n");
-        let classic = run("walk", App::Classic, &[], 3);
+        let terminal = run("walk", App::Terminal, &[], 3);
         let mut focus = run("walk", App::Focus, &[], 3);
         focus.steps[1].outcome = StepOutcome::Skipped {
             reason: "no such key".into(),
         };
         focus.steps[1].observation.cursor.index = Some(9);
-        let all = parity(&[classic, focus], &board(&text));
+        let all = parity(&[terminal, focus], &board(&text));
         assert_eq!(all[0].rows[1].skipped, [App::Focus]);
         assert!(!all[0].rows[1].diverging);
     }
@@ -215,9 +215,9 @@ mod tests {
     #[test]
     fn variants_are_grouped_and_lone_apps_have_no_parity() {
         let runs = [
-            run("walk", App::Classic, &[("scheme", "dark")], 2),
+            run("walk", App::Terminal, &[("scheme", "dark")], 2),
             run("walk", App::Focus, &[("scheme", "dark")], 2),
-            run("walk", App::Classic, &[], 2),
+            run("walk", App::Terminal, &[], 2),
         ];
         let all = parity(&runs, &board(PLAIN));
         assert_eq!(all.len(), 1, "the default variant has one app only");

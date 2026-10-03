@@ -5,9 +5,8 @@
 #
 # Re-expressed for Focus (T265): Focus's command bar does not narrow the
 # inbox behind it. Typing offers to search, Return runs the search and lists
-# the matches in the bar, which keeps the keyboard, and Escape closes the bar
-# over an inbox that never changed. The classic app it was written against
-# is removed by T256.
+# the matches in the bar, which keeps the keyboard, and Escape closes the
+# bar over an inbox that never changed.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1474" }
 proof  = "pinned"

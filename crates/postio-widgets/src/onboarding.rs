@@ -188,19 +188,6 @@ impl Onboarding {
         Self::default()
     }
 
-    /// The screen `window` is showing, if it is showing one.
-    ///
-    /// The caller mounts this under the window's own chrome rather than as
-    /// the window's whole content: a wizard needs a title bar with a close
-    /// button, and one drawn *inside* the wizard reads as part of the wizard
-    /// rather than as the window's — which is what it looked like when the
-    /// header lived here. So `window.content()` is the chrome, not the
-    /// screen, and everything that used to reach the screen by downcasting
-    /// the content asks here instead.
-    pub fn showing_in(window: &impl IsA<adw::ApplicationWindow>) -> Option<Self> {
-        crate::widgets::screen::showing_in(window)
-    }
-
     /// The name as typed, for the `From` header and the sidebar label.
     /// Empty means the user left it blank.
     pub fn name(&self) -> String {
@@ -569,12 +556,6 @@ impl Onboarding {
             && !settings.imap.host.is_empty()
             && !settings.smtp.host.is_empty()
             && !self.status().is_busy()
-    }
-
-    /// Fills the OAuth client fields, for a test driving the screen.
-    pub fn test_set_oauth_client(&self, client_id: &str, secret: &str) {
-        self.imp().oauth_client_id.set_text(client_id);
-        self.imp().oauth_client_secret.set_text(secret);
     }
 
     /// Sets the password field directly, without a key event.

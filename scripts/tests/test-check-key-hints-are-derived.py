@@ -35,7 +35,7 @@ def run_root(files: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """The check over a whole repository: every desktop crate's `src/`."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for crate in ("postio-gtk", "postio-widgets", "postio-focus"):
+        for crate in ("postio-widgets", "postio-focus"):
             (root / "crates" / crate / "src").mkdir(parents=True)
         for name, text in files.items():
             path = root / name
@@ -124,14 +124,8 @@ expect(
     "header.rs: 1 hints::fixed call(s), 0 allowed",
 )
 
-# Both desktop apps draw hints, and the shared crate draws most of them
+# The desktop app draws hints, and the shared crate draws most of them
 # (ADR 0043), so the rule follows the code there (specs/007-postio-focus R1).
-expect_root(
-    "a literal hint in the classic app's crate fails",
-    {"crates/postio-gtk/src/header.rs": 'labelled("Compose", "c");'},
-    False,
-    "crates/postio-gtk/src/header.rs:1: a literal key hint",
-)
 expect_root(
     "a literal key hint planted in postio-widgets fails",
     {"crates/postio-widgets/src/widgets/picker.rs": 'keyhint::labelled("Snooze", Some("s"));'},

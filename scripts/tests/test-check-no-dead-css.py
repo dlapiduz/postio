@@ -115,14 +115,8 @@ expect(
     ".postio-meta",
 )
 
-# Both desktop apps carry stylesheets, and the shared crate carries the widget
-# rules both of them draw with (ADR 0043; specs/007-postio-focus R1).
-expect(
-    "a dead rule in the classic app's stylesheet fails",
-    run_root({"crates/postio-gtk/data/shell.css": ".postio-gone {}"}),
-    False,
-    "crates/postio-gtk/data/shell.css:1: .postio-gone",
-)
+# The desktop app carries stylesheets, and the shared crate carries the widget
+# rules it draws with (ADR 0043; specs/007-postio-focus R1).
 expect(
     "a dead rule planted in postio-widgets' stylesheet fails",
     run_root({"crates/postio-widgets/data/widgets.css": ".postio-row {}\n.postio-gone {}"}),
@@ -136,7 +130,7 @@ expect(
     "crates/postio-focus/data/focus.css:1: .postio-focus-gone",
 )
 expect(
-    "a shared rule set by the other app's code is a use",
+    "a shared rule set by the app's code is a use",
     run_root(
         {
             "crates/postio-widgets/data/widgets.css": ".postio-pill {}",

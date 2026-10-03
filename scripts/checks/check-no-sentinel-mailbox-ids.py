@@ -5,7 +5,7 @@ The sidebar draws rows that are not folders: Flagged, Snoozed, and now the
 Outbox. They are questions about messages filed elsewhere, so there is nothing
 to `SELECT` and no row in `mailboxes` to point at.
 
-For a long time `postio-gtk::feed` gave them ids anyway — `MailboxId::new(-1)`
+For a long time the GTK list's feed gave them ids anyway — `MailboxId::new(-1)`
 and `MailboxId::new(-2)` — and relied on every reader remembering that a
 negative id is not real. Two things went wrong with that, and both are the same
 thing:
@@ -76,8 +76,8 @@ def main() -> int:
         "the rows at all.\n\n"
         "A sidebar row that is a view has no id. Build it with\n"
         "`postio_ui::sidebar::view_rows`, which leaves the id unassigned, and\n"
-        "tell the two apart with `postio_gtk::sidebar::SidebarChoice` rather\n"
-        "than by the sign of a number.\n\n"
+        "tell a folder from a view by what the row is rather than by the sign\n"
+        "of a number.\n\n"
         "See specs/003-outbox-and-reserved-mailboxes/contracts/sidebar-rows.md\n"
         "and docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md.",
         file=sys.stderr,

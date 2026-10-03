@@ -1,6 +1,4 @@
 # must_fail: #1687 stated as the intent. The list really stays where it is.
-# Re-expressed for Focus (T265): its ground truth, with the classic app
-# removed by T256.
 apps        = ["focus"]
 source      = { kind = "issue", ref = "#1687" }
 calibration = "must_fail"

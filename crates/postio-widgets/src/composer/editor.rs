@@ -650,11 +650,6 @@ impl Editor {
         self.state.changed.borrow_mut().push(Box::new(handler));
     }
 
-    /// The formatting in force where the caret sits, as last reported.
-    pub fn format_state(&self) -> FormatState {
-        self.state.format.get()
-    }
-
     /// Run `handler` whenever the caret's formatting changes — the toolbar's
     /// reflection channel. Called only on change, never per keystroke.
     pub fn connect_format_state(&self, handler: impl Fn(FormatState) + 'static) {
@@ -806,30 +801,6 @@ impl Editor {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-    }
-
-    /// The caret's character offset into the body's text, for assertions.
-    ///
-    /// **`-1` means there is no caret at all**, which is not the same as one
-    /// at the start and used to be reported as the same `0`. A WebView that
-    /// has only been loaded and focused has no selection — `execCommand`
-    /// against it returns `false` and changes nothing — and a test asserting
-    /// `offset == 0` against that passes while proving nothing. Something has
-    /// to have edited or clicked into the surface first; `test_type` leaves a
-    /// selection behind, which is how the detach tests get one.
-    #[doc(hidden)]
-    pub fn caret_offset(&self) -> i32 {
-        self.wait_ready();
-        self.run_blocking(
-            "(() => { const s = window.getSelection(); \
-               if (s.rangeCount === 0) return '-1'; \
-               const r = s.getRangeAt(0).cloneRange(); \
-               r.selectNodeContents(document.body); \
-               r.setEnd(s.getRangeAt(0).startContainer, s.getRangeAt(0).startOffset); \
-               return String(r.toString().length); })()",
-        )
-        .parse()
-        .unwrap_or(0)
     }
 
     /// Replace the body's content the way typing would — through the

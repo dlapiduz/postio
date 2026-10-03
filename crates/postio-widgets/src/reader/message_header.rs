@@ -37,22 +37,11 @@ fn show_cc_toggle(toggle: &gtk::ToggleButton, shown: bool) {
     toggle.set_can_focus(shown);
 }
 
-/// The strip above the body: sender, recipients, subject, date and verbs (#319).
+/// The strip above the body: sender, recipients, subject and date (#319).
 pub struct MessageHeader {
     root: gtk::Box,
-    /// Subject and the sender/date row, grouped so they can be hidden
-    /// together — the conversation pane's entry header already carries all
-    /// three (#487), and only the recipients below belong to this widget
-    /// there.
-    identity: gtk::Box,
     /// The `To` field name, hidden with its value when there is none.
     to_label: gtk::Label,
-    /// Where the reader mounts its action bar (#1435).
-    verbs: gtk::Box,
-    /// The `From` row, and its field name -- what a surface lays its own
-    /// leading marks after (the conversation's participant chips, #1671).
-    from_row: gtk::Box,
-    from_label: gtk::Label,
     account_row: gtk::Box,
     account_swatch: gtk::Box,
     account_name: gtk::Label,
@@ -75,10 +64,7 @@ impl MessageHeader {
 
         // Which account this arrived in, above everything else — the first
         // question in a mixed list, and the only place it is asked. See
-        // `set_account` for why it is not on the list row. Outside
-        // `identity`, which #487 hides wholesale in the conversation pane:
-        // the entry header there repeats the subject and sender, not the
-        // account, so this line still has something to say.
+        // `set_account` for why it is not on the list row.
         let account_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         account_row.add_css_class("postio-message-header-account");
         account_row.set_visible(false);
@@ -99,19 +85,8 @@ impl MessageHeader {
         subject.set_xalign(0.0);
         subject.set_ellipsize(pango::EllipsizeMode::End);
         subject.add_css_class("postio-message-header-subject");
-        // The subject shares its row with the reader's verbs (#1435). A row
-        // rather than `identity` directly, because the bar has to sit at the
-        // trailing end of the subject line -- which is where the conversation
-        // pane draws the same bar, and the whole point of this is that the
-        // two surfaces stop disagreeing.
-        let subject_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         subject.set_hexpand(true);
-        subject_row.append(&subject);
-        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        verbs.add_css_class("postio-message-header-verbs");
-        verbs.set_valign(gtk::Align::Start);
-        subject_row.append(&verbs);
-        identity.append(&subject_row);
+        identity.append(&subject);
 
         // **From, To and Cc share a label column** (#1437). Each row is
         // `label | value`, and every label is the same width, so the
@@ -188,11 +163,7 @@ impl MessageHeader {
 
         Self {
             root,
-            identity,
             to_label,
-            verbs,
-            from_row: top_row,
-            from_label,
             account_row,
             account_swatch,
             account_name,
@@ -206,64 +177,9 @@ impl MessageHeader {
         }
     }
 
-    /// Mount the reader's action bar at the end of the subject line.
-    ///
-    /// The single-message reader used to append its bar last, under the
-    /// attachment chips -- #498's "canvas footer treatment". The
-    /// conversation pane puts the same bar in its header, so the same
-    /// message drew Reply in two different places depending on which surface
-    /// happened to open it. This is the header end of making them agree
-    /// (#1435).
-    ///
-    /// Takes a widget rather than an `ActionBar` so the header keeps knowing
-    /// nothing about commands: it owns a slot, not a vocabulary.
-    pub fn set_verbs(&self, widget: &gtk::Widget) {
-        if widget.parent().is_some() {
-            return;
-        }
-        self.verbs.append(widget);
-    }
-
     /// The strip, to place above the body.
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
-    }
-
-    /// Place `widget` on the `From` row, between the field name and the
-    /// sender.
-    ///
-    /// For the conversation pane's participant chips (#1671): the pane
-    /// draws this same header, filled with the thread, so that the body
-    /// below it starts where the single reader's does -- and the chips are
-    /// the one thing the thread has on that line that a message does not.
-    /// A slot on an existing row rather than a row of its own, because a
-    /// row of its own is the height difference this exists to remove.
-    pub fn add_before_sender(&self, widget: &impl IsA<gtk::Widget>) {
-        self.from_row
-            .insert_child_after(widget, Some(&self.from_label));
-    }
-
-    /// Place `widget` on the `From` row, between the sender and the date.
-    ///
-    /// For the conversation pane's scoping note (#1671), which qualifies the
-    /// count the date column carries there.
-    pub fn add_before_date(&self, widget: &impl IsA<gtk::Widget>) {
-        self.from_row.insert_child_after(widget, Some(&self.sender));
-    }
-
-    /// Shows or hides subject, sender and date, leaving recipients alone.
-    ///
-    /// The conversation pane (#487) draws all three of those on the entry
-    /// header above this widget — showing them again here would be the
-    /// duplication #308 removed. Recipients have nowhere else to go, so
-    /// hiding "identity" is not the same as hiding the header.
-    pub fn set_identity_visible(&self, visible: bool) {
-        self.identity.set_visible(visible);
-    }
-
-    /// Whether subject, sender and date are currently on screen.
-    pub fn identity_visible(&self) -> bool {
-        self.identity.is_visible()
     }
 
     /// Fills in every field from a message's envelope.
@@ -291,18 +207,6 @@ impl MessageHeader {
         self.draw_recipients(&lines);
     }
 
-    /// Show or hide the subject line: hidden for a surface that heads its
-    /// own column with the subject (Focus's open-email dialog).
-    pub fn set_subject_visible(&self, visible: bool) {
-        self.subject.set_visible(visible);
-    }
-
-    /// Put `subject` on the subject line, as it is -- the caller has already
-    /// decided what an absent one reads as.
-    pub fn set_subject(&self, subject: &str) {
-        self.subject.set_label(subject);
-    }
-
     /// Fill the `From` row: who, and when.
     ///
     /// The conversation pane's thread says who took part and over what span
@@ -311,23 +215,6 @@ impl MessageHeader {
     pub fn set_sender_line(&self, from: &str, date: &str) {
         self.sender.set_label(from);
         self.date.set_label(date);
-    }
-
-    /// Fill the `To`/`Cc` row from these addresses, leaving the rest of the
-    /// header as it is.
-    ///
-    /// The conversation pane's is its newest message's (#1671): the one its
-    /// verbs answer.
-    pub fn set_recipients(&self, to: &[EmailAddress], cc: &[EmailAddress]) {
-        let lines = HeaderLines::of(
-            &[],
-            to,
-            cc,
-            None,
-            DateTime::<Utc>::UNIX_EPOCH,
-            postio_ui::clock::now(),
-        );
-        self.draw_recipients(&lines);
     }
 
     fn draw_recipients(&self, lines: &HeaderLines) {

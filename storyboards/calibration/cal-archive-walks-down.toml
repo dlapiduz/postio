@@ -1,8 +1,6 @@
 # must_pass: the twin of cal-archive-returns-to-top, with the true
 # expectation. (Where the cursor goes after it is #1746, so it is not ground
 # truth and is not named.)
-# Re-expressed for Focus (T265): its ground truth, with the classic app
-# removed by T256.
 apps        = ["focus"]
 source      = { kind = "issue", ref = "#1687" }
 calibration = "must_pass"

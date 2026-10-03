@@ -6,8 +6,7 @@
 #
 # Re-expressed for Focus (T265): `g *` lists flagged mail (eight rows in the
 # small seed, T257), and the reload is the engine saying the mailboxes
-# changed. The classic app's sidebar walk it was written against is removed
-# by T256.
+# changed.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#813" }
 proof  = "pinned"

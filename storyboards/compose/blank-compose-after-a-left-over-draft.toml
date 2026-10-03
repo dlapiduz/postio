@@ -6,9 +6,8 @@
 # treated as the same one. The seed holds a draft, "Notes for Thursday".
 # `c` must open an empty one, and Escape must leave it.
 #
-# Re-expressed for Focus (T265): the composer is a dialog over the list,
-# and Reply answers the row under the cursor, which `j` puts there first.
-# The classic app it was written against is removed by T256.
+# Re-expressed for Focus (T265): the composer is a dialog over the list, and
+# Reply answers the row under the cursor, which `j` puts there first.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#491" }
 proof  = "pinned"

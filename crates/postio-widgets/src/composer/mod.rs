@@ -422,21 +422,7 @@ pub trait ComposerHost {
     fn connect_command(&self, handler: Box<dyn Fn(CommandId)>);
     /// The keymap in force.
     fn keymap(&self) -> Keymap;
-    /// The composer opened (`open`) or closed: a host with a control that
-    /// says which -- the classic header's Compose button -- says so here.
-    fn composing(&self, open: bool, keymap: &Keymap);
-    /// A window of the composer's own -- a detached one -- joins the host's
-    /// app: whatever the host's own windows follow, such as the light, dark
-    /// and high-contrast scheme, it follows too (T025).
-    fn adopt(&self, window: &gtk::Window);
 }
-
-/// The class `shell.css` dims the sidebar and the list under.
-///
-/// Canvas 2a's own signal that the keyboard is in the composer: the list is
-/// still there, still scrolled where it was, and visibly not what is being
-/// typed into.
-pub const COMPOSING_CLASS: &str = "composing";
 
 /// How big the detached composer opens, in logical pixels.
 ///
@@ -1833,10 +1819,6 @@ impl Composer {
             }
         ));
 
-        // Its own window, so the scheme the host's windows follow is not
-        // this one's until the host says so -- a detached composer that
-        // stayed light in a dark application (T025).
-        holder.adopt(host.upcast_ref());
         self.imp().detached.replace(Some(host.clone()));
         sync_detach_button(&self.imp().detach, true);
         host.present();
@@ -1859,23 +1841,6 @@ impl Composer {
         } else {
             subject.to_owned()
         }
-    }
-
-    /// Brings this composition forward, wherever it is (FR-013).
-    ///
-    /// A detached one raises its window; the pane's takes the pane and the
-    /// keyboard. Asking for a draft that is already open means "show me it",
-    /// never "start another" — and never a second view of the same draft,
-    /// which is the thing that lets two surfaces disagree about one message.
-    pub fn present_surface(&self) {
-        match self.detached_window() {
-            Some(host) => host.present(),
-            None => {
-                self.take_pane();
-                self.set_visible(true);
-            }
-        }
-        self.focus_first();
     }
 
     /// Puts the composition back in the reading pane, window and all.
@@ -2011,27 +1976,6 @@ impl Composer {
                 composer.dispatch(id);
             }
         )));
-
-        host.composing(false, &host.keymap());
-        // Weak: these live on the composer, and a strong host here would
-        // keep the host (and the widget it holds) alive as long as the
-        // composer, which is itself in the host's widgets.
-        self.connect_opened({
-            let host = Rc::downgrade(&host);
-            move || {
-                if let Some(host) = host.upgrade() {
-                    host.composing(true, &host.keymap());
-                }
-            }
-        });
-        self.connect_closed({
-            let host = Rc::downgrade(&host);
-            move |_outcome| {
-                if let Some(host) = host.upgrade() {
-                    host.composing(false, &host.keymap());
-                }
-            }
-        });
     }
 
     /// Let go of the host. A host that keeps the composer's widget alive (a
@@ -3449,26 +3393,9 @@ impl Composer {
         let escape = hints::hint(keymap, CommandId::Back, "keeps the draft");
         imp.escape.set_label(&hints::line(escape.iter()));
         imp.escape.set_visible(escape.is_some());
-
-        if let Some(host) = self.host() {
-            host.composing(self.is_open(), keymap);
-        }
     }
 
     // -- Test support -----------------------------------------------------
-
-    /// What the Save draft button currently names as its key, if anything.
-    ///
-    /// For the test that a composer built *after* a rebind starts on the
-    /// rebound key rather than on the registry defaults `build_actions` drew
-    /// it with (#828). Reads the widget rather than the keymap, so it fails
-    /// if `set_keymap` stops reaching the button.
-    #[doc(hidden)]
-    pub fn test_save_hint(&self) -> Option<String> {
-        let row = self.imp().save.child()?.downcast::<gtk::Box>().ok()?;
-        let hint = row.last_child()?.downcast::<gtk::Label>().ok()?;
-        Some(hint.label().to_string())
-    }
 
     /// Sets the subject field as if the user had typed it, firing the
     /// entry's own `changed` signal.
@@ -3487,16 +3414,6 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_subject(&self) -> String {
         self.imp().subject.text().to_string()
-    }
-
-    /// Where the cursor is in the body, as a character offset.
-    ///
-    /// The acceptance criterion for detaching is that it keeps the cursor,
-    /// and the only way to state that as an assertion is to be able to read
-    /// it. Not meant for anything but tests.
-    #[doc(hidden)]
-    pub fn test_cursor_offset(&self) -> i32 {
-        self.imp().body.caret_offset()
     }
 
     /// Puts the keyboard in `field`, as clicking into it would.
@@ -3525,27 +3442,12 @@ impl Composer {
         }
     }
 
-    /// The pop-out button, so a test can assert the pointer has a way in too.
-    #[doc(hidden)]
-    pub fn test_detach_button(&self) -> gtk::Button {
-        self.imp().detach.clone()
-    }
-
     /// The "Schedule send…" button, so a test can assert the keyboard's way
     /// into the picker (`CommandId::ScheduleSend`) is the same one the
     /// pointer has.
     #[doc(hidden)]
     pub fn test_schedule_send_button(&self) -> gtk::MenuButton {
         self.imp().schedule_send.clone()
-    }
-
-    /// Whether the action row's trailing hint is allowed to give way under a
-    /// narrow allocation (#692) -- the least essential of the row's four
-    /// elements, so it is the one that should, rather than a button's own
-    /// label losing a word or the row overflowing the window outright.
-    #[doc(hidden)]
-    pub fn test_escape_hint_ellipsizes(&self) -> bool {
-        self.imp().escape.ellipsize() == gtk::pango::EllipsizeMode::End
     }
 
     /// Types `text` into the body, the way a keystroke reaches the buffer.
@@ -3566,12 +3468,6 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_body_eval(&self, script: &str) -> String {
         self.imp().body.test_eval(script)
-    }
-
-    /// Choose the signature at `index` in the picker, as a click would.
-    #[doc(hidden)]
-    pub fn test_choose_signature(&self, index: u32) {
-        self.imp().signature.set_selected(index);
     }
 
     /// Select a range of the body's `nth` text node, as a hand would before
@@ -3743,12 +3639,6 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_insert_image_file(&self, path: &std::path::Path) {
         self.insert_image_file(&gio::File::for_path(path));
-    }
-
-    /// The window this composition was detached into, if it is in one.
-    #[doc(hidden)]
-    pub fn test_detached_window(&self) -> Option<adw::Window> {
-        self.detached_window()
     }
 
     /// Types `text` into `Cc`, as [`Self::test_set_to`] does for `To`.

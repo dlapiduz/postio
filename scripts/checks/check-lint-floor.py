@@ -45,16 +45,6 @@ from pathlib import Path
 # `#[allow(unsafe_code)]` and a reason. The difference from `forbid` is only
 # that such a site is *possible*.
 EXCEPTIONS: dict[str, str] = {
-    # `gtk::ListBoxRow` carries its mailbox id in glib object data, and
-    # `ObjectExt::data`/`set_data` are unsafe by construction -- glib cannot
-    # know the type a key was stored under. Confined to `sidebar.rs`, behind
-    # a documented `# Safety`. The test module also sets environment
-    # variables, which Rust 2024 made unsafe.
-    "postio-gtk": "deny",
-    # Only the test module, which sets `XDG_STATE_HOME` to a temporary
-    # directory. `std::env::set_var` is unsafe in Rust 2024. No library code
-    # in this crate uses `unsafe`.
-    "postio-app": "deny",
     # `tests/imap_body_memory.rs` installs a counting `GlobalAlloc` to prove a
     # body fetch does not materialise the whole message. Implementing that
     # trait is `unsafe impl` by definition. No library code in this crate uses

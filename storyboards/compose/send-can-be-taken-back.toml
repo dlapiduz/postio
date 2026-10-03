@@ -7,8 +7,7 @@
 #
 # Re-expressed for Focus (T265): the Outbox is a place in `g o`, a queued
 # message opens to be read with the verbs that settle it (T239), and Cancel
-# send takes it out of the Outbox and back to Drafts. The classic app it was
-# written against is removed by T256.
+# send takes it out of the Outbox and back to Drafts.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1481" }
 proof  = "pinned"

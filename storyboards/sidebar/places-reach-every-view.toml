@@ -9,8 +9,7 @@
 # own (`g *`, `g z`), and the Outbox is a place in the `g o` popover while
 # anything waits in it (T239). Each is reached and lists its own mail:
 # Flagged eight, Snoozed none, and the Outbox the one queued send in the
-# outbox seed. The classic app's sidebar it was written against is removed
-# by T256.
+# outbox seed.
 apps   = ["focus"]
 source = { kind = "commit", ref = "d2be7412" }
 proof  = "pinned"

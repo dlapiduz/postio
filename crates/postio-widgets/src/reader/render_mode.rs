@@ -176,11 +176,6 @@ impl RenderModeLine {
         self.root.is_visible() && self.always.is_visible()
     }
 
-    /// Press the switch as a click would: test-facing.
-    pub fn press_switch(&self) {
-        self.switch.press();
-    }
-
     /// Press "Always for this sender" as a click would: test-facing.
     pub fn press_always(&self) {
         self.always.emit_clicked();

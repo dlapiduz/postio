@@ -25,12 +25,7 @@ use postio_core::{Availability, CommandId, Context, Frontend, Scope, registry};
 use postio_model::AccountId;
 
 /// Every app that reads the registry.
-const APPS: [Frontend; 4] = [
-    Frontend::Classic,
-    Frontend::Terminal,
-    Frontend::Focus,
-    Frontend::Macos,
-];
+const APPS: [Frontend; 3] = [Frontend::Terminal, Frontend::Focus, Frontend::Macos];
 
 /// Who offers a row, in the contract's words.
 #[derive(Debug, Clone, Copy)]
@@ -39,10 +34,8 @@ enum Offered {
     All,
     /// Every app that draws a message as pixels: all but the terminal.
     Graphical,
-    /// The three-pane apps -- the classic app and macOS -- and not Focus,
-    /// whichever toolkit draws it. Flagging is the contract's one row of these: "Focus
-    /// offers no flag verb, but the id stays for the other apps" (spec
-    /// C13).
+    /// The three-pane app -- macOS -- and not Focus, whichever toolkit
+    /// draws it.
     ThreePane,
     /// `Requirement::Focus`: Focus, in either toolkit (the terminal is Focus, C29).
     Focus,
@@ -53,7 +46,7 @@ impl Offered {
         match self {
             Offered::All => true,
             Offered::Graphical => app != Frontend::Terminal,
-            Offered::ThreePane => matches!(app, Frontend::Classic | Frontend::Macos),
+            Offered::ThreePane => app == Frontend::Macos,
             Offered::Focus => matches!(app, Frontend::Terminal | Frontend::Focus),
         }
     }
@@ -324,7 +317,7 @@ fn open_in(app: Frontend) -> Availability {
 fn platform_of(app: Frontend) -> Platform {
     match app {
         Frontend::Macos => Platform::Apple,
-        Frontend::Classic | Frontend::Terminal | Frontend::Focus => Platform::Freedesktop,
+        Frontend::Terminal | Frontend::Focus => Platform::Freedesktop,
     }
 }
 
@@ -394,7 +387,7 @@ fn focus_offers_nothing_that_works_on_a_surface_it_does_not_have() {
         for app in APPS {
             assert_eq!(
                 spec.requires.met_by(open_in(app)),
-                matches!(app, Frontend::Classic | Frontend::Macos),
+                app == Frontend::Macos,
                 "`{command}` for {app:?}"
             );
         }

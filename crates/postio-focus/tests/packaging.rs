@@ -9,10 +9,6 @@
 //! names but the manifest never builds is a launcher that does nothing. And
 //! a bundle the release never looked inside can be missing either one.
 //! `postio-tui`'s `packaging.rs` checks the grants the packages share.
-//!
-//! The classic app still builds from source, as `postio-classic` under
-//! `dev.postio.Postio.Classic`, until it is removed (T256). Nothing here
-//! installs or launches it.
 
 use std::path::{Path, PathBuf};
 
@@ -109,13 +105,6 @@ fn focus_is_postio() {
         "GApplication would refuse `{APP_ID}`"
     );
     assert_eq!(binaries("crates/postio-focus"), vec![BINARY.to_owned()]);
-    // Two packages building one binary name write one file in `target/`,
-    // and whichever links last is what runs. The classic app builds under a
-    // name of its own until it is removed.
-    assert!(
-        !binaries("crates/postio-app").contains(&BINARY.to_owned()),
-        "postio-app still builds a binary named `{BINARY}`"
-    );
 }
 
 #[test]
@@ -254,8 +243,7 @@ fn the_desktop_entry_passes_the_freedesktop_validator() {
 }
 
 /// The desktop Flatpak builds Focus as `postio`, runs it, and installs its
-/// entry and metainfo. It builds nothing else: the classic app has left the
-/// package.
+/// entry and metainfo. It builds nothing else.
 #[test]
 fn the_desktop_flatpak_builds_and_installs_postio_only() {
     let manifest = read(MANIFEST);
@@ -383,44 +371,11 @@ fn the_release_checks_the_bundle_carries_postio() {
             "the `flatpak` job never checks the build for {installed}"
         );
     }
-    for gone in ["postio-focus", "dev.postio.Postio.Focus"] {
-        assert!(
-            !running.iter().any(|line| line.contains(gone)),
-            "the `flatpak` job still looks for {gone}"
-        );
-    }
-    // Nothing in the release builds the classic app: its binary is not
-    // what ships, so measuring it says nothing about the package.
-    for line in workflow.lines() {
-        assert!(
-            !(line.contains("cargo") && line.contains("postio-app")),
-            "release.yml still builds the classic app:\n{line}"
-        );
-    }
-}
-
-/// Nothing the package installs, and nothing Focus compiles in, is read
-/// from the classic app's crate, which goes whole when the classic app is
-/// removed: the icons and the token build are `postio-widgets`', the
-/// desktop entry and metainfo are here.
-#[test]
-fn nothing_focus_ships_is_read_from_the_classic_crate() {
-    for (what, text) in [
-        ("the Flatpak manifest", read(MANIFEST)),
-        (
-            "postio-widgets' build step",
-            read("crates/postio-widgets/build.rs"),
-        ),
-        (
-            "postio-widgets' resource bundle",
-            read("crates/postio-widgets/data/widgets.gresource.xml"),
-        ),
-    ] {
-        assert!(
-            !text.contains("postio-gtk/"),
-            "{what} reads a file under crates/postio-gtk"
-        );
-    }
+    let gone = "dev.postio.Postio.Focus";
+    assert!(
+        !running.iter().any(|line| line.contains(gone)),
+        "the `flatpak` job still looks for {gone}"
+    );
 }
 
 fn which(program: &str) -> Option<PathBuf> {

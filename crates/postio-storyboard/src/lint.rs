@@ -481,7 +481,7 @@ mod tests {
         let text = format!(
             "source = {{ kind = \"flow\", ref = \"{a}\" }}\n\
              [[step]]\nwait = {{ until = {{ notice.text = \"{b}\" }} }}\n\
-             [app.classic.step.1]\nexpect = \"{c}\"\n"
+             [app.terminal.step.1]\nexpect = \"{c}\"\n"
         );
         let text = text.as_str();
         let found: Vec<_> = lint_text(text)
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn an_override_for_an_app_the_storyboard_excludes_is_an_error() {
         let text = format!(
-            "apps = [\"classic\"]\n{GOOD}[[step]]\ncommand = \"back\"\n[app.focus.step.1]\nexpect = \"x\"\n"
+            "apps = [\"terminal\"]\n{GOOD}[[step]]\ncommand = \"back\"\n[app.focus.step.1]\nexpect = \"x\"\n"
         );
         assert_eq!(
             lint_text(&text),
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn private_fields_need_exactly_one_named_app() {
-        let step = "[[step]]\ncommand = \"back\"\ncheck = { app.classic.pane = \"list\", keyboard.widget = \"x\" }\n";
+        let step = "[[step]]\ncommand = \"back\"\ncheck = { app.terminal.pane = \"list\", keyboard.widget = \"x\" }\n";
         let shared = lint_text(&format!("{GOOD}{step}"));
         assert_eq!(shared.len(), 2, "{shared:?}");
         assert!(
@@ -596,10 +596,10 @@ mod tests {
                 .iter()
                 .all(|e| matches!(e, LintError::SharedCheckOnPrivateField { step: 1, .. }))
         );
-        let two = lint_text(&format!("apps = [\"classic\", \"terminal\"]\n{GOOD}{step}"));
+        let two = lint_text(&format!("apps = [\"focus\", \"terminal\"]\n{GOOD}{step}"));
         assert_eq!(two.len(), 2, "{two:?}");
         assert_eq!(
-            lint_text(&format!("apps = [\"classic\"]\n{GOOD}{step}")),
+            lint_text(&format!("apps = [\"terminal\"]\n{GOOD}{step}")),
             vec![]
         );
     }
@@ -639,7 +639,7 @@ mod tests {
         std::fs::create_dir_all(root.join("gaps")).unwrap();
         std::fs::write(root.join("README.md"), "# not a storyboard").unwrap();
         std::fs::write(root.join("list/.gitkeep"), "").unwrap();
-        std::fs::write(root.join("gaps/classic.toml"), "[[gap]]\ncommand = \"x\"\n").unwrap();
+        std::fs::write(root.join("gaps/focus.toml"), "[[gap]]\ncommand = \"x\"\n").unwrap();
         std::fs::write(root.join("list/good.toml"), GOOD).unwrap();
         std::fs::write(root.join("list/bad.toml"), "seed = \"small\"\n").unwrap();
         std::fs::write(
@@ -661,7 +661,7 @@ mod tests {
             problems.iter().any(|(_, m)| m.contains("also used")),
             "duplicate names are caught: {problems:?}"
         );
-        assert!(!files.contains(&"classic.toml".to_owned()), "{problems:?}");
+        assert!(!files.contains(&"focus.toml".to_owned()), "{problems:?}");
     }
 
     #[test]

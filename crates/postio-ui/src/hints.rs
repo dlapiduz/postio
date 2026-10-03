@@ -46,25 +46,6 @@ pub fn hint(keymap: &Keymap, command: CommandId, label: &str) -> Option<Hint> {
     })
 }
 
-/// As [`hint`], naming `preferred` when it is one of `command`'s keys.
-///
-/// For a surface the canvas draws with a command's *alternate*: the list's
-/// failure plates say `R` for Refresh, whose primary key is `F5`. The
-/// preference is only honoured while the keymap actually binds it, so a
-/// rebind that takes `R` away falls back to the primary rather than naming a
-/// key that no longer does this.
-pub fn hint_as(keymap: &Keymap, command: CommandId, preferred: &str, label: &str) -> Option<Hint> {
-    let bindings = keymap.bindings(command);
-    let key = bindings
-        .iter()
-        .find(|binding| *binding == preferred)
-        .or_else(|| bindings.first())?;
-    Some(Hint {
-        key: key.clone(),
-        label: label.to_owned(),
-    })
-}
-
 /// `key`, as the registry spells it, spelled for a screen reader: the
 /// `aria-keyshortcuts` form GTK's `KeyShortcuts` property carries
 /// (FR-096). Modifiers are named in full and joined by `+`, `Return` is
@@ -269,30 +250,6 @@ mod tests {
         // to fall back on.
         let keymap = rebound(CommandId::Compose, "Delete");
         assert_eq!(hint(&keymap, CommandId::Delete, "Delete"), None);
-    }
-
-    #[test]
-    fn a_preferred_key_is_named_only_while_it_is_bound() {
-        // The list's failure plates prefer `R` for "Retry now". Under the one
-        // keymap `R` restores from Filtered and Refresh keeps `F5`
-        // (specs/007-postio-focus contracts/keymap.md), so the plate names
-        // the key Refresh has.
-        let retry = |keymap: &Keymap| {
-            hint_as(keymap, CommandId::Refresh, "R", "Retry now").map(|hint| hint.key)
-        };
-        assert_eq!(retry(Keymap::defaults()).as_deref(), Some("F5"));
-
-        // An alternate is preferred over the primary while it is bound...
-        let next = |keymap: &Keymap| {
-            hint_as(keymap, CommandId::NextMessage, "Down", "next").map(|hint| hint.key)
-        };
-        assert_eq!(next(Keymap::defaults()).as_deref(), Some("Down"));
-        // ...and giving it to archive takes it from NextMessage, so the hint
-        // falls back to the key NextMessage still has.
-        assert_eq!(
-            next(&rebound(CommandId::Archive, "Down")).as_deref(),
-            Some("j")
-        );
     }
 
     #[test]

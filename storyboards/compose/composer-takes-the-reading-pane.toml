@@ -7,8 +7,7 @@
 #
 # Re-expressed for Focus (T265) in Focus's own reading pane (T232): `F8`
 # opens messages beside the list, `Return` opens the cursor's row there, and
-# the composer then takes that pane (screen 36). The classic app it was
-# written against is removed by T256.
+# the composer then takes that pane (screen 36).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1195" }
 proof  = "pinned"

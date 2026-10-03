@@ -6,8 +6,7 @@
 #
 # Re-expressed for Focus (T265): Focus opens with no cursor row (its list is
 # windowed, and the cursor is a row a key puts there), so the first `j` puts
-# the cursor on the first row, index 0. The classic app it was written
-# against is removed by T256.
+# the cursor on the first row, index 0.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1473" }
 proof  = "pinned"

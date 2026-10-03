@@ -5,11 +5,10 @@
 # only be read with the mouse. The scroll offset must actually move, in
 # both directions, and the view must never blank doing it.
 #
-# Re-expressed for Focus (T265): the long-newsletter seed's fifth row is
-# the message tall enough to scroll; Return opens it over the list, where
-# Page Down, Page Up, Space and Shift+Space page it (the arrows and `j`/`k`
-# are dialog-scroll-keys-leave-the-list-alone's). The classic app it was
-# written against is removed by T256.
+# Re-expressed for Focus (T265): the long-newsletter seed's fifth row is the
+# message tall enough to scroll; Return opens it over the list, where Page
+# Down, Page Up, Space and Shift+Space page it (the arrows and `j`/`k` are
+# dialog-scroll-keys-leave-the-list-alone's).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1402" }
 proof  = "pinned"

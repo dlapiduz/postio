@@ -7,8 +7,7 @@
 #
 # Re-expressed for Focus (T265), where it holds: Focus's open message shows
 # one message, and Return on a thread shows its newest, message 7 of the
-# long-thread seed, and nothing moves once it has. The classic app it was
-# written against is removed by T256.
+# long-thread seed, and nothing moves once it has.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1385" }
 proof  = "pinned"

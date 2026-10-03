@@ -288,12 +288,4 @@ impl ComposerHost for DialogHost {
             .map(|window| window.keymap())
             .unwrap_or_else(|| Keymap::defaults().clone())
     }
-
-    // Focus's Compose button says nothing about whether a composition is
-    // open: the dialog over the window says it.
-    fn composing(&self, _open: bool, _keymap: &Keymap) {}
-
-    // Focus's colours follow the system through libadwaita, for every
-    // window of the process alike: nothing to join.
-    fn adopt(&self, _window: &gtk::Window) {}
 }

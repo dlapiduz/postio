@@ -1,7 +1,5 @@
 # must_fail: #1473 stated as the intent. `j` really puts the cursor on the
 # first row.
-# Re-expressed for Focus (T265): its ground truth, with the classic app
-# removed by T256.
 apps        = ["focus"]
 source      = { kind = "issue", ref = "#1473" }
 calibration = "must_fail"

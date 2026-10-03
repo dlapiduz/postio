@@ -48,22 +48,6 @@ pub fn watch(view: &webkit6::WebView) {
     });
 }
 
-/// How many web processes have died under this crate's views since the
-/// process started.
-///
-/// Monotonic: a wait helper snapshots it on entry and fails when it moves,
-/// which keeps a death in one test from failing the next one in the same
-/// process.
-pub fn deaths() -> usize {
-    DEATHS.load(Ordering::SeqCst)
-}
-
-/// Why the last web process died, as WebKit reported it — `None` while none
-/// has.
-pub fn last_death() -> Option<String> {
-    LAST_REASON.lock().ok().and_then(|reason| reason.clone())
-}
-
 /// A death nobody has acted on yet, taken: the reason, once.
 ///
 /// For the test suites' wait helpers. A wait that finds one pending fails at
