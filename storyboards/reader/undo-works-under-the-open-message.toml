@@ -1,0 +1,36 @@
+# Undo, offered by the toast, works from the open message.
+#
+# Found while writing delete-acts-in-the-open-message (88c1f0f7). With a
+# message open, Delete (or Archive) removes it and the dialog goes on to the
+# next one, and the toast behind it offers Undo -- but the reader's key
+# handler (`reading_key`, window.rs) has no arm for `undo`, so `ctrl+z` is
+# taken by nothing and the press is dropped. The only way to take it back is
+# the toast's button, which is under the dialog's scrim.
+#
+# Open until Undo is handled with the dialog up.
+source = { kind = "commit", ref = "88c1f0f7" }
+proof  = "open"
+apps   = ["focus"]
+seed   = "long-newsletter"
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+[[step]]
+command = "delete"
+check   = { view = "reader", rows.count = 59, notice.undo = true }
+
+[[step]]
+command = "undo"
+check   = { rows.count = 60 }
+expect  = "Undo restores the conversation, as it does from the list."

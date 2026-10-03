@@ -1,0 +1,53 @@
+# Escape in More's menu lets go of the menu and leaves the message open
+# (63641d47).
+#
+# More's popover is parented to its button by hand. The commit made it let go
+# of the menu cleanly when the button is destroyed; the catalogue's reading
+# of the behaviour is that Escape closes the menu and the keyboard returns
+# to the More button, with the message still open behind it. That is what
+# every other popover on the page does, and it is what a person who opened
+# More by mistake expects Escape to do.
+#
+# Open: on the branch's base, Escape in the menu closes the whole message
+# dialog (the reader is gone, the list is showing) and the keyboard lands on
+# the window's toolbar, not More. Possibly the dialog's capture controller
+# (a19c4bbb) takes Escape before the popover does; possibly this runner's
+# chain delivery differs from GTK's there, so confirm against a real key
+# press before fixing.
+#
+# Narrow, because More only exists when the action row folds (below 760 px).
+source = { kind = "commit", ref = "63641d47" }
+proof  = "open"
+apps   = ["focus"]
+seed   = "long-newsletter"
+vary   = { width = ["narrow"] }
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", reading.id = "89" }
+
+[[step]]
+command = "more_actions"
+check   = { view = "reader", reading.id = "89" }
+expect  = "More's menu is open under its button: Label, Move, Delete, each with its key."
+
+[[step]]
+key     = "Escape"
+check   = { view = "reader", reading.id = "89", keyboard.region = "reader" }
+expect  = "Escape closes the menu only. The message is still open and the keyboard is back on the More button."
+
+[[step]]
+key     = "Escape"
+check   = { view = "list", keyboard.region = "list" }
+expect  = "A second Escape closes the message."

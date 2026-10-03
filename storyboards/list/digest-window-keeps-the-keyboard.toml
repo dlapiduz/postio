@@ -1,0 +1,36 @@
+# The digest window answers keys after it opens (found by the generated pass).
+#
+# The window that opens from the "Weekly digest" row reports its keyboard as
+# unreachable from the moment it is up, and a second `j` is dropped: nothing
+# on the focus chain takes it. The first `j` does something (the frame
+# changes, the ring lands on "Archive all 6"), so this is the 92a093b8 family
+# -- the keyboard left on a widget that cannot hand a key up -- in a dialog the
+# commit did not reach. Every key in `Context::Digest` (`j`, `k`, `Return`,
+# `Tab`, `g i`) depends on it.
+#
+# Open until the digest window keeps the keyboard where its keys are heard.
+source = { kind = "commit", ref = "92a093b8" }
+proof  = "open"
+apps   = ["focus"]
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "digest" } }
+check   = { view = "digest", keyboard.reachable = true }
+expect  = "The digest opens on its summary, and a key pressed now is heard."
+
+[[step]]
+command = "next_message"
+check   = { view = "digest", keyboard.reachable = true }
+expect  = "`j` is heard and the keyboard is still reachable afterwards."
+
+[[step]]
+command = "next_message"
+check   = { view = "digest", keyboard.reachable = true }
+expect  = "A second `j` is heard too."

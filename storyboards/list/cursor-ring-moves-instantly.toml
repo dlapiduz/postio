@@ -1,0 +1,47 @@
+# The cursor ring is on the target row at once, with no trail (8ab954bf).
+#
+# The defect: libadwaita animates a row's background and focus ring, so on
+# `j` and `k` the ring faded out of one row and into the next and trailed
+# the cursor through the list. A held `j` showed two rows lit at once. Fixed
+# on the Focus branch before storyboards existed (the row's own node says
+# `transition: none`), so this is pinned.
+#
+# Every step is watched for 400 ms after it lands (`watch_ms`): a ring that is
+# still moving, or a row still fading, shows as frames that change after the
+# step has settled, and the runner records the step as `jumped` with those
+# frames kept. The run fails on the cursor's index and the reviewer reads the
+# settle verdicts and frames for the rest. Animations are off in the runner
+# for every storyboard; `transition: none` is CSS and is not an animation
+# setting, so a regression to the stock transition still shows.
+source = { kind = "commit", ref = "8ab954bf" }
+proof  = "pinned"
+apps   = ["focus"]
+design = "01-inbox-reading"
+
+[[step]]
+command = "next_message"
+settle  = { watch_ms = 400 }
+check   = { keyboard.region = "list", cursor.index = 0 }
+[[step]]
+command = "next_message"
+settle  = { watch_ms = 400 }
+check   = { cursor.index = 1 }
+[[step]]
+command = "next_message"
+settle  = { watch_ms = 400 }
+check   = { cursor.index = 2 }
+[[step]]
+command = "next_message"
+settle  = { watch_ms = 400 }
+check   = { cursor.index = 3 }
+[[step]]
+command = "next_message"
+settle  = { watch_ms = 400 }
+check   = { cursor.index = 4 }
+expect  = "Five presses, five rows. At every step exactly one row wears the ring, and it is the one the cursor is on."
+
+[[step]]
+command = "prev_message"
+settle  = { watch_ms = 400 }
+check   = { cursor.index = 3 }
+expect  = "Back one: the ring is on the fourth row and nowhere else."

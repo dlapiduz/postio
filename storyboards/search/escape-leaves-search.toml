@@ -29,3 +29,15 @@ expect  = "The keyboard moves to the hits; the query stays in the field."
 command = "back"
 check   = { keyboard.region = "list", overlay.kind = "none", rows.count = { same_as = 0 } }
 expect  = "The list is the Inbox again, every row back; the search is gone."
+
+# Focus's command bar does not narrow the inbox behind it: matches are listed
+# in the bar, and only once Return has run the search. Return does not hand
+# the keyboard to anything; the bar keeps it, with the matches under the
+# field, and Escape closes the bar over an inbox that never changed.
+[app.focus.step.2]
+check  = { keyboard.region = "search", rows.count = { unchanged = true } }
+expect = "The bar offers to search mail for what was typed; the inbox behind it is not narrowed."
+
+[app.focus.step.3]
+check  = { keyboard.region = "search", keyboard.typing = true, overlay.kind = "finder", rows.count = { unchanged = true } }
+expect = "Return runs the search and the bar lists the matches under the field; the keyboard stays in the bar."

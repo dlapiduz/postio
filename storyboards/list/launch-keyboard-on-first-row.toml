@@ -11,3 +11,10 @@ design = "01-inbox-reading"
 key    = "j"
 check  = { keyboard.region = "list", keyboard.typing = false, overlay.kind = "none", cursor.index = 1 }
 expect = "The first key moves the cursor down a row; nothing is typed anywhere."
+
+# Focus opens with no cursor row at all (its list is windowed, and the
+# cursor is a row a key puts there), so the first `j` lands on the first row,
+# index 0, rather than moving down from it.
+[app.focus.step.1]
+check  = { keyboard.region = "list", keyboard.typing = false, overlay.kind = "none", cursor.index = 0 }
+expect = "The first key puts the cursor on the first row; nothing is typed anywhere."

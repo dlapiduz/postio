@@ -1,0 +1,67 @@
+# `O` switches how the message is drawn and the reader keeps their place
+# (2ba0e97c).
+#
+# The defect: the open message took the column to the marked sentence after
+# every render, so switching the treatment with `O` -- or anything else that
+# redraws the body -- pulled the reader back to that sentence from wherever
+# they had scrolled. The column goes there once, when the message opens.
+# Fixed on the Focus branch (T213) for an office mail on paper, but the long
+# newsletter shows it again: from the top of the body, `O` scrolls the column
+# 330 px down (406 with the card up), so the sender block is gone, and the
+# frame shows the body's first heading at the top. Open until Focus holds the
+# column through that redraw too.
+#
+# The long newsletter has no marked sentence (that needs a summary's
+# citation), so the "reopen lands on the sentence once" half is not covered
+# here. What is: with the top of the body in view there is no place inside it
+# to keep, and the redraw must not scroll the column (the focus suite's
+# case); and from further down, the reader is not thrown to the top. The
+# two treatments lay the message out at very different heights (an app-colour
+# body is about 1,400 px, the same message on paper about 6,900), so the
+# offset cannot be compared exactly across a switch; the reviewer reads the
+# frames for the second half.
+source = { kind = "commit", ref = "2ba0e97c" }
+proof  = "open"
+apps   = ["focus"]
+seed   = "long-newsletter"
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", reading.id = "89", reading.scroll.offset = 0 }
+
+[[step]]
+id      = "top"
+command = "switch_treatment"
+settle  = { watch_ms = 600 }
+check   = { view = "reader", reading.id = "89", reading.scroll.offset = 0 }
+expect  = "The message is drawn the other way, and the column stays at the top of the body: it is not scrolled to put a line at the top."
+
+[[step]]
+command = "switch_treatment"
+settle  = { watch_ms = 600 }
+check   = { view = "reader", reading.id = "89", reading.scroll.offset = 0 }
+expect  = "Switched back, and still at the top."
+
+[[step]]
+id      = "scrolled"
+command = "scroll_reader_down"
+settle  = { until = { reading.scroll.offset = { changed = true } } }
+check   = { reading.scroll.offset = { changed = true } }
+expect  = "The message is scrolled a page down."
+
+[[step]]
+command = "switch_treatment"
+settle  = { watch_ms = 600 }
+check   = { view = "reader", reading.id = "89" }
+expect  = "The message is drawn the other way and the reader is still a page or so down the text, not thrown back to the top or to a sentence."

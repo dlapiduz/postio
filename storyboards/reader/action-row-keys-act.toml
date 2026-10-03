@@ -1,0 +1,35 @@
+# The keys the open message's action row shows do what they say (found by the
+# generated pass).
+#
+# The action row draws Archive `a`, Snooze `s`, Remind `h`, Label `l`, Move
+# `m` and Delete `Del`. The reader's key handler (`reading_key`, window.rs)
+# has arms for Archive and Delete and none for the other four, so `s`, `h`,
+# `l` and `m` are taken by nothing and the press is dropped. Label and Move
+# open pickers from the list, and from a button in the dialog.
+#
+# Open until the four keys act with the message open.
+source = { kind = "commit", ref = "88c1f0f7" }
+proof  = "open"
+apps   = ["focus"]
+
+[[step]]
+command = "next_message"
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader" }
+
+[[step]]
+command = "add_label"
+check   = { overlay.kind = "picker" }
+expect  = "`l` opens the label picker over the message, as the Label button does."
+
+[[step]]
+key     = "Escape"
+check   = { view = "reader", overlay.kind = "none" }
+expect  = "Escape closes the picker, and the message is still open."
+
+[[step]]
+command = "move"
+check   = { overlay.kind = "picker" }
+expect  = "`m` opens the folder picker."

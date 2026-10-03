@@ -1,0 +1,39 @@
+# The digest rules list answers Delete and Escape as soon as it opens (0cbbd3d8).
+#
+# The defect: the list rebuilt its rows when what each rule holds arrived,
+# which destroyed the focused row and left the window's focus on a widget with
+# no parents. GTK's key path starts at the focus, so no key reached the window
+# until a click: a Delete or Escape right after opening the rules did nothing
+# about half the time. Fixed on the Focus branch before storyboards existed,
+# so this is pinned.
+#
+# Focus only, and reached the way a person reaches it, by `g d`: it needs no
+# preset, because the demo's one rule ("Newsletters") is in its config. The
+# rules page and the remove confirmation are not in the shared observation
+# (the view stays `list`), so the checks pin what is: every key is received,
+# and Escape from the page lands the keyboard back on the inbox list; the
+# reviewer reads the frames for the page and the dialog.
+source = { kind = "commit", ref = "0cbbd3d8" }
+proof  = "pinned"
+apps   = ["focus"]
+
+[[step]]
+id      = "rules"
+command = "go_to_digest_rules"
+check   = { keyboard.reachable = true, rows.count = 60 }
+expect  = "The digest rules page replaces the inbox: one rule, Newsletters, under the Digest rules heading."
+
+[[step]]
+command = "delete"
+check   = { keyboard.reachable = true }
+expect  = "Delete, pressed at once, is received: the remove confirmation for Newsletters is up over the page."
+
+[[step]]
+key     = "Escape"
+check   = { keyboard.reachable = true }
+expect  = "Escape cancels the confirmation. The rule is still listed."
+
+[[step]]
+key     = "Escape"
+check   = { keyboard.region = "list", keyboard.reachable = true, rows.count = 60 }
+expect  = "Escape leaves the page: the inbox is back, sixty rows, the keyboard on its list."
