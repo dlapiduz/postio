@@ -15,17 +15,9 @@
 
 # -- list: the Inbox, the cursor on its first row (Focus opens with none, so one `j` puts it there)
 [[gap]]
-command = "archive_thread"
-context = "list"
-reason  = "bound, and FocusWindow::act has no arm for it (`no Focus surface answers this command yet`); a Focus row is a whole conversation and `archive` already takes all of it"
-[[gap]]
 command = "back"
 context = "list"
 reason  = "nothing to go back from: no selection, no search, no filter"
-[[gap]]
-command = "cancel_send"
-context = "list"
-reason  = "an Outbox verb; nothing is in the Outbox, and act() has no arm for it in the list"
 [[gap]]
 command = "darken_message"
 context = "list"
@@ -51,26 +43,6 @@ command = "first_message"
 context = "list"
 reason  = "the cursor is already on the first row"
 [[gap]]
-command = "go_to_archive"
-context = "list"
-reason  = "CANDIDATE: bound (`g a`), and act() has no arm; Focus reaches folders through the `g o` places picker, so the key is dead"
-[[gap]]
-command = "go_to_flagged"
-context = "list"
-reason  = "CANDIDATE: bound (`g *`), and act() has no arm; the same dead destination key"
-[[gap]]
-command = "go_to_sent"
-context = "list"
-reason  = "CANDIDATE: bound (`g s`), and act() has no arm; the same dead destination key"
-[[gap]]
-command = "go_to_snoozed"
-context = "list"
-reason  = "CANDIDATE: bound (`g z`), and act() has no arm; the same dead destination key"
-[[gap]]
-command = "mark_sent"
-context = "list"
-reason  = "an Outbox verb; nothing is in the Outbox, and act() has no arm for it in the list"
-[[gap]]
 command = "next_scope"
 context = "list"
 reason  = "bound, and act() has no arm for it; scope cycling is Classic's search"
@@ -95,17 +67,9 @@ command = "scroll_reader_up"
 context = "list"
 reason  = "acts in the open message only"
 [[gap]]
-command = "settings"
-context = "list"
-reason  = "bound, and act() has no arm for it; Focus has no settings surface yet"
-[[gap]]
 command = "toggle_reader_view"
 context = "list"
 reason  = "bound, and act() has no arm for it; Focus switches treatment with `switch_treatment` in the open message"
-[[gap]]
-command = "unsnooze"
-context = "list"
-reason  = "the first row is not snoozed, so there is nothing to bring back"
 [[gap]]
 command = "view_original"
 context = "list"
@@ -136,10 +100,6 @@ reason  = "an empty query has no result to open"
 command = "save_search"
 context = "search"
 reason  = "an empty query has nothing to save"
-[[gap]]
-command = "settings"
-context = "search"
-reason  = "bound, and act() has no arm for it; Focus has no settings surface yet"
 
 # -- filtered: `g f`: the Filtered view on its first tab
 [[gap]]
@@ -150,10 +110,6 @@ reason  = "the view is already on its first tab"
 command = "prev_message"
 context = "filtered"
 reason  = "the cursor is on the first row, so there is nothing above it"
-[[gap]]
-command = "settings"
-context = "filtered"
-reason  = "bound, and act() has no arm for it; Focus has no settings surface yet"
 
 # -- digest: the Weekly digest window, on its summary
 [[gap]]
@@ -171,45 +127,9 @@ reason  = "CANDIDATE: the same unreachable keyboard (storyboards/list/digest-win
 
 # -- reader: the first message open in its dialog (an invitation, wide window)
 [[gap]]
-command = "expand_all"
-context = "reader"
-reason  = "bound, and the open message's handler has no arm for it; Focus shows one message and has no folds"
-[[gap]]
-command = "find_next"
-context = "reader"
-reason  = "no find is in progress"
-[[gap]]
-command = "find_previous"
-context = "reader"
-reason  = "no find is in progress"
-[[gap]]
-command = "more_actions"
-context = "reader"
-reason  = "More exists only when the action row folds, below 760 px; the starting window is wide"
-[[gap]]
-command = "next_in_conversation"
-context = "reader"
-reason  = "the first message's thread has one message, so there is none after it"
-[[gap]]
-command = "prev_in_conversation"
-context = "reader"
-reason  = "the first message's thread has one message, so there is none before it"
-[[gap]]
 command = "prev_message"
 context = "reader"
 reason  = "the first row is open, so there is nothing before it"
-[[gap]]
-command = "scroll_reader_down"
-context = "reader"
-reason  = "the small seed's message fits the dialog, so there is nothing to scroll"
-[[gap]]
-command = "scroll_reader_up"
-context = "reader"
-reason  = "the small seed's message fits the dialog, so there is nothing to scroll"
-[[gap]]
-command = "switch_treatment"
-context = "reader"
-reason  = "a plain-text message has no treatment to switch"
 
 # -- composer: the composer's dialog over the inbox, empty
 [[gap]]
@@ -235,7 +155,7 @@ reason  = "formatting an empty body changes nothing visible until text is typed"
 [[gap]]
 command = "mark_sent"
 context = "composer"
-reason  = "an Outbox verb; nothing is in the Outbox"
+reason  = "an Outbox verb; nothing is in the Outbox (flickers: one run of two in T265 saw an effect, the composer still settling, so a stale report here is noise)"
 [[gap]]
 command = "numbered_list"
 context = "composer"
@@ -251,7 +171,7 @@ reason  = "formatting an empty body changes nothing visible until text is typed"
 [[gap]]
 command = "save_draft"
 context = "composer"
-reason  = "an empty draft has nothing to save -- and says nothing about it"
+reason  = "an empty draft has nothing to save -- and says nothing about it (flickers: one run of two in T265 saw an effect, the composer still settling, so a stale report here is noise)"
 [[gap]]
 command = "send"
 context = "composer"
