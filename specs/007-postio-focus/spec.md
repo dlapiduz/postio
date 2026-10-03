@@ -69,7 +69,8 @@ spec raised (2026-09-26 unless dated):
   branch." The milestones order the work on `feature/postio-focus`; none of
   them is a landing.
 - **Focus's rules act only while Focus runs.** Filtering, digest holding and
-  reminders act on mail while Focus has the store. Mail another app files
+  reminders act on mail while Focus, on the desktop or in the terminal
+  (C29), has the store. Mail another app files
   lands in the inbox as usual, and Focus sorts it when it next opens, even if
   the user saw it in the other app meanwhile.
 - **A digest opens on its summary**, as drawn in 01, 22 and 23: the row
@@ -99,6 +100,7 @@ spec raised (2026-09-26 unless dated):
   language model. The user's model takes over the question when it is
   connected (FR-104 to FR-108).
 - **Focus is the one desktop app** (2026-10-02, C27).
+- **The terminal is Focus too** (2026-10-02, C29).
 
 ## The inputs, and which one wins
 
@@ -164,6 +166,7 @@ ids.
 | C26 | message dialog `SPEC.md` §5, §6 | **Maintainer (2026-10-01): the system accent everywhere.** The open message follows the GNOME accent like the rest of Focus: the action card's fill is libadwaita's `--accent-color` at 8% (light) and 12% (dark), and links and the card's tag are that accent. The handoff's surface, ink, hairline and scrim values stand |
 | C27 | — | **Maintainer (2026-10-02): Focus is the one desktop app**, named "Postio" (binary `postio`, app id `dev.postio.Postio`) once the package switches (T253); until then it builds as `postio-focus` with app id `dev.postio.Postio.Focus`. The classic three-pane app (`postio-gtk`, the `postio` binary in `postio-app`) is retired rather than kept as a mode: it keeps building until it is removed and gets no new work ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). What it did and where Focus does it is [`classic-parity.md`](classic-parity.md). Removal is approved (2026-10-02) and follows T249-T265 |
 | C28 | 05 | Send is `mod+Return`: `ctrl+Return` on Linux, `cmd+Return` (`⌘↩`) on the Mac, drawn `ctrl+↵` on the composer's keycap; `mod+shift+d` is unbound |
+| C29 | — | **Maintainer (2026-10-02): the terminal is Focus too.** `postio-tui` draws Focus's surfaces in character cells ([terminal.md](terminal.md)) and turns Focus's engine on while it runs. Its three-pane layout, sidebar, panes and parts panel are removed, with no mode or flag that keeps them (User Story 16) |
 
 ## Milestones, and landing
 
@@ -892,10 +895,10 @@ the reverse.
    The reverse holds.
 3. **Given** a draft left in either app, **When** the other is opened,
    **Then** the draft is in Drafts and opens for editing.
-4. **Given** filtering on and the terminal open, **When** a promotion
-   arrives, **Then** the terminal shows it in its inbox, because Focus's
-   rules act only while Focus runs. When Focus next opens, the promotion
-   moves to Filtered.
+4. **Given** filtering on and the macOS app open, **When** a promotion
+   arrives, **Then** the macOS app shows it in its inbox, because Focus's
+   rules act only while Focus runs. When Focus next opens, on the desktop
+   or in the terminal, the promotion moves to Filtered.
 
 ---
 
@@ -1112,6 +1115,53 @@ the only one outside the mailbox.
 
 ---
 
+### User Story 16 - Focus in the terminal (Priority: P1)
+
+Someone who works in a terminal opens `postio-tui` over SSH and finds Focus:
+the dense inbox with its markers and digest rows, the strip's counts, a
+message opening over the list and closing back to the same row, the command
+bar for search and folders, the pickers at the row, Filtered, digests and
+capture. The keys, words and verbs are the desktop's, and filtering, digests
+and reminders act while the terminal has the store, exactly as while the
+desktop app has it. Only the drawing is the terminal's
+([terminal.md](terminal.md)).
+
+**Why this priority**: The terminal is the one place the desktop app cannot
+reach. Two shapes of one product, one with digests and filtering and one
+without, would teach two products.
+
+**Independent Test**: Start the terminal against a store holding a fixture
+mailbox with a marker, an invitation, a due digest and filtered mail, with
+the network absent. Drive it with keystrokes, and assert on the rendered
+screen, not on what a layer was handed, that each surface shows what
+[terminal.md](terminal.md) draws and each verb's result is visible.
+
+**Acceptance Scenarios**:
+
+1. **Given** the fixture store, **When** the terminal starts, **Then** the
+   inbox shows the strip, day headings, one-line rows, two-line marked rows
+   and the digest row, and no sidebar or reading pane.
+2. **Given** the cursor on a row, **When** the user presses `Enter`, **Then**
+   the message opens in a frame over the dimmed list; `j` shows the next
+   message in the same frame; `Esc` closes it with the cursor and the
+   selection where they were.
+3. **Given** an invitation row, **When** the user presses `y`, **Then** the
+   row says "Accepted" in place of its actions, and `ctrl+z` within the send
+   window takes it back.
+4. **Given** three rows selected, **When** the user presses `s` and `2`,
+   **Then** the three leave the inbox, and the bottom line says what was
+   snoozed with its undo key.
+5. **Given** filtering on and the terminal open, **When** a promotion
+   arrives, **Then** it goes to Filtered and the strip's count rises (FR-186).
+6. **Given** `NO_COLOR`, **When** any surface is drawn, **Then** the cursor,
+   the selection, unread, markers and the has-action toggle are each told
+   apart without colour.
+7. **Given** a mouse, **When** the user clicks a row's `Accept y`, the
+   strip's `⚑ Has action`, or a frame's `✕`, **Then** each does what its key
+   does.
+
+---
+
 ### Edge Cases
 
 - **Another app has the store.** Focus says so in the shared sentence and
@@ -1220,11 +1270,12 @@ the only one outside the mailbox.
   same keyring entries as the other apps, with no import, export or second
   copy. What any app wrote MUST be what Focus presents, and the reverse.
 - **FR-005**: No functionality may be removed from, or degraded in, the
-  terminal app or the macOS frontend. Their test suites MUST pass unchanged
-  apart from default key bindings, which follow the one keymap (FR-081). A
-  test that has to be weakened to pass is evidence of a regression, not of a
-  refactor. The classic app is retired (ADR 0043): until it is removed it
-  keeps building and its suites stay green.
+  macOS frontend. Its test suites MUST pass unchanged apart from default key
+  bindings, which follow the one keymap (FR-081). A test that has to be
+  weakened to pass is evidence of a regression, not of a refactor. The
+  terminal is Focus (C29): what it did in three panes it does where Focus
+  does it (FR-198). The classic app is retired (ADR 0043): until it is
+  removed it keeps building and its suites stay green.
 - **FR-006**: Behaviour that needs no toolkit MUST be expressed once, in the
   shared toolkit-free layers, and consumed from there. This covers list
   state, selection, paging, the keymap, key hints, the command bar and
@@ -1850,6 +1901,52 @@ the only one outside the mailbox.
   Postio, on this machine, fetching nothing. A link Postio cannot resolve
   MUST be refused with a message.
 
+**The terminal (C29, User Story 16)**
+
+- **FR-186**: The terminal MUST call `Host::enable_focus` as Focus does,
+  after the store opens and before sync starts, and again when `[focus]`
+  changes. Focus's rules act while either app has the store.
+- **FR-187**: The terminal MUST offer every command Focus offers, except
+  those that need pixels (`Requirement::Graphical`). Each MUST have a key it
+  can deliver, a command-bar row and a handler. It MUST offer no command
+  that needs a three-pane app (`Requirement::ThreePane`).
+- **FR-188**: The terminal MUST draw the window, rows, open message,
+  composer, command bar, folders box, pickers, toast, states, key map,
+  Filtered, digests and capture as [terminal.md](terminal.md) draws them.
+- **FR-189**: The terminal MUST take its words, rules and geometry inputs
+  from the same toolkit-free code as the desktop app (FR-006). A rule the
+  desktop app holds in its GTK crate MUST move to a shared crate before the
+  terminal uses it.
+- **FR-190**: The terminal MUST NOT keep a sidebar, panes to cycle, a
+  dragged divider, a parts panel or a three-pane mode. Attachments and links
+  are reached with `o` from the open message.
+- **FR-191**: Every surface MUST work at 50×12 and wider. Widths MUST come
+  only from the terminal's size, so stepping through mail never moves a
+  frame.
+- **FR-192**: Everything the keyboard reaches MUST also take a click, and
+  the terminal MUST stay fully usable with `[tui] mouse = false`.
+- **FR-193**: Under `NO_COLOR`, every state MUST keep a mark that is not a
+  colour ([terminal.md](terminal.md), "Colour and marks").
+- **FR-194**: All text from mail MUST pass through `SafeText` before it is
+  drawn, on every new surface as on the old (spec 005 FR-013).
+- **FR-195**: The open message MUST read the body on open, not when the
+  cursor rests on a row. In the pane it follows the cursor as the desktop's
+  does. Nothing is read for a row the user did not open.
+- **FR-196**: Detaching the composer MUST give it the whole screen between
+  the top bar and the bottom line, and bring it back into the frame on the
+  same command or `Esc`.
+- **FR-197**: The terminal MUST keep spec 005's budgets: a usable inbox in
+  under 500 ms, under 16 ms a keystroke, and paging that never loads a
+  mailbox.
+- **FR-198**: What the three-pane terminal did MUST stay reachable: folders
+  through `g o`, `in:` and the command bar; saved searches through `alt+1`
+  to `alt+4`, the bar and `mod+s`; attachments through `o`; accounts and
+  settings through `mod+comma`.
+- **FR-199**: `examples/shot.rs` MUST render every surface in
+  [terminal.md](terminal.md) from sample mail, and each MUST be compared with
+  its drawing there. Differences MUST be recorded in that file with their
+  reason.
+
 ### Key Entities
 
 - **Conversation row**: what the list draws for one conversation. The
@@ -1958,6 +2055,10 @@ the only one outside the mailbox.
   detector, and Postio opens zero connections to any model runtime. A test
   that fails on any connection attempt proves it. No Postio package contains
   a language model or an inference engine.
+- **SC-017**: The terminal passes every acceptance scenario of User Story 16
+  on rendered screens. Its parity test proves that every command it is
+  offered has a key and a handler. Its budget tests prove the inbox opens
+  within spec 005's 500 ms with the same rows read per keystroke.
 
 ## Assumptions
 
@@ -2043,4 +2144,4 @@ the only one outside the mailbox.
   built-in needs-action detector is plain code, not a model.
 - An Obsidian plugin, or editing notes beyond appending captures.
 - A new protocol, backend or sync mode.
-- Focus in the terminal or on iOS.
+- Focus on iOS.

@@ -9,10 +9,11 @@ crates promise each other. The reasons are in [research.md](../research.md)
 
 ```rust
 impl Host {
-    /// Turn on Focus's pipeline in this process. Called by postio-focus at
-    /// startup, after `start` and before `start_syncing`. No other app calls
-    /// it, so nothing below runs while another app holds the store (spec
-    /// Clarifications: "only while Focus runs").
+    /// Turn on Focus's pipeline in this process. Called by the two Focus
+    /// apps, postio-focus and postio-tui (C29), at startup, after `start` and
+    /// before `start_syncing`. macOS does not call it, so nothing below runs
+    /// while it holds the store (spec Clarifications: "only while Focus
+    /// runs").
     pub fn enable_focus(&self, setup: FocusSetup) -> FocusHandle;
 }
 ```

@@ -188,8 +188,9 @@ every app.
 
 ## Three-pane surfaces keep their context keys
 
-These surfaces exist only in the three-pane frontends, each in its own
-context, so their keys do not collide with the message surfaces':
+These surfaces exist only in the three-pane frontends (macOS, and the
+classic app until its removal), each in its own context, so their keys do
+not collide with the message surfaces':
 
 - Global: `mod+b` toggles the sidebar; `tab` / `shift+tab` cycle the panes;
 - Sidebar: `j`, `k`, `space`, `r`, `shift+Up`/`Down`, and `Delete` deletes a
@@ -204,8 +205,11 @@ context, so their keys do not collide with the message surfaces':
   does not suspend.
 - Every key offered by All is deliverable by a terminal, `Delete`, `*`,
   `alt+1`–`alt+4`, `]`, `[` and `!` included; the terminal's parity test
-  (`crates/postio-tui/tests/registry_parity.rs`) proves it. Commands marked
-  Focus are unmet by the terminal's `Availability`, so they are outside it.
+  (`crates/postio-tui/tests/registry_parity.rs`) proves it.
+- The terminal is Focus (C29): `Requirement::Focus` is met by it, and
+  `Requirement::ThreePane` is not. It offers every Focus command but those
+  that need pixels (`Requirement::Graphical`), and the Markdown composer's
+  own (`Requirement::Terminal`).
 
 ## How it is tested
 

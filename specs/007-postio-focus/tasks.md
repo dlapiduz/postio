@@ -477,7 +477,7 @@ maintainer asks.
 - [X] T253 The package switches to Focus (step 4; after T233, T234, T236, T237, T239, T243, T244 and T249): Focus takes the app id `dev.postio.Postio` (`postio_focus::app`), its desktop entry becomes `dev.postio.Postio.desktop` with `MimeType=x-scheme-handler/mailto;x-scheme-handler/postio;`, and the metainfo describes Focus. `flatpak/dev.postio.Postio.json` builds and installs Focus only, with `command` set to it. The classic `postio` binary leaves the package and still builds from source until T256. Rewrite `packaging.rs` for one launcher. The name and the binary name follow the maintainer's answer in `classic-parity.md` (question 2). Test first: `packaging.rs` The app is named "Postio", its binary `postio` (ADR 0043) Done: `postio-focus` builds `postio` under `dev.postio.Postio`, titled Postio; one entry (`mailto:`, `postio://`), the metainfo describes Focus (the classic screenshots dropped until the site has Focus renders); the Flatpak and release build and check it alone. The classic app builds as `postio-classic` under `dev.postio.Postio.Classic`, installed by nothing
 - [ ] T254 CI and scripts follow Focus (step 5; after T253): Focus's and `postio-widgets`' GUI suites get the CI job `test-gtk` and `test-app` have, under the nightly and the release gate, with `full-suite-crates.sh`'s `SLOW` list and `.config/nextest.toml`'s GUI profiles (which name `gtk_suite` and `app_suite`) measured and updated. `scripts/run-isolated.sh` (Focus by default), `install-local.sh`, `screens.sh`, `appearance.sh`, `ci-changes.sh` and the release workflow's size comparison (`postio-tui` against `postio`) follow. The classic jobs stay, building and testing, until T256. Coverage floors are unchanged: GUI crates have none (`scripts/coverage-floors.json`)
 - [ ] T255 The docs say one app (step 6; after T253): README (install, run, `cargo run -p` Focus), `docs/PRODUCT.md` (§2 Platforms, §5 Threading, §9 Layout, §10 Compose, §23 v1, with the flag answer), `docs/ARCHITECTURE.md`, `docs/config.md`'s `[ui]`, `docs/keybindings.md`'s Where column (through the registry, not by hand), the spec's Packaging assumption, US11 and Out of Scope, and `CLAUDE.md`'s build and test guidance, skills and hook (the list in `classic-parity.md`, "Notes for T255"). The constitution's Scope and boundary paragraph change in the amendment that lands with the branch, which needs the maintainer
-- [ ] T256 Remove the classic app (step 7; approved by the maintainer 2026-10-02), after T233-T255, T261-T265: delete `postio-gtk`, the `postio` binary and `postio-app`'s GUI with its suites and examples, and the workspace entries. `Frontend::Classic` is removed, or the classic default in `Availability::open` is replaced; `Requirement::ThreePane` is renamed for the terminal and macOS, keeping the terminal's `registry_parity` green; `[ui]` keys no app honours are removed; and `check-crate-boundaries.py` and every check naming `postio-gtk` are updated. ADR 0043's rules for the time before removal go with this. With `postio-app` go its storyboard runner (`demo::storyboard`, `examples/storyboard.rs`, five `app_suite` cases, their `.config/nextest.toml` filters), `postio_gtk`'s `storyboard` re-export, `storyboards/gaps/classic.toml`, and `postio_storyboard::apply::App::Classic` with the tests that name it
+- [ ] T256 Remove the classic app (step 7; approved by the maintainer 2026-10-02), after T233-T255, T261-T265: delete `postio-gtk`, the `postio` binary and `postio-app`'s GUI with its suites and examples, and the workspace entries. `Frontend::Classic` is removed, or the classic default in `Availability::open` is replaced; `Requirement::ThreePane` is narrowed to macOS (the terminal left it in T300); `[ui]` keys no app honours are removed; and `check-crate-boundaries.py` and every check naming `postio-gtk` are updated. ADR 0043's rules for the time before removal go with this. With `postio-app` go its storyboard runner (`demo::storyboard`, `examples/storyboard.rs`, five `app_suite` cases, their `.config/nextest.toml` filters), `postio_gtk`'s `storyboard` re-export, `storyboards/gaps/classic.toml`, and `postio_storyboard::apply::App::Classic` with the tests that name it
 - [X] T257 Flag in Focus (C13): Flag and Unflag on `*`, in the row menu and the command bar, local-first with Undo; no flag mark on rows; `g *` lists flagged mail. Test-first with real key delivery Done: Flag offered to Focus, `*` toggles, row menu says Flag or Unflag, in the command bar, Undo clears it; no flag mark on rows; `g *` lists flagged mail
 - [ ] T258 The account verbs by keyboard in Focus (`classic-parity.md` row 49): remove, rebuild the index, set the default, enable or disable, and map a mailbox role are reached only from an account row's menu and its detail view in Settings. Their registry entries (`RemoveAccount`, `RebuildAccountIndex`, `SetDefaultAccount`, `ToggleAccountEnabled`, `MapMailboxRole`, `Context::Accounts`) are the classic app's alone (`THREE_PANE_MAIL`). Offer them to Focus with keys that act on the account row Settings has focused. Test first: each key through real delivery in Settings' Accounts section
 - [ ] T259 The default signature says what is chosen: when an account has signatures and no default, Settings' "Default signature" picker shows the first signature as if it were the default. Show "None" until one is picked, and choosing one is the only thing that sets it. Test first: an account with two signatures and no default opens on "None", and nothing is written until a choice
@@ -513,6 +513,54 @@ maintainer asks.
 - [X] T160 Compare screen 25, and record it
 
 ---
+
+## Phase 19: User Story 16: Focus in the terminal (P1)
+
+**Goal**: `postio-tui` is Focus drawn in character cells ([terminal.md](terminal.md), C29). **Independent test**: User Story 16's scenarios, on rendered screens, against a fixture store with the network absent. Ids from T300 so they never collide with the desktop's (T001-T299). Each task removes the three-pane code it replaces in the same commit; nothing is kept behind a flag.
+
+### Foundation
+
+- [ ] T300 [US16] The registry: the terminal meets `Requirement::Focus` and not `ThreePane` (`crates/postio-core/src/registry.rs` `met_by`); `SwitchTreatment` also needs `Graphical`; `postio_ui::keymap_sheet::key_map` takes the frontend. The terminal's handlers for commands it no longer offers (sidebar, panes, parts panel, folder walking, saved-search rename and reorder) go. `registry_parity`'s palette surfaces follow (Picker, Digest, Filtered, Capture in; Sidebar and Parts out), and every Focus command the terminal cannot answer yet is listed in `app.rs`'s `GAPS`, which each later task empties. Test first: a Focus row is reachable for the terminal and a three-pane row is not
+- [ ] T301 [US16] One test harness for the terminal (`crates/postio-tui/src/test_support.rs`, `#[cfg(test)]` plus the `test-support` feature for `examples/shot.rs`): seed accounts, places and pages, serve fetches, open a message, answer reads, `screen(w, h)` and `hits_of`. `app.rs`'s, `view/mod.rs`'s and `shot.rs`'s copies of the seeding go as their tests move onto it
+- [ ] T302 [US16] Focus's engine in the terminal (FR-186): `run.rs` calls `Host::enable_focus` with `FocusSetup` after the store opens and before `start_syncing`, and again when `[focus]` changes; the shared setup and saved-search reading move out of `postio-focus/src/startup.rs` to `postio-session` so both apps call one. Test first: the host's probe counts the call under the terminal (it asserted the opposite for T034), and `startup_budget` follows
+- [ ] T303 [US16] The window's layout (FR-188, FR-190, FR-191): `layout.rs` becomes the top bar, strip, banner slot, list and bottom line of terminal.md, with the overlay and pane geometry as functions of `W × H`; `view/sidebar.rs`, `sidebar.rs`'s line model, `state.rs` (reader width, folded folders), the divider and the pane cycle go. The sidebar's account and folder feed becomes the places list the command bar and `g o` read. Test first: the screen at 120×36 and 50×12 has the rows terminal.md draws and no sidebar
+
+### Shared policy, out of the GTK crate (FR-189)
+
+Each moves toolkit-free code from `crates/postio-focus` to `postio-ui` (or `postio-session` where it needs the client), with its tests, and Focus calls it from there; then the terminal is written against it.
+
+- [ ] T304 [P] [US16] Rows: `list/item.rs` (`FocusRow`, `Digest`, `Conversation`, `surfaced`, ids, `threads`, `two_lines`), `list/model.rs`'s `day_of` and the single-heading rule, and the label merge and digest splice of `list/feed.rs` as pure functions
+- [ ] T305 [P] [US16] Targets and verbs: `window.rs`'s `aims`, `reach`, `aimed_message`, `aimed_senders`, `capture_source`, `picker_target`; the `act` table's command-to-`Command` construction; and the window's sentences (no saved search pinned, a digest rule saved, removed or missing, stop digesting, unsubscribed, messages open beside the list, nothing to open, not being sent)
+- [ ] T306 [P] [US16] Places and the bar: `places.rs`'s sections, ranks, `go_to`, `place_name` and the Filtered and Outbox rules; `bar.rs`'s routing (`in:`, `>`, chips only when filters), hit de-duplication and limit, headings, order and held-place words; `names.rs`
+- [ ] T307 [P] [US16] Pickers and frames: the label picker's applied rule and create flow, the move picker's destinations, Archive-first order and Recent, the pickers' typing rule; `open.rs`'s `TOOLBAR`, `SEND_TOOLBAR`, `FOLDED`, position and thread-chip words and thread stepping; `bulk.rs`'s `ACTIONS`; `chrome.rs`'s strip words; `compose/frame.rs`'s words
+- [ ] T308 [P] [US16] Digests, Filtered and capture: `digest.rs`'s page states, title, rule line, topic grouping and reference stepping; `rule_dialog.rs`'s defaults, queries and validation; `rules.rs`'s row words; `filtered.rs`'s paging and tabs; `capture.rs`'s modes, quick picks, project filter and words; `keymap_dialog.rs`'s title and footer
+
+### Surfaces
+
+- [ ] T309 [US16] The inbox (scenario 1): open `FocusScope::Inbox`, spliced digest and reminder rows, labels and `focus_counts`, re-read on `SurfacedChanged`; one- and two-line rows, marks, pills, trailing column and day headings as terminal.md draws them. Test first on the rendered screen
+- [ ] T310 [US16] Markers and their actions: the second line, `y`/`Y` answering, `e`, `s`, `t` with a vault, `-` dismiss, an answered or past invitation's status (scenario 3)
+- [ ] T311 [US16] The strip and top bar: place name, counts, `!` with its accent and "Showing", filtered and rule counts, the sync label and `? keys`
+- [ ] T312 [US16] Selection and the bulk bar: `x`, `J`/`K`, `X` as a predicate (C19), `Esc`, the bar's verbs (scenario 4)
+- [ ] T313 [US16] The bottom line's toast with Undo, 8 s, beside the bulk bar
+- [ ] T314 [US16] States: the banner (`focus_state::banner`) with its action, first sync's progress, the empty inbox
+- [ ] T315 [US16] The open message frame (scenario 2, FR-195): header, steps, position, action row and More, the column and its rhythm, the action card and the quote's highlight, attachments, the fold line, `j`/`k`, `[`/`]`, `o`, `v`, read on dwell, `Esc` back to the same row; the list dimmed behind
+- [ ] T316 [US16] Reading beside the list, `F8` and `[focus] reading`, from 128 columns
+- [ ] T317 [US16] The composer in the frame; detach to the whole screen (FR-196); reply, reply all and forward; Send later; Remind `ctrl+h`
+- [ ] T318 [US16] The command bar: opening in place, saved searches, chips, `in:`, commands with keys, results, the footer
+- [ ] T319 [US16] Folders and labels, `g o`, and the `g` go-to keys
+- [ ] T320 [US16] Pickers: snooze, remind, label and move, anchored at the row
+- [ ] T321 [US16] The key map, `?`, from `keymap_sheet` for the terminal
+- [ ] T322 [US16] Filtered, `g f`: the view, tabs, reasons, `R`, Sweep `F`
+- [ ] T323 [US16] The digest window: summary and list, references, the email from a reference, `A`, `D`, `U`
+- [ ] T324 [US16] Digest rules, `g d`, and the rule dialog, `d`
+- [ ] T325 [US16] Capture, `t` and `n`
+- [ ] T326 [US16] The mouse on every new surface (scenario 7, FR-192), and `NO_COLOR` on every new surface (scenario 6, FR-193)
+
+### Closing
+
+- [ ] T327 [US16] `examples/shot.rs` renders every surface in terminal.md, and each is compared with its drawing there, with differences recorded (FR-199)
+- [ ] T328 [US16] Spec 005 says what is true now: `contracts/tui-surface.md`'s Layout, Mouse and Colour tables point at terminal.md, FR-002's sidebar goes, and the README, `docs/keybindings.md` (through the registry) and the book describe the terminal as Focus
+- [ ] T329 [US16] Budgets (FR-197, SC-017): the startup, keystroke and rows-read counts hold for the new inbox and frame; `GAPS` and `NOT_YET` are empty
 
 ## Dependencies and order
 
@@ -667,6 +715,20 @@ this table against the spec.
 | FR-172–FR-175 | T154 |
 | FR-180, FR-181 | T157 |
 | FR-185 | T159 |
+| FR-186 | T302 |
+| FR-187 | T300, T329 |
+| FR-188 | T303, T309-T325 |
+| FR-189 | T304-T308 |
+| FR-190 | T300, T303 |
+| FR-191 | T303 |
+| FR-192 | T326 |
+| FR-193 | T326 |
+| FR-194 | T309-T325 |
+| FR-195 | T315, T316 |
+| FR-196 | T317 |
+| FR-197 | T329 |
+| FR-198 | T318, T319, T315 |
+| FR-199 | T327 |
 | SC-001 | T033, T089, T147 |
 | SC-002 | T041, T109 |
 | SC-003 | T059 |
@@ -683,3 +745,4 @@ this table against the spec.
 | SC-014 | T154 |
 | SC-015 | T029 |
 | SC-016 | T117, T152 |
+| SC-017 | T309-T329 |
