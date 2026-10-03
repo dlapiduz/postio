@@ -15,6 +15,12 @@
 //! into its own directory and returns. The parent compares what they wrote.
 //! Separate processes, because sameness *within* one process is the easy
 //! half, and the base-versus-branch diff is always across two.
+//!
+//! The children play on a compositor of their own, as
+//! `scripts/storyboards.sh` does: on the suite's shared one, another case's
+//! window can be the active one, and an inactive window draws in GTK's
+//! backdrop style, so the same step came out two ways (seen when this ran
+//! beside `observe` and `storyboards`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -60,9 +66,14 @@ pub fn two_processes_film_a_storyboard_identically() {
     let first = tempfile::tempdir().expect("a directory for the first run");
     let second = tempfile::tempdir().expect("a directory for the second run");
     let me = std::env::current_exe().expect("this binary");
+    let headless = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/test-headless.sh");
+    let display = format!("postio-determinism-{}", std::process::id());
     for out in [first.path(), second.path()] {
-        let status = Command::new(&me)
+        let status = Command::new(&headless)
+            .arg(&me)
             .args([NAME, "--exact"])
+            .env("POSTIO_TEST_DISPLAY", &display)
+            .env("POSTIO_TEST_GEOMETRY", "1920x1200")
             .env(CHILD, out)
             // The renderer the runner pins. Nameable, because naming the
             // default one is how this was seen failing: it draws the same
@@ -78,6 +89,10 @@ pub fn two_processes_film_a_storyboard_identically() {
             .expect("the child starts");
         assert!(status.success(), "a child run failed: {status}");
     }
+    let _ = Command::new(&headless)
+        .arg("--stop")
+        .env("POSTIO_TEST_DISPLAY", &display)
+        .status();
     let (a, b) = (read(first.path()), read(second.path()));
     assert_eq!(a.status, Status::Passed, "{a:#?}");
     assert_eq!(a.steps.len(), 4, "the starting state and three steps");

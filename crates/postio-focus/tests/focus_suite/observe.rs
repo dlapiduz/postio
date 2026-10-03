@@ -15,6 +15,7 @@ use postio_widgets::storyboard::deliver;
 
 use crate::support;
 
+#[track_caller]
 fn press(window: &postio_focus::window::FocusWindow, chord: &str) {
     let chord: Chord = chord.parse().expect("a chord");
     let delivery = deliver::press(window.upcast_ref(), &chord).expect("a deliverable chord");
@@ -61,6 +62,9 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert_eq!(seen.overlay.kind, Overlay::Finder, "{seen:#?}");
         assert_eq!(seen.keyboard.region, Region::Search);
         assert!(seen.keyboard.typing, "the bar's field takes text");
+        // What the bar lists is the bar's own, one app key per value.
+        assert_eq!(seen.app["focus.bar.typed"], "", "{:?}", seen.app);
+        assert_eq!(seen.app["focus.bar.messages"], 0, "{:?}", seen.app);
 
         // `Escape`: back to the list, the cursor where it was.
         press(&window, "Escape");
@@ -106,5 +110,16 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         let seen = window.observe();
         assert!(seen.notice.undo, "{seen:#?}");
         assert_eq!(seen.notice.tone, Some(Tone::Info));
+
+        // `e`: a reply, with the keyboard in its body.
+        press(&window, "e");
+        assert!(
+            crate::settle_until(async || window.observe().composer.open).await,
+            "no composer after reply"
+        );
+        let seen = window.observe();
+        assert_eq!(seen.view, View::Composer, "{seen:#?}");
+        assert_eq!(seen.keyboard.region, Region::Composer);
+        assert_eq!(seen.keyboard.field.as_deref(), Some("body"), "{seen:#?}");
     });
 }

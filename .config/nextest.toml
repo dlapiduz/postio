@@ -307,3 +307,13 @@ retries = 2
 [[profile.ci-full.overrides]]
 filter = 'binary(first_classification)'
 slow-timeout = { period = "120s", terminate-after = 10 }
+
+# Focus's determinism case films one storyboard in two child processes and
+# compares their pixels byte for byte (spec 008 SC-003). Beside the rest of
+# `focus_suite` the second child's archive frame came out another way three
+# runs in three (measured, T265), though alone it is identical every time:
+# the case is about the renderer and the clock, not about load, so it gets
+# the run to itself. It is one case of ~10 s.
+[[profile.default.overrides]]
+filter = 'binary(focus_suite) & test(/^storyboard_determinism::/)'
+threads-required = "num-test-threads"
