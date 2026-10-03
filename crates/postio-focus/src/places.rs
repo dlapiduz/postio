@@ -17,6 +17,7 @@ use postio_model::MailboxRole;
 use postio_model::listing::MailStore as _;
 use postio_ui::finder::Destination;
 use postio_ui::label_colour::{Rgb, label_colour};
+use postio_ui::places as rules;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::S2;
 
@@ -29,53 +30,8 @@ const DOT_BOX: i32 = 16;
 /// A label's dot's radius.
 const DOT_RADIUS: f64 = 4.0;
 
-/// What the Outbox is called, in the popover and the header.
-pub const OUTBOX: &str = "Outbox";
-
-/// Which section a place is listed under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Section {
-    Mailboxes,
-    Folders,
-    Labels,
-}
-
-impl Section {
-    fn title(self) -> &'static str {
-        match self {
-            Section::Mailboxes => "Mailboxes",
-            Section::Folders => "Folders",
-            Section::Labels => "Labels",
-        }
-    }
-}
-
-/// One place the popover lists.
-#[derive(Debug, Clone)]
-struct Entry {
-    section: Section,
-    /// Where it sorts within its section: a mailbox's role order.
-    rank: usize,
-    name: String,
-    /// What it says on the right: its count, or "186 today".
-    count: Option<String>,
-    go: Option<CommandId>,
-    /// Run this command rather than go to [`Self::destination`]: a place
-    /// that is a view of its own, like Filtered.
-    command: Option<CommandId>,
-    destination: Destination,
-    /// How it is marked: a mailbox's icon, or a label's colour.
-    mark: Mark,
-}
-
-/// What sits before a place's name.
-#[derive(Debug, Clone)]
-enum Mark {
-    /// A symbolic icon, by name.
-    Icon(&'static str),
-    /// A label's dot, in its stored colour if it has one.
-    Dot(Option<String>),
-}
+use postio_ui::places::{Entry, Mark};
+pub use postio_ui::places::{OUTBOX, go_to, place_name};
 
 /// What a place that is a command asks the window to run.
 type CommandHandler = Rc<dyn Fn(CommandId)>;
@@ -110,23 +66,13 @@ impl Places {
     /// The commands the popover has a row for: going to each mailbox that
     /// has a key of its own.
     pub fn controls() -> Vec<CommandId> {
-        [
-            MailboxRole::Inbox,
-            MailboxRole::Drafts,
-            MailboxRole::Sent,
-            MailboxRole::Archive,
-            MailboxRole::Snoozed,
-            MailboxRole::Flagged,
-        ]
-        .into_iter()
-        .filter_map(go_to)
-        .collect()
+        rules::direct_commands()
     }
 
     /// A closed popover, anchored to `anchor`, reading through `client`.
     pub fn new(client: Client, keymap: &Keymap, anchor: &impl IsA<gtk::Widget>) -> Rc<Self> {
         let entry = gtk::SearchEntry::new();
-        entry.set_placeholder_text(Some("Go to folder or label"));
+        entry.set_placeholder_text(Some(rules::FILTER_PLACEHOLDER));
         let list = gtk::ListBox::new();
         list.add_css_class("focus-places-list");
         list.set_selection_mode(gtk::SelectionMode::Single);
@@ -136,9 +82,7 @@ impl Places {
             .propagate_natural_height(true)
             .max_content_height(640)
             .build();
-        let footer = gtk::Label::new(Some(
-            "\u{21b5} open \u{b7} Esc close \u{b7} same as in:Receipts in the command bar",
-        ));
+        let footer = gtk::Label::new(Some(rules::FOOTER));
         footer.add_css_class("dim-label");
         footer.add_css_class("focus-places-footer");
         footer.set_xalign(0.0);
@@ -308,32 +252,8 @@ impl Places {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
-        let wanted = self.entry.text().to_lowercase();
-        let filtered = self.filtered_today.get().map(|count| Entry {
-            section: Section::Mailboxes,
-            rank: role_rank(MailboxRole::Archive) + 1,
-            name: postio_ui::filtered::TITLE.to_owned(),
-            count: Some(postio_ui::filtered::today_short(count)),
-            go: Some(CommandId::GoToFiltered),
-            command: Some(CommandId::GoToFiltered),
-            destination: Destination::Search(String::new()),
-            mark: Mark::Icon("folder-symbolic"),
-        });
-        let mut shown: Vec<Entry> = self
-            .all
-            .borrow()
-            .iter()
-            .chain(filtered.iter())
-            .filter(|entry| wanted.is_empty() || entry.name.to_lowercase().contains(&wanted))
-            .cloned()
-            .collect();
-        shown.sort_by(|a, b| {
-            (a.section, a.rank, a.name.to_lowercase()).cmp(&(
-                b.section,
-                b.rank,
-                b.name.to_lowercase(),
-            ))
-        });
+        let filtered = self.filtered_today.get().map(rules::filtered_entry);
+        let shown = rules::listed(&self.all.borrow(), filtered.as_ref(), &self.entry.text());
         let keymap = self.keymap.borrow();
         let accent_hue = accent_hue();
         let mut rows = Vec::new();
@@ -401,20 +321,7 @@ impl Places {
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.mailboxes(account.id).await;
                 for mailbox in read.unwrap_or_default() {
-                    let (section, rank) = match mailbox.role {
-                        MailboxRole::Regular => (Section::Folders, 0),
-                        role => (Section::Mailboxes, role_rank(role)),
-                    };
-                    found.push(Entry {
-                        section,
-                        rank,
-                        name: place_name(&mailbox),
-                        count: Some(mailbox.counts.total.to_string()),
-                        command: None,
-                        go: go_to(mailbox.role),
-                        destination: Destination::Mailbox(mailbox.id),
-                        mark: Mark::Icon(icon(mailbox.role)),
-                    });
+                    found.push(rules::mailbox_entry(&mailbox));
                 }
                 // The Outbox, while anything waits in it (T239): a view over
                 // Drafts, so it has no mailbox row of its own to be listed by.
@@ -422,30 +329,12 @@ impl Places {
                 // POSTIO-GLIB-SAFE: as above.
                 let waiting = client.list_count(outbox).await.unwrap_or(0);
                 if waiting > 0 {
-                    found.push(Entry {
-                        section: Section::Mailboxes,
-                        rank: role_rank(MailboxRole::Outbox),
-                        name: OUTBOX.to_owned(),
-                        count: Some(waiting.to_string()),
-                        command: None,
-                        go: None,
-                        destination: Destination::Outbox(account.id),
-                        mark: Mark::Icon(icon(MailboxRole::Outbox)),
-                    });
+                    found.push(rules::outbox_entry(account.id, waiting));
                 }
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.labels(account.id).await;
                 for label in read.unwrap_or_default() {
-                    found.push(Entry {
-                        section: Section::Labels,
-                        rank: 0,
-                        name: label.name.clone(),
-                        count: None,
-                        command: None,
-                        go: None,
-                        destination: Destination::Label(label.id),
-                        mark: Mark::Dot(label.color.clone()),
-                    });
+                    found.push(rules::label_entry(&label));
                 }
             }
             all.replace(found);
@@ -473,8 +362,8 @@ fn icon(role: MailboxRole) -> &'static str {
 /// The widget `mark` makes before a place called `name`.
 fn mark(mark: &Mark, name: &str, accent_hue: f64) -> gtk::Widget {
     match mark {
-        Mark::Icon(icon) => {
-            let image = gtk::Image::from_icon_name(icon);
+        Mark::Role(role) => {
+            let image = gtk::Image::from_icon_name(icon(*role));
             image.add_css_class("focus-places-icon");
             image.set_accessible_role(gtk::AccessibleRole::Presentation);
             image.upcast()
@@ -542,40 +431,4 @@ fn accent_hue() -> f64 {
         byte(accent.blue()),
     )
     .hue()
-}
-
-/// Where a mailbox of `role` sorts: the order screen 10 lists them in.
-fn role_rank(role: MailboxRole) -> usize {
-    match role {
-        MailboxRole::Inbox => 0,
-        MailboxRole::Drafts => 1,
-        // What Drafts sent on its way, listed under it.
-        MailboxRole::Outbox => 1,
-        MailboxRole::Sent => 2,
-        MailboxRole::Snoozed => 3,
-        MailboxRole::Archive => 4,
-        _ => 5,
-    }
-}
-
-/// The command that goes to a mailbox of `role` directly.
-pub fn go_to(role: MailboxRole) -> Option<CommandId> {
-    Some(match role {
-        MailboxRole::Inbox => CommandId::GoToInbox,
-        MailboxRole::Drafts => CommandId::GoToDrafts,
-        MailboxRole::Sent => CommandId::GoToSent,
-        MailboxRole::Archive => CommandId::GoToArchive,
-        MailboxRole::Snoozed => CommandId::GoToSnoozed,
-        MailboxRole::Flagged => CommandId::GoToFlagged,
-        _ => return None,
-    })
-}
-
-/// What a mailbox is called here: "Inbox" for an inbox, whatever the
-/// server names it ("INBOX"), and its own name otherwise.
-pub fn place_name(mailbox: &postio_model::Mailbox) -> String {
-    match mailbox.role {
-        MailboxRole::Inbox => "Inbox".to_owned(),
-        _ => mailbox.name.clone(),
-    }
 }

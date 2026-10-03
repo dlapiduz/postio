@@ -25,8 +25,8 @@ use gtk::prelude::*;
 use postio_client::Client;
 use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
 use postio_model::listing::{ListPage, MailStore as _, PageRequest};
-use postio_model::{AccountScope, ListScope, MailboxId, MailboxRole, MessageId};
-use postio_ui::finder::{self, Destination, Place, PlaceKind};
+use postio_model::{AccountScope, ListScope, MailboxId, MessageId};
+use postio_ui::finder::{self, Place};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
@@ -34,51 +34,8 @@ use postio_widgets::widgets::space::{S1, S2, S3};
 const WIDTH: i32 = 860;
 /// The top bar's field, which the bar's input takes the place of.
 const FIELD_WIDTH: i32 = 480;
-/// How many conversations a folder lists in the bar.
-const FOLDER_ROWS: u32 = 30;
-/// How many search hits the bar lists.
-const HITS: usize = 30;
-
-/// What running a row asks the window to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BarAction {
-    /// Open a message over the list.
-    Open {
-        /// Which.
-        message: MessageId,
-        /// Its subject, for the dialog's header.
-        subject: String,
-    },
-    /// Run a command, on what the bar opened over.
-    Command(CommandId),
-    /// Go to a place: the list shows it.
-    Go {
-        /// Where.
-        destination: Destination,
-        /// Its name, for the header strip.
-        name: String,
-    },
-}
-
-/// One row of the results, and what running it does.
-#[derive(Debug, Clone)]
-enum Row {
-    /// A section heading; runs nothing.
-    Heading,
-    /// A message: a search hit, or a folder's conversation.
-    Message { message: MessageId, subject: String },
-    /// A command.
-    Command(ActionId),
-    /// A place.
-    Place(Destination, String),
-    /// "Search mail for …": the results are already the search's.
-    Search,
-    /// "Search instead for “word”": the word typed, which found nothing and
-    /// was answered with another (ADR 0037); runs it quoted, exactly.
-    Instead(String),
-    /// The order the results are in, and what running it switches to.
-    Order,
-}
+pub use postio_ui::command_bar::BarAction;
+use postio_ui::command_bar::{self as rules, Line, Row, Run, SAVED, said_of};
 
 /// What a run of the bar asks for.
 type Handler = Rc<dyn Fn(BarAction)>;
@@ -101,7 +58,7 @@ pub struct Bar {
     /// Folder names by id, for a result's `in:`.
     folders: Rc<RefCell<Vec<(MailboxId, String)>>>,
     /// Who a typed name can mean, read with the places.
-    names: Rc<RefCell<crate::names::Names>>,
+    names: Rc<RefCell<postio_ui::names::Names>>,
     /// What each row of the list runs, in order.
     rows: Rc<RefCell<Vec<Row>>>,
     /// Moves with every keystroke, so a late answer to an earlier one is
@@ -136,37 +93,6 @@ pub struct Bar {
     /// what lets `O` mean "switch the order" rather than the letter, which
     /// typing always wins.
     stepped: Cell<bool>,
-}
-
-/// The verbs on an account, which Settings' Accounts section binds keys to
-/// (T258). They are reached from the list's bar too, where they act on the
-/// account row Settings has focused, or open Settings to pick one.
-const ACCOUNT_VERBS: [CommandId; 5] = [
-    CommandId::ToggleAccountEnabled,
-    CommandId::RemoveAccount,
-    CommandId::RebuildAccountIndex,
-    CommandId::SetDefaultAccount,
-    CommandId::MapMailboxRole,
-];
-
-/// Add the account verbs `query` matches to `found`, ranked among it. The
-/// palette lists a context's own commands, and these are `Accounts`'.
-fn add_account_verbs(
-    found: &mut Vec<postio_ui::palette::Entry>,
-    keymap: &Keymap,
-    state: postio_core::Availability,
-    query: &str,
-) {
-    let extra: Vec<_> = postio_ui::palette::entries(keymap, Context::Accounts, state, query)
-        .into_iter()
-        .filter(|entry| {
-            matches!(entry.id, ActionId::Builtin(id) if ACCOUNT_VERBS.contains(&id))
-                && !found.iter().any(|have| have.id == entry.id)
-        })
-        .collect();
-    found.extend(extra);
-    found.sort_by_key(|entry| std::cmp::Reverse(entry.score));
-    found.truncate(postio_ui::palette::MAX_ROWS);
 }
 
 impl Bar {
@@ -658,7 +584,7 @@ impl Bar {
         };
         let keymap = self.keymap.borrow();
         let mut entries = postio_ui::palette::entries(&keymap, Context::List, state, "");
-        add_account_verbs(&mut entries, &keymap, state, "");
+        rules::add_account_verbs(&mut entries, &keymap, state, "");
         entries
             .into_iter()
             .filter_map(|entry| match entry.id {
@@ -763,31 +689,26 @@ impl Bar {
         let text = text.to_owned();
         let typed = text.trim();
         self.echo.set_visible(!typed.is_empty());
-        self.echo
-            .set_text(&format!("You typed \u{201c}{typed}\u{201d}"));
-        if let Some(name) = typed.strip_prefix("in:").filter(|name| !name.contains(' ')) {
-            self.show_chips(&[]);
-            self.show_folder(name, generation);
-            return;
-        }
-        self.show_blend(typed);
-        if typed.is_empty() || typed.starts_with(finder::COMMANDS_ONLY) {
-            self.show_chips(&[]);
-            self.heading.set_visible(false);
-            return;
+        self.echo.set_text(&rules::echo(typed));
+        match rules::route(typed) {
+            rules::Route::Folder(name) => {
+                self.show_chips(&[]);
+                self.show_folder(name, generation);
+                return;
+            }
+            rules::Route::Plain => {
+                self.show_blend(typed);
+                self.show_chips(&[]);
+                self.heading.set_visible(false);
+                return;
+            }
+            rules::Route::Blend => self.show_blend(typed),
         }
         let parsed = self.lowered(typed);
-        // Words that name what they want -- an operator, or a partial one
-        // on its way -- are a search, shown as its chips (screen 07). A
-        // plain word is answered with the commands and places it names and
-        // one search row, and searches when that row is chosen (screen 09);
-        // it is what the entry already says, so it makes no chip.
-        if parsed.filters().next().is_some() || parsed.partials().next().is_some() {
-            let chips: Vec<String> = parsed
-                .tokens()
-                .iter()
-                .map(|token| token.raw.clone())
-                .collect();
+        // Words that name what they want are a search, shown as its chips
+        // (screen 07); a plain word makes none and searches when its row is
+        // chosen (screen 09).
+        if let Some(chips) = rules::chips(&parsed) {
             self.show_chips(&chips);
             self.show_editing();
             self.search(parsed, generation);
@@ -842,41 +763,10 @@ impl Bar {
         let mut blend = finder::blend(typed, &places, &keymap, Context::List, state);
         let words = typed.strip_prefix(finder::COMMANDS_ONLY).unwrap_or(typed);
         if typed.starts_with(finder::COMMANDS_ONLY) || !words.trim().is_empty() {
-            add_account_verbs(&mut blend.commands, &keymap, state, words.trim());
+            rules::add_account_verbs(&mut blend.commands, &keymap, state, words.trim());
         }
-        if !blend.commands.is_empty() {
-            self.append_heading("Commands");
-            for entry in blend.commands.iter().take(5) {
-                self.append_row(
-                    Row::Command(entry.id),
-                    entry.title,
-                    None,
-                    entry.binding.as_deref(),
-                );
-            }
-        }
-        if !blend.places.is_empty() {
-            self.append_heading("Go to");
-            for hit in blend.places.iter().take(5) {
-                let detail = hit
-                    .place
-                    .count
-                    .map(|count| format!("{count} conversations"));
-                self.append_row(
-                    Row::Place(hit.place.destination.clone(), hit.place.name.clone()),
-                    &format!("in:{}", hit.place.name),
-                    detail.as_deref(),
-                    hit.binding.as_deref(),
-                );
-            }
-        }
-        if let Some(query) = &blend.search {
-            self.append_row(
-                Row::Search,
-                &format!("Search mail for \u{201c}{query}\u{201d}"),
-                Some("subject, body, attachments"),
-                None,
-            );
+        for line in rules::blend_lines(&blend) {
+            self.append_line(&line);
         }
     }
 
@@ -909,52 +799,26 @@ impl Bar {
             let Ok(Some(results)) = found else {
                 return;
             };
-            let mut seen = Vec::new();
-            let mut rows = Vec::new();
-            for hit in results.hits {
-                let conversation = hit
-                    .thread_id
-                    .map(|thread| thread.get())
-                    .unwrap_or(-hit.message_id.get());
-                if seen.contains(&conversation) {
-                    continue;
-                }
-                seen.push(conversation);
-                rows.push(hit);
-                if rows.len() == HITS {
-                    break;
-                }
-            }
-            bar.heading.set_text(&format!(
-                "Conversations \u{b7} {} match{}",
-                rows.len(),
-                if rows.len() == 1 { "" } else { "es" }
-            ));
+            let rows = rules::conversations(results.hits);
+            bar.heading.set_text(&rules::results_heading(rows.len()));
             bar.heading.set_visible(true);
             // The list is for another word than the box holds, and says so
             // (ADR 0037); the typed word is one row away, quoted, which is
             // how the query language says "this word, exactly".
             if let Some(instead) = &results.instead {
-                bar.append_heading(&format!("Showing results for {}", instead.term));
+                bar.append_heading(&rules::showing_results_for(&instead.term));
+                let (title, detail) = rules::search_instead(&instead.typed);
                 bar.append_row(
                     Row::Instead(instead.typed.clone()),
-                    &format!("Search instead for \u{201c}{}\u{201d}", instead.typed),
-                    Some("exactly as typed"),
+                    &title,
+                    Some(detail),
                     None,
                 );
             }
             if !rows.is_empty() {
-                let (now, other) = match order {
-                    postio_search::ResultOrder::Relevance => ("relevance", "date"),
-                    postio_search::ResultOrder::Newest => ("date", "relevance"),
-                };
+                let (title, detail) = rules::order_words(order);
                 let key = postio_ui::hints::key(&bar.keymap.borrow(), CommandId::ToggleResultOrder);
-                bar.append_row(
-                    Row::Order,
-                    &format!("Sorted by {now}"),
-                    Some(&format!("switch to {other}")),
-                    key.as_deref(),
-                );
+                bar.append_row(Row::Order, &title, Some(&detail), key.as_deref());
             }
             // Held mail says where it waits, not the folder it is filed in.
             let held = if digesting {
@@ -971,18 +835,7 @@ impl Bar {
             let names = folders.borrow().clone();
             for hit in rows {
                 let subject = hit.subject.clone().unwrap_or_default();
-                let place = match held
-                    .iter()
-                    .find(|(message, _, _)| *message == hit.message_id)
-                {
-                    Some((_, rule, delivered)) => {
-                        Some(postio_ui::digest::held_place(rule, *delivered))
-                    }
-                    None => names
-                        .iter()
-                        .find(|(id, _)| *id == hit.mailbox_id)
-                        .map(|(_, name)| format!("in:{name}")),
-                };
+                let place = rules::result_place(&hit, &held, &names);
                 bar.append_message(
                     hit.message_id,
                     hit.from.as_ref().map(said_of),
@@ -998,20 +851,8 @@ impl Bar {
     /// `in:` and `name`: the first folder whose name starts with it, and its
     /// conversations newest first (screen 08).
     fn show_folder(&self, name: &str, generation: u64) {
-        let wanted = name.to_lowercase();
-        let folder = self
-            .places
-            .borrow()
-            .iter()
-            .filter(|place| matches!(place.kind, PlaceKind::Mailbox | PlaceKind::Folder))
-            .find(|place| place.name.to_lowercase().starts_with(&wanted))
-            .cloned();
-        let Some(Place {
-            name,
-            destination: Destination::Mailbox(mailbox),
-            ..
-        }) = folder
-        else {
+        let folder = rules::folder_for(&self.places.borrow(), name);
+        let Some((name, mailbox)) = folder else {
             self.heading.set_visible(false);
             return;
         };
@@ -1026,7 +867,7 @@ impl Bar {
             let read = client.list_page(PageRequest {
                 scope,
                 offset: 0,
-                limit: FOLDER_ROWS,
+                limit: rules::FOLDER_ROWS,
             });
             // POSTIO-GLIB-SAFE: as above.
             let page = read.await;
@@ -1037,10 +878,8 @@ impl Bar {
                 return;
             };
             bar.clear_rows();
-            bar.heading.set_text(&format!(
-                "{name} \u{b7} folder \u{b7} {} conversations \u{b7} newest first",
-                count.unwrap_or(0)
-            ));
+            bar.heading
+                .set_text(&rules::folder_heading(&name, count.unwrap_or(0)));
             bar.heading.set_visible(true);
             match page {
                 Ok(ListPage::Threads(page)) => {
@@ -1095,19 +934,8 @@ impl Bar {
                 let read = client.mailboxes(account.id).await;
                 if let Ok(mailboxes) = read {
                     for mailbox in mailboxes {
-                        let name = crate::places::place_name(&mailbox);
-                        names.push((mailbox.id, name.clone()));
-                        found.push(Place {
-                            kind: if mailbox.role == MailboxRole::Regular {
-                                PlaceKind::Folder
-                            } else {
-                                PlaceKind::Mailbox
-                            },
-                            name,
-                            count: None,
-                            go: crate::places::go_to(mailbox.role).map(ActionId::from),
-                            destination: Destination::Mailbox(mailbox.id),
-                        });
+                        names.push((mailbox.id, postio_ui::places::place_name(&mailbox)));
+                        found.push(postio_ui::places::mailbox_place(&mailbox));
                     }
                 }
                 // POSTIO-GLIB-SAFE: as above.
@@ -1117,19 +945,13 @@ impl Bar {
                 let read = client.labels(account.id).await;
                 if let Ok(labels) = read {
                     for label in labels {
-                        found.push(Place {
-                            kind: PlaceKind::Label,
-                            name: label.name.clone(),
-                            count: None,
-                            go: None,
-                            destination: Destination::Label(label.id),
-                        });
+                        found.push(postio_ui::places::label_place(&label));
                     }
                 }
             }
             places.replace(found);
             folders.replace(names);
-            directory.replace(crate::names::Names::new(&correspondents));
+            directory.replace(postio_ui::names::Names::new(&correspondents));
             // `in:` typed before the places landed is answered again, now
             // that it has folders to complete. Nothing else needs them to
             // answer, and a search is not asked for twice.
@@ -1154,6 +976,18 @@ impl Bar {
             self.list.remove(&child);
         }
         self.rows.borrow_mut().clear();
+    }
+
+    fn append_line(&self, line: &Line) {
+        match line {
+            Line::Heading(title) => self.append_heading(title),
+            Line::Row {
+                row,
+                title,
+                detail,
+                key,
+            } => self.append_row(row.clone(), title, detail.as_deref(), key.as_deref()),
+        }
     }
 
     fn append_heading(&self, title: &str) {
@@ -1247,11 +1081,7 @@ impl Bar {
         if self.list.selected_row().is_some() {
             return;
         }
-        let first = self
-            .rows
-            .borrow()
-            .iter()
-            .position(|row| !matches!(row, Row::Heading));
+        let first = self.rows.borrow().iter().position(Row::is_selectable);
         if let Some(row) = first.and_then(|at| self.list.row_at_index(at as i32)) {
             self.list.select_row(Some(&row));
         }
@@ -1266,7 +1096,7 @@ impl Bar {
             if at < 0 || at >= count {
                 return;
             }
-            if !matches!(self.rows.borrow()[at as usize], Row::Heading) {
+            if self.rows.borrow()[at as usize].is_selectable() {
                 break;
             }
         }
@@ -1289,25 +1119,22 @@ impl Bar {
         let Some(row) = self.rows.borrow().get(index).cloned() else {
             return;
         };
-        let action = match row {
-            Row::Heading => return,
-            Row::Search => {
+        let action = match row.run() {
+            Run::Nothing => return,
+            Run::Search => {
                 self.search_typed();
                 return;
             }
-            Row::Instead(typed) => {
-                self.set_text(&format!("\"{typed}\""));
+            Run::SearchFor(text) => {
+                self.set_text(&text);
                 self.search_typed();
                 return;
             }
-            Row::Order => {
+            Run::ToggleOrder => {
                 self.toggle_order();
                 return;
             }
-            Row::Message { message, subject } => BarAction::Open { message, subject },
-            Row::Command(ActionId::Builtin(command)) => BarAction::Command(command),
-            Row::Command(ActionId::Ext(_)) => return,
-            Row::Place(destination, name) => BarAction::Go { destination, name },
+            Run::Action(action) => action,
         };
         self.close();
         let handler = self.handler.borrow().clone();
@@ -1315,17 +1142,4 @@ impl Bar {
             handler(action);
         }
     }
-}
-
-/// The commands that run the saved searches, in order.
-const SAVED: [CommandId; 4] = [
-    CommandId::SavedSearch1,
-    CommandId::SavedSearch2,
-    CommandId::SavedSearch3,
-    CommandId::SavedSearch4,
-];
-
-/// A sender as a result row names them: their name, or their address.
-fn said_of(from: &postio_model::EmailAddress) -> String {
-    from.name.clone().unwrap_or_else(|| from.address.clone())
 }

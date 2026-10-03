@@ -28,7 +28,6 @@ pub mod label_picker;
 pub mod list;
 pub mod motion;
 pub mod move_picker;
-pub mod names;
 pub mod open;
 mod open_header;
 pub mod places;
