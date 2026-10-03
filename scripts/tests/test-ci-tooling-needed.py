@@ -93,7 +93,7 @@ def main() -> int:
 
     case(
         "a Rust-only change cannot affect scripts/, so it skips",
-        files=["crates/postio-gtk/src/list.rs", "crates/postio-app/src/lib.rs"],
+        files=["crates/postio-gtk/src/window.rs", "crates/postio-widgets/src/lib.rs"],
         expected="no",
     )
     case(

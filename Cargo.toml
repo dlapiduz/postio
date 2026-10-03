@@ -222,8 +222,8 @@ strip = true
 # stack, and diagnosis here happens through tests and POSTIO_LOG, not a
 # debugger. This was tuned once to `line-tables-only` without measuring what
 # that left behind, and what it left behind was most of it. Measured on the
-# `app_suite` test binary, cold builds of `cargo test --no-run -p postio-app
-# --test app_suite` at `-j6` with sccache off, on an idle box:
+# classic app's test binary (`app_suite`, since removed), cold builds of
+# `cargo test --no-run` at `-j6` with sccache off, on an idle box:
 #
 #     debug                 cold build   binary   .debug sections
 #     "line-tables-only"      301/307s   239 MB       153.6 MB
@@ -272,8 +272,8 @@ debug = 0
 # **counts** off SQLite's trace hook rather than as timings (CLAUDE.md,
 # "Gated as counts, not as timings") and `cargo bench` measures release. But
 # what it moves is the wall clock of the suites people wait on, and it moves
-# it a long way: `cargo test -p postio-app --test app_suite` runs in **200s**
-# with this at `2` and **382s** with it at `1`. Nearly double, for ~20s of
+# it a long way: the classic app's suite ran in **200s** with this at `2`
+# and **382s** with it at `1`. Nearly double, for ~20s of
 # cold-build time saved.
 #
 # So this line is not a leftover to tidy away: it is the reason the

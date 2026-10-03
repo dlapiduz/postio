@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Self-test for scripts/checks/check-parallel-main-context.py.
 
-The check exists because #841's `logic_suite` was assembled on the rule "does
+The check exists because one of #841's suites was assembled on the rule "does
 the file call `adw::init`", which is the obvious question and the wrong one.
 `list_model` and `drag_out` initialize nothing; one calls
 `MainContext::default().iteration()` and the other `block_on`. *Acquiring*

@@ -7,7 +7,7 @@ machine more patient is one environment variable rather than a pull request
 that enlarges a constant and slows every run forever.
 
 **The dial only reaches the deadlines that go through that crate.** #957 is
-what the gap costs: three `gtk_suite` cases flake on a busy workstation, one
+what the gap costs: three GTK suite cases flaked on a busy workstation, one
 a run, each passing alone every time -- and every one of them waits on a
 deadline written by hand. `gtk_composer_toolbar` waits a hardcoded 20
 seconds. Setting `POSTIO_TEST_PATIENCE=8` before a local full-suite run does
@@ -257,7 +257,7 @@ def main() -> int:
         f"\n{len(problems)} deadline(s) POSTIO_TEST_PATIENCE cannot reach.\n\n"
         "A hand-rolled deadline measures the process it runs in. On a shared\n"
         "workstation that is a flake nobody can reproduce alone -- #957, one\n"
-        "gtk_suite case a run -- and the dial #842 built to absorb it stops\n"
+        "GTK suite case a run -- and the dial #842 built to absorb it stops\n"
         "at the edge of postio_test_support.\n\n"
         "Wrap the duration so the dial reaches it:\n\n"
         "    use postio_test_support::scaled;\n"

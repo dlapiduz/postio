@@ -15,7 +15,7 @@ time, and the loser gets
 which panics, and in a `harness = false` target aborts the binary.
 
 That is not hypothetical. #841 consolidated 197 test binaries into a few
-suites, and `logic_suite` was assembled on the rule "does the file call
+suites, and one of them was assembled on the rule "does the file call
 `adw::init`" — the obvious question, and the wrong one. `list_model` and
 `drag_out` initialize nothing and both acquire the context. It passed
 locally and aborted on a four-core runner.
@@ -31,7 +31,7 @@ is correct — refusing it would push it into a sequential suite, which is
 where it segfaulted. What is unsafe is a second test running beside it.
 
 A `harness = false` target is exempt: it controls its own scheduling, which
-is why `gtk_suite` and `app_suite` exist.
+is why `focus_suite` and `widgets_suite` exist.
 
 # Exit status
 
@@ -159,11 +159,12 @@ def main() -> int:
         "panics -- and takes the whole binary down in a harness = false\n"
         "target.\n\n"
         "It passes locally and fails on a runner with more cores, which is\n"
-        "how #841 shipped it: `logic_suite` was assembled on 'does it call\n"
+        "how #841 shipped it: a suite was assembled on 'does it call\n"
         "adw::init', and these files initialize nothing.\n\n"
-        "Move the file into a `harness = false` suite (gtk_suite, app_suite),\n"
-        "which runs its cases sequentially -- or, if it genuinely needs its\n"
-        "own process, give it a test file of its own with one test in it.\n"
+        "Move the file into a `harness = false` suite (focus_suite or\n"
+        "widgets_suite), which runs its cases sequentially -- or, if it\n"
+        "genuinely needs its own process, give it a test file of its own\n"
+        "with one test in it.\n"
         "One test cannot race itself, which is why `drag_out` is allowed to\n"
         "stand alone.",
         file=sys.stderr,

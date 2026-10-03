@@ -8,7 +8,7 @@ for sccache's own daemon). That fixed a memory problem, not a leak: dozens
 of test files create a `tempfile::tempdir()` and immediately call
 `.keep()` on it, or build a state directory under `std::env::temp_dir()`
 by hand, and nothing ever removes either. One afternoon of
-`cargo test -p postio-app` left 400 behind before this was noticed.
+`cargo test` of the classic app's crate left 400 behind before this was noticed.
 
 Fixing every call site is real work -- some `.keep()` calls are load-bearing
 (the path outlives the test body, or a later assertion reads it back), so it

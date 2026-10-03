@@ -1091,9 +1091,9 @@ impl SettingsPanel {
     /// show up on the footer line -- the same place TOML validity does --
     /// rather than only in a debug log.
     ///
-    /// `window.rs` calls this with `Resolver::apply_commands`'s and
-    /// `Resolver::from_commands`'s return value on every keymap build and
-    /// every live reload, whether or not this panel happens to be open.
+    /// The app calls this with what its resolver could not bind on every
+    /// keymap build and every live reload, whether or not this panel
+    /// happens to be open.
     pub fn set_keymap_problems(&self, problems: &[String]) {
         *self.imp().keymap_problems.borrow_mut() = problems.to_vec();
         self.refresh_validity();

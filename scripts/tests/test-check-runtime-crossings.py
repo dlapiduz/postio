@@ -179,7 +179,7 @@ fn request() {
     glib::spawn_future_local(async move {
         // POSTIO-GLIB-SAFE: `MessageSource::fetch` is a trait method, and the
         // trait's contract is that what it returns is pollable on the main
-        // context -- `postio-app` implements it by spawning the runtime work
+        // context -- the app implements it by spawning the runtime work
         // and handing back a channel receive. A `MailBackend` future must
         // never be returned from it directly.
         match future.await {
