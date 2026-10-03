@@ -164,7 +164,7 @@ ids.
 | C24 | 09 | **Maintainer (2026-09-29):** `mod+k` opens the command bar in command mode with `>` typed, and `/` opens it for mail search. The bar opens in place, in the top bar's field, with its results below |
 | C25 | message dialog `SPEC.md` §2, §4, §5 | **Maintainer (2026-10-01): the system font for the chrome.** The chrome is Adwaita Sans and Adwaita Mono at the handoff's sizes, weights and gaps; no Barlow, Barlow Condensed or IBM Plex Mono in it (FR-093). A body drawn in app colours is set in Barlow (FR-039) |
 | C26 | message dialog `SPEC.md` §5, §6 | **Maintainer (2026-10-01): the system accent everywhere.** The open message follows the GNOME accent like the rest of Focus: the action card's fill is libadwaita's `--accent-color` at 8% (light) and 12% (dark), and links and the card's tag are that accent. The handoff's surface, ink, hairline and scrim values stand |
-| C27 | — | **Maintainer (2026-10-02): Focus is the one desktop app**, named "Postio" (binary `postio`, app id `dev.postio.Postio`) once the package switches (T253); until then it builds as `postio-gtk` with app id `dev.postio.Postio.Focus`. The classic three-pane app (`postio-gtk`, the `postio` binary in `postio-app`) is retired rather than kept as a mode: it keeps building until it is removed and gets no new work ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). What it did and where Focus does it is [`classic-parity.md`](classic-parity.md). Removal is approved (2026-10-02) and follows T249-T265 |
+| C27 | — | **Maintainer (2026-10-02): Focus is the one desktop app**, named "Postio": the crate `postio-gtk`, the binary `postio`, the app id `dev.postio.Postio` ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). The classic three-pane app was retired rather than kept as a mode, and removed (T256, approved 2026-10-02); where each of its capabilities lives now is [`classic-parity.md`](classic-parity.md) |
 | C28 | 05 | Send is `mod+Return`: `ctrl+Return` on Linux, `cmd+Return` (`⌘↩`) on the Mac, drawn `ctrl+↵` on the composer's keycap; `mod+shift+d` is unbound |
 | C29 | — | **Maintainer (2026-10-02): the terminal is Focus too.** `postio-tui` draws Focus's surfaces in character cells ([terminal.md](terminal.md)) and turns Focus's engine on while it runs. Its three-pane layout, sidebar, panes and parts panel are removed, with no mode or flag that keeps them (User Story 16) |
 
@@ -1274,8 +1274,7 @@ screen, not on what a layer was handed, that each surface shows what
   bindings, which follow the one keymap (FR-081). A test that has to be
   weakened to pass is evidence of a regression, not of a refactor. The
   terminal is Focus (C29): what it did in three panes it does where Focus
-  does it (FR-198). The classic app is retired (ADR 0043): until it is
-  removed it keeps building and its suites stay green.
+  does it (FR-198). The classic app is removed (ADR 0043, T256).
 - **FR-006**: Behaviour that needs no toolkit MUST be expressed once, in the
   shared toolkit-free layers, and consumed from there. This covers list
   state, selection, paging, the keymap, key hints, the command bar and
@@ -1290,12 +1289,11 @@ screen, not on what a layer was handed, that each surface shows what
   - the keycap, key-hint, chip, action-bar, notice and toast widgets, and the
     pickers.
 
-  Focus MUST NOT depend on the classic app's crates. The rule for
-  `postio-widgets` (what may live there, what may not, and who depends on
-  it) is ADR 0043, enforced by `scripts/checks/check-crate-boundaries.py`.
-- **FR-008**: Code moving out of the classic app's crates MUST go to the
-  lowest layer that can hold it, and the move MUST keep every app that still
-  builds green at every step.
+  The rule for `postio-widgets` (what may live there, what may not, and
+  who depends on it) is ADR 0043, enforced by `scripts/checks/check-crate-boundaries.py`.
+- **FR-008**: Code MUST live in the lowest layer that can hold it: the
+  toolkit-free crates before `postio-widgets`, and `postio-widgets` before
+  the app's own crate.
 - **FR-009**: The documents that name Postio's frontends, boundaries and
   keys MUST describe Focus, in this branch, together with the checks that
   enforce them:
