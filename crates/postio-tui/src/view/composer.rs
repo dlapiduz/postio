@@ -169,7 +169,6 @@ pub fn screen(
         app.preview_shown(),
         app.focus() == crate::app::Focus::Composer
             && app.scheduling().is_none()
-            && app.reminding().is_none()
             && app.path_prompt().is_none(),
         &[],
         theme,
@@ -177,16 +176,6 @@ pub fn screen(
     );
     if let Some(times) = app.scheduling() {
         draw_schedule(frame, body, "Send later", times, theme, now);
-    }
-    if let Some(times) = app.reminding() {
-        draw_schedule(
-            frame,
-            body,
-            postio_ui::pickers::REMIND_TITLE,
-            times,
-            theme,
-            now,
-        );
     }
     if let Some(typed) = app.path_prompt() {
         draw_path_prompt(frame, body, typed, theme);
@@ -718,6 +707,10 @@ mod tests {
         assert_eq!(remind, "ctrl+h", "{remind}");
         update(&mut app, ctrl('h'));
         let drawn = screen(120, 36, &app);
+        assert!(
+            drawn.contains("Or type a date"),
+            "the one remind picker, as the row's `h` opens:\n{drawn}"
+        );
         for (index, (name, _)) in postio_ui::schedule::remind_presets(chrono::Local::now())
             .iter()
             .enumerate()

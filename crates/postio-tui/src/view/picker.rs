@@ -668,9 +668,12 @@ mod more {
             commands(&effects).is_empty(),
             "nothing is sent for mail: {effects:?}"
         );
-        assert!(app.draft_remind().is_some());
+        assert!(
+            app.composer()
+                .and_then(|composer| composer.remind_at())
+                .is_some(),
+            "the draft carries the reminder"
+        );
         assert_eq!(app.focus(), crate::app::Focus::Composer, "back to writing");
-        app.clear_draft_remind();
-        assert!(app.draft_remind().is_none());
     }
 }

@@ -631,8 +631,6 @@ pub struct App {
     preview: postio_config::Preview,
     /// Whether the preview is showing.
     previewing: bool,
-    /// The reminder picker's times, while it is open.
-    reminding: Option<[(&'static str, chrono::DateTime<chrono::Local>); 4]>,
     /// When the draft was last saved on this machine, for the subtitle.
     saved_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Where the keyboard goes when the composer closes: the message it was
@@ -647,9 +645,6 @@ pub struct App {
     places_box: Option<crate::folders::Folders>,
     /// The snooze, remind, label or move picker, while it is open.
     picker: Option<crate::pickers::Picker>,
-    /// When the remind picker was told to remind about the draft being
-    /// written: for the composer to put on the draft.
-    draft_remind: Option<chrono::DateTime<chrono::Utc>>,
     /// The palette, while it is open.
     palette: Option<PaletteState>,
     /// Whether the terminal speaks the kitty keyboard protocol, so every
@@ -937,13 +932,11 @@ impl App {
             preview: postio_config::Preview::default(),
             previewing: false,
             detached: false,
-            reminding: None,
             saved_at: None,
             composed_from: Focus::List,
             bar: None,
             places_box: None,
             picker: None,
-            draft_remind: None,
             palette: None,
             enhanced_keys: false,
             sheet: None,
@@ -1059,7 +1052,6 @@ impl App {
             Focus::List
         };
         self.saved_at = None;
-        self.reminding = None;
         self.focus = Focus::Composer;
         self.detached = false;
         // Side by side is shown from the start; the toggle starts on the text.
@@ -1106,45 +1098,6 @@ impl App {
         self.saved_at.map(postio_ui::compose::saved_at)
     }
 
-    /// The reminder picker's times, while it is open.
-    pub fn reminding(&self) -> Option<&[(&'static str, chrono::DateTime<chrono::Local>)]> {
-        self.reminding.as_ref().map(|times| times.as_slice())
-    }
-
-    /// A key while the reminder picker is open: a number picks, Escape goes
-    /// back to writing.
-    fn remind_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        use crossterm::event::KeyCode;
-        let Some(times) = self.reminding else {
-            return Vec::new();
-        };
-        match key.code {
-            KeyCode::Esc => {
-                self.reminding = None;
-                vec![Effect::Redraw]
-            }
-            KeyCode::Char(digit @ '1'..='4') => {
-                let index = usize::from(digit as u8 - b'1');
-                self.reminding = None;
-                let at = times[index].1.with_timezone(&chrono::Utc);
-                match self.composer.as_mut() {
-                    Some(composer) => {
-                        composer.set_remind_at(Some(at));
-                        vec![
-                            Effect::Autosave {
-                                generation: composer.generation(),
-                                edit: composer.edits(),
-                            },
-                            Effect::Redraw,
-                        ]
-                    }
-                    None => Vec::new(),
-                }
-            }
-            _ => Vec::new(),
-        }
-    }
-
     /// A save is due, if nothing was typed since it was asked for.
     fn autosave_due(&mut self, generation: u64, edit: u64) -> Vec<Effect> {
         match &self.composer {
@@ -1176,9 +1129,6 @@ impl App {
     fn composer_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         if self.scheduling.is_some() {
             return self.schedule_key(key);
-        }
-        if self.reminding.is_some() {
-            return self.remind_key(key);
         }
         if self.path_prompt.is_some() {
             return self.path_key(key);
@@ -2158,8 +2108,8 @@ impl App {
     }
 
     /// Open the remind picker for the draft being written, over the
-    /// composer. What it chooses is [`App::draft_remind`]: the composer puts
-    /// it on the draft as `remind_at`, and clears it when the draft closes.
+    /// composer. What it chooses goes on the draft as `remind_at`, and is
+    /// sent with it.
     pub fn open_remind_picker_for_draft(&mut self, target: &str) -> Vec<Effect> {
         let from = match self.focus {
             Focus::Picker => Focus::Composer,
@@ -2172,17 +2122,6 @@ impl App {
         ));
         self.focus = Focus::Picker;
         vec![Effect::Redraw]
-    }
-
-    /// When the remind picker chose to bring the draft's conversation back
-    /// if nobody has replied.
-    pub fn draft_remind(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        self.draft_remind
-    }
-
-    /// Forget the draft's reminder: the draft was sent or put away.
-    pub fn clear_draft_remind(&mut self) {
-        self.draft_remind = None;
     }
 
     fn picker_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
@@ -2231,10 +2170,19 @@ impl App {
             self.close_picker();
         }
         match pick {
-            Pick::When(at) if draft => {
-                self.draft_remind = Some(at.with_timezone(&chrono::Utc));
-                vec![Effect::Redraw]
-            }
+            Pick::When(at) if draft => match self.composer.as_mut() {
+                Some(composer) => {
+                    composer.set_remind_at(Some(at.with_timezone(&chrono::Utc)));
+                    vec![
+                        Effect::Autosave {
+                            generation: composer.generation(),
+                            edit: composer.edits(),
+                        },
+                        Effect::Redraw,
+                    ]
+                }
+                None => vec![Effect::Redraw],
+            },
             Pick::When(at) => {
                 let at = at.with_timezone(&chrono::Utc);
                 let (id, set): (CommandId, fn(&mut Command, chrono::DateTime<chrono::Utc>)) =
@@ -2717,8 +2665,12 @@ impl App {
                 vec![Effect::Redraw]
             }
             "remind_if_no_reply" => {
-                self.reminding = Some(postio_ui::schedule::remind_presets(chrono::Local::now()));
-                vec![Effect::Redraw]
+                let subject = self
+                    .composer
+                    .as_ref()
+                    .map(|composer| composer.draft().subject)
+                    .unwrap_or_default();
+                self.open_remind_picker_for_draft(&subject)
             }
             "back" | "discard_draft" => self.close_composer(),
             // The desktop moves its composer into a window of its own; here
