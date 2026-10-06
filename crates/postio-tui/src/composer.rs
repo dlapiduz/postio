@@ -84,6 +84,8 @@ pub struct Composer {
     /// The first body line the last frame showed: the textarea's own
     /// scroll, mirrored, since it does not say where it scrolled to.
     body_top: std::cell::Cell<u16>,
+    /// How many lines the last frame showed of it.
+    body_height: std::cell::Cell<u16>,
     /// Who the recipient being typed could be, best first.
     suggestions: Vec<RecipientCandidate>,
     /// The suggestion the keyboard is on.
@@ -170,6 +172,7 @@ impl Composer {
             identity: 0,
             edits: 0,
             body_top: std::cell::Cell::new(0),
+            body_height: std::cell::Cell::new(0),
             suggestions: Vec::new(),
             suggestion: 0,
             asking: None,
@@ -414,6 +417,7 @@ impl Composer {
     /// the top. The textarea's own rule -- it scrolls only when the cursor
     /// would leave the view -- mirrored, so a click can be placed.
     pub fn body_top(&self, height: u16) -> u16 {
+        self.body_height.set(height);
         let row = u16::try_from(self.body.cursor().0).unwrap_or(u16::MAX);
         let top = self.body_top.get();
         let top = if row < top {
@@ -425,6 +429,21 @@ impl Composer {
         };
         self.body_top.set(top);
         top
+    }
+
+    /// Scroll the body by `lines`, down when positive, as far as its first
+    /// and last lines allow; the cursor stays in view.
+    pub fn scroll(&mut self, lines: isize) {
+        let top = i64::from(self.body_top.get());
+        let last = i64::try_from(self.body.lines().len())
+            .unwrap_or(i64::MAX)
+            .saturating_sub(i64::from(self.body_height.get()))
+            .max(0);
+        let by = (top + lines as i64).clamp(0, last.max(top)) - top;
+        let rows = i16::try_from(by).unwrap_or(0);
+        self.body.scroll((rows, 0));
+        self.body_top
+            .set(self.body_top.get().saturating_add_signed(rows));
     }
 
     /// Put the cursor where a click landed in the body: `row` lines and
@@ -1096,6 +1115,28 @@ pub(crate) mod tests {
         assert_eq!(composer.body_top(10), 36);
         composer.click_body(2, 3);
         assert_eq!(composer.body().cursor(), (38, 3));
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_body_and_stops_at_either_end() {
+        let mut draft = Draft::new(AccountId::new(1));
+        let lines: Vec<String> = (0..50).map(|line| format!("line {line}")).collect();
+        draft.body_markdown = Some(lines.join("\n"));
+        let mut composer = Composer::new(1, draft);
+        composer.click_body(0, 0);
+        assert_eq!(composer.body_top(10), 0);
+        composer.scroll(3);
+        assert_eq!(composer.body_top(10), 3, "three lines down");
+        composer.click_body(0, 0);
+        assert_eq!(
+            composer.body().cursor().0,
+            3,
+            "a click lands on the top line shown"
+        );
+        composer.scroll(500);
+        assert_eq!(composer.body_top(10), 40, "the last line is at the bottom");
+        composer.scroll(-500);
+        assert_eq!(composer.body_top(10), 0);
     }
 
     #[test]

@@ -171,14 +171,26 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
             // placeholder whole.
             if !key_text.is_empty() && cells(placeholder) + 2 + 3 + key_width <= inner.width {
                 let mut keys = Vec::new();
+                // Each key is a click for its own command.
+                let mut x = inner.x + inner.width - key_width;
                 if let Some(key) = &search_key {
                     keys.push(Span::styled(key.clone(), accent));
+                    hits.add(
+                        Rect::new(x, inner.y, cells(key), 1),
+                        Target::Command("search"),
+                    );
+                    x += cells(key);
                 }
                 if let Some(key) = &palette_key {
                     if !keys.is_empty() {
                         keys.push(Span::raw(" "));
+                        x += 1;
                     }
                     keys.push(Span::styled(key.clone(), accent));
+                    hits.add(
+                        Rect::new(x, inner.y, cells(key), 1),
+                        Target::Command("command_palette"),
+                    );
                 }
                 frame.render_widget(
                     Line::from(keys),

@@ -10,8 +10,9 @@ use crate::theme::{Role, Theme};
 use crate::view::hit::{Hits, Target};
 
 /// A box `width` by `height` cells, centred in `area` and no larger than
-/// it, drawn over whatever is there, with `title` in its top edge. Clicks on
-/// it land on nothing underneath. Answers what is inside the border.
+/// it, drawn over whatever is there, with `title` in its top edge. A click
+/// anywhere on the screen lands on nothing underneath. Answers what is inside
+/// the border.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -29,6 +30,9 @@ pub fn draw(
         width,
         height,
     );
+    // Everything under a box, the top bar too, takes no click: the box has
+    // the keyboard as it has the pointer.
+    hits.add(frame.area(), Target::Overlay);
     frame.render_widget(Clear, outer);
     let mut block = Block::default()
         .borders(Borders::ALL)

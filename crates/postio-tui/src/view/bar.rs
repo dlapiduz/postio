@@ -131,6 +131,10 @@ pub fn draw(
         if let Some(hint) = save_hint {
             let w = cells(&hint);
             frame.render_widget(Text::styled(hint, dim), Rect::new(end - w, y, w, 1));
+            hits.add(
+                Rect::new(end - w, y, w, 1),
+                Target::Command(CommandId::SaveSearch.as_str()),
+            );
         }
         y += 1;
     }
@@ -155,10 +159,9 @@ pub fn draw(
     frame.render_widget(Text::from(spans), Rect::new(inner.x, y, inner.width, 1));
     if !esc.is_empty() {
         let w = cells(&esc);
-        frame.render_widget(
-            Text::styled(esc, dim),
-            Rect::new(inner.x + inner.width - w - 1, y, w, 1),
-        );
+        let at = Rect::new(inner.x + inner.width - w - 1, y, w, 1);
+        frame.render_widget(Text::styled(esc, dim), at);
+        hits.add(at, Target::Command(CommandId::Back.as_str()));
     }
     let before: String = typed.chars().take(bar.caret()).collect();
     frame.set_cursor_position(Position::new(
@@ -251,6 +254,27 @@ pub fn draw(
         "  {} commands only",
         postio_ui::finder::COMMANDS_ONLY
     ));
+    // `↑↓ move`, `↵ run` and `> commands only`, the last two a click each.
+    let move_width = cells("\u{2191}\u{2193} move");
+    let run_width = cells("\u{21b5} run");
+    let commands_width = cells(&format!(
+        "{} commands only",
+        postio_ui::finder::COMMANDS_ONLY
+    ));
+    let footer_x = inner.x + 1;
+    let footer_room = inner.width.saturating_sub(1);
+    for (offset, width, target) in [
+        (move_width + 2, run_width, Target::BarRun),
+        (
+            move_width + 2 + run_width + 2,
+            commands_width,
+            Target::BarCommands,
+        ),
+    ] {
+        if offset + width <= footer_room {
+            hits.add(Rect::new(footer_x + offset, y, width, 1), target);
+        }
+    }
     let right = "Local index";
     frame.render_widget(
         Text::styled(

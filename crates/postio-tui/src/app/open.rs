@@ -5,6 +5,7 @@
 
 use postio_model::MessageId;
 use postio_model::ids::AttachmentId;
+use postio_ui::keymap::Outcome;
 use postio_ui::terminal::SafeText;
 
 use super::{App, Effect, Focus};
@@ -529,7 +530,21 @@ impl App {
                 let at = menu.at;
                 return self.choose(at);
             }
-            _ => return Vec::new(),
+            // A row's own key, as its words show it, chooses that row.
+            _ => {
+                let Outcome::Command(id) = self.keys.press(key, self.key_context(), false) else {
+                    return Vec::new();
+                };
+                let chosen = self.open.menu.as_ref().and_then(|menu| {
+                    menu.items.iter().position(
+                        |item| matches!(item.action, MenuAction::Command(own) if own == id),
+                    )
+                });
+                return match chosen {
+                    Some(at) => self.choose(at),
+                    None => Vec::new(),
+                };
+            }
         }
         vec![Effect::Redraw]
     }

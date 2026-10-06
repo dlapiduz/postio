@@ -30,6 +30,10 @@ pub enum Target {
     BarSaved(usize),
     /// One of the bar's chips.
     BarChip(usize),
+    /// The footer's `↵ run`: the chosen line, as `Enter` runs it.
+    BarRun,
+    /// The footer's `> commands only`: the same as its key.
+    BarCommands,
     /// A place in the folders popover, by its place in the list.
     PlaceRow(usize),
     /// A row of a picker, by its place in the list.
@@ -80,6 +84,12 @@ impl Hits {
             .filter(|(_, at)| *at == target)
             .map(|(area, _)| *area)
             .reduce(|a, b| a.union(b))
+    }
+
+    /// Every region, in the order drawn.
+    #[cfg(test)]
+    pub fn regions(&self) -> &[(Rect, Target)] {
+        &self.regions
     }
 
     /// What is at column `x`, row `y`.

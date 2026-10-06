@@ -280,6 +280,8 @@ pub fn fit(text: &str, width: usize) -> String {
 }
 
 #[cfg(test)]
+mod every_surface;
+#[cfg(test)]
 mod tests {
     use chrono::TimeZone;
     use ratatui::Terminal;

@@ -1523,6 +1523,12 @@ impl App {
     /// A mouse event, on what it landed on: the same things the keys do.
     fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
         use crate::view::hit::Target;
+        // A menu over the message holds the pointer as it holds the keyboard.
+        if self.open.menu.is_some()
+            && !matches!(pointer, Pointer::Click { hit, .. } if matches!(hit.target, Target::MenuRow(_)))
+        {
+            return Vec::new();
+        }
         if self.sheet.is_some() {
             match pointer {
                 Pointer::Click { hit, .. } if hit.target != Target::Command("cheat_sheet") => {
@@ -1540,7 +1546,12 @@ impl App {
         }
         if self.picker.is_some() {
             match pointer {
-                Pointer::Click { hit, .. } if !matches!(hit.target, Target::PickRow(_)) => {
+                Pointer::Click { hit, .. }
+                    if !matches!(
+                        hit.target,
+                        Target::PickRow(_) | Target::Command("picker_type_date")
+                    ) =>
+                {
                     return Vec::new();
                 }
                 Pointer::Wheel { down, .. } => {
@@ -1571,7 +1582,12 @@ impl App {
                 Pointer::Click { hit, .. }
                     if !matches!(
                         hit.target,
-                        Target::BarRow(_) | Target::BarSaved(_) | Target::BarChip(_)
+                        Target::BarRow(_)
+                            | Target::BarSaved(_)
+                            | Target::BarChip(_)
+                            | Target::BarRun
+                            | Target::BarCommands
+                            | Target::Command("save_search" | "back")
                     ) =>
                 {
                     return Vec::new();
@@ -1623,6 +1639,16 @@ impl App {
                 }
                 Target::BarRow(index) => self.bar_click(index),
                 Target::BarSaved(index) => self.bar_saved(index),
+                Target::BarRun => match self.with_bar(|bar, _, ctx| bar.enter(ctx)) {
+                    Some(step) => self.bar_step(step),
+                    None => Vec::new(),
+                },
+                Target::BarCommands => {
+                    match self.bar.as_mut().map(crate::bar::Bar::commands_only) {
+                        Some(step) => self.bar_step(step),
+                        None => Vec::new(),
+                    }
+                }
                 Target::BarChip(index) => self.bar_chip(index),
                 Target::PlaceRow(index) => self.folders_click(index),
                 Target::PickRow(index) => self.picker_click(index),
@@ -1673,6 +1699,16 @@ impl App {
                         }
                     }
                 }
+                Target::Command("picker_type_date") if self.picker.is_some() => {
+                    let step = self
+                        .picker
+                        .as_mut()
+                        .map(|picker| picker.command(postio_core::CommandId::PickerTypeDate));
+                    step.map_or_else(Vec::new, |step| self.picker_step(step))
+                }
+                // The bar's own save and close are its keys'.
+                Target::Command("save_search") if self.bar.is_some() => self.bar_save(),
+                Target::Command("back") if self.bar.is_some() => self.close_bar(),
                 // A control is its command, the same as its key.
                 Target::Command(id) => self.command(id),
                 // A button is its command, the same as its key.
@@ -1689,6 +1725,10 @@ impl App {
                 match hit.target {
                     Target::Row(_) => self.scroll_list(lines),
                     Target::Reader(_) => self.scroll_open_lines(lines),
+                    Target::ComposerBody => match self.composer.as_mut() {
+                        Some(composer) => composer.scroll(lines),
+                        None => return Vec::new(),
+                    },
                     Target::Surface(..) | Target::Overlay if self.surface_wheel(lines) => {}
                     _ => return Vec::new(),
                 }
@@ -1865,6 +1905,13 @@ impl App {
 
     fn bar_saved(&mut self, index: usize) -> Vec<Effect> {
         match self.bar.as_mut().map(|bar| bar.open_saved(index)) {
+            Some(step) => self.bar_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    fn bar_save(&mut self) -> Vec<Effect> {
+        match self.bar.as_ref().map(crate::bar::Bar::save) {
             Some(step) => self.bar_step(step),
             None => Vec::new(),
         }

@@ -11,6 +11,8 @@
 //! for `examples/shot.rs`. Every name and address is fictional and on a
 //! reserved domain.
 
+pub mod sample;
+
 use chrono::{DateTime, Local, TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use postio_model::mailbox::{Mailbox, MailboxRole};
@@ -474,6 +476,120 @@ pub fn wheel(target: hit::Target, down: bool) -> Input {
         },
         down,
     })
+}
+
+/// The keys `spec` spells, in order: a character is that key, and a name in
+/// angle brackets is a named key (`<Enter>`, `<Esc>`, `<Tab>`, `<Del>`, `<Up>`,
+/// `<Down>`, `<Left>`, `<Right>`, `<F5>`, `<F8>`), optionally after `C-` for
+/// ctrl or `A-` for alt (`<C-z>`, `<A-Enter>`).
+pub fn keys_of(spec: &str) -> Vec<Input> {
+    let mut out = Vec::new();
+    let mut rest = spec;
+    while let Some(first) = rest.chars().next() {
+        if first == '<'
+            && let Some(end) = rest.find('>')
+        {
+            let mut name = &rest[1..end];
+            let mut modifiers = KeyModifiers::NONE;
+            while let Some((prefix, after)) = name
+                .split_once('-')
+                .filter(|(prefix, _)| matches!(*prefix, "C" | "A") && !name.is_empty())
+            {
+                modifiers |= if prefix == "C" {
+                    KeyModifiers::CONTROL
+                } else {
+                    KeyModifiers::ALT
+                };
+                name = after;
+            }
+            let code = match name {
+                "Enter" => KeyCode::Enter,
+                "Esc" => KeyCode::Esc,
+                "Tab" => KeyCode::Tab,
+                "Del" => KeyCode::Delete,
+                "Up" => KeyCode::Up,
+                "Down" => KeyCode::Down,
+                "Left" => KeyCode::Left,
+                "Right" => KeyCode::Right,
+                "F5" => KeyCode::F(5),
+                "F8" => KeyCode::F(8),
+                _ if name.chars().count() == 1 => {
+                    KeyCode::Char(name.chars().next().expect("a character"))
+                }
+                _ => panic!("no key called <{name}>"),
+            };
+            out.push(key(code, modifiers));
+            rest = &rest[end + 1..];
+        } else {
+            out.push(press(first));
+            rest = &rest[first.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// Press the keys `spec` spells (see [`keys_of`]); everything the app asked for.
+pub fn press_keys(app: &mut App, spec: &str) -> Vec<Effect> {
+    keys_of(spec)
+        .into_iter()
+        .flat_map(|input| update(app, input))
+        .collect()
+}
+
+/// A mouse event at column `x`, row `y` of the screen `app` last drew at
+/// `width` x `height`, resolved as the loop resolves it, and given to the app.
+pub fn mouse_at(
+    app: &mut App,
+    (width, height): (u16, u16),
+    (x, y): (u16, u16),
+    kind: crossterm::event::MouseEventKind,
+    modifiers: KeyModifiers,
+) -> Vec<Effect> {
+    let hits = hits_of(width, height, app);
+    mouse_on(app, &hits, (x, y), kind, modifiers)
+}
+
+/// A mouse event at (`x`, `y`) of the frame whose regions are `hits`.
+pub fn mouse_on(
+    app: &mut App,
+    hits: &hit::Hits,
+    (x, y): (u16, u16),
+    kind: crossterm::event::MouseEventKind,
+    modifiers: KeyModifiers,
+) -> Vec<Effect> {
+    let event = crossterm::event::MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers,
+    };
+    match crate::run::pointer(&event, hits) {
+        Some(pointer) => update(app, Input::Pointer(pointer)),
+        None => Vec::new(),
+    }
+}
+
+/// A left click at (`x`, `y`).
+pub fn click_at(app: &mut App, size: (u16, u16), at: (u16, u16)) -> Vec<Effect> {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    mouse_at(
+        app,
+        size,
+        at,
+        MouseEventKind::Down(MouseButton::Left),
+        KeyModifiers::NONE,
+    )
+}
+
+/// The wheel turned at (`x`, `y`).
+pub fn wheel_at(app: &mut App, size: (u16, u16), at: (u16, u16), down: bool) -> Vec<Effect> {
+    use crossterm::event::MouseEventKind;
+    let kind = if down {
+        MouseEventKind::ScrollDown
+    } else {
+        MouseEventKind::ScrollUp
+    };
+    mouse_at(app, size, at, kind, KeyModifiers::NONE)
 }
 
 // -- The screen ------------------------------------------------------------

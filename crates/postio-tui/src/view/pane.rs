@@ -36,6 +36,9 @@ pub fn draw(
     hits.add(inside, Target::Overlay);
     if app.reading().is_some() {
         crate::view::open::draw(frame, inside, area.width, app, theme, now, hits);
+        if let Some(menu) = app.menu() {
+            crate::view::open::draw_menu(frame, inside, menu, theme, hits);
+        }
     } else {
         let said = postio_ui::focus_state::empty_pane(app.keymap());
         crate::view::state::empty(frame, inside, &said, theme, hits);

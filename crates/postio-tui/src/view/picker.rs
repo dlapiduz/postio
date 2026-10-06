@@ -215,6 +215,10 @@ pub fn draw(
             spans.push(Span::styled(postio_ui::pickers::DATE_PLACEHOLDER, dim));
         }
         frame.render_widget(Text::from(spans), line);
+        if !picker.in_field() {
+            // The line is a click for `Tab`: the keyboard goes into it.
+            hits.add(line, Target::Command(CommandId::PickerTypeDate.as_str()));
+        }
         let right = match (picker.date_hint(), hint(CommandId::PickerTypeDate)) {
             (Some(said), _) => Some((said, dim)),
             (None, Some(key)) if !picker.in_field() => Some((key, accent)),

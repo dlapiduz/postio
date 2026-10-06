@@ -309,7 +309,7 @@ fn base64(bytes: &[u8]) -> String {
 }
 
 /// A mouse event as the app hears it: what it landed on in the last frame.
-fn pointer(
+pub(crate) fn pointer(
     mouse: &crossterm::event::MouseEvent,
     hits: &crate::view::hit::Hits,
 ) -> Option<crate::app::Pointer> {

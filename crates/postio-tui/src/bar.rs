@@ -698,26 +698,41 @@ impl Bar {
         self.step(if down { 3 } else { -3 }, ctx);
     }
 
+    /// `Enter`: run the chosen line.
+    pub fn enter(&mut self, ctx: &Ctx<'_>) -> Step {
+        let entries = self.entries(ctx);
+        let at = self.chosen(&entries);
+        self.run(at, ctx)
+    }
+
+    /// Show only commands.
+    pub fn commands_only(&mut self) -> Step {
+        self.set_text(&finder::COMMANDS_ONLY.to_string())
+    }
+
+    /// Save the search as typed, when there is one.
+    pub fn save(&self) -> Step {
+        let query = self.query();
+        if query.is_empty() {
+            Step::Stay
+        } else {
+            Step::Save(query)
+        }
+    }
+
     /// A key in the bar.
     pub fn key(&mut self, key: &KeyEvent, keys: &mut Keys, ctx: &Ctx<'_>) -> Step {
         match keys.press(key, KeyContext::Search, true) {
             Outcome::Command(id) => {
                 return match id.as_str() {
                     "back" => Step::Close,
-                    "save_search" => {
-                        let query = self.query();
-                        if query.is_empty() {
-                            Step::Stay
-                        } else {
-                            Step::Save(query)
-                        }
-                    }
+                    "save_search" => self.save(),
                     "back_to_words" => self.back_to_words(),
                     "saved_search_1" => self.open_saved(0),
                     "saved_search_2" => self.open_saved(1),
                     "saved_search_3" => self.open_saved(2),
                     "saved_search_4" => self.open_saved(3),
-                    "command_palette" => self.set_text(&finder::COMMANDS_ONLY.to_string()),
+                    "command_palette" => self.commands_only(),
                     _ => Step::Stay,
                 };
             }
@@ -737,11 +752,7 @@ impl Bar {
                 self.step(by, ctx);
             }
             KeyCode::Tab if key.modifiers.is_empty() => return self.next_chip(),
-            KeyCode::Enter => {
-                let entries = self.entries(ctx);
-                let at = self.chosen(&entries);
-                return self.run(at, ctx);
-            }
+            KeyCode::Enter => return self.enter(ctx),
             // Typing wins: with no row chosen by an arrow, the order key is a
             // letter. Once one has, it is the key.
             _ if self.stepped && self.is_order_key(key, ctx) => return self.toggle_order(),

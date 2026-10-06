@@ -104,24 +104,56 @@ fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> Piece {
 }
 
 /// The keys that change the selection, as the keymap gives them:
-/// `x toggle  J K extend  Esc clear`.
-fn selection_keys(app: &App, theme: &Theme) -> Vec<Span<'static>> {
-    let mut parts: Vec<String> = Vec::new();
+/// `x toggle  J K extend  Esc clear`. Each key is a click for its command.
+fn selection_keys(app: &App, theme: &Theme) -> Vec<(Span<'static>, Option<&'static str>)> {
+    let dim = theme.style(Role::Dim);
+    let mut spans: Vec<(Span<'static>, Option<&'static str>)> = Vec::new();
+    let part = |spans: &mut Vec<(Span<'static>, Option<&'static str>)>,
+                pieces: Vec<(String, Option<&'static str>)>| {
+        if !spans.is_empty() {
+            spans.push((Span::styled("  ", dim), None));
+        }
+        spans.extend(
+            pieces
+                .into_iter()
+                .map(|(text, command)| (Span::styled(text, dim), command)),
+        );
+    };
     if let Some(key) = app.hint(CommandId::ToggleSelection) {
-        parts.push(format!("{} toggle", cap(&key)));
+        part(
+            &mut spans,
+            vec![(
+                format!("{} toggle", cap(&key)),
+                Some(CommandId::ToggleSelection.as_str()),
+            )],
+        );
     }
-    let extend: Vec<String> = [CommandId::ExtendSelectionDown, CommandId::ExtendSelectionUp]
-        .into_iter()
-        .filter_map(|command| app.hint(command))
-        .map(|key| cap(&key))
-        .collect();
+    let extend: Vec<(String, Option<&'static str>)> =
+        [CommandId::ExtendSelectionDown, CommandId::ExtendSelectionUp]
+            .into_iter()
+            .filter_map(|command| Some((cap(&app.hint(command)?), Some(command.as_str()))))
+            .collect();
     if !extend.is_empty() {
-        parts.push(format!("{} extend", extend.join(" ")));
+        let mut pieces = Vec::new();
+        for (index, (key, command)) in extend.into_iter().enumerate() {
+            if index > 0 {
+                pieces.push((" ".to_owned(), None));
+            }
+            pieces.push((key, command));
+        }
+        pieces.push((" extend".to_owned(), None));
+        part(&mut spans, pieces);
     }
     if let Some(key) = app.hint(CommandId::Back) {
-        parts.push(format!("{} clear", cap(&key)));
+        part(
+            &mut spans,
+            vec![(
+                format!("{} clear", cap(&key)),
+                Some(CommandId::Back.as_str()),
+            )],
+        );
     }
-    vec![Span::styled(parts.join("  "), theme.style(Role::Dim))]
+    spans
 }
 
 /// Draw the bulk bar into `area` and answer whether there was one to draw:
@@ -144,15 +176,24 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
             .map(|item| verb(app, theme, item.command, item.label)),
     );
     let toast = toast(app, theme);
-    let mut right = match &toast {
-        Some(toast) => toast.spans.clone(),
+    let mut right: Vec<(Span<'static>, Option<&'static str>)> = match &toast {
+        Some(toast) => toast
+            .spans
+            .iter()
+            .map(|span| (span.clone(), None))
+            .collect(),
         None => selection_keys(app, theme),
     };
-    let right_width = |spans: &[Span]| spans.iter().map(|span| span.content.width()).sum::<usize>();
+    let right_width = |spans: &[(Span, Option<&'static str>)]| {
+        spans
+            .iter()
+            .map(|(span, _)| span.content.width())
+            .sum::<usize>()
+    };
     // Narrowing: the keys go first, then the last verbs; a toast keeps its
     // end of the line and gives up verbs before it is cut.
     let is_toast = toast.is_some();
-    let used = |left: &[Piece], right: &[Span]| {
+    let used = |left: &[Piece], right: &[(Span, Option<&'static str>)]| {
         1 + left.iter().map(Piece::width).sum::<usize>()
             + GAP * left.len().saturating_sub(1)
             + if right.is_empty() {
@@ -170,8 +211,14 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
     }
     if used(&left, &right) > width && is_toast {
         let room = width.saturating_sub(used(&left, &[]) + GAP);
-        let words: String = right.iter().map(|span| span.content.as_ref()).collect();
-        right = vec![Span::styled(fit(&words, room), theme.style(Role::Text))];
+        let words: String = right
+            .iter()
+            .map(|(span, _)| span.content.as_ref())
+            .collect();
+        right = vec![(
+            Span::styled(fit(&words, room), theme.style(Role::Text)),
+            None,
+        )];
     }
     let toast_whole = toast
         .as_ref()
@@ -191,7 +238,18 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
     let w = u16::try_from(right_width(&right)).unwrap_or(0);
     if w > 0 {
         let at = (area.x + area.width).saturating_sub(w + 1);
-        frame.render_widget(Line::from(right), Rect::new(at, area.y, w, 1));
+        let mut x = at;
+        for (span, command) in &right {
+            let width = u16::try_from(span.content.width()).unwrap_or(0);
+            if let Some(command) = command {
+                hits.add(Rect::new(x, area.y, width, 1), Target::Command(command));
+            }
+            x += width;
+        }
+        frame.render_widget(
+            Line::from(right.into_iter().map(|(span, _)| span).collect::<Vec<_>>()),
+            Rect::new(at, area.y, w, 1),
+        );
         if let Some(undo) = toast.filter(|_| toast_whole).and_then(|toast| toast.undo) {
             toast_target(hits, at, area.y, &undo);
         }

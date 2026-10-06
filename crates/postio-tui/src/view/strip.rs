@@ -87,7 +87,8 @@ fn items<'a>(app: &App, strip: &Strip, theme: &Theme) -> (Vec<Item<'a>>, Vec<Ite
         if let Some(showing) = &strip.showing {
             left.push(Item {
                 pieces: vec![Span::styled(showing.clone(), theme.style(Role::Dim))],
-                command: None,
+                // It names the toggle's key, so it is a click for it.
+                command: Some("toggle_has_action"),
             });
         }
     }

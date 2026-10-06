@@ -699,7 +699,7 @@ pub fn framed(
 }
 
 /// A small framed list in the middle of `area`.
-fn draw_menu(
+pub(super) fn draw_menu(
     frame: &mut Frame,
     area: Rect,
     menu: &crate::app::Menu,
