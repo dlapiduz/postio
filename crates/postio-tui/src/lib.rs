@@ -20,6 +20,7 @@ pub mod clipboard;
 pub mod composer;
 pub mod config_file;
 pub mod conversation;
+pub mod digest;
 pub mod external;
 pub mod filtered;
 pub mod first_run;

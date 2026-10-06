@@ -551,7 +551,7 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 - [X] T320 [US16] Pickers: snooze, remind, label and move, anchored at the row
 - [X] T321 [US16] The key map, `?`, from `keymap_sheet` for the terminal
 - [X] T322 [US16] Filtered, `g f`: the view, tabs, reasons, `R`, Sweep `F` Done: the strip, tab line and day-headed rows take the window; `R`, `1`-`7`, `F` (a framed question first) and the mouse all work; rows are read fifty at a time as they come into view; Return does not open a filtered message here, since the open message is aimed at the inbox's rows
-- [ ] T323 [US16] The digest window: summary and list, references, the email from a reference, `A`, `D`, `U`
+- [X] T323 [US16] The digest window: summary and list, references, the email from a reference, `A`, `D`, `U` Done: Enter on a digest row opens the message frame as the window; it opens on the summary only when one is written; `]`/`[`, `Tab`, `A`, `D` (asked first), `U`, `ctrl+z` and every part by the mouse; `d` waits for T324
 - [ ] T324 [US16] Digest rules, `g d`, and the rule dialog, `d`
 - [ ] T325 [US16] Capture, `t` and `n`
 - [ ] T326 [US16] The mouse on every new surface (scenario 7, FR-192), and `NO_COLOR` on every new surface (scenario 6, FR-193)

@@ -150,7 +150,7 @@ fn shown(app: &App) -> Option<(Option<&Row>, &Member)> {
 /// The marker's sentence found in the body's own words, as the character
 /// ranges to mark on each line of `lines`: whitespace is not part of what is
 /// matched, so a sentence the sender wrapped is still found.
-fn locate(lines: &[Line<'static>], excerpt: &str) -> Vec<(usize, usize, usize)> {
+pub(super) fn locate(lines: &[Line<'static>], excerpt: &str) -> Vec<(usize, usize, usize)> {
     let wanted: Vec<&str> = excerpt.split_whitespace().collect();
     if wanted.is_empty() {
         return Vec::new();
@@ -198,7 +198,7 @@ fn locate(lines: &[Line<'static>], excerpt: &str) -> Vec<(usize, usize, usize)> 
 
 /// `line` with characters `from..to` drawn in `style` on top of what they
 /// were.
-fn restyle(line: &Line<'static>, from: usize, to: usize, style: Style) -> Line<'static> {
+pub(super) fn restyle(line: &Line<'static>, from: usize, to: usize, style: Style) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut at = 0;
     for span in &line.spans {
@@ -568,7 +568,7 @@ fn part_segments(_edges: &[(usize, usize)], _member: usize) -> Vec<Segment> {
 
 /// The marker's sentence in the body: on the surface, with an accent
 /// underline.
-fn surface_underline(theme: &Theme) -> Style {
+pub(super) fn surface_underline(theme: &Theme) -> Style {
     theme
         .style(Role::Surface)
         .patch(theme.style(Role::Accent))

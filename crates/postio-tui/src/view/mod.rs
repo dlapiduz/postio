@@ -6,6 +6,7 @@ pub mod bar;
 pub mod bottom;
 pub mod boxed;
 pub mod composer;
+pub mod digest;
 pub mod filtered;
 pub mod first_run;
 pub mod folders;
@@ -123,6 +124,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         {
             composer::screen(frame, inside, app, theme, now, &mut hits);
         }
+        // A digest's window, in the message frame.
+        digest::over_list(frame, area, app, theme, now, &mut hits);
         // The sweep's question, over the window.
         filtered::sweep(frame, body, app, theme, &mut hits);
         // Over everything: a click there lands on nothing underneath.

@@ -25,6 +25,8 @@ pub enum Ask {
     },
     /// How many messages a sweep of the inbox would file away.
     SweepPreview,
+    /// What a digest's delivery holds and its summary, once one is written.
+    Digest(postio_model::DeliveryId),
 }
 
 /// What the host answered.
@@ -43,6 +45,15 @@ pub enum Answer {
     },
     /// How many a sweep would move, or why not.
     SweepPreview(Result<u32, String>),
+    /// A digest's messages, newest first, and its summary.
+    Digest {
+        /// Which delivery.
+        delivery: postio_model::DeliveryId,
+        /// Its messages, or why there are none.
+        messages: Result<Vec<postio_model::listing::MessageSummary>, String>,
+        /// Its summary: nothing until one is written.
+        summary: Result<Option<postio_model::summary::DigestSummary>, String>,
+    },
 }
 
 impl Ask {
@@ -64,6 +75,11 @@ impl Ask {
                     .map_err(said),
             },
             Ask::SweepPreview => Answer::SweepPreview(client.sweep_preview().await.map_err(said)),
+            Ask::Digest(delivery) => Answer::Digest {
+                delivery,
+                messages: client.delivery_messages(delivery).await.map_err(said),
+                summary: client.digest_summary(delivery).await.map_err(said),
+            },
         }
     }
 }

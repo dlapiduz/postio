@@ -118,15 +118,6 @@ impl App {
         Some(vec![Effect::Redraw])
     }
 
-    /// `id` as the window runs it, from a surface that leaves the window
-    /// where it is.
-    fn global(&mut self, id: &str) -> Vec<Effect> {
-        match id {
-            "cheat_sheet" => self.open_keys(),
-            _ => self.send(id),
-        }
-    }
-
     /// `F`: say how much of the inbox the rules would file away, and ask.
     pub(super) fn ask_sweep(&mut self) -> Vec<Effect> {
         vec![Effect::Ask(Ask::SweepPreview)]
@@ -185,6 +176,7 @@ impl App {
             Answer::SweepPreview(Ok(0)) => return self.say(filtered::SWEEP_NOTHING),
             Answer::SweepPreview(Ok(count)) => self.surfaces.sweep = Some(count),
             Answer::SweepPreview(Err(reason)) => return self.say_as(Tone::Failed, &reason, None),
+            digest @ Answer::Digest { .. } => return self.digest_answered(digest),
         }
         vec![Effect::Redraw]
     }
@@ -247,7 +239,7 @@ impl App {
                 view.reveal(height);
                 vec![Effect::Redraw]
             }
-            Part::SweepCancel | Part::SweepConfirm => Vec::new(),
+            _ => Vec::new(),
         }
     }
 

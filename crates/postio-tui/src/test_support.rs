@@ -226,6 +226,7 @@ pub fn show_scope(
     scope: postio_model::FocusScope,
     rows: Vec<postio_ui::focus_list::FocusRow>,
 ) {
+    app.note_surfaced(&rows);
     let rows: Vec<Row> = rows.into_iter().map(Row::from).collect();
     let effects = update(
         app,
@@ -374,7 +375,7 @@ pub fn serve_filtered(
                     .cloned()
                     .collect()),
             },
-            Ask::SweepPreview => continue,
+            Ask::SweepPreview | Ask::Digest(_) => continue,
         };
         pending.extend(update(app, Input::Answer(answer)));
     }
@@ -515,6 +516,78 @@ pub fn screen(width: u16, height: u16, app: &App) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// -- Digests ---------------------------------------------------------------
+
+/// A digest delivery of the inbox: `count` messages for `rule`, weekly, from
+/// `senders` people, due at 11:00 on the 23rd.
+pub fn digest_row(
+    delivery: i64,
+    rule: &str,
+    count: u32,
+    senders: usize,
+) -> postio_ui::focus_list::FocusRow {
+    postio_ui::focus_list::FocusRow::Digest(postio_ui::focus_list::Digest {
+        delivery: postio_model::ids::DeliveryId::new(delivery),
+        rule: rule.to_owned(),
+        cadence: Some(postio_model::listing::Cadence::Weekly),
+        count,
+        senders: (0..senders)
+            .map(|at| {
+                EmailAddress::new(
+                    Some(format!("Sender {at}")),
+                    format!("sender{at}@example.com"),
+                )
+            })
+            .collect(),
+        summary_line: None,
+        at: local(23, 11, 0),
+    })
+}
+
+/// `config.toml`'s rule for "Newsletters": weekly, Sunday, 09:00.
+pub fn newsletters_rule() -> postio_config::DigestRule {
+    postio_config::Config::from_toml_str(
+        "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:sender0@example.com\"]\n\
+         cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
+    )
+    .expect("a config")
+    .focus
+    .digests
+    .remove(0)
+}
+
+/// What a delivery holds: message `id` from `from`, with its subject.
+pub fn held(
+    id: i64,
+    from: &str,
+    subject: &str,
+    preview: &str,
+) -> postio_model::listing::MessageSummary {
+    conversation(id, from, subject, preview, local(22, 9, id as u32 % 50)).representative
+}
+
+/// A summary citing `cites` in turn, as `(topic, text, message)`.
+pub fn summary_of(cites: &[(&str, &str, i64)]) -> postio_model::summary::DigestSummary {
+    use postio_model::summary::{DigestSummary, SummaryReference, SummaryStatement};
+    DigestSummary {
+        statements: cites
+            .iter()
+            .enumerate()
+            .map(|(at, (topic, text, message))| SummaryStatement {
+                topic: (*topic).to_owned(),
+                text: (*text).to_owned(),
+                reference: SummaryReference {
+                    number: at as u32 + 1,
+                    message: MessageId::new(*message),
+                    excerpt: format!("passage {}", at + 1),
+                },
+            })
+            .collect(),
+        messages: 14,
+        senders: 6,
+    }
 }
 
 #[cfg(test)]

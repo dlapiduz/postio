@@ -12,7 +12,7 @@
 //! `state` is what is open over the mail: `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
 //! `bar-commands`, `bar-folder`, `folders`, `snooze`, `remind`, `label`, `move`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
-//! `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
+//! `digest`, `digest-list` and `digest-email` (a digest's window on its summary, its list and an email from a reference), `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
@@ -471,6 +471,74 @@ fn main() {
             }
         }
         "nocolor" => colour = Colour::None,
+        "digest" | "digest-list" | "digest-email" => {
+            use test_support::{held, summary_of};
+            key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+            key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            let messages = vec![
+                held(
+                    21,
+                    "Harbor Weekly",
+                    "Tide tables for October",
+                    "The October tide tables are out",
+                ),
+                held(
+                    22,
+                    "Rail Notes",
+                    "Timetable change",
+                    "From the 5th the 8:10 runs at 8:15",
+                ),
+                held(
+                    23,
+                    "Town Hall",
+                    "Bin collection",
+                    "Collections move to Thursday",
+                ),
+            ];
+            let mut summary = summary_of(&[
+                (
+                    "Your harbor",
+                    "October's tide tables are published, and the east quay is closed for dredging on the 12th.",
+                    21,
+                ),
+                (
+                    "Getting around",
+                    "The 8:10 train moves to 8:15 from the 5th.",
+                    22,
+                ),
+                ("Your town", "Bins are collected on Thursdays now.", 23),
+            ]);
+            summary.statements[1].reference.excerpt = "the 8:10 runs at 8:15.".into();
+            update(
+                &mut app,
+                Input::Answer(postio_tui::ask::Answer::Digest {
+                    delivery: postio_model::ids::DeliveryId::new(1),
+                    messages: Ok(messages),
+                    summary: Ok(Some(summary)),
+                }),
+            );
+            match state.as_str() {
+                "digest-list" => key(&mut app, KeyCode::Tab, KeyModifiers::NONE),
+                "digest-email" => {
+                    key(&mut app, KeyCode::Char(']'), KeyModifiers::NONE);
+                    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+                    update(
+                        &mut app,
+                        Input::Body {
+                            message: MessageId::new(22),
+                            answer: Ok(postio_client::protocol::Body::Ready {
+                                body: postio_model::MessageBody {
+                                    text: Some("Hello all,\n\nFrom the 5th the 8:10 runs at 8:15. Please plan around it.\n\nRail Notes".into()),
+                                    html: None,
+                                },
+                                encoding_problems: false,
+                            }),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
         "filtered" | "filtered-nocolor" | "sweep" => {
             use test_support::filtered_row;
             let filed = vec![

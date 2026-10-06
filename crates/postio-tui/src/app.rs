@@ -21,8 +21,10 @@ use postio_ui::list::ListWindow;
 use postio_ui::paging::{Fetch, Page, Paging};
 use postio_ui::surfaced::Spliced;
 
+mod digest;
 mod filtered;
 mod open;
+mod surface;
 
 pub use open::{Menu, MenuAction, MenuItem, Raw};
 
@@ -882,6 +884,8 @@ pub enum Focus {
     Palette,
     /// The Filtered view, which takes the window's body.
     Filtered,
+    /// A digest's window, in the message frame.
+    Digest,
 }
 
 impl std::fmt::Debug for App {
@@ -1639,7 +1643,7 @@ impl App {
                     vec![Effect::Redraw]
                 }
                 Target::Overlay => Vec::new(),
-                Target::Surface(part, index) => self.filtered_click(part, index),
+                Target::Surface(part, index) => self.surface_click(part, index),
                 // A row of the menu over the message is chosen.
                 Target::MenuRow(at) => self.choose(at),
                 // A row's drawn answer is its key, for that row: an answer
@@ -1677,9 +1681,7 @@ impl App {
                 match hit.target {
                     Target::Row(_) => self.scroll_list(lines),
                     Target::Reader(_) => self.scroll_open_lines(lines),
-                    Target::Surface(crate::surface::Part::FilteredRow, _) => {
-                        self.filtered_wheel(lines);
-                    }
+                    Target::Surface(..) | Target::Overlay if self.surface_wheel(lines) => {}
                     _ => return Vec::new(),
                 }
                 vec![Effect::Redraw]
@@ -2368,6 +2370,7 @@ impl App {
             Focus::Reader => postio_core::Context::Reader,
             Focus::Composer => postio_core::Context::Composer,
             Focus::Filtered => postio_core::Context::Filtered,
+            Focus::Digest => postio_core::Context::Digest,
         }
     }
 
@@ -2760,6 +2763,7 @@ impl App {
             Focus::FirstRun => KeyContext::Global,
             Focus::Settings => KeyContext::Accounts,
             Focus::Filtered => KeyContext::Filtered,
+            Focus::Digest => KeyContext::Digest,
         }
     }
 
@@ -3180,6 +3184,11 @@ impl App {
         {
             return effects;
         }
+        if self.focus == Focus::Digest
+            && let Some(effects) = self.digest_command(id)
+        {
+            return effects;
+        }
         let last = self.list.total().saturating_sub(1);
         match id {
             "next_message" if self.focus == Focus::Reader => return self.step_open(1),
@@ -3244,6 +3253,10 @@ impl App {
             }
             // A draft being written is resumed, from its row or its open
             // message; one on its way or stopped is read.
+            // A digest opens in its own window, not as a message.
+            "open_message" if self.focus == Focus::List && self.cursor_is_digest() => {
+                return self.open_digest();
+            }
             "open_message" if self.focus == Focus::Reader && self.open_draft_offers_edit() => {
                 if let Some(message) = self.reading.as_ref().map(|reading| reading.row) {
                     let mut effects = self.close_message();
@@ -4231,6 +4244,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Picker => app.picker_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
         Input::Key(key) if app.focus == Focus::Filtered => app.filtered_key(&key),
+        Input::Key(key) if app.focus == Focus::Digest => app.digest_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -5168,9 +5182,6 @@ pub(crate) mod tests {
         // (C29) and cannot answer yet; tasks T309-T326 empty this list.
         "digest_rule",
         "go_to_digest_rules",
-        "next_reference",
-        "prev_reference",
-        "toggle_digest_summary",
         "capture_task",
         "capture_note",
         "capture_change_project",
@@ -5377,6 +5388,13 @@ pub(crate) mod tests {
         }
         if spec.contexts == Context::Filtered.as_set() {
             app.go_to_filtered();
+            return app.command(id);
+        }
+        if spec.contexts == Context::Digest.as_set() {
+            // A digest's window, over the inbox's first row as a digest.
+            let rows = vec![crate::test_support::digest_row(1, "Newsletters", 3, 1)];
+            crate::test_support::show_focus(&mut app, rows);
+            app.command("open_message");
             return app.command(id);
         }
         if spec.contexts == Context::Accounts.as_set() {

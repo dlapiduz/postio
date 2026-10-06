@@ -14,6 +14,17 @@ pub enum Part {
     SweepCancel,
     /// The sweep's question: sweep.
     SweepConfirm,
+    /// The digest window's Summary or messages tab: 0 or 1.
+    DigestTab,
+    /// A message of the digest's plain list.
+    DigestRow,
+    /// A statement of the summary, by its place; its paragraph and its
+    /// reference are the same click.
+    DigestReference,
+    /// The question over stopping a sender: leave it be.
+    StopCancel,
+    /// The question over stopping a sender: stop.
+    StopConfirm,
 }
 
 /// What the surfaces hold between them.
@@ -23,4 +34,6 @@ pub struct Surfaces {
     pub filtered: Option<crate::filtered::Filtered>,
     /// The sweep's question while it is up: how many it would move.
     pub sweep: Option<u32>,
+    /// The digest window, while one is open.
+    pub digest: Option<crate::digest::Window>,
 }
