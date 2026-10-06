@@ -360,6 +360,11 @@ pub const DEFAULT_TIME: &str = "09:00";
 /// Said when the time is not 24-hour HH:MM.
 pub const TIME_ERROR: &str = "Give the time as 24-hour HH:MM, such as 09:00";
 
+/// Said when "Digest mail like this" is asked for and no model is there to
+/// ask.
+pub const LIKE_THIS_NEEDS_A_MODEL: &str =
+    "Digest mail like this needs a model: turn like_this on under [focus.model] in config.toml";
+
 /// Said when the model found nothing alike to digest.
 pub const NOTHING_ALIKE: &str = "The model found nothing alike to digest";
 
@@ -735,6 +740,12 @@ mod tests {
         assert!(cited_banner(3).starts_with("Cited as 3 in the summary"));
         assert_eq!(rule_count(1), "1 rule");
         assert_eq!(rule_count(4), "4 rules");
+    }
+
+    #[test]
+    fn like_this_without_a_model_names_the_table_to_fill_in() {
+        assert!(LIKE_THIS_NEEDS_A_MODEL.contains("[focus.model]"));
+        assert!(LIKE_THIS_NEEDS_A_MODEL.contains("like_this"));
     }
 
     #[test]

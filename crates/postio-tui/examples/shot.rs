@@ -12,7 +12,7 @@
 //! `state` is what is open over the mail: `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
 //! `bar-commands`, `bar-folder`, `folders`, `snooze`, `remind`, `label`, `move`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
-//! `digest`, `digest-list` and `digest-email` (a digest's window on its summary, its list and an email from a reference), `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
+//! `rules` and `rule` (the digest rules, and the rule dialog over them), `digest`, `digest-list` and `digest-email` (a digest's window on its summary, its list and an email from a reference), `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
@@ -77,6 +77,16 @@ fn main() {
             features: postio_tui::places::Features {
                 filtering: true,
                 digest_rules: 4,
+                digests: postio_tui::places::Rules(
+                    postio_config::Config::from_toml_str(
+                        "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@localfirst.example\", \"from:editor@ledger.example\"]\ncadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n\n\
+                         [[focus.digests]]\nname = \"Receipts\"\nmatch = [\"from:billing@example.com\"]\ncadence = \"daily\"\nat = \"08:30\"\n\n\
+                         [[focus.digests]]\nname = \"Harbor list\"\nmatch = [\"list:harbor.lists.example.org\"]\ncadence = \"monthly\"\nday = 1\nat = \"07:00\"\n",
+                    )
+                    .expect("rules")
+                    .focus
+                    .digests,
+                ),
                 reading: if state == "pane" {
                     postio_config::Reading::Pane
                 } else {
@@ -537,6 +547,51 @@ fn main() {
                     );
                 }
                 _ => {}
+            }
+        }
+        "rules" | "rule" => {
+            key(&mut app, KeyCode::Char('g'), KeyModifiers::NONE);
+            update(
+                &mut app,
+                test_support::key(KeyCode::Char('d'), KeyModifiers::NONE),
+            );
+            update(
+                &mut app,
+                Input::Answer(postio_tui::ask::Answer::Waiting {
+                    names: vec![
+                        "Newsletters".into(),
+                        "Receipts".into(),
+                        "Harbor list".into(),
+                    ],
+                    holds: Ok(vec![14, 3, 0]),
+                }),
+            );
+            if state == "rule" {
+                let effects = update(
+                    &mut app,
+                    test_support::key(KeyCode::Enter, KeyModifiers::NONE),
+                );
+                let generation = effects.iter().find_map(|effect| match effect {
+                    Effect::Ask(postio_tui::ask::Ask::Preview { generation, .. }) => {
+                        Some(*generation)
+                    }
+                    _ => None,
+                });
+                update(
+                    &mut app,
+                    Input::Answer(postio_tui::ask::Answer::Preview {
+                        generation: generation.unwrap_or(1),
+                        preview: Ok(postio_client::protocol::DigestPreview {
+                            count: 9,
+                            first: vec![
+                                test_support::held(31, "Local First", "Local-first weekly 41", ""),
+                                test_support::held(32, "Local First", "Local-first weekly 40", ""),
+                                test_support::held(33, "Ledger", "The Ledger, September", ""),
+                                test_support::held(34, "Local First", "Local-first weekly 39", ""),
+                            ],
+                        }),
+                    }),
+                );
             }
         }
         "filtered" | "filtered-nocolor" | "sweep" => {

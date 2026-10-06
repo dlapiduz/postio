@@ -24,6 +24,7 @@ use postio_ui::surfaced::Spliced;
 mod digest;
 mod filtered;
 mod open;
+mod rules;
 mod surface;
 
 pub use open::{Menu, MenuAction, MenuItem, Raw};
@@ -886,6 +887,10 @@ pub enum Focus {
     Filtered,
     /// A digest's window, in the message frame.
     Digest,
+    /// The digest rules, which take the window's body.
+    Rules,
+    /// The rule dialog, over whatever opened it.
+    RuleDialog,
 }
 
 impl std::fmt::Debug for App {
@@ -2371,6 +2376,8 @@ impl App {
             Focus::Composer => postio_core::Context::Composer,
             Focus::Filtered => postio_core::Context::Filtered,
             Focus::Digest => postio_core::Context::Digest,
+            Focus::Rules => postio_core::Context::Filtered,
+            Focus::RuleDialog => postio_core::Context::Picker,
         }
     }
 
@@ -2764,6 +2771,8 @@ impl App {
             Focus::Settings => KeyContext::Accounts,
             Focus::Filtered => KeyContext::Filtered,
             Focus::Digest => KeyContext::Digest,
+            Focus::Rules => KeyContext::Filtered,
+            Focus::RuleDialog => KeyContext::Picker,
         }
     }
 
@@ -3189,6 +3198,11 @@ impl App {
         {
             return effects;
         }
+        if self.focus == Focus::Rules
+            && let Some(effects) = self.rules_command(id)
+        {
+            return effects;
+        }
         let last = self.list.total().saturating_sub(1);
         match id {
             "next_message" if self.focus == Focus::Reader => return self.step_open(1),
@@ -3384,6 +3398,9 @@ impl App {
                 }
             }
             "go_to_filtered" => return self.go_to_filtered(),
+            "go_to_digest_rules" => return self.go_to_digest_rules(),
+            "digest_rule" => return self.digest_rule(),
+            "digest_like_this" => return self.digest_like_this(),
             "sweep_inbox" => return self.ask_sweep(),
             "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
@@ -4245,6 +4262,8 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
         Input::Key(key) if app.focus == Focus::Filtered => app.filtered_key(&key),
         Input::Key(key) if app.focus == Focus::Digest => app.digest_key(&key),
+        Input::Key(key) if app.focus == Focus::Rules => app.rules_key(&key),
+        Input::Key(key) if app.focus == Focus::RuleDialog => app.rule_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -4256,7 +4275,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             effects
         }
         Input::Answer(answer) => app.answered(answer),
-        Input::Places(contents) => app.fill_places(&contents),
+        Input::Places(contents) => {
+            let mut effects = app.fill_places(&contents);
+            effects.extend(app.rules_reread());
+            effects
+        }
         Input::Parts { message, parts } => {
             if let (Ok(parts), Some(reading)) = (parts, app.reading.as_mut())
                 && let Some(member) = reading
@@ -5180,14 +5203,11 @@ pub(crate) mod tests {
         "find_previous",
         // Focus's commands the terminal is offered since it became Focus
         // (C29) and cannot answer yet; tasks T309-T326 empty this list.
-        "digest_rule",
-        "go_to_digest_rules",
         "capture_task",
         "capture_note",
         "capture_change_project",
         "capture_use_subject",
         "capture_write",
-        "digest_like_this",
     ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {

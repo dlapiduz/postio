@@ -39,6 +39,9 @@ pub struct Features {
     pub reading: postio_config::Reading,
     /// Whether `[focus.vault]` is configured, so a to-do offers Task.
     pub capture: bool,
+    /// Whether `[focus.model]` has `like_this` on, so the rule dialog offers
+    /// "Digest mail like this".
+    pub like_this: bool,
 }
 
 /// The digest rules as the file has them. Equal when they are written the

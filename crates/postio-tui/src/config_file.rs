@@ -41,6 +41,10 @@ impl Read {
                 digests: crate::places::Rules(config.focus.digests.clone()),
                 reading: config.focus.reading,
                 capture: config.focus.vault.is_some(),
+                like_this: config
+                    .focus
+                    .model_for(postio_config::model::ModelFeature::LikeThis)
+                    .is_some(),
             },
         }
     }

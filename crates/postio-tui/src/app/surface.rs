@@ -16,6 +16,12 @@ impl App {
             | Part::DigestReference
             | Part::StopCancel
             | Part::StopConfirm => self.digest_click(part, index),
+            Part::RuleRow
+            | Part::RemoveCancel
+            | Part::RemoveConfirm
+            | Part::RuleField
+            | Part::RuleCancel
+            | Part::RuleCreate => self.rules_click(part, index),
         }
     }
 
@@ -23,6 +29,13 @@ impl App {
     pub(super) fn surface_wheel(&mut self, lines: isize) -> bool {
         if self.surfaces.digest.is_some() {
             self.digest_wheel(lines);
+            return true;
+        }
+        if self.surfaces.rules.is_some() {
+            let height = self.rules_height();
+            if let Some(list) = self.surfaces.rules.as_mut() {
+                list.scroll(lines, height);
+            }
             return true;
         }
         if self.surfaces.filtered.is_some() {

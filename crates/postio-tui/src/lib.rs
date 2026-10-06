@@ -32,6 +32,8 @@ pub mod pickers;
 pub mod places;
 pub mod reader;
 pub mod row;
+pub mod rule_dialog;
+pub mod rules;
 pub mod run;
 pub mod settings;
 pub mod sheet;

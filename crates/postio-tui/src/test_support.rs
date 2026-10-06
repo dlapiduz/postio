@@ -375,7 +375,7 @@ pub fn serve_filtered(
                     .cloned()
                     .collect()),
             },
-            Ask::SweepPreview | Ask::Digest(_) => continue,
+            _ => continue,
         };
         pending.extend(update(app, Input::Answer(answer)));
     }

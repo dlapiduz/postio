@@ -27,6 +27,28 @@ pub enum Ask {
     SweepPreview,
     /// What a digest's delivery holds and its summary, once one is written.
     Digest(postio_model::DeliveryId),
+    /// How many messages each of these rules holds now, in their order.
+    Waiting(Vec<String>),
+    /// Take a rule out of `config.toml`, releasing what it held.
+    DeleteRule(String),
+    /// What a rule matching these queries would have caught since `since`.
+    Preview {
+        /// Which reading of the dialog this belongs to.
+        generation: u64,
+        /// The rule's queries.
+        queries: Vec<String>,
+        /// How far back.
+        since: chrono::DateTime<chrono::Utc>,
+    },
+    /// Write a rule to `config.toml`: a new one, or `replacing` one.
+    SaveRule {
+        /// The rule being edited, by the name it had.
+        replacing: Option<String>,
+        /// The rule as the dialog says it.
+        rule: postio_client::protocol::DigestRuleDraft,
+    },
+    /// The rule the person's model picks for mail like this message.
+    LikeThis(postio_model::MessageId),
 }
 
 /// What the host answered.
@@ -54,6 +76,36 @@ pub enum Answer {
         /// Its summary: nothing until one is written.
         summary: Result<Option<postio_model::summary::DigestSummary>, String>,
     },
+    /// What each rule holds, in the order asked, or why not.
+    Waiting {
+        /// The rules asked about.
+        names: Vec<String>,
+        /// How many each holds.
+        holds: Result<Vec<u32>, String>,
+    },
+    /// A rule was removed: how many messages it released, or why not.
+    RuleDeleted {
+        /// Which rule.
+        name: String,
+        /// What came back to the inbox.
+        released: Result<u32, String>,
+    },
+    /// What a rule would have caught.
+    Preview {
+        /// The generation it was asked in.
+        generation: u64,
+        /// The count and the newest few, or why not.
+        preview: Result<postio_client::protocol::DigestPreview, String>,
+    },
+    /// A rule was written, or why not.
+    RuleSaved {
+        /// The rule's name.
+        name: String,
+        /// Whether it was written.
+        saved: Result<(), String>,
+    },
+    /// The model's rule for mail like a message: nothing when it found none.
+    LikeThis(Result<Option<postio_client::protocol::LikeThisRule>, String>),
 }
 
 impl Ask {
@@ -75,6 +127,32 @@ impl Ask {
                     .map_err(said),
             },
             Ask::SweepPreview => Answer::SweepPreview(client.sweep_preview().await.map_err(said)),
+            Ask::Waiting(names) => Answer::Waiting {
+                holds: client.digest_waiting(names.clone()).await.map_err(said),
+                names,
+            },
+            Ask::DeleteRule(name) => Answer::RuleDeleted {
+                released: client.delete_digest_rule(name.clone()).await.map_err(said),
+                name,
+            },
+            Ask::Preview {
+                generation,
+                queries,
+                since,
+            } => Answer::Preview {
+                generation,
+                preview: client.digest_preview(queries, since).await.map_err(said),
+            },
+            Ask::SaveRule { replacing, rule } => {
+                let name = rule.name.clone();
+                Answer::RuleSaved {
+                    saved: client.save_digest_rule(replacing, rule).await.map_err(said),
+                    name,
+                }
+            }
+            Ask::LikeThis(message) => {
+                Answer::LikeThis(client.digest_like_this(message).await.map_err(said))
+            }
             Ask::Digest(delivery) => Answer::Digest {
                 delivery,
                 messages: client.delivery_messages(delivery).await.map_err(said),

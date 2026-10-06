@@ -25,6 +25,18 @@ pub enum Part {
     StopCancel,
     /// The question over stopping a sender: stop.
     StopConfirm,
+    /// A rule of the digest rules.
+    RuleRow,
+    /// The question over removing a rule: leave it be.
+    RemoveCancel,
+    /// The question over removing a rule: remove it.
+    RemoveConfirm,
+    /// A field of the rule dialog, by its place in the ring.
+    RuleField,
+    /// The rule dialog's Cancel.
+    RuleCancel,
+    /// The rule dialog's Create or Save.
+    RuleCreate,
 }
 
 /// What the surfaces hold between them.
@@ -36,4 +48,8 @@ pub struct Surfaces {
     pub sweep: Option<u32>,
     /// The digest window, while one is open.
     pub digest: Option<crate::digest::Window>,
+    /// The digest rules, while they are the window's body.
+    pub rules: Option<crate::rules::Rules>,
+    /// The rule dialog, and where the keyboard goes when it closes.
+    pub rule: Option<(crate::rule_dialog::Form, crate::app::Focus)>,
 }

@@ -16,6 +16,8 @@ pub mod open;
 pub mod palette;
 pub mod pane;
 pub mod picker;
+pub mod rule_dialog;
+pub mod rules;
 pub mod settings;
 pub mod sheet;
 pub mod state;
@@ -62,6 +64,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         if !tab {
             if app.filtered().is_some() {
                 filtered::strip(frame, window.strip, app, theme, &mut hits);
+            } else if app.rules().is_some() {
+                rules::strip(frame, window.strip, app, theme, &mut hits);
             } else {
                 strip::draw(frame, window.strip, app, theme, &mut hits);
             }
@@ -80,6 +84,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             // Filtered takes the strip's place and the list's.
             _ if app.filtered().is_some() => {
                 filtered::body(frame, body, app, theme, now, &mut hits);
+            }
+            _ if app.rules().is_some() => {
+                rules::body(frame, body, app, theme, now, &mut hits);
             }
             // A detached draft has the whole body to itself.
             Front::Composer if app.composer().is_some() && tab => {
@@ -126,8 +133,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         }
         // A digest's window, in the message frame.
         digest::over_list(frame, area, app, theme, now, &mut hits);
-        // The sweep's question, over the window.
+        // The sweep's question, and the one over removing a rule.
         filtered::sweep(frame, body, app, theme, &mut hits);
+        rules::remove(frame, body, app, theme, &mut hits);
+        rule_dialog::draw(frame, body, app, theme, now, &mut hits);
         // Over everything: a click there lands on nothing underneath.
         if let Some((bar, ctx)) = app.bar() {
             bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);

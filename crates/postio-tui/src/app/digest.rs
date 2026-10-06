@@ -146,7 +146,12 @@ impl App {
         let Outcome::Command(id) = self.keys.press(key, KeyContext::Digest, false) else {
             return Vec::new();
         };
-        self.digest_command(&id).unwrap_or_default()
+        match self.digest_command(&id) {
+            Some(effects) => effects,
+            // The rule is edited in its own dialog.
+            None if id == "digest_rule" => self.digest_rule(),
+            None => Vec::new(),
+        }
     }
 
     /// What the window does for `id`, or `None` when it is not its own.
