@@ -140,7 +140,7 @@ grep -oE 'uniffi::method\(name = "[a-zA-Z]+"\)' crates/postio-ffi/src/session.rs
     done
 
 # 2. GTK reaches this shared function and the boundary does not.
-grep -ohrE "postio_ui::[a-z_]+::[a-z_]+" crates/postio-gtk/src crates/postio-app/src \
+grep -ohrE "postio_ui::[a-z_]+::[a-z_]+" crates/postio-gtk/src crates/postio-widgets/src \
   | sort -u > /tmp/gtk
 grep -ohrE "postio_ui::[a-z_]+::[a-z_]+" crates/postio-ffi/src | sort -u > /tmp/ffi
 comm -23 /tmp/gtk /tmp/ffi

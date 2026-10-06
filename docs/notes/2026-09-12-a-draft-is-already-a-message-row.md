@@ -1,7 +1,7 @@
 # A draft is already a message row (2026-09-12)
 
 The thing to know before designing anything that lists drafts, or that adds a
-row to the sidebar.
+place to the folders popover or the macOS sidebar.
 
 ## Every draft has a `messages` row, written offline
 
@@ -47,8 +47,9 @@ is deliberate: the column means the same thing for every folder, and teaching
 three intricate triggers a fourth condition to make one folder different was
 the alternative.
 
-The sidebar therefore does **not** read `total_count` for Drafts. It asks
-`MailboxRepository::draft_counts`, which answers three numbers in one read:
+Nothing that lists Drafts reads `total_count` for it. It asks
+`MailboxRepository::draft_counts` (`draft_counts` on the client), which
+answers three numbers in one read:
 what is on its way, what has stopped and needs a person, and what Drafts should
 show. If you add a number to that row, add it there.
 
@@ -57,9 +58,9 @@ show. If you add a number to that row, add it there.
 **A sentinel id.** `Flagged` and `Snoozed` used to be `Mailbox` values with
 `MailboxId::new(-1)` and `-2`. Views have no id now — see
 [ADR 0036](../decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md) — which
-means three sidebar rows share the unassigned id. **Anything identifying a
-sidebar row by `MailboxId` is wrong.** The keyboard walk did exactly that and
-stuck on Snoozed for ever; take a `postio_gtk::sidebar::SidebarChoice` instead.
+means three views share the unassigned id. **Anything identifying a place by
+`MailboxId` is wrong.** The classic sidebar's keyboard walk did exactly that
+and stuck on Snoozed for ever; macOS names a row with `SidebarRowId`.
 
 **A second copy of `LIST_COLUMNS`.** A thread query in `threads.rs` spelled the
 same thirteen columns out again and handed them to the same `read_list_row`.

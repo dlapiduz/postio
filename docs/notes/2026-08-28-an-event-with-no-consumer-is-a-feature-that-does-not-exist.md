@@ -15,25 +15,24 @@ the usual check does not catch it. "Can a person reach it?" asks whether a
 no listener. The same question works, asked backwards — for every event the
 runtime emits, who repaints?
 
-**Where a consumer goes when it is not the sidebar or the list.**
-`Feeds::apply` is the one call the composition root makes with every event,
-but the two feeds inside it are `postio-gtk`'s own, and `postio-gtk` may not
-read a body. The reading pane's contents are `postio-app`'s. So the seam is
-`Feeds::connect_event`: the composition root registers its surfaces, and
-everything on screen is still fed by that one call rather than by a second
-event stream nobody remembers to drain. Prefer it over threading a new handle
-through `commands::apply` for the next surface that needs an event.
+**Where a consumer went in the classic app** (removed in spec 007 T256, with
+every seam named here). `Feeds::apply` was the one call its composition root
+made with every event; the reading pane's contents were `postio-app`'s, so
+the seam was `Feeds::connect_event`, and everything on screen was still fed
+by that one call rather than by a second event stream nobody remembers to
+drain. The rule outlives the code: one feed, consumers registered on it.
 
-**Two things every such consumer needs**, both of which the reading pane got
-wrong-by-omission first:
+**Two things every such consumer needs**, both of which the classic reading
+pane got wrong-by-omission first:
 
 - **Who it is for.** A backfill commits thousands of bodies. Only an arrival
   for what the surface is *showing* changes anything, and the guard belongs
   before the store read, not after it.
 - **How often.** These arrive in bursts, so the repaint is coalesced onto the
   next turn of the main loop with a `queued: Cell<bool>` and
-  `glib::idle_add_local_once` — `Folders::reload` is the pattern, and it is
-  the difference between one store read and twenty for the same message.
+  `glib::idle_add_local_once` — the classic `Folders::reload` was the
+  pattern, and it is the difference between one store read and twenty for
+  the same message.
 
-The conversation pane (ADR 0015 Q4) is still not repainted this way: its
-entries are built by a factory and it has no seam for refilling one — #739.
+The classic conversation pane (ADR 0015 Q4) was never repainted this way
+(#739).
