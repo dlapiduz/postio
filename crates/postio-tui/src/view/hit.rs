@@ -24,8 +24,12 @@ pub enum Target {
     ComposerField(crate::composer::Field),
     /// One of the composer's buttons, by the command it runs.
     ComposerAction(&'static str),
-    /// One of a search's facets, by its place in the row.
-    Facet(usize),
+    /// A line of the command bar, by its place in its list.
+    BarRow(usize),
+    /// One of the bar's saved searches.
+    BarSaved(usize),
+    /// One of the bar's chips.
+    BarChip(usize),
     /// A control of the window that runs a command, by its id: the top bar's
     /// and the strip's.
     Command(&'static str),

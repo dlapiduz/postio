@@ -9,8 +9,8 @@
 //! magick /tmp/tui.svg /tmp/tui.png
 //! ```
 //!
-//! `state` is what is open over the mail: `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `search`, `palette`, `keys` (the
-//! cheat sheet), `compose`, `undo` or `toast` (an undo offer on the bottom line),
+//! `state` is what is open over the mail: `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
+//! `bar-commands`, `bar-folder`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
@@ -68,7 +68,11 @@ fn main() {
                 },
             ],
             counts: Vec::new(),
-            saved: Vec::new(),
+            saved: vec![
+                test_support::saved_search("waiting", "Waiting on reply", "is:unread"),
+                test_support::saved_search("atlas", "Atlas", "atlas"),
+                test_support::saved_search("receipts", "Receipts this month", "receipts"),
+            ],
             features: postio_tui::places::Features {
                 filtering: true,
                 digest_rules: 4,
@@ -210,69 +214,62 @@ fn main() {
         test_support::type_text(app, text)
             .into_iter()
             .filter_map(|effect| match effect {
-                Effect::Search { sequence, .. } => Some(sequence),
+                Effect::BarSearch(ask) => Some(ask.sequence),
                 _ => None,
             })
             .next_back()
     };
     let mut colour = Colour::TrueColor;
     match state.as_str() {
-        "search" => {
-            let sequence = typed(&mut app, "/tide").unwrap_or_default();
+        "bar" => {
+            // Words that name an operator are a search, answered with its hits.
+            let sequence = typed(&mut app, "/from:ada tide").unwrap_or_default();
+            let hit = |message: i64, thread: i64, subject: &str, snippet: &str| {
+                postio_search::SearchHit {
+                    message_id: MessageId::new(message),
+                    thread_id: Some(postio_model::ThreadId::new(thread)),
+                    mailbox_id: MailboxId::new(2),
+                    subject: Some(subject.to_owned()),
+                    from: Some(EmailAddress::new(Some("Ada Moreno"), "ada@example.com")),
+                    received_at: test_support::local(23, 11, 51).with_timezone(&Utc),
+                    snippet: snippet.to_owned(),
+                    score: 0.0,
+                }
+            };
+            let hits = vec![
+                hit(
+                    3,
+                    3,
+                    "Re: Atlas Q3 budget, final numbers",
+                    "the \u{1}tide\u{2} tables for Q3",
+                ),
+                hit(4, 4, "Atlas staffing plan for Q4", "sharing the draft"),
+            ];
             update(
                 &mut app,
-                Input::Found {
+                Input::BarFound {
                     sequence,
-                    found: Ok(Some(postio_client::protocol::Found {
-                        ids: vec![MessageId::new(1), MessageId::new(3), MessageId::new(5)],
-                        hits: 3,
-                        capped: false,
-                        corpus_complete: true,
-                        elapsed: std::time::Duration::from_millis(7),
-                    })),
+                    found: Ok(Some(postio_client::protocol::Hits(
+                        postio_search::SearchResults {
+                            total_hits: 2,
+                            hits,
+                            total_hits_capped: false,
+                            elapsed: std::time::Duration::from_millis(4),
+                            corpus_complete: true,
+                            suggestion: None,
+                            instead: None,
+                        },
+                    ))),
+                    held: Vec::new(),
                 },
             );
-            use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
-            update(
-                &mut app,
-                Input::Facets {
-                    sequence,
-                    facets: Some(Facets {
-                        scopes: vec![
-                            ScopeCount {
-                                scope: Scope::AllMail,
-                                hits: 3,
-                            },
-                            ScopeCount {
-                                scope: Scope::Inbox,
-                                hits: 2,
-                            },
-                            ScopeCount {
-                                scope: Scope::Lists,
-                                hits: 0,
-                            },
-                        ],
-                        refinements: vec![
-                            Refinement {
-                                token: "is:unread".into(),
-                                hits: 2,
-                            },
-                            Refinement {
-                                token: "from:mira".into(),
-                                hits: 1,
-                            },
-                        ],
-                    }),
-                },
-            );
-            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
-            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
-            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
-            key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
         }
-        "palette" => {
+        "bar-commands" => {
             key(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
             typed(&mut app, "ar");
+        }
+        "bar-folder" => {
+            test_support::type_text(&mut app, "/in:arch");
         }
         "keys" => {
             typed(&mut app, "?");

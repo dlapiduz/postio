@@ -13,10 +13,9 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, Focus};
+use crate::app::App;
 use crate::theme::{Role, Theme};
 use crate::view::hit::{Hits, Target};
-use crate::view::search;
 use postio_core::CommandId;
 
 /// The field's width when there is room.
@@ -160,17 +159,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         .set_style(field, theme.style(Role::Surface));
     hits.add(field, Target::Command("search"));
     let inner = Rect::new(field.x + 1, field.y, field.width.saturating_sub(2), 1);
-    match app.search_query() {
-        Some(query) => search::draw(
-            frame,
-            inner,
-            query,
-            &app.search_chips(),
-            app.search_caret(),
-            app.search_readout().as_deref(),
-            app.focus() == Focus::Search,
-            theme,
-        ),
+    match app.bar_typed() {
+        Some(typed) => super::bar::field(frame, inner, typed, theme),
         None => {
             frame.render_widget(
                 Line::styled(format!("⌕ {placeholder}"), dim),
@@ -285,7 +275,7 @@ mod tests {
         crate::test_support::type_text(&mut app, "/tide");
         let drawn = screen(120, 20, &app);
         let bar = drawn.lines().next().unwrap();
-        assert!(bar.contains("/ tide"), "{bar}");
+        assert!(bar.contains("⌕ tide"), "{bar}");
         assert!(!bar.contains("go to a folder"), "{bar}");
     }
 }

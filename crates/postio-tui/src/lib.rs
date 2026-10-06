@@ -13,6 +13,7 @@
 //! asserted on the rendered buffer, which is what a person sees.
 
 pub mod app;
+pub mod bar;
 pub mod caps;
 pub mod clipboard;
 pub mod composer;

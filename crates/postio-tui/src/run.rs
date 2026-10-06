@@ -1022,29 +1022,108 @@ fn perform(
                     let _ = inputs.send(Input::Attached { path, attached }).await;
                 });
             }
-            Effect::Facets {
-                sequence,
-                account,
-                query,
-                scope,
-            } => {
+            Effect::BarSearch(ask) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let parsed = postio_search::parse(&query, chrono::Local::now().date_naive());
-                    let facets = client.facets(account, parsed, scope).await.ok().flatten();
-                    let _ = inputs.send(Input::Facets { sequence, facets }).await;
+                    let sequence = ask.sequence;
+                    let found = client
+                        .search_hits(
+                            postio_model::AccountScope::Unified,
+                            ask.query,
+                            postio_search::facets::Scope::AllMail,
+                            ask.order,
+                            0,
+                        )
+                        .await
+                        .map(|found| found.map(postio_client::protocol::Hits))
+                        .map_err(|error| error.message().to_owned());
+                    // Held mail says where it waits, not the folder it is
+                    // filed in.
+                    let held = match &found {
+                        Ok(Some(postio_client::protocol::Hits(results))) if ask.digesting => {
+                            let ids = results
+                                .hits
+                                .iter()
+                                .take(postio_ui::command_bar::HITS * 4)
+                                .map(|hit| hit.message_id)
+                                .collect();
+                            client.held(ids).await.unwrap_or_default()
+                        }
+                        _ => Vec::new(),
+                    };
+                    let _ = inputs
+                        .send(Input::BarFound {
+                            sequence,
+                            found,
+                            held,
+                        })
+                        .await;
                 });
             }
-            Effect::Search { sequence, search } => {
+            Effect::BarFolder { sequence, mailbox } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let found = client
-                        .search(search)
-                        .await
-                        .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Found { sequence, found }).await;
+                    let scope = ListScope::Mailbox(mailbox);
+                    let count = client.list_count(scope).await.unwrap_or(0);
+                    let page = client
+                        .list_page(PageRequest {
+                            scope,
+                            offset: 0,
+                            limit: postio_ui::command_bar::FOLDER_ROWS,
+                        })
+                        .await;
+                    let rows = match page {
+                        Ok(postio_model::listing::ListPage::Threads(page)) => page
+                            .rows
+                            .iter()
+                            .map(crate::bar::ResultRow::of_thread)
+                            .collect(),
+                        Ok(postio_model::listing::ListPage::Messages(page)) => page
+                            .rows
+                            .iter()
+                            .map(crate::bar::ResultRow::of_message)
+                            .collect(),
+                        Err(error) => {
+                            tracing::warn!(%error, "the bar could not list a folder: {error}");
+                            Vec::new()
+                        }
+                    };
+                    let _ = inputs
+                        .send(Input::BarFolder {
+                            sequence,
+                            count,
+                            rows,
+                        })
+                        .await;
+                });
+            }
+            Effect::ReadPlaceDetails => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let mut details = crate::places::PlaceDetails::default();
+                    for account in client.accounts().await.unwrap_or_default() {
+                        if !account.enabled {
+                            continue;
+                        }
+                        details
+                            .labels
+                            .extend(client.labels(account.id).await.unwrap_or_default());
+                        details
+                            .label_counts
+                            .extend(client.label_counts(account.id).await.unwrap_or_default());
+                        details
+                            .correspondents
+                            .extend(client.correspondents(account.id).await.unwrap_or_default());
+                        let waiting = client
+                            .list_count(ListScope::Outbox(account.id))
+                            .await
+                            .unwrap_or(0);
+                        details.outbox.push((account.id, waiting));
+                    }
+                    let _ = inputs.send(Input::PlaceDetails(details)).await;
                 });
             }
             // The desktop's own notification service, where the session has
@@ -1070,14 +1149,6 @@ fn perform(
                 tokio::spawn(async move {
                     let labels = client.labels(account).await.unwrap_or_default();
                     let _ = inputs.send(Input::Labels(labels)).await;
-                });
-            }
-            Effect::ReadCorrespondents(account) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let found = client.correspondents(account).await.unwrap_or_default();
-                    let _ = inputs.send(Input::Correspondents(found)).await;
                 });
             }
             Effect::Recipients { account, prefix } => {

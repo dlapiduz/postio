@@ -64,6 +64,21 @@ impl Features {
     }
 }
 
+/// What the bar and the folders box read of every enabled account beyond the
+/// folders: labels with their counts, correspondents, and what waits in each
+/// Outbox.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlaceDetails {
+    /// Every account's labels.
+    pub labels: Vec<postio_model::Label>,
+    /// How many conversations carry each label.
+    pub label_counts: Vec<(postio_model::LabelId, u32)>,
+    /// Who a typed name can mean.
+    pub correspondents: Vec<postio_model::Contact>,
+    /// How many drafts wait in each account's Outbox.
+    pub outbox: Vec<(AccountId, u32)>,
+}
+
 /// A saved search from `config.toml`'s `[filters]`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Saved {

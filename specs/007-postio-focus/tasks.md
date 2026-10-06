@@ -546,7 +546,7 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 - [X] T315 [US16] The open message frame (scenario 2, FR-195): header, steps, position, action row and More, the column and its rhythm, the action card and the quote's highlight, attachments, the fold line, `j`/`k`, `[`/`]`, `o`, `v`, read on dwell, `Esc` back to the same row; the list dimmed behind Done: `find_*` stay in GAPS (spec 006's find has no terminal index yet); the column shows one message at a time, so `toggle_fold` says so
 - [X] T316 [US16] Reading beside the list, `F8` and `[focus] reading`, from 128 columns
 - [X] T317 [US16] The composer in the frame; detach to the whole screen (FR-196); reply, reply all and forward; Send later; Remind `ctrl+h` Done: Remind `ctrl+h` opens the schedule picker's numbered list with the reminder presets until the pickers (T320) replace it; Escape from a detached draft brings the frame back
-- [ ] T318 [US16] The command bar: opening in place, saved searches, chips, `in:`, commands with keys, results, the footer
+- [X] T318 [US16] The command bar: opening in place, saved searches, chips, `in:`, commands with keys, results, the footer
 - [ ] T319 [US16] Folders and labels, `g o`, and the `g` go-to keys
 - [ ] T320 [US16] Pickers: snooze, remind, label and move, anchored at the row
 - [ ] T321 [US16] The key map, `?`, from `keymap_sheet` for the terminal

@@ -2,6 +2,7 @@
 //!
 //! Nothing here decides anything about mail; it draws what `App` holds.
 
+pub mod bar;
 pub mod bottom;
 pub mod cheatsheet;
 pub mod composer;
@@ -11,7 +12,6 @@ pub mod list;
 pub mod open;
 pub mod palette;
 pub mod pane;
-pub mod search;
 pub mod settings;
 pub mod state;
 pub mod strip;
@@ -42,6 +42,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         settings::draw(frame, area, app, theme);
         if let Some(open) = app.palette() {
             palette::draw(frame, area, &open, theme);
+        }
+        if let Some((bar, ctx)) = app.bar() {
+            bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
         }
     } else if let Some(run) = app.first_run() {
         first_run::draw(frame, area, run, theme);
@@ -79,21 +82,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 if let Some((_, pane)) = beside {
                     pane::draw(frame, pane, app, theme, now, &mut hits);
                 }
-                // A search's facets take the list's first line.
-                let facets = app.facets();
-                let list = if facets.is_empty() || region.height < 2 {
-                    region
-                } else {
-                    search::draw_facets(
-                        frame,
-                        Rect::new(region.x, region.y, region.width, 1),
-                        &facets,
-                        app.facets_note(),
-                        theme,
-                        &mut hits,
-                    );
-                    Rect::new(region.x, region.y + 1, region.width, region.height - 1)
-                };
+                let list = region;
                 if let Some(said) = app.empty_inbox(now) {
                     state::empty(frame, list, &said, theme, &mut hits);
                 } else {
@@ -123,6 +112,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             composer::screen(frame, inside, app, theme, now, &mut hits);
         }
         // Over everything: a click there lands on nothing underneath.
+        if let Some((bar, ctx)) = app.bar() {
+            bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
+        }
         if let Some(open) = app.palette() {
             palette::draw(frame, area, &open, theme);
             hits.add(area, hit::Target::Overlay);
@@ -493,184 +485,6 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_operator_is_marked_bold_and_a_half_typed_one_is_not() {
-        let mut app = with_places((160, 16));
-        for c in "/from:ada is:".chars() {
-            update(
-                &mut app,
-                Input::Key(crossterm::event::KeyEvent::from(
-                    crossterm::event::KeyCode::Char(c),
-                )),
-            );
-        }
-        let drawn = buffer(160, 16, &app);
-        let screen = screen(160, 16, &app);
-        let (row, line) = screen
-            .lines()
-            .enumerate()
-            .find(|(_, line)| line.contains("/ from:ada is:"))
-            .unwrap_or_else(|| panic!("no bar:\n{screen}"));
-        let bold = |needle: &str| {
-            let column = line[..line.find(needle).expect("drawn")].chars().count();
-            drawn[(u16::try_from(column).unwrap(), u16::try_from(row).unwrap())]
-                .modifier
-                .contains(ratatui::style::Modifier::BOLD)
-        };
-        assert!(bold("from:ada"), "a whole operator reads as one");
-        assert!(
-            !bold("is:"),
-            "one still waiting for its value is in progress"
-        );
-    }
-
-    #[test]
-    fn the_search_field_in_the_top_bar_holds_the_query_and_its_readout() {
-        let mut app = with_places((160, 16));
-        update(
-            &mut app,
-            Input::Key(crossterm::event::KeyEvent::from(
-                crossterm::event::KeyCode::Char('/'),
-            )),
-        );
-        for c in "from:ada tide".chars() {
-            update(
-                &mut app,
-                Input::Key(crossterm::event::KeyEvent::from(
-                    crossterm::event::KeyCode::Char(c),
-                )),
-            );
-        }
-        update(
-            &mut app,
-            Input::Found {
-                sequence: 13,
-                found: Ok(Some(postio_client::protocol::Found {
-                    ids: vec![postio_model::MessageId::new(4)],
-                    hits: 1,
-                    capped: false,
-                    corpus_complete: false,
-                    elapsed: std::time::Duration::from_millis(7),
-                })),
-            },
-        );
-        let screen = screen(160, 16, &app);
-        let bar = screen.lines().next().expect("a top row");
-        assert!(
-            bar.contains("/ from:ada tide"),
-            "the search field is the top bar:\n{screen}"
-        );
-        assert!(
-            !bar.contains("Inbox"),
-            "across the top, over no pane:\n{screen}"
-        );
-        assert!(bar.contains("1 hit · 7 ms · still syncing"), "{bar}");
-        assert!(
-            !bar.contains("go to a folder"),
-            "the query replaces the placeholder: {bar}"
-        );
-    }
-
-    #[test]
-    fn a_searchs_facets_sit_over_its_results_and_take_a_click() {
-        use crossterm::event::{KeyCode, KeyEvent};
-        use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
-        let mut app = with_places((160, 16));
-        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('/'))));
-        let sequence = update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('t'))))
-            .iter()
-            .find_map(|effect| match effect {
-                crate::app::Effect::Search { sequence, .. } => Some(*sequence),
-                _ => None,
-            })
-            .expect("searched");
-        update(
-            &mut app,
-            Input::Found {
-                sequence,
-                found: Ok(Some(postio_client::protocol::Found {
-                    ids: vec![
-                        postio_model::MessageId::new(4),
-                        postio_model::MessageId::new(5),
-                    ],
-                    hits: 2,
-                    capped: false,
-                    corpus_complete: true,
-                    elapsed: std::time::Duration::from_millis(7),
-                })),
-            },
-        );
-        update(
-            &mut app,
-            Input::Facets {
-                sequence,
-                facets: Some(Facets {
-                    scopes: vec![
-                        ScopeCount {
-                            scope: Scope::AllMail,
-                            hits: 2,
-                        },
-                        ScopeCount {
-                            scope: Scope::Inbox,
-                            hits: 1,
-                        },
-                    ],
-                    refinements: vec![Refinement {
-                        token: "is:unread".into(),
-                        hits: 1,
-                    }],
-                }),
-            },
-        );
-        let mut hits = hit::Hits::default();
-        let drawn = {
-            let backend = ratatui::backend::TestBackend::new(160, 16);
-            let mut terminal = ratatui::Terminal::new(backend).unwrap();
-            let theme = Theme::new(
-                crate::caps::Colour::None,
-                crate::caps::Background::Unknown,
-                &Default::default(),
-            )
-            .0;
-            terminal
-                .draw(|frame| hits = draw(frame, &app, &theme, chrono::Local::now()))
-                .unwrap();
-            screen(160, 16, &app)
-        };
-        let facets = drawn
-            .lines()
-            .find(|line| line.contains("All mail"))
-            .unwrap_or_else(|| panic!("no facet row:\n{drawn}"));
-        for wanted in ["All mail 2", "Inbox only 1", "Lists 0", "is:unread 1"] {
-            assert!(facets.contains(wanted), "{wanted} missing: {facets}");
-        }
-        let row = u16::try_from(
-            drawn
-                .lines()
-                .position(|line| line.contains("All mail"))
-                .unwrap(),
-        )
-        .unwrap();
-        let at = facets.find("is:unread").unwrap();
-        let column = u16::try_from(facets[..at].chars().count()).unwrap();
-        let hit = hits.at(column, row).expect("the chip takes a click");
-        assert_eq!(hit.target, hit::Target::Facet(3));
-
-        // Nothing to narrow by: said, not left blank.
-        update(
-            &mut app,
-            Input::Facets {
-                sequence,
-                facets: Some(Facets::default()),
-            },
-        );
-        let drawn = screen(160, 16, &app);
-        assert!(
-            drawn.contains("Every match is alike"),
-            "said, as far as the pane is wide:\n{drawn}"
-        );
-    }
-
-    #[test]
     fn the_top_bar_offers_search_and_its_hints_come_from_the_keymap() {
         let app = with_places((160, 16));
         let drawn = screen(160, 16, &app);
@@ -695,31 +509,6 @@ mod tests {
         let top = drawn.lines().next().expect("a top row");
         assert!(top.contains(&format!("Compose {compose}")), "{top}");
         assert!(!top.contains("Compose c"), "{top}");
-    }
-
-    #[test]
-    fn the_palette_draws_its_rows_with_their_keys() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = with_places((160, 24));
-        update(
-            &mut app,
-            Input::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
-        );
-        for c in "archive".chars() {
-            update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char(c))));
-        }
-        let screen = screen(160, 24, &app);
-        assert!(screen.contains("> archive"), "{screen}");
-        let row = screen
-            .lines()
-            .find(|line| line.contains("Archive") && !line.contains("thread"))
-            .unwrap_or_else(|| panic!("no Archive row:\n{screen}"));
-        assert!(row.contains(" a│"), "the key, at the right edge: {row}");
-        assert!(
-            screen.contains("╭─ Commands ─"),
-            "a rounded frame, titled:\n{screen}"
-        );
-        assert!(screen.contains('╯'), "{screen}");
     }
 
     #[test]

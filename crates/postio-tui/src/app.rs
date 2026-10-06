@@ -157,13 +157,6 @@ pub enum Input {
         /// How many edits it had when it asked.
         edit: u64,
     },
-    /// A search's facets, for the search `sequence` asked.
-    Facets {
-        /// Which search.
-        sequence: u64,
-        /// Its counts, when the store could be read.
-        facets: Option<postio_search::facets::Facets>,
-    },
     /// A signature was saved or removed, or why it could not be: the
     /// store's sentence, which is for the person who typed.
     SignatureSaved(Result<(), String>),
@@ -186,17 +179,29 @@ pub enum Input {
     Notified(postio_ui::notify::Notification),
     /// The account's labels, for the finder's `+` ([`Effect::ReadLabels`]).
     Labels(Vec<postio_model::Label>),
-    /// The account's correspondents, for the finder's `@`
-    /// ([`Effect::ReadCorrespondents`]).
-    Correspondents(Vec<postio_model::Contact>),
-    /// The host answered an [`Effect::Search`].
-    Found {
+    /// The host answered an [`Effect::BarSearch`].
+    BarFound {
         /// Which question it answers.
         sequence: u64,
         /// What matched, nothing when the store could not be read, or why
         /// the host could not be asked.
-        found: Result<Option<postio_client::protocol::Found>, String>,
+        found: Result<Option<postio_client::protocol::Hits>, String>,
+        /// Which of the hits a digest holds: the message, the rule and
+        /// whether it has been delivered.
+        held: Vec<(postio_model::MessageId, String, bool)>,
     },
+    /// The host answered an [`Effect::BarFolder`].
+    BarFolder {
+        /// Which question it answers.
+        sequence: u64,
+        /// How many conversations the folder holds.
+        count: u32,
+        /// The newest of them.
+        rows: Vec<crate::bar::ResultRow>,
+    },
+    /// The labels and correspondents of every account, read for the bar
+    /// ([`Effect::ReadPlaceDetails`]).
+    PlaceDetails(crate::places::PlaceDetails),
     /// The host answered an [`Effect::Recipients`].
     Recipients {
         /// What was looked up.
@@ -303,8 +308,6 @@ pub enum Effect {
     },
     /// Read the account's labels, for the finder's `+`.
     ReadLabels(postio_model::AccountId),
-    /// Read the account's correspondents, for the finder's `@`.
-    ReadCorrespondents(postio_model::AccountId),
     /// Write a part to a file, and answer with [`Input::PartWritten`].
     SavePart {
         /// Whose.
@@ -392,26 +395,19 @@ pub enum Effect {
     /// Save this query as a saved search in `config.toml`, as the desktop's
     /// Ctrl+S does.
     SaveSearch(String),
-    /// Run a search; its answer comes back as [`Input::Found`].
-    Search {
-        /// Which question this is, so an older answer can be dropped.
+    /// Run the bar's search; its answer comes back as [`Input::BarFound`].
+    BarSearch(crate::bar::Ask),
+    /// List a folder's conversations for the bar; the answer comes back as
+    /// [`Input::BarFolder`].
+    BarFolder {
+        /// Which question this is.
         sequence: u64,
-        /// The search.
-        search: postio_client::protocol::Search,
+        /// The folder.
+        mailbox: postio_model::MailboxId,
     },
-    /// Count a search's facets: its matches in every scope, and what would
-    /// narrow them. Asked after its hits, so the count being watched never
-    /// waits for these.
-    Facets {
-        /// The search they are for.
-        sequence: u64,
-        /// Which accounts.
-        account: postio_model::AccountScope,
-        /// The query as typed.
-        query: String,
-        /// The scope searched.
-        scope: postio_search::facets::Scope,
-    },
+    /// Read every account's labels and correspondents; the answer comes back
+    /// as [`Input::PlaceDetails`].
+    ReadPlaceDetails,
     /// Look up who a recipient being typed could be.
     Recipients {
         /// Whose contacts.
@@ -562,8 +558,6 @@ pub struct App {
     renaming: Option<Renaming>,
     /// The account's labels, as the finder's `+` offers them.
     labels: Vec<postio_model::Label>,
-    /// The account's correspondents, as the finder's `@` offers them.
-    correspondents: Vec<postio_model::Contact>,
     /// Each account's sync status, folded from the host's events.
     trackers: postio_ui::status::Trackers,
     /// Which account the list on screen belongs to.
@@ -609,8 +603,8 @@ pub struct App {
     /// Whether the draft is in a tab of its own rather than the reading
     /// pane: the desktop's composer window (FR-003).
     detached: bool,
-    /// The search bar, while it is open.
-    search: Option<SearchBar>,
+    /// The command bar, while it is open.
+    bar: Option<crate::bar::Bar>,
     /// The palette, while it is open.
     palette: Option<PaletteState>,
     /// Whether the terminal speaks the kitty keyboard protocol, so every
@@ -716,16 +710,10 @@ pub struct Privacy {
 /// Which of the finder's modes the palette is in (`postio_ui::finder`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Finding {
-    /// `>`: run a command.
-    Commands,
-    /// `#`: go to a folder.
-    Folders,
     /// `#`, asked by `m`: which folder to move the selection to.
     MoveTo,
     /// `+`: put a label on the selection.
     Labels,
-    /// `@`: find a correspondent, and search their mail.
-    Correspondents,
     /// `M` in the settings: which of an account's roles to point somewhere.
     Roles(postio_model::AccountId),
     /// Then which folder that role is, or automatic.
@@ -781,7 +769,7 @@ pub struct PaletteRow {
     /// What it says.
     pub title: String,
     /// What the row says at its right: the key that does the same, as this
-    /// terminal can send it, or a correspondent's address.
+    /// terminal can send it.
     pub chord: Option<String>,
     /// Which characters of the title the query matched.
     pub positions: Vec<usize>,
@@ -789,12 +777,8 @@ pub struct PaletteRow {
 
 /// What a palette row does.
 enum PaletteAction {
-    Run(postio_core::ActionId),
-    Open(ListScope),
     MoveTo(postio_model::MailboxId),
     Label(postio_model::ids::LabelId),
-    /// The query that searches a correspondent's mail.
-    Correspondent(String),
     /// Ask which folder this role is.
     PickRole(postio_model::AccountId, postio_model::mailbox::MailboxRole),
     /// Point the role at this folder's path, or back to automatic.
@@ -834,48 +818,6 @@ fn best_first(
         .collect()
 }
 
-/// The search bar: what is typed, which question is outstanding, and what
-/// the last answer turned out to be.
-#[derive(Debug, Default)]
-struct SearchBar {
-    input: tui_input::Input,
-    pacer: postio_ui::search::Pacer,
-    outcome: Option<postio_ui::search::Outcome>,
-    /// Newest first rather than best match first.
-    newest_first: bool,
-    /// The standing rescope a facet picked.
-    scope: postio_search::facets::Scope,
-    /// What the results turned out to be made of, once asked.
-    facets: Option<postio_search::facets::Facets>,
-    /// The facet Tab is on.
-    facet: Option<usize>,
-}
-
-/// One of a search's facets, as the row under the bar offers it: a scope to
-/// search in, or a token that narrows what was found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Facet {
-    /// What it says.
-    pub label: String,
-    /// How many matches it keeps, once counted.
-    pub count: Option<u64>,
-    /// Whether it is a scope, rather than a refinement.
-    pub scope: bool,
-    /// Whether it is the scope searched.
-    pub current: bool,
-    /// Whether Tab is on it.
-    pub chosen: bool,
-    /// What choosing it does.
-    does: FacetDoes,
-}
-
-/// What choosing a facet does.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum FacetDoes {
-    Scope(postio_search::facets::Scope),
-    Refine(String),
-}
-
 /// Which pane the keyboard is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
@@ -886,8 +828,8 @@ pub enum Focus {
     Reader,
     /// The composer, in the reading pane.
     Composer,
-    /// The search bar.
-    Search,
+    /// The command bar.
+    Bar,
     /// The first run, while there is no account.
     FirstRun,
     /// The settings.
@@ -957,10 +899,9 @@ impl App {
             reminding: None,
             saved_at: None,
             composed_from: Focus::List,
-            search: None,
+            bar: None,
             palette: None,
             labels: Vec::new(),
-            correspondents: Vec::new(),
             enhanced_keys: false,
             cheatsheet: None,
             armed_link: None,
@@ -1566,6 +1507,25 @@ impl App {
     /// A mouse event, on what it landed on: the same things the keys do.
     fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
         use crate::view::hit::Target;
+        // The bar holds the pointer as it holds the keyboard: a click outside
+        // it does nothing, and the wheel scrolls its lines.
+        if self.bar.is_some() {
+            match pointer {
+                Pointer::Click { hit, .. }
+                    if !matches!(
+                        hit.target,
+                        Target::BarRow(_) | Target::BarSaved(_) | Target::BarChip(_)
+                    ) =>
+                {
+                    return Vec::new();
+                }
+                Pointer::Wheel { down, .. } => {
+                    self.with_bar(|bar, _, ctx| bar.wheel(down, ctx));
+                    return vec![Effect::Redraw];
+                }
+                Pointer::Click { .. } => {}
+            }
+        }
         match pointer {
             Pointer::Click { hit, ctrl, shift } => match hit.target {
                 Target::Row(position) => {
@@ -1604,7 +1564,9 @@ impl App {
                     }
                     vec![Effect::Redraw]
                 }
-                Target::Facet(index) => self.choose_facet(index),
+                Target::BarRow(index) => self.bar_click(index),
+                Target::BarSaved(index) => self.bar_saved(index),
+                Target::BarChip(index) => self.bar_chip(index),
                 Target::Reader(line) => {
                     if self.reading.is_none() {
                         return Vec::new();
@@ -1737,13 +1699,9 @@ impl App {
         self
     }
 
-    /// Open the palette in one of the finder's modes, from wherever the
-    /// keyboard is.
+    /// Open the palette in one of its modes, from wherever the keyboard is.
     fn open_palette(&mut self, finding: Finding) -> Vec<Effect> {
         let from = match self.focus {
-            // The finder's prefixes turn the bar into the palette; what it
-            // runs then runs over the list.
-            Focus::Search if finding == Finding::Folders || self.search.is_none() => Focus::List,
             Focus::Palette => Focus::List,
             other => other,
         };
@@ -1754,11 +1712,10 @@ impl App {
             finding,
         });
         self.focus = Focus::Palette;
-        // Labels and correspondents are read each time the box asks for
-        // them, so one made since the last time is offered.
+        // Labels are read each time the box asks for them, so one made since
+        // the last time is offered.
         let read = match (finding, self.account) {
             (Finding::Labels, Some(account)) => Some(Effect::ReadLabels(account)),
-            (Finding::Correspondents, Some(account)) => Some(Effect::ReadCorrespondents(account)),
             _ => None,
         };
         let mut effects = vec![Effect::Redraw];
@@ -1766,12 +1723,265 @@ impl App {
         effects
     }
 
+    // -- The command bar (src/bar.rs) ------------------------------------
+
+    /// The bar and what it needs to draw, while it is open.
+    pub fn bar(&self) -> Option<(&crate::bar::Bar, crate::bar::Ctx<'_>)> {
+        let bar = self.bar.as_ref()?;
+        Some((bar, self.bar_ctx(bar.from(), self.keys.keymap())))
+    }
+
+    /// What the bar needs of the app, for a bar opened over `from`.
+    fn bar_ctx<'a>(&self, from: Focus, keymap: &'a postio_core::Keymap) -> crate::bar::Ctx<'a> {
+        crate::bar::Ctx {
+            keymap,
+            context: Self::context_of(from),
+            state: self.availability(),
+            enhanced: self.enhanced_keys,
+        }
+    }
+
+    /// What is typed in the bar, while it is open.
+    pub fn bar_typed(&self) -> Option<&str> {
+        self.bar.as_ref().map(crate::bar::Bar::typed)
+    }
+
+    /// Open the bar holding `typed`, over where the keyboard is.
+    fn open_bar(&mut self, typed: &str) -> Vec<Effect> {
+        let from = match (&self.bar, self.focus) {
+            (Some(bar), _) => bar.from(),
+            (None, Focus::Palette) => Focus::List,
+            (None, focus) => focus,
+        };
+        let folders: Vec<&postio_model::Mailbox> = self
+            .folders
+            .iter()
+            .filter(|folder| folder.selectable)
+            .collect();
+        let sources = crate::bar::Sources {
+            places: folders
+                .iter()
+                .map(|folder| postio_ui::places::mailbox_place(folder))
+                .collect(),
+            folders: folders
+                .iter()
+                .map(|folder| (folder.id, postio_ui::places::place_name(folder)))
+                .collect(),
+            saved: self
+                .places
+                .saved
+                .iter()
+                .map(|saved| (saved.name.clone(), saved.query.clone()))
+                .collect(),
+            digesting: self.features.digest_rules > 0,
+        };
+        let (bar, step) = crate::bar::Bar::open(from, sources, typed);
+        self.bar = Some(bar);
+        self.focus = Focus::Bar;
+        let mut effects = self.bar_step(step);
+        effects.push(Effect::ReadPlaceDetails);
+        effects
+    }
+
+    /// Run `f` on the bar with the keys and what it needs.
+    fn with_bar<T>(
+        &mut self,
+        f: impl FnOnce(&mut crate::bar::Bar, &mut Keys, &crate::bar::Ctx<'_>) -> T,
+    ) -> Option<T> {
+        let mut bar = self.bar.take()?;
+        let keymap = self.keys.keymap().clone();
+        let ctx = self.bar_ctx(bar.from(), &keymap);
+        let out = f(&mut bar, &mut self.keys, &ctx);
+        self.bar = Some(bar);
+        Some(out)
+    }
+
+    fn bar_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        match self.with_bar(|bar, keys, ctx| bar.key(key, keys, ctx)) {
+            Some(step) => self.bar_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    fn bar_click(&mut self, index: usize) -> Vec<Effect> {
+        match self.with_bar(|bar, _, ctx| bar.click(index, ctx)) {
+            Some(step) => self.bar_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    fn bar_saved(&mut self, index: usize) -> Vec<Effect> {
+        match self.bar.as_mut().map(|bar| bar.open_saved(index)) {
+            Some(step) => self.bar_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    fn bar_chip(&mut self, index: usize) -> Vec<Effect> {
+        match self.bar.as_mut().map(|bar| bar.edit_chip(index)) {
+            Some(step) => self.bar_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    /// What a key or a click in the bar asks for.
+    fn bar_step(&mut self, step: crate::bar::Step) -> Vec<Effect> {
+        use crate::bar::Step;
+        match step {
+            Step::Stay => vec![Effect::Redraw],
+            Step::Close => self.close_bar(),
+            Step::Search(ask) => vec![Effect::BarSearch(ask), Effect::Redraw],
+            Step::Folder(mailbox, sequence) => {
+                vec![Effect::BarFolder { sequence, mailbox }, Effect::Redraw]
+            }
+            Step::Save(query) => {
+                let mut effects = self.say(&postio_ui::focus_target::search_saved(&query));
+                effects.insert(0, Effect::SaveSearch(query));
+                effects
+            }
+            Step::Act(action) => self.bar_act(action),
+        }
+    }
+
+    fn close_bar(&mut self) -> Vec<Effect> {
+        if let Some(bar) = self.bar.take() {
+            self.focus = bar.from();
+        }
+        vec![Effect::Redraw]
+    }
+
+    /// Close the bar and do what its row asked, where it opened.
+    fn bar_act(&mut self, action: postio_ui::command_bar::BarAction) -> Vec<Effect> {
+        use postio_ui::command_bar::BarAction;
+        use postio_ui::finder::Destination;
+        let Some(bar) = self.bar.take() else {
+            return Vec::new();
+        };
+        let from = bar.from();
+        self.focus = from;
+        match action {
+            BarAction::Open { message, .. } => self.open_found(message, bar.result_of(message)),
+            BarAction::Command(id) => {
+                if postio_ui::command_bar::ACCOUNT_VERBS.contains(&id) && from != Focus::Settings {
+                    // Account verbs act on the account row Settings has.
+                    self.settings = Some(crate::settings::Settings::default());
+                    self.focus = Focus::Settings;
+                    return self.say("Pick an account in Settings, then run it again");
+                }
+                match from {
+                    Focus::Composer => self.composer_command(id.as_str()),
+                    Focus::Settings => self.settings_command(id.as_str()),
+                    _ => self.command(id.as_str()),
+                }
+            }
+            BarAction::Go { destination, name } => match destination {
+                Destination::Mailbox(mailbox) => {
+                    let inbox = self.folders.iter().any(|folder| {
+                        folder.id == mailbox
+                            && folder.role == postio_model::mailbox::MailboxRole::Inbox
+                    });
+                    self.open_there(if inbox {
+                        ListScope::Focus(postio_model::FocusScope::Inbox)
+                    } else {
+                        ListScope::Mailbox(mailbox)
+                    })
+                }
+                // A label is its search: Focus lists no label on its own.
+                Destination::Label(_) => self.open_bar(&format!("label:\"{name}\"")),
+                Destination::Search(query) => self.open_bar(&query),
+                Destination::Outbox(account) => self.open_there(ListScope::Outbox(account)),
+            },
+        }
+    }
+
+    /// Open a message a search found, as a row opens it: the one in the list
+    /// when it is there, otherwise on its own.
+    fn open_found(
+        &mut self,
+        message: postio_model::MessageId,
+        found: Option<&crate::bar::ResultRow>,
+    ) -> Vec<Effect> {
+        if self.list.row_of(message).is_none()
+            && let Some(found) = found
+        {
+            self.reading = Some(crate::conversation::Reading {
+                row: message,
+                members: vec![crate::conversation::Member {
+                    id: message,
+                    from: found.sender.clone(),
+                    address: None,
+                    when: found.at,
+                    body: None,
+                    held_back: Default::default(),
+                    source: None,
+                    original: false,
+                    reader_view: false,
+                    images_allowed: false,
+                    asked: true,
+                    has_attachments: false,
+                    parts: Vec::new(),
+                    to: Vec::new(),
+                    cc: Vec::new(),
+                }],
+                current: 0,
+            });
+            self.reader_top = 0;
+            self.focus = Focus::Reader;
+            return vec![Effect::Redraw, Effect::ReadBody(message)];
+        }
+        let mut effects = self.open_reading(message);
+        self.focus = Focus::Reader;
+        effects.push(Effect::Redraw);
+        effects
+    }
+
+    fn bar_found(
+        &mut self,
+        sequence: u64,
+        found: Result<Option<postio_client::protocol::Hits>, String>,
+        held: &[(postio_model::MessageId, String, bool)],
+    ) -> Vec<Effect> {
+        if let Ok(Some(postio_client::protocol::Hits(results))) = found {
+            self.with_bar(|bar, _, ctx| bar.found(ctx, sequence, results, held));
+        }
+        vec![Effect::Redraw]
+    }
+
+    fn bar_listed(
+        &mut self,
+        sequence: u64,
+        count: u32,
+        rows: Vec<crate::bar::ResultRow>,
+    ) -> Vec<Effect> {
+        self.with_bar(|bar, _, ctx| bar.listed(ctx, sequence, count, rows));
+        vec![Effect::Redraw]
+    }
+
+    /// The labels and correspondents arrived: labels are places, and a typed
+    /// name is looked up among the correspondents.
+    fn place_details(&mut self, details: crate::places::PlaceDetails) -> Vec<Effect> {
+        let labels = details
+            .labels
+            .iter()
+            .map(postio_ui::places::label_place)
+            .collect();
+        let names = postio_ui::names::Names::new(&details.correspondents);
+        let step = self.bar.as_mut().map(|bar| {
+            bar.learn(labels, names);
+            bar.places_known()
+        });
+        match step {
+            Some(step) => self.bar_step(step),
+            None => Vec::new(),
+        }
+    }
+
     /// The registry's context for where the keyboard is.
     fn context_of(focus: Focus) -> postio_core::Context {
         match focus {
             Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
             Focus::Settings => postio_core::Context::Accounts,
-            Focus::Search => postio_core::Context::Search,
+            Focus::Bar => postio_core::Context::Search,
             Focus::Reader => postio_core::Context::Reader,
             Focus::Composer => postio_core::Context::Composer,
         }
@@ -1833,10 +2043,8 @@ impl App {
             .collect();
         Some(PaletteView {
             marker: match state.finding {
-                Finding::Commands => ">",
-                Finding::Folders | Finding::MoveTo => "#",
+                Finding::MoveTo => "#",
                 Finding::Labels => "+",
-                Finding::Correspondents => "@",
                 Finding::Roles(_) => "Role",
                 Finding::RoleFolder(..) => "Folder",
                 Finding::Rename => "Name",
@@ -1851,43 +2059,17 @@ impl App {
     fn palette_rows(&self, state: &PaletteState) -> Vec<(PaletteRow, PaletteAction)> {
         let query = state.input.value();
         match state.finding {
-            Finding::Commands => {
-                let context = Self::context_of(state.from);
-                let availability = self.availability();
-                postio_ui::palette::entries(self.keys.keymap(), context, availability, query)
-                    .into_iter()
-                    .map(|entry| {
-                        let chord = postio_ui::terminal::deliverable_binding(
-                            self.keys.keymap(),
-                            entry.id,
-                            self.enhanced_keys,
-                        );
-                        (
-                            PaletteRow {
-                                title: entry.title.to_owned(),
-                                chord,
-                                positions: entry.positions,
-                            },
-                            PaletteAction::Run(entry.id),
-                        )
-                    })
-                    .collect()
-            }
-            Finding::Folders | Finding::MoveTo => {
-                let moving = state.finding == Finding::MoveTo;
+            Finding::MoveTo => {
                 let mut found: Vec<(i32, PaletteRow, PaletteAction)> =
                     crate::places::entries(&self.places)
                         .iter()
                         .filter_map(|line| {
                             let scope = line.opens?;
                             // A move goes to a folder, not to a view over several.
-                            let action = match scope {
-                                ListScope::Mailbox(mailbox) if moving => {
-                                    PaletteAction::MoveTo(mailbox)
-                                }
-                                _ if moving => return None,
-                                scope => PaletteAction::Open(scope),
+                            let ListScope::Mailbox(mailbox) = scope else {
+                                return None;
                             };
+                            let action = PaletteAction::MoveTo(mailbox);
                             let title = line.label.as_str().to_owned();
                             let matched = postio_ui::palette::score(query.trim(), &title)?;
                             Some((
@@ -1976,20 +2158,6 @@ impl App {
                 );
                 best_first(query, offered)
             }
-            Finding::Correspondents => postio_ui::finder::contacts(&self.correspondents, query)
-                .into_iter()
-                .map(|hit| {
-                    let search = postio_ui::finder::contact_query(&hit);
-                    (
-                        PaletteRow {
-                            title: hit.name,
-                            chord: Some(hit.address),
-                            positions: hit.positions,
-                        },
-                        PaletteAction::Correspondent(search),
-                    )
-                })
-                .collect(),
         }
     }
 
@@ -2017,15 +2185,6 @@ impl App {
                 });
                 self.focus = from;
                 return match chosen {
-                    Some(PaletteAction::Run(postio_core::ActionId::Builtin(id))) => match from {
-                        Focus::Composer => self.composer_command(id.as_str()),
-                        Focus::Settings => self.settings_command(id.as_str()),
-                        _ => self.command(id.as_str()),
-                    },
-                    Some(PaletteAction::Run(other)) => {
-                        self.say(&format!("{other} is not something this terminal can run"))
-                    }
-                    Some(PaletteAction::Open(scope)) => vec![Effect::Open(scope), Effect::Redraw],
                     Some(PaletteAction::Rename(name)) => self.named(name),
                     Some(PaletteAction::PickRole(account, role)) => {
                         self.open_palette(Finding::RoleFolder(account, role))
@@ -2052,16 +2211,6 @@ impl App {
                             }
                         })
                     }
-                    // Back in the bar holding the query, which is a search the
-                    // person can go on building on, as the desktop's `@` is.
-                    Some(PaletteAction::Correspondent(query)) => {
-                        self.search = Some(SearchBar {
-                            input: tui_input::Input::default().with_value(query),
-                            ..SearchBar::default()
-                        });
-                        self.focus = Focus::Search;
-                        self.run_search()
-                    }
                     None => vec![Effect::Redraw],
                 };
             }
@@ -2082,307 +2231,6 @@ impl App {
             }
         }
         vec![Effect::Redraw]
-    }
-
-    /// What is typed in the search bar, while it is open.
-    pub fn search_query(&self) -> Option<&str> {
-        self.search.as_ref().map(|bar| bar.input.value())
-    }
-
-    /// The operators in the query, as chips: Postio's query language, read
-    /// back as it is typed (`postio_ui::search`). The bar draws these.
-    pub fn search_chips(&self) -> Vec<postio_ui::search::Chip> {
-        self.search_query()
-            .map(|query| {
-                postio_ui::search::chips(&postio_search::parse(
-                    query,
-                    chrono::Local::now().date_naive(),
-                ))
-            })
-            .unwrap_or_default()
-    }
-
-    /// Where the caret is in the search bar, in characters.
-    pub fn search_caret(&self) -> usize {
-        self.search.as_ref().map_or(0, |bar| bar.input.cursor())
-    }
-
-    /// What the last search turned out to be, as the desktop says it.
-    pub fn search_readout(&self) -> Option<String> {
-        let outcome = self.search.as_ref()?.outcome.as_ref()?;
-        Some(postio_ui::search::readout(outcome))
-    }
-
-    /// Open the search bar, over the list.
-    fn open_search(&mut self) -> Vec<Effect> {
-        if self.search.is_none() {
-            self.search = Some(SearchBar::default());
-        }
-        self.focus = Focus::Search;
-        vec![Effect::Redraw]
-    }
-
-    /// Close the search bar and put the folder back where it was.
-    fn close_search(&mut self) -> Vec<Effect> {
-        let mut effects = vec![Effect::Redraw];
-        self.search = None;
-        self.focus = Focus::List;
-        if self.paging.close_results() {
-            self.list.reset(0);
-            self.cursor = 0;
-            self.top = 0;
-            if let Some(scope) = self.scope {
-                effects.push(Effect::Recount(scope));
-            }
-        }
-        effects
-    }
-
-    /// A key in the search bar: typed, with Backspace taking a whole chip
-    /// (`postio_ui::search::backspace`), Enter going down to the results,
-    /// and Escape closing the bar.
-    fn search_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        use crossterm::event::KeyCode;
-        use tui_input::backend::crossterm::EventHandler;
-        match self.keys.press(key, KeyContext::Search, true) {
-            Outcome::Command(id) if id == "back" => return self.close_search(),
-            Outcome::Command(id) => return self.command(&id),
-            Outcome::Pending(_) => return Vec::new(),
-            Outcome::Unhandled => {}
-        }
-        let Some(bar) = self.search.as_mut() else {
-            return Vec::new();
-        };
-        let before = bar.input.value().to_owned();
-        let offered = self.facets().len();
-        let Some(bar) = self.search.as_mut() else {
-            return Vec::new();
-        };
-        match key.code {
-            // Tab walks the facets, as the desktop's Tab goes to its refine
-            // column, and past the last one comes back to the typing.
-            KeyCode::Tab | KeyCode::BackTab if offered > 0 => {
-                let forward = key.code == KeyCode::Tab;
-                bar.facet = match (bar.facet, forward) {
-                    (None, true) => Some(0),
-                    (None, false) => Some(offered - 1),
-                    (Some(at), true) => (at + 1 < offered).then_some(at + 1),
-                    (Some(at), false) => at.checked_sub(1),
-                };
-                return vec![Effect::Redraw];
-            }
-            KeyCode::Enter if bar.facet.is_some() => {
-                let chosen = bar.facet.take().unwrap_or_default();
-                return self.choose_facet(chosen);
-            }
-            KeyCode::Enter => {
-                self.focus = Focus::List;
-                return vec![Effect::Redraw];
-            }
-            KeyCode::Backspace => {
-                let parsed = postio_search::parse(&before, chrono::Local::now().date_naive());
-                let caret = before
-                    .char_indices()
-                    .nth(bar.input.cursor())
-                    .map_or(before.len(), |(at, _)| at);
-                match postio_ui::search::backspace(&parsed, caret) {
-                    postio_ui::search::Backspace::PopChip { query, caret, .. } => {
-                        let chars = query[..caret].chars().count();
-                        bar.input = tui_input::Input::default().with_value(query);
-                        bar.input.handle(tui_input::InputRequest::SetCursor(chars));
-                    }
-                    postio_ui::search::Backspace::Ordinary => {
-                        bar.input.handle_event(&crossterm::event::Event::Key(*key));
-                    }
-                }
-            }
-            _ => {
-                bar.input.handle_event(&crossterm::event::Event::Key(*key));
-            }
-        }
-        if bar.input.value() == before {
-            return vec![Effect::Redraw];
-        }
-        // A new question: Tab starts again from the typing.
-        bar.facet = None;
-        // The finder's prefixes: typed first into an empty bar, they turn it
-        // into another of its modes, as the desktop's box does.
-        match bar.input.value() {
-            ">" => {
-                self.search = None;
-                return self.open_palette(Finding::Commands);
-            }
-            "#" => {
-                self.search = None;
-                return self.open_palette(Finding::Folders);
-            }
-            "+" => {
-                self.search = None;
-                return self.open_palette(Finding::Labels);
-            }
-            "@" => {
-                self.search = None;
-                return self.open_palette(Finding::Correspondents);
-            }
-            _ => {}
-        }
-        self.run_search()
-    }
-
-    /// The facets the row under the bar offers, while a search has an
-    /// answer: every scope with its count, then the refinements worth
-    /// offering -- none that keeps nothing, none that keeps everything.
-    pub fn facets(&self) -> Vec<Facet> {
-        use postio_search::facets::Scope;
-        let Some(bar) = self.search.as_ref() else {
-            return Vec::new();
-        };
-        let Some(outcome) = bar.outcome.as_ref() else {
-            return Vec::new();
-        };
-        let counted = bar.facets.as_ref();
-        let scopes = Scope::ALL.iter().map(|scope| Facet {
-            label: scope.label().to_owned(),
-            count: counted.map(|facets| facets.hits(*scope)),
-            scope: true,
-            current: *scope == bar.scope,
-            chosen: false,
-            does: FacetDoes::Scope(*scope),
-        });
-        let refinements = counted
-            .map(|facets| facets.suggested(outcome.hits))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|refinement| Facet {
-                label: refinement.token.clone(),
-                count: Some(refinement.hits),
-                scope: false,
-                current: false,
-                chosen: false,
-                does: FacetDoes::Refine(refinement.token.clone()),
-            });
-        let mut facets: Vec<Facet> = scopes.chain(refinements).collect();
-        if let Some(chosen) = bar.facet.and_then(|at| facets.get_mut(at)) {
-            chosen.chosen = true;
-        }
-        facets
-    }
-
-    /// Why the facets offer no refinement, once they are counted and do not.
-    pub fn facets_note(&self) -> Option<&'static str> {
-        let bar = self.search.as_ref()?;
-        let outcome = bar.outcome.as_ref()?;
-        let counted = bar.facets.as_ref()?;
-        if !counted.suggested(outcome.hits).is_empty() {
-            return None;
-        }
-        Some(if outcome.hits == 0 {
-            postio_ui::search::NOTHING_MATCHED
-        } else {
-            postio_ui::search::NOTHING_TO_NARROW
-        })
-    }
-
-    /// Search in the scope, or narrow by the token, of facet `at`: never
-    /// retyped, and a refinement is a chip Backspace takes off again.
-    fn choose_facet(&mut self, at: usize) -> Vec<Effect> {
-        let Some(facet) = self.facets().into_iter().nth(at) else {
-            return Vec::new();
-        };
-        let Some(bar) = self.search.as_mut() else {
-            return Vec::new();
-        };
-        bar.facet = None;
-        match facet.does {
-            FacetDoes::Scope(scope) => bar.scope = scope,
-            FacetDoes::Refine(token) => {
-                let query = postio_search::facets::append(bar.input.value(), &token);
-                bar.input = tui_input::Input::default().with_value(query);
-            }
-        }
-        self.run_search()
-    }
-
-    /// Ask the host the question now in the bar; an empty bar puts the
-    /// folder back.
-    fn run_search(&mut self) -> Vec<Effect> {
-        let account = self.account.map_or(
-            postio_model::AccountScope::Unified,
-            postio_model::AccountScope::Account,
-        );
-        let Some(bar) = self.search.as_mut() else {
-            return Vec::new();
-        };
-        let query = bar.input.value().to_owned();
-        if query.trim().is_empty() {
-            bar.pacer.abandon();
-            bar.outcome = None;
-            let mut effects = vec![Effect::Redraw];
-            if self.paging.close_results() {
-                self.list.reset(0);
-                self.cursor = 0;
-                self.top = 0;
-                if let Some(scope) = self.scope {
-                    effects.push(Effect::Recount(scope));
-                }
-            }
-            return effects;
-        }
-        let sequence = bar.pacer.issue();
-        vec![
-            Effect::Search {
-                sequence,
-                search: postio_client::protocol::Search {
-                    account,
-                    query,
-                    newest_first: bar.newest_first,
-                    scope: bar.scope,
-                },
-            },
-            Effect::Redraw,
-        ]
-    }
-
-    /// An answer to a search: shown in the list if it is still the question.
-    fn found(
-        &mut self,
-        sequence: u64,
-        found: Result<Option<postio_client::protocol::Found>, String>,
-    ) -> Vec<Effect> {
-        let Some(bar) = self.search.as_mut() else {
-            return Vec::new();
-        };
-        if !bar.pacer.accepts(sequence) {
-            return Vec::new();
-        }
-        match found {
-            Ok(Some(found)) => {
-                bar.outcome = Some(postio_ui::search::Outcome {
-                    hits: found.hits,
-                    capped: found.capped,
-                    elapsed: found.elapsed,
-                    corpus_complete: found.corpus_complete,
-                    unreachable: Vec::new(),
-                });
-                let facets = Effect::Facets {
-                    sequence,
-                    account: self.account.map_or(
-                        postio_model::AccountScope::Unified,
-                        postio_model::AccountScope::Account,
-                    ),
-                    query: bar.input.value().to_owned(),
-                    scope: bar.scope,
-                };
-                let total = self.paging.show_results(found.ids);
-                self.selection.clear();
-                self.list.reset(total);
-                self.cursor = 0;
-                self.top = 0;
-                vec![facets, Effect::Redraw]
-            }
-            Ok(None) => self.say("The search could not be run"),
-            Err(reason) => self.say(&reason),
-        }
     }
 
     /// The schedule-send picker's times, while it is open.
@@ -2557,7 +2405,7 @@ impl App {
             Focus::List => KeyContext::List,
             Focus::Reader => KeyContext::Reader,
             Focus::Composer => KeyContext::Composer,
-            Focus::Search => KeyContext::Search,
+            Focus::Bar => KeyContext::Search,
             Focus::Palette => KeyContext::Palette,
             Focus::FirstRun => KeyContext::Global,
             Focus::Settings => KeyContext::Accounts,
@@ -2772,15 +2620,9 @@ impl App {
         self.list.total()
     }
 
-    /// The lines the list may use: its rows, less a search's facets while
-    /// they are shown.
+    /// The lines the list may use.
     fn list_lines(&self) -> u16 {
-        let facets = u16::from(
-            self.search
-                .as_ref()
-                .is_some_and(|bar| bar.outcome.is_some()),
-        );
-        self.window().list.height.saturating_sub(facets)
+        self.window().list.height
     }
 
     /// The row at `position`, when its page is here.
@@ -2793,9 +2635,6 @@ impl App {
     /// the row before it. The first row in view always has one. Search
     /// results are ranked, not dated, and have none.
     fn heading_at(&self, position: u32, top: u32) -> Option<Heading> {
-        if self.paging.showing_results() {
-            return None;
-        }
         let row = self.row_at(position)?;
         if self.has_action() {
             // One heading over the whole list, not a day's.
@@ -2937,7 +2776,6 @@ impl App {
     /// conversations: Focus's own inbox, and not a search's results.
     fn splices(&self) -> bool {
         self.scope == Some(ListScope::Focus(postio_model::FocusScope::Inbox))
-            && !self.paging.showing_results()
     }
 
     /// How many conversations the store holds for the list on screen, which
@@ -3084,12 +2922,14 @@ impl App {
                     return self.compose(postio_model::Draft::new(account));
                 }
             }
-            // The folders box is the finder's `#` until the places box
-            // replaces it (T319).
             "toggle_has_action" => return self.toggle_has_action(),
-            "go_to_folders" => return self.open_palette(Finding::Folders),
-            "search" => return self.open_search(),
-            "command_palette" => return self.open_palette(Finding::Commands),
+            // The places box is the bar's `in:` until the folders popover
+            // replaces it.
+            "go_to_folders" => return self.open_bar("in:"),
+            "search" => return self.open_bar(""),
+            "command_palette" => {
+                return self.open_bar(&postio_ui::finder::COMMANDS_ONLY.to_string());
+            }
             "cheat_sheet" => self.cheatsheet = Some(self.focus),
             "settings" => {
                 self.settings = Some(crate::settings::Settings::default());
@@ -3100,22 +2940,9 @@ impl App {
                 self.first_run = Some(crate::first_run::FirstRun::another());
                 self.focus = Focus::FirstRun;
             }
-            "toggle_result_order" => {
-                if let Some(bar) = self.search.as_mut() {
-                    bar.newest_first = !bar.newest_first;
-                    return self.run_search();
-                }
-            }
-            "save_search" => {
-                if let Some(query) = self.search_query().map(str::trim)
-                    && !query.is_empty()
-                {
-                    let query = query.to_owned();
-                    let mut effects = self.say(&format!("Saved “{query}” to the saved searches"));
-                    effects.insert(0, Effect::SaveSearch(query));
-                    return effects;
-                }
-            }
+            // The bar's own keys: it resolves them itself while it is open, and
+            // there is nothing for them to do anywhere else.
+            "toggle_result_order" | "save_search" | "back_to_words" => {}
             "back" if self.focus == Focus::Reader => return self.back_from_message(),
             "back" if self.focus != Focus::List => self.focus = Focus::List,
             "expand_all" => self.toggle_folds(),
@@ -3143,12 +2970,7 @@ impl App {
             }
             "scroll_reader_down" => self.scroll_reader(1),
             "scroll_reader_up" => self.scroll_reader(-1),
-            // Escape backs out one layer at a time: a selection first, then
-            // a search whose results the list is showing (#1011), as the
-            // desktop does.
-            "back" if self.selection.selection().is_empty() && self.search.is_some() => {
-                return self.close_search();
-            }
+            // Escape clears the selection.
             "back" => self.selection.clear(),
             // One toggle in a terminal: reader view is the readable form of
             // bulk mail here, and both commands move between it and the
@@ -3312,11 +3134,7 @@ impl App {
         else {
             return self.say(&postio_ui::focus_target::no_saved_search(index));
         };
-        self.search = Some(SearchBar {
-            input: tui_input::Input::default().with_value(query),
-            ..SearchBar::default()
-        });
-        self.run_search()
+        self.open_bar(&query)
     }
 
     /// Each account's inbox in turn, then every account at once when there
@@ -3635,6 +3453,15 @@ impl App {
     /// to.
     fn fill_places(&mut self, contents: &crate::places::Places) -> Vec<Effect> {
         self.places = contents.clone();
+        if let Some(bar) = self.bar.as_mut() {
+            bar.set_saved(
+                contents
+                    .saved
+                    .iter()
+                    .map(|saved| (saved.name.clone(), saved.query.clone()))
+                    .collect(),
+            );
+        }
         self.features = contents.features.clone();
         self.folders = contents.folders.clone();
         self.accounts = contents.accounts.clone();
@@ -3956,9 +3783,6 @@ impl App {
 
     /// A list opened: show it from the top.
     fn open(&mut self, scope: ListScope, total: u32) -> Vec<Effect> {
-        // A folder opened is a search left, as it is on the desktop.
-        self.search = None;
-        self.paging.close_results();
         self.paging.open(scope);
         if let Some(previous) = self.scope.filter(|previous| *previous != scope) {
             if std::mem::take(&mut self.going_back) {
@@ -4041,20 +3865,8 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::FirstRun => app.first_run_key(&key),
         Input::Key(key) if app.focus == Focus::Settings => app.settings_key(&key),
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
-        Input::Key(key) if app.focus == Focus::Search => app.search_key(&key),
+        Input::Key(key) if app.focus == Focus::Bar => app.bar_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
-        // Over search results the list's keys come first, and what the list
-        // does not know is the search's: `o` for the order, Ctrl+S to save.
-        Input::Key(key) if app.focus == Focus::List && app.paging.showing_results() => {
-            match app.keys.press(&key, KeyContext::List, false) {
-                Outcome::Command(id) => app.command(&id),
-                Outcome::Pending(_) => Vec::new(),
-                Outcome::Unhandled => match app.keys.press(&key, KeyContext::Search, false) {
-                    Outcome::Command(id) => app.command(&id),
-                    Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
-                },
-            }
-        }
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -4234,15 +4046,17 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 crate::paths::name_of(&path)
             )),
         },
-        Input::Found { sequence, found } => app.found(sequence, found),
-        Input::Facets { sequence, facets } => {
-            if let Some(bar) = app.search.as_mut()
-                && bar.pacer.accepts(sequence)
-            {
-                bar.facets = facets;
-            }
-            vec![Effect::Redraw]
-        }
+        Input::BarFound {
+            sequence,
+            found,
+            held,
+        } => app.bar_found(sequence, found, &held),
+        Input::BarFolder {
+            sequence,
+            count,
+            rows,
+        } => app.bar_listed(sequence, count, rows),
+        Input::PlaceDetails(details) => app.place_details(details),
         Input::Notified(notification) => {
             let safe = |text: &str| postio_ui::terminal::SafeText::new(text).to_string();
             let (title, body) = (safe(&notification.title), safe(&notification.body));
@@ -4259,20 +4073,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                         .as_str()
                         .to_owned();
                     label
-                })
-                .collect();
-            vec![Effect::Redraw]
-        }
-        Input::Correspondents(found) => {
-            app.correspondents = found
-                .into_iter()
-                .map(|mut contact| {
-                    let safe =
-                        |text: &str| postio_ui::terminal::SafeText::new(text).as_str().to_owned();
-                    contact.name = contact.name.as_deref().map(safe);
-                    contact.address.name = contact.address.name.as_deref().map(safe);
-                    contact.address.address = safe(&contact.address.address);
-                    contact
                 })
                 .collect();
             vec![Effect::Redraw]
@@ -4365,8 +4165,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::test_support::{
-        alt, app, click, ctrl, key, open_list, places, press, reader_text, row, serve, type_text,
-        wheel,
+        alt, app, click, key, open_list, places, press, reader_text, row, serve, type_text, wheel,
     };
 
     #[test]
@@ -4947,33 +4746,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn escape_leaves_a_search_from_the_bar_and_from_its_results() {
-        // #1011's rule, as the desktop keeps it: Escape leaves the search
-        // whether the keyboard is still in the bar or has gone down to the
-        // results with Enter.
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-
-        update(&mut app, press('/'));
-        type_text(&mut app, "ada");
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.search_query(), None, "Escape in the bar leaves it");
-        assert_eq!(app.focus(), Focus::List);
-
-        update(&mut app, press('/'));
-        type_text(&mut app, "ada");
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::List, "Enter goes down to the results");
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(
-            app.search_query(),
-            None,
-            "and Escape from the results leaves the search too"
-        );
-    }
-
-    #[test]
     fn open_message_reads_the_row_and_puts_the_keyboard_in_the_reader() {
         // It fell through to the dispatcher, which answered that it was not
         // wired up; opening is the reader's own business.
@@ -5010,7 +4782,6 @@ pub(crate) mod tests {
         // Focus's commands the terminal is offered since it became Focus
         // (C29) and cannot answer yet; tasks T309-T326 empty this list.
         "digest_rule",
-        "back_to_words",
         "go_to_filtered",
         "go_to_digest_rules",
         "picker_choose_1",
@@ -5105,41 +4876,6 @@ pub(crate) mod tests {
         update(&mut app, press('g'));
         let effects = update(&mut app, press('z'));
         assert_eq!(opens(&effects), vec![ListScope::Snoozed(account)]);
-    }
-
-    #[test]
-    fn alt_and_a_number_runs_that_pinned_saved_search_or_says_none_is_there() {
-        // specs/007-postio-focus T162: `alt+1`...`alt+4` run the saved
-        // searches by their place in the pinned list; a place with nothing pinned is said, as on the desktop.
-        let mut app = app((160, 40));
-        let mut contents = places();
-        contents.saved = vec![
-            crate::places::Saved {
-                key: "unread-from-ada".into(),
-                name: "Unread from Ada".into(),
-                query: "from:ada is:unread".into(),
-            },
-            crate::places::Saved {
-                key: "tides".into(),
-                name: "Tides".into(),
-                query: "subject:tide".into(),
-            },
-        ];
-        update(&mut app, Input::Places(contents));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-
-        let effects = update(&mut app, key(KeyCode::Char('2'), KeyModifiers::ALT));
-        assert_eq!(
-            searches(&effects).last().map(|(_, query)| query.as_str()),
-            Some("subject:tide"),
-            "{effects:?}"
-        );
-        assert_eq!(app.search_query(), Some("subject:tide"));
-
-        let effects = update(&mut app, key(KeyCode::Char('3'), KeyModifiers::ALT));
-        assert!(searches(&effects).is_empty(), "{effects:?}");
-        assert_eq!(app.notice(), Some("No saved search 3 is pinned"));
     }
 
     #[test]
@@ -6027,369 +5763,6 @@ pub(crate) mod tests {
         assert_eq!(app.notice(), Some("There is no image on the clipboard"));
     }
 
-    fn searches(effects: &[Effect]) -> Vec<(u64, String)> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::Search { sequence, search } => Some((*sequence, search.query.clone())),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn found(ids: &[i64]) -> postio_client::protocol::Found {
-        postio_client::protocol::Found {
-            ids: ids.iter().copied().map(MessageId::new).collect(),
-            hits: ids.len() as u64,
-            capped: false,
-            corpus_complete: true,
-            elapsed: std::time::Duration::from_millis(11),
-        }
-    }
-
-    #[test]
-    fn a_search_is_scoped_and_refined_from_its_facets_without_retyping() {
-        use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, press('/'));
-        let mut latest = 0;
-        for c in "tide".chars() {
-            latest = searches(&update(&mut app, press(c))).last().unwrap().0;
-        }
-        let effects = update(
-            &mut app,
-            Input::Found {
-                sequence: latest,
-                found: Ok(Some(found(&[1, 2, 3]))),
-            },
-        );
-        assert!(
-            effects.contains(&Effect::Facets {
-                sequence: latest,
-                account: postio_model::AccountScope::Unified,
-                query: "tide".into(),
-                scope: Scope::AllMail,
-            }),
-            "the counts are asked for after the hits: {effects:?}"
-        );
-        update(
-            &mut app,
-            Input::Facets {
-                sequence: latest,
-                facets: Some(Facets {
-                    scopes: vec![
-                        ScopeCount {
-                            scope: Scope::AllMail,
-                            hits: 3,
-                        },
-                        ScopeCount {
-                            scope: Scope::Inbox,
-                            hits: 2,
-                        },
-                        ScopeCount {
-                            scope: Scope::Lists,
-                            hits: 0,
-                        },
-                    ],
-                    refinements: vec![
-                        Refinement {
-                            token: "is:unread".into(),
-                            hits: 1,
-                        },
-                        // Keeps every match: narrows nothing, so not offered.
-                        Refinement {
-                            token: "has:attachment".into(),
-                            hits: 3,
-                        },
-                    ],
-                }),
-            },
-        );
-        let offered: Vec<(String, Option<u64>)> = app
-            .facets()
-            .iter()
-            .map(|facet| (facet.label.clone(), facet.count))
-            .collect();
-        assert_eq!(
-            offered,
-            [
-                ("All mail".to_owned(), Some(3)),
-                ("Inbox only".to_owned(), Some(2)),
-                ("Lists".to_owned(), Some(0)),
-                ("is:unread".to_owned(), Some(1)),
-            ]
-        );
-        assert!(app.facets()[0].current, "the scope searched");
-
-        // Tab walks them; Enter on a refinement adds its token.
-        for _ in 0..4 {
-            update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        }
-        assert!(app.facets()[3].chosen);
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(searches(&effects).last().unwrap().1, "tide is:unread");
-        assert_eq!(app.search_query(), Some("tide is:unread"));
-        assert_eq!(app.focus(), Focus::Search, "still searching");
-
-        // Enter on a scope searches there, the query untouched.
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let scoped = effects
-            .iter()
-            .find_map(|effect| match effect {
-                Effect::Search { search, .. } => Some(search.clone()),
-                _ => None,
-            })
-            .expect("searched again");
-        assert_eq!(scoped.scope, Scope::Inbox);
-        assert_eq!(scoped.query, "tide is:unread");
-    }
-
-    #[test]
-    fn a_search_runs_on_every_key_and_a_half_typed_operator_is_no_error() {
-        // US4 scenario 1.
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, press('/'));
-        assert_eq!(app.focus(), Focus::Search);
-
-        let mut asked = Vec::new();
-        for c in "from:ada is:".chars() {
-            asked.extend(searches(&update(&mut app, press(c))));
-        }
-        assert_eq!(asked.len(), "from:ada is:".len(), "one search per key");
-        assert!(
-            asked.windows(2).all(|pair| pair[0].0 < pair[1].0),
-            "each newer than the last"
-        );
-        assert_eq!(asked.last().unwrap().1, "from:ada is:");
-        let chips = app.search_chips();
-        assert!(
-            chips
-                .iter()
-                .any(|chip| chip.label == "from:ada" && chip.complete)
-        );
-        assert!(
-            chips
-                .iter()
-                .any(|chip| chip.label == "is:" && !chip.complete),
-            "a half-typed operator is a chip in progress, not an error: {chips:?}"
-        );
-
-        for c in "unread".chars() {
-            update(&mut app, press(c));
-        }
-        let latest = searches(&update(&mut app, press(' '))).last().unwrap().0;
-        update(
-            &mut app,
-            Input::Found {
-                sequence: latest - 1,
-                found: Ok(Some(found(&[9]))),
-            },
-        );
-        assert_ne!(app.total(), 1, "an answer to an older question is dropped");
-        let effects = update(
-            &mut app,
-            Input::Found {
-                sequence: latest,
-                found: Ok(Some(found(&[3, 1]))),
-            },
-        );
-        assert_eq!(app.total(), 2);
-        assert!(
-            effects.iter().any(|effect| matches!(
-                effect,
-                Effect::Fetch {
-                    fetch: Fetch::Hits { .. },
-                    ..
-                }
-            )),
-            "the hits are read: {effects:?}"
-        );
-        assert_eq!(app.search_readout().as_deref(), Some("2 hits · 11 ms"));
-    }
-
-    fn showing_results(app: &mut App) {
-        let opening = open_list(app, 3);
-        serve(app, opening);
-        update(app, press('/'));
-        let asked = type_text(app, "tide");
-        let sequence = searches(&asked).last().unwrap().0;
-        update(
-            app,
-            Input::Found {
-                sequence,
-                found: Ok(Some(found(&[3, 1]))),
-            },
-        );
-        update(app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::List, "down in the results");
-    }
-
-    #[test]
-    fn over_the_results_shift_o_reorders_and_ctrl_s_saves_the_search() {
-        let mut app = app((160, 40));
-        showing_results(&mut app);
-
-        let effects = update(&mut app, press('O'));
-        let again: Vec<_> = effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::Search { search, .. } => Some((search.query.clone(), search.newest_first)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(again, vec![("tide".to_owned(), true)], "{effects:?}");
-
-        let effects = update(&mut app, ctrl('s'));
-        assert!(
-            effects.contains(&Effect::SaveSearch("tide".into())),
-            "{effects:?}"
-        );
-
-        // And the list's own keys still work there.
-        update(&mut app, press('j'));
-        assert_eq!(app.cursor(), 1);
-    }
-
-    #[test]
-    fn a_palette_opened_in_the_search_bar_offers_the_searchs_commands() {
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, press('/'));
-        type_text(&mut app, "tide");
-        update(&mut app, ctrl('k'));
-        let titles: Vec<String> = app
-            .palette()
-            .unwrap()
-            .rows
-            .into_iter()
-            .map(|row| row.title)
-            .collect();
-        let order = postio_core::registry::get(postio_core::CommandId::ToggleResultOrder).title;
-        assert!(titles.iter().any(|title| title == order), "{titles:?}");
-    }
-
-    #[test]
-    fn backspace_takes_a_whole_chip_and_escape_puts_the_folder_back() {
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, press('/'));
-        for c in "tide from:ada".chars() {
-            update(&mut app, press(c));
-        }
-        let asked = searches(&update(
-            &mut app,
-            key(KeyCode::Backspace, KeyModifiers::NONE),
-        ));
-        assert_eq!(app.search_query(), Some("tide"));
-        update(
-            &mut app,
-            Input::Found {
-                sequence: asked.last().expect("asked again").0,
-                found: Ok(Some(found(&[2]))),
-            },
-        );
-        assert_eq!(app.total(), 1, "the results replaced the folder");
-
-        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::List);
-        assert_eq!(app.search_query(), None);
-        let scope = ListScope::Mailbox(MailboxId::new(1));
-        assert!(effects.contains(&Effect::Recount(scope)), "{effects:?}");
-    }
-
-    #[test]
-    fn the_palette_lists_what_this_context_reaches_with_keys_this_terminal_sends() {
-        // T066: the rows are postio_ui::palette::entries, and each shows the
-        // chord a legacy terminal can deliver.
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, ctrl('k'));
-        assert_eq!(app.focus(), Focus::Palette);
-        let shown = app.palette().expect("open");
-        let keymap = postio_core::Keymap::resolve(&Default::default());
-        let expected: Vec<&str> = postio_ui::palette::entries(
-            &keymap,
-            postio_core::Context::List,
-            postio_core::Availability {
-                frontend: postio_core::Frontend::Terminal,
-                ..postio_core::Availability::open(postio_core::Scope::Unified)
-            },
-            "",
-        )
-        .iter()
-        .map(|entry| entry.title)
-        .collect();
-        let titles: Vec<&str> = shown.rows.iter().map(|row| row.title.as_str()).collect();
-        assert_eq!(titles, expected);
-        let mark_sent = shown
-            .rows
-            .iter()
-            .find(|row| {
-                row.title == postio_core::registry::get(postio_core::CommandId::MarkSent).title
-            })
-            .expect("listed");
-        assert_eq!(mark_sent.chord.as_deref(), Some("alt+m"));
-    }
-
-    #[test]
-    fn a_palette_row_runs_where_the_palette_was_opened() {
-        let mut app = app((160, 40));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        update(&mut app, ctrl('k'));
-        type_text(&mut app, "archive");
-        assert_eq!(app.palette().unwrap().rows[0].title, "Archive");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Send(postio_core::Command::Archive { .. }))),
-            "{effects:?}"
-        );
-        assert!(app.palette().is_none());
-        assert_eq!(app.focus(), Focus::List);
-
-        update(&mut app, ctrl('k'));
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(app.palette().is_none());
-        assert_eq!(app.focus(), Focus::List);
-    }
-
-    #[test]
-    fn the_search_bars_prefixes_reach_the_palette_and_the_folders() {
-        let mut app = app((160, 40));
-        update(&mut app, Input::Places(places()));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-
-        update(&mut app, press('/'));
-        update(&mut app, press('>'));
-        assert_eq!(app.focus(), Focus::Palette, "> runs a command");
-        assert_eq!(app.palette().unwrap().marker, ">");
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-
-        update(&mut app, press('/'));
-        update(&mut app, press('#'));
-        let folders = app.palette().expect("# goes to a folder");
-        assert_eq!(folders.marker, "#");
-        type_text(&mut app, "arch");
-        assert_eq!(app.palette().unwrap().rows[0].title, "Archive");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
-            "{effects:?}"
-        );
-    }
-
     fn labelled(id: i64, name: &str) -> postio_model::Label {
         let mut label = postio_model::Label::new(postio_model::AccountId::new(1), name);
         label.id = postio_model::ids::LabelId::new(id);
@@ -6401,35 +5774,6 @@ pub(crate) mod tests {
             Effect::Send(postio_core::Command::AddLabel { label, .. }) => Some(*label),
             _ => None,
         })
-    }
-
-    #[test]
-    fn the_plus_prefix_puts_a_label_on_the_selection() {
-        let mut app = app((160, 40));
-        update(&mut app, Input::Places(places()));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-
-        update(&mut app, press('/'));
-        let effects = update(&mut app, press('+'));
-        assert_eq!(app.palette().expect("+ adds a label").marker, "+");
-        assert!(
-            effects.contains(&Effect::ReadLabels(postio_model::AccountId::new(1))),
-            "{effects:?}"
-        );
-        update(
-            &mut app,
-            Input::Labels(vec![labelled(7, "Work"), labelled(8, "Receipts")]),
-        );
-        type_text(&mut app, "rec");
-        assert_eq!(app.palette().unwrap().rows[0].title, "Receipts");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(
-            added_label(&effects),
-            Some(Some(postio_model::ids::LabelId::new(8))),
-            "{effects:?}"
-        );
-        assert!(app.palette().is_none());
     }
 
     #[test]
@@ -6484,51 +5828,6 @@ pub(crate) mod tests {
                 .any(|effect| matches!(effect, Effect::Open(_))),
             "a move does not go there: {effects:?}"
         );
-    }
-
-    #[test]
-    fn the_at_prefix_finds_a_correspondent_and_searches_their_mail() {
-        let mut app = app((160, 40));
-        update(&mut app, Input::Places(places()));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-
-        update(&mut app, press('/'));
-        let effects = update(&mut app, press('@'));
-        assert_eq!(app.palette().expect("@ finds a correspondent").marker, "@");
-        assert!(
-            effects.contains(&Effect::ReadCorrespondents(postio_model::AccountId::new(1))),
-            "{effects:?}"
-        );
-        let contact = |name: &str, address: &str| postio_model::Contact {
-            id: postio_model::ids::ContactId::new(1),
-            account_id: Some(postio_model::AccountId::new(1)),
-            address: postio_model::EmailAddress::new(Some(name), address),
-            name: None,
-            times_seen: 3,
-            last_seen_at: None,
-            source: Default::default(),
-            suppressed: false,
-        };
-        update(
-            &mut app,
-            Input::Correspondents(vec![
-                contact("Ada Lovelace", "ada@example.test"),
-                contact("Grace Hopper", "grace@example.test"),
-            ]),
-        );
-        type_text(&mut app, "gh");
-        assert_eq!(app.palette().unwrap().rows[0].title, "Grace Hopper");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::Search, "back in the bar, to build on");
-        let asked: Vec<String> = effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::Search { search, .. } => Some(search.query.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(asked, ["from:grace@example.test"]);
     }
 
     #[test]
