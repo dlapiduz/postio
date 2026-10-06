@@ -100,7 +100,7 @@ async fn main() {
     let filler = "lorem ipsum dolor sit amet ".repeat(BODY_BYTES / 27);
     connection
         .execute(
-            "UPDATE messages SET body_state = 'full', body_text = ?1",
+            "UPDATE message_contents SET body_state = 'full', body_text = ?1",
             postio_storage::bind![filler.as_str()],
         )
         .await
@@ -149,8 +149,8 @@ async fn main() {
         for id in &candidates {
             connection
                 .execute(
-                    "INSERT OR REPLACE INTO message_search_bodies (message_id, body_search)
-                     VALUES (?1, ?2)",
+                    "INSERT OR REPLACE INTO message_search_bodies (content_id, body_search)
+                     SELECT content_id, ?2 FROM messages WHERE id=?1",
                     postio_storage::bind![*id, "indexed"],
                 )
                 .await

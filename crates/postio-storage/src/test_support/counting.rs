@@ -226,6 +226,8 @@ pub async fn scans(connection: &crate::Connection, sql: &str) -> Vec<String> {
 /// encrypted store each page of it is decrypted to be read.
 pub const GROWING_TABLES: &[&str] = &[
     "messages",
+    "message_contents",
+    "message_content_parts",
     "recipients",
     "attachments",
     "search_documents",

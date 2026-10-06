@@ -308,6 +308,7 @@ pub async fn prefetch_text_sections(
     let messages = MessageRepository::new(connection);
     // (path, section) -> the ids wanting it, and what they will cost.
     let mut groups: HashMap<(String, String), Vec<postio_model::RemoteId>> = HashMap::new();
+    let mut contents = HashSet::new();
     let mut budget = PREFETCH_BUDGET;
     for request in requests {
         if !matches!(request.want, Want::Text) {
@@ -319,6 +320,15 @@ pub async fn prefetch_text_sections(
         let Ok(Some(message)) = messages.get(request.message).await else {
             continue;
         };
+        if let Some(identity) = &message.server.content_identity
+            && (messages
+                .has_reusable_content(request.message)
+                .await
+                .unwrap_or(false)
+                || !contents.insert((message.account_id, identity.clone())))
+        {
+            continue;
+        }
         let sections = [message.text_part_id.clone(), message.html_part_id.clone()];
         let mut wanted = false;
         for section in sections.into_iter().flatten() {
@@ -1282,6 +1292,18 @@ pub async fn fetch_body(
         return Ok(Outcome::Gone);
     };
 
+    if matches!(request.want, Want::Text)
+        && message.server.content_identity.is_some()
+        && messages.has_reusable_content(request.message).await?
+        && !message.attachments.iter().any(|part| {
+            part.blob_id.is_none()
+                && part.is_inline()
+                && inline_cap.is_some_and(|cap| part.size <= cap)
+        })
+    {
+        return Ok(Outcome::Stored { bytes: 0 });
+    }
+
     match &request.want {
         // The payload axis: named sections, nothing around them.
         Want::Payloads(parts) => {
@@ -1395,6 +1417,29 @@ pub async fn fetch_body(
         .write_gate()
         .acquire(WritePriority::Background)
         .await;
+
+    // Native adapters may supply immutable identity without BODYSTRUCTURE.
+    // Preserve the parsed part map so every membership can resolve CID and
+    // attachment bytes, including one that arrives after this row is removed.
+    // Read current location state under the gate: flags may have changed while
+    // the body was on the wire.
+    if message.server.content_identity.is_some() && message.content_type.is_none() {
+        let Some(mut current) = messages.get(request.message).await? else {
+            return Ok(Outcome::Gone);
+        };
+        // `content_type` marks a complete text section map, not merely a
+        // top-level MIME header. Keep it absent so an evicted inline part
+        // falls back to the whole source instead of replacing the cached
+        // words with an empty section fetch.
+        current.text_is_flowed = parsed.text_is_flowed;
+        current.read_receipt_requested = parsed.read_receipt_requested;
+        current.attachments = parsed
+            .parts
+            .iter()
+            .map(|part| part.attachment.clone())
+            .collect();
+        messages.update(&mut current).await?;
+    }
 
     // Two columns, not the row: see `set_fetched`.
     messages

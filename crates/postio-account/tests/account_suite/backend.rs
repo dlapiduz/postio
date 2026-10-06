@@ -1017,6 +1017,7 @@ fn a_fetched_message_becomes_a_domain_message() {
     };
 
     let fetched = FetchedMessage {
+        content_identity: None,
         remote_id: postio_model::RemoteId::new("4242:12"),
         uid: Uid::new(12),
         uid_validity: UidValidity::new(4_242),
@@ -1065,6 +1066,7 @@ fn a_fetched_message_with_a_body_structure_carries_its_own_content_type() {
         [PartNode::new("1", "text/html", 512)],
     );
     let fetched = FetchedMessage {
+        content_identity: None,
         remote_id: postio_model::RemoteId::new("1:1"),
         uid: Uid::new(1),
         uid_validity: UidValidity::new(1),
@@ -1085,6 +1087,7 @@ fn a_fetched_message_with_a_body_structure_carries_its_own_content_type() {
 #[test]
 fn a_fetched_message_with_no_body_structure_has_no_content_type() {
     let fetched = FetchedMessage {
+        content_identity: None,
         remote_id: postio_model::RemoteId::new("1:1"),
         uid: Uid::new(1),
         uid_validity: UidValidity::new(1),
@@ -1150,6 +1153,7 @@ fn a_fetched_message_carries_the_sections_holding_its_own_text() {
         ],
     );
     let fetched = FetchedMessage {
+        content_identity: None,
         remote_id: postio_model::RemoteId::new("1:1"),
         uid: Uid::new(1),
         uid_validity: UidValidity::new(1),
@@ -1174,6 +1178,7 @@ fn a_fetched_message_carries_the_sections_holding_its_own_text() {
 #[test]
 fn a_fetched_message_with_no_body_structure_names_no_text_sections() {
     let fetched = FetchedMessage {
+        content_identity: None,
         remote_id: postio_model::RemoteId::new("1:1"),
         uid: Uid::new(1),
         uid_validity: UidValidity::new(1),
@@ -1307,6 +1312,7 @@ fn a_fetched_message_carries_the_backend_neutral_identity() {
     // is `remote_id`; the generation-and-uid pair is how this adapter, and
     // only this adapter, spells one.
     let fetched = FetchedMessage {
+        content_identity: None,
         remote_id: postio_model::RemoteId::new("4242:12"),
         uid: Uid::new(12),
         uid_validity: UidValidity::new(4_242),
@@ -1555,6 +1561,7 @@ fn what_a_fetch_knew_of_the_promoted_headers_reaches_the_domain_message() {
         automation: postio_model::promoted::PRECEDENCE_LIST,
     };
     let fetched = |promoted| FetchedMessage {
+        content_identity: None,
         remote_id: postio_model::RemoteId::new("4242:12"),
         uid: Uid::new(12),
         uid_validity: UidValidity::new(4_242),

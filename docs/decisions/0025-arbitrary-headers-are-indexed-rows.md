@@ -1,7 +1,12 @@
 # ADR 0025 — Arbitrary headers are stored on the row and indexed as rows, not as text
 
 - **Status:** Accepted (2026-09-03). Built (`postio-index/src/index.rs`);
-  the size budget is [ADR 0027](0027-the-header-index-is-budgeted-per-message.md)'s
+  the size budget is [ADR 0027](0027-the-header-index-is-budgeted-per-message.md)'s.
+  **Amended 2026-10-08 by [ADR 0046](0046-content-identity-is-distinct-from-mailbox-identity.md):**
+  decoded bodies and header blocks belong to `message_contents`; derived
+  body and header rows are keyed by content. Mailbox occurrence IDs still
+  target location-specific operations. Sharing requires an account-scoped
+  immutable backend identity, never an RFC Message-ID.
 - **Date:** 2026-09-03
 - **Decision by:** a `/ux-architect` session, on the question
   [#884](https://github.com/dlapiduz/postio/issues/884) raised: `header:` has

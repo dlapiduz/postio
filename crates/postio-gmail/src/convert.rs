@@ -84,6 +84,10 @@ pub(crate) fn fetched(message: &GmailMessage, position: u32) -> Option<FetchedMe
         .map(|payload| payload.headers.as_slice())
         .unwrap_or_default();
     Some(FetchedMessage {
+        content_identity: Some(postio_model::ContentIdentity::new(
+            "gmail-message",
+            message.id.clone(),
+        )),
         remote_id: RemoteId::new(message.id.clone()),
         uid: Uid::new(position),
         uid_validity: UidValidity::new(GENERATION),
@@ -252,6 +256,25 @@ pub(crate) fn label_changes(change: &FlagChange) -> (Vec<String>, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_message_identity_is_account_wide_content_identity() {
+        let wire = GmailMessage {
+            id: "message-1".into(),
+            ..Default::default()
+        };
+        let message = fetched(&wire, 1).unwrap().into_message(
+            postio_model::AccountId::new(1),
+            postio_model::MailboxId::new(2),
+        );
+        assert_eq!(
+            message.server.content_identity,
+            Some(postio_model::ContentIdentity::new(
+                "gmail-message",
+                "message-1"
+            ))
+        );
+    }
 
     #[test]
     fn seen_is_the_absence_of_unread() {

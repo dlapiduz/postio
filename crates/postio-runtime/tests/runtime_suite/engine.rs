@@ -1657,7 +1657,7 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
             async |connection| {
                 postio_storage::sql::exists(
                     &connection,
-                    "SELECT 1 FROM message_search_bodies WHERE message_id = ?1",
+                    "SELECT 1 FROM message_search_bodies WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1)",
                     bind![id],
                 )
                 .await

@@ -97,7 +97,9 @@ pub use ids::{
 };
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleKind, RoleOverrides};
-pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
+pub use message::{
+    BodyState, ContentIdentity, LocalSyncState, Message, MessageBody, ServerIdentifiers,
+};
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
 pub use outgoing::{BuiltMessage, CalendarMethod, CalendarPart, OutgoingAttachment};

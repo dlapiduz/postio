@@ -615,45 +615,60 @@ struct Evictable {
 
 #[derive(Debug, Clone, Copy)]
 enum Reference {
-    /// `messages.raw_blob_id` for this message.
-    RawSource(i64),
-    /// `attachments.blob_id` for this attachment, whose message is this.
-    Payload { attachment: i64, message: i64 },
+    /// Raw RFC source referenced under this physical blob key.
+    RawSource,
+    /// Payload bytes referenced under this physical blob key.
+    Payload,
 }
 
 impl Evictable {
     /// Stops the database claiming bytes that are no longer on disk.
     async fn forget(&self, connection: &Connection) -> Result<()> {
         match self.reference {
-            Reference::RawSource(message) => {
-                // No `body_state` change: raw source was never what `full`
-                // meant. The text and every payload are still local, so the
-                // message is exactly as complete as it was.
+            Reference::RawSource => {
+                // The file is shared by every reference to this blob key.
+                // Clear ownership and the reader projection together.
                 sql::execute(
                     connection,
-                    "UPDATE messages SET raw_blob_id = NULL WHERE id = ?1",
-                    [message],
+                    "UPDATE message_contents SET raw_blob_id = NULL WHERE raw_blob_id = ?1",
+                    [self.blob.as_str()],
+                )
+                .await?;
+                sql::execute(
+                    connection,
+                    "UPDATE messages SET raw_blob_id = NULL WHERE raw_blob_id = ?1",
+                    [self.blob.as_str()],
                 )
                 .await?;
             }
-            Reference::Payload {
-                attachment,
-                message,
-            } => {
+            Reference::Payload => {
                 sql::execute(
                     connection,
-                    "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
-                    [attachment],
+                    "UPDATE message_contents SET body_state = 'partial'
+                      WHERE namespace IS NULL AND body_state IN ('partial','full')
+                        AND id IN (SELECT m.content_id FROM messages m
+                                   JOIN attachments a ON a.message_id = m.id WHERE a.blob_id = ?1)",
+                    [self.blob.as_str()],
                 )
                 .await?;
-                // `full` means every part is local and one no longer is, so
-                // the honest state is `partial` -- which is also what makes
-                // the attachment chip offer "download" again (ADR 0017).
                 sql::execute(
                     connection,
                     "UPDATE messages SET body_state = 'partial'
-                      WHERE id = ?1 AND body_state = 'full'",
-                    [message],
+                      WHERE body_state = 'full' AND id IN
+                        (SELECT message_id FROM attachments WHERE blob_id = ?1)",
+                    [self.blob.as_str()],
+                )
+                .await?;
+                sql::execute(
+                    connection,
+                    "UPDATE message_content_parts SET blob_id = NULL WHERE blob_id = ?1",
+                    [self.blob.as_str()],
+                )
+                .await?;
+                sql::execute(
+                    connection,
+                    "UPDATE attachments SET blob_id = NULL WHERE blob_id = ?1",
+                    [self.blob.as_str()],
                 )
                 .await?;
             }
@@ -675,7 +690,7 @@ async fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
         (),
         |row| {
             Ok(Evictable {
-                reference: Reference::RawSource(row.col(0)?),
+                reference: Reference::RawSource,
                 blob: BlobId::new(row.col::<String>(1)?),
             })
         },
@@ -692,10 +707,7 @@ async fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
             (),
             |row| {
                 Ok(Evictable {
-                    reference: Reference::Payload {
-                        attachment: row.col(0)?,
-                        message: row.col(2)?,
-                    },
+                    reference: Reference::Payload,
                     blob: BlobId::new(row.col::<String>(1)?),
                 })
             },
@@ -729,8 +741,10 @@ pub struct EvictionReport {
 /// surviving half. Named once, because a fourth reference added to the schema
 /// and not to this list is mail the sweep deletes while a row still points at
 /// it.
-pub(crate) const BLOB_REFERENCES: [(&str, &str); 3] = [
+pub(crate) const BLOB_REFERENCES: [(&str, &str); 5] = [
     ("messages", "raw_blob_id"),
+    ("message_contents", "raw_blob_id"),
+    ("message_content_parts", "blob_id"),
     ("attachments", "blob_id"),
     ("cross_account_moves", "raw_blob_id"),
 ];

@@ -599,10 +599,9 @@ impl Store {
     /// `no such column` once per folder for as long as it ran.
     ///
     /// A stamp [`schema::migrations_from`] has a path from is migrated in
-    /// place: each step's statements, then the new stamp. Every statement is
-    /// safe to run twice, so a store cut off before the stamp is written runs
-    /// them again on its next open rather than being left half-carried. A
-    /// stamp with no path is refused, untouched, with
+    /// place: each step's statements, then the new stamp, in one
+    /// transaction, so a store cut off before it commits is left as it was
+    /// and runs them again on its next open. A stamp with no path is refused, untouched, with
     /// [`Error::SchemaFromAnotherBuild`] -- the file survives being refused,
     /// because starting over sets it aside rather than deleting it.
     async fn bring_the_schema_to_head(&self, migrating: &impl Fn()) -> Result<()> {
@@ -627,15 +626,23 @@ impl Store {
         // A step may create a table that names one created after it, as
         // `HEAD` does; the store's own connections turn the keys back on.
         crate::sql::execute(&connection, "PRAGMA foreign_keys = OFF", ()).await?;
+        // Every step and the new stamp, in one transaction: a store cut off
+        // part-way is left at its old stamp with its old schema, rather than
+        // half-carried by a step that cannot run twice (a column added, rows
+        // copied).
+        let mut batch = String::from("BEGIN IMMEDIATE;\n");
         for step in steps {
-            connection.execute_batch(step.statements).await?;
+            batch.push_str(step.statements);
+            batch.push('\n');
         }
-        crate::sql::execute(
-            &connection,
-            &format!("PRAGMA user_version = {}", schema::FINGERPRINT),
-            (),
-        )
-        .await?;
+        batch.push_str(&format!(
+            "PRAGMA user_version = {};\nCOMMIT;",
+            schema::FINGERPRINT
+        ));
+        if let Err(error) = connection.execute_batch(&batch).await {
+            let _ = connection.execute_batch("ROLLBACK;").await;
+            return Err(error.into());
+        }
         tracing::info!(to = schema::FINGERPRINT, "the store's schema is migrated");
         Ok(())
     }
