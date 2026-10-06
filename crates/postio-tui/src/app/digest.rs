@@ -946,4 +946,288 @@ mod tests {
         );
         let _ = FocusRow::Digest;
     }
+
+    /// Every effect `update` asked the host for.
+    fn sent(effects: &[Effect]) -> Vec<&Command> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Send(command) => Some(command),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn email_body(message: i64) -> Input {
+        Input::Body {
+            message: MessageId::new(message),
+            answer: Ok(postio_client::protocol::Body::Ready {
+                body: postio_model::MessageBody {
+                    text: Some("Hello.".into()),
+                    html: None,
+                },
+                encoding_problems: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn the_brackets_step_one_statement_at_a_time_and_stop_at_either_end() {
+        let mut app = opened((120, 40), true);
+        let reference = |app: &App| app.digest().unwrap().reference();
+        assert_eq!(reference(&app), Some(0), "it opens on the first");
+        update(&mut app, press('['));
+        assert_eq!(reference(&app), Some(0), "nothing before the first");
+        for want in [1, 2, 3] {
+            update(&mut app, press(']'));
+            assert_eq!(
+                reference(&app),
+                Some(want),
+                "one statement, not one message"
+            );
+        }
+        update(&mut app, press(']'));
+        assert_eq!(reference(&app), Some(3), "nothing after the last");
+        update(&mut app, press('['));
+        assert_eq!(reference(&app), Some(2));
+        // Two statements cite the harbor message; stepping goes through both.
+        update(&mut app, press('['));
+        update(&mut app, press('['));
+        assert_eq!(reference(&app), Some(0));
+        let drawn = screen(120, 40, &app);
+        assert!(
+            drawn.contains("Harbor Weekly · Tide tables for October")
+                && !drawn.contains("Rail Notes · Timetable change"),
+            "only the focused statement shows its card:\n{drawn}"
+        );
+    }
+
+    #[test]
+    fn the_brackets_belong_to_the_summary_and_do_nothing_on_the_list() {
+        let mut app = opened((120, 36), true);
+        update(&mut app, press(']'));
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let before = screen(120, 36, &app);
+        for bracket in [']', '['] {
+            let effects = update(&mut app, press(bracket));
+            assert!(
+                !effects.iter().any(|e| matches!(e, Effect::Send(_))),
+                "{effects:?}"
+            );
+        }
+        assert_eq!(
+            app.digest().unwrap().reference(),
+            Some(1),
+            "left where it was"
+        );
+        assert_eq!(screen(120, 36, &app), before, "and nothing moved on screen");
+        // Back on the summary it is still on the statement it left.
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.digest().unwrap().reference(), Some(1));
+        assert!(
+            line_with(&screen(120, 36, &app), "A dredging notice").contains("[2]"),
+            "the second statement is the focused one"
+        );
+    }
+
+    #[test]
+    fn tab_is_the_summarys_alone_and_without_one_the_window_does_not_move() {
+        let mut app = opened((120, 36), false);
+        let before = screen(120, 36, &app);
+        let effects = update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::Send(_))),
+            "{effects:?}"
+        );
+        assert_eq!(screen(120, 36, &app), before, "nothing to switch to");
+        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
+        assert_eq!(
+            app.digest().unwrap().reference(),
+            None,
+            "no statement to focus"
+        );
+        update(&mut app, press(']'));
+        assert_eq!(app.digest().unwrap().reference(), None, "nor to step to");
+        // With a summary it goes both ways and the tab row says which.
+        let mut app = opened((120, 36), true);
+        let on_summary = screen(120, 36, &app);
+        assert!(
+            on_summary.contains("Written on this computer"),
+            "{on_summary}"
+        );
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            app.digest().unwrap().page(),
+            postio_ui::digest::Page::Summary
+        );
+        assert_eq!(screen(120, 36, &app), on_summary, "the same page it left");
+    }
+
+    #[test]
+    fn a_archives_the_delivery_once_from_any_page_and_not_a_message() {
+        let archived = |effects: &[Effect]| {
+            let sent = sent(effects);
+            assert_eq!(
+                sent,
+                vec![&Command::ArchiveDigest {
+                    delivery: DeliveryId::new(1),
+                    archived: true
+                }],
+                "one command, for the delivery: {effects:?}"
+            );
+        };
+        // From the summary, on the second statement.
+        let mut app = opened((120, 36), true);
+        update(&mut app, press(']'));
+        archived(&update(&mut app, press('A')));
+        assert!(app.digest().is_none() && app.reading().is_none());
+        assert_eq!(app.focus(), Focus::List);
+        // From the list.
+        let mut app = opened((120, 36), true);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, press('j'));
+        archived(&update(&mut app, press('A')));
+        // From an email in the window.
+        let mut app = opened((120, 36), true);
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        update(&mut app, email_body(21));
+        archived(&update(&mut app, press('A')));
+        assert!(app.digest().is_none() && app.reading().is_none());
+        // The lower case is not it.
+        let mut app = opened((120, 36), true);
+        let effects = update(&mut app, press('a'));
+        assert!(
+            !sent(&effects).contains(&&Command::ArchiveDigest {
+                delivery: DeliveryId::new(1),
+                archived: true
+            }),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn d_asks_about_the_focused_senders_and_only_return_stops_them() {
+        let mut app = opened((120, 36), true);
+        update(&mut app, press(']'));
+        update(&mut app, press(']'));
+        let effects = update(&mut app, press('D'));
+        assert!(
+            sent(&effects).is_empty(),
+            "asking sends nothing: {effects:?}"
+        );
+        let drawn = screen(120, 36, &app);
+        assert!(
+            drawn.contains("Stop digesting rail@example.com?"),
+            "the third statement is Rail Notes':\n{drawn}"
+        );
+        // Nothing else answers it: not `A`, not `D` again, not a letter.
+        for other in ['A', 'D', 'y', 'j'] {
+            let effects = update(&mut app, press(other));
+            assert!(sent(&effects).is_empty(), "{other}: {effects:?}");
+        }
+        assert!(app.digest().unwrap().stopping().is_some(), "still asking");
+        assert_eq!(app.focus(), Focus::Digest);
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            sent(&effects),
+            vec![&Command::StopDigestingSender {
+                target: MessageTarget::Messages(vec![MessageId::new(22)]),
+                stopped: true,
+                kept: None,
+            }],
+            "the sender of the focused statement, once"
+        );
+        assert!(
+            app.digest().unwrap().stopping().is_none(),
+            "the question goes"
+        );
+        assert_eq!(app.focus(), Focus::Digest, "the window stays");
+        assert!(!screen(120, 36, &app).contains("Stop digesting"));
+    }
+
+    #[test]
+    fn d_over_an_email_is_about_that_emails_sender_and_over_the_list_the_rows() {
+        // The email on screen, though the focused statement is another.
+        let mut app = opened((120, 36), true);
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        update(&mut app, press('j'));
+        update(&mut app, email_body(22));
+        update(&mut app, press('D'));
+        assert!(screen(120, 36, &app).contains("Stop digesting rail@example.com?"));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            sent(&effects).iter().all(|command| matches!(
+                command,
+                Command::StopDigestingSender { target: MessageTarget::Messages(m), .. }
+                    if *m == vec![MessageId::new(22)]
+            )),
+            "{effects:?}"
+        );
+        // On the list it is the row the keyboard is on.
+        let mut app = opened((120, 36), true);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, press('j'));
+        update(&mut app, press('j'));
+        update(&mut app, press('D'));
+        assert!(screen(120, 36, &app).contains("Stop digesting town@example.com?"));
+        // Escape takes the question down and the window stays.
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(sent(&effects).is_empty());
+        assert!(app.digest().unwrap().stopping().is_none());
+        assert!(!screen(120, 36, &app).contains("Stop digesting"));
+    }
+
+    #[test]
+    fn u_follows_the_focused_statement_as_d_does() {
+        let mut app = opened((120, 36), true);
+        update(&mut app, press(']'));
+        update(&mut app, press(']'));
+        update(&mut app, press(']'));
+        let effects = update(&mut app, press('U'));
+        assert!(
+            effects.contains(&Effect::Unsubscribe(MessageId::new(23))),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn escape_from_an_email_goes_back_to_the_statement_it_came_from_and_not_out() {
+        let mut app = opened((120, 40), true);
+        update(&mut app, press(']'));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            effects.contains(&Effect::ReadBody(MessageId::new(21))),
+            "the second statement cites the harbor message too: {effects:?}"
+        );
+        update(&mut app, email_body(21));
+        assert!(screen(120, 40, &app).contains("Cited as 2 in the summary"));
+        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(sent(&effects).is_empty(), "{effects:?}");
+        assert_eq!(app.focus(), Focus::Digest, "the window did not close");
+        assert!(app.reading().is_none(), "the email is put away");
+        assert_eq!(app.digest().unwrap().reference(), Some(1));
+        assert_eq!(
+            app.digest().unwrap().page(),
+            postio_ui::digest::Page::Summary
+        );
+        let drawn = screen(120, 40, &app);
+        assert!(
+            line_with(&drawn, "A dredging notice").contains("[2]")
+                && drawn.contains("Harbor Weekly · Tide tables for October"),
+            "its card is under it again:\n{drawn}"
+        );
+        // From the list it is the list, on the row it left, summary or not.
+        let mut app = opened((120, 40), true);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, press('j'));
+        update(&mut app, press('j'));
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        update(&mut app, email_body(23));
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
+        assert_eq!(app.digest().unwrap().cursor(), 2);
+        assert_eq!(app.focus(), Focus::Digest);
+    }
 }

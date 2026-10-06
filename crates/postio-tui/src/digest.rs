@@ -268,11 +268,17 @@ impl Window {
     /// Open `message` in the window, from `from` the page `Esc` goes back
     /// to, citing the reference that names it when one does.
     pub fn open_email(&mut self, message: MessageId, from: Page) {
+        // From the summary it is the focused statement's reference, which is
+        // not the first to cite the message when two statements share one.
         let cited = self.summary.as_ref().and_then(|summary| {
-            summary
-                .statements
-                .iter()
-                .find(|statement| statement.reference.message == message)
+            let cites = |statement: &&SummaryStatement| statement.reference.message == message;
+            let focused = self
+                .reference
+                .filter(|_| from == Page::Summary)
+                .and_then(|at| summary.statements.get(at))
+                .filter(cites);
+            focused
+                .or_else(|| summary.statements.iter().find(cites))
                 .map(|statement| &statement.reference)
         });
         let (number, excerpt) = match cited {
