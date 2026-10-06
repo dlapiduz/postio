@@ -382,6 +382,12 @@ for: the store is written, the row repaints without its bold.
 - **Not at open.** `j`/`k` step the pane and `[`/`]` step the thread;
   marking at open would mark everything a person stepped past. A held `j`
   rests nowhere, so it marks nothing.
+- **Only while the window is the active one.** A message left open in a
+  window that has lost the focus is not being read: the clock stops when the
+  window stops being active, and nothing is marked however long it stays
+  away. When the window is active again the clock starts over for the same
+  message, if it is still open and the clock had not already finished with
+  it (marked, or kept unread by `r`).
 - **The cursor marks nothing** (FR-016): with nothing open it starts no
   clock.
 - **One message at a time.** The clock marks the message on screen, not the
@@ -396,7 +402,7 @@ for: the store is written, the row repaints without its bold.
 - **Local-first.** The mark is a store write and an enqueued flag change.
 
 Pinned by `read_on_dwell` (left open in the dialog, stepped past in the
-pane, closed before the dwell, `r` again), with `postio-ui`'s `dwell` cases.
+pane, closed before the dwell, `r` again, an unfocused window, refocusing), with `postio-ui`'s `dwell` cases.
 
 ## Sending states
 

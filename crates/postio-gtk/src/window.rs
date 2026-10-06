@@ -471,6 +471,7 @@ impl FocusWindow {
         self.set_content(Some(imp.toast.overlay()));
 
         self.drop_focus_that_leaves();
+        self.connect_is_active_notify(|window| window.focus_changed(window.is_active()));
         self.connect_close_request(|window| {
             window.save_geometry();
             glib::Propagation::Proceed
@@ -4234,6 +4235,16 @@ impl FocusWindow {
             }
             crate::bar::BarAction::Command(command) => self.act(command),
             crate::bar::BarAction::Go { destination, name } => self.go_to(destination, &name),
+        }
+    }
+
+    /// The window became the active one, or stopped being it: the open
+    /// message's read clock runs only while it is. Called from the window's
+    /// own notification; public because a headless compositor grants no
+    /// focus, so a test says what the notification would.
+    pub fn focus_changed(&self, active: bool) {
+        if let Some(reading) = self.reading() {
+            reading.set_window_active(active);
         }
     }
 

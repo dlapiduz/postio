@@ -828,6 +828,14 @@ const CASES: &[(&str, fn())] = &[
         read_on_dwell::r_in_the_open_message_marks_it_unread_again as fn(),
     ),
     (
+        "read_on_dwell::a_message_in_a_window_that_lost_focus_stays_unread",
+        read_on_dwell::a_message_in_a_window_that_lost_focus_stays_unread as fn(),
+    ),
+    (
+        "read_on_dwell::refocusing_does_not_take_back_r",
+        read_on_dwell::refocusing_does_not_take_back_r as fn(),
+    ),
+    (
         "reading_pane::f8_and_the_setting_switch_between_the_dialog_and_the_pane",
         reading_pane::f8_and_the_setting_switch_between_the_dialog_and_the_pane as fn(),
     ),

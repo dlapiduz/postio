@@ -187,3 +187,71 @@ pub fn r_in_the_open_message_marks_it_unread_again() {
         }
     });
 }
+
+/// A message left open in a window that is not the active one is not being
+/// read: the clock stops when the window loses focus, nothing is marked
+/// however long it stays away, and it starts again from the top when the
+/// window is back, for the message still open.
+pub fn a_message_in_a_window_that_lost_focus_stays_unread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        all_bold(&window).await;
+
+        support::deliver(&window, "j");
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || showing(&window).as_deref() == Some("First")).await,
+            "Return opened nothing"
+        );
+        // The window loses the focus before the dwell is up. The headless
+        // compositor grants no focus to take away, so say what GTK's
+        // `is-active` notification would.
+        window.focus_changed(false);
+        crate::settle_for(DWELL_TO_READ * 2).await;
+        assert_eq!(
+            bold(&window, "First"),
+            Some(true),
+            "a message open in an unfocused window was marked read"
+        );
+
+        window.focus_changed(true);
+        assert!(
+            crate::settle_until(async || bold(&window, "First") == Some(false)).await,
+            "First stayed unread after the window was back for the dwell"
+        );
+    });
+}
+
+/// Coming back to the window does not start the clock again on a message
+/// the clock was finished with: one `r` marked unread stays unread.
+pub fn refocusing_does_not_take_back_r() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        all_bold(&window).await;
+
+        support::deliver(&window, "j");
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || bold(&window, "First") == Some(false)).await,
+            "First was never marked read"
+        );
+        assert!(support::deliver(&window, "r"), "r reached nothing");
+        assert!(crate::settle_until(async || bold(&window, "First") == Some(true)).await);
+        window.focus_changed(false);
+        window.focus_changed(true);
+        crate::settle_for(DWELL_TO_READ * 2).await;
+        assert_eq!(
+            bold(&window, "First"),
+            Some(true),
+            "refocusing the window marked the message read again"
+        );
+    });
+}

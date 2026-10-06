@@ -166,6 +166,13 @@ pub struct OpenMessage {
     /// when another is, when it closes, or when the person sets its read
     /// state themselves.
     dwell: RefCell<Option<glib::SourceId>>,
+    /// The message the clock has finished with: marked read, or left alone
+    /// by the person's own choice. Refocusing the window does not start its
+    /// clock again.
+    settled: Cell<Option<MessageId>>,
+    /// Whether the window is not the active one: nobody is reading, so no
+    /// clock runs.
+    away: Cell<bool>,
     /// Who is told when the clock runs out.
     read: RefCell<Option<ReadHandler>>,
 }
@@ -457,6 +464,8 @@ impl OpenMessage {
             body: Rc::default(),
             capture: Cell::new(false),
             dwell: RefCell::default(),
+            settled: Cell::new(None),
+            away: Cell::new(false),
             read: RefCell::default(),
         });
 
@@ -995,6 +1004,7 @@ impl OpenMessage {
         // its top: the view is put there now, and the new document's first
         // snapshot starts there too.
         self.reader.view().scroll_to_edge(false);
+        self.settled.set(None);
         self.arm_dwell(message);
         self.load(message, generation);
     }
@@ -1031,8 +1041,8 @@ impl OpenMessage {
     /// other. The delay and the rule are `postio_ui::dwell`'s, shared with
     /// the classic app; only the timer is this toolkit's.
     fn arm_dwell(&self, message: MessageId) {
-        self.cancel_dwell();
-        if !self.open.get() {
+        self.stop_dwell();
+        if !self.open.get() || self.away.get() {
             return;
         }
         let postio_ui::dwell::Arm::Start { after, .. } =
@@ -1047,6 +1057,7 @@ impl OpenMessage {
             };
             // Fired: the id is spent, and removing it again would warn.
             let _ = page.dwell.borrow_mut().take();
+            page.settled.set(Some(message));
             if !page.open.get() || page.shown.get() != Some(message) {
                 return;
             }
@@ -1062,6 +1073,28 @@ impl OpenMessage {
     /// the person set its read state themselves, which the clock must not
     /// overrule.
     pub fn cancel_dwell(&self) {
+        self.settled.set(self.shown.get());
+        self.stop_dwell();
+    }
+
+    /// The window gained or lost the focus. A message left open in a window
+    /// that is not the active one is not being read: the clock stops, and
+    /// when the window is back it starts again from the top -- for the same
+    /// message, still open, that the clock has not already finished with.
+    pub fn set_window_active(&self, active: bool) {
+        self.away.set(!active);
+        if !active {
+            self.stop_dwell();
+        } else if self.open.get()
+            && let Some(message) = self.shown.get()
+            && self.settled.get() != Some(message)
+        {
+            self.arm_dwell(message);
+        }
+    }
+
+    /// Stop the clock, leaving the message unsettled.
+    fn stop_dwell(&self) {
         if let Some(source) = self.dwell.borrow_mut().take() {
             source.remove();
         }
