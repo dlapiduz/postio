@@ -30,15 +30,15 @@
 //! new arrivals answers nothing on every existing store.
 //!
 //! Bodies are not flattened into it: since ADR 0020 they are already one
-//! column of one row (`messages.body_text`), and their index sits on a
+//! column of one row (`message_contents.body_text`), and their index sits on a
 //! sibling table of its own, `message_search_bodies`, which [`index_body`]
 //! writes — the fold cannot be computed by a trigger, and keeping the folded
 //! copy off `messages` keeps the index's segment merges off every other
 //! write to that table.
 //!
-//! `search_documents.message_id` cascades from `messages.id`, so deleting a
-//! message deletes its flattened row, and the indexes follow their tables
-//! without any help from this crate.
+//! `search_documents.content_id` cascades from `message_contents.id`, so
+//! removing the last mailbox membership collects its document and indexes.
+//! Search hydrates a qualifying occurrence for location-specific actions.
 //!
 //! # Applying this schema
 //!
@@ -134,7 +134,8 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
         // naming it is what stops a future rename from leaving one behind.
         postio_storage::sql::batch(
             connection,
-            "DROP INDEX IF EXISTS idx_message_headers_name;
+            "DROP TRIGGER IF EXISTS trg_message_contents_header_index_au;
+             DROP INDEX IF EXISTS idx_message_headers_name;
              DROP TABLE IF EXISTS message_headers;",
         )
         .await?;
@@ -164,7 +165,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
 /// 3 — `search_documents_deferred`, and every trigger standing aside while
 ///     it holds a row, so a sync batch indexes each message once
 ///     ([`defer_documents`], #1587).
-const METADATA_SCHEMA_VERSION: i64 = 3;
+const METADATA_SCHEMA_VERSION: i64 = 4;
 
 /// The body half's version: `messages_body_fts` over `message_search_bodies`.
 ///
@@ -181,7 +182,7 @@ const METADATA_SCHEMA_VERSION: i64 = 3;
 /// 1 — `messages_body_fts` on `messages.body_search`.
 /// 2 — the same index moved to its own table, `message_search_bodies`, so a
 ///     header write no longer merges the body index (`fts_write_cost`).
-const BODIES_SCHEMA_VERSION: i64 = 2;
+const BODIES_SCHEMA_VERSION: i64 = 3;
 
 /// The header half's version: `message_headers` and its name index.
 ///
@@ -195,7 +196,7 @@ const BODIES_SCHEMA_VERSION: i64 = 2;
 /// reads a blob or decompresses a body of its own — `body_headers` is one of
 /// the three columns the row already carries, and
 /// [`messages_missing_header_rows`] finds every message that needs one.
-const HEADERS_SCHEMA_VERSION: i64 = 1;
+const HEADERS_SCHEMA_VERSION: i64 = 2;
 
 /// How many rows one message may contribute to `message_headers`.
 ///
@@ -295,9 +296,9 @@ pub async fn index_body(
     // that the write is an insert into a table with a foreign key.
     connection
         .execute(
-            "INSERT INTO message_search_bodies (message_id, body_search)
-             SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?1)
-             ON CONFLICT (message_id) DO UPDATE SET body_search = excluded.body_search",
+            "INSERT INTO message_search_bodies (content_id, body_search)
+             SELECT content_id, ?2 FROM messages WHERE id = ?1
+             ON CONFLICT (content_id) DO UPDATE SET body_search = excluded.body_search",
             (message_id, postio_model::fold::fold(body.unwrap_or(""))),
         )
         .await?;
@@ -393,8 +394,8 @@ pub fn indexable_text(body: &MessageBody) -> Option<String> {
 /// again. Two things make each skipped row dearer than a bare index walk, and
 /// both argue for skipping fewer of them: `body_state` is not in
 /// `idx_messages_recency`, so every row the walk passes is fetched from
-/// `messages` to test it, and `messages` holds `body_text`/`body_html`
-/// inline — most of the table by bytes.
+/// `messages` to test it. Bodies now live on their content owner, so the
+/// recency walk reads bounded occurrence metadata.
 pub async fn messages_missing_body_text(
     connection: &Connection,
     limit: u32,
@@ -409,8 +410,9 @@ pub async fn messages_missing_body_text(
             "SELECT m.id, m.received_at
                FROM messages m
               WHERE m.body_state IN ('full', 'partial')
+                AND m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id AND body_state IN ('full','partial'))
                 AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
-                                 WHERE b.message_id = m.id)
+                                 WHERE b.content_id = m.content_id)
               ORDER BY m.received_at DESC, m.id DESC
               LIMIT ?1",
             [limit],
@@ -456,9 +458,10 @@ pub async fn messages_missing_body_text(
             "SELECT m.id, m.received_at
                FROM messages m
               WHERE m.body_state IN ('full', 'partial')
+                AND m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id AND body_state IN ('full','partial'))
                 AND m.received_at <= ?2
                 AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
-                                 WHERE b.message_id = m.id)
+                                 WHERE b.content_id = m.content_id)
               ORDER BY m.received_at DESC, m.id DESC
               LIMIT ?1",
             bind![limit, cursor.received_at],
@@ -504,8 +507,9 @@ pub async fn messages_missing_body_text_for_account(
            FROM messages m
           WHERE m.account_id = ?1
             AND m.body_state IN ('full', 'partial')
+            AND m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id AND body_state IN ('full','partial'))
             AND NOT EXISTS (SELECT 1 FROM message_search_bodies b
-                             WHERE b.message_id = m.id)
+                             WHERE b.content_id = m.content_id)
           ORDER BY m.received_at DESC
           LIMIT ?2",
         bind![account_id, limit],
@@ -531,7 +535,7 @@ pub async fn clear_account_body_index(connection: &Connection, account_id: i64) 
     Ok(connection
         .execute(
             "DELETE FROM message_search_bodies
-              WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?1)",
+              WHERE content_id IN (SELECT id FROM message_contents WHERE account_id = ?1)",
             [account_id],
         )
         .await? as usize)
@@ -571,25 +575,25 @@ pub async fn index_headers(
     message_id: i64,
     headers: &postio_model::Headers,
 ) -> Result<()> {
-    if !message_exists(connection, message_id).await? {
+    let Some(content_id) = content_id_of(connection, message_id).await? else {
         return Ok(());
-    }
+    };
     // Delete first: the pass is resumable and a version bump refills the whole
     // table, so re-indexing a message is the ordinary case. An upsert would
     // leave the rows of a message that has *lost* a header behind.
     connection
         .execute(
-            "DELETE FROM message_headers WHERE message_id = ?1",
-            [message_id],
+            "DELETE FROM message_headers WHERE content_id = ?1",
+            [content_id],
         )
         .await?;
 
     let normalized = headers.normalized();
     let mut statement = connection
         .prepare(
-            "INSERT INTO message_headers (message_id, name, value, ordinal)
+            "INSERT INTO message_headers (content_id, name, value, ordinal)
          VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT (message_id, name, ordinal) DO NOTHING",
+         ON CONFLICT (content_id, name, ordinal) DO NOTHING",
         )
         .await?;
     let mut written = 0usize;
@@ -601,12 +605,12 @@ pub async fn index_headers(
             continue;
         }
         statement
-            .execute(bind![message_id, header.name, header.value, ordinal as i64])
+            .execute(bind![content_id, header.name, header.value, ordinal as i64])
             .await?;
         written += 1;
     }
     if written == 0 {
-        statement.execute(bind![message_id, "", "", 0i64]).await?;
+        statement.execute(bind![content_id, "", "", 0i64]).await?;
     }
     Ok(())
 }
@@ -617,15 +621,15 @@ pub async fn index_headers(
 /// delete on its own would succeed against no rows and the insert that
 /// follows would be the thing that failed — turning "indexed a message that
 /// has just been expunged" into an error the caller has to classify.
-async fn message_exists(connection: &Connection, message_id: i64) -> Result<bool> {
+async fn content_id_of(connection: &Connection, message_id: i64) -> Result<Option<i64>> {
     let found: Option<i64> = sql::first(
         connection,
-        "SELECT 1 FROM messages WHERE id = ?1",
+        "SELECT content_id FROM messages WHERE id = ?1",
         [message_id],
         |row| row.col(0),
     )
     .await?;
-    Ok(found.is_some())
+    Ok(found)
 }
 
 /// Message ids whose header block is stored and whose header rows are not,
@@ -649,8 +653,9 @@ pub async fn messages_missing_header_rows(connection: &Connection, limit: u32) -
         connection,
         "SELECT m.id
            FROM messages m
-          WHERE m.body_headers IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.message_id = m.id)
+          WHERE m.body_has_headers = 1
+            AND m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id)
+            AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.content_id = m.content_id)
           ORDER BY m.received_at DESC
           LIMIT ?1",
         [limit],
@@ -674,8 +679,9 @@ pub async fn messages_missing_header_rows_for_account(
         "SELECT m.id
            FROM messages m
           WHERE m.account_id = ?1
-            AND m.body_headers IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.message_id = m.id)
+            AND m.body_has_headers = 1
+            AND m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id)
+            AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.content_id = m.content_id)
           ORDER BY m.received_at DESC
           LIMIT ?2",
         bind![account_id, limit],
@@ -695,7 +701,7 @@ pub async fn clear_account_header_index(connection: &Connection, account_id: i64
     Ok(connection
         .execute(
             "DELETE FROM message_headers
-          WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?1)",
+          WHERE content_id IN (SELECT id FROM message_contents WHERE account_id = ?1)",
             [account_id],
         )
         .await? as usize)
@@ -766,9 +772,9 @@ pub async fn write_documents(
     );
     let written = sql::execute(
         connection,
-        "INSERT INTO search_documents (message_id, subject, sender, recipients, filenames, list_id)
+        "INSERT INTO search_documents (content_id, subject, sender, recipients, filenames, list_id)
          SELECT
-             m.id,
+             m.content_id,
              coalesce(m.subject, ''),
              coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || a.address, ' ')
                          FROM recipients r JOIN addresses a ON a.id = r.address_id
@@ -782,7 +788,8 @@ pub async fn write_documents(
              coalesce(m.list_id, '')
            FROM messages m
           WHERE m.id IN (SELECT value FROM json_each(?1))
-         ON CONFLICT (message_id) DO UPDATE SET
+          GROUP BY m.content_id
+         ON CONFLICT (content_id) DO UPDATE SET
              subject = excluded.subject,
              sender = excluded.sender,
              recipients = excluded.recipients,
@@ -832,7 +839,7 @@ pub const SCHEMA_FOR_TEST: &str = SCHEMA;
 
 const SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS search_documents (
-    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    content_id  INTEGER PRIMARY KEY REFERENCES message_contents(id) ON DELETE CASCADE,
     sender      TEXT NOT NULL DEFAULT '',
     recipients  TEXT NOT NULL DEFAULT '',
     subject     TEXT NOT NULL DEFAULT '',
@@ -858,7 +865,7 @@ CREATE INDEX IF NOT EXISTS search_documents_fts ON search_documents
 -- The body index, over its own table (`postio_storage::schema` defines
 -- `message_search_bodies`; this owns the index on it).
 --
--- `body_search` is `messages.body_text` folded for search. It sits in a
+-- `body_search` is `message_contents.body_text` folded for search. It sits in a
 -- sibling table rather than on `messages` so a header write does not merge
 -- the body index -- the table's own documentation in `postio_storage::schema`
 -- has the write-cost measurement.
@@ -884,14 +891,21 @@ CREATE INDEX IF NOT EXISTS messages_body_fts ON message_search_bodies USING fts 
 -- `idx_message_headers_name` is what makes `header:` a range scan over one
 -- name rather than a scan of everything.
 CREATE TABLE IF NOT EXISTS message_headers (
-    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    content_id INTEGER NOT NULL REFERENCES message_contents(id) ON DELETE CASCADE,
     name       TEXT    NOT NULL,   -- lowercased; RFC 5322 names are case-insensitive
     value      TEXT    NOT NULL,   -- unfolded, RFC 2047-decoded, truncated at VALUE_LIMIT
     ordinal    INTEGER NOT NULL,   -- position within the message, wire order
-    PRIMARY KEY (message_id, name, ordinal)
+    PRIMARY KEY (content_id, name, ordinal)
 );
 
-CREATE INDEX IF NOT EXISTS idx_message_headers_name ON message_headers (name, message_id);
+CREATE INDEX IF NOT EXISTS idx_message_headers_name ON message_headers (name, content_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_message_contents_header_index_au
+AFTER UPDATE OF body_headers ON message_contents
+WHEN old.body_headers IS NOT new.body_headers
+BEGIN
+    DELETE FROM message_headers WHERE content_id = new.id;
+END;
 
 -- While this holds a row, every trigger below stands aside: a sync batch
 -- is writing, and will write each message's document once, whole, when it
@@ -907,19 +921,22 @@ CREATE TABLE IF NOT EXISTS search_documents_deferred (
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_messages_ai
 AFTER INSERT ON messages
-WHEN NOT EXISTS (SELECT 1 FROM search_documents_deferred)
+WHEN new.content_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
-    INSERT INTO search_documents (message_id, subject, list_id)
-    VALUES (new.id, coalesce(new.subject, ''), coalesce(new.list_id, ''))
-    ON CONFLICT (message_id) DO UPDATE SET subject = excluded.subject, list_id = excluded.list_id;
+    INSERT INTO search_documents (content_id, subject, list_id)
+    VALUES (new.content_id, coalesce(new.subject, ''), coalesce(new.list_id, ''))
+    ON CONFLICT (content_id) DO UPDATE SET subject = excluded.subject, list_id = excluded.list_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_messages_au
-AFTER UPDATE OF subject, list_id ON messages
+AFTER UPDATE OF subject, list_id, content_id ON messages
 WHEN NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
-    UPDATE search_documents SET subject = coalesce(new.subject, ''), list_id = coalesce(new.list_id, '')
-    WHERE message_id = new.id;
+    INSERT INTO search_documents (content_id, subject, list_id)
+    SELECT new.content_id, coalesce(new.subject, ''), coalesce(new.list_id, '')
+     WHERE new.content_id IS NOT NULL
+    ON CONFLICT (content_id) DO UPDATE SET subject = excluded.subject, list_id = excluded.list_id
+      WHERE subject IS NOT excluded.subject OR list_id IS NOT excluded.list_id;
 END;
 
 -- recipients -> search_documents: sender (kind = 'from') and recipients
@@ -937,7 +954,7 @@ BEGIN
         recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
                       FROM recipients r JOIN addresses a ON a.id = r.address_id
                      WHERE r.message_id = new.message_id AND r.kind IN ('to', 'cc', 'bcc'))
-    WHERE message_id = new.message_id;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = new.message_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_recipients_ad
@@ -951,7 +968,7 @@ BEGIN
         recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
                       FROM recipients r JOIN addresses a ON a.id = r.address_id
                      WHERE r.message_id = old.message_id AND r.kind IN ('to', 'cc', 'bcc'))
-    WHERE message_id = old.message_id;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = old.message_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_recipients_au
@@ -965,7 +982,7 @@ BEGIN
         recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
                       FROM recipients r JOIN addresses a ON a.id = r.address_id
                      WHERE r.message_id = old.message_id AND r.kind IN ('to', 'cc', 'bcc'))
-    WHERE message_id = old.message_id AND old.message_id IS NOT NULL;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = old.message_id) AND old.message_id IS NOT NULL;
 
     UPDATE search_documents SET
         sender = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
@@ -974,7 +991,7 @@ BEGIN
         recipients = (SELECT coalesce(group_concat(coalesce(r.name, '') || ' ' || a.address, ' '), '')
                       FROM recipients r JOIN addresses a ON a.id = r.address_id
                      WHERE r.message_id = new.message_id AND r.kind IN ('to', 'cc', 'bcc'))
-    WHERE message_id = new.message_id AND new.message_id IS NOT NULL;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = new.message_id) AND new.message_id IS NOT NULL;
 END;
 
 -- attachments -> search_documents: filenames, same recompute-from-scratch
@@ -986,7 +1003,7 @@ BEGIN
     UPDATE search_documents SET
         filenames = (SELECT coalesce(group_concat(filename, ' '), '')
                      FROM attachments WHERE message_id = new.message_id AND filename IS NOT NULL)
-    WHERE message_id = new.message_id;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = new.message_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_attachments_ad
@@ -996,22 +1013,22 @@ BEGIN
     UPDATE search_documents SET
         filenames = (SELECT coalesce(group_concat(filename, ' '), '')
                      FROM attachments WHERE message_id = old.message_id AND filename IS NOT NULL)
-    WHERE message_id = old.message_id;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = old.message_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_attachments_au
-AFTER UPDATE ON attachments
+AFTER UPDATE OF filename, message_id ON attachments
 WHEN NOT EXISTS (SELECT 1 FROM search_documents_deferred)
 BEGIN
     UPDATE search_documents SET
         filenames = (SELECT coalesce(group_concat(filename, ' '), '')
                      FROM attachments WHERE message_id = old.message_id AND filename IS NOT NULL)
-    WHERE message_id = old.message_id AND old.message_id IS NOT NULL;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = old.message_id) AND old.message_id IS NOT NULL;
 
     UPDATE search_documents SET
         filenames = (SELECT coalesce(group_concat(filename, ' '), '')
                      FROM attachments WHERE message_id = new.message_id AND filename IS NOT NULL)
-    WHERE message_id = new.message_id AND new.message_id IS NOT NULL;
+    WHERE content_id = (SELECT content_id FROM messages WHERE id = new.message_id) AND new.message_id IS NOT NULL;
 END;
 
 -- Everything that was already here.
@@ -1028,9 +1045,9 @@ END;
 -- a second copy of every document. The index on `search_documents` follows
 -- the rows without being touched here -- it is an index, and the engine
 -- maintains it the way it maintains any other.
-INSERT INTO search_documents (message_id, subject, sender, recipients, filenames, list_id)
+INSERT INTO search_documents (content_id, subject, sender, recipients, filenames, list_id)
 SELECT
-    m.id,
+    m.content_id,
     coalesce(m.subject, ''),
     coalesce((SELECT group_concat(coalesce(r.name, '') || ' ' || a.address, ' ')
                 FROM recipients r JOIN addresses a ON a.id = r.address_id
@@ -1046,8 +1063,8 @@ FROM messages m
 -- `WHERE true` is not decoration: SQLite cannot tell an `ON CONFLICT` clause
 -- from the tail of the SELECT's own WHERE without it, and rejects the
 -- statement as a syntax error near `DO`.
-WHERE true
-ON CONFLICT (message_id) DO NOTHING;
+WHERE m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id)
+ON CONFLICT (content_id) DO NOTHING;
 ";
 
 #[cfg(test)]
@@ -1064,9 +1081,9 @@ mod tests {
     async fn matches(connection: &Connection, query: &str) -> Vec<i64> {
         sql::all(
             connection,
-            "SELECT message_id FROM search_documents
+            "SELECT content_id FROM search_documents
               WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
-              ORDER BY message_id",
+              ORDER BY content_id",
             [query],
             |row| row.col(0),
         )
@@ -1170,7 +1187,7 @@ mod tests {
         sql::first(
             connection,
             "SELECT subject, sender, recipients, filenames FROM search_documents
-              WHERE message_id = ?1",
+              WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1)",
             [message],
             |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?)),
         )
@@ -1302,7 +1319,7 @@ mod tests {
         let folded = postio_model::fold::fold(query);
         sql::all(
             connection,
-            "SELECT message_id FROM message_search_bodies              WHERE fts_match(body_search, ?1) ORDER BY message_id",
+            "SELECT content_id FROM message_search_bodies              WHERE fts_match(body_search, ?1) ORDER BY content_id",
             [folded.as_str()],
             |row| row.col(0),
         )

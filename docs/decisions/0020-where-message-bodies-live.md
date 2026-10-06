@@ -12,6 +12,11 @@
   `crates/postio-storage/src/body_codec.rs` restored per-row zstd (level 3,
   no dictionary) wherever the frame is smaller than the text.
   `body_dictionaries` stays gone.
+  **Amended 2026-10-05 by [ADR 0045](0045-content-identity-is-distinct-from-mailbox-identity.md):**
+  decoded bodies and header blocks belong to `message_contents`; derived
+  body and header rows are keyed by content. Mailbox occurrence IDs still
+  target location-specific operations. Sharing requires an account-scoped
+  immutable backend identity, never an RFC Message-ID.
 - **Date:** 2026-08-27
 - **Decision by:** the maintainer, asking two questions in sequence — *"are all
   the bodies just out there in the open?"* and *"why not store the bodies

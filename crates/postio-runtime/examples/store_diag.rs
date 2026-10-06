@@ -198,9 +198,9 @@ async fn main() {
     // union, which is where a search's cost lives.
     println!("\n== D: the plans the two halves of a match take ==");
     for sql in [
-        "SELECT message_id FROM search_documents
+        "SELECT content_id FROM search_documents
           WHERE fts_match(sender, recipients, subject, filenames, list_id, 'invoice')",
-        "SELECT message_id FROM message_search_bodies WHERE fts_match(body_search, 'invoice')",
+        "SELECT content_id FROM message_search_bodies WHERE fts_match(body_search, 'invoice')",
         "SELECT id FROM messages m
           WHERE m.deleted_locally = 0 AND m.account_id = 1
           ORDER BY m.received_at DESC, m.id DESC LIMIT 50",

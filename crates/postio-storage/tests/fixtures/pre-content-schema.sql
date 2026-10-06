@@ -1,99 +1,4 @@
-//! The schema, at head, as one constant.
-//!
-//! # Content ownership migration
-//!
-//! [`HEAD`] creates a new store. [`MIGRATE_CONTENT`] advances the exact
-//! preceding Turso schema, preserving occurrence identities and giving each
-//! existing message independent content. Native identities arrive on resync;
-//! existing RFC Message-IDs are never evidence for sharing. Unknown stamps
-//! still require rebuilding by resyncing. The former SQLCipher format cannot
-//! be read by Turso and has no migration here.
-//!
-//! # What this is not the same as
-//!
-//! Four things differ from the schema the old engine held, and each is forced
-//! rather than chosen:
-//!
-//! 1. **`body_dictionaries` is gone.** Bodies were plain `TEXT` for a while,
-//!    because an index cannot tokenise compressed bytes and the body index
-//!    sat on the body column; once it moved to its own folded table (point
-//!    2), the column was free to be small again, and `crate::body_codec`
-//!    packs it per row — zstd when that is smaller, no shared dictionary.
-//! 2. **`body_search` is a sibling table** (`message_search_bodies`), not a
-//!    column: the body folded for search. The engine's
-//!    tokenizer does not remove diacritics and offers no option to, so the
-//!    fold FTS5 did inside its index is done by `postio_model::fold` before
-//!    the write.
-//! 3. **No table is `WITHOUT ROWID`.** Four were. Turso puts that behind an
-//!    experimental flag and will not build a secondary index on such a table,
-//!    which `idx_message_labels_label` and `idx_thread_links_thread` need. The
-//!    cost is one rowid per row on four narrow tables; the alternative was
-//!    losing two indexes that queries depend on.
-//! 4. **The two FTS5 virtual tables are not here.** They are indexes now, and
-//!    they live with the rest of the search schema in `postio-index`.
-//!
-//! Everything else is the schema as it was, transcribed by applying the
-//! twenty migrations and dumping the result rather than by retyping it.
 
-/// What this schema hashes to, for `PRAGMA user_version`.
-///
-/// # Why a hash rather than a number someone maintains
-///
-/// A hand-kept version integer has to be remembered, and the failure it
-/// guards against is exactly the one where somebody did not: a column was
-/// added to [`HEAD`] and nothing else changed, so an older store went on
-/// opening and failing one statement at a time. Hashing the schema text
-/// cannot be forgotten — edit `HEAD` at all and the stamp moves with it.
-///
-/// It is deliberately *not* a version. Nothing is ordered, nothing is
-/// comparable, and there is no "newer": two builds either agree or they do
-/// not, which is the only question with an answer while there are no
-/// migrations.
-///
-/// FNV-1a, 32 bits, which is what `user_version` has room for. A collision
-/// would let a mismatched store through — the failure this started from
-/// rather than a new one — and 32 bits against the handful of schemas a
-/// single-user alpha sees is not worth a hashing dependency.
-pub const FINGERPRINT: i64 = fingerprint_of(HEAD);
-
-/// Exact source schema supported by the content ownership migration.
-pub const BEFORE_CONTENT_FINGERPRINT: i64 = -103_003_987;
-
-/// One forward migration; old occurrences remain independent until resynced.
-pub const MIGRATE_CONTENT: &str = concat!(
-    include_str!("schema/contents.sql"),
-    include_str!("schema/migrate-content.sql"),
-    include_str!("schema/content-locations.sql"),
-    include_str!("schema/content-projection.sql"),
-);
-
-/// FNV-1a over the schema text, at compile time.
-///
-/// Folded through `i32` because that is what `user_version` is: a signed
-/// 32-bit field. Hashing to `u32` and widening instead makes every hash above
-/// `i32::MAX` read back negative, so the stamp never equals itself and every
-/// store demands a resync on its second open.
-const fn fingerprint_of(schema: &str) -> i64 {
-    let bytes = schema.as_bytes();
-    let mut hash: u32 = 0x811c_9dc5;
-    let mut index = 0;
-    while index < bytes.len() {
-        hash ^= bytes[index] as u32;
-        hash = hash.wrapping_mul(0x0100_0193);
-        index += 1;
-    }
-    hash as i32 as i64
-}
-
-/// Every table, index and trigger the store needs, in one batch.
-///
-/// Creation order is tables, then indexes, then triggers, and tables are in
-/// alphabetical order rather than dependency order — a foreign key may be
-/// declared before the table it names, which is why [`crate::store`] runs this
-/// with foreign keys off and turns them on afterwards.
-pub const HEAD: &str = concat!(
-    include_str!("schema/contents.sql"),
-    r#"
 CREATE TABLE accounts (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     display_name         TEXT    NOT NULL,
@@ -391,10 +296,6 @@ CREATE TABLE message_labels (
 );
 
 CREATE TABLE messages (
-    content_id INTEGER REFERENCES message_contents(id) ON DELETE CASCADE,
-    content_namespace TEXT,
-    content_key TEXT,
-    body_has_headers INTEGER NOT NULL DEFAULT 0,
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id              INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     mailbox_id              INTEGER NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
@@ -472,8 +373,28 @@ CREATE TABLE messages (
                                                              'sent', 'failed', 'unconfirmed')),
     send_at                 INTEGER,
 
-    -- Large decoded bodies and the header block live in message_contents.
-    -- These small fields are the mailbox list's bounded read projection.
+    -- The message's decoded text. TEXT, and stored as it reads.
+    --
+    -- These were zstd BLOBs against a shared dictionary until the engine
+    -- changed (specs/004-turso-store). The compression is gone and it is not
+    -- a size decision: the full-text index is now an index *on this column*,
+    -- and an index cannot tokenise compressed bytes. Under FTS5 the tokens
+    -- lived in a virtual table of their own, so the column beside it was free
+    -- to be unreadable; under an index method the indexed column is the
+    -- corpus. Keeping both would mean storing every body twice.
+    --
+    -- NULL means "no such part". A part that exists and is empty is a
+    -- zero-length value, which is a different fact and one the reading pane
+    -- distinguishes.
+    --
+    -- These are the most sensitive bytes in the product, and the engine's
+    -- page encryption is what protects them (#300, ADR 0014). A file per body
+    -- would leak its size and its mtime even when encrypted; a row leaks
+    -- neither.
+    body_text               TEXT,
+    body_html               TEXT,
+    -- The full header block, preserved for display and later reparsing.
+    body_headers            TEXT,
     -- Whether `body_text` uses RFC 3676 format=flowed.
     text_is_flowed          INTEGER NOT NULL DEFAULT 0,
     -- Whether `body_headers` was cut at the header-block limit.
@@ -535,7 +456,7 @@ CREATE TABLE messages (
 -- `body_search` is created by `postio-index`, which owns the search indexes;
 -- the table is here because it hangs off `messages`.
 CREATE TABLE message_search_bodies (
-    content_id  INTEGER PRIMARY KEY REFERENCES message_contents(id) ON DELETE CASCADE,
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     body_search TEXT NOT NULL
 );
 
@@ -930,184 +851,4 @@ BEGIN
            snoozed_count = snoozed_count + (NEW.deleted_locally = 0 AND
                NEW.snoozed_until IS NOT NULL AND NEW.snoozed_until > (strftime('%s','now') * 1000))
      WHERE id = NEW.mailbox_id;
-END;;"#,
-    include_str!("schema/content-locations.sql"),
-    include_str!("schema/content-projection.sql")
-);
-
-/// What the schema declares, as names, without an engine.
-///
-/// A crude parse on purpose: it reads [`HEAD`] the way a reader does rather
-/// than the way an engine does, so the test below can run at the `--lib` tier
-/// in microseconds instead of opening a database.
-#[cfg(test)]
-fn declared() -> std::collections::BTreeSet<&'static str> {
-    HEAD.lines()
-        .filter_map(|line| {
-            let line = line.trim_start();
-            let rest = line
-                .strip_prefix("CREATE TABLE ")
-                .or_else(|| line.strip_prefix("CREATE INDEX "))
-                .or_else(|| line.strip_prefix("CREATE UNIQUE INDEX "))
-                .or_else(|| line.strip_prefix("CREATE TRIGGER "))?;
-            rest.trim_matches('"').split([' ', '(', '"']).next()
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every object the twenty migrations built, minus the ones this engine
-    /// deliberately does without.
-    ///
-    /// Generated by applying `src/migrations/*.sql` in order and reading
-    /// `sqlite_master`, so it describes the schema as it actually was rather
-    /// than as anyone remembers it. Transcription is the risk this test
-    /// exists for: `HEAD` was assembled from a dump, and a dump that lost an
-    /// index would still be a working schema and a slow one.
-    const OLD_SCHEMA: &[&str] = &[
-        // 26 tables
-        "accounts",
-        "addresses",
-        "attachments",
-        "body_dictionaries",
-        "contact_group_members",
-        "contact_groups",
-        "contacts",
-        "cross_account_moves",
-        "drafts",
-        "egress_log",
-        "identities",
-        "labels",
-        "mailbox_role_refusals",
-        "mailbox_roles",
-        "mailboxes",
-        "message_labels",
-        "messages",
-        "operation_queue",
-        "recipients",
-        "settings",
-        "signatures",
-        "sqlite_sequence",
-        "sync_state",
-        "thread_links",
-        "threads",
-        "unsubscribe_activations",
-        // 55 indexes
-        "idx_addresses_normalized",
-        "idx_attachments_blob",
-        "idx_attachments_draft",
-        "idx_attachments_filename",
-        "idx_attachments_message",
-        "idx_contacts_account_address",
-        "idx_contacts_rank",
-        "idx_contacts_shared_address",
-        "idx_cross_account_moves_phase",
-        "idx_drafts_account_updated",
-        "idx_drafts_message",
-        "idx_drafts_state",
-        "idx_drafts_thread",
-        "idx_egress_log_at",
-        "idx_identities_account",
-        "idx_identities_one_default",
-        "idx_labels_account_name",
-        "idx_mailboxes_account_path",
-        "idx_mailboxes_account_role",
-        "idx_mailboxes_parent",
-        "idx_message_labels_label",
-        "idx_messages_account_list",
-        "idx_messages_in_reply_to",
-        "idx_messages_list",
-        "idx_messages_list_id",
-        "idx_messages_mailbox_remote_id",
-        "idx_messages_mod_seq",
-        "idx_messages_recency",
-        "idx_messages_rfc_message_id",
-        "idx_messages_send_state",
-        "idx_messages_snoozed_due",
-        "idx_messages_thread",
-        "idx_messages_thread_mailbox",
-        "idx_messages_uid",
-        "idx_operation_queue_drain",
-        "idx_operation_queue_target",
-        "idx_recipients_address",
-        "idx_recipients_draft",
-        "idx_recipients_message",
-        "idx_settings_account_key",
-        "idx_settings_global_key",
-        "idx_signatures_account",
-        "idx_signatures_name",
-        "idx_sync_state_account",
-        "idx_thread_links_lookup",
-        "idx_thread_links_thread",
-        "idx_threads_account_last_at",
-        "idx_threads_account_subject",
-        "idx_threads_last_at",
-        "idx_threads_subject",
-        "idx_unsubscribe_activations_account",
-        // 4 triggers
-        "messages_bodies_owed_update",
-        "messages_count_delete",
-        "messages_count_insert",
-        "messages_count_update",
-    ];
-
-    /// Gone on purpose, each with the reason it is gone.
-    ///
-    /// The list that makes this test a record rather than a rubber stamp: an
-    /// object may only leave the schema by being named here, so "we dropped
-    /// it deliberately" has to be written down at the moment it stops being
-    /// true that nothing was lost.
-    const DELIBERATELY_ABSENT: &[(&str, &str)] = &[
-        (
-            "body_dictionaries",
-            "the zstd dictionaries the bodies were compressed against. Bodies \
-             are TEXT now because the full-text index is built on the column \
-             itself, so there is nothing left to compress against.",
-        ),
-        (
-            "sqlite_sequence",
-            "the engine's own bookkeeping for AUTOINCREMENT, never declared \
-             by a migration -- it appeared in the dump because the engine \
-             creates it. Turso creates its own.",
-        ),
-    ];
-
-    #[test]
-    fn the_head_schema_declares_everything_the_migrations_did() {
-        let declared = declared();
-        let excused: std::collections::BTreeSet<&str> =
-            DELIBERATELY_ABSENT.iter().map(|(name, _)| *name).collect();
-
-        let missing: Vec<&str> = OLD_SCHEMA
-            .iter()
-            .copied()
-            .filter(|name| !declared.contains(name) && !excused.contains(name))
-            .collect();
-
-        assert!(
-            missing.is_empty(),
-            "the head schema lost {} object(s) the migrations declared: {missing:?}\n\
-             Either transcribe them into HEAD, or name each one in \
-             DELIBERATELY_ABSENT with the reason it is gone.",
-            missing.len(),
-        );
-    }
-
-    #[test]
-    fn nothing_is_excused_that_the_schema_still_declares() {
-        let declared = declared();
-        let contradictory: Vec<&str> = DELIBERATELY_ABSENT
-            .iter()
-            .map(|(name, _)| *name)
-            .filter(|name| declared.contains(name))
-            .collect();
-        assert!(
-            contradictory.is_empty(),
-            "DELIBERATELY_ABSENT claims {contradictory:?} were dropped, but \
-             HEAD still declares them -- the reasons recorded there are stale.",
-        );
-    }
-}
+END;;

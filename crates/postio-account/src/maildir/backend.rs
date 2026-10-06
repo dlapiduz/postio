@@ -359,6 +359,7 @@ impl MailBackend for MaildirBackend {
             let raw = self.store.read(&entry.file)?;
             let parsed = postio_model::mime::parse_headers(&raw);
             fetched.push(FetchedMessage {
+                content_identity: None,
                 remote_id: identity::remote_id(validity, Uid::new(entry.uid)),
                 uid: Uid::new(entry.uid),
                 uid_validity: validity,

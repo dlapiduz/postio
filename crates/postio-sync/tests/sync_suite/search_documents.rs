@@ -53,11 +53,11 @@ async fn a_first_sync_writes_each_search_document_once() {
         .expect("the search schema");
     sql::batch(
         &connection,
-        "CREATE TABLE document_writes (id INTEGER PRIMARY KEY, message_id INTEGER);
+        "CREATE TABLE document_writes (id INTEGER PRIMARY KEY, content_id INTEGER);
          CREATE TRIGGER count_document_inserts AFTER INSERT ON search_documents
-         BEGIN INSERT INTO document_writes (message_id) VALUES (new.message_id); END;
+         BEGIN INSERT INTO document_writes (content_id) VALUES (new.content_id); END;
          CREATE TRIGGER count_document_updates AFTER UPDATE ON search_documents
-         BEGIN INSERT INTO document_writes (message_id) VALUES (new.message_id); END;",
+         BEGIN INSERT INTO document_writes (content_id) VALUES (new.content_id); END;",
     )
     .await
     .expect("the counting triggers");

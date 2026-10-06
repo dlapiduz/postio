@@ -478,6 +478,9 @@ impl BodyStructure {
 /// locally.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FetchedMessage {
+    /// Immutable content identity across this account's mailboxes, only when
+    /// the backend guarantees it. Ordinary IMAP leaves this absent.
+    pub content_identity: Option<postio_model::ContentIdentity>,
     /// The backend's own identity for this message (#543, #544): what the
     /// row stores as `remote_id`. Filled by the adapter that fetched it —
     /// the IMAP adapter packs its generation-and-uid pair, a JMAP adapter
@@ -517,6 +520,7 @@ impl FetchedMessage {
         message.server.uid_validity = Some(self.uid_validity);
         message.server.mod_seq = self.mod_seq;
         message.server.remote_id = Some(self.remote_id);
+        message.server.content_identity = self.content_identity;
 
         if let Some(envelope) = self.envelope {
             message.date = envelope.date;

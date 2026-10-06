@@ -1186,6 +1186,7 @@ fn read_draft(row: &Row) -> Result<Draft> {
         attachments: Vec::new(),
         state: DraftState::from_name(&state).ok_or_else(|| unknown_enum("drafts.state", state))?,
         server: ServerIdentifiers {
+            content_identity: None,
             uid: row.col::<Option<i64>>(11)?.map(|uid| Uid::new(uid as u32)),
             uid_validity: row
                 .col::<Option<i64>>(12)?

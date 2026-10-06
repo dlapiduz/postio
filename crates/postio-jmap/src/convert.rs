@@ -56,8 +56,9 @@ pub(crate) fn summary(
 /// identity (#544), so a position shifting between passes re-fetches at
 /// worst — it can never mislabel.
 pub(crate) fn fetched(email: &JmapEmail, position: u32) -> Option<FetchedMessage> {
-    let id = email.id.clone()?;
+    let id = email.id.clone().filter(|id| !id.is_empty())?;
     Some(FetchedMessage {
+        content_identity: Some(postio_model::ContentIdentity::new("jmap-email", id.clone())),
         remote_id: RemoteId::new(id),
         uid: Uid::new(position),
         uid_validity: UidValidity::new(GENERATION),
@@ -161,6 +162,22 @@ pub(crate) fn keyword(flag: &Flag) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_email_identity_is_account_wide_content_identity() {
+        let email = JmapEmail {
+            id: Some("email-1".into()),
+            ..Default::default()
+        };
+        let message = fetched(&email, 1).unwrap().into_message(
+            postio_model::AccountId::new(1),
+            postio_model::MailboxId::new(2),
+        );
+        assert_eq!(
+            message.server.content_identity,
+            Some(postio_model::ContentIdentity::new("jmap-email", "email-1"))
+        );
+    }
 
     #[test]
     fn keywords_round_trip_through_the_seams_flags() {

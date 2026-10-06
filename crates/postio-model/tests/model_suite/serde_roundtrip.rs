@@ -146,6 +146,7 @@ fn sample_message() -> Message {
     message.size = 12_345;
     message.headers = Headers::from_iter([("X-Mailer", "postio"), ("Received", "from a")]);
     message.server = ServerIdentifiers {
+        content_identity: None,
         uid: Some(Uid::new(881)),
         uid_validity: Some(UidValidity::new(12)),
         mod_seq: Some(ModSeq::new(3_999)),

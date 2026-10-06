@@ -627,7 +627,7 @@ id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_id
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
 raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
-html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested";
+html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested, content_namespace, content_key";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -663,9 +663,9 @@ impl<'a> MessageRepository<'a> {
 
     /// Inserts a message with its recipients, attachments and labels.
     ///
-    /// The body and the header block are *not* written: they belong to the blob
-    /// store, and their keys are set with
-    /// [`MessageRepository::set_body`].
+    /// Decoded body and header bytes are written to the content owner through
+    /// [`MessageRepository::set_body`]. An immutable backend identity can reuse
+    /// an existing owner's bytes and availability.
     pub async fn create(&self, message: &mut Message) -> Result<MessageId> {
         sql::in_scope(self.connection, |transaction| async move {
             let id = insert(&transaction, message).await?;
@@ -1439,9 +1439,10 @@ impl<'a> MessageRepository<'a> {
     pub async fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
         sql::first(
             self.connection,
-            "SELECT body_text, body_html, body_headers,
-                    body_headers_truncated, body_encoding_problems
-               FROM messages WHERE id = ?1",
+            "SELECT message_contents.body_text, message_contents.body_html, message_contents.body_headers,
+                    message_contents.body_headers_truncated, message_contents.body_encoding_problems
+               FROM messages JOIN message_contents ON message_contents.id = messages.content_id
+              WHERE messages.id = ?1",
             [id.get()],
             |row| {
                 let text: Option<Vec<u8>> = row.col(0)?;
@@ -1532,7 +1533,7 @@ impl<'a> MessageRepository<'a> {
         sql::all(
             self.connection,
             "SELECT id, raw_blob_id FROM messages
-              WHERE body_headers IS NULL
+              WHERE body_has_headers = 0
                 AND raw_blob_id IS NOT NULL
                 AND body_state IN ('partial', 'full')
               ORDER BY received_at DESC
@@ -1570,7 +1571,7 @@ impl<'a> MessageRepository<'a> {
                     mailboxes.path, messages.remote_id, mailboxes.role
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.mailbox_id = ?1
-                AND messages.body_headers IS NULL
+                AND messages.body_has_headers = 0
                 AND messages.raw_blob_id IS NULL
                 AND messages.body_state IN ('partial', 'full')
                 AND messages.uid IS NOT NULL
@@ -1602,9 +1603,9 @@ impl<'a> MessageRepository<'a> {
         let encoded = block.map(|block| block.text.clone());
         let changed = sql::execute(
             self.connection,
-            "UPDATE messages
+            "UPDATE message_contents
                 SET body_headers = ?2, body_headers_truncated = ?3
-              WHERE id = ?1",
+              WHERE id = (SELECT content_id FROM messages WHERE id = ?1)",
             bind![
                 id.get(),
                 encoded,
@@ -1621,7 +1622,7 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Stores a message's decoded content on its row.
+    /// Stores decoded content once, shared only under a backend guarantee.
     ///
     /// Takes the new [`BodyState`] with it: the content and "how much of this
     /// message is local" are one fact, and writing them separately would leave
@@ -1653,12 +1654,19 @@ impl<'a> MessageRepository<'a> {
     ) -> Result<()> {
         let changed = sql::execute(
             self.connection,
-            "UPDATE messages
+            "UPDATE message_contents
                     SET body_text = ?2, body_html = ?3, body_headers = ?4,
                         body_state = ?5,
                         body_headers_truncated = ?6, body_encoding_problems = ?7,
-                        body_line_count = ?8, body_parsed_with = ?9
-                  WHERE id = ?1",
+                        body_line_count = ?8, body_parsed_with = ?9,
+                        content_type = (SELECT content_type FROM messages WHERE id = ?1),
+                        text_part_id = (SELECT text_part_id FROM messages WHERE id = ?1),
+                        text_part_headers = (SELECT text_part_headers FROM messages WHERE id = ?1),
+                        html_part_id = (SELECT html_part_id FROM messages WHERE id = ?1),
+                        html_part_headers = (SELECT html_part_headers FROM messages WHERE id = ?1),
+                        text_is_flowed = (SELECT text_is_flowed FROM messages WHERE id = ?1),
+                        read_receipt_requested = (SELECT read_receipt_requested FROM messages WHERE id = ?1)
+                  WHERE id = (SELECT content_id FROM messages WHERE id = ?1)",
             bind![
                 id.get(),
                 // Packed per row: zstd when that is smaller, the text
@@ -1685,6 +1693,20 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
+    /// Whether a backend-identified immutable content body is already local.
+    /// Parser repairs still fetch the source that produced a damaged body.
+    pub async fn has_reusable_content(&self, id: MessageId) -> Result<bool> {
+        sql::scalar(
+            self.connection,
+            "SELECT EXISTS (SELECT 1 FROM messages m JOIN message_contents c ON c.id=m.content_id
+             WHERE m.id=?1 AND c.namespace IS NOT NULL AND c.body_state IN ('full','partial')
+             AND NOT (c.body_encoding_problems=1 AND c.body_parsed_with < ?2))",
+            bind![id.get(), postio_model::mime::PARSER_VERSION],
+        )
+        .await
+        .map(|present| present != 0)
+    }
+
     /// Sets `body_state` on its own, without touching the stored body.
     ///
     /// The one write [`set_body`](Self::set_body) cannot do: a
@@ -1695,7 +1717,8 @@ impl<'a> MessageRepository<'a> {
     pub async fn set_body_state(&self, id: MessageId, body_state: BodyState) -> Result<()> {
         let changed = sql::execute(
             self.connection,
-            "UPDATE messages SET body_state = ?2 WHERE id = ?1",
+            "UPDATE message_contents SET body_state = ?2
+             WHERE id = (SELECT content_id FROM messages WHERE id = ?1)",
             bind![id.get(), body_state.as_str()],
         )
         .await?;
@@ -1754,10 +1777,10 @@ impl<'a> MessageRepository<'a> {
     ) -> Result<()> {
         sql::execute(
             self.connection,
-            "UPDATE messages
+            "UPDATE message_contents
                 SET preview = coalesce(preview, ?2),
                     raw_blob_id = coalesce(?3, raw_blob_id)
-              WHERE id = ?1",
+              WHERE id = (SELECT content_id FROM messages WHERE id = ?1)",
             bind![id.get(), preview, raw_blob.map(BlobId::as_str)],
         )
         .await?;
@@ -2257,7 +2280,7 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
                 last_synced_at = ?29, raw_blob_id = ?30, content_type = ?31, list_id = ?32,
                 text_part_id = ?33, text_part_headers = ?34,
                 html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37,
-                read_receipt_requested = ?38
+                read_receipt_requested = ?38, content_namespace = ?39, content_key = ?40
           WHERE id = ?1",
         row_values(id, message),
     )
@@ -2304,15 +2327,52 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
                                deleted_locally, last_synced_at, raw_blob_id, content_type,
                                list_id, text_part_id, text_part_headers,
                                html_part_id, html_part_headers, text_is_flowed,
-                               read_receipt_requested)
+                               read_receipt_requested, content_namespace, content_key)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                 ?32, ?33, ?34, ?35, ?36, ?37, ?38)",
+                 ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)",
     )
     .await?
     .execute(row_values(0, message))
     .await?;
     Ok(MessageId::new(connection.last_insert_rowid()))
+}
+
+/// A late header fetch has no body or MIME structure of its own. Refresh its
+/// small read projection from the content it explicitly shares. Ordinary
+/// IMAP writes do not pay for this lookup.
+async fn reuse_content_projection(connection: &Connection, message: &mut Message) -> Result<()> {
+    if message.server.content_identity.is_none() {
+        return Ok(());
+    }
+    sql::execute(
+        connection,
+        "UPDATE messages SET content_id = content_id WHERE id = ?1",
+        [message.id.get()],
+    )
+    .await?;
+    let Some(stored) = sql::first(
+        connection,
+        &format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"),
+        [message.id.get()],
+        read_message,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    message.sync.body_state = stored.sync.body_state;
+    message.raw_blob_id = stored.raw_blob_id;
+    message.preview = stored.preview;
+    message.content_type = stored.content_type;
+    message.text_part_id = stored.text_part_id;
+    message.text_part_headers = stored.text_part_headers;
+    message.html_part_id = stored.html_part_id;
+    message.html_part_headers = stored.html_part_headers;
+    message.text_is_flowed = stored.text_is_flowed;
+    message.read_receipt_requested = stored.read_receipt_requested;
+    message.attachments = read_attachments(connection, message.id).await?;
+    Ok(())
 }
 
 /// The parameter list shared by insert and update, `?1` being the id.
@@ -2399,6 +2459,20 @@ fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
         maybe_text(message.html_part_headers.clone()),
         boolean(message.text_is_flowed),
         boolean(message.read_receipt_requested),
+        maybe_text(
+            message
+                .server
+                .content_identity
+                .as_ref()
+                .map(|identity| identity.namespace.clone()),
+        ),
+        maybe_text(
+            message
+                .server
+                .content_identity
+                .as_ref()
+                .map(|identity| identity.key.clone()),
+        ),
     ]
 }
 
@@ -2485,6 +2559,7 @@ async fn write_children(connection: &Connection, message: &mut Message) -> Resul
         .await?;
     }
 
+    reuse_content_projection(connection, message).await?;
     Ok(())
 }
 
@@ -2601,6 +2676,15 @@ fn read_message(row: &Row) -> Result<Message> {
         size: row.col::<i64>(11)? as u64,
         headers: postio_model::Headers::new(),
         server: ServerIdentifiers {
+            content_identity: match (
+                row.col::<Option<String>>(33)?,
+                row.col::<Option<String>>(34)?,
+            ) {
+                (Some(namespace), Some(key)) => {
+                    Some(postio_model::ContentIdentity::new(namespace, key))
+                }
+                _ => None,
+            },
             uid: row.col::<Option<i64>>(14)?.map(|uid| Uid::new(uid as u32)),
             uid_validity: row
                 .col::<Option<i64>>(15)?

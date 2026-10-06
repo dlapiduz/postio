@@ -2836,7 +2836,7 @@ async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
 
     let (html_bytes, text_bytes): (i64, i64) = postio_storage::sql::one(
         &connection,
-        "SELECT length(body_html), length(body_text) FROM messages WHERE id = ?1",
+        "SELECT length(c.body_html), length(c.body_text) FROM messages m JOIN message_contents c ON c.id = m.content_id WHERE m.id = ?1",
         [id.get()],
         |row| {
             use postio_storage::sql::RowExt;
@@ -2890,7 +2890,7 @@ async fn set_body_leaves_the_search_index_to_the_indexer() {
         .expect("set");
     let indexed = postio_storage::sql::exists(
         &connection,
-        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1",
+        "SELECT 1 FROM message_search_bodies WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1)",
         [id.get()],
     )
     .await

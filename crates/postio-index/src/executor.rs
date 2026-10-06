@@ -722,16 +722,16 @@ const BODY_SCORE_WEIGHT: f64 = 0.5;
 /// the conditions that follow still number themselves — and `match_params`
 /// binds two values rather than four, in the same order.
 const HITS_JOIN: &str = "FROM (
-             SELECT message_id AS rid,
+             SELECT content_id AS rid,
                     fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
                     NULL AS body
                FROM search_documents
               WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
              UNION ALL
-             SELECT message_id, NULL, fts_score(body_search, ?2)
+             SELECT content_id, NULL, fts_score(body_search, ?2)
                FROM message_search_bodies
               WHERE fts_match(body_search, ?2)
-          ) hits CROSS JOIN messages m ON m.id = hits.rid";
+          ) hits CROSS JOIN messages m ON m.content_id = hits.rid";
 
 /// The same match, asked one message at a time.
 ///
@@ -751,10 +751,10 @@ const HITS_JOIN: &str = "FROM (
 /// posting. On a word in most of the mailbox either is ~120 ms of setup to
 /// answer a `LIMIT 50`.
 const CORRELATED_MATCH: &str = "(EXISTS (SELECT 1 FROM search_documents d
-               WHERE d.message_id = m.id
+               WHERE d.content_id = m.content_id
                  AND fts_match(d.sender, d.recipients, d.subject, d.filenames, d.list_id, ?))
    OR EXISTS (SELECT 1 FROM message_search_bodies b
-               WHERE b.message_id = m.id AND fts_match(b.body_search, ?)))";
+               WHERE b.content_id = m.content_id AND fts_match(b.body_search, ?)))";
 
 /// Which plan a statement asks for. See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -876,10 +876,10 @@ impl Plan {
         // be.
         for term in request.query.text_terms().filter(|term| term.negated) {
             conditions.push(
-                "m.id NOT IN (SELECT message_id FROM search_documents
+                "m.content_id NOT IN (SELECT content_id FROM search_documents
                                WHERE fts_match(sender, recipients, subject,
                                                filenames, list_id, ?))
-                 AND m.id NOT IN (SELECT message_id FROM message_search_bodies
+                 AND m.content_id NOT IN (SELECT content_id FROM message_search_bodies
                                    WHERE fts_match(body_search, ?))"
                     .to_string(),
             );
@@ -947,7 +947,34 @@ impl Plan {
     /// is right depends on what the statement is about to do with the rows.
     /// See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
     fn where_sql(&self, form: Form) -> String {
-        let mut conditions = self.conditions.clone();
+        let eligible = self.occurrence_where_sql(form);
+        // A sibling must satisfy the same location predicates before it can
+        // represent this content. Reusing numbered parameters keeps this a
+        // bounded indexed sibling seek, including on the recency-driven path.
+        // Replace the occurrence alias, not the suffix of another alias
+        // such as contact-group membership's `gm`.
+        let mut earlier = String::new();
+        let mut cursor = 0;
+        for (offset, _) in eligible.match_indices("m.") {
+            if offset > 0
+                && (eligible.as_bytes()[offset - 1].is_ascii_alphanumeric()
+                    || eligible.as_bytes()[offset - 1] == b'_')
+            {
+                continue;
+            }
+            earlier.push_str(&eligible[cursor..offset]);
+            earlier.push_str("earlier.");
+            cursor = offset + 2;
+        }
+        earlier.push_str(&eligible[cursor..]);
+        let mut conditions = vec![
+            eligible,
+            format!(
+                "NOT EXISTS (SELECT 1 FROM messages earlier \
+             WHERE earlier.content_id = m.content_id AND earlier.id < m.id \
+               AND ({earlier}))"
+            ),
+        ];
         if self.has_match {
             conditions.push(
                 match form {
@@ -958,6 +985,26 @@ impl Plan {
             );
         }
         conditions.join(" AND ")
+    }
+
+    /// Location predicates, with reusable bindings for selecting siblings and
+    /// measuring facets. Content matches are identical across memberships.
+    fn occurrence_where_sql(&self, form: Form) -> String {
+        let mut parameter = if self.has_match && form == Form::Driven {
+            3
+        } else {
+            1
+        };
+        let mut sql = String::new();
+        for character in self.conditions.join(" AND ").chars() {
+            if character == '?' {
+                sql.push_str(&format!("?{parameter}"));
+                parameter += 1;
+            } else {
+                sql.push(character);
+            }
+        }
+        sql
     }
 
     /// Every parameter one statement binds, in the order its `?`s appear.
@@ -1086,38 +1133,56 @@ impl Plan {
     /// bound five parameters into three slots. Nothing user-supplied is
     /// interpolated; every value the caller controls is still a parameter.
     async fn current_scope(&self, connection: &Connection) -> Result<CurrentScope> {
+        // Cap content identities first, then measure every qualifying
+        // membership. Summing per-folder counts would double-count content;
+        // choosing one folder first would hide valid folder refinements.
         let sql = format!(
-            "SELECT name, count(*) AS hits,
-                    coalesce(sum(seen = 0), 0),
-                    coalesce(sum(flagged), 0),
-                    coalesce(sum(has_attachments), 0),
-                    coalesce(sum(size >= {LARGE_BYTES}), 0)
-               FROM (SELECT DISTINCT m.id, mb.name AS name, m.seen, m.flagged,
-                            m.has_attachments, m.size
-                       {from}
-                       JOIN mailboxes mb ON mb.id = m.mailbox_id
-                      WHERE {where_sql} LIMIT ?)
-              GROUP BY name",
+            "WITH capped AS (
+                 SELECT DISTINCT m.content_id {from} WHERE {where_sql} LIMIT ?
+             ), matched AS (
+                 SELECT m.content_id, mb.name, m.seen, m.flagged, m.has_attachments, m.size
+                   FROM capped c JOIN messages m ON m.content_id = c.content_id
+                   JOIN mailboxes mb ON mb.id = m.mailbox_id
+                  WHERE {eligible}
+             )
+             SELECT NULL, count(DISTINCT content_id),
+                    count(DISTINCT CASE WHEN seen = 0 THEN content_id END),
+                    count(DISTINCT CASE WHEN flagged THEN content_id END),
+                    count(DISTINCT CASE WHEN has_attachments THEN content_id END),
+                    count(DISTINCT CASE WHEN size >= {LARGE_BYTES} THEN content_id END)
+               FROM matched
+             UNION ALL
+             SELECT name, count(DISTINCT content_id), 0, 0, 0, 0
+               FROM matched GROUP BY name",
             from = self.source_sql(Form::Driven),
             where_sql = self.where_sql(Form::Driven),
+            eligible = self.occurrence_where_sql(Form::Driven),
         );
         let mut params = self.params_for(Form::Driven);
         params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
-
-        let mut folders: Vec<(String, u64, [i64; 4])> = sql::all(connection, &sql, params, |row| {
+        let rows = sql::all(connection, &sql, params, |row| {
             Ok((
-                row.col::<String>(0)?,
+                row.col::<Option<String>>(0)?,
                 row.col::<i64>(1)?.max(0) as u64,
-                [row.col(2)?, row.col(3)?, row.col(4)?, row.col(5)?],
+                [
+                    row.col::<i64>(2)?,
+                    row.col::<i64>(3)?,
+                    row.col::<i64>(4)?,
+                    row.col::<i64>(5)?,
+                ],
             ))
         })
         .await?;
-
-        let hits = folders.iter().map(|(_, hits, _)| hits).sum();
+        let mut hits = 0;
         let mut flags = [0i64; 4];
-        for (_, _, counts) in &folders {
-            for (total, count) in flags.iter_mut().zip(counts) {
-                *total += count;
+        let mut folders = Vec::new();
+        for (name, count, counts) in rows {
+            match name {
+                Some(name) => folders.push((name, count, counts)),
+                None => {
+                    hits = count;
+                    flags = counts;
+                }
             }
         }
         let mut refinements: Vec<Refinement> =
@@ -1546,7 +1611,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         Filter::Header { name, value } => match value {
             None => (
                 "EXISTS (SELECT 1 FROM message_headers h \
-                  WHERE h.message_id = m.id AND h.name = ?)"
+                  WHERE h.content_id = m.content_id AND h.name = ?)"
                     .to_string(),
                 vec![turso::Value::Text(name.clone())],
             ),
@@ -1557,7 +1622,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
             // nothing to gain by wrapping it.
             Some(value) => (
                 "EXISTS (SELECT 1 FROM message_headers h \
-                  WHERE h.message_id = m.id AND h.name = ? \
+                  WHERE h.content_id = m.content_id AND h.name = ? \
                     AND h.value LIKE '%' || ? || '%' ESCAPE '\\')"
                     .to_string(),
                 vec![
@@ -1633,7 +1698,7 @@ fn fts_column_condition(column: &str, value: &str) -> (String, Vec<turso::Value>
     let literal = fts_literal(value);
     (
         format!(
-            "m.id IN (SELECT message_id FROM search_documents
+            "m.content_id IN (SELECT content_id FROM search_documents
                        WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
                          AND fts_match({column}, ?))"
         ),

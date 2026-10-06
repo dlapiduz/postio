@@ -1131,6 +1131,7 @@ impl MailBackend for MockBackend {
                 None => true,
             })
             .map(|message| FetchedMessage {
+                content_identity: None,
                 remote_id: identity::remote_id(folder.uid_validity, Uid::new(message.uid)),
                 uid: Uid::new(message.uid),
                 uid_validity: folder.uid_validity,

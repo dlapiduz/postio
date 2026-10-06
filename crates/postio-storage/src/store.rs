@@ -557,14 +557,24 @@ impl Store {
     /// `messages.body_parsed_with`, which opened, synced, and warned
     /// `no such column` once per folder for as long as it ran.
     ///
-    /// There are no migrations ([`schema::HEAD`] argues why), so this cannot
-    /// repair anything and does not try. It refuses, names the remedy, and
-    /// leaves the file alone — "rebuilt by resyncing" means the old one has to
-    /// survive being refused.
+    /// The exact preceding schema advances through [`schema::MIGRATE_CONTENT`]
+    /// atomically. Unknown stamps are refused without changing the file.
     async fn prove_the_schema_matches(&self) -> Result<()> {
         let connection = self.connect_bare()?;
         let found: i64 = crate::sql::scalar(&connection, "PRAGMA user_version", ()).await?;
         if found == schema::FINGERPRINT {
+            return Ok(());
+        }
+        if found == schema::BEFORE_CONTENT_FINGERPRINT {
+            let migration = format!(
+                "BEGIN IMMEDIATE; {} PRAGMA user_version = {}; COMMIT;",
+                schema::MIGRATE_CONTENT,
+                schema::FINGERPRINT,
+            );
+            if let Err(error) = connection.execute_batch(&migration).await {
+                let _ = connection.execute_batch("ROLLBACK;").await;
+                return Err(error.into());
+            }
             return Ok(());
         }
         Err(Error::SchemaFromAnotherBuild {

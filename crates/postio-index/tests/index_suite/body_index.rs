@@ -49,7 +49,7 @@ async fn a_message(connection: &Connection, subject: &str) -> i64 {
 async fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
     postio_storage::sql::all(
         connection,
-        "SELECT message_id FROM message_search_bodies          WHERE fts_match(body_search, ?1) ORDER BY message_id",
+        "SELECT m.id FROM message_search_bodies b JOIN messages m ON m.content_id=b.content_id WHERE fts_match(body_search, ?1) ORDER BY m.id",
         [postio_model::fold::fold(query)],
         |row| postio_storage::sql::RowExt::col(row, 0),
     )
