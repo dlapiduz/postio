@@ -5,11 +5,6 @@ Postio has two apps on Linux: the desktop app (GTK) and the terminal app,
 implementation of everything they do to it. They are meant to do the same
 things, each in its own medium. This table says where they differ today.
 
-The desktop app is one dense inbox with no folder sidebar: a message opens
-over the list or beside it, and `g o` lists every place. The terminal is
-being rebuilt to the same design; its column describes it as it stands,
-and changes with that work.
-
 - ✓ has it
 - ◐ has it, differently or in part (the note says how)
 - ✗ missing
@@ -32,23 +27,23 @@ single command.
 | Add a second account | ✓ | ✓ | `Alt+N` from anywhere; Escape goes back to the mail |
 | Enable, disable, remove (with undo), make default, rebuild index, update credential | ✓ | ✓ | From Settings |
 | Map a folder's role (Sent, Archive, …) | ✓ | ✓ | `M` asks for the role, then the folder |
-| Cycle the account scope, including all accounts at once | ◐ | ✓ | The desktop inbox is every account's at once; `account:` in a search narrows it to one |
+| Cycle the account scope, including all accounts at once | ✓ | ✓ | |
 
 ## The list
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
-| Folders and the Flagged, Snoozed, Drafts and Outbox views | ✓ | ✓ | The desktop's folders popover (`g o`) lists the folders, Drafts and the Outbox; `g *` and `g z` go to Flagged and Snoozed |
-| Saved searches: run, rename, reorder, delete | ◐ | ✓ | The desktop runs the pinned ones from the command bar (`Alt+1`…`Alt+4`); the rest is `config.toml`. The terminal: `r`, `Shift+↑`/`Shift+↓`, `d` (twice: it asks first) |
+| Folders and the Flagged, Snoozed, Drafts and Outbox views | ✓ | ✓ | |
+| Saved searches in the sidebar: run, rename, reorder, delete | ✓ | ✓ | `r`, `Shift+↑`/`Shift+↓`, `d` (twice: it asks first, as the desktop does) |
 | Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✓ | |
 | Back to the previous view | ✓ | ✓ | |
-| Folders nested as the server keeps them; fold one | — | ✓ | The desktop's popover filters them as you type instead; the terminal folds with Space, or a click on its mark |
-| The conversation rail | — | — | The desktop opens one message at a time |
+| Folders nested as the server keeps them; fold one | ✓ | ✓ | Space, or a click on its mark; both apps remember what is folded, each in its own file |
+| The conversation rail | ✓ | — | The terminal has none |
 | Cursor and selection kept apart; multiple selection | ✓ | ✓ | |
 | Archive, delete, move, flag, mark unread, label, snooze, undo | ✓ | ✓ | |
-| Conversations, and walking one | ✓ | ✓ | `]`/`[` on the desktop |
-| Toggle the sidebar | — | ✓ | The desktop has none. On a narrow terminal it is brought forward instead |
-| The mouse: click, select, scroll, drag the divider | ◐ | ✓ | The desktop has no divider to drag |
+| Conversations, and walking one with `J`/`K` | ✓ | ✓ | |
+| Toggle the sidebar | ✓ | ✓ | On a narrow terminal it is brought forward instead |
+| The mouse: click, select, scroll, drag the divider | ✓ | ✓ | |
 
 ## Reading
 
@@ -57,16 +52,16 @@ single command.
 | HTML mail, sanitised | ✓ | ◐ | The terminal draws it as styled Markdown |
 | Fold and unfold every quote | ✓ | ✓ | |
 | Fold and unfold one quote | ✓ | ✓ | By a click on it, in both |
-| Fold a message in a conversation to its header | — | ✓ | The desktop shows one message at a time |
+| Fold a message in a conversation to its header | ✓ | ✓ | |
 | Images in a message | ✓ | ◐ | Labelled placeholders; drawing them is the next iteration |
 | Remote images allowed per sender | ✓ | ✓ | The same allow list |
 | Open a link | ✓ | ◐ | A click shows where it goes and a second opens it; no key yet |
 | Attachments: open, save, save all | ✓ | ✓ | |
 | Reader view, or the sender's own markup (`View original`) | ✓ | ✓ | |
 | Find in the message on screen (`Ctrl+F`, next and previous match) | ✓ | — | Not yet in the terminal: its `GAPS` list names the three commands |
-| Zoom a message in and out; darken a designed message in dark mode | ◐ | — | The desktop zooms, and draws a designed message on paper or in its own colours (`O`) rather than darkening it. The terminal draws text in its own font and colours, so there is nothing for these to act on |
+| Zoom a message in and out; darken a designed message in dark mode | ✓ | — | The terminal draws text in its own font and colours, so there is nothing for these to act on; it does not offer them |
 | Open a part with another app | ✓ | ◐ | The terminal opens every part with the system's default app |
-| Show a held-back part once, with what it references | — | — | The parts panel is the macOS app's; a terminal cannot draw the images either |
+| Show a held-back part once, with what it references | ✓ | — | For drawing its images, which a terminal cannot |
 | Unsubscribe | ✓ | ✓ | |
 | Drag a message or a part out to another app | ✓ | — | A terminal has nothing to drag to |
 
@@ -82,7 +77,7 @@ single command.
 | Attach a file; paste an image; drop a file | ✓ | ✓ | In the terminal a drop arrives as its path |
 | Schedule send; undo send; why a send failed | ✓ | ✓ | |
 | Save the draft now | ✓ | ✓ | It also saves as you type |
-| Where the composer opens | the open message's place, or a window | tab | |
+| A composer of its own | window | tab | |
 
 ## Search
 
