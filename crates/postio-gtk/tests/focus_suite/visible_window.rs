@@ -166,11 +166,18 @@ pub fn opening_and_switching_large_folders_asks_a_bounded_number_of_pages() {
         support::keys(&window, &["g", "o"]);
         let places = window.places().expect("g o opened the folders popover");
         assert!(
-            crate::settle_until(async || places.names().len() >= 2).await,
+            // Snoozed and Flagged are listed at once; the mailboxes follow.
+            crate::settle_until(async || places.names().contains(&"Inbox".to_owned())).await,
             "the popover listed no folders: {:?}",
             places.names()
         );
-        let names = places.names();
+        // Filtered is a page of its own over the inbox, not a list to switch
+        // to: the popover is not reachable from it.
+        let names: Vec<String> = places
+            .names()
+            .into_iter()
+            .filter(|name| name != "Filtered")
+            .collect();
         let before = client.counts().of("Page");
         for name in names.iter().cycle().take(8) {
             if !places.is_open() {
