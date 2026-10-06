@@ -550,7 +550,7 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 - [X] T319 [US16] Folders and labels, `g o`, and the `g` go-to keys
 - [X] T320 [US16] Pickers: snooze, remind, label and move, anchored at the row
 - [X] T321 [US16] The key map, `?`, from `keymap_sheet` for the terminal
-- [ ] T322 [US16] Filtered, `g f`: the view, tabs, reasons, `R`, Sweep `F`
+- [X] T322 [US16] Filtered, `g f`: the view, tabs, reasons, `R`, Sweep `F` Done: the strip, tab line and day-headed rows take the window; `R`, `1`-`7`, `F` (a framed question first) and the mouse all work; rows are read fifty at a time as they come into view; Return does not open a filtered message here, since the open message is aimed at the inbox's rows
 - [ ] T323 [US16] The digest window: summary and list, references, the email from a reference, `A`, `D`, `U`
 - [ ] T324 [US16] Digest rules, `g d`, and the rule dialog, `d`
 - [ ] T325 [US16] Capture, `t` and `n`

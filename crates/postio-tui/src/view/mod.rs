@@ -4,7 +4,9 @@
 
 pub mod bar;
 pub mod bottom;
+pub mod boxed;
 pub mod composer;
+pub mod filtered;
 pub mod first_run;
 pub mod folders;
 pub mod hit;
@@ -57,7 +59,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         // bar and the bottom line while it is in front.
         let tab = app.composer_detached() && app.focus() == Focus::Composer;
         if !tab {
-            strip::draw(frame, window.strip, app, theme, &mut hits);
+            if app.filtered().is_some() {
+                filtered::strip(frame, window.strip, app, theme, &mut hits);
+            } else {
+                strip::draw(frame, window.strip, app, theme, &mut hits);
+            }
         }
         let below = window.strip.y + u16::from(!tab);
         let body = Rect::new(
@@ -70,6 +76,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             state::banner(frame, row, &banner, app, theme, &mut hits);
         }
         match app.front() {
+            // Filtered takes the strip's place and the list's.
+            _ if app.filtered().is_some() => {
+                filtered::body(frame, body, app, theme, now, &mut hits);
+            }
             // A detached draft has the whole body to itself.
             Front::Composer if app.composer().is_some() && tab => {
                 composer::screen(frame, body, app, theme, now, &mut hits);
@@ -113,6 +123,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         {
             composer::screen(frame, inside, app, theme, now, &mut hits);
         }
+        // The sweep's question, over the window.
+        filtered::sweep(frame, body, app, theme, &mut hits);
         // Over everything: a click there lands on nothing underneath.
         if let Some((bar, ctx)) = app.bar() {
             bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);

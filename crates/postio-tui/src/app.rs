@@ -21,6 +21,7 @@ use postio_ui::list::ListWindow;
 use postio_ui::paging::{Fetch, Page, Paging};
 use postio_ui::surfaced::Spliced;
 
+mod filtered;
 mod open;
 
 pub use open::{Menu, MenuAction, MenuItem, Raw};
@@ -128,6 +129,8 @@ pub enum Input {
         /// The body, or why there is none.
         answer: Result<postio_client::protocol::Body, String>,
     },
+    /// The host answered an [`Effect::Ask`].
+    Answer(crate::ask::Answer),
     /// The host answered an [`Effect::Unsubscribe`]: the list's name, or
     /// why not.
     Unsubscribed(Result<String, String>),
@@ -297,6 +300,9 @@ pub enum Effect {
     Redraw,
     /// Leave.
     Quit,
+    /// Ask the host something for a Focus surface and answer with
+    /// [`Input::Answer`].
+    Ask(crate::ask::Ask),
     /// Read a conversation and answer with [`Input::Conversation`].
     ReadConversation(postio_model::ThreadId),
     /// Read a body and answer with [`Input::Body`].
@@ -661,6 +667,8 @@ pub struct App {
     first_run: Option<crate::first_run::FirstRun>,
     /// The settings, while they are open.
     settings: Option<crate::settings::Settings>,
+    /// What Focus's surfaces hold: Filtered and its sweep.
+    surfaces: crate::surface::Surfaces,
 }
 
 /// The surfaced rows of Focus's inbox and where they sit: what turns the
@@ -872,6 +880,8 @@ pub enum Focus {
     Settings,
     /// The command palette, or another of the finder's modes.
     Palette,
+    /// The Filtered view, which takes the window's body.
+    Filtered,
 }
 
 impl std::fmt::Debug for App {
@@ -944,6 +954,7 @@ impl App {
             mouse: true,
             first_run: None,
             settings: None,
+            surfaces: crate::surface::Surfaces::default(),
         }
     }
 
@@ -1628,6 +1639,7 @@ impl App {
                     vec![Effect::Redraw]
                 }
                 Target::Overlay => Vec::new(),
+                Target::Surface(part, index) => self.filtered_click(part, index),
                 // A row of the menu over the message is chosen.
                 Target::MenuRow(at) => self.choose(at),
                 // A row's drawn answer is its key, for that row: an answer
@@ -1665,6 +1677,9 @@ impl App {
                 match hit.target {
                     Target::Row(_) => self.scroll_list(lines),
                     Target::Reader(_) => self.scroll_open_lines(lines),
+                    Target::Surface(crate::surface::Part::FilteredRow, _) => {
+                        self.filtered_wheel(lines);
+                    }
                     _ => return Vec::new(),
                 }
                 vec![Effect::Redraw]
@@ -2352,6 +2367,7 @@ impl App {
             Focus::Keys => postio_core::Context::List,
             Focus::Reader => postio_core::Context::Reader,
             Focus::Composer => postio_core::Context::Composer,
+            Focus::Filtered => postio_core::Context::Filtered,
         }
     }
 
@@ -2391,7 +2407,7 @@ impl App {
         (crate::sheet::height(&columns).saturating_sub(page), page)
     }
 
-    fn open_keys(&mut self) -> Vec<Effect> {
+    pub(crate) fn open_keys(&mut self) -> Vec<Effect> {
         let from = match (&self.sheet, self.focus) {
             (Some(open), _) => open.from(),
             (None, focus) => focus,
@@ -2743,6 +2759,7 @@ impl App {
             Focus::Palette => KeyContext::Palette,
             Focus::FirstRun => KeyContext::Global,
             Focus::Settings => KeyContext::Accounts,
+            Focus::Filtered => KeyContext::Filtered,
         }
     }
 
@@ -3158,6 +3175,11 @@ impl App {
     /// `postio_core::aim` -- the rule every frontend shares for what a verb
     /// acts on -- mirrored into [`App::state`], and sent.
     fn command(&mut self, id: &str) -> Vec<Effect> {
+        if self.focus == Focus::Filtered
+            && let Some(effects) = self.filtered_command(id)
+        {
+            return effects;
+        }
         let last = self.list.total().saturating_sub(1);
         match id {
             "next_message" if self.focus == Focus::Reader => return self.step_open(1),
@@ -3348,6 +3370,8 @@ impl App {
                     self.focus = Focus::FirstRun;
                 }
             }
+            "go_to_filtered" => return self.go_to_filtered(),
+            "sweep_inbox" => return self.ask_sweep(),
             "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
             "go_to_drafts" => return self.go_to(postio_model::mailbox::MailboxRole::Drafts),
@@ -4198,6 +4222,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.open.menu.is_some() && app.focus == Focus::Reader => {
             app.menu_key(&key)
         }
+        Input::Key(key) if app.surfaces.sweep.is_some() => app.sweep_key(&key),
         Input::Key(key) if app.focus == Focus::FirstRun => app.first_run_key(&key),
         Input::Key(key) if app.focus == Focus::Settings => app.settings_key(&key),
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
@@ -4205,12 +4230,18 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Folders => app.folders_key(&key),
         Input::Key(key) if app.focus == Focus::Picker => app.picker_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
+        Input::Key(key) if app.focus == Focus::Filtered => app.filtered_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
         },
         Input::Opened { scope, total } => app.open(scope, total),
-        Input::Host(event) => app.hear(&event),
+        Input::Host(event) => {
+            let mut effects = app.hear(&event);
+            effects.extend(app.filtered_hears(&event));
+            effects
+        }
+        Input::Answer(answer) => app.answered(answer),
         Input::Places(contents) => app.fill_places(&contents),
         Input::Parts { message, parts } => {
             if let (Ok(parts), Some(reading)) = (parts, app.reading.as_mut())
@@ -4507,6 +4538,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
     // the row it was opened from leaving.
     effects.extend(app.follow_cursor());
     effects.extend(app.fetches());
+    effects.extend(app.filtered_fetches());
     effects
 }
 
@@ -5135,18 +5167,10 @@ pub(crate) mod tests {
         // Focus's commands the terminal is offered since it became Focus
         // (C29) and cannot answer yet; tasks T309-T326 empty this list.
         "digest_rule",
-        "go_to_filtered",
         "go_to_digest_rules",
         "next_reference",
         "prev_reference",
         "toggle_digest_summary",
-        "filtered_tab_1",
-        "filtered_tab_2",
-        "filtered_tab_3",
-        "filtered_tab_4",
-        "filtered_tab_5",
-        "filtered_tab_6",
-        "filtered_tab_7",
         "capture_task",
         "capture_note",
         "capture_change_project",
@@ -5350,6 +5374,10 @@ pub(crate) mod tests {
         if spec.contexts == Context::Composer.as_set() {
             addressed(&mut app, "Parity");
             return app.composer_command(id);
+        }
+        if spec.contexts == Context::Filtered.as_set() {
+            app.go_to_filtered();
+            return app.command(id);
         }
         if spec.contexts == Context::Accounts.as_set() {
             update(&mut app, key(KeyCode::Char(','), KeyModifiers::ALT));

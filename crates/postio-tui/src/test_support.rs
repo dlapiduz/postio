@@ -315,6 +315,72 @@ pub fn show_rows(app: &mut App, rows: &[Row]) {
     serve_with(app, effects, |position| rows[position as usize].clone());
 }
 
+// -- Filtered --------------------------------------------------------------
+
+/// One message Filtered holds, filed away on `day` of September 2026 at
+/// `hour:minute`: from `source`, for `reason`, its subject "Filtered `id`".
+pub fn filtered_row(
+    id: i64,
+    source: &str,
+    reason: &str,
+    day: u32,
+    hour: u32,
+    minute: u32,
+) -> postio_client::protocol::FilteredRow {
+    let at = local(day, hour, minute);
+    let mut message = conversation(id, source, &format!("Filtered {id}"), "", at).representative;
+    message.thread = None;
+    postio_client::protocol::FilteredRow {
+        message,
+        reason: reason.to_owned(),
+        source: Some(source.to_owned()),
+        at,
+    }
+}
+
+/// Answer every ask among `effects` from `tabs` and `rows`, and whatever
+/// those asked for in turn; return how many there were.
+pub fn serve_filtered(
+    app: &mut App,
+    effects: Vec<Effect>,
+    tabs: &[(&str, u32)],
+    rows: &[postio_client::protocol::FilteredRow],
+) -> usize {
+    use crate::ask::{Answer, Ask};
+    let mut asked = 0;
+    let mut pending = effects;
+    while let Some(effect) = pending.pop() {
+        let Effect::Ask(ask) = effect else {
+            continue;
+        };
+        asked += 1;
+        let answer = match ask {
+            Ask::FilteredTabs => Answer::FilteredTabs(Ok(tabs
+                .iter()
+                .map(|(reason, count)| ((*reason).to_owned(), *count))
+                .collect())),
+            Ask::FilteredPage {
+                generation,
+                reason,
+                offset,
+            } => Answer::FilteredPage {
+                generation,
+                offset,
+                rows: Ok(rows
+                    .iter()
+                    .filter(|row| reason.as_ref().is_none_or(|reason| *reason == row.reason))
+                    .skip(offset as usize)
+                    .take(postio_ui::filtered::PAGE as usize)
+                    .cloned()
+                    .collect()),
+            },
+            Ask::SweepPreview => continue,
+        };
+        pending.extend(update(app, Input::Answer(answer)));
+    }
+    asked
+}
+
 // -- Reading ---------------------------------------------------------------
 
 /// The message `message` open and read: the cursor rests on it, its

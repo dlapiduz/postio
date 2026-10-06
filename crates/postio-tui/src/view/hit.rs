@@ -39,6 +39,8 @@ pub enum Target {
     Command(&'static str),
     /// A row of the menu over the open message, by its place in the menu.
     MenuRow(usize),
+    /// One of a Focus surface's many parts, by its place.
+    Surface(crate::surface::Part, usize),
     /// Something drawn over everything else: clicks there land on nothing
     /// underneath.
     Overlay,

@@ -1291,6 +1291,14 @@ fn perform(
                     let _ = inputs.send(Input::Opened { scope, total }).await;
                 });
             }
+            Effect::Ask(ask) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let answer = ask.perform(&client).await;
+                    let _ = inputs.send(Input::Answer(answer)).await;
+                });
+            }
             Effect::SaveSearch(query) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

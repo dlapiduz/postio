@@ -12,6 +12,7 @@
 //! `state` is what is open over the mail: `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
 //! `bar-commands`, `bar-folder`, `folders`, `snooze`, `remind`, `label`, `move`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
+//! `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
@@ -470,6 +471,42 @@ fn main() {
             }
         }
         "nocolor" => colour = Colour::None,
+        "filtered" | "filtered-nocolor" | "sweep" => {
+            use test_support::filtered_row;
+            let filed = vec![
+                filtered_row(11, "Forge", "notification", 23, 11, 2),
+                filtered_row(12, "Ledger", "notification", 23, 10, 40),
+                filtered_row(13, "Promo Weekly", "promotion", 23, 9, 5),
+                filtered_row(14, "Forge", "notification", 22, 16, 0),
+                filtered_row(15, "Rates Desk", "spam", 22, 8, 15),
+                filtered_row(16, "Parcel Post", "shipping", 21, 12, 30),
+            ];
+            let tabs = [
+                ("notification", 88),
+                ("spam", 12),
+                ("promotion", 41),
+                ("receipt", 19),
+                ("shipping", 14),
+                ("social", 12),
+            ];
+            key(&mut app, KeyCode::Char('g'), KeyModifiers::NONE);
+            let effects = update(
+                &mut app,
+                test_support::key(KeyCode::Char('f'), KeyModifiers::NONE),
+            );
+            test_support::serve_filtered(&mut app, effects, &tabs, &filed);
+            key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+            if state == "sweep" {
+                key(&mut app, KeyCode::Char('F'), KeyModifiers::NONE);
+                update(
+                    &mut app,
+                    Input::Answer(postio_tui::ask::Answer::SweepPreview(Ok(7))),
+                );
+            }
+            if state == "filtered-nocolor" {
+                colour = Colour::None;
+            }
+        }
         _ => {}
     }
 
