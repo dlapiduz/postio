@@ -1,6 +1,9 @@
 # ADR 0036 — A sidebar row is a folder or a view, and a view is never a destination
 
-- **Status:** Accepted (2026-09-12)
+- **Status:** Accepted (2026-09-12). Holds for the macOS sidebar, and for
+  the desktop app, which has no sidebar (ADR 0043): its folders popover
+  lists the folders and the Outbox, and `g *` and `g z` reach Flagged and
+  Snoozed
 - **Numbered 0036 at merge, not at draft.** ADR 0035 paid for the other habit
   twice — drafted as 0025 while 0025 was landing, renumbered to 0027 while 0027
   was landing. A number is claimed when a branch merges. This one was left
@@ -39,7 +42,7 @@ and no id — because there is no row.
 
 It was already true, and enforced three different ways, none of which said so.
 
-`postio-gtk::feed` invented the Flagged and Snoozed rows as `Mailbox` values
+The classic app's `postio-gtk::feed` invented the Flagged and Snoozed rows as `Mailbox` values
 with `MailboxId::new(-1)` and `-2`. A negative id is an id that means "not an
 id", and it fails in two ways that are really one:
 
@@ -90,8 +93,8 @@ And for the ids: `scripts/checks/check-no-sentinel-mailbox-ids.py` refuses a
 negative `MailboxId` anywhere under `crates/`. A view row is *unassigned*, which
 is already this codebase's word for "not a row in the database".
 
-`postio_gtk::sidebar::SidebarChoice` — `Folder(id)` or `View(role)` — is how a
-reader says which kind it has rather than remembering a number. The id decides,
+The classic app's `SidebarChoice` — `Folder(id)` or `View(role)` — was how a
+reader said which kind it had rather than remembering a number. The id decides,
 not the role: a server with a real `\Flagged` folder gives a row with **both**
 an id and the Flagged role, and that is a folder, the one holding the account's
 own mail.
@@ -108,8 +111,8 @@ anything keying on `MailboxId` cannot tell them apart. That is not theoretical:
 the sidebar's keyboard walk did exactly that, and stuck on Snoozed for ever —
 `j` could not reach the Outbox at all. The fix was for the walk to use the row
 it was holding rather than look one up. **Any new code that identifies a
-sidebar row by its id is wrong for the same reason**, and should take a
-`SidebarChoice`.
+sidebar or popover row by its id is wrong for the same reason**, and should
+carry the row itself, or a type that says folder or view.
 
 **Not decided here.** Whether saved searches become views of this kind. They
 are a separate mechanism in a separate section today, and folding them in is a

@@ -120,8 +120,8 @@ makes the recipient list what the user can see, which is also what makes Bcc
 behave.
 
 Where §6 *does* reach: `postio-search` gains a `group:` field, so `group:family`
-means "from or to any member" and works in the search bar, in a pinned sidebar
-filter and in `[filters]` alike. That is one `Field` row and one arm in the
+means "from or to any member" and works in the search bar, in a pinned search
+and in `[filters]` alike. That is one `Field` row and one arm in the
 parser, resolved by `postio-index` to an address set — one language, one
 parser, and dry-run for free.
 

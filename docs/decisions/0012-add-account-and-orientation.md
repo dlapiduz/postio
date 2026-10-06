@@ -1,10 +1,10 @@
 # ADR 0012 — Adding a second account, and orienting a first-time user
 
 - **Status:** Accepted (2026-08-24). Built. The form and joining a running
-  application are shared (`postio_widgets::present::onboarding`) and Focus
-  uses them; the orientation plate (Q4–Q6) is the classic app's alone, since
-  every Focus control carries its key (`specs/007-postio-focus`
-  classic-parity.md row 12)
+  application are shared (`postio_widgets::present::onboarding`) and the
+  desktop app uses them; the orientation plate (Q4–Q6) went with the classic
+  app (T256), since every control in the desktop app carries its key
+  (`specs/007-postio-focus` classic-parity.md row 12)
 - **Date:** 2026-08-24
 - **Issue:** [#64 Setup wizard: add-account flow and first-run keyboard orientation](https://github.com/dlapiduz/postio/issues/64)
 - **Related:** [ADR 0005](0005-multiple-accounts.md) (what a second account
@@ -38,8 +38,8 @@ doing the probe, the connection test and the two writes on the other side.
 | `Settings` as a view-owned shape, not `AccountSettings` | Built |
 | Probe on *commit*, never on keystroke, for the privacy reason | Built |
 | `onboarding::install` replacing the window's content | Built — and single-use by construction |
-| A path for an account to join a running app | Built since — `attach_account` in `crates/postio-app/src/lib.rs` (Q2) |
-| Anything that tells a new user the app is keyboard-first | Built since — `crates/postio-gtk/src/orientation.rs`, driven from `crates/postio-app/src/orientation.rs` (Q4–Q6) |
+| A path for an account to join a running app | Built since — the add-account form over a running window (`crates/postio-gtk/src/window.rs`; `focus_suite::add_account_running`) (Q2) |
+| Anything that tells a new user the app is keyboard-first | Built in the classic app as the orientation plate (Q4–Q6), removed with it in T256; the desktop app teaches each key inside the control it runs |
 
 ---
 

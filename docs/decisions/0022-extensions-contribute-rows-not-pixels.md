@@ -41,9 +41,10 @@ does an extension contribute".
 same engine, Swift over Rust, thirteen of fifteen crates already building
 unchanged. *(Written 2026-08-28; the frontend is built now — `macos/`, over
 `crates/postio-ffi`, the read-only slice — and the count was of a
-fifteen-crate workspace that has twenty. The exclusion set, `postio-gtk` and
-`postio-app`, is unchanged.)* Every architectural boundary in this workspace — `postio-core` has
-no GTK, `postio-gtk` has no SQL or protocol — exists to keep that possible,
+fifteen-crate workspace that has twenty. The exclusion set is still the GTK
+crates, today `postio-gtk` and `postio-widgets`.)* Every architectural boundary
+in this workspace — `postio-core` has no GTK, the desktop app's own code has no
+SQL or protocol — exists to keep that possible,
 and ADR 0019 turned the possibility into a plan.
 
 An extension that draws is necessarily toolkit-specific. Which leaves two
@@ -101,9 +102,9 @@ what the tree already says.
    execution out-of-process.
 2. **Queries** — a named query string is a saved search (`PRODUCT.md` §7: *a
    virtual folder is a saved search that is pinned*), so an extension that
-   wants a place in the sidebar contributes a query with a name and gets a
-   real sidebar row, keyboard navigation, rename and reorder, on both
-   frontends, for free.
+   wants a place contributes a query with a name and gets a pinned saved
+   search — a row in the macOS sidebar with keyboard navigation, rename and
+   reorder, a place in the desktop app's command bar — for free.
 
 An extension that wants to *show* something shows it the way Postio shows
 things: as mail, as a query result, or as a command that acts. If the thing it
@@ -151,7 +152,7 @@ Stated as a loss rather than buried, because it is the reason someone will
 want to reopen this:
 
 - **No custom rendering.** Nobody can write a renderer for a body format
-  Postio does not handle, or draw a chart in the reading pane.
+  Postio does not handle, or draw a chart in an open message.
 - **No synchronous interception.** Nothing can run *before* a message is
   displayed and change what is displayed. A rule that acts on arrival is
   [ADR 0008](0008-filters-and-rules.md)'s territory and stays there.

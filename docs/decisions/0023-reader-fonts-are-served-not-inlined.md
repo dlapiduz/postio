@@ -54,5 +54,5 @@ What it buys:
 - `crates/postio-ffi/tests/ffi_suite/reader.rs` asserts byte-identical documents, and nothing about it is relaxed.
 - The CSP test is byte-exact on `font-src postio-font:` in both the blocked and allowed forms.
 - `document.rs` asserts every vendored face is referenced and resolvable, against the table a handler serves.
-- `crates/postio-gtk/tests/gtk_suite/gtk_reader_fonts.rs` holds that the faces are the reader's own and not carried by the document.
+- The classic app's `gtk_reader_fonts.rs` held that the faces are the reader's own and not carried by the document; it went with that app's WebKit reader in T256. The desktop app's reader is `postio-render` (ADR 0042), which draws with compiled-in faces (`postio_render::fonts`).
 - Nothing about the network changes. `postio-font:` is answered in-process from compiled-in bytes; `connect-src 'none'` and `default-src 'none'` are untouched.

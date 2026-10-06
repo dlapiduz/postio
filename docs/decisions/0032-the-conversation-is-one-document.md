@@ -1,6 +1,6 @@
 # ADR 0032 — The conversation is one document
 
-- **Status:** Accepted (2026-09-09). Built: the classic reading pane, the terminal and macOS draw a conversation as one document; Focus shows one message at a time (below). The screen-reader gate (#1424) is still open
+- **Status:** Accepted (2026-09-09). Built: the terminal and macOS draw a conversation as one document (the classic app's reading pane did, until its removal in T256); the desktop app shows one message at a time (below). The screen-reader gate (#1424) is still open
 - **Date:** 2026-09-06
 - **Raised by:** the maintainer, asking: *"Why do we need a view per message in the conversation view? Isn't there a way to render all messages in the single view? Maybe with html?"*
 - **Issue:** [#1216](https://github.com/dlapiduz/postio/issues/1216)
@@ -21,8 +21,7 @@ with the shared `Reader` in a single-message mode. What it keeps from this ADR
 is the cost argument: one surface serves every open, whatever the thread.
 
 **The stacked conversation is one document** wherever a conversation is read as
-a stack: the classic app's reading pane, until that app is removed (ADR 0043);
-the terminal's conversation view; and the macOS conversation pane
+a stack: the terminal's conversation view and the macOS conversation pane
 (`postio-ffi`'s `conversation.rs`).
 
 ## Why one document

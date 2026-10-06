@@ -32,7 +32,7 @@ decision stands.
 | [0021](0021-exactly-once-send.md) | Sending is at-most-once | Built |
 | [0022](0022-extensions-contribute-rows-not-pixels.md) | Extensions contribute table rows, not pixels | Decided for the part that is forced; nothing registers yet |
 | [0023](0023-reader-fonts-are-served-not-inlined.md) | The reader's fonts are served over a scheme, not inlined | Built |
-| [0024](0024-layout-intent-and-constraint.md) | Layout intent is stored; the viewport's constraint is applied | Built |
+| [0024](0024-layout-intent-and-constraint.md) | Layout intent is stored; the viewport's constraint is applied | Built in the classic app, removed with it; the desktop app follows the rule (`[focus] reading`) |
 | [0025](0025-arbitrary-headers-are-indexed-rows.md) | Arbitrary headers are stored on the row and indexed as rows | Built |
 | [0026](0026-a-saga-carries-its-own-coordinates.md) | A saga's remove phase carries its own coordinates | Built |
 | [0027](0027-the-header-index-is-budgeted-per-message.md) | The header index is budgeted per message | Built |
@@ -51,7 +51,7 @@ decision stands.
 | [0040](0040-the-store-keeps-few-connections-maintains-its-counts-and-budgets-its-index.md) | The store keeps few connections, maintains its counts, and budgets its index | Proposed; the connection half (§1) landed with #1602, the rest awaits the maintainer |
 | [0041](0041-one-app-opens-the-store-at-a-time.md) | One app opens the store at a time; each runs the host inside it | Built |
 | [0042](0042-the-reading-renderer-is-disconnected-and-memory-safe.md) | The reading renderer is disconnected and memory-safe | Built |
-| [0043](0043-focus-is-the-one-desktop-app.md) | Focus is the one desktop app, and the GTK it draws lives in `postio-widgets` | Accepted; the classic app is being retired (`specs/007-postio-focus/classic-parity.md`) |
+| [0043](0043-focus-is-the-one-desktop-app.md) | Focus is the one desktop app, and the GTK it draws lives in `postio-widgets` | Built; the classic app was removed (T256; `specs/007-postio-focus/classic-parity.md`) |
 | [0044](0044-every-frontend-is-observable-and-storyboarded.md) | Every frontend is observable and storyboarded | Accepted, with `specs/008-storyboards` |
 
 ## Writing one

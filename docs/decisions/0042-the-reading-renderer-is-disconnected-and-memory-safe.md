@@ -58,9 +58,9 @@ keep obeying after the feature has landed.
   it in.
 - `scripts/checks/check-crate-boundaries.py`'s `RULES["postio-render"]`
   bans the network and storage crates by name, on product edges.
-- `postio-render`'s `egress` suite and `postio-gtk`'s `gtk_reader` hold rule
-  4 in both directions: blocked mail reaches no loopback listener, and the
-  same mail reaches it once consent is given. Focus's
+- `postio-render`'s `egress` suite holds rule 4 in both directions (the
+  classic app's `gtk_reader` did too, until T256): blocked mail reaches no
+  loopback listener, and the same mail reaches it once consent is given. Focus's
   `focus_suite::remote_images` holds it in the app: nothing is asked for
   before Show, Show fetches once, and Always holds for that sender alone.
 

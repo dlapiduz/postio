@@ -1,10 +1,10 @@
 # ADR 0015 — One row per thread, and the conversation pane
 
 - **Status:** Accepted (2026-08-25). Built: one row per thread, in every
-  frontend. The conversation pane is the classic app's (until its removal,
-  ADR 0043), the terminal's and macOS's, drawn as one document (ADR 0032),
-  opening on the newest message with every body shown; Focus shows one
-  message at a time instead (ADR 0032)
+  frontend. The terminal's and macOS's conversation pane draws a thread as
+  one document (ADR 0032), opening on the newest message with every body
+  shown; the desktop app shows one message at a time instead (spec 007
+  FR-037, ADR 0032). The classic app's pane went with it (ADR 0043)
 - **Date:** 2026-08-25
 - **Issue:** [#134](https://github.com/dlapiduz/postio/issues/134), decided by
   the maintainer: a single row per thread in the list, and the reading pane

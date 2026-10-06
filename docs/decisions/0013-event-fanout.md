@@ -47,7 +47,7 @@ and the third is the one the issue's framing missed:
 | `EventSink` is `Clone`, many producers | Built — a spawned task keeps its handler's sink and origin |
 | `EventStream` is deliberately **not** `Clone` | Built — `async_channel`'s receiver is work-stealing: a cloned receiver *steals* events, it does not duplicate them. Not-`Clone` is what makes delivery total |
 | `EventEnvelope { event, origin }`, `send_tracked`, `InvocationFinished` | Built (ADR 0002, #33) |
-| **There are already two event queues, not one** | Built — the bus's channel (made inside `BridgeBuilder::build`) and the engine's (`event_channel()`, called from `postio-app/src/lib.rs`), each with one reader |
+| **There are already two event queues, not one** | Built — the bus's channel (made inside `BridgeBuilder::build`) and the engine's (`event_channel()`, called then from `postio-app/src/lib.rs`, the classic app's, removed in T256), each with one reader |
 | The window drains both | Built — `commands::drain` is called once per stream, over a `Rc<RefCell<Vec<Option<EventStream>>>>` handoff shared with onboarding |
 
 So today's shape is *N producers, two channels, one reader each* — and the

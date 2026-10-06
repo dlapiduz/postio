@@ -50,7 +50,7 @@ So the surface is being paid for in full and used for less than half of what
 it was chosen for. What it charges in exchange is specific and countable:
 `editor.js` (260 lines), three registered script-message handlers, a formatting
 path that runs `execCommand` strings through `evaluate_javascript`, and
-`postio-gtk`'s `gtk_editable_dialect.rs`, whose whole job is to pin
+`postio-widgets`' `editable_dialect.rs`, whose whole job is to pin
 *WebKit's* dialect so `postio_body::parse` can absorb it. That test exists
 because the markup is a foreign engine's opinion rather than Postio's.
 
@@ -193,7 +193,7 @@ rich document, not a source format.
   `check-crate-boundaries.py` keeps it that way.
 - **`postio-widgets`** loses `composer/editor.js`, the three script-message
   handlers, every `evaluate_javascript` formatting call, and webkit6 from its
-  graph; `gtk_editable_dialect.rs` goes too — the dialect stops being
+  graph; `editable_dialect.rs` goes too — the dialect stops being
   a foreign engine's and becomes Postio's, so the contract is a `postio-body`
   unit test instead of a WebKit integration one.
 - **`postio-ui`** keeps `editor/markdown.rs` unchanged and stops generating

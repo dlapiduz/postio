@@ -4,7 +4,7 @@
 - **Date:** 2026-09-05
 - **Decision by:** the maintainer, reporting against the running app, with new flow screens from the designer (`Design/screens/21`, `22`, `23`).
 - **Issue:** [#1179](https://github.com/dlapiduz/postio/issues/1179)
-- **Related:** `PRODUCT.md` §19 (visual identity), `Design/Mail Client.dc.html` (PLATE 1b), [#1174](https://github.com/dlapiduz/postio/issues/1174) (action-bar buttons, same root cause), [#873](https://github.com/dlapiduz/postio/issues/873) / [#874](https://github.com/dlapiduz/postio/issues/874) (the structured panes these controls replace the insides of)
+- **Related:** `PRODUCT.md` §19 (visual identity), the PLATE canvas it was decided against (retired with the classic app; the design is spec 007's `screens.md` now), [#1174](https://github.com/dlapiduz/postio/issues/1174) (action-bar buttons, same root cause), [#873](https://github.com/dlapiduz/postio/issues/873) / [#874](https://github.com/dlapiduz/postio/issues/874) (the structured panes these controls replace the insides of)
 - **Decision:** **which GTK control a setting gets is decided by what the setting *is*, not by what is convenient to build.** Four rules, below, and they hold across settings, onboarding, and anywhere else a choice is offered.
 
 ---
@@ -33,9 +33,9 @@ by pane ends up with three idioms.
 `System / Light / Dark`. `Airy / Snug / Compact`. `IMAP IDLE / Every 5 min /
 Manual`. `Above the quote / Below the quote`.
 
-Joined, square-cornered buttons with the chosen one filled — in the classic
-app's accent, and in Focus the neutral selected fill, since Focus keeps its
-accent for markers, the focus ring and the has-action toggle (spec 007
+Joined, square-cornered buttons with the chosen one filled — in the desktop
+app's neutral selected fill (the classic app used its accent), since the app
+keeps its accent for markers, the focus ring and the has-action toggle (spec 007
 FR-091). Built from grouped `gtk::ToggleButton`s, so GTK supplies the keyboard
 behaviour and the accessibility for free: arrow keys move within the group,
 exactly one member is ever active, and a screen reader announces a radio

@@ -34,7 +34,7 @@ second it happens; a rule that fired on a near-miss is discovered later, if at
 all, and it has already moved the mail.
 
 Constitution III requires the same string to mean the same thing typed in the
-box, saved to the sidebar, and written into `config.toml`. Widening keeps that
+box, saved as a pinned search, and written into `config.toml`. Widening keeps that
 sentence literally true while destroying what it is for.
 
 ## Rejected

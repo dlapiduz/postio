@@ -92,8 +92,8 @@ query with no `OR` produces a tree identical in meaning to the conjunction,
 so nothing that works without it changes.
 
 This is worth doing carefully and worth doing once. `ARCHITECTURE.md` §6's
-whole claim is that the same string means the same thing in the search bar, the
-sidebar and `config.toml`; an `OR` that existed only for rules would end that.
+whole claim is that the same string means the same thing in the command bar, a
+pinned search and `config.toml`; an `OR` that existed only for rules would end that.
 
 ---
 

@@ -8,7 +8,9 @@
   **Q6b decided 2026-08-28** ([#470](https://github.com/dlapiduz/postio/issues/470)),
   **Q6c decided 2026-08-28** ([#471](https://github.com/dlapiduz/postio/issues/471)),
   **amended 2026-09-14 for the Turso engine** (specs/004-turso-store — the
-  built table, Q3, Q5, Q7, Alternatives and Consequences)
+  built table, Q3, Q5, Q7, Alternatives and Consequences). The sidebar
+  shape it describes is macOS's: the desktop app has no sidebar, and its
+  inbox is every enabled account's inbox at once (ADR 0043)
 - **Date:** 2026-08-24
 - **Issue:** [#1 Multiple accounts & unified inbox](https://github.com/dlapiduz/postio/issues/1)
 - **Unblocks:** [#64](https://github.com/dlapiduz/postio/issues/64) (add-account

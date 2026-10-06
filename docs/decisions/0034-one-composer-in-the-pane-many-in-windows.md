@@ -1,8 +1,8 @@
 # ADR 0034 — One composer in the pane, many in windows
 
-- **Status:** Accepted (2026-09-11). Built. "The pane" is the classic
-  app's reading pane until that app is removed (ADR 0043); in Focus the one
-  composer in the window is its compose dialog, or the open message's place
+- **Status:** Accepted (2026-09-11). Built. "The pane" below was the
+  classic app's reading pane, removed with that app (T256, ADR 0043); in the
+  desktop app the one composer in the window is its compose dialog, or the open message's place
   in the pane beside the list, and a draft may be detached to a window of its
   own (`specs/007-postio-focus` FR-050, screens.md "The composer")
 - **Date:** 2026-09-11
@@ -189,11 +189,13 @@ decision. Windows are the level the desktop already provides.
 
 ## How it is verified
 
-- `gtk_suite`: starting a second draft while the pane holds one leaves two
-  composers, the first in a window, with both drafts intact (FR-010, FR-011).
-- `gtk_suite`: asking for a draft that is already open brings its surface
-  forward rather than opening a second view of it (FR-013).
-- `app_suite`: the keystroke path, from `c` in a window that already has a
-  draft, since that is the join the widget tests cannot see.
+- In the classic app, removed in T256, its `gtk_suite` held that starting a
+  second draft while the pane held one left two composers, the first in a
+  window, with both drafts intact (FR-010, FR-011), and that asking for a
+  draft already open brought its surface forward (FR-013); its `app_suite`
+  held the keystroke path from `c`.
+- In the desktop app, `focus_suite::compose_detach` holds that the detach
+  key and command reach the composer in the running window and move it to a
+  window of its own and back.
 - Every open composer says which draft it holds, and a detached window is
   identifiable from the window list without being focused (FR-014).

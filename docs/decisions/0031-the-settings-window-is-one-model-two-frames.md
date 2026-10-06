@@ -22,7 +22,7 @@ go:
   (`specs/007-postio-focus` screens.md, "Settings"). Focus is one window, and
   everything it opens over the list is a dialog that closes back to the list
   as it was.
-- **The classic GTK app**, until its removal (ADR 0043): an `AdwWindow`.
+- **The classic GTK app** used an `AdwWindow`, until its removal (T256, ADR 0043).
 
 [ADR 0029](0029-one-control-vocabulary.md) is **binding** on every frame (Q3).
 
