@@ -189,7 +189,7 @@ pub fn adopt_at(
         attachments_eager: config.sync.attachment_fetch
             == postio_config::sync::AttachmentFetch::Eager,
     });
-    // Focus's notifications follow the classic app's `[sync]` settings,
+    // Focus's notifications follow the `[sync]` settings,
     // and are only ever about mail that stayed in its inbox (FR-153).
     host.notify_with(config.sync.clone());
     window.set_notifier({

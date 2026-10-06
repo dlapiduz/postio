@@ -24,9 +24,9 @@ pub mod storyboard;
 /// thirty conversations or a draft left over from yesterday.
 ///
 /// The bases decide what mail the store holds; the rest add one thing to
-/// [`Seed::Small`]'s inbox. `first-run` is not here: the classic app's
-/// orientation strip it showed is one Focus dropped (`classic-parity.md`
-/// row 12), and Focus's own first run is the store with no account.
+/// [`Seed::Small`]'s inbox. `first-run` is not here: Focus has no orientation strip
+/// (`classic-parity.md` row 12), and its own first run is the store with no
+/// account.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Seed {
     /// Today's inbox over the storage seed: the default.

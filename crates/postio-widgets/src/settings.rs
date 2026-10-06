@@ -1216,7 +1216,7 @@ impl SettingsPanel {
     ///
     /// `path` is where a revoke writes back to — `window.rs` hands in the
     /// path its readers share one allow list by
-    /// (the classic window's `new_reader`), and a
+    /// and a
     /// revoke here updates that shared list as well as the file, so it
     /// reaches every reader of the app, open ones included (T020).
     pub fn set_remote_image_allowlist(

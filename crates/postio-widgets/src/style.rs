@@ -1,9 +1,11 @@
 //! The shared widgets' stylesheet, `data/widgets.css`, and how an app loads
 //! it.
 //!
-//! Every value in it is a `--postio-*` role, and each app defines the roles
-//! (specs/007-postio-focus research R11): the classic app from its generated
-//! `tokens.css`, and Focus from libadwaita's own colours.
+//! Every value in it is a `--postio-*` role, and the app defines the roles
+//! (specs/007-postio-focus research R11): Focus from libadwaita's own
+//! colours. The metrics -- spacing, radii, sizes -- are not the app's to
+//! define: `build.rs` generates them from `postio_ui::tokens` into
+//! `metrics.css`, which the sheet imports.
 //!
 //! # One sheet with the app's own, not a second provider
 //!

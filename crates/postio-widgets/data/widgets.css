@@ -5,9 +5,9 @@
  * kinds of button, the chips, the action bar and the one-line notice.
  * `postio_widgets::widgets` is the code.
  *
- * Every value is a `--postio-*` role, never a literal colour, and each app
- * defines the roles: the classic app from its generated `tokens.css`, and
- * Focus from libadwaita's own colours (research R11).
+ * Every value is a `--postio-*` role, never a literal colour, and the app
+ * defines the roles: Focus from libadwaita's own colours (research R11;
+ * `postio-gtk/data/focus-colours.css`).
  *
  * An app layers its own surfaces over these rules by importing this sheet
  * at the top of its own, not by loading it beside it: GTK compares
@@ -18,8 +18,8 @@
  *
  * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent.
  *
- * THE METRICS COME FIRST. Spacing, radii, chip and type sizes are shared by
- * both desktop apps, and generated from the design system into
+ * THE METRICS COME FIRST. Spacing, radii, chip and type sizes are generated
+ * from `postio_ui::tokens` by `build.rs` into
  * `metrics.css` beside this sheet; importing it here means an app that
  * takes these widgets takes the numbers they are laid out by, and defines
  * only its colours (research R11).
@@ -597,9 +597,8 @@ button.postio-icon-button.postio-recipient-chip-remove {
    validity line where a save button would otherwise go. No transition.
    Measurements (`NAV_WIDTH`, `BODY_HEIGHT`) are Rust constants in
    `src/settings.rs`, applied as size requests rather than CSS -- this is
-   colour, spacing and type only. Both desktop apps draw it (T233): the
-   classic app in a window of its own, Focus in its dialog, which re-dresses
-   the accent's uses for FR-091 in its own sheet. */
+   colour, spacing and type only. Focus draws it in its dialog,
+   which re-dresses the accent's uses for FR-091 in its own sheet. */
 /* The panel has no frame of its own: the window or the dialog around it
    draws the border, the shadow and the header. */
 .postio-settings {

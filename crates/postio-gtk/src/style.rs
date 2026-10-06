@@ -11,7 +11,7 @@
 //! **The accent is reserved** (FR-091): action markers, the keyboard focus
 //! ring and the has-action toggle, and nothing else. The shared sheet uses
 //! the accent for a primary button's fill and a few hovers, which is the
-//! classic app's language; Focus's sheet re-dresses those, and a test here
+//! shared sheet's language; Focus's sheet re-dresses those, and a test here
 //! reads both sheets as GTK would and fails if any other rule paints with it.
 
 /// Focus's colour roles.

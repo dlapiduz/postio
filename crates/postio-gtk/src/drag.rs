@@ -3,7 +3,7 @@
 //! A row grabbed and pulled out of the window offers the message it is, or
 //! the messages selected when it is one of them, to a file manager as `.eml`
 //! files. The offer is `postio_widgets::drag_out::LazyFiles` over
-//! `postio_widgets::present::export`, the classic list's own: nothing is
+//! `postio_widgets::present::export`: nothing is
 //! written until a drop somewhere asks, so picking mail up and putting it
 //! back writes nothing.
 

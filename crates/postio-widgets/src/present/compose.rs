@@ -13,9 +13,9 @@
 //! this way before this module existed -- reaching only through the client,
 //! answering the WebKit-facing seams from a cache it fills ahead of time
 //! rather than a blocking read -- and is what this module is built from.
-//! The classic composer used a different shape for the same
+//! The composer once used a different shape for the same
 //! seams: `postio_session::blocking::now` for the seams that had to answer
-//! on the spot. Unifying on Focus's shape is what let two of that debt's
+//! on the spot. Unifying on this shape is what let two of that debt's
 //! three sites disappear rather than move (`check-blocking-now-sites.py`);
 //! see [`install_inline_images`] and [`install_resume`].
 //!
@@ -48,9 +48,8 @@ pub const SUGGESTION_LIMIT: usize = 8;
 
 /// How the composer tells the rest of the window something happened, for a
 /// window whose news does not otherwise reach it. `None` for a window that
-/// already hears the host's events (#1608): the classic app's composition
-/// root is one, Focus's is another, so this stays a caller's choice rather
-/// than something this module decides.
+/// already hears the host's events (#1608); that stays a caller's choice
+/// rather than something this module decides.
 pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
 
 /// Which message `e`, `E` and `f` answer: the row the cursor is on, or the
@@ -76,8 +75,8 @@ pub type OnResumeNote = Rc<dyn Fn(ResumeNote)>;
 
 /// The account's identities and named signatures, read once and put in front
 /// of the user (#12); the answer is the account row, for a caller that has
-/// its own use for it (the classic window marks its own messages in the
-/// conversation pane from the same identities, #1241).
+/// its own use for it (a window can mark its own messages in a
+/// conversation from the same identities, #1241).
 ///
 /// Nothing called this before #12 was fixed, so the picker had been built,
 /// tested and shown with an empty model since it was written: every draft
@@ -112,8 +111,7 @@ pub async fn install_identities(
 /// overrides the account's default, which overrides the identity's.
 ///
 /// `selected` answers which mailbox is in view, read fresh on every compose
-/// rather than once at install: the classic app reads its sidebar's
-/// selection, which changes on every click; Focus has no folder selected and
+/// rather than once at install: Focus has no folder selected and
 /// answers `None`, which leaves the account's default signature to decide.
 pub fn install_signature_default(
     composer: &Composer,
@@ -148,8 +146,7 @@ pub fn install_signature_default(
 }
 
 /// A caller's reaction to an id a save just landed -- Focus's footer
-/// stamps "Saved at HH:MM" from it; the classic app has no such row and
-/// passes `None`.
+/// stamps "Saved at HH:MM" from it; a caller with no such row passes `None`.
 pub type OnSaved = Rc<dyn Fn(DraftId)>;
 
 /// Autosave through the host's `DraftWriter`, and clearing the row once
@@ -157,9 +154,8 @@ pub type OnSaved = Rc<dyn Fn(DraftId)>;
 ///
 /// Crash recovery is not here: whether a brand-new composer should reopen
 /// whatever `account` was writing when the last session died is a
-/// composition-root decision (the classic app's does, at mount; Focus's
-/// dialog is built lazily, well after startup, and opening a dialog nobody
-/// asked for would be a surprise). See [`recover_draft`].
+/// composition-root decision (Focus's dialog is built lazily, well after startup, and opening a
+/// dialog nobody asked for would be a surprise). See [`recover_draft`].
 pub fn install_autosave(
     composer: &Composer,
     client: &Client,

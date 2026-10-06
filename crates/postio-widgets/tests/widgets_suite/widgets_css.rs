@@ -3,7 +3,7 @@
 //!
 //! The roles here are this test's own, and deliberately unlike any real
 //! palette: what is asserted is that a control wears the *role*, so the same
-//! sheet serves the classic app's tokens and Focus's libadwaita colours.
+//! sheet serves any palette, Focus's libadwaita colours among them.
 //! Asserted on the colour each widget resolves, which is what gets drawn.
 
 use std::cell::RefCell;

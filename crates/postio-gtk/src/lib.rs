@@ -3,7 +3,7 @@
 //!
 //! It runs `postio-host` in this process and reaches mail only through
 //! `postio-client` (ADR 0041), and it draws with `postio-widgets`, never with
-//! the classic app's crates (ADR 0043). The binary is a thin `main` over
+//! a crate of its own that draws mail (ADR 0043). The binary is a thin `main` over
 //! [`app::run`]; everything else is here, where `tests/focus_suite` can drive
 //! the same startup the binary runs.
 

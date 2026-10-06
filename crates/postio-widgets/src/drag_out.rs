@@ -33,8 +33,8 @@
 //! The widgets may not open the store, so the bytes cannot come from here.
 //! [`Materialise`] is the seam: the app registers a callback -- both apps use
 //! [`crate::present::export::materialiser`] -- that turns what was dragged
-//! into files, and this module never learns how. Shared by both desktop apps
-//! (T245): the classic list's drag and Focus's rows offer the same provider.
+//! into files, and this module never learns how. Focus's rows offer it
+//! (T245).
 
 use std::cell::RefCell;
 use std::future::Future;

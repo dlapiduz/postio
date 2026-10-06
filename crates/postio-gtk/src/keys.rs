@@ -3,7 +3,7 @@
 //! Every app shares one keymap (spec 007, Clarifications), and a command only
 //! another app offers keeps its key there. Focus binds only the commands it
 //! offers (`Resolver::from_commands_for(.., Frontend::Focus)`, T029), so a
-//! key the keymap keeps for the classic app -- `p` opens its parts panel --
+//! key the keymap keeps for another frontend -- `p` opens the terminal's parts panel --
 //! does what an unbound key does here, rather than reaching a command Focus
 //! would refuse as "not wired up".
 

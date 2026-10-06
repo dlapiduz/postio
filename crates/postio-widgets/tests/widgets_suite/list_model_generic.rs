@@ -1,5 +1,5 @@
 //! The windowed list model is generic over its row (specs/007-postio-focus
-//! T021): a list of rows that are not the classic app's is windowed, filled in
+//! T021): a list of rows that are not messages is windowed, filled in
 //! place and refreshed by the same code, through a `GObject` of its own that
 //! implements `WindowedModel` in two lines -- the shape Focus's list takes.
 //!
@@ -17,7 +17,7 @@ use postio_model::ids::{MessageId, ThreadId};
 use postio_ui::list::ListRow;
 use postio_widgets::list_model::{ModelRow, PAGE_SIZE, PageSource, Windowed, WindowedModel};
 
-/// A row that is not the classic app's: a note with an id.
+/// A row that is not a message: a note with an id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Note {
     pub(crate) id: MessageId,

@@ -4,7 +4,7 @@
 //! composer's verbs, Send first where Reply sits in the message dialog's;
 //! and the Labels row.
 //!
-//! The composer inside it is the classic app's, whole (FR-050): every
+//! The composer inside it is the shared one, whole (FR-050): every
 //! control here calls one of its verbs, and every key a control shows is
 //! read from the keymap in force (constitution II), compacted as the
 //! message dialog's are (`hints::short`).

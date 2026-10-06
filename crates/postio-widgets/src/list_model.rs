@@ -7,8 +7,7 @@
 //! 50-message one: a few hundred rows resident, and the rest a page request
 //! away.
 //!
-//! This began as the classic app's `MessageList`, and every behaviour below
-//! was proven there. A list is drawn this way over different rows --
+//! A list is drawn this way over different rows --
 //! messages, conversations, digests and reminders -- so the model is generic
 //! over what a position holds:
 //!

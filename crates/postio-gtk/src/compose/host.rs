@@ -1,8 +1,7 @@
 //! Focus's compose dialog as a composer's host (research R15): the second
-//! implementation of `ComposerHost`, beside the classic window's.
+//! implementation of `ComposerHost`.
 //!
-//! Where the classic window lends the composer its reading pane, Focus lends
-//! it a dialog over the list: taking the pane presents the dialog, and
+//! Focus lends the composer a dialog over the list: taking the pane presents the dialog, and
 //! giving it back closes it and returns the keyboard to the row it left
 //! from. The keymap is the window's, resolved in the composer's context, so
 //! `[keys]` reaches the composer here exactly as it does there.

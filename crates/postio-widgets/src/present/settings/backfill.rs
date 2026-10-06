@@ -1,6 +1,6 @@
 //! Skipping or resuming a folder's background backfill (ADR 0016, #350):
 //! the per-folder control in Settings' Sync & storage section, and the one
-//! write the classic app's sidebar menu makes too.
+//! write a folder's own menu can make too.
 //!
 //! The panel draws a check per folder and calls back through
 //! `connect_backfill_exclusion_changed` without knowing anything persists

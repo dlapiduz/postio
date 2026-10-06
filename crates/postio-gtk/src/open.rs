@@ -471,8 +471,7 @@ impl OpenMessage {
 
         let weak = Rc::downgrade(&page);
         page.this.replace(weak.clone());
-        // A chip asks, as the classic app's does: where the verbs live is
-        // the window's chooser (T240).
+        // A chip asks: where the verbs live is the window's chooser (T240).
         page.reader.connect_attachment({
             let weak = weak.clone();
             move |node| {
@@ -1039,7 +1038,7 @@ impl OpenMessage {
 
     /// Start the read clock on `message`, the one now shown, stopping any
     /// other. The delay and the rule are `postio_ui::dwell`'s, shared with
-    /// the classic app; only the timer is this toolkit's.
+    /// the other frontends; only the timer is this toolkit's.
     fn arm_dwell(&self, message: MessageId) {
         self.stop_dwell();
         if !self.open.get() || self.away.get() {

@@ -374,10 +374,9 @@ const LARGE_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 const AUTOSAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// What a composer needs from whatever holds it (specs/007-postio-focus
-/// T023): the classic window, whose reading pane it takes over, or Focus's
-/// compose dialog.
+/// T023): Focus's compose dialog.
 ///
-/// Everything the composer used to ask the classic `Window` for goes through
+/// Everything the composer asks its app for goes through
 /// here -- where it is drawn, the pane and the keyboard context it takes and
 /// gives back, the keymap its keys resolve against, the command broadcast,
 /// the parent of its file dialogs -- so the composer names no app, and a
@@ -415,8 +414,8 @@ pub trait ComposerHost {
         state: gtk::gdk::ModifierType,
         window: &gtk::Window,
     ) -> glib::Propagation;
-    /// Offer `action` where the host's own controls reach it: the classic
-    /// header's Compose button reaches `win.compose`.
+    /// Offer `action` where the host's own controls reach it: a header's
+    /// Compose button reaches `win.compose`.
     fn add_action(&self, action: &gio::SimpleAction);
     /// Call `handler` with every command the host dispatches.
     fn connect_command(&self, handler: Box<dyn Fn(CommandId)>);
@@ -1900,7 +1899,7 @@ impl Composer {
     /// One key press from the detached window, resolved against the main
     /// window's keymap.
     ///
-    /// Public for the same reason the classic `Window::handle_key` is: it is the whole
+    /// Public so a test can press keys: it is the whole
     /// keyboard path in one call, and GTK4 gives no supported way to
     /// synthesize a GDK event for a test to press instead.
     pub fn handle_key(
@@ -2219,8 +2218,8 @@ impl Composer {
     /// is read from a probe that wears a `.postio-flow-*` class -- the
     /// reader's own -- whose `color` the host's stylesheet sets to its
     /// token, so no colour is written in Rust and the body follows the
-    /// host's light and dark. The classic composer never calls this, and
-    /// keeps the generated palette and its inset.
+    /// host's light and dark. A host that does not call this keeps the
+    /// generated palette and its inset.
     pub fn flow_in_column(&self) {
         let Some(column) = self.child().and_downcast::<gtk::Box>() else {
             return;

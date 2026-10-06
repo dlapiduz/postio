@@ -94,7 +94,7 @@ impl Default for Drawn {
     }
 }
 
-/// A one-line row's height, in pixels: the classic row's (research R3).
+/// A one-line row's height, in pixels: the design's (research R3).
 pub const ONE_LINE: i32 = 40;
 
 /// A two-line row's height: a conversation with a marker.

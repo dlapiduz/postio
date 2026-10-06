@@ -163,7 +163,7 @@ impl Feed {
             inner.list.replace_source(source, false);
             // Asked for here rather than left to the view: rows already on
             // screen stay until this page lands and the list changes over,
-            // and nothing else would ask for it (the classic feed's rule).
+            // and nothing else would ask for it (the feed's rule).
             // An empty scope's first page is empty, which is the change-over
             // to nothing.
             Rc::clone(&inner).request(0);

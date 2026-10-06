@@ -1,8 +1,7 @@
 //! Focus's one window: what it says while the store opens, the sentence when
 //! it cannot, and the inbox once it has.
 //!
-//! The window comes first and the store behind it (#1114's rule for the
-//! classic app): a person sees a window at once, and it says what it is
+//! The window comes first and the store behind it (#1114's rule): a person sees a window at once, and it says what it is
 //! waiting for only once the wait is worth mentioning
 //! ([`postio_ui::list_state::OPENING_THRESHOLD`]).
 
@@ -486,7 +485,7 @@ impl FocusWindow {
 
         // Capture, not bubble: a single-key binding has to be seen before the
         // focused widget consumes it, and whether it should is the
-        // resolver's decision (the classic window's rule).
+        // resolver's decision.
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed(glib::clone!(
@@ -1189,7 +1188,7 @@ impl FocusWindow {
     }
 
     /// Whether the composer's body has the keyboard: a `WebView`, which no
-    /// type test says is being typed in (the classic window's #602).
+    /// type test says is being typed in (#602).
     pub(crate) fn composer_body_has_keyboard(&self) -> bool {
         self.compose().is_some_and(|compose| {
             compose.composer().focused_field() == Some(postio_widgets::composer::Field::Body)
@@ -1267,8 +1266,7 @@ impl FocusWindow {
                 .imp()
                 .accounts
                 .replace(enabled.iter().map(|account| account.id).collect());
-            // A new message is written from the first account, as the
-            // classic app's is.
+            // A new message is written from the first account.
             if let Some(account) = enabled.first() {
                 window.mount_compose(&client, account.id);
             }
@@ -1321,12 +1319,11 @@ impl FocusWindow {
     /// `CommandId::AddAccount`): the shared form both desktop apps drive
     /// (`postio_widgets::present::onboarding::add_account`, T165). Saving
     /// refreshes the accounts Focus knows -- mounting the composer among
-    /// them -- and brings every account's connection up, the order the
-    /// classic app's own first run brings a window up over a new account.
+    /// them -- and brings every account's connection up, in that order.
     ///
     /// With no account at all this is the first run: once the account is
     /// saved the form asks how much history to sync (#876, T243) before the
-    /// connection comes up, as the classic first run does. An account added
+    /// connection comes up. An account added
     /// to a window that has one joins a window already syncing.
     ///
     /// A second call while the form is already open reuses it rather than
@@ -1656,7 +1653,7 @@ impl FocusWindow {
             // The capture sheet (US15), from the row or the open message.
             CommandId::CaptureTask => self.open_capture(crate::capture::Mode::Task),
             CommandId::CaptureNote => self.open_capture(crate::capture::Mode::Note),
-            // The classic app's composer, in its dialog (US3). With no
+            // The shared composer, in its dialog (US3). With no
             // account there is nothing to write from yet (T172).
             CommandId::Compose => match self.compose() {
                 Some(compose) => compose.dispatch(id),
@@ -3674,7 +3671,7 @@ impl FocusWindow {
                     move |id| window.act(id)
                 ));
                 // Open for the dwell, it counts as read (T237): the host
-                // marks it without an undo entry, as the classic app does.
+                // marks it without an undo entry.
                 reading.connect_read(glib::clone!(
                     #[weak(rename_to = window)]
                     self,
@@ -4589,7 +4586,7 @@ impl FocusWindow {
         self.compose().and_then(|compose| compose.dialog())
     }
 
-    /// The composer Focus writes in: the classic app's, in a dialog.
+    /// The composer Focus writes in: the shared one, in a dialog.
     pub fn composer(&self) -> Option<postio_widgets::composer::Composer> {
         self.compose().map(|compose| compose.composer().clone())
     }

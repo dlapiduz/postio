@@ -5,8 +5,7 @@
 //! The panel draws the sections and calls back through its `connect_*`
 //! handlers without knowing anything persists them. These are the other
 //! half: every read and write is the host's, asked through `postio-client`
-//! (ADR 0041), so the window behaves the same in the classic app and in
-//! Focus.
+//! (ADR 0041), so the window behaves the same over any host.
 //!
 //! - [`accounts`]: the account rows, their detail view and signatures, the
 //!   connection test, rebuilding an index, removing with undo.
@@ -41,8 +40,7 @@ pub mod privacy;
 /// Accounts whose local search index is being rebuilt right now (#981).
 ///
 /// Shared between [`accounts`], which adds and removes membership as a
-/// rebuild runs, and whatever in the app reads it -- the classic app's
-/// search, which raises a corpus caveat while an account's index is
+/// rebuild runs, and whatever in the app reads it -- a search, which can raise a corpus caveat while an account's index is
 /// mid-rebuild.
 pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 

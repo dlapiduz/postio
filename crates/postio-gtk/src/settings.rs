@@ -2,8 +2,7 @@
 //! the shared settings panel in a dialog over the list, in the message
 //! dialog's frame.
 //!
-//! The panel is `postio_widgets::settings::SettingsPanel`, the classic app's
-//! window, and its presenters are `postio_widgets::present::settings`, over
+//! The panel is `postio_widgets::settings::SettingsPanel`, and its presenters are `postio_widgets::present::settings`, over
 //! the same client the window reads through. What is Focus's here is the
 //! frame -- the dialog, its header and its size -- and the [`Outside`] the
 //! presenters ask for what is not the host's to answer.
@@ -71,7 +70,7 @@ impl Settings {
         let search = panel.search_field();
         search.set_valign(gtk::Align::Center);
         search.add_css_class("focus-settings-search");
-        // Narrower than the classic header's: the title stays centred in a
+        // Narrow: the title stays centred in a
         // dialog as narrow as 640.
         search.set_width_chars(16);
         let title = gtk::Label::new(Some("Settings"));
@@ -131,7 +130,7 @@ impl Settings {
             move |_| {
                 if let Some(settings) = settings.upgrade() {
                     settings.open.set(false);
-                    // Hidden while closed, as the classic app hides it: the
+                    // Hidden while closed: the
                     // presenters read what costs only while it shows.
                     settings.panel.set_visible(false);
                 }

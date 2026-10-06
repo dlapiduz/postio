@@ -13,7 +13,7 @@
 //! one is a bug.
 //!
 //! [`Geometry`] is the part every window has: its size and whether it was
-//! maximised. An app with more to remember (the classic window's dividers)
+//! maximised. An app with more to remember (a window's dividers)
 //! keeps its own keys in the same file and reads and writes these through
 //! [`Geometry::read`] and [`Geometry::write`], so one file holds all of it
 //! and neither writer drops the other's keys.

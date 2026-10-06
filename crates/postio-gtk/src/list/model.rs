@@ -38,8 +38,7 @@ mod imp {
             static SIGNALS: std::sync::OnceLock<Vec<glib::subclass::Signal>> =
                 std::sync::OnceLock::new();
             // What the row says has changed while it stayed where it is: a
-            // bound row widget redraws, and the model stays quiet (the
-            // classic row's rule, #1216).
+            // bound row widget redraws, and the model stays quiet (#1216).
             SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("changed").build()])
         }
     }

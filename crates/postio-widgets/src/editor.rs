@@ -1,7 +1,6 @@
 //! `config.toml` in the person's own editor: what `CommandId::EditConfig`
-//! (`mod+e`) does in both desktop apps (ADR 0043; specs/007-postio-focus
-//! T235). Moved from the classic app's `config` module, where it was the
-//! only launcher.
+//! (`mod+e`) does in the desktop app (ADR 0043; specs/007-postio-focus
+//! T235).
 //!
 //! `[compose] editor` wins when it is set (#1297); otherwise `$VISUAL` wins
 //! over `$EDITOR`, the precedence every POSIX tool gives them. Neither is run inside a terminal: many desktop users already point

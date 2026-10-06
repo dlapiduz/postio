@@ -406,7 +406,7 @@ struct EditorState {
     loaded: Cell<bool>,
     /// The palette variables a host's column supplies, each read from a
     /// probe its stylesheet colours ([`Editor::flow_in`]); empty for a
-    /// surface that keeps the generated palette, as the classic one does.
+    /// surface that keeps the generated palette.
     flow: RefCell<Vec<(&'static str, glib::WeakRef<gtk::Widget>)>>,
 }
 

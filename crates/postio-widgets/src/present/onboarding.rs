@@ -6,7 +6,7 @@
 //! mail. This is the other half. The probe, the connection test, the
 //! browser sign-in and the two writes are the host's (ADR 0041): this asks
 //! for each through `postio-client` and shows the answer, so the form
-//! behaves the same over the classic app's host and over Focus's.
+//! behaves the same over any host.
 //!
 //! # What it does not do
 //!
@@ -359,7 +359,7 @@ pub fn open_in_browser(parent: &impl IsA<gtk::Widget>) -> impl Fn(&str) + 'stati
 /// time, moving the field being typed in; one sized from the window holds
 /// still, matches the message and composer dialogs it is seen beside in
 /// Focus, and at its tallest the form fits it in a window 800 pixels tall.
-/// A shorter window -- the classic app's default is 700 -- scrolls the
+/// A shorter window -- 700 pixels, say -- scrolls the
 /// form's body, never its header.
 fn dialog(
     parent: &gtk::Widget,

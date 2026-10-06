@@ -74,8 +74,7 @@ window.focus-window {
 /* Buttons at the design's proportions (screens 04 and 05; T175, T177): a
    regular button is 30px, a small one 26px, and a bar's verbs are the
    quiet 26px kind -- no frame of their own, a tint under the pointer. The
-   shared sheet is the classic app's, whose action bars draw every verb
-   framed. */
+   shared sheet draws every verb of an action bar framed. */
 .focus-open-toolbar button.postio-button-regular,
 .focus-open-send-toolbar button.postio-button-regular,
 .focus-bulk-actions button.postio-button-regular {
@@ -207,7 +206,7 @@ button.postio-button-secondary:hover {
    accent for markers, the focus ring and the has-action toggle: the current
    section is the neutral selection a selected row wears, a checked box is
    filled with the ink, and what is wrong with the file is the error colour.
-   The keycap roles the classic tokens define are spelt out here too. */
+   The keycap roles are spelt out here too. */
 .postio-settings-tag {
   color: var(--postio-ink-secondary);
 }
@@ -270,8 +269,7 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
 }
 
 /* The section list's and a pane's small headings ("MAIL", "Check for
-   mail"): the classic app's kicker comes from its generated tokens, which
-   Focus does not load. Here it is Focus's own small heading, in its face. */
+   mail"): Focus's own small heading, in its face. */
 .postio-settings .postio-kicker {
   font-family: var(--postio-font-body);
   font-weight: bold;
@@ -928,7 +926,7 @@ popover.focus-row-menu-popover separator.focus-row-menu-rule {
 
 /* ── The shared account form, without the accent (FR-091) ────────────
    The credential and add-account form came to postio-widgets with T165,
-   painted in the classic app's accent: its card icons, its scope mark and
+   painted in the accent: its card icons, its scope mark and
    a segmented control's checked segment. Focus shows the same form from
    its sign-in banner, and keeps the accent for markers, the focus ring and
    the has-action toggle, so here the icons take the ink and the checked
@@ -951,10 +949,9 @@ popover.focus-row-menu-popover separator.focus-row-menu-rule {
 /* ── The compose dialog (T221; screens.md, "The composer") ─────────────
    The message dialog's family: its surface and palette (focus-colours.css),
    its 52px header bar, its 44px action row between hairlines, its keycaps,
-   and one centred column for the fields and the body. The composer is the
-   classic app's; its own classes are dressed by the classic stylesheet,
-   which Focus does not load, so the fields are restated here, scoped to the
-   dialog: hairline rows, flat entries, muted names -- and no accent
+   and one centred column for the fields and the body. The composer is
+   the shared one (`postio_widgets::composer`), and the shared sheet does not
+   dress its fields, so they are restated here, scoped to the dialog: hairline rows, flat entries, muted names -- and no accent
    underline on the focused row (FR-091). */
 .focus-compose-surface,
 .focus-compose .postio-composer,

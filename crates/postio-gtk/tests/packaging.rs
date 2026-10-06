@@ -339,6 +339,37 @@ fn the_metainfo_describes_postio_with_one_launcher() {
     );
 }
 
+/// The store page shows what the app looks like: screenshots, each an image
+/// the site serves (so the URL is the site's own) that exists in the
+/// repository, and none of them an earlier app's.
+#[test]
+fn the_metainfo_shows_focus_screenshots_the_site_serves() {
+    let metainfo = read(&format!("crates/postio-gtk/data/{APP_ID}.metainfo.xml"));
+    let prefix = "https://dlapiduz.github.io/postio/assets/img/";
+    let images: Vec<&str> = metainfo
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("<image>")?.strip_suffix("</image>"))
+        .collect();
+    assert!(
+        images.len() >= 3,
+        "the store page has too few screenshots: {images:?}"
+    );
+    for image in images {
+        let name = image
+            .strip_prefix(prefix)
+            .unwrap_or_else(|| panic!("{image} is not an image the site serves"));
+        assert!(
+            name.starts_with("focus-"),
+            "{name} is not a render of this app"
+        );
+        assert!(
+            root().join("site/assets/img").join(name).exists(),
+            "the site has no {name}"
+        );
+    }
+}
+
 /// The release looks inside the bundle it is about to publish, so a
 /// manifest that stops building the app fails the release rather than
 /// shipping without it.

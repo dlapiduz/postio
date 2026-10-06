@@ -1,5 +1,5 @@
-//! Compose, reply and forward (spec 007 US3; screens 05 and 06): the classic
-//! app's composer, whole, in a dialog over the list.
+//! Compose, reply and forward (spec 007 US3; screens 05 and 06): the shared
+//! composer, whole, in a dialog over the list.
 //!
 //! Focus has no composer of its own (FR-050). What is here is the frame the
 //! screens draw around it, the dialog it is hosted in ([`host`]), and its

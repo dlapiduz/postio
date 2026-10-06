@@ -1,8 +1,7 @@
 /* Focus's colour roles (specs/007-postio-focus research R11, FR-090).
  *
  * The shared widgets and Focus's own surfaces read `--postio-*` roles, and
- * each app defines them. The classic app defines them from its generated
- * `tokens.css`, with its steel accent. Focus defines them from libadwaita's
+ * the app defines them. Focus defines them from libadwaita's
  * own named colours, so the system's accent and its light and dark arrive
  * through AdwStyleManager, with nothing of Focus's in between: switching the
  * system to dark repaints Focus at once (US1 scenario 6).

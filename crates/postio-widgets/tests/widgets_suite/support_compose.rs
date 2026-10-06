@@ -85,9 +85,8 @@ pub(crate) const EDITOR_LISTENING: &str = "String(window.postioEditorReady === t
 
 // -- The window's set-up, as the cases spell it ---------------------------------
 
-/// The app-level set-up the cases ask for, spelled as the classic cases did so
-/// a case reads the same: the shared sheet and the bundled icon. The fonts are
-/// the classic app's and are not here.
+/// The app-level set-up the cases ask for, the shared sheet and the bundled icon.
+/// There are no fonts to install.
 pub mod app {
     use gtk::gdk;
 
@@ -97,8 +96,8 @@ pub mod app {
 }
 
 pub mod fonts {
-    /// The classic app's embedded fonts; the shared widgets draw with the
-    /// system's, so there is nothing to install.
+    /// The shared widgets draw with the system's fonts, so there is nothing
+    /// to install.
     pub fn install() -> Result<(), std::convert::Infallible> {
         Ok(())
     }
@@ -111,13 +110,12 @@ pub mod style {
         postio_widgets::style::install(display);
     }
 
-    /// The classic app follows the light/dark scheme per window; the shared
-    /// sheet follows libadwaita's own, so there is nothing to track.
+    /// The shared sheet follows libadwaita's light/dark scheme, so there
+    /// is nothing to track.
     pub fn track(_root: &impl gtk::prelude::IsA<gtk::Widget>) {}
 }
 
-/// `postio_widgets::composer`, plus the one function the classic window's
-/// version of it had: mounting a composer on a [`Window`].
+/// `postio_widgets::composer`, plus the one function it adds: mounting a composer on a [`Window`].
 pub mod composer {
     pub use postio_widgets::composer::*;
 

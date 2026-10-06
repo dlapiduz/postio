@@ -37,11 +37,32 @@
   <url type="bugtracker">https://github.com/dlapiduz/postio/issues</url>
   <url type="vcs-browser">https://github.com/dlapiduz/postio</url>
   <content_rating type="oars-1.1"/>
-  <!-- No screenshots until the landing page carries renders of this app.
-       Those it had were the retired three-pane app's, and a store page
-       showing a layout the package does not contain is worse than none.
-       They come back with the site's images, drawn by Focus's own shot
-       example (specs/007-postio-focus T255). -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://dlapiduz.github.io/postio/assets/img/focus-inbox.png</image>
+      <caption>The inbox: one dense list, mail as it arrived</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/focus-open.png</image>
+      <caption>A message open over the list, in one centred column</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/focus-command-bar.png</image>
+      <caption>The command bar: search, go to, or run a command</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/focus-folders.png</image>
+      <caption>The folders popover: mailboxes, folders, labels</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/focus-reply.png</image>
+      <caption>Replying in the compose dialog</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://dlapiduz.github.io/postio/assets/img/focus-dark.png</image>
+      <caption>The inbox in the dark style</caption>
+    </screenshot>
+  </screenshots>
   <releases>
     <release version="0.4.2" date="2026-09-20" type="development">
       <description>

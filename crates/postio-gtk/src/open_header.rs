@@ -5,8 +5,8 @@
 //! for today's mail, in full beyond it.
 //!
 //! Drawn from the row's envelope, so it is up as soon as the row is read.
-//! The shared reader's own header (the classic app's, with its Cc
-//! disclosure) is not shown in Focus.
+//! The shared reader's own header, with its Cc
+//! disclosure, is not shown in Focus.
 
 use adw::prelude::*;
 use chrono::{DateTime, Local, Utc};

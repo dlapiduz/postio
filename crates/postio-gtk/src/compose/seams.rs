@@ -29,7 +29,7 @@ pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
 pub type Resume = shared::Resume;
 
 /// What the frame's subtitle says once opening a queued draft has cancelled
-/// its send, as the classic app says it (#433).
+/// its send (#433).
 const SEND_CANCELLED: &str = "Send cancelled \u{2014} you're editing this draft again";
 
 /// Answer every seam of `composer` through `client`, for `account`; the
@@ -82,10 +82,10 @@ fn autosave(
     shared::install_autosave(composer, client, Some(on_saved))
 }
 
-/// A draft left in Drafts -- by Focus or by the classic app -- opens in the
+/// A draft left in Drafts -- by Focus or by another client -- opens in the
 /// composer for editing (US3 scenario 3, US11 scenario 3), through
 /// [`shared::install_resume`]; the note it hands back becomes the frame's
-/// subtitle rather than the classic app's toast or status line.
+/// subtitle rather than a toast or status line.
 fn resume(
     composer: &Composer,
     client: &Client,

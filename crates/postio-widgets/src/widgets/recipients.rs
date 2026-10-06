@@ -8,8 +8,7 @@
 //! and whatever it holds once an address is finished (a chosen suggestion,
 //! or a typed address and its comma) becomes a chip. The recipients are the
 //! chips, then what is still being typed. The composer opts in
-//! (`Composer::set_recipient_chips`); Focus does, and whether the classic
-//! app does is a `/ux-architect` call (research R15).
+//! (`Composer::set_recipient_chips`); Focus does (research R15).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
