@@ -11,17 +11,19 @@
 **A local-first, keyboard-first email client for people who have too much
 email.** Read less. Find anything. Act faster.
 
-![Postio reading a conversation: the folder list, the message list and a
-threaded reading pane, all driven from the keyboard](site/assets/img/conversation.png)
+![The inbox: one dense list, an invitation, questions and to-dos called out
+on their rows with the sentence that raised them, a digest, and three rows
+selected over the bulk bar](site/assets/img/focus-inbox.png)
 
 Postio keeps a complete, encrypted copy of your mail on your own machine,
 with a full-text index built beside it. Opening the app, searching, and
 moving around never wait on the network. Every action — archive, flag, move,
 delete, snooze, undo — lands on that local copy instantly and reaches the
-server in the background. It is a native GTK4/libadwaita application on Linux
-and a native SwiftUI/AppKit one on macOS — **two frontends over one Rust
-engine**, not a toolkit ported — works fully offline after its first sync, and
-never sends anything you did not ask it to.
+server in the background. On Linux it is one native GTK4/libadwaita app and a
+terminal app with the same design; on macOS it is a native SwiftUI/AppKit
+one — **frontends over one Rust engine**, not a toolkit ported. It works
+fully offline after its first sync, and never sends anything you did not ask
+it to.
 
 **Postio 0.4.0 is an alpha.** It is more complete than the number suggests,
 but it is early software: expect rough edges, read the
@@ -35,18 +37,29 @@ your current client around until you trust it.
 
 ## Why Postio
 
+- **One dense inbox, as it arrived.** The desktop app shows one list of mail,
+  newest first: sender, subject and first line, verbatim. A message opens
+  over the list and `Esc` puts you back on the same row, or, if you prefer,
+  it opens beside the list (`F8`). There is no folder sidebar; `g o` and the
+  command bar go everywhere else.
+- **It does four things to mail, and only those.** It calls out real
+  actions — an invitation, a direct question, a to-do — on the row, quoting
+  the sentence verbatim. It holds some mail back into digests on a cadence
+  you choose. It files spam and automated updates into Filtered, each with
+  its reason and one key from restored. And it captures mail into an
+  Obsidian vault as a task or a note.
 - **It is instant.** The inbox, a thread, a search result: all of it is read
   from the local store, never fetched live. Startup, navigation and search
   are held to real budgets and the *cause* of each budget is counted in the
   test suite, not just timed on one machine.
 - **Search is how you move.** One query language works everywhere it
-  appears: typed into the search box, saved as a folder in the sidebar, or
-  written into `config.toml`. `from:ada has:attach after:2026-01-01` is a
+  appears: typed into the command bar, saved as a pinned search, or written
+  into `config.toml`. `from:ada has:attach after:2026-01-01` is a
   query you can type, and results appear as you type it.
-- **Every action has a key.** `j`/`k` move, `e` replies, `a` archives, `u`
-  undoes anything, `/` searches, `Ctrl+K` opens the command palette, `?`
-  shows the cheat sheet. Every binding is rebindable. The mouse works too and
-  is never required.
+- **Every action has a key.** `j`/`k` move, `e` replies, `a` archives,
+  `Ctrl+Z` undoes anything, `/` searches, `Ctrl+K` runs any command by name,
+  `?` shows the key map. Every app has the same keys, and every binding is
+  rebindable. The mouse works too and is never required.
 - **All your accounts, one inbox.** Several IMAP, Gmail or JMAP accounts,
   each synced by its own engine, grouped into one unified inbox at read
   time. Sign in with a password, an app-specific password, or OAuth 2 through
@@ -59,12 +72,9 @@ your current client around until you trust it.
 - **Encrypted at rest.** The local store is encrypted and the key lives in
   your OS keyring, so a stray backup or a stolen disk holds ciphertext.
   Credentials go in the keyring too, never in a config file or a log.
-- **Built for triage.** Select a run of messages and the list header becomes
-  the action bar. Snooze, schedule a send, fold quoted text, walk a
-  conversation with `J`/`K`, archive a whole thread with `A`.
-
-![Search results with the scope and refinement panels, and a matched message
-previewed with its hits highlighted](site/assets/img/search.png)
+- **Built for triage.** Select a run of messages and the bulk bar acts on all
+  of them. Snooze, schedule a send, fold quoted text, walk a thread with
+  `]`/`[`, archive a whole thread with `A`.
 
 ## Install
 
@@ -135,7 +145,7 @@ one-time SDK setup are in [`flatpak/README.md`](flatpak/README.md).
 ### 3. Just try it
 
 ```bash
-cargo run -p postio-app
+cargo run -p postio-gtk
 ```
 
 builds and runs Postio from the checkout without installing anything.
@@ -230,20 +240,25 @@ xdg-mime default dev.postio.Postio.desktop x-scheme-handler/mailto
 | Keys | Does |
 |---|---|
 | `j` / `k` | Next / previous message |
-| `Enter` or `l` | Open the message or conversation |
+| `Enter` / `Esc` | Open the message / close it, back on the same row |
+| `]` / `[` | Next / previous message in its thread |
 | `e` / `E` / `f` | Reply / reply all / forward |
 | `a` / `A` | Archive the message / the whole thread |
-| `d`, `m`, `s`, `L` | Delete, move to…, flag, add a label |
-| `b` / `B` | Snooze / unsnooze |
+| `Delete`, `m`, `*`, `l` | Delete, move to…, flag, add a label |
+| `s` / `B` | Snooze / unsnooze |
+| `y` / `Y` | Accept / decline an invitation |
 | `x`, `J` / `K` | Select this row, extend the selection down / up |
-| `u` | Undo the last action, however many rows it touched |
-| `/` | Search all mail (`>` runs a command, `#` jumps to a folder, `@` finds a person) |
-| `Ctrl+S` in a search | Save the search as a folder in the sidebar |
+| `Ctrl+Z` | Undo the last action, however many rows it touched |
+| `/` | Search all mail (`>` runs a command, `#` jumps to a folder, `@` finds a person, `+` adds a label) |
+| `Ctrl+S` in a search | Save the search; `Alt+1`…`Alt+4` run the pinned ones |
 | `c` | Compose (`Ctrl+Enter` sends, `Ctrl+Shift+Enter` schedules) |
-| `g i`, `g d`, `g t`, `g s` | Go to inbox, drafts, sent, flagged |
-| `g a` | Switch between an account and the unified inbox |
-| `Ctrl+K` | Command palette, every command by name |
-| `?` | The cheat sheet |
+| `g o` | Every mailbox, folder and label, with their counts |
+| `g i`, `g t`, `g s`, `g *` | Go to inbox, drafts, sent, flagged |
+| `!` | Show only the mail that needs something from you |
+| `g f`, `g d` | Filtered mail, digest rules |
+| `F8` | Read beside the list instead of over it |
+| `Ctrl+K` | Run any command by name |
+| `?` | The key map |
 
 Search operators compose, and a leading `-` negates:
 
@@ -262,9 +277,6 @@ A search covers every folder except drafts, junk and trash; `in:trash` (or
 The complete, generated keyboard reference is
 [`docs/keybindings.md`](docs/keybindings.md); every binding can be changed
 in `config.toml`.
-
-![Replying inside the reading pane, with the quoted message folded under the
-reply and the message list still visible](site/assets/img/compose.png)
 
 ## Configuration
 
@@ -287,7 +299,7 @@ archive = "w"             # overrides the default binding for `archive`
 
 [filters.needs-reply]
 query  = "is:unread from:team"
-pinned = true             # shows in the sidebar as a folder
+pinned = true             # a pinned search, one key away in the command bar
 ```
 
 Every key, type and default is in [`docs/config.md`](docs/config.md).
@@ -333,7 +345,7 @@ mailboxes so far, and the issue tracker is where the rough edges get filed.
 
 ## How Postio is built
 
-Twenty crates in strict layers: a GTK view layer that speaks no SQL and no
+Crates in strict layers: a GTK app whose own code speaks no SQL and no
 protocol, an engine that owns the local store and the network, and a
 UI-agnostic contract between them — commands down, events up, and the UI
 never awaits the network. The boundaries are checked against cargo's
