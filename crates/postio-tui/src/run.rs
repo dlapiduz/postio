@@ -1143,12 +1143,71 @@ fn perform(
             }
             // Nothing to offer is what a store that cannot be read offers:
             // the finder says "no label matches" either way.
-            Effect::ReadLabels(account) => {
+            Effect::ReadLabelPicker {
+                message,
+                account,
+                threads,
+            } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
+                    // The row's own account: a label is an account's, and a
+                    // message can carry only its account's.
+                    let account = client
+                        .account_of(message)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(account);
                     let labels = client.labels(account).await.unwrap_or_default();
-                    let _ = inputs.send(Input::Labels(labels)).await;
+                    let counts = client.label_counts(account).await.unwrap_or_default();
+                    let carried = if threads.is_empty() {
+                        Vec::new()
+                    } else {
+                        client
+                            .thread_labels(threads.clone())
+                            .await
+                            .unwrap_or_default()
+                    };
+                    let applied = postio_ui::pickers::applied_labels(carried, &threads)
+                        .into_iter()
+                        .collect();
+                    let _ = inputs
+                        .send(Input::LabelPicker {
+                            account,
+                            labels,
+                            counts,
+                            applied,
+                        })
+                        .await;
+                });
+            }
+            Effect::CreateLabel {
+                account,
+                name,
+                close,
+            } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let label = client.create_label(account, name).await.ok().flatten();
+                    let _ = inputs.send(Input::LabelMade { label, close }).await;
+                });
+            }
+            Effect::ReadRecentMoves => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let recent = client.move_recent().await.unwrap_or_default();
+                    let _ = inputs.send(Input::RecentMoves(recent)).await;
+                });
+            }
+            Effect::NoteMove(mailbox) => {
+                let client = client.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = client.note_move(mailbox).await {
+                        tracing::warn!(%error, "could not keep a recent move: {error}");
+                    }
                 });
             }
             Effect::Recipients { account, prefix } => {

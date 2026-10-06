@@ -25,6 +25,7 @@ pub mod folders;
 pub mod input;
 pub mod layout;
 pub mod paths;
+pub mod pickers;
 pub mod places;
 pub mod reader;
 pub mod row;

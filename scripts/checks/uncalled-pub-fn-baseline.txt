@@ -24,6 +24,7 @@ backfill_progress                 # crates/postio-runtime/src/engine.rs:595
 by_address                        # crates/postio-storage/src/repository/contacts.rs:99
 can_redo                          # crates/postio-body/src/edit.rs:118
 check_budget                      # crates/postio-core/src/perf_budget.rs:65
+clear_draft_remind                # crates/postio-tui/src/app.rs -- the composer lane clears the draft's reminder with it (T317)
 closing_after                     # crates/postio-account/src/imap/transport.rs:634
 conformance_cases                 # crates/postio-core/src/aim.rs:346
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
@@ -66,6 +67,7 @@ on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
+open_remind_picker_for_draft      # crates/postio-tui/src/app.rs -- the composer's Remind button opens it (T317)
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
 record_seen                       # crates/postio-model/src/contact.rs:95
 recount                           # crates/postio-storage/src/repository/mailboxes.rs:276

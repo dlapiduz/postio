@@ -57,6 +57,12 @@ const SENDER_BESIDE: u16 = 12;
 /// The room the right edge keeps.
 const MARGIN: usize = 0;
 
+/// Where the subject starts in a list `width` cells wide, `beside` the
+/// reading pane or not: after the cursor, the mark and the sender's column.
+pub fn subject_x(width: u16, beside: bool) -> u16 {
+    SENDER_X + sender_width(width, beside) + 1
+}
+
 /// How many lines `row` takes: one, or two with a marker. A row not here yet
 /// is one.
 pub fn lines_of(row: Option<&Row>) -> u16 {

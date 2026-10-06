@@ -177,8 +177,26 @@ pub enum Input {
     },
     /// New mail worth telling the person about, as the host decided it.
     Notified(postio_ui::notify::Notification),
-    /// The account's labels, for the finder's `+` ([`Effect::ReadLabels`]).
-    Labels(Vec<postio_model::Label>),
+    /// What a label picker lists, read ([`Effect::ReadLabelPicker`]).
+    LabelPicker {
+        /// The account the labels are of.
+        account: postio_model::AccountId,
+        /// Its labels.
+        labels: Vec<postio_model::Label>,
+        /// How many conversations carry each.
+        counts: Vec<(postio_model::LabelId, u32)>,
+        /// Which every conversation the picker acts on carries.
+        applied: std::collections::BTreeSet<postio_model::LabelId>,
+    },
+    /// The host answered an [`Effect::CreateLabel`]: the new label.
+    LabelMade {
+        /// The label, or nothing when it could not be made.
+        label: Option<postio_model::Label>,
+        /// Whether the picker closes now.
+        close: bool,
+    },
+    /// The last folders mail was moved to ([`Effect::ReadRecentMoves`]).
+    RecentMoves(Vec<postio_model::MailboxId>),
     /// The host answered an [`Effect::BarSearch`].
     BarFound {
         /// Which question it answers.
@@ -306,8 +324,30 @@ pub enum Effect {
         /// The rest.
         body: String,
     },
-    /// Read the account's labels, for the finder's `+`.
-    ReadLabels(postio_model::AccountId),
+    /// Read a label picker's labels, their counts, and which the
+    /// conversations carry; the answer comes back as [`Input::LabelPicker`].
+    ReadLabelPicker {
+        /// The message whose account's labels are offered.
+        message: postio_model::MessageId,
+        /// The account to offer when the message's cannot be found.
+        account: postio_model::AccountId,
+        /// The conversations whose labels are shown as applied.
+        threads: Vec<postio_model::ThreadId>,
+    },
+    /// Make a label; the answer comes back as [`Input::LabelMade`].
+    CreateLabel {
+        /// Whose.
+        account: postio_model::AccountId,
+        /// Its name.
+        name: String,
+        /// Whether the picker closes once it is made.
+        close: bool,
+    },
+    /// Read the folders mail was last moved to; the answer comes back as
+    /// [`Input::RecentMoves`].
+    ReadRecentMoves,
+    /// Remember a move, for the picker's Recent.
+    NoteMove(postio_model::MailboxId),
     /// Write a part to a file, and answer with [`Input::PartWritten`].
     SavePart {
         /// Whose.
@@ -556,8 +596,6 @@ pub struct App {
     privacy: Option<Privacy>,
     /// What the palette is naming, while it is.
     renaming: Option<Renaming>,
-    /// The account's labels, as the finder's `+` offers them.
-    labels: Vec<postio_model::Label>,
     /// Each account's sync status, folded from the host's events.
     trackers: postio_ui::status::Trackers,
     /// Which account the list on screen belongs to.
@@ -607,6 +645,11 @@ pub struct App {
     bar: Option<crate::bar::Bar>,
     /// The folders popover, while it is open.
     places_box: Option<crate::folders::Folders>,
+    /// The snooze, remind, label or move picker, while it is open.
+    picker: Option<crate::pickers::Picker>,
+    /// When the remind picker was told to remind about the draft being
+    /// written: for the composer to put on the draft.
+    draft_remind: Option<chrono::DateTime<chrono::Utc>>,
     /// The palette, while it is open.
     palette: Option<PaletteState>,
     /// Whether the terminal speaks the kitty keyboard protocol, so every
@@ -712,10 +755,6 @@ pub struct Privacy {
 /// Which of the finder's modes the palette is in (`postio_ui::finder`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Finding {
-    /// `#`, asked by `m`: which folder to move the selection to.
-    MoveTo,
-    /// `+`: put a label on the selection.
-    Labels,
     /// `M` in the settings: which of an account's roles to point somewhere.
     Roles(postio_model::AccountId),
     /// Then which folder that role is, or automatic.
@@ -779,8 +818,6 @@ pub struct PaletteRow {
 
 /// What a palette row does.
 enum PaletteAction {
-    MoveTo(postio_model::MailboxId),
-    Label(postio_model::ids::LabelId),
     /// Ask which folder this role is.
     PickRole(postio_model::AccountId, postio_model::mailbox::MailboxRole),
     /// Point the role at this folder's path, or back to automatic.
@@ -834,6 +871,8 @@ pub enum Focus {
     Bar,
     /// The folders popover.
     Folders,
+    /// A picker over the focused row.
+    Picker,
     /// The first run, while there is no account.
     FirstRun,
     /// The settings.
@@ -905,8 +944,9 @@ impl App {
             composed_from: Focus::List,
             bar: None,
             places_box: None,
+            picker: None,
+            draft_remind: None,
             palette: None,
-            labels: Vec::new(),
             enhanced_keys: false,
             cheatsheet: None,
             armed_link: None,
@@ -1512,6 +1552,20 @@ impl App {
     /// A mouse event, on what it landed on: the same things the keys do.
     fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
         use crate::view::hit::Target;
+        if self.picker.is_some() {
+            match pointer {
+                Pointer::Click { hit, .. } if !matches!(hit.target, Target::PickRow(_)) => {
+                    return Vec::new();
+                }
+                Pointer::Wheel { down, .. } => {
+                    if let Some(picker) = self.picker.as_mut() {
+                        picker.wheel(down);
+                    }
+                    return vec![Effect::Redraw];
+                }
+                Pointer::Click { .. } => {}
+            }
+        }
         if self.places_box.is_some() {
             match pointer {
                 Pointer::Click { hit, .. } if !matches!(hit.target, Target::PlaceRow(_)) => {
@@ -1585,6 +1639,7 @@ impl App {
                 Target::BarSaved(index) => self.bar_saved(index),
                 Target::BarChip(index) => self.bar_chip(index),
                 Target::PlaceRow(index) => self.folders_click(index),
+                Target::PickRow(index) => self.picker_click(index),
                 Target::Reader(line) => {
                     if self.reading.is_none() {
                         return Vec::new();
@@ -1730,15 +1785,7 @@ impl App {
             finding,
         });
         self.focus = Focus::Palette;
-        // Labels are read each time the box asks for them, so one made since
-        // the last time is offered.
-        let read = match (finding, self.account) {
-            (Finding::Labels, Some(account)) => Some(Effect::ReadLabels(account)),
-            _ => None,
-        };
-        let mut effects = vec![Effect::Redraw];
-        effects.extend(read);
-        effects
+        vec![Effect::Redraw]
     }
 
     // -- The command bar (src/bar.rs) ------------------------------------
@@ -2005,6 +2052,248 @@ impl App {
         }
     }
 
+    // -- The pickers (src/pickers.rs) --------------------------------------
+
+    /// The picker and its keymap, while one is open.
+    pub fn picker(&self) -> Option<(&crate::pickers::Picker, &postio_core::Keymap)> {
+        Some((self.picker.as_ref()?, self.keys.keymap()))
+    }
+
+    /// The rows a verb acts on: those selected, or the cursor's.
+    fn aimed_rows(&self) -> Vec<&Row> {
+        let picked = match self.selection.selection() {
+            postio_core::Selection::These(picked) => picked,
+            postio_core::Selection::Everything { .. } => return Vec::new(),
+        };
+        let rows: Vec<&Row> = picked
+            .iter()
+            .filter_map(|message| self.list.row_of(*message))
+            .collect();
+        if rows.is_empty() {
+            self.cursor_message()
+                .and_then(|message| self.list.row_of(message))
+                .into_iter()
+                .collect()
+        } else {
+            rows
+        }
+    }
+
+    /// What a picker names as its target: the conversation under the cursor,
+    /// or how many are selected.
+    fn picker_target(&self) -> Option<String> {
+        if let postio_core::Selection::Everything { .. } = self.selection.selection() {
+            return Some("Every conversation".to_owned());
+        }
+        let rows = self.aimed_rows();
+        let first = rows.first()?;
+        Some(postio_ui::pickers::target(
+            rows.len(),
+            first.from.as_str(),
+            first.subject.as_str(),
+        ))
+    }
+
+    /// `s`, `h`, `l` or `m`: the picker, over the row the keyboard is on.
+    fn open_picker(&mut self, kind: crate::pickers::Kind) -> Vec<Effect> {
+        use crate::pickers::{Kind, Picker};
+        let Some(target) = self.picker_target() else {
+            return Vec::new();
+        };
+        let from = match self.focus {
+            Focus::Picker => Focus::List,
+            focus => focus,
+        };
+        let now = chrono::Local::now();
+        let mut effects = vec![Effect::Redraw];
+        let picker = match kind {
+            Kind::Snooze | Kind::Remind => Picker::when(kind, &target, from, now),
+            Kind::Label => {
+                let Some(account) = self.account_here() else {
+                    return Vec::new();
+                };
+                let rows = self.aimed_rows();
+                let threads = rows.iter().filter_map(|row| row.thread).collect();
+                let message = rows
+                    .first()
+                    .map_or(postio_model::MessageId::new(0), |row| row.id);
+                effects.push(Effect::ReadLabelPicker {
+                    message,
+                    account,
+                    threads,
+                });
+                Picker::labelling(&target, from, account)
+            }
+            Kind::Move => {
+                let enabled: Vec<postio_model::mailbox::Mailbox> = self
+                    .folders
+                    .iter()
+                    .filter(|folder| {
+                        self.accounts
+                            .iter()
+                            .any(|account| account.enabled && account.id == folder.account_id)
+                    })
+                    .cloned()
+                    .collect();
+                effects.push(Effect::ReadRecentMoves);
+                Picker::moving(&target, from, enabled)
+            }
+        };
+        self.picker = Some(picker);
+        self.focus = Focus::Picker;
+        effects
+    }
+
+    /// Open the remind picker for the draft being written, over the
+    /// composer. What it chooses is [`App::draft_remind`]: the composer puts
+    /// it on the draft as `remind_at`, and clears it when the draft closes.
+    pub fn open_remind_picker_for_draft(&mut self, target: &str) -> Vec<Effect> {
+        let from = match self.focus {
+            Focus::Picker => Focus::Composer,
+            focus => focus,
+        };
+        self.picker = Some(crate::pickers::Picker::for_draft(
+            target,
+            from,
+            chrono::Local::now(),
+        ));
+        self.focus = Focus::Picker;
+        vec![Effect::Redraw]
+    }
+
+    /// When the remind picker chose to bring the draft's conversation back
+    /// if nobody has replied.
+    pub fn draft_remind(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.draft_remind
+    }
+
+    /// Forget the draft's reminder: the draft was sent or put away.
+    pub fn clear_draft_remind(&mut self) {
+        self.draft_remind = None;
+    }
+
+    fn picker_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        let Some(mut picker) = self.picker.take() else {
+            return Vec::new();
+        };
+        let step = picker.key(key, &mut self.keys);
+        self.picker = Some(picker);
+        self.picker_step(step)
+    }
+
+    fn picker_click(&mut self, index: usize) -> Vec<Effect> {
+        let step = self.picker.as_mut().map(|picker| picker.choose(index));
+        match step {
+            Some(step) => self.picker_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    fn picker_step(&mut self, step: crate::pickers::Step) -> Vec<Effect> {
+        use crate::pickers::Step;
+        match step {
+            Step::Stay => vec![Effect::Redraw],
+            Step::Close => self.close_picker(),
+            Step::Keep(pick) => self.picker_pick(pick, false),
+            Step::Choose(pick) => self.picker_pick(pick, true),
+        }
+    }
+
+    fn close_picker(&mut self) -> Vec<Effect> {
+        if let Some(picker) = self.picker.take() {
+            self.focus = picker.from();
+        }
+        vec![Effect::Redraw]
+    }
+
+    /// What a choice sends, aimed where the picker opened.
+    fn picker_pick(&mut self, pick: crate::pickers::Pick, close: bool) -> Vec<Effect> {
+        use crate::pickers::{Kind, Pick};
+        use postio_core::{Command, CommandId};
+        let Some(picker) = self.picker.as_ref() else {
+            return Vec::new();
+        };
+        let (kind, draft, account) = (picker.kind(), picker.is_for_draft(), picker.account());
+        if close {
+            self.close_picker();
+        }
+        match pick {
+            Pick::When(at) if draft => {
+                self.draft_remind = Some(at.with_timezone(&chrono::Utc));
+                vec![Effect::Redraw]
+            }
+            Pick::When(at) => {
+                let at = at.with_timezone(&chrono::Utc);
+                let (id, set): (CommandId, fn(&mut Command, chrono::DateTime<chrono::Utc>)) =
+                    if kind == Kind::Snooze {
+                        (CommandId::Snooze, |command, at| {
+                            if let Command::Snooze { until, .. } = command {
+                                *until = Some(at);
+                            }
+                        })
+                    } else {
+                        (CommandId::RemindIfNoReply, |command, when| {
+                            if let Command::RemindIfNoReply { at, .. } = command {
+                                *at = Some(when);
+                            }
+                        })
+                    };
+                self.send_answered(id, |command| set(command, at))
+            }
+            Pick::Label { label, on } => self.send_answered(CommandId::AddLabel, |command| {
+                if let Command::AddLabel {
+                    label: chosen,
+                    on: state,
+                    ..
+                } = command
+                {
+                    *chosen = Some(label);
+                    *state = Some(on);
+                }
+            }),
+            Pick::Create { name, close } => match account {
+                Some(account) => vec![Effect::CreateLabel {
+                    account,
+                    name,
+                    close,
+                }],
+                None => Vec::new(),
+            },
+            Pick::Move(to) => {
+                let mut effects = self.send_answered(CommandId::Move, |command| {
+                    if let Command::Move { to: chosen, .. } = command {
+                        *chosen = Some(to);
+                    }
+                });
+                effects.push(Effect::NoteMove(to));
+                effects
+            }
+        }
+    }
+
+    /// A label was made for the picker: it is put on what the picker acts on.
+    fn label_made(&mut self, label: Option<postio_model::Label>, close: bool) -> Vec<Effect> {
+        let Some(mut label) = label else {
+            return self.say("The label could not be made");
+        };
+        label.name = postio_ui::terminal::SafeText::new(&label.name)
+            .as_str()
+            .to_owned();
+        let id = label.id;
+        if let Some(picker) = self.picker.as_mut() {
+            picker.made(label, close);
+        }
+        if close {
+            self.close_picker();
+        }
+        self.send_answered(postio_core::CommandId::AddLabel, |command| {
+            if let postio_core::Command::AddLabel { label, on, .. } = command {
+                *label = Some(id);
+                *on = Some(true);
+            }
+        })
+    }
+
     // -- The folders popover (src/folders.rs) -----------------------------
 
     /// The popover and what it lists from, while it is open.
@@ -2098,6 +2387,7 @@ impl App {
             Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
             Focus::Settings => postio_core::Context::Accounts,
             Focus::Bar | Focus::Folders => postio_core::Context::Search,
+            Focus::Picker => postio_core::Context::Picker,
             Focus::Reader => postio_core::Context::Reader,
             Focus::Composer => postio_core::Context::Composer,
         }
@@ -2159,8 +2449,6 @@ impl App {
             .collect();
         Some(PaletteView {
             marker: match state.finding {
-                Finding::MoveTo => "#",
-                Finding::Labels => "+",
                 Finding::Roles(_) => "Role",
                 Finding::RoleFolder(..) => "Folder",
                 Finding::Rename => "Name",
@@ -2175,49 +2463,6 @@ impl App {
     fn palette_rows(&self, state: &PaletteState) -> Vec<(PaletteRow, PaletteAction)> {
         let query = state.input.value();
         match state.finding {
-            Finding::MoveTo => {
-                let mut found: Vec<(i32, PaletteRow, PaletteAction)> =
-                    crate::places::entries(&self.places)
-                        .iter()
-                        .filter_map(|line| {
-                            let scope = line.opens?;
-                            // A move goes to a folder, not to a view over several.
-                            let ListScope::Mailbox(mailbox) = scope else {
-                                return None;
-                            };
-                            let action = PaletteAction::MoveTo(mailbox);
-                            let title = line.label.as_str().to_owned();
-                            let matched = postio_ui::palette::score(query.trim(), &title)?;
-                            Some((
-                                matched.score,
-                                PaletteRow {
-                                    title,
-                                    chord: None,
-                                    positions: matched.positions,
-                                },
-                                action,
-                            ))
-                        })
-                        .collect();
-                found.sort_by_key(|(score, ..)| std::cmp::Reverse(*score));
-                found
-                    .into_iter()
-                    .map(|(_, row, action)| (row, action))
-                    .collect()
-            }
-            Finding::Labels => postio_ui::finder::labels(&self.labels, query)
-                .into_iter()
-                .map(|hit| {
-                    (
-                        PaletteRow {
-                            title: hit.name,
-                            chord: None,
-                            positions: hit.positions,
-                        },
-                        PaletteAction::Label(hit.id),
-                    )
-                })
-                .collect(),
             // ADR 0035's role map: the desktop's roles in its order, then the
             // account's folders with "Automatic" first, as its picker lists
             // them.
@@ -2313,20 +2558,6 @@ impl App {
                         }),
                         Effect::Redraw,
                     ],
-                    Some(PaletteAction::MoveTo(mailbox)) => {
-                        self.send_answered(postio_core::CommandId::Move, |command| {
-                            if let postio_core::Command::Move { to, .. } = command {
-                                *to = Some(mailbox);
-                            }
-                        })
-                    }
-                    Some(PaletteAction::Label(label)) => {
-                        self.send_answered(postio_core::CommandId::AddLabel, |command| {
-                            if let postio_core::Command::AddLabel { label: chosen, .. } = command {
-                                *chosen = Some(label);
-                            }
-                        })
-                    }
                     None => vec![Effect::Redraw],
                 };
             }
@@ -2522,6 +2753,7 @@ impl App {
             Focus::Reader => KeyContext::Reader,
             Focus::Composer => KeyContext::Composer,
             Focus::Bar | Focus::Folders => KeyContext::Search,
+            Focus::Picker => KeyContext::Picker,
             Focus::Palette => KeyContext::Palette,
             Focus::FirstRun => KeyContext::Global,
             Focus::Settings => KeyContext::Accounts,
@@ -3058,6 +3290,9 @@ impl App {
             // there is nothing for them to do anywhere else.
             "toggle_result_order" | "save_search" | "back_to_words" => {}
             "back" if self.focus == Focus::Reader => return self.back_from_message(),
+            // A picker resolves its own keys while it is open.
+            "picker_choose_1" | "picker_choose_2" | "picker_choose_3" | "picker_choose_4"
+            | "picker_type_date" | "picker_toggle" | "picker_confirm" => {}
             "back" if self.focus != Focus::List => self.focus = Focus::List,
             "expand_all" => self.toggle_folds(),
             "show_images" => return self.allow_images(false),
@@ -3317,8 +3552,12 @@ impl App {
             return Vec::new();
         };
         match id {
-            postio_core::CommandId::Move => self.open_palette(Finding::MoveTo),
-            postio_core::CommandId::AddLabel => self.open_palette(Finding::Labels),
+            postio_core::CommandId::Move => self.open_picker(crate::pickers::Kind::Move),
+            postio_core::CommandId::AddLabel => self.open_picker(crate::pickers::Kind::Label),
+            postio_core::CommandId::Snooze => self.open_picker(crate::pickers::Kind::Snooze),
+            postio_core::CommandId::RemindIfNoReply => {
+                self.open_picker(crate::pickers::Kind::Remind)
+            }
             id => self.send_aimed(id),
         }
     }
@@ -3981,6 +4220,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
         Input::Key(key) if app.focus == Focus::Bar => app.bar_key(&key),
         Input::Key(key) if app.focus == Focus::Folders => app.folders_key(&key),
+        Input::Key(key) if app.focus == Focus::Picker => app.picker_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
@@ -4180,8 +4420,13 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             effects
         }
         // Outside text, made safe to draw once, here, as the list's rows are.
-        Input::Labels(labels) => {
-            app.labels = labels
+        Input::LabelPicker {
+            account,
+            labels,
+            counts,
+            applied,
+        } => {
+            let labels = labels
                 .into_iter()
                 .map(|mut label| {
                     label.name = postio_ui::terminal::SafeText::new(&label.name)
@@ -4190,6 +4435,16 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                     label
                 })
                 .collect();
+            if let Some(picker) = app.picker.as_mut() {
+                picker.learn_labels(account, labels, counts, applied.into_iter().collect());
+            }
+            vec![Effect::Redraw]
+        }
+        Input::LabelMade { label, close } => app.label_made(label, close),
+        Input::RecentMoves(recent) => {
+            if let Some(picker) = app.picker.as_mut() {
+                picker.learn_recent(recent);
+            }
             vec![Effect::Redraw]
         }
         Input::Recipients { prefix, found } => {
@@ -4899,13 +5154,6 @@ pub(crate) mod tests {
         "digest_rule",
         "go_to_filtered",
         "go_to_digest_rules",
-        "picker_choose_1",
-        "picker_choose_2",
-        "picker_choose_3",
-        "picker_choose_4",
-        "picker_type_date",
-        "picker_toggle",
-        "picker_confirm",
         "next_reference",
         "prev_reference",
         "toggle_digest_summary",
@@ -5876,73 +6124,6 @@ pub(crate) mod tests {
         assert_eq!(app.notice(), Some(crate::clipboard::UNAVAILABLE));
         update(&mut app, Input::ClipboardImage(Ok(None)));
         assert_eq!(app.notice(), Some("There is no image on the clipboard"));
-    }
-
-    fn labelled(id: i64, name: &str) -> postio_model::Label {
-        let mut label = postio_model::Label::new(postio_model::AccountId::new(1), name);
-        label.id = postio_model::ids::LabelId::new(id);
-        label
-    }
-
-    fn added_label(effects: &[Effect]) -> Option<Option<postio_model::ids::LabelId>> {
-        effects.iter().find_map(|effect| match effect {
-            Effect::Send(postio_core::Command::AddLabel { label, .. }) => Some(*label),
-            _ => None,
-        })
-    }
-
-    #[test]
-    fn add_label_asks_which_label_rather_than_sending_half_a_command() {
-        // A label of `None` means "ask": sent as it is, the dispatcher
-        // refuses it with "Pick a label to add".
-        let mut app = app((160, 40));
-        update(&mut app, Input::Places(places()));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-
-        let effects = update(&mut app, press('l'));
-        assert_eq!(added_label(&effects), None, "{effects:?}");
-        assert_eq!(app.palette().expect("the label picker").marker, "+");
-        update(&mut app, Input::Labels(vec![labelled(7, "Work")]));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(
-            added_label(&effects),
-            Some(Some(postio_model::ids::LabelId::new(7))),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
-    fn move_asks_which_folder_and_moves_rather_than_opening_it() {
-        let mut app = app((160, 40));
-        update(&mut app, Input::Places(places()));
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-
-        let effects = update(&mut app, press('m'));
-        assert!(
-            !effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Send(_))),
-            "{effects:?}"
-        );
-        assert_eq!(app.palette().expect("the folder picker").marker, "#");
-        type_text(&mut app, "arch");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects.iter().any(|effect| matches!(
-                effect,
-                Effect::Send(postio_core::Command::Move { to: Some(to), .. })
-                    if *to == MailboxId::new(2)
-            )),
-            "{effects:?}"
-        );
-        assert!(
-            !effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Open(_))),
-            "a move does not go there: {effects:?}"
-        );
     }
 
     #[test]

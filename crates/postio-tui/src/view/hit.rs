@@ -32,6 +32,8 @@ pub enum Target {
     BarChip(usize),
     /// A place in the folders popover, by its place in the list.
     PlaceRow(usize),
+    /// A row of a picker, by its place in the list.
+    PickRow(usize),
     /// A control of the window that runs a command, by its id: the top bar's
     /// and the strip's.
     Command(&'static str),
@@ -66,6 +68,16 @@ impl Hits {
         if area.width > 0 && area.height > 0 {
             self.regions.push((area, target));
         }
+    }
+
+    /// Where `target` was drawn: the smallest rectangle holding every region
+    /// that stands for it.
+    pub fn area_of(&self, target: Target) -> Option<Rect> {
+        self.regions
+            .iter()
+            .filter(|(_, at)| *at == target)
+            .map(|(area, _)| *area)
+            .reduce(|a, b| a.union(b))
     }
 
     /// What is at column `x`, row `y`.

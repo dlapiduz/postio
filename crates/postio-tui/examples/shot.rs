@@ -289,6 +289,40 @@ fn main() {
                 }),
             );
         }
+        "snooze" => {
+            typed(&mut app, "s");
+        }
+        "remind" => {
+            typed(&mut app, "h");
+        }
+        "label" => {
+            typed(&mut app, "l");
+            let mut atlas = test_support::label(7, "Atlas");
+            atlas.color = Some("#3584e4".into());
+            update(
+                &mut app,
+                Input::LabelPicker {
+                    account: AccountId::new(1),
+                    labels: vec![
+                        atlas,
+                        test_support::label(8, "Harbor"),
+                        test_support::label(9, "Kitchen reno"),
+                    ],
+                    counts: vec![
+                        (postio_model::LabelId::new(7), 12),
+                        (postio_model::LabelId::new(8), 5),
+                    ],
+                    applied: [postio_model::LabelId::new(8)].into(),
+                },
+            );
+        }
+        "move" => {
+            typed(&mut app, "m");
+            update(
+                &mut app,
+                Input::RecentMoves(vec![MailboxId::new(6), MailboxId::new(2)]),
+            );
+        }
         "bar-folder" => {
             test_support::type_text(&mut app, "/in:arch");
         }

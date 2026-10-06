@@ -548,7 +548,7 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 - [X] T317 [US16] The composer in the frame; detach to the whole screen (FR-196); reply, reply all and forward; Send later; Remind `ctrl+h` Done: Remind `ctrl+h` opens the schedule picker's numbered list with the reminder presets until the pickers (T320) replace it; Escape from a detached draft brings the frame back
 - [X] T318 [US16] The command bar: opening in place, saved searches, chips, `in:`, commands with keys, results, the footer
 - [X] T319 [US16] Folders and labels, `g o`, and the `g` go-to keys
-- [ ] T320 [US16] Pickers: snooze, remind, label and move, anchored at the row
+- [X] T320 [US16] Pickers: snooze, remind, label and move, anchored at the row
 - [ ] T321 [US16] The key map, `?`, from `keymap_sheet` for the terminal
 - [ ] T322 [US16] Filtered, `g f`: the view, tabs, reasons, `R`, Sweep `F`
 - [ ] T323 [US16] The digest window: summary and list, references, the email from a reference, `A`, `D`, `U`

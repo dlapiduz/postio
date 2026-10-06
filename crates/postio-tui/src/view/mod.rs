@@ -13,6 +13,7 @@ pub mod list;
 pub mod open;
 pub mod palette;
 pub mod pane;
+pub mod picker;
 pub mod settings;
 pub mod state;
 pub mod strip;
@@ -115,6 +116,31 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         // Over everything: a click there lands on nothing underneath.
         if let Some((bar, ctx)) = app.bar() {
             bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
+        }
+        if let Some((open, keymap)) = app.picker() {
+            let beside = app
+                .pane()
+                .and_then(|_| crate::layout::split_pane(window.list));
+            let list = beside.map_or(window.list, |(list, _)| list);
+            let place = picker::Place {
+                area: Rect::new(
+                    area.x,
+                    window.list.y,
+                    area.width,
+                    window.bottom.y.saturating_sub(window.list.y),
+                ),
+                row: hits.area_of(hit::Target::Row(app.cursor())),
+                subject_x: list.x + list::subject_x(list.width, beside.is_some()),
+            };
+            picker::draw(
+                frame,
+                &place,
+                open,
+                keymap,
+                &|command| app.hint(command),
+                theme,
+                &mut hits,
+            );
         }
         if let Some((open, reach)) = app.folders() {
             folders::draw(

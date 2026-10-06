@@ -201,7 +201,7 @@ mod tests {
                 saved: Vec::new(),
                 features: Features {
                     filtering,
-                    digest_rules: 0,
+                    ..Features::default()
                 },
             },
         );
