@@ -243,8 +243,7 @@ fn footer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hi
         let command = match hint.label.as_str() {
             "restore + never filter sender" => Some(CommandId::RestoreFiltered),
             "inbox" => Some(CommandId::GoToInbox),
-            // Reading a filtered message is not offered here.
-            "open" => continue,
+            "open" => Some(CommandId::OpenMessage),
             _ => None,
         };
         // The key as this terminal sends it, when the hint is one command's.

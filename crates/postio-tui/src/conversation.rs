@@ -61,6 +61,27 @@ impl Member {
 }
 
 impl Member {
+    /// The one message a list row stands for, its body asked for.
+    pub fn from_row(row: &crate::row::Row) -> Member {
+        Member {
+            id: row.id,
+            from: row.from.clone(),
+            address: row.address.clone(),
+            when: row.when,
+            body: None,
+            held_back: Default::default(),
+            source: None,
+            original: false,
+            reader_view: false,
+            images_allowed: false,
+            asked: true,
+            has_attachments: row.attachment,
+            parts: Vec::new(),
+            to: Vec::new(),
+            cc: Vec::new(),
+        }
+    }
+
     /// A member from a list row.
     pub fn from_summary(summary: &MessageSummary) -> Member {
         Member {
@@ -83,6 +104,17 @@ impl Member {
     }
 }
 
+/// A message opened for itself: Filtered's row, or what the command bar
+/// found. It is not the list's cursor row, so its verbs aim at it and the
+/// list's cursor and marks are left alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Own {
+    /// What the message is: the header's subject, labels and read state.
+    pub row: crate::row::Row,
+    /// Where the keyboard goes when the message closes.
+    pub back: crate::app::Focus,
+}
+
 /// What the reader shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reading {
@@ -92,6 +124,9 @@ pub struct Reading {
     pub members: Vec<Member>,
     /// The member the keyboard is on.
     pub current: usize,
+    /// Set when it was opened for the message itself rather than for the
+    /// cursor's row.
+    pub own: Option<Own>,
 }
 
 /// What a line of a reading stands for, for a click on it.

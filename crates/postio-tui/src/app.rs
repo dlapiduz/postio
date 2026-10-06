@@ -2011,38 +2011,35 @@ impl App {
         message: postio_model::MessageId,
         found: Option<&crate::bar::ResultRow>,
     ) -> Vec<Effect> {
-        if self.list.row_of(message).is_none()
-            && let Some(found) = found
-        {
-            self.reading = Some(crate::conversation::Reading {
-                row: message,
-                members: vec![crate::conversation::Member {
-                    id: message,
-                    from: found.sender.clone(),
-                    address: None,
-                    when: found.at,
-                    body: None,
-                    held_back: Default::default(),
-                    source: None,
-                    original: false,
-                    reader_view: false,
-                    images_allowed: false,
-                    asked: true,
-                    has_attachments: false,
-                    parts: Vec::new(),
-                    to: Vec::new(),
-                    cc: Vec::new(),
-                }],
-                current: 0,
-            });
-            self.reader_top = 0;
-            self.focus = Focus::Reader;
-            return vec![Effect::Redraw, Effect::ReadBody(message)];
-        }
-        let mut effects = self.open_reading(message);
-        self.focus = Focus::Reader;
-        effects.push(Effect::Redraw);
-        effects
+        // The message itself, wherever it is: the list's row when this list
+        // has one, else what the bar says of it. Its verbs aim at it.
+        let row = self.list.row_of(message).cloned().or_else(|| {
+            found.map(|found| Row {
+                id: message,
+                thread: None,
+                is_thread: false,
+                kind: crate::row::Kind::Message,
+                from: found.sender.clone(),
+                address: None,
+                subject: found.subject.clone(),
+                preview: found.snippet.clone(),
+                when: found.at,
+                unread: false,
+                attachment: false,
+                count: 1,
+                marker: None,
+                labels: Vec::new(),
+                send_state: None,
+            })
+        });
+        let Some(row) = row else {
+            return Vec::new();
+        };
+        let back = match self.focus {
+            Focus::Filtered => Focus::Filtered,
+            _ => Focus::List,
+        };
+        self.open_for_itself(row, back)
     }
 
     fn bar_found(
@@ -2096,8 +2093,16 @@ impl App {
         Some((self.picker.as_ref()?, self.keys.keymap()))
     }
 
-    /// The rows a verb acts on: those selected, or the cursor's.
+    /// The rows a verb acts on: the message open for itself, else those
+    /// selected, or the cursor's.
     fn aimed_rows(&self) -> Vec<&Row> {
+        if let Some(own) = self
+            .reading
+            .as_ref()
+            .and_then(|reading| reading.own.as_ref())
+        {
+            return vec![&own.row];
+        }
         let picked = match self.selection.selection() {
             postio_core::Selection::These(picked) => picked,
             postio_core::Selection::Everything { .. } => return Vec::new(),
@@ -3690,13 +3695,28 @@ impl App {
 
     /// Aim a verb at what the user is looking at, and send it as it is.
     fn send_aimed(&mut self, id: postio_core::CommandId) -> Vec<Effect> {
-        let selection = self.selection.selection();
         let reachable: Vec<postio_model::AccountId> = self
             .accounts
             .iter()
             .filter(|account| account.enabled)
             .map(|account| account.id)
             .collect();
+        let (quiet, _) = postio_core::bridge::event_channel();
+        // A message opened for itself is what the verb is about; the list's
+        // cursor and marks are somewhere else.
+        if let Some(own) = self.own_aim() {
+            let nothing = postio_core::Selection::These(Vec::new());
+            let aim = postio_core::aim::Aim {
+                scope: None,
+                selection: &nothing,
+                cursor: Some(own),
+                rows: &self.list,
+            };
+            let command = postio_core::aim::command_for(id, &aim);
+            postio_core::aim::mirror(&self.state, &quiet, &aim);
+            return vec![Effect::Send(command)];
+        }
+        let selection = self.selection.selection();
         let aim = postio_core::aim::Aim {
             scope: self
                 .scope
@@ -3706,7 +3726,6 @@ impl App {
             rows: &self.list,
         };
         let command = postio_core::aim::command_for(id, &aim);
-        let (quiet, _) = postio_core::bridge::event_channel();
         postio_core::aim::mirror(&self.state, &quiet, &aim);
         // What was selected has been acted on: the selection lets go.
         self.selection.clear();
@@ -3774,30 +3793,16 @@ impl App {
                     row: message,
                     members: Vec::new(),
                     current: 0,
+                    own: None,
                 });
                 vec![Effect::ReadConversation(thread)]
             }
             _ => {
                 self.reading = Some(crate::conversation::Reading {
                     row: message,
-                    members: vec![crate::conversation::Member {
-                        id: row.id,
-                        from: row.from.clone(),
-                        address: row.address.clone(),
-                        when: row.when,
-                        body: None,
-                        held_back: Default::default(),
-                        source: None,
-                        original: false,
-                        reader_view: false,
-                        images_allowed: false,
-                        asked: true,
-                        has_attachments: row.attachment,
-                        parts: Vec::new(),
-                        to: Vec::new(),
-                        cc: Vec::new(),
-                    }],
+                    members: vec![crate::conversation::Member::from_row(row)],
                     current: 0,
+                    own: None,
                 });
                 self.reader_top = 0;
                 vec![Effect::Redraw, Effect::ReadBody(message)]
@@ -6278,6 +6283,7 @@ pub(crate) mod tests {
             row: MessageId::new(1),
             members: vec![crate::conversation::tests::member_with_lines(1, 120)],
             current: 0,
+            own: None,
         };
         app.reading = Some(reading);
 
@@ -6298,6 +6304,7 @@ pub(crate) mod tests {
             row: MessageId::new(1),
             members: vec![member],
             current: 0,
+            own: None,
         }
     }
 

@@ -963,6 +963,7 @@ mod tests {
                 &words.join(" "),
             )],
             current: 0,
+            own: None,
         });
         let screen = screen(160, 30, &app);
         for word in &words {

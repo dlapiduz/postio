@@ -80,11 +80,46 @@ impl App {
         self.open.menu.as_ref()
     }
 
-    /// The list row the open message was opened from.
+    /// The row the open message stands for: its own, when it was opened for
+    /// itself, else the list row it was opened from.
     pub fn row_of_open(&self) -> Option<&crate::row::Row> {
+        let reading = self.reading.as_ref()?;
+        match &reading.own {
+            Some(own) => Some(&own.row),
+            None => self.row(reading.row),
+        }
+    }
+
+    /// The message verbs aim at while one is open for itself.
+    pub(super) fn own_aim(&self) -> Option<MessageId> {
         self.reading
             .as_ref()
-            .and_then(|reading| self.row(reading.row))
+            .filter(|reading| reading.own.is_some())
+            .map(|reading| reading.row)
+    }
+
+    /// Open `row`'s message for itself, over whatever the window shows: its
+    /// verbs aim at it, the list's cursor and marks stay where they are, and
+    /// closing it returns the keyboard to `back`.
+    pub(super) fn open_for_itself(&mut self, row: crate::row::Row, back: Focus) -> Vec<Effect> {
+        let message = row.id;
+        self.reading = Some(crate::conversation::Reading {
+            row: message,
+            members: vec![crate::conversation::Member::from_row(&row)],
+            current: 0,
+            own: Some(crate::conversation::Own { row, back }),
+        });
+        self.focus = Focus::Reader;
+        self.reader_top = 0;
+        self.open = Open {
+            dwell: self.open.dwell,
+            ..Open::default()
+        };
+        self.armed_link = None;
+        let mut effects = vec![Effect::ReadBody(message)];
+        effects.extend(self.arm_dwell());
+        effects.push(Effect::Redraw);
+        effects
     }
 
     /// Whether the action card is drawn for `member`: the marker is the
@@ -127,11 +162,16 @@ impl App {
         self.features.capture
     }
 
-    /// "Message 5 of 312 · thread of 6", for the open message.
+    /// "Message 5 of 312 · thread of 6", for the open message; nothing for
+    /// one opened for itself.
     pub fn position_line(&self) -> String {
         let Some(reading) = self.reading.as_ref() else {
             return String::new();
         };
+        // A message opened for itself is no place in the list.
+        if reading.own.is_some() {
+            return String::new();
+        }
         let row = self.row(reading.row);
         let latest = reading.current + 1 >= reading.members.len();
         postio_ui::focus_dialog::position_line(
@@ -147,7 +187,10 @@ impl App {
     /// The pane the open message sits in beside the list, when it is placed
     /// there: `[focus] reading` says so and the terminal is wide enough.
     pub fn pane(&self) -> Option<u16> {
-        if self.features.reading != postio_config::Reading::Pane {
+        // Filtered has the whole body: a message opened from it is in the
+        // frame, over it.
+        if self.features.reading != postio_config::Reading::Pane || self.surfaces.filtered.is_some()
+        {
             return None;
         }
         let list = self.window().list;
@@ -260,6 +303,17 @@ impl App {
     /// its place, the list's cursor with it. A digest is not a message and
     /// is passed over.
     pub(super) fn step_open(&mut self, by: i32) -> Vec<Effect> {
+        // One opened for itself steps through where it came from.
+        if let Some(own) = self
+            .reading
+            .as_ref()
+            .and_then(|reading| reading.own.as_ref())
+        {
+            return match own.back {
+                Focus::Filtered => self.step_filtered_open(by as isize),
+                _ => Vec::new(),
+            };
+        }
         let last = self.list.total().saturating_sub(1);
         let mut at = self.cursor;
         loop {
@@ -284,7 +338,7 @@ impl App {
     /// archived from it, or a row that was not here yet when `j` was
     /// pressed.
     pub(super) fn follow_cursor(&mut self) -> Vec<Effect> {
-        if self.focus != Focus::Reader {
+        if self.focus != Focus::Reader || self.own_aim().is_some() {
             return Vec::new();
         }
         let Some(open) = self.reading.as_ref().map(|reading| reading.row) else {
@@ -308,7 +362,11 @@ impl App {
     /// Close the message: the list is as it was, the cursor and the
     /// selection with it.
     pub(super) fn close_message(&mut self) -> Vec<Effect> {
-        self.focus = Focus::List;
+        self.focus = self
+            .reading
+            .as_ref()
+            .and_then(|reading| reading.own.as_ref())
+            .map_or(Focus::List, |own| own.back);
         self.reading = None;
         self.reader_top = 0;
         self.armed_link = None;

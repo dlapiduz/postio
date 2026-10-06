@@ -426,9 +426,23 @@ fn cases() -> Vec<Case> {
                 ctl("6 Shipping 14", "6"),
                 ctl("7 Social 12", "7"),
                 ctl("Promo Weekly", "j"),
+                ctl("↵ open", "<Enter>"),
             ],
             holds: false,
             ..case("Filtered", "filtered", (120, 36))
+        },
+        Case {
+            then: "<Enter>",
+            marks: vec![Has("╭"), Styled("Filtered 12", BOLD)],
+            controls: vec![
+                ctl("↓ j", "j"),
+                ctl("Esc ✕", "<Esc>"),
+                ctl("Archive a", "a"),
+                ctl("Snooze s", "s"),
+                ctl("Reply e", "e"),
+            ],
+            holds: false,
+            ..case("a filtered message open for itself", "filtered", (120, 36))
         },
         Case {
             wheel: Some("Forge"),

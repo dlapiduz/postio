@@ -98,9 +98,8 @@ impl App {
                     restored: true,
                 })]);
             }
-            // Reading a filtered message is the open message's, which is
-            // aimed at the inbox's rows; Filtered does not open it.
-            "open_message" => return Some(Vec::new()),
+            // The filtered message opens in the frame, aimed at itself.
+            "open_message" => return Some(self.open_filtered_row()),
             "back" | "go_to_inbox" => return Some(self.leave_filtered()),
             "sweep_inbox" => return Some(self.ask_sweep()),
             "quit" | "undo" | "cheat_sheet" => return Some(self.global(id)),
@@ -116,6 +115,36 @@ impl App {
         }
         view.reveal(height);
         Some(vec![Effect::Redraw])
+    }
+
+    /// `Return` on the focused row: its message, in the frame over Filtered.
+    fn open_filtered_row(&mut self) -> Vec<Effect> {
+        let Some(row) = self
+            .surfaces
+            .filtered
+            .as_ref()
+            .and_then(|view| view.focused())
+            .map(|item| item.row.clone())
+        else {
+            return Vec::new();
+        };
+        self.open_for_itself(row, Focus::Filtered)
+    }
+
+    /// `j` and `k` in a message opened from Filtered: the next or previous
+    /// row's message opens in its place, and the keyboard there with it.
+    pub(super) fn step_filtered_open(&mut self, by: isize) -> Vec<Effect> {
+        let height = self.filtered_height();
+        let Some(view) = self.surfaces.filtered.as_mut() else {
+            return Vec::new();
+        };
+        let before = view.focused().map(|item| item.row.id);
+        view.step(by);
+        view.reveal(height);
+        if view.focused().map(|item| item.row.id) == before {
+            return Vec::new();
+        }
+        self.open_filtered_row()
     }
 
     /// `F`: say how much of the inbox the rules would file away, and ask.
@@ -549,12 +578,155 @@ mod tests {
         assert_eq!(effects, vec![Effect::Ask(Ask::SweepPreview)]);
     }
 
+    /// Filtered, with the second row's message open: the inbox behind it has
+    /// one row, `Hello`, whose message is 1.
+    fn reading_the_second(size: (u16, u16)) -> App {
+        let mut app = open_filtered(size);
+        update(&mut app, press('j'));
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        app
+    }
+
+    fn resolved(app: &App) -> Option<postio_core::Resolved> {
+        app.state()
+            .read(|state| state.resolve(&MessageTarget::Selection))
+    }
+
     #[test]
-    fn return_on_a_row_opens_nothing_and_leaves_the_view_where_it_is() {
+    fn return_on_a_row_opens_that_message_in_the_frame_over_filtered() {
         let mut app = open_filtered((120, 30));
+        update(&mut app, press('j'));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(effects.is_empty(), "{effects:?}");
+        assert!(
+            effects.contains(&Effect::ReadBody(MessageId::new(12))),
+            "{effects:?}"
+        );
+        assert_eq!(app.focus(), Focus::Reader);
+        let drawn = screen(120, 30, &app);
+        assert!(drawn.contains("╭"), "a frame:\n{drawn}");
+        assert!(
+            line_with(&drawn, "Filtered 12").contains('╭')
+                || drawn.lines().any(|line| line.contains("│")
+                    && line.contains("Filtered 12")
+                    && line.contains("Esc")),
+            "its subject heads the frame:\n{drawn}"
+        );
+        assert!(
+            drawn.contains("‹ Inbox"),
+            "Filtered's strip is behind:\n{drawn}"
+        );
+    }
+
+    #[test]
+    fn with_reading_beside_the_list_a_filtered_message_still_opens_in_the_frame() {
+        let mut app = app((140, 30));
+        let mut contents = places_with_features();
+        contents.features.reading = postio_config::Reading::Pane;
+        seed_places(&mut app, contents);
+        update(&mut app, press('g'));
+        let effects = update(&mut app, press('f'));
+        serve_filtered(&mut app, effects, &TABS, &filed());
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let drawn = screen(140, 30, &app);
+        assert!(
+            drawn.contains('╭') && drawn.contains("Filtered 11"),
+            "{drawn}"
+        );
+        assert_eq!(app.focus(), Focus::Reader);
+    }
+
+    #[test]
+    fn a_verb_on_the_open_message_acts_on_it_not_on_the_inboxs_cursor() {
+        let mut app = reading_the_second((120, 30));
+        let effects = update(&mut app, press('a'));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(Command::Archive { .. }))),
+            "{effects:?}"
+        );
+        assert_eq!(
+            resolved(&app),
+            Some(postio_core::Resolved::Messages(vec![MessageId::new(12)])),
+            "the filtered message, not the inbox's row 1"
+        );
+    }
+
+    #[test]
+    fn a_picker_over_the_open_message_is_about_it_and_snoozes_it() {
+        let mut app = reading_the_second((120, 30));
+        update(&mut app, press('s'));
+        let drawn = screen(120, 30, &app);
+        assert!(drawn.contains("Ledger · Filtered 12"), "{drawn}");
+        let effects = update(&mut app, press('2'));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Send(Command::Snooze { .. }))),
+            "{effects:?}"
+        );
+        assert_eq!(
+            resolved(&app),
+            Some(postio_core::Resolved::Messages(vec![MessageId::new(12)]))
+        );
+    }
+
+    #[test]
+    fn the_inboxs_selection_is_left_alone_by_a_verb_on_the_open_message() {
+        let mut app = inbox((120, 30));
+        update(&mut app, press('x'));
+        update(&mut app, press('g'));
+        let effects = update(&mut app, press('f'));
+        serve_filtered(&mut app, effects, &TABS, &filed());
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        update(&mut app, press('a'));
+        assert_eq!(
+            app.selection().selection(),
+            postio_core::Selection::These(vec![MessageId::new(1)]),
+            "the inbox's marked row stays marked"
+        );
+    }
+
+    #[test]
+    fn escape_goes_back_to_filtered_on_the_same_row() {
+        let mut app = reading_the_second((120, 30));
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::Filtered);
+        let drawn = screen(120, 30, &app);
+        assert!(!drawn.contains('╭'), "the frame is gone:\n{drawn}");
+        assert!(
+            line_with(&drawn, "Filtered 12").starts_with('▌'),
+            "the keyboard is on the row it was on:\n{drawn}"
+        );
+    }
+
+    #[test]
+    fn j_and_k_in_the_open_message_step_through_filtered_and_escape_stays_where_they_got_to() {
+        let mut app = reading_the_second((120, 30));
+        let effects = update(&mut app, press('j'));
+        assert!(
+            effects.contains(&Effect::ReadBody(MessageId::new(13))),
+            "{effects:?}"
+        );
+        update(&mut app, press('k'));
+        update(&mut app, press('k'));
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        let drawn = screen(120, 30, &app);
+        assert!(line_with(&drawn, "Filtered 11").starts_with('▌'), "{drawn}");
+    }
+
+    #[test]
+    fn a_message_found_by_the_bar_acts_on_itself_too() {
+        let (mut app, _) = crate::test_support::sample::state("bar", 120, 36);
+        // The cursor is on the first row, message 1; the hit is message 3.
+        assert_eq!(app.cursor(), 0);
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::Reader);
+        update(&mut app, press('a'));
+        assert_eq!(
+            resolved(&app),
+            Some(postio_core::Resolved::Messages(vec![MessageId::new(3)]))
+        );
     }
 
     #[test]
@@ -610,7 +782,7 @@ mod tests {
     }
 
     #[test]
-    fn the_footer_names_what_the_keys_do_without_offering_open() {
+    fn the_footer_names_what_the_keys_do_and_open_is_one_of_them() {
         let app = open_filtered((120, 30));
         let drawn = screen(120, 30, &app);
         let footer = drawn.lines().nth(28).unwrap();
@@ -620,7 +792,7 @@ mod tests {
         );
         assert!(footer.contains("1–7 reason tabs"), "{footer}");
         assert!(footer.contains("g i inbox"), "{footer}");
-        assert!(!footer.contains("open"), "{footer}");
+        assert!(footer.contains("↵ open"), "{footer}");
     }
 
     #[test]

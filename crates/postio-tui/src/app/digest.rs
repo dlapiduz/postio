@@ -287,24 +287,9 @@ impl App {
         };
         self.reading = Some(crate::conversation::Reading {
             row: message,
-            members: vec![crate::conversation::Member {
-                id: row.id,
-                from: row.from.clone(),
-                address: row.address.clone(),
-                when: row.when,
-                body: None,
-                held_back: Default::default(),
-                source: None,
-                original: false,
-                reader_view: false,
-                images_allowed: false,
-                asked: true,
-                has_attachments: row.attachment,
-                parts: Vec::new(),
-                to: Vec::new(),
-                cc: Vec::new(),
-            }],
+            members: vec![crate::conversation::Member::from_row(&row)],
             current: 0,
+            own: None,
         });
         vec![Effect::Redraw, Effect::ReadBody(message)]
     }
