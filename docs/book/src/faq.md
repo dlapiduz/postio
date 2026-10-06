@@ -47,18 +47,23 @@ text an AI agent could be tricked by.
 
 ## Can I make rules that file mail as it arrives?
 
-Not yet. Rules are designed — the same search language you type in the
-search bar, reused as the condition — and not built. Saved searches are:
-`Ctrl+S` on a search saves and pins it, and it re-runs whenever you open it
-(`Alt+1`…`Alt+4` in the desktop app).
+Two kinds, yes. The desktop app files spam and automated updates into
+Filtered as they arrive, each with its reason and `R` from restored, and a
+digest rule (`d` on a row) holds a sender's mail back into a digest on the
+day you choose; `g d` lists the rules. Both act while Postio is open.
+General rules — the same search language you type in the command bar,
+reused as the condition, with actions of your choosing — are designed and
+not built. Saved searches are: `Ctrl+S` in the command bar saves and pins
+one, it re-runs whenever you open it, and `Alt+1`…`Alt+4` run the pinned
+ones.
 
 ## How does search work?
 
 Locally and fast — a full-text index built on your own machine, never a
 server-side search. One query language works everywhere it shows up: typed
 in the command bar, saved as a named search, or pinned so it is one key
-away. `from:ada after:2026-01-01 has:attach` is the kind of query
-you can type, and results begin appearing as you type it. When a query
+away. `from:ada after:2026-01-01 has:attach` is the kind of query you can
+type, and results begin appearing as you type it. When a query
 finds nothing, Postio suggests the spelling that would.
 
 "All mail" means every folder except drafts, junk and trash — the three a
