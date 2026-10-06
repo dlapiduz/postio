@@ -252,7 +252,7 @@ xdg-mime default dev.postio.Postio.desktop x-scheme-handler/mailto
 | `/` | Search all mail (`>` runs a command, `#` jumps to a folder, `@` finds a person, `+` adds a label) |
 | `Ctrl+S` in a search | Save the search; `Alt+1`…`Alt+4` run the pinned ones |
 | `c` | Compose (`Ctrl+Enter` sends, `Ctrl+Shift+Enter` schedules) |
-| `g o` | Every mailbox, folder and label, with their counts |
+| `g o` | Every mailbox, folder and label |
 | `g i`, `g t`, `g s`, `g *` | Go to inbox, drafts, sent, flagged |
 | `!` | Show only the mail that needs something from you |
 | `g f`, `g d` | Filtered mail, digest rules |

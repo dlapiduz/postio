@@ -38,7 +38,7 @@ single command.
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
-| Folders and the Flagged, Snoozed, Drafts and Outbox views | ✓ | ✓ | The desktop lists them in the folders popover, `g o` |
+| Folders and the Flagged, Snoozed, Drafts and Outbox views | ✓ | ✓ | The desktop's folders popover (`g o`) lists the folders, Drafts and the Outbox; `g *` and `g z` go to Flagged and Snoozed |
 | Saved searches: run, rename, reorder, delete | ◐ | ✓ | The desktop runs the pinned ones from the command bar (`Alt+1`…`Alt+4`); the rest is `config.toml`. The terminal: `r`, `Shift+↑`/`Shift+↓`, `d` (twice: it asks first) |
 | Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✓ | |
 | Back to the previous view | ✓ | ✓ | |

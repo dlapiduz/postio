@@ -401,13 +401,13 @@ width decides what is *shown*, never what the user asked for.
 
 **One box, and one popover.** The command bar (`/` for mail, `mod+k` for
 commands) searches as you type, and a prefix chooses what else to ask (§7).
-The folders popover (`g o`, or a click on "Inbox ▾") lists every mailbox,
-folder and label with its count, and keeps a distinction that is
+The folders popover (`g o`, or a click on "Inbox ▾") lists the mailboxes
+and folders with their counts, and the labels. A distinction runs under it that is
 load-bearing: a *folder* is one the server has — Inbox, Archive, Sent,
 Drafts, Trash, Junk, and whatever else the account holds — and a *view* is a
-saved question about messages filed elsewhere — Flagged, Snoozed, Filtered
-and the **Outbox** — with a name, a place and a count, and nothing a message
-can be moved into. Every account has a real folder for all six roles, created
+saved question about messages filed elsewhere — Flagged (`g *`), Snoozed
+(`g z`), Filtered (`g f`) and the **Outbox** — with a name, a place and a
+count, and nothing a message can be moved into. Every account has a real folder for all six roles, created
 on the server if it has none, so archive and delete always have somewhere to
 put mail. [ADR 0036](decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md).
 

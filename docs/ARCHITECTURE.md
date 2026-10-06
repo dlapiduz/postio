@@ -323,11 +323,10 @@ backend learns them is in
 **What this decision does NOT say.** A real IMAP mailbox is *not* a saved
 search. It is server state with a `UIDVALIDITY`, a message set that physically
 lives there, and a `MailboxRole` (`Inbox`, `Archive`, `Sent`, `Drafts`,
-`Trash`, `Junk`, `Flagged`, `Regular`). `a` archives *into* one. The folders
-popover (and the macOS sidebar) lists two kinds of thing that look alike and
-behave differently: real mailboxes that mail moves between, and views —
-Flagged, Snoozed, the Outbox, and on macOS the pinned searches — that are
-queries re-run on open.
+`Trash`, `Junk`, `Flagged`, `Regular`). `a` archives *into* one. Two kinds
+of place look alike and behave differently: real mailboxes that mail moves
+between, and views — Flagged, Snoozed, Filtered, the Outbox, and on macOS
+the pinned searches — that are queries re-run on open.
 Collapsing that distinction would break move, archive and sync. Saved searches
 are how you get a *view*; mailboxes are where mail *is*.
 

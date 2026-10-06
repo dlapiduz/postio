@@ -566,8 +566,8 @@ spacing, colour, proportion defer to it. Keys: `e` reply, `a`/`A` archive,
 `mod+z` undo, `]`/`[` walk a thread, `mod+Return` send, one keymap for every
 app; all rebindable, table generated into `docs/keybindings.md`. The
 composer opens in the open message's place: a dialog over the list, or the
-pane when reading beside it (`F8`). The folders popover (`g o`) says
-"Flagged". v1 scope: Linux, IMAP+SMTP, one provider preset table, and no AI
+pane when reading beside it (`F8`). The app says "Flagged" (`*`, `g *`),
+never "Starred". v1 scope: Linux, IMAP+SMTP, one provider preset table, and no AI
 in Postio itself; a local model the user runs and connects is optional and
 never required (constitution, Scope). Other AI is deferred to epic E12. OAuth
 is in scope — ADR 0006, tracked under #2.
