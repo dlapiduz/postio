@@ -49,15 +49,15 @@ text an AI agent could be tricked by.
 
 Not yet. Rules are designed — the same search language you type in the
 search bar, reused as the condition — and not built. Saved searches are:
-`Ctrl+S` on a search pins it to the sidebar as a folder that re-runs when
-you open it.
+`Ctrl+S` on a search saves and pins it, and it re-runs whenever you open it
+(`Alt+1`…`Alt+4` in the desktop app).
 
 ## How does search work?
 
 Locally and fast — a full-text index built on your own machine, never a
 server-side search. One query language works everywhere it shows up: typed
-in the search bar, saved to the sidebar as a named search, or pinned as a
-virtual folder. `from:ada after:2026-01-01 has:attach` is the kind of query
+in the command bar, saved as a named search, or pinned so it is one key
+away. `from:ada after:2026-01-01 has:attach` is the kind of query
 you can type, and results begin appearing as you type it. When a query
 finds nothing, Postio suggests the spelling that would.
 
