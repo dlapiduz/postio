@@ -63,7 +63,7 @@ command from inside a text field.
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
 | `alt+d` | Darken this message | List, conversation, reader (not the terminal) |  | `darken_message` |
-| `O` | Show original or app colours | Reader (Postio Focus) |  | `switch_treatment` |
+| `O` | Show original or app colours | Reader (not macOS) |  | `switch_treatment` |
 | `ctrl+f` | Find in message | List, conversation, reader |  | `find_in_message` |
 | `ctrl+g` or `F3` | Next match | List, conversation, reader |  | `find_next` |
 | `ctrl+shift+g` or `shift+F3` | Previous match | List, conversation, reader |  | `find_previous` |
@@ -83,20 +83,20 @@ command from inside a text field.
 | `r` | Mark read or unread | List, conversation, reader | Undoable | `toggle_read` |
 | `s` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
-| `h` or `ctrl+h` | Remind if no reply… | List, conversation, reader, composer (Postio Focus) | Undoable | `remind_if_no_reply` |
+| `h` or `ctrl+h` | Remind if no reply… | List, conversation, reader, composer (not macOS) | Undoable | `remind_if_no_reply` |
 | `l` | Add label… | List, conversation, reader | Undoable | `add_label` |
-| `y` | Accept invitation | List, conversation, reader (Postio Focus) | Undo briefly | `accept_invite` |
-| `Y` | Decline invitation | List, conversation, reader (Postio Focus) | Undo briefly | `decline_invite` |
-| `d` | Digest rule… | List, conversation, reader, digest (Postio Focus) |  | `digest_rule` |
-| `D` | Stop digesting this sender | Reader, digest (Postio Focus) | Undoable | `stop_digesting_sender` |
-| `v` | View source | List, conversation, reader (Postio Focus) |  | `view_source` |
-| `o` | Open attachment or link… | List, conversation, reader (Postio Focus) |  | `open_attachment_or_link` |
-| `-` | Dismiss marker | List, conversation, reader (Postio Focus) | Undoable | `dismiss_marker` |
-| `.` | More actions | Reader (Postio Focus) |  | `more_actions` |
-| `F8` | Read beside the list or over it | List (Postio Focus) |  | `toggle_reading_pane` |
+| `y` | Accept invitation | List, conversation, reader (not macOS) | Undo briefly | `accept_invite` |
+| `Y` | Decline invitation | List, conversation, reader (not macOS) | Undo briefly | `decline_invite` |
+| `d` | Digest rule… | List, conversation, reader, digest (not macOS) |  | `digest_rule` |
+| `D` | Stop digesting this sender | Reader, digest (not macOS) | Undoable | `stop_digesting_sender` |
+| `v` | View source | List, conversation, reader (not macOS) |  | `view_source` |
+| `o` | Open attachment or link… | List, conversation, reader (not macOS) |  | `open_attachment_or_link` |
+| `-` | Dismiss marker | List, conversation, reader (not macOS) | Undoable | `dismiss_marker` |
+| `.` | More actions | Reader (not macOS) |  | `more_actions` |
+| `F8` | Read beside the list or over it | List (not macOS) |  | `toggle_reading_pane` |
 | `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
-| `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search (Postio Focus) |  | `back_to_words` |
+| `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search (not macOS) |  | `back_to_words` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
 | `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
@@ -135,13 +135,13 @@ command from inside a text field.
 | `g *` | Go to flagged | List, conversation, reader, search, folder list |  | `go_to_flagged` |
 | `g r` | Go to archive | List, conversation, reader, search, folder list |  | `go_to_archive` |
 | `g z` | Go to snoozed | List, conversation, reader, search, folder list |  | `go_to_snoozed` |
-| `g f` | Go to Filtered | List, conversation, reader, search, folder list (Postio Focus) |  | `go_to_filtered` |
-| `g d` | Go to digest rules | List, conversation, reader, search, folder list (Postio Focus) |  | `go_to_digest_rules` |
+| `g f` | Go to Filtered | List, conversation, reader, search, folder list (not macOS) |  | `go_to_filtered` |
+| `g d` | Go to digest rules | List, conversation, reader, search, folder list (not macOS) |  | `go_to_digest_rules` |
 | `alt+1` | Saved search 1 | List, conversation, reader, search, folder list |  | `saved_search_1` |
 | `alt+2` | Saved search 2 | List, conversation, reader, search, folder list |  | `saved_search_2` |
 | `alt+3` | Saved search 3 | List, conversation, reader, search, folder list |  | `saved_search_3` |
 | `alt+4` | Saved search 4 | List, conversation, reader, search, folder list |  | `saved_search_4` |
-| `!` | Show only what has an action | List (Postio Focus) |  | `toggle_has_action` |
+| `!` | Show only what has an action | List (not macOS) |  | `toggle_has_action` |
 | `tab` | Next pane | List, conversation, reader, folder list (macOS) |  | `cycle_pane` |
 | `shift+tab` | Previous pane | List, conversation, reader, folder list (macOS) |  | `cycle_pane_back` |
 | `j` or `Down` | Next folder | Folder list (macOS) |  | `next_folder` |
@@ -169,31 +169,31 @@ command from inside a text field.
 | `H` | Render part once | Parts panel (macOS) |  | `render_part_once` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
-| `1` | Choose option 1 | Picker (Postio Focus) |  | `picker_choose_1` |
-| `2` | Choose option 2 | Picker (Postio Focus) |  | `picker_choose_2` |
-| `3` | Choose option 3 | Picker (Postio Focus) |  | `picker_choose_3` |
-| `4` | Choose option 4 | Picker (Postio Focus) |  | `picker_choose_4` |
-| `Tab` | Type a date | Picker (Postio Focus) |  | `picker_type_date` |
-| `space` | Toggle option | Picker (Postio Focus) |  | `picker_toggle` |
-| `Return` | Confirm | Picker (Postio Focus) |  | `picker_confirm` |
-| `]` | Next reference | Digest (Postio Focus) |  | `next_reference` |
-| `[` | Previous reference | Digest (Postio Focus) |  | `prev_reference` |
-| `Tab` | Summary or messages | Digest (Postio Focus) |  | `toggle_digest_summary` |
-| `R` | Restore to inbox | Filtered view (Postio Focus) | Undoable | `restore_filtered` |
-| `1` | Reason 1 | Filtered view (Postio Focus) |  | `filtered_tab_1` |
-| `2` | Reason 2 | Filtered view (Postio Focus) |  | `filtered_tab_2` |
-| `3` | Reason 3 | Filtered view (Postio Focus) |  | `filtered_tab_3` |
-| `4` | Reason 4 | Filtered view (Postio Focus) |  | `filtered_tab_4` |
-| `5` | Reason 5 | Filtered view (Postio Focus) |  | `filtered_tab_5` |
-| `6` | Reason 6 | Filtered view (Postio Focus) |  | `filtered_tab_6` |
-| `7` | Reason 7 | Filtered view (Postio Focus) |  | `filtered_tab_7` |
-| `F` | Filter what is in the inbox… | List (Postio Focus) | Undoable | `sweep_inbox` |
-| `t` | Capture a task… | List, conversation, reader, capture sheet (Postio Focus) |  | `capture_task` |
-| `n` | Capture a note… | List, conversation, reader, capture sheet (Postio Focus) |  | `capture_note` |
-| `ctrl+p` | Change project | Capture sheet (Postio Focus) |  | `capture_change_project` |
-| `alt+s` | Use the subject instead | Capture sheet (Postio Focus) |  | `capture_use_subject` |
-| `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet (Postio Focus) |  | `capture_write` |
-| `L` | Digest mail like this | List (Postio Focus) |  | `digest_like_this` |
+| `1` | Choose option 1 | Picker (not macOS) |  | `picker_choose_1` |
+| `2` | Choose option 2 | Picker (not macOS) |  | `picker_choose_2` |
+| `3` | Choose option 3 | Picker (not macOS) |  | `picker_choose_3` |
+| `4` | Choose option 4 | Picker (not macOS) |  | `picker_choose_4` |
+| `Tab` | Type a date | Picker (not macOS) |  | `picker_type_date` |
+| `space` | Toggle option | Picker (not macOS) |  | `picker_toggle` |
+| `Return` | Confirm | Picker (not macOS) |  | `picker_confirm` |
+| `]` | Next reference | Digest (not macOS) |  | `next_reference` |
+| `[` | Previous reference | Digest (not macOS) |  | `prev_reference` |
+| `Tab` | Summary or messages | Digest (not macOS) |  | `toggle_digest_summary` |
+| `R` | Restore to inbox | Filtered view (not macOS) | Undoable | `restore_filtered` |
+| `1` | Reason 1 | Filtered view (not macOS) |  | `filtered_tab_1` |
+| `2` | Reason 2 | Filtered view (not macOS) |  | `filtered_tab_2` |
+| `3` | Reason 3 | Filtered view (not macOS) |  | `filtered_tab_3` |
+| `4` | Reason 4 | Filtered view (not macOS) |  | `filtered_tab_4` |
+| `5` | Reason 5 | Filtered view (not macOS) |  | `filtered_tab_5` |
+| `6` | Reason 6 | Filtered view (not macOS) |  | `filtered_tab_6` |
+| `7` | Reason 7 | Filtered view (not macOS) |  | `filtered_tab_7` |
+| `F` | Filter what is in the inbox… | List (not macOS) | Undoable | `sweep_inbox` |
+| `t` | Capture a task… | List, conversation, reader, capture sheet (not macOS) |  | `capture_task` |
+| `n` | Capture a note… | List, conversation, reader, capture sheet (not macOS) |  | `capture_note` |
+| `ctrl+p` | Change project | Capture sheet (not macOS) |  | `capture_change_project` |
+| `alt+s` | Use the subject instead | Capture sheet (not macOS) |  | `capture_use_subject` |
+| `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet (not macOS) |  | `capture_write` |
+| `L` | Digest mail like this | List (not macOS) |  | `digest_like_this` |
 
 ## The one box
 
