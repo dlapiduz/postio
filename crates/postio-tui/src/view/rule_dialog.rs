@@ -267,13 +267,13 @@ pub fn draw(
             Button {
                 words: "Cancel".to_owned(),
                 key: key(CommandId::Back),
-                part: Part::RuleCancel,
+                target: Target::Surface(Part::RuleCancel, 0),
                 primary: false,
             },
             Button {
                 words: digest::create_words(form.editing()).to_owned(),
                 key: key(CommandId::PickerConfirm),
-                part: Part::RuleCreate,
+                target: Target::Surface(Part::RuleCreate, 0),
                 primary: true,
             },
         ],

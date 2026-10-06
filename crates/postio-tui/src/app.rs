@@ -21,6 +21,7 @@ use postio_ui::list::ListWindow;
 use postio_ui::paging::{Fetch, Page, Paging};
 use postio_ui::surfaced::Spliced;
 
+mod capture;
 mod digest;
 mod filtered;
 mod open;
@@ -891,6 +892,8 @@ pub enum Focus {
     Rules,
     /// The rule dialog, over whatever opened it.
     RuleDialog,
+    /// The capture sheet, over whatever opened it.
+    Capture,
 }
 
 impl std::fmt::Debug for App {
@@ -2378,6 +2381,7 @@ impl App {
             Focus::Digest => postio_core::Context::Digest,
             Focus::Rules => postio_core::Context::Filtered,
             Focus::RuleDialog => postio_core::Context::Picker,
+            Focus::Capture => postio_core::Context::Capture,
         }
     }
 
@@ -2773,6 +2777,7 @@ impl App {
             Focus::Digest => KeyContext::Digest,
             Focus::Rules => KeyContext::Filtered,
             Focus::RuleDialog => KeyContext::Picker,
+            Focus::Capture => KeyContext::Capture,
         }
     }
 
@@ -3203,6 +3208,11 @@ impl App {
         {
             return effects;
         }
+        if self.focus == Focus::Capture
+            && let Some(effects) = self.capture_command(id)
+        {
+            return effects;
+        }
         let last = self.list.total().saturating_sub(1);
         match id {
             "next_message" if self.focus == Focus::Reader => return self.step_open(1),
@@ -3401,6 +3411,12 @@ impl App {
             "go_to_digest_rules" => return self.go_to_digest_rules(),
             "digest_rule" => return self.digest_rule(),
             "digest_like_this" => return self.digest_like_this(),
+            "capture_task" => return self.open_capture(postio_ui::capture::Mode::Task),
+            "capture_note" => return self.open_capture(postio_ui::capture::Mode::Note),
+            // The sheet's own, with no sheet open.
+            "capture_change_project" | "capture_use_subject" | "capture_write" => {
+                return Vec::new();
+            }
             "sweep_inbox" => return self.ask_sweep(),
             "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
@@ -4264,6 +4280,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Digest => app.digest_key(&key),
         Input::Key(key) if app.focus == Focus::Rules => app.rules_key(&key),
         Input::Key(key) if app.focus == Focus::RuleDialog => app.rule_key(&key),
+        Input::Key(key) if app.focus == Focus::Capture => app.capture_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
@@ -5203,11 +5220,6 @@ pub(crate) mod tests {
         "find_previous",
         // Focus's commands the terminal is offered since it became Focus
         // (C29) and cannot answer yet; tasks T309-T326 empty this list.
-        "capture_task",
-        "capture_note",
-        "capture_change_project",
-        "capture_use_subject",
-        "capture_write",
     ];
 
     fn opens(effects: &[Effect]) -> Vec<ListScope> {

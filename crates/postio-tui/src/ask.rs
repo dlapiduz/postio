@@ -49,6 +49,23 @@ pub enum Ask {
     },
     /// The rule the person's model picks for mail like this message.
     LikeThis(postio_model::MessageId),
+    /// What the capture sheet needs from the vault for a message with this
+    /// subject.
+    Vault(String),
+    /// Append a task to a project's note, or to the tasks note.
+    CaptureTask {
+        /// The project, or none for the tasks note.
+        project: Option<postio_vault::Project>,
+        /// The task.
+        task: postio_vault::Task,
+    },
+    /// Append an entry to a note of the vault.
+    CaptureNote {
+        /// The note, relative to the vault.
+        note: std::path::PathBuf,
+        /// The entry.
+        entry: postio_vault::NoteEntry,
+    },
 }
 
 /// What the host answered.
@@ -106,6 +123,10 @@ pub enum Answer {
     },
     /// The model's rule for mail like a message: nothing when it found none.
     LikeThis(Result<Option<postio_client::protocol::LikeThisRule>, String>),
+    /// The vault's projects and what it suggests, or why not.
+    Vault(Result<postio_client::protocol::VaultPicture, String>),
+    /// What a capture appended, or why not.
+    Captured(Result<postio_vault::Captured, String>),
 }
 
 impl Ask {
@@ -152,6 +173,13 @@ impl Ask {
             }
             Ask::LikeThis(message) => {
                 Answer::LikeThis(client.digest_like_this(message).await.map_err(said))
+            }
+            Ask::Vault(subject) => Answer::Vault(client.vault(&subject).await.map_err(said)),
+            Ask::CaptureTask { project, task } => {
+                Answer::Captured(client.capture_task(project, task).await.map_err(said))
+            }
+            Ask::CaptureNote { note, entry } => {
+                Answer::Captured(client.capture_note(note, entry).await.map_err(said))
             }
             Ask::Digest(delivery) => Answer::Digest {
                 delivery,

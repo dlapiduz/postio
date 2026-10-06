@@ -22,6 +22,11 @@ impl App {
             | Part::RuleField
             | Part::RuleCancel
             | Part::RuleCreate => self.rules_click(part, index),
+            Part::CaptureMode
+            | Part::CapturePick
+            | Part::CaptureProject
+            | Part::CaptureText
+            | Part::CaptureCancel => self.capture_click(part, index),
         }
     }
 

@@ -257,13 +257,13 @@ pub fn remove(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mu
             Button {
                 words: "Cancel".to_owned(),
                 key: key(CommandId::Back),
-                part: Part::RemoveCancel,
+                target: Target::Surface(Part::RemoveCancel, 0),
                 primary: false,
             },
             Button {
                 words: "Remove rule".to_owned(),
                 key: key(CommandId::OpenMessage),
-                part: Part::RemoveConfirm,
+                target: Target::Surface(Part::RemoveConfirm, 0),
                 primary: true,
             },
         ],

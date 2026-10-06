@@ -553,7 +553,7 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 - [X] T322 [US16] Filtered, `g f`: the view, tabs, reasons, `R`, Sweep `F` Done: the strip, tab line and day-headed rows take the window; `R`, `1`-`7`, `F` (a framed question first) and the mouse all work; rows are read fifty at a time as they come into view; Return does not open a filtered message here, since the open message is aimed at the inbox's rows
 - [X] T323 [US16] The digest window: summary and list, references, the email from a reference, `A`, `D`, `U` Done: Enter on a digest row opens the message frame as the window; it opens on the summary only when one is written; `]`/`[`, `Tab`, `A`, `D` (asked first), `U`, `ctrl+z` and every part by the mouse; `d` waits for T324
 - [X] T324 [US16] Digest rules, `g d`, and the rule dialog, `d` Done: `g d` lists each rule with its match, when, next delivery and what it holds, Return edits and Delete asks before it removes; `d` opens the 64-wide dialog from a row, a selection, an open message or a digest, with the 90-day preview, "Match a list or a search instead…", and `L` (a rule from the model) only while `[focus.model]` has like_this on
-- [ ] T325 [US16] Capture, `t` and `n`
+- [X] T325 [US16] Capture, `t` and `n` Done: a frame 72 wide with the Task/Note pair, the sentence or the subject, due quick picks, the suggested project with its reason and `ctrl+p` to change it, and the exact line as the preview; `ctrl+Return` writes through the host and the toast says where; with no vault the toast says to name one; a marked to-do's row offers `Task t` when a vault exists
 - [ ] T326 [US16] The mouse on every new surface (scenario 7, FR-192), and `NO_COLOR` on every new surface (scenario 6, FR-193)
 
 ### Closing

@@ -51,7 +51,7 @@ pub struct Button {
     /// The key that runs it, as it is drawn; empty for none.
     pub key: String,
     /// What a click on it stands for.
-    pub part: crate::surface::Part,
+    pub target: Target,
     /// Whether it is the box's own act, drawn bold.
     pub primary: bool,
 }
@@ -100,7 +100,7 @@ pub fn buttons(
         spans.push(Span::styled(" ]", style));
         let w = u16::try_from(width).unwrap_or(0);
         frame.render_widget(Line::from(spans), Rect::new(x, y, w, 1));
-        hits.add(Rect::new(x, y, w, 1), Target::Surface(button.part, 0));
+        hits.add(Rect::new(x, y, w, 1), button.target);
         x += w + 2;
     }
 }

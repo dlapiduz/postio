@@ -5147,6 +5147,7 @@ dependencies = [
  "postio-test-support",
  "postio-tui",
  "postio-ui",
+ "postio-vault",
  "pulldown-cmark",
  "ratatui",
  "ratatui-textarea",

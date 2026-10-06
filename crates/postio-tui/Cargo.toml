@@ -39,6 +39,8 @@ postio-search.workspace = true
 # Logging, to journald: stderr is the screen this draws on.
 postio-session.workspace = true
 postio-ui.workspace = true
+# Obsidian capture: the lines a task or a note becomes.
+postio-vault.workspace = true
 # The link destinations in a message, from the parser tui-markdown already
 # brings.
 pulldown-cmark = { version = "0.13", default-features = false }

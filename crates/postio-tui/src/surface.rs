@@ -37,6 +37,16 @@ pub enum Part {
     RuleCancel,
     /// The rule dialog's Create or Save.
     RuleCreate,
+    /// The capture sheet's Task or Note: 0 or 1.
+    CaptureMode,
+    /// A quick pick of the due day, by its place.
+    CapturePick,
+    /// A project of the chooser, by its place.
+    CaptureProject,
+    /// The capture sheet's text, to type in.
+    CaptureText,
+    /// The capture sheet's Cancel.
+    CaptureCancel,
 }
 
 /// What the surfaces hold between them.
@@ -52,4 +62,6 @@ pub struct Surfaces {
     pub rules: Option<crate::rules::Rules>,
     /// The rule dialog, and where the keyboard goes when it closes.
     pub rule: Option<(crate::rule_dialog::Form, crate::app::Focus)>,
+    /// The capture sheet, and where the keyboard goes when it closes.
+    pub capture: Option<(crate::capture::Sheet, crate::app::Focus)>,
 }

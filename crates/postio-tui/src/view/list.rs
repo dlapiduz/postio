@@ -93,6 +93,7 @@ pub fn draw(
     theme: &Theme,
     now: DateTime<Local>,
     hint: &dyn Fn(CommandId) -> Option<String>,
+    capture: bool,
     hits: &mut Hits,
 ) {
     let mut y = area.y;
@@ -144,7 +145,16 @@ pub fn draw(
             );
             if height == 2 {
                 frame.render_widget(
-                    second_line(row, bar, usize::from(area.width), beside, theme, now, hint),
+                    second_line(
+                        row,
+                        bar,
+                        usize::from(area.width),
+                        beside,
+                        theme,
+                        now,
+                        hint,
+                        capture,
+                    ),
                     Rect::new(area.x, y + 1, area.width, 1),
                 );
             }
@@ -157,10 +167,11 @@ pub fn draw(
             // Each drawn answer is its key, for this row.
             let mut x = area.x
                 + u16::try_from(
-                    usize::from(area.width).saturating_sub(MARGIN + answers_width(row, now, hint)),
+                    usize::from(area.width)
+                        .saturating_sub(MARGIN + answers_width(row, now, hint, capture)),
                 )
                 .unwrap_or(0);
-            for (command, text) in answers(row, now, hint) {
+            for (command, text) in answers(row, now, hint, capture) {
                 let w = u16::try_from(text.width()).unwrap_or(u16::MAX);
                 hits.add(
                     Rect::new(x, y + 1, w, 1),
@@ -293,11 +304,13 @@ fn answers(
     row: &Row,
     now: DateTime<Local>,
     hint: &dyn Fn(CommandId) -> Option<String>,
+    capture: bool,
 ) -> Vec<(CommandId, String)> {
     let Some(marker) = &row.marker else {
         return Vec::new();
     };
-    let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local);
+    let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local)
+        .capturing(capture);
     if line.status.is_some() {
         return Vec::new();
     }
@@ -313,14 +326,16 @@ fn answers_width(
     row: &Row,
     now: DateTime<Local>,
     hint: &dyn Fn(CommandId) -> Option<String>,
+    capture: bool,
 ) -> usize {
-    let answers = answers(row, now, hint);
+    let answers = answers(row, now, hint, capture);
     answers.iter().map(|(_, text)| text.width()).sum::<usize>()
         + 2 * answers.len().saturating_sub(1)
 }
 
 /// A marked row's second line, under the subject: the chip, the date and the
 /// quoted sentence, and on the right what answers it.
+#[allow(clippy::too_many_arguments)]
 fn second_line<'a>(
     row: &Row,
     bar: Span<'a>,
@@ -329,11 +344,13 @@ fn second_line<'a>(
     theme: &Theme,
     now: DateTime<Local>,
     hint: &dyn Fn(CommandId) -> Option<String>,
+    capture: bool,
 ) -> Line<'a> {
     let Some(marker) = &row.marker else {
         return Line::from(bar);
     };
-    let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local);
+    let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local)
+        .capturing(capture);
     // Under the subject, or under the sender once the sender's column has
     // narrowed.
     let start = if !beside && u16::try_from(width).unwrap_or(u16::MAX) >= WIDE {
@@ -343,7 +360,7 @@ fn second_line<'a>(
     };
     let right: String = match line.status {
         Some(status) => status.to_owned(),
-        None => answers(row, now, hint)
+        None => answers(row, now, hint, capture)
             .into_iter()
             .map(|(_, text)| text)
             .collect::<Vec<_>>()

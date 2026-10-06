@@ -5,6 +5,7 @@
 pub mod bar;
 pub mod bottom;
 pub mod boxed;
+pub mod capture;
 pub mod composer;
 pub mod digest;
 pub mod filtered;
@@ -115,6 +116,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                         theme,
                         now,
                         &|command| app.hint(command),
+                        app.captures(),
                         &mut hits,
                     );
                 }
@@ -137,6 +139,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         filtered::sweep(frame, body, app, theme, &mut hits);
         rules::remove(frame, body, app, theme, &mut hits);
         rule_dialog::draw(frame, body, app, theme, now, &mut hits);
+        capture::draw(frame, body, app, theme, &mut hits);
         // Over everything: a click there lands on nothing underneath.
         if let Some((bar, ctx)) = app.bar() {
             bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);

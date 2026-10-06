@@ -12,7 +12,7 @@
 //! `state` is what is open over the mail: `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
 //! `bar-commands`, `bar-folder`, `folders`, `snooze`, `remind`, `label`, `move`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
-//! `rules` and `rule` (the digest rules, and the rule dialog over them), `digest`, `digest-list` and `digest-email` (a digest's window on its summary, its list and an email from a reference), `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
+//! `capture` (the capture sheet over a to-do), `rules` and `rule` (the digest rules, and the rule dialog over them), `digest`, `digest-list` and `digest-email` (a digest's window on its summary, its list and an email from a reference), `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
 //! Every name and address is fictional and on a reserved domain.
@@ -87,6 +87,7 @@ fn main() {
                     .focus
                     .digests,
                 ),
+                capture: state == "capture",
                 reading: if state == "pane" {
                     postio_config::Reading::Pane
                 } else {
@@ -548,6 +549,50 @@ fn main() {
                 }
                 _ => {}
             }
+        }
+        "capture" => {
+            use postio_model::listing::{MarkerKind, MarkerSummary, MarkerWhen};
+            let todo = MarkerSummary {
+                kind: MarkerKind::Todo,
+                when: Some(MarkerWhen::Due(test_support::local(25, 17, 0))),
+                excerpt: Some("Please send the Atlas figures by Friday".into()),
+                answer: None,
+                cancelled: false,
+            };
+            test_support::show_focus(
+                &mut app,
+                vec![postio_ui::focus_list::FocusRow::conversation(
+                    test_support::marked(
+                        test_support::conversation(
+                            1,
+                            "Ada Moreno",
+                            "Atlas figures for the board",
+                            "",
+                            test_support::local(23, 9, 0),
+                        ),
+                        todo,
+                    ),
+                )],
+            );
+            key(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+            let project = |name: &str| postio_vault::Project {
+                name: name.into(),
+                note: std::path::PathBuf::from(format!("Projects/{name}.md")),
+            };
+            update(
+                &mut app,
+                Input::Answer(postio_tui::ask::Answer::Vault(Ok(
+                    postio_client::protocol::VaultPicture {
+                        projects: vec![project("Atlas"), project("Garden")],
+                        suggestion: Some(postio_vault::Suggestion {
+                            project: project("Atlas"),
+                            reason: postio_vault::Reason::NamedInSubject("atlas".into()),
+                        }),
+                        tasks_note: std::path::PathBuf::from("Tasks.md"),
+                        tasks: Vec::new(),
+                    },
+                ))),
+            );
         }
         "rules" | "rule" => {
             key(&mut app, KeyCode::Char('g'), KeyModifiers::NONE);

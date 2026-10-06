@@ -177,6 +177,9 @@ impl App {
             Answer::SweepPreview(Ok(count)) => self.surfaces.sweep = Some(count),
             Answer::SweepPreview(Err(reason)) => return self.say_as(Tone::Failed, &reason, None),
             digest @ Answer::Digest { .. } => return self.digest_answered(digest),
+            other @ (Answer::Vault(_) | Answer::Captured(_)) => {
+                return self.capture_answered(other);
+            }
             other => return self.rules_answered(other),
         }
         vec![Effect::Redraw]

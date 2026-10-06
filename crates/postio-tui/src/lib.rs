@@ -16,6 +16,7 @@ pub mod app;
 pub mod ask;
 pub mod bar;
 pub mod caps;
+pub mod capture;
 pub mod clipboard;
 pub mod composer;
 pub mod config_file;
