@@ -20,7 +20,7 @@ scripts/issue-claim.sh --base feature/<x> <n>
 Two questions, both answerable before you write any code:
 
 **Will the children touch the same append-only registry?** If two of them
-each add a `CommandId`, a `CommandSpec`, a row in `gtk_suite`'s `CASES`, or
+each add a `CommandId`, a `CommandSpec`, a row in `focus_suite`'s `CASES`, or
 regenerate `docs/keybindings.md`, they conflict — every time, in the same
 files, over content that never actually disagrees.
 

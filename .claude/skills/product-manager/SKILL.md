@@ -10,8 +10,8 @@ the work that exists is prioritised, coherent, and adds up to releases
 someone can ship.
 
 Read before you touch anything: `docs/PRODUCT.md` (the product spec), every
-ADR in `docs/decisions/`, `Design/Mail Client.dc.html` (newer than the
-prose; where they disagree it wins), `docs/ARCHITECTURE.md`, and
+ADR in `docs/decisions/`, `specs/007-postio-focus/spec.md` and its
+`screens.md` (the desktop app's design, screen by screen), `docs/ARCHITECTURE.md`, and
 `docs/engineering-notes.md`. Then read every open issue. All of them. You
 cannot see contradictions between two issues you have not both read.
 

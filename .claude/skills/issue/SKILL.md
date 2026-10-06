@@ -186,16 +186,16 @@ than only at the end, and re-read the issue before you finish it in case
 someone decided something while you worked.
 
 **Iterate cheaply; confirm expensively.** `scripts/test-fast.sh` runs the unit
-tests of the crates you changed and links nothing else — seconds. One
-`cargo nextest run -p postio-app --test app_suite` is ~20 s of running on a
-warm tree (200 s under plain `cargo test`, which runs its binaries one at a
-time), and TDD pays it twice per fix. Use the fast loop between edits and the
+tests of the crates you changed and links nothing else — seconds.
+`cargo nextest run -p postio-gtk --test focus_suite` opens a real window for
+each of its 288 cases — name the case you need — and TDD pays it twice per
+fix. Use the fast loop between edits and the
 integration suites to confirm at the end. If a rule is hard to prove without
 linking the application, that is usually a sign it wants to be a function in a
 leaf crate rather than something buried in a widget.
 
 **An interaction issue starts with its storyboard.** If the issue changes how
-a GTK app behaves under the keyboard, write the storyboard in `storyboards/`
+an app behaves under the keyboard, write the storyboard in `storyboards/`
 from the acceptance first -- not from what you build -- and see it red on the
 base (`scripts/storyboards.sh base`). Before landing, run `/ux-review`; the
 landing labels an unreviewed interaction change (ADR 0044).
@@ -327,7 +327,7 @@ This has gone wrong four times here, and the last one was the worst. Commands
 resolved through the registry, the keymap, the palette and the selection model
 and then hit a no-op handler. The entire search UI was built, tested, and fed
 by nothing. The parts panel existed with no command to open it. And the
-**Reader was never mounted** — `postio_gtk::reader::Reader` was constructed in
+**Reader was never mounted** — the old three-pane app's `Reader` was constructed in
 exactly one place in the workspace, for the search preview, while the pane the
 layout gives the reader had one caller: the composer, taking it over. You
 could not read mail in a mail client. Every test passed. The epic said
@@ -336,7 +336,7 @@ Reading was done.
 That one was found by rendering the app and looking at it, not by a test:
 
 ```bash
-cargo run -p postio-app --example shot -- /tmp/check.png demo selected
+cargo run -p postio-gtk --example shot -- /tmp/check.png 01
 ```
 
 So: **either wire it, or open the wiring issue before you close** — and say
