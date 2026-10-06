@@ -5,21 +5,18 @@
 //! None of that is a toolkit's business — it is a reading of a
 //! [`postio_search::ParsedQuery`] and a sentence about a result set.
 //!
-//! It lived in the classic app's search until #1157, where the macOS bar could
-//! not reach any of it: the chips, the Backspace rule, the readout wording,
-//! its screen-reader form, and the debounce pacing. A second frontend
-//! re-deriving those would be a second query vocabulary on screen, a second
-//! answer to what "still syncing" means, and a second debounce — and the
-//! chips in particular are how a user *learns* Postio's query language, so
-//! two of them is two languages.
+//! Both frontends draw these, so neither re-derives them: a second reading
+//! of the query would be a second query vocabulary on screen, and the chips
+//! in particular are how a user *learns* Postio's query language, so two of
+//! them is two languages. The same goes for the readout wording and its
+//! screen-reader form, and for what "still syncing" means.
 //!
 //! # Where the chips live
 //!
 //! The entry holds the *whole* query, and the chips are a parse of it drawn
 //! alongside. They are a reading of what is typed, not a second store that
 //! could disagree with it — which is why [`postio_search::ParsedQuery`] hands
-//! out spans into the input, and why `remove_token` returns *the string to
-//! put back in the entry*.
+//! out spans into the input.
 //!
 //! The alternative — lifting completed operators out of the entry into
 //! standalone chips — is a nicer picture and a worse editor: the caret can no
@@ -34,7 +31,7 @@ use postio_search::query::{Field, TokenKind};
 /// One chip: an operator the parser recognized in the query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chip {
-    /// Position of the token in [`ParsedQuery::tokens`], for popping it.
+    /// Position of the token in [`ParsedQuery::tokens`].
     pub index: usize,
     /// The exact source text, so what the chip says is what is in the entry.
     pub label: String,
@@ -69,56 +66,6 @@ pub fn chips(parsed: &ParsedQuery) -> Vec<Chip> {
         .collect()
 }
 
-/// What Backspace should do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Backspace {
-    /// Delete one character, as usual.
-    Ordinary,
-    /// Take the whole chip out.
-    PopChip {
-        /// The token that went.
-        index: usize,
-        /// What the entry should now hold.
-        query: String,
-        /// Where the caret should now sit, in bytes.
-        caret: usize,
-    },
-}
-
-/// Decides what Backspace does with the caret at `caret` bytes into the query.
-///
-/// A chip pops when the caret is inside it or against its right edge — which is
-/// where the caret is after typing one. Against its *left* edge the caret is
-/// before the chip, not in it, so Backspace deletes what precedes as usual;
-/// otherwise there would be no way to remove the space in front of a chip.
-///
-/// Free text is never popped whole. `subject:report` is one idea and deleting
-/// it in one keystroke is a convenience; a word the user typed is a word, and
-/// swallowing it would be a surprise.
-pub fn backspace(parsed: &ParsedQuery, caret: usize) -> Backspace {
-    let Some((index, token)) = parsed
-        .tokens()
-        .iter()
-        .enumerate()
-        .find(|(_, token)| token.span.contains(caret))
-    else {
-        return Backspace::Ordinary;
-    };
-
-    if !token.is_operator() || caret <= token.span.start {
-        return Backspace::Ordinary;
-    }
-
-    // Where the join lands after `remove_token` trims the whitespace around the
-    // hole it leaves.
-    let caret = parsed.input()[..token.span.start].trim_end().len();
-    Backspace::PopChip {
-        index,
-        query: parsed.remove_token(index),
-        caret,
-    }
-}
-
 /// How a chip reads to a screen reader.
 pub fn spoken(chip: &Chip) -> String {
     let field = chip.field.keyword();
@@ -138,21 +85,6 @@ pub fn spoken(chip: &Chip) -> String {
 // ---------------------------------------------------------------------------
 // The live readout — canvas 2b's `14 hits · 11 ms`
 // ---------------------------------------------------------------------------
-
-/// How long the box waits after a keystroke before it searches.
-///
-/// Sized to *typing*, not to the frame budget: people type at roughly
-/// 150–250 ms a key, and the 60 ms this used to be fired between almost
-/// every pair of keystrokes — typing `radon` searched `r`, `ra`, `rad`,
-/// `rado`, `radon`, five queries for one question (#500). At 200 ms a word
-/// typed at ordinary speed is one search, and the price is one beat between
-/// the last keystroke and the answer. `Enter` does not wait: it flushes the
-/// queued query immediately.
-///
-/// The keystroke itself never waits for a search — it only ever reschedules
-/// one — which is what keeps typing inside the 16 ms interaction budget
-/// regardless of this number.
-pub const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// What one search turned out to be.
 ///
@@ -323,50 +255,6 @@ fn elapsed(elapsed: Duration) -> String {
 pub const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
 /// [`NOTHING_MATCHED`]'s other half: there were matches, all alike.
 pub const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
-
-/// Which question is outstanding, so an answer to an older one can be thrown
-/// away instead of drawn.
-///
-/// Every run gets a sequence number, and only the newest one's answer is
-/// accepted. This is the same generation rule [`crate::list`] applies to message
-/// pages and for the same reason: superseding a query is the *normal* case
-/// when results follow every keystroke, and without it the readout flickers
-/// backwards through the answers to queries nobody is asking any more.
-///
-/// Pure, and deliberately not a widget: the rule is worth testing on its own,
-/// and it is the whole of what "cancelled, not awaited" means.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Pacer {
-    issued: u64,
-}
-
-impl Pacer {
-    /// The sequence number of the outstanding run.
-    pub fn issued(&self) -> u64 {
-        self.issued
-    }
-}
-
-impl Pacer {
-    /// Hands out the sequence number for a new run, superseding whatever was
-    /// in flight.
-    pub fn issue(&mut self) -> u64 {
-        self.issued += 1;
-        self.issued
-    }
-
-    /// Whether `sequence`'s answer is still the answer to the current
-    /// question.
-    pub fn accepts(&self, sequence: u64) -> bool {
-        sequence != 0 && sequence == self.issued
-    }
-
-    /// Gives up on whatever is in flight without asking anything new — the box
-    /// closed, or emptied.
-    pub fn abandon(&mut self) {
-        self.issued += 1;
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Painting the match — canvas 2b's "preview · match highlighted"

@@ -58,7 +58,6 @@ fn a_fresh_state_is_an_empty_list() {
     assert_eq!(state.focus(), None);
     assert_eq!(state.scope().account(), None);
     assert_eq!(state.mailbox(), None);
-    assert_eq!(state.search_query(), None);
 }
 
 #[test]
@@ -208,40 +207,7 @@ fn the_back_stack_is_bounded() {
     assert_eq!(*state.view(), ViewMode::List);
 }
 
-// -- Search and the composer -------------------------------------------------
-
-#[test]
-fn search_is_a_view_the_user_can_leave() {
-    let mut state = in_the_inbox();
-    let before = selection(&state);
-
-    let events = state.open_search("from:ana has:attachment");
-
-    assert_eq!(state.search_query(), Some("from:ana has:attachment"));
-    assert_eq!(state.context(), Context::Search);
-    assert!(
-        events.contains(&Event::ContextChanged {
-            context: Context::Search
-        }),
-        "{events:?}"
-    );
-
-    state.back();
-    assert_eq!(state.search_query(), None);
-    assert_eq!(selection(&state), before);
-}
-
-#[test]
-fn refining_a_query_stays_in_search_and_still_announces_itself() {
-    let mut state = in_the_inbox();
-    state.open_search("from:a");
-
-    let events = state.open_search("from:an");
-
-    assert_eq!(state.search_query(), Some("from:an"));
-    assert!(!events.is_empty(), "a changed query is a changed view");
-    assert_eq!(state.back_depth(), 1, "typing does not deepen the stack");
-}
+// -- The composer -------------------------------------------------
 
 #[test]
 fn the_composer_takes_over_the_pane_and_gives_it_back() {
@@ -289,7 +255,6 @@ fn the_context_follows_the_view() {
             },
             Context::Reader,
         ),
-        (ViewMode::Search { query: "a".into() }, Context::Search),
         (
             ViewMode::Composer {
                 draft: DraftId::new(1),
@@ -314,7 +279,6 @@ fn a_change_always_emits_an_event_and_a_no_op_never_does() {
         ("focus", |state| state.focus_on(Some(message(2)))),
         ("thread", |state| state.open_conversation(ThreadId::new(42))),
         ("message", |state| state.open_message(message(2))),
-        ("search", |state| state.open_search("from:ana")),
         ("composer", |state| state.open_composer(DraftId::new(5))),
         ("back", |state| state.back()),
         ("clear", |state| state.clear_selection()),

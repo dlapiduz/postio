@@ -6,15 +6,9 @@
 //! answer to "where is my inbox", and the duplicate rule in particular took a
 //! bug report to find (#501).
 //!
-//! It lived in the classic app's sidebar until #1155, which is where the macOS
-//! sidebar could not reach it — so that one sorted alphabetically and drew
-//! `Archive, Archive … Sent, Sent … Trash, Trash`, exactly the failure #501
-//! had already fixed on the other platform. Nothing here touches a toolkit:
-//! `Vec<Mailbox>` in, `Vec<Mailbox>` out.
+//! Nothing here touches a toolkit: `Vec<Mailbox>` in, `Vec<Mailbox>` out.
 
-use std::collections::{HashMap, HashSet};
-
-use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxId, MailboxRole};
+use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxRole};
 
 /// Where a role sits in the sidebar, or `None` for an ordinary folder.
 ///
@@ -86,21 +80,6 @@ pub struct ViewCounts {
     pub drafts: u32,
     /// How many of those have stopped and need a person (FR-022).
     pub attention: u32,
-}
-
-/// Whether `mailbox` is a view over messages filed elsewhere rather than a
-/// folder on the server.
-///
-/// A view is unpersisted by construction — it has no row, because there is
-/// nothing to store — so an unassigned id is what says so. Every mailbox the
-/// sidebar is handed otherwise comes from the store and has one.
-///
-/// This replaces the negative-id sentinels the classic app's feed used to invent
-/// (`MailboxId::new(-1)` and `-2`). A sentinel is a value that means something
-/// only to whoever remembers it, and the frontend that did not remember —
-/// macOS — simply never had these rows.
-pub fn is_view(mailbox: &Mailbox) -> bool {
-    !mailbox.id.is_assigned()
 }
 
 /// The view rows this account's sidebar draws, in no particular order —
@@ -218,137 +197,11 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     (special, ordinary)
 }
 
-// ── The ordinary folders as a tree ─────────────────────────────────────────
+// ── What a row is called ────────────────────────────────────────────────────
 //
-// Moved out of the classic app's sidebar by spec 005: the terminal sidebar draws
-// the same hierarchy and folds it with the same command.
-
-/// One row of the ordinary folder tree (#324), positioned in the hierarchy
-/// the server reported: the mailbox itself, how deep it nests, and whether
-/// it has children to disclose.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FolderRow {
-    /// The folder.
-    pub mailbox: Mailbox,
-    /// Ancestors between this row and a root, capped at [`MAX_DEPTH`].
-    pub depth: u8,
-    /// Whether this row has at least one child in the tree, whatever its
-    /// current expansion state.
-    pub has_children: bool,
-}
-
-/// Nesting deeper than this renders at the same indent as this depth: the
-/// sidebar column has finite width, and pushing a name out of it to indent
-/// correctly is worse than an indent that stops being literal.
-pub const MAX_DEPTH: u8 = 4;
-
-/// Flatten the ordinary folders into the order the sidebar draws them:
-/// depth-first, each level sorted the way the flat list has always been
-/// sorted, a folder's children immediately beneath it and hidden while it is
-/// collapsed.
-///
-/// `collapsed` names the folders currently closed; everything else with
-/// children is open, which is why a fresh account — nothing collapsed yet —
-/// renders exactly as flat-but-correctly-indented as it would before this
-/// existed, rather than defaulting to a wall of closed rows.
-///
-/// A `\Noselect` container (`Mailbox::selectable == false`) still gets a row
-/// when it has children, so the hierarchy it organizes can be opened even
-/// though it cannot be opened as a mailbox — see #324's acceptance. A
-/// `\Noselect` folder with nothing under it gets no row at all: nothing to
-/// open and nothing to toggle is a row that wastes a keystroke, same as
-/// today's flat list already decided in [`sections`].
-///
-/// A child whose parent was never listed by the server (`parent_id` points
-/// at nothing in `mailboxes`, or is `None`) renders as its own root — exactly
-/// what `postio-sync::discover::link_parents` already promises: "the folder
-/// is still perfectly usable; it just sits at the top."
-pub fn folder_rows(mailboxes: &[Mailbox], collapsed: &HashSet<MailboxId>) -> Vec<FolderRow> {
-    let ordinary: Vec<&Mailbox> = mailboxes
-        .iter()
-        .filter(|m| role_order(m.role).is_none() || !primary_within(m, mailboxes))
-        .collect();
-    let present: HashSet<MailboxId> = ordinary.iter().map(|m| m.id).collect();
-
-    let mut children: HashMap<MailboxId, Vec<&Mailbox>> = HashMap::new();
-    for m in &ordinary {
-        if let Some(parent) = m.parent_id
-            && present.contains(&parent)
-        {
-            children.entry(parent).or_default().push(m);
-        }
-    }
-    for list in children.values_mut() {
-        list.sort_by_key(|m| m.path.to_lowercase());
-    }
-
-    let mut roots: Vec<&Mailbox> = ordinary
-        .iter()
-        .copied()
-        .filter(|m| !m.parent_id.is_some_and(|p| present.contains(&p)))
-        .collect();
-    roots.sort_by_key(|m| m.path.to_lowercase());
-
-    let mut out = Vec::new();
-    for root in roots {
-        walk_folder_tree(root, 0, &children, collapsed, &mut out);
-    }
-    out
-}
-
-fn walk_folder_tree<'a>(
-    mailbox: &'a Mailbox,
-    depth: u8,
-    children: &HashMap<MailboxId, Vec<&'a Mailbox>>,
-    collapsed: &HashSet<MailboxId>,
-    out: &mut Vec<FolderRow>,
-) {
-    let kids = children.get(&mailbox.id);
-    let has_children = kids.is_some_and(|k| !k.is_empty());
-    if !mailbox.selectable && !has_children {
-        return;
-    }
-    out.push(FolderRow {
-        mailbox: mailbox.clone(),
-        depth: depth.min(MAX_DEPTH),
-        has_children,
-    });
-    if has_children && !collapsed.contains(&mailbox.id) {
-        for child in kids.into_iter().flatten() {
-            walk_folder_tree(child, depth + 1, children, collapsed, out);
-        }
-    }
-}
-
-// ── What a row is called, and the number beside it ──────────────────────────
-//
-// Both moved out of the classic app's sidebar by spec 003, for the reason
-// `role_order` and `sections` moved in #1155: they are product decisions, not
-// widget details, and the frontend that had to re-derive them did not. The
-// FFI sent `mailbox.name` raw, which is empty for a view row — so even once
-// Flagged and Snoozed crossed the boundary, macOS had two rows with no label.
-
-///
-/// Straight off the canvas: Inbox 12 unread, Flagged 3 flagged, Drafts 2 in
-/// total, and nothing at all beside Sent or Archive. A count of zero is not
-/// drawn — an empty column is quieter than a row of noughts.
-pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
-    let counts = &mailbox.counts;
-    let count = match mailbox.role {
-        // A draft you have not finished is not "unread".
-        MailboxRole::Drafts => counts.total,
-        MailboxRole::Flagged => counts.flagged,
-        MailboxRole::Snoozed => counts.snoozed,
-        // How many are on their way. The row is hidden entirely when this is
-        // zero, which is its ordinary state -- see spec 003 FR-012.
-        MailboxRole::Outbox => counts.total,
-        // Nothing arrives in these unread, so a count would only ever be
-        // "how much have you kept", which is not a thing to nag about.
-        MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
-        MailboxRole::Inbox | MailboxRole::Regular => counts.unread,
-    };
-    (count > 0).then_some(count)
-}
+// A product decision rather than a widget detail, so both frontends take it
+// from here instead of re-deriving it: a view row has no server name, and a
+// raw `mailbox.name` would draw it with no label.
 
 /// What a folder is called in the sidebar.
 ///
@@ -432,7 +285,7 @@ mod tests {
         );
         for row in &views {
             assert!(
-                is_view(row),
+                !row.id.is_assigned(),
                 "{:?} has an id, so something will try to SELECT it",
                 row.role
             );

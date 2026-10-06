@@ -3,8 +3,7 @@
 //! A [`ParsedQuery`] is a flat, ordered list of [`Token`]s. That shape is
 //! deliberate: the query executor wants the *filters* and the *free text*
 //! separated, while the search bar wants the *tokens in source order with their
-//! spans* so it can draw one chip per token and pop the chip under the caret
-//! with Backspace. Both views come off the same list — see [`ParsedQuery::filters`]
+//! spans* so it can draw one chip per token. Both views come off the same list — see [`ParsedQuery::filters`]
 //! and [`ParsedQuery::tokens`].
 
 use chrono::NaiveDate;
@@ -347,7 +346,7 @@ pub struct Token {
     /// Where the token sits in the original query string.
     pub span: Span,
     /// The exact source text, quotes, leading `-` and all. This is the chip's
-    /// label and what [`ParsedQuery::remove_token`] deletes.
+    /// label.
     pub raw: String,
     /// The parsed meaning.
     pub kind: TokenKind,
@@ -370,11 +369,6 @@ impl Token {
             TokenKind::Partial(partial) => partial.negated,
             TokenKind::Text(term) => term.negated,
         }
-    }
-
-    /// Whether this token should be drawn as a chip rather than as plain text.
-    pub fn is_operator(&self) -> bool {
-        !matches!(self.kind, TokenKind::Text(_))
     }
 }
 
@@ -424,30 +418,6 @@ impl ParsedQuery {
             TokenKind::Text(term) => Some(term),
             _ => None,
         })
-    }
-
-    /// The token under a caret at `offset` bytes into the input.
-    ///
-    /// Both edges count, so pressing Backspace with the caret against the right
-    /// edge of a chip pops that chip.
-    pub fn token_at(&self, offset: usize) -> Option<&Token> {
-        self.tokens.iter().find(|token| token.span.contains(offset))
-    }
-
-    /// The query string with token `index` removed and the surrounding
-    /// whitespace tidied — what the search bar sets its entry to when a chip is
-    /// popped. An out-of-range index returns the input unchanged.
-    pub fn remove_token(&self, index: usize) -> String {
-        let Some(token) = self.tokens.get(index) else {
-            return self.input.clone();
-        };
-        let before = self.input[..token.span.start].trim_end();
-        let after = self.input[token.span.end..].trim_start();
-        match (before.is_empty(), after.is_empty()) {
-            (true, _) => after.to_string(),
-            (false, true) => before.to_string(),
-            (false, false) => format!("{before} {after}"),
-        }
     }
 
     /// The free-text portion as an FTS5 `MATCH` expression, or `None` when
@@ -601,22 +571,6 @@ mod tests {
         assert!(filter_token.negated());
         assert!(!partial_token.negated());
         assert!(text_token.negated());
-    }
-
-    #[test]
-    fn only_free_text_is_not_an_operator() {
-        let filter_token = token(TokenKind::Filter(Clause {
-            negated: false,
-            filter: Filter::HasAttachment,
-        }));
-        let text_token = token(TokenKind::Text(TextTerm {
-            negated: false,
-            value: "docker".into(),
-            quoted: false,
-        }));
-
-        assert!(filter_token.is_operator());
-        assert!(!text_token.is_operator());
     }
 
     #[test]

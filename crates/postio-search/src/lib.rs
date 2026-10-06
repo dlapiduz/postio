@@ -34,9 +34,7 @@
 //!   [`ParsedQuery::fts_match`]. Building the statement, ranking and snippeting
 //!   belong to the query executor, not here.
 //! * **Chip-ready.** Every token carries its byte [`query::Span`] and its raw
-//!   source text, so the search bar can render one chip per token, find the
-//!   chip under the caret with [`ParsedQuery::token_at`] and pop it with
-//!   [`ParsedQuery::remove_token`].
+//!   source text, so the search bar can render one chip per token.
 //!
 //! # Operators
 //!

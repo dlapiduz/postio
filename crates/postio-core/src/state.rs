@@ -32,8 +32,7 @@ use crate::{Context, Event, MessageTarget};
 /// Which surface the reading pane is showing.
 ///
 /// Not a widget and not a window: compose takes over the reading pane rather
-/// than opening a window of its own, and search is a view the user can leave
-/// with `Esc`, so both are modes of the same pane.
+/// than opening a window of its own, so it is a mode of the same pane.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMode {
@@ -55,11 +54,6 @@ pub enum ViewMode {
         /// The message on screen.
         message: MessageId,
     },
-    /// Search results for a query.
-    Search {
-        /// The query as the user typed it, in `postio-search`'s syntax.
-        query: String,
-    },
     /// The composer, which has taken the reading pane over.
     Composer {
         /// The draft being edited.
@@ -78,7 +72,6 @@ impl ViewMode {
             ViewMode::List => Context::List,
             ViewMode::Conversation { .. } => Context::Conversation,
             ViewMode::Reader { .. } => Context::Reader,
-            ViewMode::Search { .. } => Context::Search,
             ViewMode::Composer { .. } => Context::Composer,
         }
     }
@@ -509,14 +502,6 @@ impl AppState {
         self.view.context()
     }
 
-    /// The active search query, if the user is in search.
-    pub fn search_query(&self) -> Option<&str> {
-        match &self.view {
-            ViewMode::Search { query } => Some(query),
-            _ => None,
-        }
-    }
-
     /// The draft the composer is editing, if it is open.
     pub fn composing(&self) -> Option<DraftId> {
         match &self.view {
@@ -616,22 +601,6 @@ impl AppState {
             // the reading pane must not land on the row behind it.
             state.selected = Selection::These(vec![message]);
             state.focus = Some(message);
-        })
-    }
-
-    /// Show results for a query.
-    ///
-    /// Refining a query while already in search replaces the view rather than
-    /// pushing another step — typing must not build a stack of `Esc`s.
-    pub fn open_search(&mut self, query: impl Into<String>) -> Vec<Event> {
-        let query = query.into();
-        self.commit(|state| {
-            let view = ViewMode::Search { query };
-            if matches!(state.view, ViewMode::Search { .. }) {
-                state.view = view;
-            } else {
-                state.push(view);
-            }
         })
     }
 
