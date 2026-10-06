@@ -405,7 +405,8 @@ width decides what is *shown*, never what the user asked for.
 **One box, and one popover.** The command bar (`/` for mail, `mod+k` for
 commands) searches as you type, and a prefix chooses what else to ask (§7).
 The folders popover (`g o`, or a click on "Inbox ▾") lists the mailboxes
-and folders with their counts, and the labels. A distinction runs under it that is
+and folders with their counts, the Flagged (`g *`) and Snoozed (`g z`) views, and the labels.
+A distinction runs under it that is
 load-bearing: a *folder* is one the server has — Inbox, Archive, Sent,
 Drafts, Trash, Junk, and whatever else the account holds — and a *view* is a
 saved question about messages filed elsewhere — Flagged (`g *`), Snoozed

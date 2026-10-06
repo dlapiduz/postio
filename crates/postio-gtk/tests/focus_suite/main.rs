@@ -532,6 +532,10 @@ const CASES: &[(&str, fn())] = &[
         places::g_o_then_trav_and_enter_shows_travel as fn(),
     ),
     (
+        "places::flagged_and_snoozed_are_listed_and_open_their_views",
+        places::flagged_and_snoozed_are_listed_and_open_their_views as fn(),
+    ),
+    (
         "bar::alt_2_runs_the_second_saved_search",
         bar::alt_2_runs_the_second_saved_search as fn(),
     ),

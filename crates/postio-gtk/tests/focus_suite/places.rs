@@ -68,3 +68,91 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
         assert_eq!(window.place_name(), "Inbox");
     });
 }
+
+/// The popover lists Flagged (`g *`) and Snoozed (`g z`) among the
+/// mailboxes, each with its key inside the row, and choosing one lists the
+/// same cross-account view the key does.
+pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (atlas, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
+            .await;
+        let (harbor, _) = fixture
+            .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
+            .await;
+        fixture
+            .file(
+                ("Tomas Reyes", "tomas@example.net"),
+                "Staffing plan",
+                "x",
+                10,
+            )
+            .await;
+        crate::commands::snooze(&fixture, harbor).await;
+        let (window, client) = fixture.open().await;
+        crate::commands::flag(&client, atlas).await;
+
+        support::keys(&window, &["g", "o"]);
+        let places = window.places().expect("g o opened the folders popover");
+        for (name, key) in [("Flagged", "g *"), ("Snoozed", "g z")] {
+            assert!(
+                crate::settle_until(async || places.names().contains(&name.to_owned())).await,
+                "the popover never listed {name}: {:?}",
+                places.names()
+            );
+            let said = row_saying(&window, name).await;
+            assert!(
+                said.iter().any(|text| text == key),
+                "the {name} row does not show {key}: {said:?}"
+            );
+        }
+
+        support::click_row_saying(&window, &window, "Flagged");
+        assert!(
+            crate::settle_until(async || {
+                window.place_name() == "Flagged" && support::subjects(&window) == ["Atlas budget"]
+            })
+            .await,
+            "choosing Flagged listed {:?} under {:?}",
+            support::subjects(&window),
+            window.place_name()
+        );
+        support::keys(&window, &["g", "o"]);
+        support::click_row_saying(&window, &window, "Snoozed");
+        assert!(
+            crate::settle_until(async || {
+                window.place_name() == "Snoozed" && support::subjects(&window) == ["Harbor draft"]
+            })
+            .await,
+            "choosing Snoozed listed {:?} under {:?}",
+            support::subjects(&window),
+            window.place_name()
+        );
+    });
+}
+
+/// What the popover's row for `name` says, key included.
+async fn row_saying(window: &postio_gtk::window::FocusWindow, name: &str) -> Vec<String> {
+    use gtk::prelude::*;
+    let said = std::cell::RefCell::new(Vec::new());
+    crate::settle_until(async || {
+        let found = support::descendants(window)
+            .into_iter()
+            .find(|widget| {
+                widget.is::<gtk::ListBoxRow>()
+                    && widget.is_mapped()
+                    && support::texts(widget).iter().any(|text| text == name)
+            })
+            .map(|row| support::texts(&row))
+            .unwrap_or_default();
+        let done = !found.is_empty();
+        said.replace(found);
+        done
+    })
+    .await;
+    said.into_inner()
+}

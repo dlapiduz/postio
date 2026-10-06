@@ -253,7 +253,15 @@ impl Places {
             self.list.remove(&child);
         }
         let filtered = self.filtered_today.get().map(rules::filtered_entry);
-        let shown = rules::listed(&self.all.borrow(), filtered.as_ref(), &self.entry.text());
+        // Snoozed and Flagged are views, always there; a server's own mailbox
+        // with the same role already has its row.
+        let mut all = self.all.borrow().clone();
+        for view in rules::view_entries() {
+            if !all.iter().any(|entry| entry.go == view.go) {
+                all.push(view);
+            }
+        }
+        let shown = rules::listed(&all, filtered.as_ref(), &self.entry.text());
         let keymap = self.keymap.borrow();
         let accent_hue = accent_hue();
         let mut rows = Vec::new();

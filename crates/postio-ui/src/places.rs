@@ -138,6 +138,29 @@ pub fn filtered_entry(today: u32) -> Entry {
     }
 }
 
+/// The entries for Snoozed and Flagged: views over mail filed elsewhere, not
+/// folders with an id of their own, so they are listed always, whatever the
+/// accounts' mailboxes say. Each runs the command its key runs, which lists
+/// the same cross-account view.
+pub fn view_entries() -> Vec<Entry> {
+    [
+        (MailboxRole::Snoozed, "Snoozed", CommandId::GoToSnoozed),
+        (MailboxRole::Flagged, "Flagged", CommandId::GoToFlagged),
+    ]
+    .into_iter()
+    .map(|(role, name, command)| Entry {
+        section: Section::Mailboxes,
+        rank: role_rank(role),
+        name: name.to_owned(),
+        count: None,
+        go: Some(command),
+        command: Some(command),
+        destination: Destination::Search(String::new()),
+        mark: Mark::Role(role),
+    })
+    .collect()
+}
+
 /// The places to list: every entry (and Filtered, while it is one) whose
 /// name contains `wanted`, case aside, by section, rank, then name.
 pub fn listed(all: &[Entry], filtered: Option<&Entry>, wanted: &str) -> Vec<Entry> {
@@ -241,6 +264,17 @@ mod tests {
         mailbox.role = role;
         mailbox.id = MailboxId::new(name.len() as i64);
         mailbox
+    }
+
+    #[test]
+    fn snoozed_and_flagged_are_views_that_run_their_go_to_commands() {
+        let views = view_entries();
+        let commands: Vec<_> = views.iter().map(|entry| entry.command).collect();
+        assert_eq!(
+            commands,
+            [Some(CommandId::GoToSnoozed), Some(CommandId::GoToFlagged)]
+        );
+        assert!(views.iter().all(|entry| entry.go == entry.command));
     }
 
     #[test]

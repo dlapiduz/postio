@@ -45,7 +45,7 @@ async fn showing(window: &Window, place: &str, subjects: &[&str]) {
     );
 }
 
-async fn snooze(fixture: &Fixture, message: MessageId) {
+pub async fn snooze(fixture: &Fixture, message: MessageId) {
     let connection = fixture.database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .snooze(&[message], chrono::Utc::now() + Duration::days(2))
@@ -53,7 +53,7 @@ async fn snooze(fixture: &Fixture, message: MessageId) {
         .expect("snoozed");
 }
 
-async fn flag(client: &postio_client::Client, message: MessageId) {
+pub async fn flag(client: &postio_client::Client, message: MessageId) {
     client
         .send(Command::Flag {
             target: MessageTarget::Messages(vec![message]),
