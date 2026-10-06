@@ -863,36 +863,37 @@ fixture mailbox. Assert:
 
 ### User Story 11 - One store, any Postio app (Priority: P1)
 
-The user reads mail in the terminal, closes it, opens Focus, and finds the
-same mailbox:
+The user reads mail in the terminal, closes it, opens the desktop app, and
+finds the same mailbox:
 
 - the same folders;
 - the archive they just made;
 - the draft they left;
 - the same keys, because every app shares one default keymap.
 
-If another Postio app has the store open, Focus says so in the sentence the
-other apps use, and does not open the store; "Try again" opens it once the
-other app has closed. The reverse holds. Digest rules, filter decisions,
-corrections and reminders made in Focus live in the store and configuration
-that every app shares. They act only while Focus runs.
+If another Postio app has the store open, the desktop app says so in the
+sentence the other apps use, and does not open the store; "Try again" opens
+it once the other app has closed. The reverse holds. Digest rules, filter
+decisions, corrections and reminders made in Focus live in the store and
+configuration that every app shares. They act only while Focus, on the
+desktop or in the terminal, runs.
 
 **Why this priority**: ADR 0041 requires it. Without it, Focus would be a
 mail client with its own copy of the mailbox.
 
-**Independent Test**: Open the store in one app's process and start Focus:
-it refuses with the sentence and leaves the store unchanged. Close the first
-app and open Focus, and assert Focus presents what the first app wrote. Do
-the reverse.
+**Independent Test**: Open the store in one app's process and start the
+desktop app: it refuses with the sentence and leaves the store unchanged.
+Close the first app and open the desktop app, and assert it presents what
+the first app wrote. Do the reverse.
 
 **Acceptance Scenarios**:
 
-1. **Given** the terminal open, **When** Focus starts, **Then** it says
+1. **Given** the terminal open, **When** the desktop app starts, **Then** it says
    "Postio is already open in another window. Close it to open Postio here."
    and does not touch the store. The reverse holds.
-2. **Given** a message archived in Focus, **When** Focus is closed and the
-   terminal opened, **Then** the message is in the archive, not the inbox.
-   The reverse holds.
+2. **Given** a message archived in the desktop app, **When** it is closed
+   and the terminal opened, **Then** the message is in the archive, not the
+   inbox. The reverse holds.
 3. **Given** a draft left in either app, **When** the other is opened,
    **Then** the draft is in Drafts and opens for editing.
 4. **Given** filtering on and the macOS app open, **When** a promotion
@@ -2111,10 +2112,9 @@ screen, not on what a layer was handed, that each surface shows what
 - **Label colours.** A label's stored colour is used when it has one.
   Otherwise the label gets a stable colour from a palette that excludes the
   accent's hue.
-- **Packaging.** Focus is the desktop Flatpak's app. At the package switch
-  (T253) it takes the name "Postio", the binary `postio`, the app id
-  `dev.postio.Postio`, the launcher, the icon and the `mailto:` and
-  `postio:` handlers.
+- **Packaging.** Focus is the desktop Flatpak's one app: the name "Postio",
+  the binary `postio`, the app id `dev.postio.Postio`, the launcher, the
+  icon and the `mailto:` and `postio:` handlers.
 - **Platforms.** This spec covers Linux and GTK. Focus's design on macOS is
   outlined in [macos.md](./macos.md); its logic lives in the toolkit-free
   layers (FR-006), so it is not designed out.

@@ -96,39 +96,12 @@ their own commands; `Requirement::ThreePane` is macOS's.
 
 | # | Capability | In the classic app | Where it is now |
 |---|---|---|---|
-| 47 | First run: the account form, OAuth, then how much history to sync | `postio-app::onboarding` (`Status::SyncWindow`, `write_sync_window`; `sync_window`) | The form and sign-in are **covered by** Focus's first run (`window.rs`, `postio_widgets::present::onboarding`; `focus_suite::first_run`). The sync-window step is **covered by** `Presenter::ask_sync_window`, which both apps' first runs use (`focus_suite::first_run`) |
+| 47 | First run: the account form, OAuth, then how much history to sync | `postio-app::onboarding` (`Status::SyncWindow`, `write_sync_window`; `sync_window`) | The form and sign-in are **covered by** Focus's first run (`window.rs`, `postio_widgets::present::onboarding`; `focus_suite::first_run`). The sync-window step is **covered by** `Presenter::ask_sync_window`, which every first run uses (`focus_suite::first_run`) |
 | 48 | Adding another account; updating a credential | `add_account.rs`, `settings_credential.rs` | **Covered by** `AddAccount` and `UpdateCredential` in `FocusWindow::act`, and by the sign-in banner's button, which an account with no stored credential gets too: the sync blocks on a missing password (`BackendError::needs_a_password`) and the banner opens the credential form (`focus_suite::startup_repair`, T262) |
 | 49 | The settings window. Accounts: edit, test the connection, token expiry, enable or disable, remove, rebuild the index, set the default, map mailbox roles, weights. Also Filters, Composing, Appearance, Keyboard, Sync and storage, Privacy (the remote-image allow list, the unsubscribe log, the read-receipt count, the connection log) and the config file | `postio-gtk::settings`, `widgets/`; `postio-app::settings_*`, `sidebar_backfill.rs`; `ToggleAccountEnabled`, `RemoveAccount`, `RebuildAccountIndex`, `SetDefaultAccount`, `MapMailboxRole` | **Covered by** the shared settings window in a dialog (T233, T234): `mod+comma` and the main menu's Settings open it (`FocusWindow::act`). Every section but Appearance (rows 18, 19), with the classic app's wiring ported (`settings_wiring.rs`). The account verbs are reached from each row's menu and its detail view, and from the keyboard (T258): with the keyboard on an account row, `Return`, `Delete` (undone by `mod+z`), `r`, `m` and `M` (which opens the account's roles) act on that row, and the command bar lists them (with Settings shut they open it to pick a row). |
 | 50 | Excluding a folder from backfill (ADR 0016) | `sidebar.rs` (`connect_backfill_exclusion_changed`) | **Covered by** Sync & storage's "Back up locally", a check per folder (T234; `settings::a_folder_left_out_of_backfill_is_written_and_shown`) |
-| 51 | Edit configuration (`mod+e` opens `config.toml` in the person's editor) | `postio-gtk::config`; `EditConfig` | **Covered by** `FocusWindow::act` through `postio_widgets::editor`, the launcher both apps share (T235; `settings::mod_e_opens_config_toml_in_the_persons_editor`) |
+| 51 | Edit configuration (`mod+e` opens `config.toml` in the person's editor) | `postio-gtk::config`; `EditConfig` | **Covered by** `FocusWindow::act` through `postio_widgets::editor`, the shared launcher (T235; `settings::mod_e_opens_config_toml_in_the_persons_editor`) |
 | 52 | `config.toml` applied live: keys, filters, sync, storage ceiling, reader zoom, compose, ui | `postio-gtk::config` (`storage_ceiling_wiring`) | **Covered by** `Session::follow_config`: keys, filters, sync, `[focus]`, and since T235 `[compose]`, `[reader]` and `[storage]` (`reload.rs`'s case per section) |
 
-**Checked and absent from both apps:** printing (neither app has a print
+**Checked and absent from both apps:** printing (neither app had a print
 operation), and creating, renaming or deleting folders.
-
-### Notes for T255 (CLAUDE.md, recorded for the docs step)
-
-These places in `CLAUDE.md` still describe the classic app:
-
-- the tier table and the `app_suite` timings in "Build & test";
-- the "iterate at the cheapest layer" paragraph, which cites `postio-gtk`'s
-  330 unit tests and `app_suite`'s ~200s;
-- "Integration suites run under nextest", which cites `app_suite`'s 200s → 20s;
-- "Tests are headless automatically", which names `cargo run -p postio-app`;
-- "To see the app", which names `cargo run -p postio-app` (`scripts/run-isolated.sh`
-  already runs Postio);
-- "To prove a change reaches the running app", which names
-  `crates/postio-app/tests/app_suite/`, `wiring.rs`, `keystroke.rs`,
-  `click_preview.rs`, `CASES`, `IGNORED` and `list_contract.rs`. Focus's
-  equivalent is `focus_suite`, with the same harness;
-- the invariant "`postio-gtk`: no SQL, no protocol", which now holds of the
-  app's own code: `check-crate-boundaries.py` bans the engine and the
-  protocol as its direct dependencies, and the engine reaches it only
-  through `postio-host`;
-- "Keys: `e` reply, `a`/`A` archive, `u` undo…", which is already stale (the
-  one keymap moved undo to `mod+z`), plus "Compose takes over the reading
-  pane" and "The sidebar says 'Flagged'".
-
-The skills `/gtk-design`, `/issue`, `/initiative` and `/steward` name
-`postio-gtk` and `app_suite` too, and so does
-`.claude/hooks/test-guard-shared-tree.py`.
