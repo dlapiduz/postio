@@ -21,6 +21,10 @@ use postio_ui::list::ListWindow;
 use postio_ui::paging::{Fetch, Page, Paging};
 use postio_ui::surfaced::Spliced;
 
+mod open;
+
+pub use open::{Menu, MenuAction, MenuItem, Raw};
+
 use crate::input::Keys;
 use crate::row::Row;
 use crate::view::list::{Heading, Visible};
@@ -106,14 +110,16 @@ pub enum Input {
         /// Its messages, oldest first, or why there are none.
         members: Result<Vec<postio_model::listing::MessageSummary>, String>,
     },
-    /// Whom a message asked for by [`Effect::ReadBody`] was written to:
-    /// its To and then its Cc, for the reader's header. Arrives just before
-    /// its body, from the same read.
+    /// Whom a message asked for by [`Effect::ReadBody`] was written to, for
+    /// the open message's header. Arrives just before its body, from the
+    /// same read.
     Addressed {
         /// Whose.
         message: postio_model::MessageId,
-        /// Everyone it was sent to, To first.
+        /// Whom it was sent to.
         to: Vec<postio_model::EmailAddress>,
+        /// Who was copied.
+        cc: Vec<postio_model::EmailAddress>,
     },
     /// A body asked for by [`Effect::ReadBody`] arrived.
     Body {
@@ -125,6 +131,20 @@ pub enum Input {
     /// The host answered an [`Effect::Unsubscribe`]: the list's name, or
     /// why not.
     Unsubscribed(Result<String, String>),
+    /// The host answered an [`Effect::ReadSource`]: the bytes, or why not.
+    Source {
+        /// Whose.
+        message: postio_model::MessageId,
+        /// What came off the wire.
+        raw: Result<Vec<u8>, String>,
+    },
+    /// An [`Effect::ArmDwell`]'s time is up.
+    DwellDue {
+        /// Which clock.
+        generation: u64,
+        /// The message it was armed for.
+        message: postio_model::MessageId,
+    },
     /// An [`Effect::ExpireNotice`]'s time is up.
     NoticeDue {
         /// Which notice it was asked for.
@@ -298,6 +318,18 @@ pub enum Effect {
     Launch(std::path::PathBuf),
     /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
+    /// Read a message's source and answer with [`Input::Source`].
+    ReadSource(postio_model::MessageId),
+    /// Ask for [`Input::DwellDue`] after `after`: how long the message has
+    /// to stay open to count as read.
+    ArmDwell {
+        /// Which clock.
+        generation: u64,
+        /// The message on screen.
+        message: postio_model::MessageId,
+        /// How long.
+        after: std::time::Duration,
+    },
     /// Ask for [`Input::NoticeDue`] after `after`: the toast's time.
     ExpireNotice {
         /// Which notice, so a newer one is not taken down by an older timer.
@@ -540,6 +572,8 @@ pub struct App {
     reading: Option<crate::conversation::Reading>,
     /// The first reader line in view.
     reader_top: usize,
+    /// What the open message holds besides the message.
+    open: open::Open,
     /// Where saved parts go.
     downloads: std::path::PathBuf,
     /// Senders whose remote images are always allowed, shared with the
@@ -899,6 +933,7 @@ impl App {
             going_back: false,
             reading: None,
             reader_top: 0,
+            open: open::Open::default(),
             allowlist: postio_ui::allowlist::RemoteImageAllowList::default(),
             downloads: std::path::PathBuf::from("."),
             composer: None,
@@ -1533,6 +1568,8 @@ impl App {
                     vec![Effect::Redraw]
                 }
                 Target::Overlay => Vec::new(),
+                // A row of the menu over the message is chosen.
+                Target::MenuRow(at) => self.choose(at),
                 // A row's drawn answer is its key, for that row: an answer
                 // to an invitation is about the invitation wherever the
                 // cursor is; the rest take the cursor there first.
@@ -1567,7 +1604,7 @@ impl App {
                 let lines: isize = if down { WHEEL } else { -WHEEL };
                 match hit.target {
                     Target::Row(_) => self.scroll_list(lines),
-                    Target::Reader(_) => self.scroll_reader_lines(lines),
+                    Target::Reader(_) => self.scroll_open_lines(lines),
                     _ => return Vec::new(),
                 }
                 vec![Effect::Redraw]
@@ -1578,19 +1615,15 @@ impl App {
     /// A click on line `line` of what is being read: what the keys do there.
     fn click_reader(&mut self, line: usize) -> Vec<Effect> {
         use crate::conversation::At;
+        let at = self.line_at(line);
         let Some(reading) = self.reading.as_mut() else {
             return Vec::new();
         };
-        let at = reading.targets().get(line).cloned().unwrap_or(At::Nothing);
         if !matches!(at, At::Link(_)) {
             self.armed_link = None;
         }
         match at {
             At::Nothing => vec![Effect::Redraw],
-            At::Header(member) => {
-                reading.current = member;
-                vec![Effect::Redraw]
-            }
             At::Fold { member, block } => {
                 reading.toggle_fold(member, block);
                 vec![Effect::Redraw]
@@ -1612,7 +1645,6 @@ impl App {
             // A click on an attachment's line opens it with the system's
             // opener.
             At::Part { member, part } => {
-                reading.current = member;
                 let Some(member) = reading.members.get(member) else {
                     return Vec::new();
                 };
@@ -1635,18 +1667,6 @@ impl App {
         self.top = u32::try_from(top.clamp(0, i64::from(last_top))).unwrap_or(0);
         let shown = self.fit_from(self.top).max(1);
         self.cursor = self.cursor.clamp(self.top, self.top + shown - 1);
-    }
-
-    /// Scroll what is being read by `lines`.
-    fn scroll_reader_lines(&mut self, lines: isize) {
-        let Some((layout, _)) = self.reader_layout() else {
-            return;
-        };
-        let length = layout.len();
-        self.reader_top = self
-            .reader_top
-            .saturating_add_signed(lines)
-            .min(length.saturating_sub(1));
     }
 
     /// The same app, knowing the terminal delivers every chord.
@@ -2465,17 +2485,6 @@ impl App {
     fn key_context(&self) -> KeyContext {
         match self.focus {
             Focus::List => KeyContext::List,
-            // As the desktop reading pane is: a conversation of several is
-            // where `J`/`K` walk messages and `O` expands; a message on its
-            // own is the reader, where `p` shows its parts.
-            Focus::Reader
-                if self
-                    .reading
-                    .as_ref()
-                    .is_some_and(|reading| reading.members.len() > 1) =>
-            {
-                KeyContext::Conversation
-            }
             Focus::Reader => KeyContext::Reader,
             Focus::Composer => KeyContext::Composer,
             Focus::Search => KeyContext::Search,
@@ -2909,6 +2918,8 @@ impl App {
     fn command(&mut self, id: &str) -> Vec<Effect> {
         let last = self.list.total().saturating_sub(1);
         match id {
+            "next_message" if self.focus == Focus::Reader => return self.step_open(1),
+            "prev_message" if self.focus == Focus::Reader => return self.step_open(-1),
             "next_message" => self.move_to(self.cursor.saturating_add(1)),
             "prev_message" => self.move_to(self.cursor.saturating_sub(1)),
             "first_message" => self.move_to(0),
@@ -2967,7 +2978,21 @@ impl App {
                     return vec![Effect::ReplySource { kind, message }];
                 }
             }
-            "open_message" if self.listing_drafts() => {
+            // A draft being written is resumed, from its row or its open
+            // message; one on its way or stopped is read.
+            "open_message" if self.focus == Focus::Reader && self.open_draft_offers_edit() => {
+                if let Some(message) = self.reading.as_ref().map(|reading| reading.row) {
+                    let mut effects = self.close_message();
+                    effects.push(Effect::Resume(message));
+                    return effects;
+                }
+            }
+            "open_message"
+                if self.listing_drafts()
+                    && self.row_at(self.cursor).is_none_or(|row| {
+                        !postio_ui::focus_dialog::opens_to_read(row.send_state)
+                    }) =>
+            {
                 if let Some(message) = self.cursor_message() {
                     return vec![Effect::Resume(message)];
                 }
@@ -2976,13 +3001,7 @@ impl App {
             // row under the cursor is read if it is not already, and the
             // keyboard goes into it.
             "open_message" => {
-                let Some(message) = self.cursor_message() else {
-                    return Vec::new();
-                };
-                let mut effects = self.open_reading(message);
-                self.focus = Focus::Reader;
-                effects.push(Effect::Redraw);
-                return effects;
+                return self.open_at_cursor();
             }
             // One composition at a time, as the desktop's `c` does with a
             // composer already open: it goes back to it.
@@ -3027,6 +3046,7 @@ impl App {
                     return effects;
                 }
             }
+            "back" if self.focus == Focus::Reader => return self.back_from_message(),
             "back" if self.focus != Focus::List => self.focus = Focus::List,
             "expand_all" => self.toggle_folds(),
             "show_images" => return self.allow_images(false),
@@ -3038,8 +3058,18 @@ impl App {
                     .map(|member| vec![Effect::Unsubscribe(member.id)])
                     .unwrap_or_default();
             }
-            "next_in_conversation" => self.walk_conversation(1),
-            "prev_in_conversation" => self.walk_conversation(-1),
+            "next_in_conversation" => return self.walk_conversation(1),
+            "prev_in_conversation" => return self.walk_conversation(-1),
+            "view_source" => return self.view_source(),
+            "open_attachment_or_link" => return self.offer_choices(),
+            "more_actions" => return self.more_actions(),
+            "dismiss_marker" if self.focus == Focus::Reader => {
+                return self.dismiss_open_marker();
+            }
+            "toggle_read" => {
+                self.cancel_dwell();
+                return self.send("toggle_read");
+            }
             "scroll_reader_down" => self.scroll_reader(1),
             "scroll_reader_up" => self.scroll_reader(-1),
             // Escape backs out one layer at a time: a selection first, then
@@ -3053,14 +3083,11 @@ impl App {
             // bulk mail here, and both commands move between it and the
             // sender's own markup (spec 006 FR-031).
             "view_original" | "toggle_reader_view" => return self.view_original(),
+            // One message is shown at a time, so there is none to fold to
+            // its header.
             "toggle_fold" => {
-                let folded = self
-                    .reading
-                    .as_mut()
-                    .is_some_and(|reading| reading.toggle_current());
-                if !folded {
-                    return self.say("Only a message in a conversation folds to its header");
-                }
+                return self
+                    .say("The open message shows one message; [ and ] step through the thread");
             }
             // The invitation on the open message, or on the cursor's row:
             // the host queues the reply for its window (FR-102).
@@ -3342,13 +3369,6 @@ impl App {
         }
     }
 
-    /// The reader's lines and each member's header line, as of now.
-    fn reader_layout(&self) -> Option<(Vec<ratatui::text::Line<'static>>, Vec<usize>)> {
-        self.reading
-            .as_ref()
-            .map(|reading| reading.layout(chrono::Local::now()))
-    }
-
     /// Allow the current message's remote images: this once, or from its
     /// sender always -- which is written to the allow list the desktop app
     /// reads too, so the sender is trusted in both.
@@ -3380,35 +3400,6 @@ impl App {
             Effect::Redraw,
             Effect::SaveAllowlist(self.allowlist.clone()),
         ]
-    }
-
-    /// Scroll the reader by `pages` screenfuls, overlapping two lines so the
-    /// eye keeps its place.
-    fn scroll_reader(&mut self, pages: isize) {
-        let Some((lines, _)) = self.reader_layout() else {
-            return;
-        };
-        let length = lines.len();
-        let page = usize::from(self.size.1.saturating_sub(6)).max(1);
-        let step = page.saturating_sub(2).max(1);
-        self.reader_top = if pages >= 0 {
-            (self.reader_top + step * pages.unsigned_abs()).min(length.saturating_sub(1))
-        } else {
-            self.reader_top.saturating_sub(step * pages.unsigned_abs())
-        };
-    }
-
-    /// Move to the next or previous message of the conversation.
-    fn walk_conversation(&mut self, step: isize) {
-        let Some(reading) = self.reading.as_mut() else {
-            return;
-        };
-        let last = reading.members.len().saturating_sub(1);
-        reading.current = reading.current.saturating_add_signed(step).min(last);
-        if let Some((_, headers)) = self.reader_layout() {
-            let current = self.reading.as_ref().map_or(0, |reading| reading.current);
-            self.reader_top = headers.get(current).copied().unwrap_or(0);
-        }
     }
 
     /// Open `message` for reading: its body is read now, and its
@@ -3448,11 +3439,12 @@ impl App {
                         source: None,
                         original: false,
                         reader_view: false,
-                        collapsed: false,
                         images_allowed: false,
+                        asked: true,
                         has_attachments: row.attachment,
                         parts: Vec::new(),
-                        recipients: Vec::new(),
+                        to: Vec::new(),
+                        cc: Vec::new(),
                     }],
                     current: 0,
                 });
@@ -3484,14 +3476,15 @@ impl App {
             .map(crate::conversation::Member::from_summary)
             .collect();
         reading.current = reading.members.len().saturating_sub(1);
-        let reads = reading
-            .members
-            .iter()
-            .map(|member| Effect::ReadBody(member.id))
-            .collect::<Vec<_>>();
-        self.walk_conversation(0);
+        // Only the message shown is read; the others when they are stepped
+        // to (FR-195).
         let mut effects = vec![Effect::Redraw];
-        effects.extend(reads);
+        if let Some(member) = reading.members.get_mut(reading.current) {
+            member.asked = true;
+            effects.push(Effect::ReadBody(member.id));
+        }
+        self.reader_top = 0;
+        effects.extend(self.arm_dwell());
         effects
     }
 
@@ -3560,8 +3553,6 @@ impl App {
             .address
             .as_deref()
             .is_some_and(|address| self.allowlist.is_allowed(address));
-        // Bodies arrive in any order; keep the newest message's header in view.
-        self.walk_conversation(0);
         let mut effects = vec![Effect::Redraw];
         if ask_for_parts {
             effects.push(Effect::ReadParts(message));
@@ -3973,6 +3964,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.cheatsheet = None;
             vec![Effect::Redraw]
         }
+        Input::Key(key) if app.open.menu.is_some() && app.focus == Focus::Reader => {
+            app.menu_key(&key)
+        }
         Input::Key(key) if app.focus == Focus::FirstRun => app.first_run_key(&key),
         Input::Key(key) if app.focus == Focus::Settings => app.settings_key(&key),
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
@@ -4025,6 +4019,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 Vec::new()
             }
         }
+        Input::Source { message, raw } => app.source_read(message, raw),
+        Input::DwellDue {
+            generation,
+            message,
+        } => app.dwelt(generation, message),
         Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
         Input::SignatureSaved(saved) => match saved {
             // The account list carries the signatures; read it again.
@@ -4242,7 +4241,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Ok(list) => format!("Asked to leave {list}"),
             Err(reason) => reason,
         }),
-        Input::Addressed { message, to } => {
+        Input::Addressed { message, to, cc } => {
             let member = app.reading.as_mut().and_then(|reading| {
                 reading
                     .members
@@ -4252,10 +4251,14 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             match member {
                 Some(member) => {
                     // A header is attacker-controlled like any other.
-                    member.recipients = to
-                        .iter()
-                        .map(|address| postio_ui::terminal::SafeText::new(address.display()))
-                        .collect();
+                    let safe = |people: &[postio_model::EmailAddress]| -> Vec<_> {
+                        people
+                            .iter()
+                            .map(|address| postio_ui::terminal::SafeText::new(address.display()))
+                            .collect()
+                    };
+                    member.to = safe(&to);
+                    member.cc = safe(&cc);
                     vec![Effect::Redraw]
                 }
                 None => Vec::new(),
@@ -4273,7 +4276,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             generation,
             page,
             rows,
-        } => app.page(generation, page, rows),
+        } => {
+            let mut effects = app.page(generation, page, rows);
+            effects.extend(app.follow_cursor());
+            effects
+        }
     };
     effects.extend(app.fetches());
     effects
@@ -4932,9 +4939,6 @@ pub(crate) mod tests {
         // Focus's commands the terminal is offered since it became Focus
         // (C29) and cannot answer yet; tasks T309-T326 empty this list.
         "digest_rule",
-        "view_source",
-        "open_attachment_or_link",
-        "more_actions",
         "toggle_reading_pane",
         "back_to_words",
         "go_to_filtered",
@@ -5371,7 +5375,11 @@ pub(crate) mod tests {
                 total: 2,
             },
         );
-        serve(&mut app, opening);
+        crate::test_support::serve_with(&mut app, opening, |position| {
+            let mut draft = row(position);
+            draft.send_state = Some(postio_model::DraftState::Editing);
+            draft
+        });
 
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
@@ -6537,10 +6545,9 @@ pub(crate) mod tests {
     }
 
     fn line_of(app: &App, wanted: &str) -> usize {
-        let (lines, _) = app.reading().unwrap().layout(chrono::Local::now());
-        lines
-            .iter()
-            .position(|line| line.to_string().contains(wanted))
+        reader_text(app)
+            .lines()
+            .position(|line| line.contains(wanted))
             .unwrap_or_else(|| panic!("no line with {wanted}"))
     }
 
@@ -6554,9 +6561,8 @@ pub(crate) mod tests {
         )));
         let marker = line_of(&app, "quoted line");
         update(&mut app, click(Target::Reader(Some(marker)), false, false));
-        let (lines, _) = app.reading().unwrap().layout(chrono::Local::now());
-        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
-        assert!(text.iter().any(|line| line.contains("earlier")), "{text:?}");
+        let text = reader_text(&app);
+        assert!(text.contains("earlier"), "{text}");
     }
 
     #[test]
@@ -7254,18 +7260,7 @@ pub(crate) mod tests {
         );
         let reading = app.reading().expect("the reader shows it");
         assert_eq!(reading.row, message);
-        let drawn: String = reading
-            .layout(chrono::Local::now())
-            .0
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.to_string())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let drawn = reader_text(&app);
         assert!(drawn.contains("Hello Ada,"), "{drawn}");
         assert!(drawn.contains("quoted line"), "{drawn}");
     }
@@ -7404,46 +7399,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn toggle_fold_collapses_the_focused_message_to_its_header() {
-        let mut app = app((160, 40));
-        reading_a_conversation(&mut app);
-        for id in 1..=3 {
-            update(
-                &mut app,
-                Input::Body {
-                    message: MessageId::new(id),
-                    answer: Ok(postio_client::protocol::Body::Ready {
-                        body: postio_model::MessageBody {
-                            text: Some(format!("words of message {id}")),
-                            html: None,
-                        },
-                        encoding_problems: false,
-                    }),
-                },
-            );
-        }
-        let current = app.reading().unwrap().current;
-        let words = format!("words of message {}", current + 1);
-        assert!(reader_text(&app).contains(&words));
-        app.command("toggle_fold");
-        let folded = reader_text(&app);
-        assert!(
-            !folded.contains(&words),
-            "collapsed to its header:\n{folded}"
-        );
-        let reading = app.reading().unwrap();
-        let now = chrono::Local::now();
-        assert_eq!(
-            reading.layout(now).0.len(),
-            reading.targets().len(),
-            "clicks still land on the lines drawn"
-        );
-        app.command("toggle_fold");
-        assert!(reader_text(&app).contains(&words), "and open again");
-    }
-
-    #[test]
-    fn a_conversation_row_reads_every_message_in_it() {
+    fn a_conversation_row_reads_the_message_shown_and_the_others_when_stepped_to() {
         let mut app = app((160, 40));
         let effects = reading_a_conversation(&mut app);
         let reads: Vec<MessageId> = effects
@@ -7453,7 +7409,24 @@ pub(crate) mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(reads, [1, 2, 3].map(MessageId::new).to_vec());
+        assert_eq!(
+            reads,
+            [3].map(MessageId::new).to_vec(),
+            "only the newest, which is shown (FR-195)"
+        );
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let stepped = update(&mut app, press('['));
+        assert!(
+            stepped.contains(&Effect::ReadBody(MessageId::new(2))),
+            "{stepped:?}"
+        );
+        let again = update(&mut app, press(']'));
+        assert!(
+            !again.iter().any(|e| matches!(e, Effect::ReadBody(_))),
+            "read once: {again:?}"
+        );
+        update(&mut app, press('['));
+        update(&mut app, press('['));
         for id in 1..=3 {
             update(
                 &mut app,
@@ -7469,12 +7442,24 @@ pub(crate) mod tests {
                 },
             );
         }
-        let drawn = reader_text(&app);
-        for id in 1..=3 {
-            assert!(drawn.contains(&format!("words of message {id}")), "{drawn}");
-        }
-        for who in ["ada@example.com", "bea@example.com", "cy@example.com"] {
-            assert!(drawn.contains(who), "{who} heads their message: {drawn}");
+        // One message at a time, the one stepped to, under its sender.
+        for (id, who) in [
+            (1, "ada@example.com"),
+            (2, "bea@example.com"),
+            (3, "cy@example.com"),
+        ] {
+            let at = app.reading().unwrap().current;
+            let drawn = reader_text(&app);
+            assert!(
+                drawn.contains(&format!("words of message {}", at + 1)),
+                "{drawn}"
+            );
+            assert!(
+                !drawn.contains(&format!("words of message {}", (at + 1) % 3 + 1)),
+                "{drawn}"
+            );
+            let _ = (id, who);
+            update(&mut app, press(']'));
         }
     }
 
@@ -7486,10 +7471,14 @@ pub(crate) mod tests {
         assert_eq!(app.reading().unwrap().current, 2, "it opens on the newest");
         update(&mut app, press('['));
         assert_eq!(app.reading().unwrap().current, 1);
-        let at_second = app.reader_top();
         update(&mut app, press('['));
         assert_eq!(app.reading().unwrap().current, 0);
-        assert!(app.reader_top() < at_second, "the reader moved up to it");
+        update(&mut app, press('['));
+        assert_eq!(
+            app.reading().unwrap().current,
+            0,
+            "nothing before the first"
+        );
         update(&mut app, press(']'));
         assert_eq!(app.reading().unwrap().current, 1);
     }

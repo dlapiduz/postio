@@ -9,7 +9,7 @@
 //! magick /tmp/tui.svg /tmp/tui.png
 //! ```
 //!
-//! `state` is what is open over the mail: `reading` (the first message), `search`, `palette`, `keys` (the
+//! `state` is what is open over the mail: `reading`, `open` or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `search`, `palette`, `keys` (the
 //! cheat sheet), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
@@ -167,7 +167,7 @@ fn main() {
     update(&mut app, Input::FocusCounts(test_support::drawing_counts()));
 
     // The first message open, for `reading`; otherwise the list.
-    if state == "reading" {
+    if matches!(state.as_str(), "reading" | "open" | "open-narrow") {
         test_support::open_message(
         &mut app,
         MessageId::new(1),

@@ -8,8 +8,8 @@ pub mod composer;
 pub mod first_run;
 pub mod hit;
 pub mod list;
+pub mod open;
 pub mod palette;
-pub mod reader;
 pub mod search;
 pub mod settings;
 pub mod state;
@@ -103,9 +103,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                     }
                 }
             }
-            // T315: the open message becomes the overlay frame; until then
-            // it fills the body.
-            Front::Reader => reader::draw(frame, body, app, theme, now, &mut hits),
             _ => {
                 // A search's facets take the list's first line.
                 let facets = app.facets();
@@ -142,6 +139,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                     );
                 }
             }
+        }
+        if app.front() == Front::Reader {
+            open::over_list(frame, area, app, theme, now, &mut hits);
         }
         // Over everything: a click there lands on nothing underneath.
         if let Some(open) = app.palette() {
@@ -1135,143 +1135,6 @@ mod tests {
         let screen = screen(160, 16, &app);
         assert!(!screen.contains('\u{1b}'), "{screen:?}");
         assert!(screen.contains("Re:"), "{screen}");
-    }
-
-    #[test]
-    fn an_opened_message_fills_the_body() {
-        use chrono::Utc;
-        use postio_ui::paging::Page;
-        let mut app = with_places((160, 12));
-        let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
-        let effects = update(&mut app, Input::Opened { scope, total: 1 });
-        let (generation, page) = effects
-            .iter()
-            .find_map(|effect| match effect {
-                crate::app::Effect::Fetch {
-                    generation, page, ..
-                } => Some((*generation, *page)),
-                _ => None,
-            })
-            .expect("the first page is asked for");
-        let row = crate::row::Row {
-            unread: true,
-            address: None,
-            ..crate::test_support::row_from(7, "Ada Lovelace", "Engine notes", "", Utc::now())
-        };
-        update(
-            &mut app,
-            Input::Page {
-                generation,
-                page,
-                rows: Ok(Page {
-                    total: 1,
-                    rows: vec![row],
-                }),
-            },
-        );
-        app.open_reading(postio_model::MessageId::new(7));
-        update(
-            &mut app,
-            crate::test_support::key(
-                crossterm::event::KeyCode::Enter,
-                crossterm::event::KeyModifiers::NONE,
-            ),
-        );
-        update(
-            &mut app,
-            Input::Body {
-                message: postio_model::MessageId::new(7),
-                answer: Ok(postio_client::protocol::Body::Ready {
-                    body: postio_model::MessageBody {
-                        text: None,
-                        html: Some("<p>The <b>analytical</b> engine</p>".into()),
-                    },
-                    encoding_problems: false,
-                }),
-            },
-        );
-        let screen = screen(160, 12, &app);
-        assert!(screen.contains("The analytical engine"), "{screen}");
-        assert_eq!(
-            screen.matches("Engine notes").count(),
-            1,
-            "the open message fills the body and its subject heads it:\n{screen}"
-        );
-    }
-
-    #[test]
-    fn the_reader_is_headed_by_who_wrote_to_whom_and_when_and_offers_its_keys() {
-        use chrono::Utc;
-        use postio_ui::paging::Page;
-        let mut app = with_places((160, 20));
-        let scope = postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1));
-        let effects = update(&mut app, Input::Opened { scope, total: 1 });
-        let (generation, page) = effects
-            .iter()
-            .find_map(|effect| match effect {
-                crate::app::Effect::Fetch {
-                    generation, page, ..
-                } => Some((*generation, *page)),
-                _ => None,
-            })
-            .expect("the first page is asked for");
-        let row = crate::test_support::row_from(
-            7,
-            "Ada Lovelace",
-            "Engine notes",
-            "",
-            Utc.with_ymd_and_hms(2026, 9, 22, 9, 14, 0).unwrap(),
-        );
-        update(
-            &mut app,
-            Input::Page {
-                generation,
-                page,
-                rows: Ok(Page {
-                    total: 1,
-                    rows: vec![row],
-                }),
-            },
-        );
-        app.open_reading(postio_model::MessageId::new(7));
-        update(
-            &mut app,
-            crate::test_support::key(
-                crossterm::event::KeyCode::Enter,
-                crossterm::event::KeyModifiers::NONE,
-            ),
-        );
-        update(
-            &mut app,
-            Input::Addressed {
-                message: postio_model::MessageId::new(7),
-                to: vec![
-                    postio_model::EmailAddress::new(None::<String>, "grace@example.net"),
-                    postio_model::EmailAddress::new(Some("Bea"), "bea@example.org"),
-                ],
-            },
-        );
-        let screen = screen(160, 20, &app);
-        let reader: Vec<String> = screen.lines().map(str::to_owned).collect();
-        let at = |needle: &str| {
-            reader
-                .iter()
-                .position(|line| line.contains(needle))
-                .unwrap_or_else(|| panic!("{needle} missing:\n{screen}"))
-        };
-        let subject = at("Engine notes");
-        let meta = at("ada@example.com → grace@example.net, Bea");
-        assert_eq!(meta, subject + 1, "who under what:\n{screen}");
-        assert!(
-            reader[meta].contains("Tue 22 Sep"),
-            "and when: {}",
-            reader[meta]
-        );
-        let keys = reader.len() - 2;
-        assert!(
-            reader[keys].contains("e reply") && reader[keys].contains("a archive"),
-            "the keys at the foot:\n{screen}"
-        );
     }
 
     fn status_of(app: &App, colour: Colour) -> (String, Vec<ratatui::buffer::Cell>, Theme) {

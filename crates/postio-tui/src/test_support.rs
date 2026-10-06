@@ -321,7 +321,14 @@ pub fn show_rows(app: &mut App, rows: &[Row]) {
 /// recipients are known and its body has arrived.
 pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, body: MessageBody) {
     app.open_reading(message);
-    update(app, Input::Addressed { message, to });
+    update(
+        app,
+        Input::Addressed {
+            message,
+            to,
+            cc: Vec::new(),
+        },
+    );
     update(
         app,
         Input::Body {
@@ -334,19 +341,13 @@ pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, bo
     );
 }
 
-/// What the reader shows, as plain text.
+/// What the open message's column shows, as plain text.
 pub fn reader_text(app: &App) -> String {
-    app.reading()
-        .expect("a message is open")
-        .layout(Local::now())
-        .0
+    assert!(app.reading().is_some(), "a message is open");
+    crate::view::open::document(app, &plain_theme(), 72, now())
+        .lines
         .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.to_string())
-                .collect::<String>()
-        })
+        .map(|line| line.line.to_string())
         .collect::<Vec<_>>()
         .join("\n")
 }

@@ -29,6 +29,8 @@ pub enum Target {
     /// A control of the window that runs a command, by its id: the top bar's
     /// and the strip's.
     Command(&'static str),
+    /// A row of the menu over the open message, by its place in the menu.
+    MenuRow(usize),
     /// Something drawn over everything else: clicks there land on nothing
     /// underneath.
     Overlay,

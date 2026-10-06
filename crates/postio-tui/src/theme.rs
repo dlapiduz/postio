@@ -165,7 +165,12 @@ impl Theme {
         }
     }
 
-    /// The style for `role`.
+    /// A theme with no colour: for measuring what a screen would take.
+    pub fn plain() -> Theme {
+        Theme::new(Colour::None, Background::Unknown, &BTreeMap::new()).0
+    }
+
+    /// The style a role is drawn in.
     pub fn style(&self, role: Role) -> Style {
         self.styles.get(&role).copied().unwrap_or_default()
     }

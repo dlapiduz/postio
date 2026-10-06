@@ -944,6 +944,33 @@ fn perform(
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");
                 }
             }
+            Effect::ReadSource(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let raw = client
+                        .raw_source(message)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Source { message, raw }).await;
+                });
+            }
+            Effect::ArmDwell {
+                generation,
+                message,
+                after,
+            } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs
+                        .send(Input::DwellDue {
+                            generation,
+                            message,
+                        })
+                        .await;
+                });
+            }
             Effect::ExpireNotice { generation, after } => {
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
@@ -1088,8 +1115,13 @@ fn perform(
                     let answer = match reading {
                         Ok(Some(reading)) => {
                             if let Some(row) = reading.row {
-                                let to = row.to.into_iter().chain(row.cc).collect();
-                                let _ = inputs.send(Input::Addressed { message, to }).await;
+                                let _ = inputs
+                                    .send(Input::Addressed {
+                                        message,
+                                        to: row.to,
+                                        cc: row.cc,
+                                    })
+                                    .await;
                             }
                             Ok(reading.body)
                         }

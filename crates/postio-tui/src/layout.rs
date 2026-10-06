@@ -73,6 +73,33 @@ pub fn frame_width(width: u16) -> u16 {
         .clamp(FRAME_NARROWEST, FRAME_WIDEST)
 }
 
+/// The frame holding the open message in a terminal of `area`: every row but
+/// the top bar and the bottom line, `frame_width` wide and centred.
+pub fn open_frame(area: Rect) -> Rect {
+    let width = frame_width(area.width).min(area.width);
+    Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + 1,
+        width,
+        area.height.saturating_sub(2),
+    )
+}
+
+/// Below this many columns of frame, Label, Move and Delete fold into More.
+const MORE_BELOW: u16 = 96;
+
+/// Whether a frame `width` columns wide folds Label, Move and Delete into
+/// More.
+pub fn folds_into_more(width: u16) -> bool {
+    width < MORE_BELOW
+}
+
+/// The scrolling column's width in a frame or pane `width` wide:
+/// `min(72, width − 8)`.
+pub fn column_width(width: u16) -> u16 {
+    72.min(width.saturating_sub(8))
+}
+
 /// The reading pane's width beside the list: `min(100, W − 56)` from 128
 /// columns, and none below.
 pub fn pane_width(width: u16) -> Option<u16> {
@@ -108,6 +135,22 @@ mod tests {
         assert_eq!(frame_width(80), 76, "never narrower than 76 from 80");
         assert_eq!(frame_width(79), 79, "the whole width below 80");
         assert_eq!(frame_width(50), 50);
+    }
+
+    #[test]
+    fn the_frame_covers_every_row_but_the_top_bar_and_the_bottom_line() {
+        let frame = open_frame(Rect::new(0, 0, 120, 36));
+        assert_eq!(frame, Rect::new(14, 1, 92, 34));
+        assert_eq!(open_frame(Rect::new(0, 0, 60, 14)), Rect::new(0, 1, 60, 12));
+    }
+
+    #[test]
+    fn the_column_is_72_or_the_frame_less_8_and_the_action_row_folds_below_96() {
+        assert_eq!(column_width(92), 72);
+        assert_eq!(column_width(76), 68);
+        assert_eq!(column_width(100), 72);
+        assert!(folds_into_more(92));
+        assert!(!folds_into_more(96));
     }
 
     #[test]
