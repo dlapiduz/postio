@@ -7,6 +7,7 @@ pub mod bottom;
 pub mod cheatsheet;
 pub mod composer;
 pub mod first_run;
+pub mod folders;
 pub mod hit;
 pub mod list;
 pub mod open;
@@ -114,6 +115,17 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         // Over everything: a click there lands on nothing underneath.
         if let Some((bar, ctx)) = app.bar() {
             bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
+        }
+        if let Some((open, reach)) = app.folders() {
+            folders::draw(
+                frame,
+                area,
+                open,
+                &reach,
+                &|command| app.hint(command),
+                theme,
+                &mut hits,
+            );
         }
         if let Some(open) = app.palette() {
             palette::draw(frame, area, &open, theme);

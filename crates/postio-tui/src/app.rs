@@ -605,6 +605,8 @@ pub struct App {
     detached: bool,
     /// The command bar, while it is open.
     bar: Option<crate::bar::Bar>,
+    /// The folders popover, while it is open.
+    places_box: Option<crate::folders::Folders>,
     /// The palette, while it is open.
     palette: Option<PaletteState>,
     /// Whether the terminal speaks the kitty keyboard protocol, so every
@@ -830,6 +832,8 @@ pub enum Focus {
     Composer,
     /// The command bar.
     Bar,
+    /// The folders popover.
+    Folders,
     /// The first run, while there is no account.
     FirstRun,
     /// The settings.
@@ -900,6 +904,7 @@ impl App {
             saved_at: None,
             composed_from: Focus::List,
             bar: None,
+            places_box: None,
             palette: None,
             labels: Vec::new(),
             enhanced_keys: false,
@@ -1507,6 +1512,18 @@ impl App {
     /// A mouse event, on what it landed on: the same things the keys do.
     fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
         use crate::view::hit::Target;
+        if self.places_box.is_some() {
+            match pointer {
+                Pointer::Click { hit, .. } if !matches!(hit.target, Target::PlaceRow(_)) => {
+                    return Vec::new();
+                }
+                Pointer::Wheel { down, .. } => {
+                    self.with_folders(|folders, _, reach| folders.wheel(down, reach));
+                    return vec![Effect::Redraw];
+                }
+                Pointer::Click { .. } => {}
+            }
+        }
         // The bar holds the pointer as it holds the keyboard: a click outside
         // it does nothing, and the wheel scrolls its lines.
         if self.bar.is_some() {
@@ -1567,6 +1584,7 @@ impl App {
                 Target::BarRow(index) => self.bar_click(index),
                 Target::BarSaved(index) => self.bar_saved(index),
                 Target::BarChip(index) => self.bar_chip(index),
+                Target::PlaceRow(index) => self.folders_click(index),
                 Target::Reader(line) => {
                     if self.reading.is_none() {
                         return Vec::new();
@@ -1853,7 +1871,6 @@ impl App {
     /// Close the bar and do what its row asked, where it opened.
     fn bar_act(&mut self, action: postio_ui::command_bar::BarAction) -> Vec<Effect> {
         use postio_ui::command_bar::BarAction;
-        use postio_ui::finder::Destination;
         let Some(bar) = self.bar.take() else {
             return Vec::new();
         };
@@ -1874,23 +1891,32 @@ impl App {
                     _ => self.command(id.as_str()),
                 }
             }
-            BarAction::Go { destination, name } => match destination {
-                Destination::Mailbox(mailbox) => {
-                    let inbox = self.folders.iter().any(|folder| {
-                        folder.id == mailbox
-                            && folder.role == postio_model::mailbox::MailboxRole::Inbox
-                    });
-                    self.open_there(if inbox {
-                        ListScope::Focus(postio_model::FocusScope::Inbox)
-                    } else {
-                        ListScope::Mailbox(mailbox)
-                    })
-                }
-                // A label is its search: Focus lists no label on its own.
-                Destination::Label(_) => self.open_bar(&format!("label:\"{name}\"")),
-                Destination::Search(query) => self.open_bar(&query),
-                Destination::Outbox(account) => self.open_there(ListScope::Outbox(account)),
-            },
+            BarAction::Go { destination, name } => self.go_destination(destination, &name),
+        }
+    }
+
+    /// Show `destination` in the list: a label is its search, as Focus lists
+    /// no label on its own.
+    fn go_destination(
+        &mut self,
+        destination: postio_ui::finder::Destination,
+        name: &str,
+    ) -> Vec<Effect> {
+        use postio_ui::finder::Destination;
+        match destination {
+            Destination::Mailbox(mailbox) => {
+                let inbox = self.folders.iter().any(|folder| {
+                    folder.id == mailbox && folder.role == postio_model::mailbox::MailboxRole::Inbox
+                });
+                self.open_there(if inbox {
+                    ListScope::Focus(postio_model::FocusScope::Inbox)
+                } else {
+                    ListScope::Mailbox(mailbox)
+                })
+            }
+            Destination::Label(_) => self.open_bar(&format!("label:\"{name}\"")),
+            Destination::Search(query) => self.open_bar(&query),
+            Destination::Outbox(account) => self.open_there(ListScope::Outbox(account)),
         }
     }
 
@@ -1966,6 +1992,9 @@ impl App {
             .map(postio_ui::places::label_place)
             .collect();
         let names = postio_ui::names::Names::new(&details.correspondents);
+        if let Some(folders) = self.places_box.as_mut() {
+            folders.learn(details.clone());
+        }
         let step = self.bar.as_mut().map(|bar| {
             bar.learn(labels, names);
             bar.places_known()
@@ -1976,12 +2005,99 @@ impl App {
         }
     }
 
+    // -- The folders popover (src/folders.rs) -----------------------------
+
+    /// The popover and what it lists from, while it is open.
+    pub fn folders(&self) -> Option<(&crate::folders::Folders, crate::folders::Reach<'_>)> {
+        Some((self.places_box.as_ref()?, self.folders_reach()))
+    }
+
+    fn folders_reach(&self) -> crate::folders::Reach<'_> {
+        crate::folders::Reach {
+            folders: &self.folders,
+            filtered_today: self
+                .features
+                .filtering
+                .then(|| self.counts.map_or(0, |counts| counts.filtered_today)),
+        }
+    }
+
+    /// `g o`, or a click on the strip's place.
+    fn open_folders(&mut self) -> Vec<Effect> {
+        let from = match (&self.places_box, self.focus) {
+            (Some(open), _) => open.from(),
+            (None, Focus::Palette) => Focus::List,
+            (None, focus) => focus,
+        };
+        self.places_box = Some(crate::folders::Folders::open(from));
+        self.focus = Focus::Folders;
+        vec![Effect::ReadPlaceDetails, Effect::Redraw]
+    }
+
+    fn with_folders<T>(
+        &mut self,
+        f: impl FnOnce(&mut crate::folders::Folders, &mut Keys, &crate::folders::Reach<'_>) -> T,
+    ) -> Option<T> {
+        let mut open = self.places_box.take()?;
+        let reach = crate::folders::Reach {
+            folders: &self.folders,
+            filtered_today: self
+                .features
+                .filtering
+                .then(|| self.counts.map_or(0, |counts| counts.filtered_today)),
+        };
+        let out = f(&mut open, &mut self.keys, &reach);
+        self.places_box = Some(open);
+        Some(out)
+    }
+
+    fn folders_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        match self.with_folders(|folders, keys, reach| folders.key(key, keys, reach)) {
+            Some(step) => self.folders_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    fn folders_click(&mut self, index: usize) -> Vec<Effect> {
+        let step = self
+            .places_box
+            .as_ref()
+            .map(|open| open.go(index, &self.folders_reach()));
+        match step {
+            Some(step) => self.folders_step(step),
+            None => Vec::new(),
+        }
+    }
+
+    fn folders_step(&mut self, step: crate::folders::Step) -> Vec<Effect> {
+        use crate::folders::Step;
+        match step {
+            Step::Stay => vec![Effect::Redraw],
+            Step::Close => self.close_folders(),
+            Step::Go(destination, name) => {
+                self.close_folders();
+                self.go_destination(destination, &name)
+            }
+            Step::Run(command) => {
+                self.close_folders();
+                self.command(command.as_str())
+            }
+        }
+    }
+
+    fn close_folders(&mut self) -> Vec<Effect> {
+        if let Some(open) = self.places_box.take() {
+            self.focus = open.from();
+        }
+        vec![Effect::Redraw]
+    }
+
     /// The registry's context for where the keyboard is.
     fn context_of(focus: Focus) -> postio_core::Context {
         match focus {
             Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
             Focus::Settings => postio_core::Context::Accounts,
-            Focus::Bar => postio_core::Context::Search,
+            Focus::Bar | Focus::Folders => postio_core::Context::Search,
             Focus::Reader => postio_core::Context::Reader,
             Focus::Composer => postio_core::Context::Composer,
         }
@@ -2405,7 +2521,7 @@ impl App {
             Focus::List => KeyContext::List,
             Focus::Reader => KeyContext::Reader,
             Focus::Composer => KeyContext::Composer,
-            Focus::Bar => KeyContext::Search,
+            Focus::Bar | Focus::Folders => KeyContext::Search,
             Focus::Palette => KeyContext::Palette,
             Focus::FirstRun => KeyContext::Global,
             Focus::Settings => KeyContext::Accounts,
@@ -2923,9 +3039,7 @@ impl App {
                 }
             }
             "toggle_has_action" => return self.toggle_has_action(),
-            // The places box is the bar's `in:` until the folders popover
-            // replaces it.
-            "go_to_folders" => return self.open_bar("in:"),
+            "go_to_folders" => return self.open_folders(),
             "search" => return self.open_bar(""),
             "command_palette" => {
                 return self.open_bar(&postio_ui::finder::COMMANDS_ONLY.to_string());
@@ -3866,6 +3980,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Settings => app.settings_key(&key),
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
         Input::Key(key) if app.focus == Focus::Bar => app.bar_key(&key),
+        Input::Key(key) if app.focus == Focus::Folders => app.folders_key(&key),
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
         Input::Key(key) => match app.keys.press(&key, app.key_context(), false) {
             Outcome::Command(id) => app.command(&id),

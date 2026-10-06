@@ -88,7 +88,7 @@ impl Row {
 }
 
 /// The hue the accent has, which no label's colour may come near.
-fn accent_hue() -> f64 {
+pub(crate) fn accent_hue() -> f64 {
     let (_, dark) = postio_ui::tokens::accent_rgb();
     Rgb::new(dark.0, dark.1, dark.2).hue()
 }

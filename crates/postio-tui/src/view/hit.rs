@@ -30,6 +30,8 @@ pub enum Target {
     BarSaved(usize),
     /// One of the bar's chips.
     BarChip(usize),
+    /// A place in the folders popover, by its place in the list.
+    PlaceRow(usize),
     /// A control of the window that runs a command, by its id: the top bar's
     /// and the strip's.
     Command(&'static str),

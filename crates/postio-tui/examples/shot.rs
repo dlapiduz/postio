@@ -10,7 +10,7 @@
 //! ```
 //!
 //! `state` is what is open over the mail: `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
-//! `bar-commands`, `bar-folder`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
+//! `bar-commands`, `bar-folder`, `folders`, `snooze`, `remind`, `label`, `move`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
 //!
@@ -267,6 +267,27 @@ fn main() {
         "bar-commands" => {
             key(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
             typed(&mut app, "ar");
+        }
+        "folders" => {
+            typed(&mut app, "go");
+            let mut atlas = test_support::label(7, "Atlas");
+            atlas.color = Some("#3584e4".into());
+            update(
+                &mut app,
+                Input::PlaceDetails(postio_tui::places::PlaceDetails {
+                    labels: vec![
+                        atlas,
+                        test_support::label(8, "Harbor"),
+                        test_support::label(9, "Kitchen reno"),
+                    ],
+                    label_counts: vec![
+                        (postio_model::LabelId::new(7), 12),
+                        (postio_model::LabelId::new(8), 5),
+                    ],
+                    correspondents: Vec::new(),
+                    outbox: vec![(AccountId::new(1), 2)],
+                }),
+            );
         }
         "bar-folder" => {
             test_support::type_text(&mut app, "/in:arch");

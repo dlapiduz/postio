@@ -21,6 +21,7 @@ pub mod config_file;
 pub mod conversation;
 pub mod external;
 pub mod first_run;
+pub mod folders;
 pub mod input;
 pub mod layout;
 pub mod paths;
