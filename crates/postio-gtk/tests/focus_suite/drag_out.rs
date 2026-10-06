@@ -167,3 +167,143 @@ pub fn a_select_all_drag_offers_no_files() {
         );
     });
 }
+
+/// The spelling that carries files out of a Flatpak sandbox.
+const PORTAL_MIME: &str = "application/vnd.portal.filetransfer";
+
+/// The drag offers the document portal's spelling beside `text/uri-list`:
+/// inside a sandbox it is the only one that carries a file out. Offering it
+/// needs no portal; serving it does (the ignored case below).
+pub fn a_dragged_row_offers_the_portal_spelling_too() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, messages) = five_with_sources().await;
+        let offer = window
+            .drag_offer(position(&window, messages[1]))
+            .expect("a row in the list can be dragged out");
+        let mimes: Vec<String> = offer
+            .formats()
+            .union_serialize_mime_types()
+            .mime_types()
+            .iter()
+            .map(|mime| mime.to_string())
+            .collect();
+        assert!(
+            mimes.iter().any(|mime| mime == PORTAL_MIME),
+            "a sandboxed receiver could take nothing from this drag: {mimes:?}"
+        );
+    });
+}
+
+/// Ask the document portal what a receiver would get for `key`: the
+/// receiving half of a drop, done by hand.
+fn retrieve_files(key: &str) -> Result<Vec<String>, glib::Error> {
+    let bus = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)?;
+    let reply = bus.call_sync(
+        Some("org.freedesktop.portal.Documents"),
+        "/org/freedesktop/portal/documents",
+        "org.freedesktop.portal.FileTransfer",
+        "RetrieveFiles",
+        Some(
+            &(
+                key,
+                std::collections::HashMap::<String, glib::Variant>::new(),
+            )
+                .to_variant(),
+        ),
+        Some(glib::VariantTy::new("(as)").unwrap()),
+        gio::DBusCallFlags::NONE,
+        5_000,
+        gio::Cancellable::NONE,
+    )?;
+    let (files,): (Vec<String>,) = reply.get().expect("the portal answered with (as)");
+    Ok(files)
+}
+
+/// Whether the session bus has a document portal that answers for
+/// `FileTransfer`: owning the name is not enough, as a sandbox with no FUSE
+/// mount owns it and fails every call.
+fn portal_available() -> bool {
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+        return false;
+    };
+    bus.call_sync(
+        Some("org.freedesktop.portal.Documents"),
+        "/org/freedesktop/portal/documents",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        Some(&("org.freedesktop.portal.FileTransfer", "version").to_variant()),
+        None,
+        gio::DBusCallFlags::NONE,
+        2_000,
+        gio::Cancellable::NONE,
+    )
+    .is_ok()
+}
+
+/// What serving the portal spelling writes: the transfer key.
+fn portal_key(offer: &gdk::ContentProvider) -> String {
+    let stream = gio::MemoryOutputStream::new_resizable();
+    glib::MainContext::default()
+        .block_on(offer.write_mime_type_future(PORTAL_MIME, &stream, glib::Priority::DEFAULT))
+        .expect("the portal spelling of the drop is served");
+    stream.close(gio::Cancellable::NONE).expect("it closes");
+    String::from_utf8_lossy(&stream.steal_as_bytes())
+        .trim_end_matches('\0')
+        .trim()
+        .to_owned()
+}
+
+/// A dragged message survives the document portal: the drop serialises to a
+/// transfer key, a receiver redeems it with `RetrieveFiles`, and the path it
+/// gets opens as the message the server sent. The portal carries references,
+/// not bytes, so reclaiming the export directory afterwards breaks the
+/// receiver -- which is why the export directory is a cache the app never
+/// sweeps. Needs a working document portal, so it is ignored by name (see
+/// `IGNORED`) and skips itself where the bus has none.
+pub fn a_dragged_message_survives_the_portal() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        if !portal_available() {
+            eprintln!("skipping: no working org.freedesktop.portal.FileTransfer on this bus");
+            return;
+        }
+        let (_fixture, window, messages) = five_with_sources().await;
+        let offer = window
+            .drag_offer(position(&window, messages[1]))
+            .expect("a row in the list can be dragged out");
+
+        let key = portal_key(&offer);
+        assert!(
+            !key.is_empty(),
+            "the portal spelling serialised to nothing: a sandboxed receiver would get no files"
+        );
+        let files = retrieve_files(&key).expect("the portal resolves the transfer key");
+        assert_eq!(files.len(), 1, "one message was dragged: {files:?}");
+        let path = std::path::PathBuf::from(&files[0]);
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "Second.eml");
+        assert_eq!(
+            std::fs::read(&path).expect("the portal named a file the receiver cannot open"),
+            raw("Second"),
+            "the file another application opens is not the message the server sent"
+        );
+
+        // Reclaim the cache, as the system is entitled to: the receiver of a
+        // second drop finds nothing, because the portal never copied it.
+        let key = portal_key(&offer);
+        for entry in std::fs::read_dir(export_dir()).expect("the export directory") {
+            let _ = std::fs::remove_file(entry.expect("an entry").path());
+        }
+        let files = retrieve_files(&key).expect("the portal still resolves the key");
+        assert!(
+            files
+                .iter()
+                .all(|path| !std::path::Path::new(path).exists()),
+            "the portal copied the exported bytes; paths::export_dir's reasoning needs revisiting"
+        );
+    });
+}

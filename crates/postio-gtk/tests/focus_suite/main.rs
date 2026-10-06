@@ -119,7 +119,11 @@ mod window_teardown;
 /// the case needs. A name here still runs when asked for explicitly, and still
 /// appears in `--list`, exactly as an ignored libtest case does. Say in a
 /// comment beside the name which issue or task takes it back.
-const IGNORED: &[&str] = &[];
+const IGNORED: &[&str] = &[
+    // Needs a working document portal on the session bus, which a CI machine
+    // does not have; run by name where there is one.
+    "drag_out::a_dragged_message_survives_the_portal",
+];
 
 const CASES: &[(&str, fn())] = &[
     (
@@ -1260,6 +1264,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "drag_out::a_select_all_drag_offers_no_files",
         drag_out::a_select_all_drag_offers_no_files as fn(),
+    ),
+    (
+        "drag_out::a_dragged_row_offers_the_portal_spelling_too",
+        drag_out::a_dragged_row_offers_the_portal_spelling_too as fn(),
+    ),
+    (
+        "drag_out::a_dragged_message_survives_the_portal",
+        drag_out::a_dragged_message_survives_the_portal as fn(),
     ),
     (
         "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
