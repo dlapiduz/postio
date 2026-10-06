@@ -2988,6 +2988,49 @@ async fn native_whole_fetch_preserves_parts_for_late_memberships() {
         body.html,
         "refetching an evicted CID must retain the shared message words"
     );
+    local
+        .blobs
+        .evict_to_fit(&local.connection, 0)
+        .await
+        .unwrap();
+    let mut payload = request(&local.inbox, first.id, 1, first.size);
+    payload.want = Want::Payloads(vec![stored.attachments[0].part_id.clone().unwrap()]);
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &payload,
+        None,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("a native payload request can use the whole source");
+    let restored = repo.get(second.id).await.unwrap().unwrap();
+    assert_eq!(
+        local
+            .blobs
+            .get(restored.attachments[0].blob_id.as_ref().unwrap())
+            .unwrap(),
+        b"picture"
+    );
+    assert_eq!(repo.body(second.id).await.unwrap().unwrap().html, body.html);
+    let calls = backend.calls();
+    assert_eq!(
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &payload,
+            None,
+            None,
+            &CancelToken::new(),
+        )
+        .await
+        .unwrap(),
+        Outcome::Stored { bytes: 0 }
+    );
+    assert_eq!(backend.calls(), calls, "a restored payload stays local");
 }
 
 #[tokio::test]

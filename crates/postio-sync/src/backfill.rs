@@ -1305,6 +1305,20 @@ pub async fn fetch_body(
     }
 
     match &request.want {
+        // Native whole-source adapters have immutable identity but no section
+        // map. A parsed MIME path is useful to the reader, but does not imply
+        // the backend can fetch that path independently.
+        Want::Payloads(parts)
+            if message.server.content_identity.is_some() && message.content_type.is_none() =>
+        {
+            let missing = message.attachments.iter().any(|part| {
+                part.blob_id.is_none() && part.part_id.as_ref().is_some_and(|id| parts.contains(id))
+            });
+            if !missing {
+                return Ok(Outcome::Stored { bytes: 0 });
+            }
+            // Restore the requested payload from the whole source below.
+        }
         // The payload axis: named sections, nothing around them.
         Want::Payloads(parts) => {
             let parts = parts.clone();
