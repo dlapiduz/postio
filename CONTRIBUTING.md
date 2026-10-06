@@ -107,7 +107,7 @@ Tests are headless automatically: the cargo runner puts test binaries on a
 private mutter compositor, so a GTK suite does not throw windows at your
 desktop. `POSTIO_HEADLESS=0 cargo test` watches a run. To see the app
 itself, `scripts/run-isolated.sh` builds a pinned commit with its own
-target directory and a throwaway store, and `cargo run -p postio-app` runs
+target directory and a throwaway store, and `cargo run -p postio-gtk` runs
 whatever is on disk.
 
 ## Contributing code
@@ -147,12 +147,12 @@ What makes a prompt runnable:
 
 A worked example:
 
-> The reading pane shows a blank body when a message's blob is missing
-> instead of saying it is offline. Write a failing integration test in
-> `crates/postio-app/tests/` that opens a message whose body blob is
-> absent while the connection state is Offline, and assert the pane shows
-> the offline notice rather than empty content. Then make it pass —
-> likely in the reading-pane feed where BodyLoaded events are applied.
+> The open message shows a blank body when a message's blob is missing
+> instead of saying it is offline. Write a failing case in
+> `crates/postio-gtk/tests/focus_suite/` that opens a message whose body
+> blob is absent while the connection state is Offline, and assert the
+> message shows the offline notice rather than empty content. Then make it
+> pass — likely where the open message applies BodyLoaded events.
 > Do not load the mailbox into memory; keep the fix event-driven.
 
 ## Logs in bug reports
