@@ -8,7 +8,7 @@ This replaces `spec.md`, which was the original brief. It kept its section
 numbers — the codebase cites them from about eighty doc comments and tests, and
 those citations are how a constraint stays attached to the code that honours
 it — but not its content, most of which had been overtaken by the tree, the
-design canvas, or an ADR.
+design, or an ADR.
 
 **One fact, one home.** Where something is recorded elsewhere, this document
 says where and stops. It is a map as much as a specification:
@@ -18,7 +18,7 @@ says where and stops. It is a map as much as a specification:
 | How Postio is put together, and why | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | A decision and the alternatives it rejected | [`decisions/`](decisions/) |
 | Every key, generated from the registry | [`keybindings.md`](keybindings.md) |
-| Visual detail — spacing, colour, the chosen direction | `Design/Mail Client.dc.html` |
+| Visual detail — each screen against its reference | [`specs/007-postio-focus/screens.md`](../specs/007-postio-focus/screens.md) |
 | Hard-won lessons | [`engineering-notes.md`](engineering-notes.md) |
 | What is planned and not yet built | the [Postio Roadmap](https://github.com/users/dlapiduz/projects/2) |
 
@@ -71,56 +71,14 @@ deliberately absent from v1. §12, §23.
 **v1 is Linux only**: GTK4 and libadwaita, Wayland first, X11 where it happens
 to work. Verified against gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52.
 
-macOS and Windows frontends over the same Rust engine were always possible,
-and that possibility is the reason for two CI-enforced boundaries rather than
-an aspiration in a document: `postio-core` must not depend on GTK, and
-`postio-gtk` must not depend on the database engine or the protocol crates
-(`ARCHITECTURE.md` §9).
-
-**A native macOS frontend is built, well past the read-only slice it was
-scoped as, and is on `main`** (#1306) — Swift over the same engine through the
-UniFFI boundary in `crates/postio-ffi` and the Swift package in `macos/`,
-[ADR 0019](decisions/0019-macos-frontend.md). A first-run wizard that looks
-an address's servers up and signs in before saving, sync, the three-pane
-shell, the list, the reader with its privacy behaviour, conversations,
-search with the chips that teach the query language, the palette, the cheat
-sheet, a menu bar built from the command registry, compose with rich text
-and attachments, notifications, and a settings window. Compose was deferred
-in the original scope and is not deferred any more.
-
-**Every command reaches something on it, and that is a test rather than a
-claim:** `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` sweeps every
-command in the registry and fails if one reaches nothing and is not listed as
-debt with the issue that will build it. That list started at forty-nine and is
-empty, as `postio-app`'s `app_suite/command_wiring.rs` is on the GTK side.
-Three commands are scoped away by design rather than missing —
-`detach_composer`, `next_scope` and `darken_message`, whose surfaces the Mac's
-design does not have (`postio_core::registry::offered_on`). It is built from
-the checkout; there is no signed bundle to download yet.
-
-macOS is **not part of v1**, which stays Linux. The invariant the boundary
-was kept for turned out to be load-bearing rather than merely tidy: measured
-on 2026-08-27, thirteen of what were then fifteen crates built and tested on
-macOS with no changes at all (the workspace is twenty crates now). Windows
-remains unscheduled.
-
-**A terminal frontend uses the same store as the desktop app** —
-`postio-tui`, [`specs/005-tui-frontend`](../specs/005-tui-frontend/spec.md):
-the desktop app's commands, keys and verbs in a terminal, local or over SSH,
-with the mouse as well as the keyboard, and mail read and written as
-Markdown. Either can be the one open, not both at once: whichever starts
-first has the mailbox, and the other says so and asks for it to be closed
-([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)). It ships
-as its own package, smaller than the desktop one. Images are labelled
-placeholders that open in the system viewer; drawing them in the terminal is
-the next iteration.
-
-**Postio Focus is a second desktop app on the same store** —
-`postio-focus`, [`specs/007-postio-focus`](../specs/007-postio-focus/spec.md).
-It has no folder sidebar and no reading pane. Home is one dense inbox, driven
-from the keyboard, that shows mail as it arrived, and a message opens in a
-dialog over it, one message at a time. Beside what the classic app does, it
-does four things to mail:
+**Postio has one desktop app, the Focus design** —
+[`specs/007-postio-focus`](../specs/007-postio-focus/spec.md),
+[ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md): the crate
+`postio-gtk`, the binary `postio`, the app id `dev.postio.Postio`, and the one
+launcher in the desktop Flatpak. Home is one dense inbox, driven from the
+keyboard, that shows mail as it arrived; a message opens over it, or beside it
+for those who choose that, one message at a time (§9). Beside reading,
+writing, searching and filing mail, it does four things to mail:
 
 - it calls out real actions: an invitation, a direct question, a to-do;
 - it holds some mail back into digests, on a cadence the user sets;
@@ -128,13 +86,10 @@ does four things to mail:
   from restored;
 - it captures mail into an Obsidian vault as a task or a note.
 
-Its filing and digest rules act only while Focus runs. It has the same
-commands and keys as the classic app, and both desktop apps draw with the
-same widgets, from `postio-widgets`
-([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)).
-It is one app at a time with the others, like the terminal. It ships in the
-desktop Flatpak as a second launcher, not as a package of its own. Its
-settings are `[focus]` in [`config.toml`](config.md).
+Its filing, digest and reminder rules act only while Focus — on the desktop
+or in the terminal — has the store. What it draws outside its own window
+lives in `postio-widgets`, which depends on no app. Its settings are `[focus]`
+in [`config.toml`](config.md).
 
 **Focus may use a model the user runs on this computer**, named in
 `[focus.model]`. It is optional and off until named, it is reached only on
@@ -142,6 +97,55 @@ this computer, and it is never required: without it, a built-in rule-based
 detector marks questions and to-dos, and a digest opens on its list of mail
 instead of a summary. Postio ships, downloads and starts no model (the
 constitution's Scope).
+
+**A terminal frontend uses the same store** — `postio-tui`,
+[`specs/005-tui-frontend`](../specs/005-tui-frontend/spec.md): the same
+commands, keys and verbs in a terminal, local or over SSH, with the mouse as
+well as the keyboard, and mail read and written as Markdown. It draws the
+Focus design in character cells (spec 007, C29,
+[`terminal.md`](../specs/007-postio-focus/terminal.md)); that work is under
+way in spec 007's terminal tasks. Only one app has the store open at a time:
+whichever starts first has the mailbox, and the other says so and asks for it
+to be closed ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
+It ships as its own package, smaller than the desktop one. Images are labelled
+placeholders that open in the system viewer; drawing them in the terminal is
+the next iteration.
+
+macOS and Windows frontends over the same Rust engine were always possible,
+and that possibility is the reason for two CI-enforced boundaries rather than
+an aspiration in a document: `postio-core` must not depend on GTK, and the
+desktop app's own code does no SQL and speaks no protocol — `postio-gtk` may
+not depend on the store engine or `io-imap` directly, and reaches mail
+through `postio-host` and `postio-client` (`ARCHITECTURE.md` §9).
+
+**A native macOS frontend is built, well past the read-only slice it was
+scoped as, and is on `main`** (#1306) — Swift over the same engine through the
+UniFFI boundary in `crates/postio-ffi` and the Swift package in `macos/`,
+[ADR 0019](decisions/0019-macos-frontend.md). A first-run wizard that looks
+an address's servers up and signs in before saving, sync, a three-pane
+shell, the list, the reader with its privacy behaviour, conversations,
+search with the chips that teach the query language, the palette, the cheat
+sheet, a menu bar built from the command registry, compose with rich text
+and attachments, notifications, and a settings window. Compose was deferred
+in the original scope and is not deferred any more. Focus on macOS is
+outlined in [`specs/007-postio-focus/macos.md`](../specs/007-postio-focus/macos.md).
+
+**Every command reaches something, and that is a test rather than a
+claim.** On the Mac, `crates/postio-ffi/tests/ffi_suite/command_coverage.rs`
+sweeps every command in the registry and fails if one reaches nothing and is
+not listed as debt with the issue that will build it; that list started at
+forty-nine and is empty. Three commands are scoped away by design rather than
+missing — `detach_composer`, `next_scope` and `darken_message`, whose surfaces
+the Mac's design does not have (`postio_core::registry::offered_on`). On the
+desktop, `focus_suite`'s `every_command` presses every command Focus binds
+and fails on one with no visible effect that `storyboards/gaps/focus.toml`
+does not name. The Mac app is built from the checkout; there is no signed
+bundle to download yet.
+
+macOS is **not part of v1**, which stays Linux. The invariant the boundary
+was kept for turned out to be load-bearing rather than merely tidy: measured
+on 2026-08-27, thirteen of what were then fifteen crates built and tested on
+macOS with no changes at all. Windows remains unscheduled.
 
 ---
 
@@ -193,9 +197,11 @@ Threads are reconstructed locally with JWZ over `Message-ID`, `In-Reply-To`,
 it exists and never as the answer. A server that threads badly, or not at all,
 must not make Postio thread badly.
 
-In a thread the reader can expand and collapse messages, jump between them,
-open one on its own, and expand or collapse quoted content — quoting folds
-into `<details>` with no script involved (`postio-body`,
+In the desktop app a message opens on its own, the latest of its thread by
+default, and `]`/`[` walk the thread (spec 007 FR-037). The macOS app shows a
+thread as one document whose messages expand and collapse
+([ADR 0032](decisions/0032-the-conversation-is-one-document.md)). Either way
+quoted content folds into `<details>` with no script involved (`postio-body`,
 [ADR 0004](decisions/0004-composer-document-model.md)).
 
 **A thread belongs to one account.** The unified inbox groups across accounts
@@ -268,7 +274,7 @@ is the reasoning.
 Search is a defining feature and a primary way to navigate.
 
 **One query language, everywhere.** The same string means the same thing typed
-in the search bar, saved to the sidebar, or written into `config.toml`. A
+in the command bar, saved as a pinned search, or written into `config.toml`. A
 saved search is a query with a name; a virtual folder is a saved search that is
 pinned; a rule is a saved search plus actions. `ARCHITECTURE.md` §6 holds the
 boundary that keeps this true, and
@@ -305,13 +311,12 @@ vocabulary, which §3 is most explicit about. A header that must be matchable
 one that was, and `is:bulk` and `is:automated` (`List-Unsubscribe`,
 `Precedence`, `Auto-Submitted`) are two more.
 
-`account:` names an account by the name it shows in the sidebar or by its
-address, and composes with everything else — `account:work is:unread` is one
+`account:` names an account by its name or by its address, and composes with everything else — `account:work is:unread` is one
 query rather than a mode you switch into. It is what keeps a saved search
 pinned to one account however it is opened, and `-account:work` means every
 other one.
 
-**It is `is:flagged`, not `is:starred`** — the sidebar says Flagged, and the
+**It is `is:flagged`, not `is:starred`** — the app says Flagged, and the
 older spelling is accepted as an alias so that nobody's muscle memory or saved
 query breaks. Likewise `has:attach` with `has:attachment` as an alias.
 
@@ -331,8 +336,9 @@ language rather than becoming a second one.
 **Every command has a keyboard shortcut, a command-palette entry and an
 accessible action.** That is a structural requirement, and it is met by having
 exactly one enumerable table — `postio-core::registry` — from which the keymap,
-the `Ctrl+K` palette, the `?` cheat sheet, the context menu, the key hints on
-the focused row and [`keybindings.md`](keybindings.md) are all derived. Three
+the command bar's commands (`mod+k`), the `?` key map, the row menu, the
+keycap inside every control and [`keybindings.md`](keybindings.md) are all
+derived. Three
 hand-maintained lists drift within a release; one table cannot.
 
 **A command that is not in the registry does not exist** — not merely unbound,
@@ -343,12 +349,12 @@ from the registry by a test that fails when the file drifts. They are not
 repeated here, for the same reason they are not repeated anywhere else.
 
 Worth knowing before reading that table: every Postio app — the desktop app,
-the terminal, Focus and macOS — has one keymap, the registry's
+the terminal and macOS — has one keymap, the registry's
 (`specs/007-postio-focus/contracts/keymap.md`). `e` replies and `a` archives,
 `A` archives a thread, `mod+z` undoes, `r` marks read or unread, `s` snoozes,
-and `]`/`[` walk a thread in the reading pane. A command only one app offers
-keeps its key there and leaves it free in the others. The original brief
-proposed `r` for reply; the design canvas is newer and won that, and the one
+`]`/`[` walk a thread in the open message, and `mod+Return` sends. A command
+only some apps offer keeps its key in the others and leaves it free there.
+The original brief proposed `r` for reply; the design won that, and the one
 keymap settled the rest. Every one is overridable from `[keys]` in
 `config.toml`, keyed by command id — which makes command ids a file format
 that is not renamed casually (`ARCHITECTURE.md` §3): the one keymap renamed
@@ -359,64 +365,89 @@ and kept no alias.
 
 ## 9. Layout
 
-Three panes — sidebar, message list, reading pane — with the sidebar
-deliberately not consuming the screen. The list is windowed over the paged
-store and is never fully materialised (§18).
+**One list.** The desktop app shows every account's inbox as one dense list,
+newest first under day headings, with no folder sidebar. A row shows mail as
+it arrived — sender, subject and first line, verbatim, never a rewritten
+subject or a score. The list is windowed over the paged store and is never
+fully materialised (§18). Above it, a top bar holds Compose, the command
+bar's field, the sync state and the main menu; a header strip names the place
+("Inbox ▾", `g o`), its counts and the "Has action" toggle (`!`), and, while
+they are in use, how much was filtered today and how many digest rules there
+are.
 
-**The sidebar draws two kinds of row and the difference is load-bearing.** A
-*folder* is one the server has: Inbox, Archive, Sent, Drafts, Trash, Junk, and
-whatever else the account holds. A *view* is a saved question about messages
-filed elsewhere — Flagged, Snoozed, and the **Outbox** — with a name, a place
-and a count, and nothing a message can be moved into. Every account has a real
-folder for all six roles, created on the server if it has none, so `!` and `a`
-and `d` always have somewhere to put mail. [ADR 0036](decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md).
+**Rows are two heights, fixed by kind** — 40px for a conversation, 72px for
+one with a marker — and focus, hover and selection change what a row draws,
+never how tall it is, so the list never moves under the cursor.
 
-**The Outbox holds what is on its way**, and is not drawn when it holds
+**Markers call out real actions** on a row's second line: an invitation
+(Accept `y`, Decline `Y`), a direct question (Reply `e`), a to-do (Snooze
+`s`, or Task `t` with a vault), and a reply that has not come. A question or
+to-do quotes the sentence that raised it verbatim. `!` shows only marked
+mail, and `-` dismisses a wrong marker, which is remembered.
+
+**Digests** hold some mail back on a cadence the user sets (`d` makes a rule,
+`g d` lists them). A delivery is one row; it opens on a summary when the
+user has connected a local model (§12), every statement in it citing the mail
+it came from, and `Tab` switches to the plain list. **Filtered** (`g f`) holds
+spam and automated updates, each with its reason and `R` from restored.
+Filtered mail is archived, never deleted automatically.
+
+**The open message is a dialog over the list**, one message at a time:
+`]`/`[` walk its thread, `j`/`k` the list, and `Esc` closes it onto the same
+row. Its frame follows from the window, never from the message. `F8` places
+it beside the list instead (`[focus] reading = "pane"`); a window narrower
+than 980px uses the dialog whatever the setting says, because the window's
+width decides what is *shown*, never what the user asked for.
+
+**One box, and one popover.** The command bar (`/` for mail, `mod+k` for
+commands) searches as you type, and a prefix chooses what else to ask (§7).
+The folders popover (`g o`, or a click on "Inbox ▾") lists every mailbox,
+folder and label with its count, and keeps a distinction that is
+load-bearing: a *folder* is one the server has — Inbox, Archive, Sent,
+Drafts, Trash, Junk, and whatever else the account holds — and a *view* is a
+saved question about messages filed elsewhere — Flagged, Snoozed, Filtered
+and the **Outbox** — with a name, a place and a count, and nothing a message
+can be moved into. Every account has a real folder for all six roles, created
+on the server if it has none, so archive and delete always have somewhere to
+put mail. [ADR 0036](decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md).
+
+**The Outbox holds what is on its way**, and is not listed when it holds
 nothing, which is its ordinary state. Pressing Send puts the message there
 immediately — offline included — and it leaves for Sent when the server
 accepts it. What it is *not* is a place things pile up: Drafts holds what you
-are writing and what has stopped, and its row says how many of those need you,
-separately from how many there are.
-
-The layout adapts rather than being fixed: three panes on a desktop monitor,
-two on a laptop, message-focused for reading and writing, and search-focused
-when results take over the workspace. The widths that divide those are in
-`postio-gtk::shell`'s own table rather than repeated here, for the same reason
-the bindings are not repeated in §8 — and what the sidebar does across a
-resize is
-[ADR 0024](decisions/0024-layout-intent-and-constraint.md): the window's width
-decides what is *shown*, never what the user asked for.
+are writing and what has stopped, and a draft's row says which.
 
 **The list has a cursor *and* a selection**, and they are not the same thing —
 the cursor is where the keyboard is, the selection is what `a` would archive.
 Conflating them is the classic bug, because it only surfaces once a selection
-is more than one row (`ARCHITECTURE.md` §4).
+is more than one row (`ARCHITECTURE.md` §4). A selected row is a neutral
+background and a checked box, and the bulk bar acts on the selection.
 
-The chosen visual direction is **PLATE (canvas option 1b)**: airy desktop,
-40px rows, one height per density whatever state a row is in — focus,
-hover and selection change what a row draws, never how tall it is, so the
-list never moves under the cursor. The focused row carries no key hints
-(maintainer, 2026-09-25): the action bars, the palette and the `?` cheat
-sheet teach the keyboard instead. §19.
+How each surface looks is spec 007's
+[`contracts/focus-surface.md`](../specs/007-postio-focus/contracts/focus-surface.md),
+held against its reference in [`screens.md`](../specs/007-postio-focus/screens.md).
+§19.
 
 ---
 
 ## 10. Compose
 
-The composer takes over the reading pane. It is **not a separate window** — the
-original brief implied one and the design canvas is explicit that it is not,
-and this is the resolved decision rather than a disagreement to arbitrate.
-The list keeps its scroll and its selection underneath, so context never
-disappears and `Esc` returns you exactly where you were.
+The composer opens where the open message is: in its dialog over the list,
+or in the pane when the user reads beside the list (spec 007 FR-050). It is
+**not a separate window**. The list keeps its scroll and its cursor
+underneath, so context never disappears, and `Esc` closes the composer,
+keeps the draft, and returns you exactly where you were. There is one
+composer, `postio-widgets`' — the desktop app has none of its own.
 
-A composition **can** be popped out into a window of its own (`ctrl+shift+o`,
-or the button beside the composer's heading), which is the inverse of what
-most clients default to and deliberately so: losing your place in the list to
-write a reply is the failure the in-place design exists to avoid, so nothing
-ever opens detached and the pop-out is only ever asked for. It exists because
-writing while reading something *else* is the one thing an in-place composer
-genuinely cannot do. It is the same composition either way — the same widget,
-moved — so there is never a second composer to keep in step.
+A composition **can** be detached into a window of its own
+(`detach_composer`, or Detach in the composer's header), which is the
+inverse of what most clients default to and deliberately so: losing your
+place in the list to write a reply is the failure the in-place design exists
+to avoid, so nothing ever opens detached and detaching is only ever asked
+for. It exists because writing while reading something *else* is the one
+thing an in-place composer genuinely cannot do. It is the same composition
+either way — the same widget, moved — so there is never a second composer to
+keep in step.
 
 Recipients autocomplete from explicit contacts and from correspondents seen in
 the mailbox ([ADR 0007](decisions/0007-address-book.md)); Cc and Bcc appear on
@@ -428,7 +459,7 @@ frontend's composer is a port rather than a rewrite and identical gestures
 produce identical bytes on the wire. Rich text is
 [ADR 0003](decisions/0003-rich-text-compose.md); where the document lives is
 [ADR 0004](decisions/0004-composer-document-model.md). **The composer is rich
-text over that model**: its editing surface is a WebView (`postio_gtk::editor`)
+text over that model**: its editing surface is a WebView (`postio_widgets::composer::editor`)
 with bold, italic, bulleted
 and numbered lists, links, quote blocks and inserted images — the bindings are
 in [`keybindings.md`](keybindings.md). Plain text is what a message that used
@@ -467,7 +498,7 @@ has the measurements and the policy.
 ## 12. AI
 
 **Deferred to post-v1 by decision, not by accident** (§23). The one exception
-is the model a user may run for Postio Focus (§2). The two constraints that
+is the model a user may run for Focus (§2). The two constraints that
 bind whenever it does arrive are already fixed:
 
 - **AI must never silently modify or send mail.** Read and search may be
@@ -605,15 +636,20 @@ application that happens to be built with GTK.
 Generous typography, real spacing, subtle hierarchy, restrained colour,
 excellent dark *and* light mode, minimal chrome, very good message rendering.
 
-**The design canvas is the authority on visual detail** — `Design/Mail
-Client.dc.html`, direction **PLATE (1b)**. From the Industry design system Postio
-keeps the *identity*: Barlow / Barlow Condensed / IBM Plex Mono, steel accent
-`#5980a6`, hairline dividers, airy 40px rows, an accent-tinted selected row with
-a 3px left border. It drops the *wireframe chrome*: no blueprint registration
-marks, no transparent line-drawing cards. Real Adwaita window chrome, so it
+**Spec 007 is the authority on visual detail**: each screen in
+[`contracts/focus-surface.md`](../specs/007-postio-focus/contracts/focus-surface.md),
+held against the maintainer's reference images in
+[`screens.md`](../specs/007-postio-focus/screens.md), which records every
+difference and its reason. The chrome is the system's: Adwaita Sans, and
+Adwaita Mono for keys, addresses and counts (spec 007 C25), and libadwaita's
+own colours, so light, dark and the user's accent arrive from the desktop
+(C26). The accent is reserved for what needs the user — action markers, the
+focus ring, the has-action toggle — and a selected row is neutral. A message
+body is drawn in the app's colours, set in Barlow, or as the original on a
+sheet of paper when it paints its own page. Real Adwaita window chrome, so it
 reads as a GNOME application.
 
-Tokens are **generated from the design system, never retyped**
+Spacing and sizes are **generated from the design system, never retyped**
 (`ARCHITECTURE.md` §10).
 
 ---
@@ -702,14 +738,14 @@ images blocked per sender, and one-click unsubscribe on request; rich-text
 compose, reply, reply-all, forward, attachments, drafts, signatures and
 identities, scheduled send, an outbox that sends at most once; contacts and
 contact groups, filled from the mail and completing recipients; local
-full-text search with operators, an instant search box, and saved searches
-pinned in the sidebar; vim-style navigation, a command palette and
-configurable shortcuts; an encrypted local store, background sync, offline
-reading, undo, desktop notifications. All of it in a terminal too, on the
-same store as the desktop app (§2). And a second desktop app, Postio Focus
-(§2): one dense inbox with action markers, digests, filtering with reasons,
-and Obsidian capture, with a local model the user may bring for questions,
-to-dos and digest summaries.
+full-text search with operators, one command bar, and pinned saved searches;
+vim-style navigation and configurable shortcuts; an encrypted local store,
+background sync, offline reading, undo, desktop notifications. Flagging is
+`*`, from the key, the row menu or the command bar, and `g *` lists flagged
+mail; a row carries no flag mark (spec 007 C13). The desktop app is one dense
+inbox with action markers, digests, filtering with reasons and Obsidian
+capture, and a local model the user may bring for questions, to-dos and
+digest summaries (§2, §9). All of it in a terminal too, on the same store.
 
 **Out, deliberately:** Rules — the language is shared and the design is
 [ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
@@ -740,7 +776,7 @@ A second copy of it here would be out of date within a week.
 /     invoices from Acme that I haven't responded to
 ```
 
-Postio finds them. `Enter` opens the conversation. `a` archives it.
+Postio finds them. `Enter` opens the message. `a` archives it.
 
 Or `Ctrl+K → Summarise`:
 
