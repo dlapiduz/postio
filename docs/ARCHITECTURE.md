@@ -15,17 +15,15 @@ in [`docs/archive/`](archive/); every finding it raised has since landed.
 
 ```mermaid
 graph TD
-    app["<b>postio-app</b><br/><i>GTK binary — Linux</i><br/>a window, and the presenters that join the two halves"]
+    app["<b>postio-gtk</b><br/><i>Postio, the desktop app — Linux</i><br/>one dense inbox · markers · digests · filtering<br/><i>its own code: no SQL · no protocol</i>"]
     mac["<b>macos/</b><br/><i>Swift package — macOS</i><br/>SwiftUI · AppKit · WKWebView"]
     tui["<b>postio-tui</b><br/><i>terminal binary</i><br/>ratatui · crossterm · Markdown in and out"]
-    focus["<b>postio-focus</b><br/><i>Postio Focus's GTK binary</i><br/>one dense inbox · markers · digests · filtering<br/><i>never the classic app's crates — CI enforced</i>"]
     host["<b>postio-host</b><br/><i>in each app's process</i><br/>every store operation, once · sync · upkeep"]
     client["<b>postio-client</b><br/>Req/Resp · commands down, events up<br/><i>no engine — CI enforced</i>"]
     session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
 
     subgraph view ["frontends"]
-        gtk["<b>postio-gtk</b><br/>GTK4 · libadwaita · WebKitGTK<br/><i>no SQL · no protocol</i>"]
-        widgets["<b>postio-widgets</b><br/>what both desktop apps draw with<br/>message view · composer · keycaps · chips<br/><i>no store · no protocol · no host</i>"]
+        widgets["<b>postio-widgets</b><br/>what the desktop app draws outside its window<br/>message view · composer · keycaps · chips<br/><i>no store · no protocol · no host · no app</i>"]
         ffi["<b>postio-ffi</b><br/>the UniFFI boundary<br/><i>ADR 0019 · what crosses to Swift</i>"]
         ui["<b>postio-ui</b><br/>presentation with no toolkit in it<br/>keymap · list window · reader document · tokens<br/><i>called by both — no GTK, no SQL</i>"]
     end
@@ -58,7 +56,13 @@ graph TD
     end
 
     app --> session
-    app --> gtk
+    app --> widgets
+    app --> ui
+    app --> core
+    app --> search
+    app --> body
+    app --> config
+    app --> vault
     mac --> ffi
     ffi --> host
     ffi --> client
@@ -69,23 +73,14 @@ graph TD
     app --> client
     tui --> client
     tui --> host
-    focus --> widgets
-    focus --> host
-    focus --> client
-    focus --> session
     host --> session
     host --> client
     host --> ai
     host --> calendar
+    host --> vault
     client --> core
     session --> runtime
     session --> core
-    gtk --> ui
-    gtk --> core
-    gtk --> search
-    gtk --> body
-    gtk --> config
-    gtk --> widgets
     widgets --> core
     widgets --> client
     widgets --> body
@@ -119,7 +114,7 @@ graph TD
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
     class model,search,calendar pure
-    class core,gtk,session,client,tui,widgets,focus,classify,ai,vault guard
+    class core,app,session,client,tui,widgets,classify,ai,vault guard
 ```
 
 Arrows are "depends on", and every arrow drawn is a real direct dependency.
@@ -129,32 +124,32 @@ says nothing about rank), and edges already implied by a path through the
 diagram, such as `postio-runtime -> postio-search` or the fact that very
 nearly everything depends on `postio-model`.
 
-**Postio Focus added six crates** (`specs/007-postio-focus`). `postio-focus`
-is the second desktop app, a sibling of `postio-app` that never depends on it
-or on `postio-gtk`. `postio-widgets` is what both desktop apps draw with
-([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)).
-The other four are Focus's engine work, and the classic app could use each
-of them too. `postio-classify` decides what is filtered, held and marked.
-The filing pass in `postio-sync` and the host's body-stage task call it.
-`postio-calendar` reads invitations and writes their replies. `postio-ai`
-asks the user's own model. `postio-vault` writes to an Obsidian vault, and
-nothing links it yet: the capture sheet that will is still to be built.
+**The desktop app is `postio-gtk`**, the Focus design
+(`specs/007-postio-focus`, [ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)):
+the binary `postio`, the app id `dev.postio.Postio`. What it draws outside its
+own window — the message view, the composer, the keycaps, chips and pickers,
+the settings window — is `postio-widgets`, which depends on no app. Focus's
+engine work is four crates. `postio-classify` decides what is filtered, held
+and marked; the filing pass in `postio-sync` and the host's body-stage task
+call it. `postio-calendar` reads invitations and writes their replies.
+`postio-ai` asks the user's own model. `postio-vault` writes a capture into
+an Obsidian vault.
 
-`postio-app` and `postio-session` are one rank, split along one line: does it
-name a toolkit. Everything the application *is* — the store, the runtime, the
+`postio-gtk` and `postio-session` are split along one line: does it name a
+toolkit. Everything the application *is* — the store, the runtime, the
 engines, and the verb vocabulary that turns a `Command` into rows and events —
-is in `postio-session`, which a frontend that is not GTK can link. What is left
-in `postio-app` is a window and the presenters that join the two halves, each
-of which names a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why
-the alternative — a second binary opening the store directly — is not a second
+is in `postio-session`, behind `postio-host`, which every frontend links. What
+is in `postio-gtk` is a window, its rows and its dialogs, each of which names
+a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why the
+alternative — a second binary opening the store directly — is not a second
 frontend but a second application sharing a file.
 
 Dashed borders mark the crates whose dependency closure CI polices
 (`scripts/checks/check-crate-boundaries.py`).
 
 **One app opens the store at a time** ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
-The two desktop apps, the terminal and the macOS app each run `postio-host` inside their own
-process and reach mail only through `postio-client`, whose in-process
+The desktop app, the terminal and the macOS app each run `postio-host` inside
+their own process and reach mail only through `postio-client`, whose in-process
 transport is a spawn and a oneshot. The host is where every store operation
 is written once -- paging, reading, search, compose, settings, onboarding,
 sync and upkeep -- and the frontends draw. Whichever app starts first holds
@@ -250,7 +245,7 @@ Two separate decisions that are usually conflated, and both are correctness
 issues rather than preferences.
 
 **The list has a cursor *and* a selection.** The cursor is where the keyboard
-is: `j`/`k` move it and the reading pane follows. The selection is what `a`
+is: `j`/`k` move it, and an open message follows. The selection is what `a`
 would archive. Most of the time they are the same row, which is exactly why
 conflating them is the classic bug — it only surfaces once a selection is more
 than one row, and then every bulk action lands somewhere the user did not
@@ -283,13 +278,13 @@ wearing a different hat.
 | Concept | Is | Status |
 |---|---|---|
 | A search | A query | Built |
-| A saved search | A query with a name | Built (`Ctrl+S` on a search; renamed, reordered and deleted from the sidebar) |
-| A virtual folder in the sidebar | A saved search that is pinned | Built |
+| A saved search | A query with a name | Built (`Ctrl+S` in the command bar; the macOS sidebar renames, reorders and deletes them) |
+| A pinned search | A saved search that is pinned | Built (the desktop app offers it in the command bar, `Alt+1`…`Alt+4`; macOS in its sidebar) |
 | A rule | An ordered `[[rules]]` entry naming actions, optionally reusing a named `[filters]` query rather than `[filters]` itself growing actions (ADR 0008 Q4) | Not built ([#5](https://github.com/dlapiduz/postio/issues/5)); the engine lives on `feature/rules` |
 
 `crates/postio-config/src/filters.rs` implements the schema and names it
 exactly this way — *"`[filters]` — named saved queries"* — with a `pinned`
-field meaning "show this filter in the sidebar":
+field meaning "offer this filter where the app keeps its places":
 
 ```toml
 [filters.needs-reply]
@@ -297,8 +292,9 @@ query  = "is:unread from:team"
 pinned = true
 ```
 
-The sidebar renders pinned filters, the settings window edits them, and a
-saved search re-runs its query when opened. There is no rules engine on
+The desktop app's command bar offers pinned filters, the macOS sidebar lists
+them, the settings window edits them, and a saved search re-runs its query
+when opened. There is no rules engine on
 `main`: ADR 0008, 0028 and 0030 decide its shape, and the implementation
 waits on an unmerged branch.
 
@@ -313,8 +309,8 @@ bug surfaces, and a rule that does not agree with the search bar about what
 which is pure — no SQL, no toolkit, `postio-model` only. `postio-config` keeps
 queries as *text* and does not parse them. `postio-index` executes a parsed
 query against the engine's full-text index. So the same string means the same thing whether it was
-typed in the search bar, saved to the sidebar, or written into `config.toml` in
-`$EDITOR`.
+typed in the command bar, saved as a pinned search, or written into
+`config.toml` in `$EDITOR`.
 
 **A header wanted before its body is promoted, not special-cased.** It gets a
 column, its own operator and its own fetch, so filing and search ask the same
@@ -327,9 +323,11 @@ backend learns them is in
 **What this decision does NOT say.** A real IMAP mailbox is *not* a saved
 search. It is server state with a `UIDVALIDITY`, a message set that physically
 lives there, and a `MailboxRole` (`Inbox`, `Archive`, `Sent`, `Drafts`,
-`Trash`, `Junk`, `Flagged`, `Regular`). `a` archives *into* one. The sidebar
-shows two kinds of thing that look alike and behave differently: real mailboxes
-that mail moves between, and virtual folders that are queries re-run on open.
+`Trash`, `Junk`, `Flagged`, `Regular`). `a` archives *into* one. The folders
+popover (and the macOS sidebar) lists two kinds of thing that look alike and
+behave differently: real mailboxes that mail moves between, and views —
+Flagged, Snoozed, the Outbox, and on macOS the pinned searches — that are
+queries re-run on open.
 Collapsing that distinction would break move, archive and sync. Saved searches
 are how you get a *view*; mailboxes are where mail *is*.
 
@@ -365,9 +363,11 @@ hide inside the thing meant to catch it.
 
 - **`postio-core` must not depend on `gtk4`/`libadwaita`.** It is the
   UI-agnostic contract; this is what keeps a second frontend possible.
-- **`postio-gtk` must not depend on `turso`/`io-imap`.** The view layer does
-  no SQL and speaks no protocol. (`rusqlite` stays on the banned list beside
-  `turso`, so the rule outlives the engine that made it.)
+- **`postio-gtk` must not depend *directly* on `turso`/`io-imap`.** The
+  desktop app's own code does no SQL and speaks no protocol. It opens the
+  store in its own process through `postio-host` (ADR 0041), so the engine is
+  in its graph, transitively and only there. (`rusqlite` stays on the banned
+  list beside `turso`, so the rule outlives the engine that made it.)
 - **`postio-client` must not depend on a toolkit, WebKit, the database
   engine or the protocol crates**, and **`postio-tui` on a toolkit or
   WebKit.** The client is the frontends' whole view of mail, and it stays
@@ -375,10 +375,9 @@ hide inside the thing meant to catch it.
   through the host like every app, and is held to being small
   (`specs/005-tui-frontend` FR-051) by leaving GTK and WebKit out.
 - **`postio-widgets` must not depend on the database engine, the protocol,
-  the host or either desktop app**, and **`postio-focus` must not depend on
-  `postio-gtk` or `postio-app`, nor `postio-gtk` on `postio-focus`.** The
-  widgets reach mail only through `postio-client`, and neither desktop app
-  stands on the other
+  the crates that own the store (`postio-host`, `postio-session`,
+  `postio-runtime`, `postio-storage`, `postio-sync`) or the app.** The
+  widgets reach mail only through `postio-client`
   ([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)).
 - **`postio-classify` links nothing that sends mail or reaches the network**,
   and **`postio-calendar` is a pure leaf**: no database engine, toolkit,
@@ -390,19 +389,21 @@ hide inside the thing meant to catch it.
   FR-168).
 - **`postio-vault` links no network crate, toolkit or database engine**, and
   no async runtime. It appends Markdown to a folder on this computer.
-- **No app binary links an inference engine**: not `postio-app`,
-  `postio-focus`, `postio-tui` or `postio-ffi`. The model is the user's own,
+- **No app binary links an inference engine**: not `postio-gtk`,
+  `postio-tui` or `postio-ffi`. The model is the user's own,
   run beside Postio, and optional.
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an
 innocent-looking intermediate is caught, and a string in a comment cannot fool
 it. It counts the guarded crate's own dev-dependencies too — a test that pulls
-`turso` into `postio-gtk` violates the invariant just as much as the library
-would.
+`turso` into `postio-widgets` violates the invariant just as much as the
+library would. A rule about *direct* dependencies, as `postio-gtk`'s is, looks
+at the crate's own dependency list, dev-dependencies included, and stops
+there.
 
-**This is also why `postio-runtime` and `postio-app` are separate crates rather
-than features of `postio-core`.** Cargo resolves features as a *union* across
+**This is also why `postio-runtime` and `postio-session` are separate crates
+rather than features of `postio-core`.** Cargo resolves features as a *union* across
 everything being built, so a `postio-core/runtime` feature would put the
 database engine in the graph of every crate depending on `postio-core` the moment anything turned
 it on — the view layer included. `postio-core` therefore has **no optional
@@ -420,20 +421,19 @@ more. It is built from the checkout and not yet released.
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` sweeps every command in
 the registry and fails if one reaches neither the boundary, the bus, nor a
 window this frontend presents — unless it is listed as debt with the issue
-that will build it. `postio-app`'s `app_suite/command_wiring.rs` is the same
-sweep on the GTK side and its list is empty. A frontend without such a sweep
+that will build it. On the desktop, `focus_suite`'s `every_command` presses
+every command the app binds and fails on one with no visible effect that
+`storyboards/gaps/focus.toml` does not name. A frontend without such a sweep
 accumulates commands that are drawn in a menu, bound to a key, offered in the
 palette, and answered by nobody; the macOS one had **forty-nine** when the
 sweep was first written.
 
 The invariant is what made that possible, and it was not a theory: measured on
 2026-08-27, when the workspace had fifteen crates, **thirteen of them built and
-tested on macOS with no changes at all** — everything but `postio-gtk` and
-`postio-app`. `cargo check --workspace --all-targets --exclude postio-gtk
---exclude postio-app` exited 0 there; the whole-workspace run failed only on
-`glib-sys` wanting `glib-2.0` from `pkg-config`. The GTK crates are still the
-exclusion set, and Focus added two to it, `postio-widgets` and
-`postio-focus`, which link GTK as well. The boundary this section describes
+tested on macOS with no changes at all** — everything but the two GTK crates
+of the time; the whole-workspace run failed only on `glib-sys` wanting
+`glib-2.0` from `pkg-config`. The GTK crates are still the exclusion set:
+today `postio-gtk` and `postio-widgets`. The boundary this section describes
 turns out to be exactly where the portable half ends.
 
 `scripts/issue-land.sh` enforces the same line at landing time: a changed crate
@@ -443,14 +443,21 @@ caught identically ([#555](https://github.com/dlapiduz/postio/issues/555)).
 
 ### 10. Design tokens are generated, never retyped
 
-`Design/_ds/industry-*/styles.css` → `postio-gtk/src/tokens.rs` → 
-`postio-gtk/data/tokens.css`. Every colour, length, radius and font stack in the
-output is copied from a parsed token or computed from one. Retune the source and
-the app follows.
+`Design/_ds/industry-*/styles.css` → `postio_ui::tokens` → `postio-widgets`'
+`build.rs` → `data/metrics.css` (spacing, radii, chip and type sizes),
+`data/space.rs` (the spacing ramp, in Rust) and `postio-ui`'s
+`data/reader-tokens.css` (the reader's palette). Every length in the output is
+copied from a parsed token or computed from one. The generated files are
+checked in, so a build without the `Design/` tree still works, and
+`postio-ui`'s drift tests fail when a checked-in copy no longer matches its
+source. The build script runs the same `postio_ui::tokens` the tests do, so
+drift is caught by a test rather than by eye.
 
-`build.rs` compiles `tokens.rs` directly (`#[path = "src/tokens.rs"]`), so the
-build script and the test suite run *exactly* the same parser — drift is caught
-by a test rather than by eye. The module is `std`-only for that reason.
+**Colour is the system's.** The desktop app defines its `--postio-*` colour
+roles from libadwaita's named colours (`postio-gtk/data/focus-colours.css`),
+so light, dark and the accent come from the desktop (`specs/007-postio-focus`
+C26, research R11). No hex or `rgba()` literal appears there but the message
+dialog's surface, ink and rules.
 
 ### 11. Privacy is a feature, not a setting
 
@@ -510,7 +517,7 @@ Two constraints already decided, before any of it is built:
   attack against mail-reading agents, and it is the dominant design constraint
   on `postio-z3b.2` rather than an afterthought.
 
-**The one exception is Postio Focus's model** (the constitution's Scope,
+**The one exception is Focus's model** (the constitution's Scope,
 `specs/007-postio-focus` research R16). `postio-ai` is built, and narrower
 than ADR 0009's provider trait: it is a client for one model the user runs
 on this computer and names in `[focus.model]`. Both constraints above hold
@@ -554,7 +561,7 @@ document. The rich editing surface stays in epic E10.
 Recorded rather than hidden. The August 2026 review
 ([`docs/archive/architecture-review-2026-08.md`](archive/architecture-review-2026-08.md))
 listed seven findings, and every one has landed: `postio-session` split out of
-`postio-app` with the same CI-enforced no-GTK rule `postio-core` has
+the GTK binary with the same CI-enforced no-GTK rule `postio-core` has
 ([#82](https://github.com/dlapiduz/postio/issues/82)); the toolkit-free
 keymap, selection and tokens moved into `postio-ui`; the sanitiser and quote
 folder into `postio-body` ([ADR 0004](decisions/0004-composer-document-model.md));
