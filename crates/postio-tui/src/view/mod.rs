@@ -4,7 +4,6 @@
 
 pub mod bar;
 pub mod bottom;
-pub mod cheatsheet;
 pub mod composer;
 pub mod first_run;
 pub mod folders;
@@ -15,6 +14,7 @@ pub mod palette;
 pub mod pane;
 pub mod picker;
 pub mod settings;
+pub mod sheet;
 pub mod state;
 pub mod strip;
 pub mod topbar;
@@ -157,9 +157,16 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             palette::draw(frame, area, &open, theme);
             hits.add(area, hit::Target::Overlay);
         }
-        if let Some(sections) = app.cheat_sheet() {
-            cheatsheet::draw(frame, area, &sections, theme);
-            hits.add(area, hit::Target::Overlay);
+        if let Some((sheet, columns)) = app.key_map() {
+            sheet::draw(
+                frame,
+                area,
+                sheet,
+                &columns,
+                &|command| app.hint(command),
+                theme,
+                &mut hits,
+            );
         }
         status_line(frame, window.bottom, app, tab, theme, &mut hits);
     }
@@ -547,57 +554,6 @@ mod tests {
         let top = drawn.lines().next().expect("a top row");
         assert!(top.contains(&format!("Compose {compose}")), "{top}");
         assert!(!top.contains("Compose c"), "{top}");
-    }
-
-    #[test]
-    fn the_cheat_sheet_shows_every_section_and_binding() {
-        // T067.
-        use crossterm::event::{KeyCode, KeyEvent};
-        let mut app = with_places((200, 90));
-        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Char('?'))));
-        let screen = screen(200, 90, &app);
-        let keymap = postio_core::Keymap::resolve(&Default::default());
-        let sections = postio_ui::cheatsheet::sections(
-            &keymap,
-            postio_core::Context::List,
-            // No list is open here, so the view is unified, where a move has
-            // no account to move within (#182). As this terminal asks.
-            postio_core::Availability {
-                frontend: postio_core::Frontend::Terminal,
-                ..postio_core::Availability::open(postio_core::Scope::Unified)
-            },
-        );
-        assert!(!sections.is_empty());
-        for section in &sections {
-            assert!(
-                screen.contains(section.title),
-                "{} missing:\n{screen}",
-                section.title
-            );
-            for row in &section.rows {
-                let key = row
-                    .id
-                    .and_then(|id| postio_ui::terminal::deliverable_binding(&keymap, id, false))
-                    .unwrap_or_default();
-                assert!(
-                    screen
-                        .lines()
-                        .any(|line| line.contains(row.title) && line.contains(&key)),
-                    "{} ({key}) missing:\n{screen}",
-                    row.title
-                );
-            }
-        }
-        assert!(
-            screen.contains("╭─ Keys "),
-            "a rounded frame, titled:\n{screen}"
-        );
-        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Esc)));
-        assert!(!screen_of_size(&app, 200, 90).contains(sections[0].title));
-    }
-
-    fn screen_of_size(app: &App, width: u16, height: u16) -> String {
-        screen(width, height, app)
     }
 
     #[test]

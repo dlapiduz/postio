@@ -31,6 +31,7 @@ pub mod reader;
 pub mod row;
 pub mod run;
 pub mod settings;
+pub mod sheet;
 pub mod term;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

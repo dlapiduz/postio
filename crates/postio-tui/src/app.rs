@@ -655,8 +655,8 @@ pub struct App {
     /// Whether the terminal speaks the kitty keyboard protocol, so every
     /// chord arrives; otherwise only what a legacy terminal can send does.
     enhanced_keys: bool,
-    /// Where the keyboard was when the cheat sheet opened, while it is open.
-    cheatsheet: Option<Focus>,
+    /// The key map, while it is open.
+    sheet: Option<crate::sheet::Sheet>,
     /// A link clicked once: shown in full, and opened by a second click
     /// on it (US2 scenario 4).
     armed_link: Option<String>,
@@ -726,10 +726,6 @@ pub enum Tone {
     /// Something refused or failed.
     Failed,
 }
-
-/// One section of the cheat sheet as it is drawn: its heading, and each
-/// command with the key this terminal can send for it.
-pub type SheetSection = (&'static str, Vec<(&'static str, String)>);
 
 /// What a name typed in the palette is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -873,6 +869,8 @@ pub enum Focus {
     Folders,
     /// A picker over the focused row.
     Picker,
+    /// The key map.
+    Keys,
     /// The first run, while there is no account.
     FirstRun,
     /// The settings.
@@ -948,7 +946,7 @@ impl App {
             draft_remind: None,
             palette: None,
             enhanced_keys: false,
-            cheatsheet: None,
+            sheet: None,
             armed_link: None,
             mouse: true,
             first_run: None,
@@ -1552,6 +1550,21 @@ impl App {
     /// A mouse event, on what it landed on: the same things the keys do.
     fn pointer(&mut self, pointer: Pointer) -> Vec<Effect> {
         use crate::view::hit::Target;
+        if self.sheet.is_some() {
+            match pointer {
+                Pointer::Click { hit, .. } if hit.target != Target::Command("cheat_sheet") => {
+                    return Vec::new();
+                }
+                Pointer::Wheel { down, .. } => {
+                    let (max, _) = self.sheet_limits();
+                    if let Some(sheet) = self.sheet.as_mut() {
+                        sheet.scroll_by(if down { WHEEL } else { -WHEEL }, max);
+                    }
+                    return vec![Effect::Redraw];
+                }
+                Pointer::Click { .. } => {}
+            }
+        }
         if self.picker.is_some() {
             match pointer {
                 Pointer::Click { hit, .. } if !matches!(hit.target, Target::PickRow(_)) => {
@@ -2388,6 +2401,7 @@ impl App {
             Focus::Settings => postio_core::Context::Accounts,
             Focus::Bar | Focus::Folders => postio_core::Context::Search,
             Focus::Picker => postio_core::Context::Picker,
+            Focus::Keys => postio_core::Context::List,
             Focus::Reader => postio_core::Context::Reader,
             Focus::Composer => postio_core::Context::Composer,
         }
@@ -2405,37 +2419,56 @@ impl App {
         }
     }
 
-    /// The cheat sheet, while it is open: `postio_ui::cheatsheet::sections`
-    /// for where the keyboard was, each key as this terminal can send it.
-    pub fn cheat_sheet(&self) -> Option<Vec<SheetSection>> {
-        let focus = self.cheatsheet?;
-        let keymap = self.keys.keymap();
-        Some(
-            postio_ui::cheatsheet::sections(keymap, Self::context_of(focus), self.availability())
-                .into_iter()
-                .map(|section| {
-                    let rows = section
-                        .rows
-                        .into_iter()
-                        .map(|row| {
-                            let key = row
-                                .id
-                                .and_then(|id| {
-                                    postio_ui::terminal::deliverable_binding(
-                                        keymap,
-                                        id,
-                                        self.enhanced_keys,
-                                    )
-                                })
-                                .or(row.binding)
-                                .unwrap_or_default();
-                            (row.title, key)
-                        })
-                        .collect();
-                    (section.title, rows)
-                })
-                .collect(),
-        )
+    // -- The key map (src/sheet.rs) ----------------------------------------
+
+    /// The key map and its columns, while it is open.
+    pub fn key_map(&self) -> Option<(&crate::sheet::Sheet, Vec<Vec<crate::sheet::Line>>)> {
+        let sheet = self.sheet.as_ref()?;
+        let width = crate::view::sheet::body(self.screen()).width;
+        Some((
+            sheet,
+            crate::sheet::columns(self.keys.keymap(), self.enhanced_keys, width),
+        ))
+    }
+
+    fn screen(&self) -> ratatui::layout::Rect {
+        ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1)
+    }
+
+    /// How far the key map can scroll, and how far a page is.
+    fn sheet_limits(&self) -> (usize, usize) {
+        let body = crate::view::sheet::body(self.screen());
+        let columns = crate::sheet::columns(self.keys.keymap(), self.enhanced_keys, body.width);
+        let page = usize::from(body.height);
+        (crate::sheet::height(&columns).saturating_sub(page), page)
+    }
+
+    fn open_keys(&mut self) -> Vec<Effect> {
+        let from = match (&self.sheet, self.focus) {
+            (Some(open), _) => open.from(),
+            (None, focus) => focus,
+        };
+        self.sheet = Some(crate::sheet::Sheet::open(from));
+        self.focus = Focus::Keys;
+        vec![Effect::Redraw]
+    }
+
+    fn keys_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        let (max, page) = self.sheet_limits();
+        let Some(sheet) = self.sheet.as_mut() else {
+            return Vec::new();
+        };
+        match sheet.key(key, &mut self.keys, page, max) {
+            crate::sheet::Step::Stay => vec![Effect::Redraw],
+            crate::sheet::Step::Close => self.close_keys(),
+        }
+    }
+
+    fn close_keys(&mut self) -> Vec<Effect> {
+        if let Some(sheet) = self.sheet.take() {
+            self.focus = sheet.from();
+        }
+        vec![Effect::Redraw]
     }
 
     /// The palette as it is drawn, while it is open.
@@ -2754,6 +2787,7 @@ impl App {
             Focus::Composer => KeyContext::Composer,
             Focus::Bar | Focus::Folders => KeyContext::Search,
             Focus::Picker => KeyContext::Picker,
+            Focus::Keys => KeyContext::List,
             Focus::Palette => KeyContext::Palette,
             Focus::FirstRun => KeyContext::Global,
             Focus::Settings => KeyContext::Accounts,
@@ -3276,7 +3310,8 @@ impl App {
             "command_palette" => {
                 return self.open_bar(&postio_ui::finder::COMMANDS_ONLY.to_string());
             }
-            "cheat_sheet" => self.cheatsheet = Some(self.focus),
+            "cheat_sheet" if self.sheet.is_some() => return self.close_keys(),
+            "cheat_sheet" => return self.open_keys(),
             "settings" => {
                 self.settings = Some(crate::settings::Settings::default());
                 self.focus = Focus::Settings;
@@ -4207,11 +4242,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.size = (width, height);
             vec![Effect::Redraw]
         }
-        // Any key puts the cheat sheet away; it is something to read.
-        Input::Key(_) if app.cheatsheet.is_some() => {
-            app.cheatsheet = None;
-            vec![Effect::Redraw]
-        }
+        Input::Key(key) if app.focus == Focus::Keys => app.keys_key(&key),
         Input::Key(key) if app.open.menu.is_some() && app.focus == Focus::Reader => {
             app.menu_key(&key)
         }
