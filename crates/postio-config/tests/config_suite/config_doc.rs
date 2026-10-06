@@ -213,7 +213,7 @@ const ENTRIES: &[Entry] = &[
         path: "focus.filtering",
         kind: "boolean",
         default: "true",
-        description: "Postio Focus files spam and automated updates away as they arrive, each \
+        description: "Focus files spam and automated updates away as they arrive, each \
                        with its reason and one key from restored. `false` stops filing new \
                        mail away; what is already filtered stays where it is.",
     },
@@ -221,7 +221,7 @@ const ENTRIES: &[Entry] = &[
         path: "focus.reading",
         kind: "string",
         default: "\"dialog\"",
-        description: "Where Enter opens a message in Postio Focus: `dialog`, over the list, or \
+        description: "Where Enter opens a message in Focus: `dialog`, over the list, or \
                        `pane`, beside it. A window narrower than 980 px uses the dialog \
                        whatever this says. F8 switches it.",
     },
@@ -396,10 +396,17 @@ projects = \"Projects\"
 /// What each section says after its table, where a row is not enough.
 const PROSE: &[(&str, &str)] = &[
     (
+        "ui",
+        "The macOS app's appearance. The desktop app and the terminal read none \
+         of these: they follow the system's light and dark, and draw rows at \
+         fixed heights.\n",
+    ),
+    (
         "focus",
-        "Postio Focus's settings: what it files away, what it holds into digests, \
-         and the model and vault it may use. The classic app and the terminal \
-         read none of them. The contract they are built to is \
+        "Focus's settings: what it files away, what it holds into digests, \
+         and the model and vault it may use. The desktop app and the terminal \
+         are Focus and read them; the macOS app reads none of them. The \
+         contract they are built to is \
          [`specs/007-postio-focus/contracts/config.md`](../specs/007-postio-focus/contracts/config.md).\n\
          \n\
          Focus writes to this file itself, when a sender is restored, a marker \

@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ConfigError, Extras, Result};
 
-/// Message-list row height. The PLATE design is airy (40px rows); the other two
+/// Message-list row height in the macOS app. Airy is 40px rows; the other two
 /// tighten the same row anatomy rather than changing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Density {
-    /// 40px rows — the default, matching the chosen design direction.
+    /// 40px rows — the default.
     #[default]
     Airy,
     /// Middle setting.
@@ -31,14 +31,15 @@ pub enum Theme {
     Dark,
 }
 
-/// The `[ui]` section.
+/// The `[ui]` section: the macOS app's appearance. The desktop app and the
+/// terminal read none of it.
 ///
 /// ```toml
 /// [ui]
 /// density = "airy"          # airy | comfortable | compact
 /// theme = "system"          # system | light | dark
 /// show_hover_actions = true # mouse parity: reveal row actions on hover
-/// sender_avatars = true     # initials chip per row, from canvas 1b
+/// sender_avatars = true     # initials chip per row
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiConfig {
@@ -51,7 +52,7 @@ pub struct UiConfig {
     /// Show per-row actions when the pointer is over a row.
     #[serde(default = "crate::yes")]
     pub show_hover_actions: bool,
-    /// Show each row's sender-initials chip, per canvas 1b's row anatomy.
+    /// Show each row's sender-initials chip.
     #[serde(default = "crate::yes")]
     pub sender_avatars: bool,
     /// Keys this version of Postio does not know, preserved verbatim.

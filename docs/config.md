@@ -21,6 +21,8 @@ wrote it.
 | `show_hover_actions` | boolean | `true` | Show per-row actions when the pointer rests over a row. |
 | `sender_avatars` | boolean | `true` | Show each row's sender-initials chip. |
 
+The macOS app's appearance. The desktop app and the terminal read none of these: they follow the system's light and dark, and draw rows at fixed heights.
+
 ## `[reader]`
 
 | Key | Type | Default | Description |
@@ -76,10 +78,10 @@ wrote it.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `filtering` | boolean | `true` | Postio Focus files spam and automated updates away as they arrive, each with its reason and one key from restored. `false` stops filing new mail away; what is already filtered stays where it is. |
-| `reading` | string | `"dialog"` | Where Enter opens a message in Postio Focus: `dialog`, over the list, or `pane`, beside it. A window narrower than 980 px uses the dialog whatever this says. F8 switches it. |
+| `filtering` | boolean | `true` | Focus files spam and automated updates away as they arrive, each with its reason and one key from restored. `false` stops filing new mail away; what is already filtered stays where it is. |
+| `reading` | string | `"dialog"` | Where Enter opens a message in Focus: `dialog`, over the list, or `pane`, beside it. A window narrower than 980 px uses the dialog whatever this says. F8 switches it. |
 
-Postio Focus's settings: what it files away, what it holds into digests, and the model and vault it may use. The classic app and the terminal read none of them. The contract they are built to is [`specs/007-postio-focus/contracts/config.md`](../specs/007-postio-focus/contracts/config.md).
+Focus's settings: what it files away, what it holds into digests, and the model and vault it may use. The desktop app and the terminal are Focus and read them; the macOS app reads none of them. The contract they are built to is [`specs/007-postio-focus/contracts/config.md`](../specs/007-postio-focus/contracts/config.md).
 
 Focus writes to this file itself, when a sender is restored, a marker kind is stopped, or a digest rule is made, stopped or removed. It writes the way the settings window saves: everything it does not own is kept as written, and the file is replaced whole. A running app picks the change up as it would an edit in `$EDITOR`.
 
