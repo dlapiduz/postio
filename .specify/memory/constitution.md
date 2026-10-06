@@ -3,37 +3,29 @@ Sync Impact Report
 ==================
 Version change: 1.3.0 → 1.4.0 (was: 1.2.1 → 1.3.0; 1.2.0 → 1.2.1;
   1.1.0 → 1.2.0; 1.0.0 → 1.1.0; unversioned scaffold → 1.0.0)
-Bump rationale (1.4.0): MINOR. Drafted 2026-10-06 for specs/007-postio-focus
-  (T255), after the maintainer's decisions C27 (2026-10-02: Focus is the one
-  desktop app) and the removal of the classic app (T256, approved
-  2026-10-02). AWAITING THE MAINTAINER'S APPROVAL: this amendment is drafted,
-  not approved.
-  - Additional Constraints → Scope names one desktop app, Postio
-    (`postio-gtk`, the Focus design of specs/007-postio-focus), beside the
-    terminal frontend, instead of two desktop apps.
-  - Principle VII's boundary list says what `check-crate-boundaries.py`
-    enforces now. `postio-gtk` is the desktop app, not the view layer it
-    used to name: it takes no store engine and no protocol as a *direct*
-    dependency, and reaches the engine only through `postio-host`, as every
-    frontend does (ADR 0041). "Neither desktop app depends on the other"
-    becomes "`postio-widgets` depends on no app, and takes no store engine,
-    no protocol and none of the crates that own the store" (ADR 0043).
-  - Principle II names the surfaces the one desktop app generates from the
-    registry (the command bar's commands, the `?` key map, the row menu,
-    the keycap in each control), and Principle III says "saved as a pinned
-    search" where it said "saved to the sidebar". Both are wording: what is
-    generated, and what one query language means, are unchanged.
-
-  Why MINOR, not MAJOR: no principle and no governance rule is removed or
-  redefined. Principle VII still says the boundaries are checks; the rule
-  for the app's own code (no SQL, no protocol) is kept, and the transitive
-  form of it now belongs to the crate that holds the GTK the app draws
-  (`postio-widgets`), which is where the old view layer's rule applied.
-  Scope narrows from two desktop apps to one, which is a material change to
-  a section, not a principle. If the maintainer reads moving `postio-gtk`'s
-  rule from any depth to direct dependencies as a redefinition of
-  Principle VII, the bump is MAJOR (2.0.0) and nothing else in the text
-  changes.
+Bump rationale (1.4.0): MINOR. Approved by the maintainer on 2026-10-06,
+  for specs/007-postio-focus (T255), after the classic GTK app was removed
+  (C27, T256).
+  - Additional Constraints → Scope: Postio is one product with several
+    interfaces on the same engine and store -- the GTK interface
+    (`postio-gtk`, the Focus design), the terminal (`postio-tui`), macOS
+    (`macos/` over `postio-ffi`), and others to come -- in place of "two
+    desktop apps".
+  - Principle VII: one separation rule for every interface. An interface
+    holds no SQL and no protocol code: it takes no store engine and no mail
+    protocol as a direct dependency, and reaches mail through Postio's
+    engine crates. The earlier "not even indirectly" form for `postio-gtk`
+    is dropped -- every interface has the engine in its graph, through
+    those crates, by design (ADR 0041). `check-crate-boundaries.py` now
+    enforces the rule for `postio-gtk`, `postio-tui` and `postio-ffi`.
+    `postio-widgets` keeps its stricter rule: no store engine, no protocol,
+    no store-owning crate and no interface, at any depth (ADR 0043).
+  - Principles II and III, wording: the generated surfaces are named as the
+    GTK interface has them, and "saved as a pinned search" replaces "saved
+    to the sidebar". What is generated, and what one query language means,
+    are unchanged.
+  MINOR: no principle is removed; VII states one separation rule for every
+  interface and drops a form of it that no interface could keep.
 Bump rationale (1.3.0): MINOR. Approved by the maintainer on 2026-09-27
   ("approve as drafted"), for specs/007-postio-focus (T146).
   - Additional Constraints → Scope names a second desktop app, Postio Focus,
@@ -47,9 +39,8 @@ Bump rationale (1.3.0): MINOR. Approved by the maintainer on 2026-09-27
     deferred to epic E12.
   - Principle VII's boundary list gains the rules `check-crate-boundaries.py`
     has enforced since spec 007's T002:
-    - `postio-widgets` held the GTK the two desktop apps of the time shared
-      (ADR 0043), and neither depended on the other (restated by 1.4.0, when
-      one desktop app was left);
+    - `postio-widgets` held the GTK the desktop apps shared (ADR 0043), and
+      neither depended on the other;
     - `postio-classify` takes no send path, no network crate and no inference
       engine;
     - `postio-calendar` is a pure leaf;
@@ -103,10 +94,9 @@ Modified sections (1.4.0):
   desktop app has them.
   III. Search Is Navigation — "saved as a pinned search" for "saved to the
   sidebar".
-  VII. Boundaries Are Enforced, Not Advised — `postio-gtk` is the desktop
-  app, held to no store engine and no protocol as direct dependencies;
-  `postio-widgets` depends on no app.
-  Additional Constraints — Scope names one desktop app.
+  VII. Boundaries Are Enforced, Not Advised — one separation rule for every
+  interface: no store engine and no protocol as a direct dependency.
+  Additional Constraints — Scope: one product, several interfaces.
 
 Modified sections (1.3.0):
   VII. Boundaries Are Enforced, Not Advised — adds `postio-widgets` (ADR 0043),
@@ -274,18 +264,20 @@ line away and neither can be undone.
 
 The architectural boundaries are checks in `scripts/checks/`, and a change MUST
 satisfy them rather than argue with them: `postio-core` and `postio-session`
-take no GTK; `postio-gtk`, the desktop app, takes no store engine and no
-protocol as a direct dependency, and reaches the engine only through
-`postio-host`; `postio-search` and
+take no GTK; `postio-search` and
 `postio-body` are pure leaves; `postio-model` takes no ammonia/html5ever,
 rusqlite, gtk4, or tokio; `postio-config` takes no rusqlite or gtk4;
 `postio-sync` talks to the `MailBackend` trait and never to `io-imap` types.
-Every frontend reaches mail through `postio-client`, one app holding the
-store at a time (ADR 0041); `postio-client` takes no toolkit, no WebKit, no
-store engine and no protocol, and `postio-tui` no toolkit and no WebKit.
-The GTK the desktop app draws outside its own window lives in
-`postio-widgets`, which takes no store engine, no protocol and none of the
-crates that own the store, and depends on no app (ADR 0043). `postio-classify` takes no send path, no network crate and no
+**Every interface is separate from the engine.** An interface -- `postio-gtk`,
+`postio-tui`, `postio-ffi` (macOS), and any that follows -- holds no SQL and no
+protocol code: it takes no store engine and no mail protocol as a direct
+dependency, and reaches mail through Postio's engine crates and
+`postio-client`, one interface holding the store at a time (ADR 0041).
+`postio-client` takes no toolkit, no WebKit, no store engine and no protocol;
+`postio-tui` and `postio-ffi` take no toolkit and no WebKit. The GTK the GTK
+interface draws outside its own window lives in `postio-widgets`, which takes
+no store engine, no protocol and none of the crates that own the store, at any
+depth, and depends on no interface (ADR 0043). `postio-classify` takes no send path, no network crate and no
 inference engine. `postio-calendar` takes no store engine, toolkit, async
 runtime or network crate. No app links an inference engine, directly or
 through any crate it depends on.
@@ -305,10 +297,13 @@ that lives only in a document has already been crossed.
 
 ## Additional Constraints
 
-**Scope.** v1 is Linux only: GTK4 and libadwaita, Wayland first. It has one
-desktop app, Postio, the Focus design (`postio-gtk`, `specs/007-postio-focus`,
-ADR 0043), and a terminal frontend (`specs/005-tui-frontend`), both on the
-same store, one app at a time. IMAP and SMTP, one provider preset table, OAuth in scope (ADR 0006).
+**Scope.** Postio is one product with several interfaces on the same engine
+and store, one interface holding the store at a time (ADR 0041): the GTK
+interface (`postio-gtk`, the Focus design, `specs/007-postio-focus`), the
+terminal (`postio-tui`, `specs/005-tui-frontend`), and macOS (`macos/` over
+`postio-ffi`); more may follow. v1 ships on Linux -- GTK4 and libadwaita,
+Wayland first, and the terminal. IMAP and SMTP, one provider preset table,
+OAuth in scope (ADR 0006).
 
 **No AI in Postio itself.** Postio embeds, bundles, downloads and starts no
 model and no inference engine. Focus may use a model the user runs on this

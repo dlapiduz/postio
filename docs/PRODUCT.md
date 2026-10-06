@@ -71,7 +71,10 @@ deliberately absent from v1. §12, §23.
 **v1 is Linux only**: GTK4 and libadwaita, Wayland first, X11 where it happens
 to work. Verified against gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52.
 
-**Postio has one desktop app, the Focus design** —
+**Postio is one product with several interfaces** on the same engine and
+store: the GTK interface, the terminal (§2 below) and macOS, with others to
+come (constitution, Scope). On the Linux desktop, Postio is the GTK interface,
+the Focus design —
 [`specs/007-postio-focus`](../specs/007-postio-focus/spec.md),
 [ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md): the crate
 `postio-gtk`, the binary `postio`, the app id `dev.postio.Postio`, and the one

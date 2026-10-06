@@ -99,7 +99,7 @@ spec raised (2026-09-26 unless dated):
   needs action question if no ai is connected." It is plain code, not a
   language model. The user's model takes over the question when it is
   connected (FR-104 to FR-108).
-- **Focus is the one desktop app** (2026-10-02, C27).
+- **Postio is one product with several interfaces; its GTK interface is Focus** (2026-10-02, C27).
 - **The terminal is Focus too** (2026-10-02, C29).
 
 ## The inputs, and which one wins
@@ -164,7 +164,7 @@ ids.
 | C24 | 09 | **Maintainer (2026-09-29):** `mod+k` opens the command bar in command mode with `>` typed, and `/` opens it for mail search. The bar opens in place, in the top bar's field, with its results below |
 | C25 | message dialog `SPEC.md` §2, §4, §5 | **Maintainer (2026-10-01): the system font for the chrome.** The chrome is Adwaita Sans and Adwaita Mono at the handoff's sizes, weights and gaps; no Barlow, Barlow Condensed or IBM Plex Mono in it (FR-093). A body drawn in app colours is set in Barlow (FR-039) |
 | C26 | message dialog `SPEC.md` §5, §6 | **Maintainer (2026-10-01): the system accent everywhere.** The open message follows the GNOME accent like the rest of Focus: the action card's fill is libadwaita's `--accent-color` at 8% (light) and 12% (dark), and links and the card's tag are that accent. The handoff's surface, ink, hairline and scrim values stand |
-| C27 | — | **Maintainer (2026-10-02): Focus is the one desktop app**, named "Postio": the crate `postio-gtk`, the binary `postio`, the app id `dev.postio.Postio` ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). The classic three-pane app was retired rather than kept as a mode, and removed (T256, approved 2026-10-02); where each of its capabilities lives now is [`classic-parity.md`](classic-parity.md) |
+| C27 | — | **Maintainer (2026-10-02, 2026-10-06): Postio is one product with several interfaces (GTK, terminal, macOS, and others to come), and its GTK interface is Focus**, named "Postio": the crate `postio-gtk`, the binary `postio`, the app id `dev.postio.Postio` ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). The classic three-pane app was retired rather than kept as a mode, and removed (T256, approved 2026-10-02); where each of its capabilities lives now is [`classic-parity.md`](classic-parity.md) |
 | C28 | 05 | Send is `mod+Return`: `ctrl+Return` on Linux, `cmd+Return` (`⌘↩`) on the Mac, drawn `ctrl+↵` on the composer's keycap; `mod+shift+d` is unbound |
 | C29 | — | **Maintainer (2026-10-02): the terminal is Focus too.** `postio-tui` draws Focus's surfaces in character cells ([terminal.md](terminal.md)) and turns Focus's engine on while it runs. Its three-pane layout, sidebar, panes and parts panel are removed, with no mode or flag that keeps them (User Story 16) |
 

@@ -13,10 +13,12 @@
   (the renderer the message view is built on),
   [ADR 0031](0031-the-settings-window-is-one-model-two-frames.md) (the
   settings model is shared, the frame is each app's).
-- **Decision:** **Postio has one desktop app, Focus, in the crate
-  `postio-gtk`: named Postio, the binary `postio`, the app id
-  `dev.postio.Postio`. What it draws, other than its own window, lives in
-  `postio-widgets`, which depends on no app.**
+- **Decision:** **Postio is one product with several interfaces (GTK,
+  terminal, macOS, and others to come). Its GTK interface is the Focus
+  design, in the crate `postio-gtk`: named Postio, the binary `postio`, the
+  app id `dev.postio.Postio`; there is no second GTK app. What it draws,
+  other than its own window, lives in `postio-widgets`, which depends on no
+  interface.**
 
 ---
 

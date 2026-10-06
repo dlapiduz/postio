@@ -151,6 +151,24 @@ NETWORK_CRATES = [
     "pimalaya-stream",
 ]
 
+# What no interface may depend on directly: the store engine and the mail
+# protocol. Every interface -- the GTK app, the terminal, the macOS seam, and
+# whatever follows -- holds no SQL and no protocol code of its own and reaches
+# mail through Postio's engine crates (constitution VII, ADR 0041). The
+# engine is in each interface's graph on purpose, through those crates; this
+# list is checked against the interface's own manifest only. `rusqlite` and
+# `libsqlite3-sys` stay listed beside the current engine: a rule keyed on a
+# dependency's *name* stops holding the moment the name changes, and the
+# point of this check is that the boundary does not depend on anyone
+# noticing (specs/004-turso-store T002).
+INTERFACE_DIRECT = [
+    "rusqlite",
+    "libsqlite3-sys",
+    "turso",
+    "turso_core",
+    "io-imap",
+]
+
 RULES: dict[str, dict[str, object]] = {
     "postio-widgets": {
         "banned": [
@@ -176,21 +194,10 @@ RULES: dict[str, dict[str, object]] = {
     },
     "postio-gtk": {
         "banned": [*INFERENCE_ENGINES],
-        "direct": [
-            "rusqlite",
-            "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
-            "turso",
-            "turso_core",
-            "io-imap",
-        ],
+        "direct": INTERFACE_DIRECT,
         "why": (
-            "postio-gtk is the desktop app's view layer: command down, "
-            "event up. Its own code does no SQL and speaks no protocol -- "
+            "postio-gtk is Postio's GTK interface: command down, event up. "
+            "Its own code does no SQL and speaks no protocol -- "
             "storage goes through postio-storage and mail through the "
             "MailBackend trait, behind the host it runs in its own process "
             "(ADR 0041), which is why the engine is in its graph and may be "
@@ -420,6 +427,7 @@ RULES: dict[str, dict[str, object]] = {
             "libsqlite3-sys",
             *INFERENCE_ENGINES,
         ],
+        "direct": INTERFACE_DIRECT,
         "why": (
             "postio-tui opens the store itself when no other Postio has it "
             "(ADR 0041), so the engine and the protocol are in its graph on "
@@ -444,6 +452,7 @@ RULES: dict[str, dict[str, object]] = {
         # `rusqlite` is deliberately *not* banned. postio-ffi sits above
         # postio-session, exactly where the desktop app does, and the store is on
         # the other side of that composition root by design.
+        "direct": INTERFACE_DIRECT,
         "why": (
             "postio-ffi is the boundary the macOS app talks to (ADR 0019). "
             "It composes postio-session and speaks Command/Event, so it must "

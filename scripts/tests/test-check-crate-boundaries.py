@@ -369,10 +369,20 @@ def main() -> int:
             must_mention=("postio-tui", "gtk4"),
         )
         check_case(
-            "postio-tui may link the store engine",
+            "postio-tui may not depend on the store engine directly",
             build_fixture(
                 tmp_path / "tui-turso",
                 tui_deps='turso = { path = "../../vendor/turso" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-tui", "turso"),
+        )
+        check_case(
+            "postio-tui may reach the store engine through another crate",
+            build_fixture(
+                tmp_path / "tui-turso-through",
+                tui_deps='helper = { path = "../helper" }\n',
+                helper_deps='turso = { path = "../../vendor/turso" }\n',
             ),
             expected_status=0,
             must_mention=("postio-tui",),

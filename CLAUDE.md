@@ -325,9 +325,10 @@ see.
 `scripts/checks/` names its own fix when it fails. The architectural ones, in
 one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 
-- `postio-core`, `postio-session`: no GTK. `postio-gtk` (the app): no turso,
-  rusqlite or io-imap as a *direct* dependency, the engine only through
-  `postio-host`. `postio-widgets`: no store, protocol or app.
+- `postio-core`, `postio-session`: no GTK. Every interface (`postio-gtk`,
+  `postio-tui`, `postio-ffi`): no turso, rusqlite or io-imap as a *direct*
+  dependency; mail only through the engine crates. `postio-widgets`: no
+  store, protocol or interface at any depth.
 - `postio-search`, `postio-body`: pure leaves — no database engine (turso;
   rusqlite stays banned so the rule survives a rename), no gtk4.
 - `postio-model`: no ammonia/html5ever, database engine, gtk4, or tokio — the
