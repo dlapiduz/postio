@@ -1,8 +1,8 @@
 # Focus in the terminal
 
-The terminal app (`postio-tui`) is Postio Focus drawn in character cells
-(C29, User Story 16, FR-186 to FR-199). It has the GTK app's surfaces, verbs,
-words and keys. Only the drawing differs. This file is the terminal's
+The terminal interface (`postio-tui`) is Postio Focus drawn in character
+cells (C29, User Story 16, FR-186 to FR-199). It has the GTK interface's
+surfaces, verbs, words and keys. Only the drawing differs. This file is the terminal's
 `contracts/focus-surface.md`: what each surface looks like in cells, and the
 few places a terminal has to differ from a window, each with its reason.
 

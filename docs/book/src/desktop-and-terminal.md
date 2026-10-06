@@ -1,7 +1,7 @@
 # The desktop app and the terminal, side by side
 
-Postio has two apps on Linux: the desktop app (GTK) and the terminal app,
-`postio-tui`. Both are Postio Focus: the same dense inbox, the same keys,
+Postio is one product with several interfaces. On Linux there are two: the
+desktop app (GTK) and the terminal, `postio-tui`. Both draw Postio Focus: the same dense inbox, the same keys,
 the same verbs, and the same four things done to mail (actions called out,
 digests on a cadence, spam and updates filtered, Obsidian capture). They use
 the same mailbox, one at a time, and Focus's filtering, digests and reminders
@@ -13,7 +13,7 @@ act while either of them is open. This table says where they differ.
 
 Every command the terminal is offered has a key and does something there.
 `registry_parity` in `crates/postio-tui/tests` fails for one that does not.
-What is left below is how the two apps do the same thing, and what only
+What is left below is how the two interfaces do the same thing, and what only
 pixels can do.
 
 ## The inbox

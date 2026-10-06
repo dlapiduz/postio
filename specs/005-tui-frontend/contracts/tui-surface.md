@@ -24,7 +24,7 @@ postio-tui
   a defect, and `tests/registry_parity.rs` enumerates the registry to prove
   there is none (SC-001).
 - Chords are resolved by `postio_ui::keymap::Resolver` with `[keys]`
-  overrides, as in the desktop app.
+  overrides, as in the GTK interface.
 - When a terminal lacks the kitty keyboard protocol, a chord it cannot
   deliver falls back to the command's registry `alternate_bindings`. The
   key map shows the chord that works *in this terminal*.

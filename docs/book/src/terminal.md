@@ -1,6 +1,6 @@
 # Postio in a terminal
 
-`postio-tui` is Postio in a terminal: Postio Focus drawn in character
+`postio-tui` is Postio's terminal interface: Postio Focus drawn in character
 cells, with the same inbox, commands and keys as the desktop app, local or
 over SSH, with the mouse as well as the keyboard. Mail is read and written
 as Markdown. While it has your mail open, Focus's filtering, digests and
@@ -12,7 +12,7 @@ They take turns, though. Only one of them can have your mail open at a time,
 so close one before opening the other
 ([ADR 0041](https://github.com/dlapiduz/postio/blob/main/docs/decisions/0041-one-app-opens-the-store-at-a-time.md)).
 
-Where the two apps still differ is set out in
+Where the two interfaces still differ is set out in
 [The desktop app and the terminal, side by side](desktop-and-terminal.md).
 
 ## Running it
