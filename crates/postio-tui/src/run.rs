@@ -944,6 +944,14 @@ fn perform(
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");
                 }
             }
+            Effect::SetReading(reading) => {
+                if let Err(error) = crate::config_file::path()
+                    .ok_or_else(|| "There is no config.toml here".to_owned())
+                    .and_then(|path| crate::config_file::set_reading(&path, reading))
+                {
+                    tracing::warn!(%error, "could not write where messages open");
+                }
+            }
             Effect::ReadSource(message) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

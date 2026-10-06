@@ -318,6 +318,8 @@ pub enum Effect {
     Launch(std::path::PathBuf),
     /// Write the remote-image allow list, which the desktop app reads too.
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
+    /// Write `[focus] reading` to `config.toml`: where messages open.
+    SetReading(postio_config::Reading),
     /// Read a message's source and answer with [`Input::Source`].
     ReadSource(postio_model::MessageId),
     /// Ask for [`Input::DwellDue`] after `after`: how long the message has
@@ -1512,7 +1514,12 @@ impl App {
         match pointer {
             Pointer::Click { hit, ctrl, shift } => match hit.target {
                 Target::Row(position) => {
-                    self.focus = Focus::List;
+                    // Beside the list a click is the pointer's `j`: the
+                    // message stays open and follows.
+                    let beside = self.focus == Focus::Reader && self.pane().is_some();
+                    if !beside {
+                        self.focus = Focus::List;
+                    }
                     let message = self.list.peek(position);
                     match (ctrl, shift, message) {
                         (true, _, Some(_)) => {
@@ -3060,6 +3067,7 @@ impl App {
             }
             "next_in_conversation" => return self.walk_conversation(1),
             "prev_in_conversation" => return self.walk_conversation(-1),
+            "toggle_reading_pane" => return self.toggle_reading_pane(),
             "view_source" => return self.view_source(),
             "open_attachment_or_link" => return self.offer_choices(),
             "more_actions" => return self.more_actions(),
@@ -4276,12 +4284,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             generation,
             page,
             rows,
-        } => {
-            let mut effects = app.page(generation, page, rows);
-            effects.extend(app.follow_cursor());
-            effects
-        }
+        } => app.page(generation, page, rows),
     };
+    // A message open follows the cursor wherever it went: `j`, a click, or
+    // the row it was opened from leaving.
+    effects.extend(app.follow_cursor());
     effects.extend(app.fetches());
     effects
 }
@@ -4939,7 +4946,6 @@ pub(crate) mod tests {
         // Focus's commands the terminal is offered since it became Focus
         // (C29) and cannot answer yet; tasks T309-T326 empty this list.
         "digest_rule",
-        "toggle_reading_pane",
         "back_to_words",
         "go_to_filtered",
         "go_to_digest_rules",

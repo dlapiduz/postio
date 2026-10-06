@@ -52,6 +52,8 @@ const SENDER_X: u16 = 3;
 const WIDE: u16 = 100;
 const SENDER_WIDE: u16 = 20;
 const SENDER_NARROW: u16 = 16;
+/// The sender's column beside the reading pane.
+const SENDER_BESIDE: u16 = 12;
 /// The room the right edge keeps.
 const MARGIN: usize = 0;
 
@@ -62,21 +64,24 @@ pub fn lines_of(row: Option<&Row>) -> u16 {
 }
 
 /// The sender's column in a list `width` cells wide.
-fn sender_width(width: u16) -> u16 {
-    if width >= WIDE {
+fn sender_width(width: u16, beside: bool) -> u16 {
+    if beside {
+        SENDER_BESIDE
+    } else if width >= WIDE {
         SENDER_WIDE
     } else {
         SENDER_NARROW
     }
 }
 
-/// Draw `rows` into `area`. `first` is the list position of the first row,
+/// Draw `rows` into `area`, beside the reading pane or not. `first` is the list position of the first row,
 /// for what a click on each means; `hint` is the key this terminal sends for
 /// a command, for the answers a marked row offers.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
+    beside: bool,
     rows: &[Visible],
     first: u32,
     theme: &Theme,
@@ -125,6 +130,7 @@ pub fn draw(
                     visible,
                     bar.clone(),
                     usize::from(area.width),
+                    beside,
                     theme,
                     now,
                 ),
@@ -132,7 +138,7 @@ pub fn draw(
             );
             if height == 2 {
                 frame.render_widget(
-                    second_line(row, bar, usize::from(area.width), theme, now, hint),
+                    second_line(row, bar, usize::from(area.width), beside, theme, now, hint),
                     Rect::new(area.x, y + 1, area.width, 1),
                 );
             }
@@ -209,6 +215,7 @@ fn first_line<'a>(
     visible: &Visible,
     bar: Span<'a>,
     width: usize,
+    beside: bool,
     theme: &Theme,
     now: DateTime<Local>,
 ) -> Line<'a> {
@@ -217,7 +224,10 @@ fn first_line<'a>(
     } else {
         theme.style(Role::Text)
     };
-    let sender_room = usize::from(sender_width(u16::try_from(width).unwrap_or(u16::MAX)));
+    let sender_room = usize::from(sender_width(
+        u16::try_from(width).unwrap_or(u16::MAX),
+        beside,
+    ));
     let sender = fit(row.from.as_str(), sender_room - 1);
     let sender_pad = sender_room.saturating_sub(sender.width());
     let trail = trailing(row, now);
@@ -309,6 +319,7 @@ fn second_line<'a>(
     row: &Row,
     bar: Span<'a>,
     width: usize,
+    beside: bool,
     theme: &Theme,
     now: DateTime<Local>,
     hint: &dyn Fn(CommandId) -> Option<String>,
@@ -319,7 +330,7 @@ fn second_line<'a>(
     let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local);
     // Under the subject, or under the sender once the sender's column has
     // narrowed.
-    let start = if u16::try_from(width).unwrap_or(u16::MAX) >= WIDE {
+    let start = if !beside && u16::try_from(width).unwrap_or(u16::MAX) >= WIDE {
         usize::from(SENDER_X + SENDER_WIDE)
     } else {
         usize::from(SENDER_X)

@@ -106,8 +106,8 @@ impl App {
 
     /// What a click on row `line` of the open message's column stands for.
     pub(super) fn line_at(&self, line: usize) -> crate::conversation::At {
-        let (outer, _) = self.open_geometry();
-        let column = crate::layout::column_width(outer).min(outer.saturating_sub(2));
+        let (outer, inner, _) = self.open_geometry();
+        let column = crate::layout::column_width(outer).min(inner);
         draw::document(
             self,
             &crate::theme::Theme::plain(),
@@ -141,18 +141,59 @@ impl App {
         )
     }
 
-    /// The frame's width and the height of the column's window.
-    fn open_geometry(&self) -> (u16, u16) {
+    /// The pane the open message sits in beside the list, when it is placed
+    /// there: `[focus] reading` says so and the terminal is wide enough.
+    pub fn pane(&self) -> Option<u16> {
+        if self.features.reading != postio_config::Reading::Pane {
+            return None;
+        }
+        let list = self.window().list;
+        crate::layout::split_pane(list).map(|(_, pane)| pane.width)
+    }
+
+    /// The keymap in force.
+    pub fn keymap(&self) -> &postio_core::Keymap {
+        self.keys.keymap()
+    }
+
+    /// `F8`: open messages beside the list, or over it again. The choice is
+    /// written to `config.toml` and said in the words the desktop uses.
+    pub(super) fn toggle_reading_pane(&mut self) -> Vec<Effect> {
+        use postio_config::Reading;
+        let next = match self.features.reading {
+            Reading::Dialog => Reading::Pane,
+            Reading::Pane => Reading::Dialog,
+        };
+        self.features.reading = next;
+        let said = postio_ui::focus_target::reading_placement(
+            next == Reading::Pane,
+            self.pane().is_some(),
+        );
+        let mut effects = vec![Effect::SetReading(next)];
+        effects.extend(self.say(said));
+        effects
+    }
+
+    /// The width the open message is laid out in, the width of what scrolls,
+    /// and how many rows the column shows at once.
+    fn open_geometry(&self) -> (u16, u16, u16) {
+        if let Some(pane) = self.pane() {
+            let list = self.window().list;
+            return (pane, pane - 1, list.height.saturating_sub(4));
+        }
         let area = ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1);
         let frame = crate::layout::open_frame(area);
-        (frame.width, frame.height.saturating_sub(2 + 4))
+        (
+            frame.width,
+            frame.width.saturating_sub(2),
+            frame.height.saturating_sub(2 + 4),
+        )
     }
 
     /// How many rows the open message's column has, and how many it shows
     /// at once.
     fn open_extent(&self) -> (usize, usize) {
-        let (outer, height) = self.open_geometry();
-        let inner = outer.saturating_sub(2);
+        let (outer, inner, height) = self.open_geometry();
         let length = match &self.open.raw {
             Some(raw) => raw.text.as_ref().map_or(1, |text| {
                 draw::raw_lines(text, usize::from(inner).saturating_sub(2).max(1)).len()
@@ -192,6 +233,12 @@ impl App {
         let Some(message) = self.cursor_message() else {
             return Vec::new();
         };
+        // The row already open is open.
+        if self.focus == Focus::Reader
+            && self.reading.as_ref().map(|reading| reading.row) == Some(message)
+        {
+            return vec![Effect::Redraw];
+        }
         let mut effects = self.open_reading(message);
         self.focus = Focus::Reader;
         self.reader_top = 0;
@@ -249,7 +296,7 @@ impl App {
                 }
                 self.open_at_cursor()
             }
-            None if self.list.total() == 0 => self.close_message(),
+            None if self.scope.is_some() && self.list.total() == 0 => self.close_message(),
             _ => Vec::new(),
         }
     }
@@ -440,8 +487,8 @@ impl App {
     /// `.`: the verbs the action row folded away, as a menu. Nothing when
     /// nothing is folded.
     pub(super) fn more_actions(&mut self) -> Vec<Effect> {
-        let (outer, _) = self.open_geometry();
-        if self.reading.is_none() || !draw::folded(self, outer, outer.saturating_sub(2)) {
+        let (outer, inner, _) = self.open_geometry();
+        if self.reading.is_none() || !draw::folded(self, outer, inner) {
             return Vec::new();
         }
         let items = postio_ui::focus_dialog::FOLDED

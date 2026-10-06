@@ -100,6 +100,16 @@ pub fn column_width(width: u16) -> u16 {
     72.min(width.saturating_sub(8))
 }
 
+/// `list` split into what stays the list and the reading pane to its right:
+/// `None` where there is no room for one.
+pub fn split_pane(list: Rect) -> Option<(Rect, Rect)> {
+    let pane = pane_width(list.width)?;
+    Some((
+        Rect::new(list.x, list.y, list.width - pane, list.height),
+        Rect::new(list.x + list.width - pane, list.y, pane, list.height),
+    ))
+}
+
 /// The reading pane's width beside the list: `min(100, W − 56)` from 128
 /// columns, and none below.
 pub fn pane_width(width: u16) -> Option<u16> {
@@ -151,6 +161,15 @@ mod tests {
         assert_eq!(column_width(100), 72);
         assert!(folds_into_more(92));
         assert!(!folds_into_more(96));
+    }
+
+    #[test]
+    fn the_list_keeps_at_least_56_beside_the_pane() {
+        let (list, pane) = split_pane(Rect::new(0, 2, 128, 30)).unwrap();
+        assert_eq!((list.width, pane.width, pane.x), (56, 72, 56));
+        let (list, pane) = split_pane(Rect::new(0, 2, 200, 30)).unwrap();
+        assert_eq!((list.width, pane.width), (100, 100));
+        assert!(split_pane(Rect::new(0, 2, 127, 30)).is_none());
     }
 
     #[test]

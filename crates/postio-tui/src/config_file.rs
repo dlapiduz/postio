@@ -66,6 +66,19 @@ fn rewrite(path: &Path, change: impl FnOnce(&mut postio_config::Config)) -> Resu
     Ok(Read::of(&config))
 }
 
+/// Write `[focus] reading` at `path` as `reading`, leaving the rest of the
+/// file as it was, as the desktop's `F8` does.
+pub fn set_reading(path: &Path, reading: postio_config::Reading) -> Result<(), String> {
+    let original = text(path);
+    let written = postio_config::focus_edit::set_reading(&original, reading)
+        .map_err(|error| error.to_string())?;
+    match written {
+        Some(edited) => postio_config::Config::write_text_to_path(&edited, path)
+            .map_err(|error| error.to_string()),
+        None => Ok(()),
+    }
+}
+
 /// The pinned saved searches in `config`, in the finder's order -- the
 /// one a reorder on either app writes.
 pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
@@ -95,6 +108,24 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn where_messages_open_is_written_in_focus_and_the_rest_of_the_file_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# my own notes\n[ui]\ntheme = \"dark\"\n").unwrap();
+        set_reading(&path, postio_config::Reading::Pane).expect("written");
+        let after = text(&path);
+        assert!(
+            after.contains("# my own notes") && after.contains("theme = \"dark\""),
+            "{after}"
+        );
+        let config = postio_config::Config::from_toml_str(&after).unwrap();
+        assert_eq!(config.focus.reading, postio_config::Reading::Pane);
+        set_reading(&path, postio_config::Reading::Dialog).expect("written");
+        let config = postio_config::Config::from_toml_str(&text(&path)).unwrap();
+        assert_eq!(config.focus.reading, postio_config::Reading::Dialog);
+    }
 
     #[test]
     fn what_the_terminal_writes_the_desktops_watcher_sees() {

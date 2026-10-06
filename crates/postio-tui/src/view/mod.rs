@@ -10,6 +10,7 @@ pub mod hit;
 pub mod list;
 pub mod open;
 pub mod palette;
+pub mod pane;
 pub mod search;
 pub mod settings;
 pub mod state;
@@ -104,25 +105,29 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 }
             }
             _ => {
+                // Beside the reading pane the list keeps the left of the
+                // rows, and the pane the rest.
+                let beside = app
+                    .pane()
+                    .and_then(|_| crate::layout::split_pane(window.list));
+                let region = beside.map_or(window.list, |(list, _)| list);
+                if let Some((_, pane)) = beside {
+                    pane::draw(frame, pane, app, theme, now, &mut hits);
+                }
                 // A search's facets take the list's first line.
                 let facets = app.facets();
-                let list = if facets.is_empty() || window.list.height < 2 {
-                    window.list
+                let list = if facets.is_empty() || region.height < 2 {
+                    region
                 } else {
                     search::draw_facets(
                         frame,
-                        Rect::new(window.list.x, window.list.y, window.list.width, 1),
+                        Rect::new(region.x, region.y, region.width, 1),
                         &facets,
                         app.facets_note(),
                         theme,
                         &mut hits,
                     );
-                    Rect::new(
-                        window.list.x,
-                        window.list.y + 1,
-                        window.list.width,
-                        window.list.height - 1,
-                    )
+                    Rect::new(region.x, region.y + 1, region.width, region.height - 1)
                 };
                 if let Some(said) = app.empty_inbox(now) {
                     state::empty(frame, list, &said, theme, &mut hits);
@@ -130,6 +135,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                     list::draw(
                         frame,
                         list,
+                        beside.is_some(),
                         &app.visible(),
                         app.top(),
                         theme,
@@ -140,7 +146,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 }
             }
         }
-        if app.front() == Front::Reader {
+        if app.front() == Front::Reader && app.pane().is_none() {
             open::over_list(frame, area, app, theme, now, &mut hits);
         }
         // Over everything: a click there lands on nothing underneath.
