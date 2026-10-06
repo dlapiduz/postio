@@ -39,8 +39,8 @@ The spec asks for four things:
   `postio_gtk::demo` is the one demo store its `shot` and its runner
   share, with the seeds' store halves in `postio_storage::seed`, and the
   catalogue is written against its surfaces. The classic app's runner,
-  which this plan first built on `main`, is not reachable from the script
-  or the catalogue and goes with the classic app in T256.
+  which this plan first built on `main`, went with the classic app in
+  T256.
 - **`scripts/storyboards.sh` drives everything.** It replaces
   `scripts/screens.sh`, whose table becomes zero-step storyboards (R12).
 - **Base runs.** The branch's storyboards are run against the merge-base's
@@ -152,7 +152,7 @@ window, the clock seam, and the toast's tone and undo accessors.
 | **II. The keyboard is a system** | Pass, and strengthened | Storyboards press commands through the shared registry and resolver, so a broken binding fails a step (R3). Chain delivery tests the keymap where people actually meet it. The generated pass (US6) gives both GTK apps the "every command is answered" guarantee. |
 | **III. One query language** | N/A | Search storyboards type queries; they do not parse them. |
 | **IV. Test-first** | Pass, after the amendment | The runner and the format are built red-green like any code. Catalogue storyboards get their red from the base, from an open defect, or are labelled `pinned`. They never get it from re-breaking a fix (R0). This branch amends the spec's conflicting wording. Tests assert on what a person would see (the region holding the keyboard, the frame, the cursor), not on what a layer was handed. |
-| **V. Performance is a requirement** | Pass | SC-002 budgets the runner. The `app_suite` case is subject to the four-minute landing budget and to `POSTIO-MEASUREMENT` like any other case. The clock seam is one function call per row format. |
+| **V. Performance is a requirement** | Pass | SC-002 budgets the runner. The `focus_suite` case is subject to the four-minute landing budget and to `POSTIO-MEASUREMENT` like any other case. The clock seam is one function call per row format. |
 | **VI. Privacy** | Pass | Fixtures only, on reserved domains, and linted (FR-027). No real store. The PR gets text summaries, never frames. The bundle refuses the untracked `Design/postio-focus-design/`, which carries a real name (contracts/review.md). Logs carry no content, because runs are files, not logs. |
 | **VII. Boundaries are enforced** | Pass | See the list below. |
 
@@ -163,8 +163,7 @@ window, the clock seam, and the toast's tone and undo accessors.
 - The GTK half is in `postio-widgets`, per ADR 0043.
 - Seeds stay in the app crate, behind a `demo` feature; their store halves
   are `postio_storage::seed`'s.
-- Neither `postio-storyboard` nor `postio-gtk` depends on `postio-gtk` or
-  `postio-app`.
+- `postio-storyboard` depends on no app.
 
 **Re-check after Phase 1: pass.** The design added one crate, two
 toolkit-free modules and one feature flag (`demo`). None of them crosses a
@@ -305,7 +304,7 @@ starts, and land any fix to it on this branch first.
 | The reviewer is vague or too lenient | Medium | Citations enforced (FR-019), the calibration set (R10), and batches of one surface each. |
 | The review becomes a ritual: run, ignore, land | Medium | The landing warning and the label make a skipped review visible. SC-004 measures whether escaped defects actually fall. |
 | The Focus lane's `git mv` conflicts | Low | Freeze the GTK half first (see Branch shape). |
-| `app_suite`'s `storyboards` case blows the landing budget | Low | It is an integration suite, so it runs nightly. If it is slow, it goes on `SLOW` / `POSTIO-MEASUREMENT`. |
+| `focus_suite`'s `storyboards` case blows the landing budget | Low | It is an integration suite, so it runs nightly. If it is slow, it goes on `SLOW` / `POSTIO-MEASUREMENT`. |
 
 ## Complexity Tracking
 

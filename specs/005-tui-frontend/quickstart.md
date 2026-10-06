@@ -1,5 +1,13 @@
 # Quickstart: validating Postio in the terminal
 
+> **The classic app these commands name is gone.** `postio-app`, its
+> `app_suite`, and the classic `postio-gtk` with its `gtk_suite` were removed
+> in `specs/007-postio-focus` T256. The desktop app is now `postio-gtk`, the
+> Focus design: run it with `cargo run -p postio-gtk`, and its suite with
+> `cargo nextest run -p postio-gtk --test focus_suite`. The steps below are
+> this feature's validation as it was done.
+
+
 How to prove the feature works end to end. Each scenario names the spec
 criterion it proves. The shapes are in [contracts/](./contracts/) and
 [data-model.md](./data-model.md); this guide does not repeat them.

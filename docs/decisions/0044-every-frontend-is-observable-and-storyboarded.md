@@ -4,8 +4,8 @@
 - **Spec:** [`specs/008-storyboards`](../../specs/008-storyboards/spec.md)
   (FR-010, FR-015, FR-031; the spec carries the reasoning, this records the
   rule)
-- **Related:** ADR 0043 on `feature/postio-focus` (where the GTK half both
-  desktop apps share lives),
+- **Related:** [ADR 0043](0043-focus-is-the-one-desktop-app.md) (the GTK
+  half lives in `postio-widgets`, beside the one desktop app),
   [ADR 0019](0019-macos-frontend.md) (the frontend the rule will reach next)
 - **Decision:** **Every Postio frontend reports where everything is as one
   shared `Observation`, has a runner that plays the shared storyboard

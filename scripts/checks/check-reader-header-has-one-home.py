@@ -17,9 +17,8 @@ happened once here (#1150). A boundary that carries the answer cannot be read
 two ways, and the header is the surface where a disagreement is most visible to
 a user.
 
-The rule holds in every desktop crate: the shared
-`postio-widgets` that holds the reader both desktop apps draw (ADR 0043), and
-`postio-gtk`.
+The rule holds in every desktop crate: `postio-widgets`, which holds the
+reader the desktop app draws (ADR 0043), and `postio-gtk`.
 
 Fix: delete the private copy from the desktop crate and call
 `postio_ui::reader::header` instead. If a rule genuinely needs to differ per

@@ -17,11 +17,11 @@ string that composes it -- `"postio-account-{index}"` covers every class
 starting `postio-account-`, and `"{class}-hint"` every class ending `-hint`.
 Tests count, because a test that looks a class up is using it; the token
 generator (`crates/postio-ui/src/tokens.rs`) does not, because it is where
-`tokens.css`'s rules are *written*, not where a widget wears one.
+the generated sheets' rules are *written*, not where a widget wears one.
 
 Fix: delete the rule (or just the dead selector from its group). If the class
-is in `tokens.css`, delete it from the generator in
-`crates/postio-ui/src/tokens.rs` and rebuild -- the file is generated. If the
+is in a generated sheet (`postio-widgets`' `metrics.css`), delete it from the
+generator in `crates/postio-ui/src/tokens.rs` and rebuild. If the
 class really is set, spell it so it can be found: a literal, or a `format!`
 whose literal prefix or suffix names it.
 

@@ -91,9 +91,8 @@ pass and never a failure.
 
 - **`App`**: `focus` \| `terminal` \| `macos`. `focus` is Postio, the one
   desktop app, and the only one with a runner (specs/007-postio-focus
-  T265); the terminal and macOS name theirs when they have one. The format
-  still parses `classic` for the classic app's own runner, which no script
-  reaches; both go with the classic app in T256.
+  T265); the terminal and macOS name theirs when they have one. `classic`
+  went with the classic app's runner in T256.
   `provides(App, CommandId)` comes from the registry (R7).
 - **`Axis` and its values.** Each app declares its subset in `runner list`:
 
