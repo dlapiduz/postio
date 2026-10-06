@@ -1,105 +1,99 @@
 # The desktop app and the terminal, side by side
 
 Postio has two apps on Linux: the desktop app (GTK) and the terminal app,
-`postio-tui`. They use the same mailbox, one at a time, and share one
-implementation of everything they do to it. They are meant to do the same
-things, each in its own medium. This table says where they differ today.
+`postio-tui`. Both are Postio Focus: the same dense inbox, the same keys,
+the same verbs, and the same four things done to mail (actions called out,
+digests on a cadence, spam and updates filtered, Obsidian capture). They use
+the same mailbox, one at a time, and Focus's filtering, digests and reminders
+act while either of them is open. This table says where they differ.
 
 - ✓ has it
 - ◐ has it, differently or in part (the note says how)
-- ✗ missing
 - — not applicable
 
-The terminal's gaps are tracked by a test,
-`every_command_is_answered_here_or_by_the_dispatcher` in
-`crates/postio-tui/src/app.rs`. It fails for any command the terminal neither
-handles itself nor passes on to something that does, unless its `GAPS` list
-names it. The list is empty now: every command does something in both apps.
-What is left below is how they do it, and the features that are not a
-single command.
+Every command the terminal is offered has a key and does something there.
+`registry_parity` in `crates/postio-tui/tests` fails for one that does not.
+What is left below is how the two apps do the same thing, and what only
+pixels can do.
 
-## Accounts
+## The inbox
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
-| First run: find the servers, sign in with a password | ✓ | ✓ | The same steps and sentences |
-| Sign in with a browser (OAuth) | ✓ | ✓ | The terminal shows the whole address; Enter opens it, `y` copies it |
-| Add a second account | ✓ | ✓ | `Alt+N` from anywhere; Escape goes back to the mail |
-| Enable, disable, remove (with undo), make default, rebuild index, update credential | ✓ | ✓ | From Settings |
-| Map a folder's role (Sent, Archive, …) | ✓ | ✓ | `M` asks for the role, then the folder |
-| Cycle the account scope, including all accounts at once | ✓ | ✓ | |
-
-## The list
-
-| Feature | Desktop | Terminal | Notes |
-|---|---|---|---|
-| Folders and the Flagged, Snoozed, Drafts and Outbox views | ✓ | ✓ | |
-| Saved searches in the sidebar: run, rename, reorder, delete | ✓ | ✓ | `r`, `Shift+↑`/`Shift+↓`, `d` (twice: it asks first, as the desktop does) |
-| Go-to keys (inbox, sent, drafts, flagged) | ✓ | ✓ | |
-| Back to the previous view | ✓ | ✓ | |
-| Folders nested as the server keeps them; fold one | ✓ | ✓ | Space, or a click on its mark; both apps remember what is folded, each in its own file |
-| The conversation rail | ✓ | — | The terminal has none |
-| Cursor and selection kept apart; multiple selection | ✓ | ✓ | |
-| Archive, delete, move, flag, mark unread, label, snooze, undo | ✓ | ✓ | |
-| Conversations, and walking one with `J`/`K` | ✓ | ✓ | |
-| Toggle the sidebar | ✓ | ✓ | On a narrow terminal it is brought forward instead |
-| The mouse: click, select, scroll, drag the divider | ✓ | ✓ | |
+| The inbox as it arrived, across every account | ✓ | ✓ | |
+| Invitation, question and to-do markers, answered from the row | ✓ | ✓ | `y`, `Y`, `e`, `s`, `t`, `-` |
+| Digest rows and fired reminders | ✓ | ✓ | |
+| The has-action filter | ✓ | ✓ | `!` |
+| Cursor and selection kept apart; the bulk bar | ✓ | ✓ | `x`, `J`/`K`, `X` |
+| Undo after the toast has gone | ✓ | ✓ | `Ctrl+Z` |
+| Folders, labels and the mailboxes | ✓ | ✓ | `g o`, the `g` keys, and `in:` in the command bar |
+| A row menu | ✓ | ◐ | In the terminal, the command bar acts on the focused row or the selection |
+| The mouse: click, select, scroll | ✓ | ✓ | With `[tui] mouse = false`, every key still works |
 
 ## Reading
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
-| HTML mail, sanitised | ✓ | ◐ | The terminal draws it as styled Markdown |
-| Fold and unfold every quote | ✓ | ✓ | |
-| Fold and unfold one quote | ✓ | ✓ | By a click on it, in both |
-| Fold a message in a conversation to its header | ✓ | ✓ | |
-| Images in a message | ✓ | ◐ | Labelled placeholders; drawing them is the next iteration |
+| A message opens over the list, or beside it | ✓ | ✓ | `F8`; the terminal places it beside the list from 128 columns |
+| One message at a time; `j`/`k` through the list, `[`/`]` through the thread | ✓ | ✓ | |
+| The action card, and the sentence it quotes highlighted in the body | ✓ | ✓ | |
+| HTML mail, sanitised | ✓ | ◐ | The terminal draws it as styled text in its own colours |
+| App colours, or the original on paper (`O`) | ✓ | — | A terminal has one treatment, so it does not offer the switch |
+| Zoom; darken a designed message | ✓ | — | The terminal draws text in its own font and colours |
+| Images in a message | ✓ | ◐ | Labelled placeholders in the terminal |
 | Remote images allowed per sender | ✓ | ✓ | The same allow list |
-| Open a link | ✓ | ◐ | A click shows where it goes and a second opens it; no key yet |
-| Attachments: open, save, save all | ✓ | ✓ | |
-| Reader view, or the sender's own markup (`View original`) | ✓ | ✓ | |
-| Find in the message on screen (`Ctrl+F`, next and previous match) | ✓ | — | Not yet in the terminal: its `GAPS` list names the three commands |
-| Zoom a message in and out; darken a designed message in dark mode | ✓ | — | The terminal draws text in its own font and colours, so there is nothing for these to act on; it does not offer them |
-| Open a part with another app | ✓ | ◐ | The terminal opens every part with the system's default app |
-| Show a held-back part once, with what it references | ✓ | — | For drawing its images, which a terminal cannot |
-| Unsubscribe | ✓ | ✓ | |
+| Links and attachments | ✓ | ✓ | `o`; a click on a link shows where it goes, a second opens it |
+| Find in the message | ✓ | ✓ | `Ctrl+F` |
+| Raw source | ✓ | ✓ | `v` |
+| Unsubscribe | ✓ | ✓ | `U` |
 | Drag a message or a part out to another app | ✓ | — | A terminal has nothing to drag to |
 
 ## Writing
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
-| New, reply, reply all, forward; drafts; resume a draft | ✓ | ✓ | |
+| New, reply, reply all, forward; drafts | ✓ | ✓ | In the frame over the list |
 | The editor | rich text | Markdown | Markdown is sent as HTML with the Markdown as the plain-text part |
-| Formatting: bold, italic, lists, link, quote | ✓ | ◐ | As Markdown: around the selection, or a pair to type into; lists and quotes toggle on the line |
 | Preview what will be sent; edit in `$EDITOR` | — | ✓ | `Alt+P`, `Alt+E` |
 | Recipients from contacts; Cc and Bcc; identities | ✓ | ✓ | |
 | Attach a file; paste an image; drop a file | ✓ | ✓ | In the terminal a drop arrives as its path |
-| Schedule send; undo send; why a send failed | ✓ | ✓ | |
-| Save the draft now | ✓ | ✓ | It also saves as you type |
-| A composer of its own | window | tab | |
+| Send later; remind if no reply | ✓ | ✓ | `Ctrl+H` opens the same remind picker as `h` on a row |
+| Detach the composer | a window | the whole screen | `Alt+O` |
 
-## Search
+## Finding and going
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
-| The query language, operators shown as chips | ✓ | ✓ | |
-| Facets: search in a scope (all mail, inbox only, lists), refine by what the matches share | ✓ | ✓ | A row over the results; Tab walks it, Enter or a click picks |
-| The finder's modes (`>` `#` `+` `@`), the palette, the key list | ✓ | ✓ | |
+| The command bar: search, commands, go to | ✓ | ✓ | `/`, `Ctrl+K` |
+| Plain words turned into operator chips | ✓ | ✓ | |
+| Saved searches | ✓ | ✓ | `Alt+1`–`Alt+4`; `Ctrl+S` saves the query |
+| The pickers: snooze, remind, label, move | ✓ | ✓ | `s`, `h`, `l`, `m` |
+| The key map | ✓ | ✓ | `?` |
+
+## Filtered and digests
+
+| Feature | Desktop | Terminal | Notes |
+|---|---|---|---|
+| Filtered, with its reasons and tabs; restore; sweep | ✓ | ✓ | `g f`, `R`, `F` |
+| The digest window: summary, messages, the email from a reference | ✓ | ✓ | `]`/`[`, `Tab`, `A`, `D` |
+| Digest rules and the rule dialog | ✓ | ✓ | `g d`, `d` |
+| Capture a task or a note into Obsidian | ✓ | ✓ | `t`, `n`; with `[focus.vault]` set |
 
 ## Settings
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
+| Accounts: add, sign in, enable, remove, make default, map a folder's role | ✓ | ✓ | |
 | Every section of `config.toml` | panes | `$EDITOR` | The terminal opens the file at the section |
-| Signatures: write, add, rename, delete | ✓ | ✓ | `s` on an account in Settings; the text is written in `$EDITOR` |
-| The privacy pane: senders allowed remote images, lists left, read receipts, recent connections | ✓ | ✓ | The same words from the same place; `d` on a sender asks for its images again |
+| Signatures | ✓ | ✓ | In the terminal the text is written in `$EDITOR` |
+| The privacy section | ✓ | ✓ | The same words from the same place |
 
 ## Everything else
 
 | Feature | Desktop | Terminal | Notes |
 |---|---|---|---|
-| New-mail notifications | ✓ | ✓ | The terminal uses its status line and `notify-send` |
-| Colours | light and dark | the terminal's own | `NO_COLOR` is honoured; roles are set in `[tui.colors]` |
+| A main menu | ✓ | — | Each item is a command with its key and a command-bar row |
+| New-mail notifications | ✓ | ✓ | The terminal uses its bottom line and `notify-send` |
+| Colours | the system's, light and dark | the terminal's own | `NO_COLOR` is honoured; roles are set in `[tui.colors]` |
 | One mailbox, whichever app is open | ✓ | ✓ | One app at a time |
-| Runs over SSH, with no display | ✗ | ✓ | |
+| Runs over SSH, with no display | — | ✓ | |

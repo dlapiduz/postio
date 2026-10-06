@@ -107,7 +107,7 @@ bold, then `focus_row::digest_line` dimmed, the message count and the time.
  In░░╭──────────────────────────────────────────────────────────────────────────────────────╮░░░░░░░░░
  ░░░░│ ↑ k  ↓ j                     Harbor API draft v3                              Esc ✕   │░░░░░░░░░
  ░░░░│                       Message 5 of 312 · thread of 6                                  │░░░░░░░░░
- ░░░░│ Reply e  Reply all E  Forward f  Archive a  Snooze s  Remind h  Label l  Move m  More .│░░░░░░░░░
+ ░░░░│ Reply e  Reply all E  Forward f  Archive a  Snooze s  Remind h  More .                 │░░░░░░░░░
  ░░░░├──────────────────────────────────────────────────────────────────────────────────────┤░░░░░░░░░
  ░░░░│        Latest of 6 in this thread  [ earlier message                                 │░░░░░░░░░
  ░░░░│        Harbor API draft v3                                                           │░░░░░░░░░
