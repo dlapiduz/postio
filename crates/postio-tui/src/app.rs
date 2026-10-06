@@ -599,6 +599,13 @@ pub struct App {
     preview: postio_config::Preview,
     /// Whether the preview is showing.
     previewing: bool,
+    /// The reminder picker's times, while it is open.
+    reminding: Option<[(&'static str, chrono::DateTime<chrono::Local>); 4]>,
+    /// When the draft was last saved on this machine, for the subtitle.
+    saved_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Where the keyboard goes when the composer closes: the message it was
+    /// started from, or the list.
+    composed_from: Focus,
     /// Whether the draft is in a tab of its own rather than the reading
     /// pane: the desktop's composer window (FR-003).
     detached: bool,
@@ -947,6 +954,9 @@ impl App {
             preview: postio_config::Preview::default(),
             previewing: false,
             detached: false,
+            reminding: None,
+            saved_at: None,
+            composed_from: Focus::List,
             search: None,
             palette: None,
             labels: Vec::new(),
@@ -1059,6 +1069,13 @@ impl App {
         self.composer = Some(
             crate::composer::Composer::new(self.compositions, draft).with_identities(identities),
         );
+        self.composed_from = if self.focus == Focus::Reader && self.reading.is_some() {
+            Focus::Reader
+        } else {
+            Focus::List
+        };
+        self.saved_at = None;
+        self.reminding = None;
         self.focus = Focus::Composer;
         self.detached = false;
         // Side by side is shown from the start; the toggle starts on the text.
@@ -1086,27 +1103,62 @@ impl App {
             }
         }
         self.detached = false;
-        self.focus = Focus::List;
+        self.focus = self.after_composing();
         effects.push(Effect::Redraw);
         effects
     }
 
-    /// Out of the draft's tab and back to the mail, the draft still open
-    /// there and saved as it stands.
-    fn leave_draft_tab(&mut self) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        if let Some(composer) = &self.composer {
-            let draft = composer.draft();
-            if postio_model::draft::closing(&draft) == postio_model::draft::Closing::Keep {
-                effects.push(Effect::SaveDraft {
-                    generation: composer.generation(),
-                    draft: Box::new(draft),
-                });
-            }
+    /// Where the keyboard goes once the composer is done with it.
+    fn after_composing(&self) -> Focus {
+        if self.composed_from == Focus::Reader && self.reading.is_some() {
+            Focus::Reader
+        } else {
+            Focus::List
         }
-        self.focus = Focus::List;
-        effects.push(Effect::Redraw);
-        effects
+    }
+
+    /// The subtitle's note on the draft: when it was last saved here.
+    pub fn saved_note(&self) -> Option<String> {
+        self.saved_at.map(postio_ui::compose::saved_at)
+    }
+
+    /// The reminder picker's times, while it is open.
+    pub fn reminding(&self) -> Option<&[(&'static str, chrono::DateTime<chrono::Local>)]> {
+        self.reminding.as_ref().map(|times| times.as_slice())
+    }
+
+    /// A key while the reminder picker is open: a number picks, Escape goes
+    /// back to writing.
+    fn remind_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        use crossterm::event::KeyCode;
+        let Some(times) = self.reminding else {
+            return Vec::new();
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.reminding = None;
+                vec![Effect::Redraw]
+            }
+            KeyCode::Char(digit @ '1'..='4') => {
+                let index = usize::from(digit as u8 - b'1');
+                self.reminding = None;
+                let at = times[index].1.with_timezone(&chrono::Utc);
+                match self.composer.as_mut() {
+                    Some(composer) => {
+                        composer.set_remind_at(Some(at));
+                        vec![
+                            Effect::Autosave {
+                                generation: composer.generation(),
+                                edit: composer.edits(),
+                            },
+                            Effect::Redraw,
+                        ]
+                    }
+                    None => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// A save is due, if nothing was typed since it was asked for.
@@ -1140,6 +1192,9 @@ impl App {
     fn composer_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         if self.scheduling.is_some() {
             return self.schedule_key(key);
+        }
+        if self.reminding.is_some() {
+            return self.remind_key(key);
         }
         if self.path_prompt.is_some() {
             return self.path_key(key);
@@ -2388,7 +2443,7 @@ impl App {
         // discard, and the draft is the queue's now.
         self.composer = None;
         self.asked_at = None;
-        self.focus = Focus::List;
+        self.focus = self.after_composing();
         vec![
             Effect::QueueSend {
                 generation,
@@ -2428,7 +2483,15 @@ impl App {
             }
             // Escape. The draft is not lost by leaving: it is autosaved, a row
             // in Drafts, as the desktop's Esc parks one.
-            "back" if self.detached => self.leave_draft_tab(),
+            // A draft that has the whole screen gives it back first.
+            "back" if self.detached => {
+                self.detached = false;
+                vec![Effect::Redraw]
+            }
+            "remind_if_no_reply" => {
+                self.reminding = Some(postio_ui::schedule::remind_presets(chrono::Local::now()));
+                vec![Effect::Redraw]
+            }
             "back" | "discard_draft" => self.close_composer(),
             // The desktop moves its composer into a window of its own; here
             // it is a tab, and the reading pane goes back to the reader.
@@ -4048,6 +4111,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                     && composer.generation() == generation
                 {
                     composer.adopt_id(id);
+                    app.saved_at = Some(chrono::Utc::now());
                 }
                 Vec::new()
             }
@@ -5858,8 +5922,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_popped_out_draft_keeps_its_id_and_the_reader_comes_back() {
-        // T063 (FR-003): the desktop's composer window is a tab here.
+    fn a_detached_draft_keeps_its_id_and_escape_brings_the_frame_back() {
+        // FR-196: Detach gives the composer the whole screen.
         let mut app = app((160, 40));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
@@ -5874,33 +5938,23 @@ pub(crate) mod tests {
 
         update(&mut app, alt('o'));
         assert!(app.composer_detached());
-        assert_eq!(app.focus(), Focus::Composer, "the draft's tab is in front");
+        assert_eq!(app.focus(), Focus::Composer);
 
         let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::List, "back to the mail");
-        let composer = app.composer().expect("the draft is still open in its tab");
+        assert!(!app.composer_detached(), "Escape brings it back");
+        assert_eq!(app.focus(), Focus::Composer, "still writing");
+        assert!(saves(&effects).is_empty(), "{effects:?}");
+        let composer = app.composer().expect("the draft is still open");
         assert_eq!(composer.draft().id, postio_model::DraftId::new(5));
-        assert!(
-            saves(&effects).len() == 1,
-            "saved on the way out of the tab: {effects:?}"
-        );
-        assert_eq!(app.front(), Front::List, "the mail is in front again");
-
-        update(&mut app, press('c'));
-        assert_eq!(
-            app.focus(),
-            Focus::Composer,
-            "c goes back to the open draft"
-        );
-        assert_eq!(
-            app.composer().unwrap().generation(),
-            generation,
-            "not a new one"
-        );
+        assert_eq!(composer.generation(), generation);
+        assert_eq!(app.front(), Front::Composer);
 
         update(&mut app, alt('o'));
-        assert!(!app.composer_detached(), "and the same key puts it back");
-        assert_eq!(app.front(), Front::Composer);
+        update(&mut app, alt('o'));
+        assert!(
+            !app.composer_detached(),
+            "the same key detaches and attaches"
+        );
     }
 
     fn reads_the_clipboard(effects: &[Effect]) -> usize {

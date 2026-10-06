@@ -26,23 +26,6 @@ use ratatui::text::Line;
 use crate::app::{App, Focus, Front};
 use crate::theme::{Role, Theme};
 
-/// The composer's buttons, each with the key this terminal can send for
-/// it, from the keymap in force; one with no key it can send is left out,
-/// and the last go first when the pane is narrow.
-fn composer_actions(app: &App) -> Vec<composer::Action> {
-    use postio_core::CommandId;
-    [
-        (CommandId::Send, "Send", "send"),
-        (CommandId::ScheduleSend, "Schedule", "schedule_send"),
-        (CommandId::AttachFile, "Attach", "attach_file"),
-        (CommandId::DiscardDraft, "Discard", "discard_draft"),
-        (CommandId::TogglePreview, "Preview", "toggle_preview"),
-    ]
-    .into_iter()
-    .filter_map(|(command, word, id)| Some((app.hint(command)?, word, id)))
-    .collect()
-}
-
 /// Draw the whole screen, and answer what is where on it, for the mouse.
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -> hit::Hits {
     let mut hits = hit::Hits::default();
@@ -82,27 +65,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             state::banner(frame, row, &banner, app, theme, &mut hits);
         }
         match app.front() {
-            Front::Composer if app.composer().is_some() => {
-                if let Some(writing) = app.composer() {
-                    composer::draw(
-                        frame,
-                        body,
-                        writing,
-                        app.preview_shown(),
-                        app.focus() == Focus::Composer
-                            && app.scheduling().is_none()
-                            && app.path_prompt().is_none(),
-                        &composer_actions(app),
-                        theme,
-                        &mut hits,
-                    );
-                    if let Some(times) = app.scheduling() {
-                        composer::draw_schedule(frame, body, times, theme, now);
-                    }
-                    if let Some(typed) = app.path_prompt() {
-                        composer::draw_path_prompt(frame, body, typed, theme);
-                    }
-                }
+            // A detached draft has the whole body to itself.
+            Front::Composer if app.composer().is_some() && tab => {
+                composer::screen(frame, body, app, theme, now, &mut hits);
             }
             _ => {
                 // Beside the reading pane the list keeps the left of the
@@ -149,6 +114,14 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         if app.front() == Front::Reader && app.pane().is_none() {
             open::over_list(frame, area, app, theme, now, &mut hits);
         }
+        // The draft being written, in the frame over the list.
+        if app.front() == Front::Composer
+            && !tab
+            && app.composer().is_some()
+            && let Some((_, inside)) = open::framed(frame, area, theme, &mut hits)
+        {
+            composer::screen(frame, inside, app, theme, now, &mut hits);
+        }
         // Over everything: a click there lands on nothing underneath.
         if let Some(open) = app.palette() {
             palette::draw(frame, area, &open, theme);
@@ -181,15 +154,6 @@ fn status_line(
         return;
     }
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
-    if app.composer_detached() && !tab {
-        spans.push(Span::styled(
-            match app.hint(postio_core::CommandId::Compose) {
-                Some(key) => format!("✎ A draft is open — {key} goes back to it"),
-                None => "✎ A draft is open".to_owned(),
-            },
-            theme.style(Role::Text),
-        ));
-    }
     let mut undo = None;
     if let Some(toast) = bottom::toast(app, theme) {
         if spans.len() > 1 {
@@ -334,7 +298,7 @@ mod tests {
             .find(|line| line.contains("Send"))
             .unwrap_or_else(|| panic!("no Send in the composer:\n{screen}"));
         assert!(foot.contains("alt+s"), "{foot}");
-        for word in ["Schedule", "Attach", "Discard"] {
+        for word in ["Send later", "Attach", "Remind"] {
             assert!(foot.contains(word), "{word} in {foot}");
         }
         // And it is something to click.
@@ -526,36 +490,6 @@ mod tests {
         let screen = screen(160, 16, &app);
         assert!(screen.contains("**bold**"), "{screen}");
         assert!(screen.contains("Some bold words"), "{screen}");
-    }
-
-    #[test]
-    fn a_detached_draft_has_the_screen_and_the_mail_says_it_is_open() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = with_places((160, 16));
-        let opening = crate::test_support::open_list(&mut app, 3);
-        crate::test_support::serve(&mut app, opening);
-        let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
-        draft.subject = "Tide gate".into();
-        app.compose(draft);
-        update(
-            &mut app,
-            Input::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::ALT)),
-        );
-        let tab = screen(160, 16, &app);
-        assert!(
-            !tab.contains("Inbox"),
-            "the draft's tab has the whole screen:\n{tab}"
-        );
-        assert!(tab.contains("Tide gate"), "{tab}");
-
-        update(&mut app, Input::Key(KeyEvent::from(KeyCode::Esc)));
-        let mail = screen(160, 16, &app);
-        assert!(mail.contains("Inbox"), "{mail}");
-        assert!(
-            !mail.contains("Subject"),
-            "the reading pane is the reader's:\n{mail}"
-        );
-        assert!(mail.contains("A draft is open"), "{mail}");
     }
 
     #[test]

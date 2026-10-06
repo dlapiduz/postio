@@ -649,10 +649,28 @@ pub fn over_list(
     now: DateTime<Local>,
     hits: &mut Hits,
 ) {
+    let Some((outer, inside)) = framed(frame, area, theme, hits) else {
+        return;
+    };
+    draw(frame, inside, outer.width, app, theme, now, hits);
+    if let Some(menu) = app.menu() {
+        draw_menu(frame, inside, menu, theme, hits);
+    }
+}
+
+/// A rounded frame covering every row of `area` but the first and the last,
+/// the rows behind it dimmed and taking no click, its header's hairline
+/// meeting the border. Answers the frame and what is inside it.
+pub fn framed(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    hits: &mut Hits,
+) -> Option<(Rect, Rect)> {
     use ratatui::widgets::{Block, BorderType, Borders, Clear};
     let outer = crate::layout::open_frame(area);
     if outer.width < 12 || outer.height < 8 {
-        return;
+        return None;
     }
     // Everything under the frame is dimmed and takes no click.
     let behind = Rect::new(
@@ -673,15 +691,11 @@ pub fn over_list(
     let inside = block.inner(outer);
     frame.render_widget(block, outer);
     hits.add(outer, Target::Overlay);
-    // The hairline under the header meets the border.
     let tee = outer.y + 4;
     let buffer = frame.buffer_mut();
     buffer[(outer.x, tee)].set_symbol("├");
     buffer[(outer.x + outer.width - 1, tee)].set_symbol("┤");
-    draw(frame, inside, outer.width, app, theme, now, hits);
-    if let Some(menu) = app.menu() {
-        draw_menu(frame, inside, menu, theme, hits);
-    }
+    Some((outer, inside))
 }
 
 /// A small framed list in the middle of `area`.

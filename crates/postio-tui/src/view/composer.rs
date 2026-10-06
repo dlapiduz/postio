@@ -15,6 +15,184 @@ use crate::view::hit::{Hits, Target};
 /// The width of the field labels, so the values line up.
 const LABEL: u16 = 9;
 
+/// The composer in `area`: its three header rows -- Detach, the title and
+/// close; what will be sent and what has happened to the draft; the verbs --
+/// then a hairline, and under it the fields and the body.
+pub fn screen(
+    frame: &mut Frame,
+    area: Rect,
+    app: &crate::app::App,
+    theme: &Theme,
+    now: chrono::DateTime<chrono::Local>,
+    hits: &mut Hits,
+) {
+    use crate::view::bottom::cap;
+    use unicode_width::UnicodeWidthStr;
+    let Some(composer) = app.composer() else {
+        return;
+    };
+    if area.width < 20 || area.height < 8 {
+        return;
+    }
+    let dim = theme.style(Role::Dim);
+    let text = theme.style(Role::Text);
+    let inner = usize::from(area.width);
+    let click = |hits: &mut Hits, x: u16, y: u16, width: usize, id: &'static str| {
+        hits.add(
+            Rect::new(x, y, u16::try_from(width).unwrap_or(0), 1),
+            Target::ComposerAction(id),
+        );
+    };
+
+    // Row 1: Detach, the title, Esc ✕.
+    let detach = match app.hint(postio_core::CommandId::DetachComposer) {
+        Some(key) => format!("Detach {}", cap(&key)),
+        None => "Detach".to_owned(),
+    };
+    frame.render_widget(
+        Line::styled(detach.clone(), dim),
+        Rect::new(area.x + 1, area.y, area.width - 1, 1),
+    );
+    click(hits, area.x + 1, area.y, detach.width(), "detach_composer");
+    let close = match app.hint(postio_core::CommandId::Back) {
+        Some(key) => format!("{} ✕", cap(&key)),
+        None => "✕".to_owned(),
+    };
+    let close_x = area.x + u16::try_from(inner.saturating_sub(close.width() + 1)).unwrap_or(0);
+    frame.render_widget(
+        Line::styled(close.clone(), text),
+        Rect::new(
+            close_x,
+            area.y,
+            u16::try_from(close.width()).unwrap_or(0),
+            1,
+        ),
+    );
+    click(hits, close_x, area.y, close.width(), "back");
+    let title = postio_ui::compose::title(composer.kind());
+    let at = area.x + u16::try_from(inner.saturating_sub(title.width()) / 2).unwrap_or(0);
+    frame.render_widget(
+        Line::styled(title, text.add_modifier(Modifier::BOLD)),
+        Rect::new(at, area.y, u16::try_from(title.width()).unwrap_or(0), 1),
+    );
+
+    // Row 2: what will be sent, and what has happened to the draft.
+    let words = composer.words();
+    let summary = format!(
+        "Markdown · {}",
+        if words == 1 {
+            "1 word".to_owned()
+        } else {
+            format!("{words} words")
+        }
+    );
+    let subtitle = postio_ui::compose::subtitle(&summary, &app.saved_note().unwrap_or_default());
+    let subtitle = fit(&subtitle, inner.saturating_sub(2));
+    let at = area.x + u16::try_from(inner.saturating_sub(subtitle.width()) / 2).unwrap_or(0);
+    frame.render_widget(
+        Line::styled(subtitle.clone(), dim),
+        Rect::new(
+            at,
+            area.y + 1,
+            u16::try_from(subtitle.width()).unwrap_or(0),
+            1,
+        ),
+    );
+
+    // Row 3: the verbs, the first the one a message is for.
+    let remind_key = app
+        .keymap()
+        .bindings(postio_core::CommandId::RemindIfNoReply)
+        .iter()
+        .find(|binding| binding.contains('+'))
+        .map(|binding| cap(binding));
+    let verbs: Vec<(String, Option<String>, &'static str)> = vec![
+        (
+            "Send".to_owned(),
+            app.hint(postio_core::CommandId::Send),
+            "send",
+        ),
+        (
+            "Send later".to_owned(),
+            app.hint(postio_core::CommandId::ScheduleSend),
+            "schedule_send",
+        ),
+        (
+            "Attach".to_owned(),
+            app.hint(postio_core::CommandId::AttachFile),
+            "attach_file",
+        ),
+        (
+            postio_ui::compose::remind_words(composer.remind_at()),
+            remind_key,
+            "remind_if_no_reply",
+        ),
+    ];
+    let mut x = area.x + 1;
+    let end = area.x + area.width;
+    for (index, (word, key, id)) in verbs.into_iter().enumerate() {
+        let key = key.map(|key| cap(&key));
+        let shown = match &key {
+            Some(key) => format!("{word} {key}"),
+            None => word.clone(),
+        };
+        let w = u16::try_from(shown.width()).unwrap_or(u16::MAX);
+        if x + w > end {
+            break;
+        }
+        let primary = |style: ratatui::style::Style| {
+            if index == 0 {
+                style.add_modifier(Modifier::BOLD)
+            } else {
+                style
+            }
+        };
+        let mut spans = vec![Span::styled(word.clone(), primary(text))];
+        if let Some(key) = key {
+            spans.push(Span::styled(format!(" {key}"), primary(dim)));
+        }
+        frame.render_widget(Line::from(spans), Rect::new(x, area.y + 2, w, 1));
+        click(hits, x, area.y + 2, shown.width(), id);
+        x += w + 2;
+    }
+    frame.render_widget(
+        Line::styled("─".repeat(inner), dim),
+        Rect::new(area.x, area.y + 3, area.width, 1),
+    );
+
+    // The fields and the body.
+    let body = Rect::new(area.x, area.y + 4, area.width, area.height - 4);
+    draw(
+        frame,
+        body,
+        composer,
+        app.preview_shown(),
+        app.focus() == crate::app::Focus::Composer
+            && app.scheduling().is_none()
+            && app.reminding().is_none()
+            && app.path_prompt().is_none(),
+        &[],
+        theme,
+        hits,
+    );
+    if let Some(times) = app.scheduling() {
+        draw_schedule(frame, body, "Send later", times, theme, now);
+    }
+    if let Some(times) = app.reminding() {
+        draw_schedule(
+            frame,
+            body,
+            postio_ui::pickers::REMIND_TITLE,
+            times,
+            theme,
+            now,
+        );
+    }
+    if let Some(typed) = app.path_prompt() {
+        draw_path_prompt(frame, body, typed, theme);
+    }
+}
+
 /// Draw `composer` into `area`; with `focused`, the terminal's cursor goes
 /// where the next letter will land.
 #[allow(clippy::too_many_arguments)]
@@ -274,6 +452,7 @@ fn draw_actions(
 pub fn draw_schedule(
     frame: &mut Frame,
     area: Rect,
+    title: &str,
     times: &[(&'static str, chrono::DateTime<chrono::Local>)],
     theme: &Theme,
     now: chrono::DateTime<chrono::Local>,
@@ -291,7 +470,7 @@ pub fn draw_schedule(
     let top = area.y + area.height - wanted;
     let width = usize::from(area.width);
     let mut lines = vec![Line::styled(
-        fit("Send later — a number picks, Esc goes back", width),
+        fit(&format!("{title} — a number picks, Esc goes back"), width),
         theme.style(Role::Accent).add_modifier(Modifier::BOLD),
     )];
     for (index, (label, when)) in times.iter().enumerate() {
@@ -356,4 +535,303 @@ pub fn draw_path_prompt(frame: &mut Frame, area: Rect, typed: &str, theme: &Them
                 .min(row.width.saturating_sub(1)),
         row.y,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use postio_model::{AccountId, DraftKind, EmailAddress, MessageId};
+    use postio_ui::focus_list::FocusRow;
+
+    use crate::app::{App, Effect, Front, Input, Pointer, update};
+    use crate::test_support::{
+        alt, app, conversation, ctrl, hits_of, key, local, places, press, screen, seed_places,
+        show_focus, type_text, unread,
+    };
+
+    fn inbox(size: (u16, u16)) -> App {
+        let mut app = app(size);
+        seed_places(&mut app, places());
+        show_focus(
+            &mut app,
+            vec![FocusRow::conversation(unread(conversation(
+                1,
+                "Lena Park",
+                "Harbor API draft v3",
+                "",
+                local(23, 11, 22),
+            )))],
+        );
+        app
+    }
+
+    fn composing(size: (u16, u16), kind: DraftKind) -> App {
+        let mut app = inbox(size);
+        let mut draft = postio_model::Draft::new(AccountId::new(1));
+        draft.kind = kind;
+        draft.to = vec![EmailAddress::new(Some("Lena Park"), "lena@example.com")];
+        draft.subject = "Re: Harbor API draft v3".into();
+        app.compose(draft);
+        app
+    }
+
+    fn lines_of(drawn: &str) -> Vec<&str> {
+        drawn.lines().collect()
+    }
+
+    #[test]
+    fn the_composer_is_the_frame_with_detach_the_title_and_close_then_the_subtitle_then_the_verbs()
+    {
+        let app = composing((120, 36), DraftKind::Reply);
+        let drawn = screen(120, 36, &app);
+        let lines = lines_of(&drawn);
+        let top: Vec<char> = lines[1].chars().collect();
+        assert_eq!((top[14], top[105]), ('╭', '╮'), "{drawn}");
+        let detach = app.hint(postio_core::CommandId::DetachComposer).unwrap();
+        assert!(
+            lines[2].contains(&format!("Detach {}", crate::view::bottom::cap(&detach))),
+            "{drawn}"
+        );
+        assert!(lines[2].contains("Reply"), "{drawn}");
+        assert!(lines[2].contains("Esc ✕"), "{drawn}");
+        assert!(lines[3].contains("Markdown · 0 words"), "{drawn}");
+        let verbs = lines[4];
+        for wanted in ["Send ", "Send later", "Attach", "Remind"] {
+            assert!(verbs.contains(wanted), "{wanted}:\n{drawn}");
+        }
+        assert!(
+            verbs.find("Send ").unwrap() < verbs.find("Send later").unwrap(),
+            "{drawn}"
+        );
+        // The fields and the body are inside, under the hairline.
+        let tee: Vec<char> = lines[5].chars().collect();
+        assert_eq!((tee[14], tee[105]), ('├', '┤'), "{drawn}");
+        assert!(
+            lines[6].contains("To") && lines[6].contains("lena@example.com"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("Re: Harbor API draft v3"), "{drawn}");
+        let titles = [
+            (DraftKind::New, "New message"),
+            (DraftKind::ReplyAll, "Reply to all"),
+            (DraftKind::Forward, "Forward"),
+        ];
+        for (kind, title) in titles {
+            let drawn = screen(120, 36, &composing((120, 36), kind));
+            assert!(lines_of(&drawn)[2].contains(title), "{title}:\n{drawn}");
+        }
+    }
+
+    #[test]
+    fn the_subtitle_counts_the_words_and_says_when_the_draft_was_saved() {
+        let mut app = composing((120, 36), DraftKind::Reply);
+        // Into the body, then two words.
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        type_text(&mut app, "two words");
+        let drawn = screen(120, 36, &app);
+        assert!(
+            lines_of(&drawn)[3].contains("Markdown · 2 words"),
+            "{drawn}"
+        );
+        assert!(!lines_of(&drawn)[3].contains("saved"), "{drawn}");
+        update(
+            &mut app,
+            Input::DraftSaved {
+                generation: 1,
+                saved: Ok(postio_model::DraftId::new(4)),
+            },
+        );
+        let drawn = screen(120, 36, &app);
+        assert!(
+            lines_of(&drawn)[3].contains("Markdown · 2 words · Draft saved locally "),
+            "{drawn}"
+        );
+    }
+
+    #[test]
+    fn the_list_behind_the_composer_is_dimmed() {
+        use ratatui::style::Modifier;
+        let app = composing((120, 36), DraftKind::New);
+        let buffer = crate::test_support::buffer(120, 36, &app);
+        assert!(buffer[(2, 4)].modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn detach_gives_the_composer_the_whole_screen_between_the_bars_and_detach_or_escape_brings_it_back()
+     {
+        let mut app = composing((120, 36), DraftKind::Reply);
+        let hit = hits_of(120, 36, &app);
+        let drawn = screen(120, 36, &app);
+        let (y, line) = lines_of(&drawn)
+            .into_iter()
+            .enumerate()
+            .find(|(_, line)| line.contains("Detach"))
+            .unwrap();
+        let x = u16::try_from(line[..line.find("Detach").unwrap()].chars().count()).unwrap();
+        let target = hit.at(x, u16::try_from(y).unwrap()).expect("a click");
+        update(
+            &mut app,
+            Input::Pointer(Pointer::Click {
+                hit: target,
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        assert!(app.composer_detached());
+        let drawn = screen(120, 36, &app);
+        let lines = lines_of(&drawn);
+        assert!(!drawn.contains('╭'), "no frame:\n{drawn}");
+        assert!(lines[0].contains("Compose"), "the top bar stays:\n{drawn}");
+        assert!(
+            lines[1].contains("Detach") && lines[1].contains("Reply"),
+            "{drawn}"
+        );
+        assert!(!lines[1].contains("Inbox"), "the strip gave way:\n{drawn}");
+        // Escape brings it back to the frame, the draft still being written.
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.composer_detached());
+        assert_eq!(app.front(), Front::Composer);
+        assert!(screen(120, 36, &app).contains('╭'));
+        // And the same key detaches again, and again brings it back.
+        assert_eq!(
+            app.hint(postio_core::CommandId::DetachComposer).as_deref(),
+            Some("alt+o")
+        );
+        update(&mut app, alt('o'));
+        assert!(app.composer_detached());
+        update(&mut app, alt('o'));
+        assert!(!app.composer_detached());
+    }
+
+    #[test]
+    fn remind_asks_when_and_the_chosen_day_is_on_the_verb_and_goes_with_the_send() {
+        let mut app = composing((120, 36), DraftKind::Reply);
+        let remind = app
+            .keymap()
+            .bindings(postio_core::CommandId::RemindIfNoReply)
+            .iter()
+            .find(|binding| binding.contains('+'))
+            .expect("a chord for it")
+            .clone();
+        assert_eq!(remind, "ctrl+h", "{remind}");
+        update(&mut app, ctrl('h'));
+        let drawn = screen(120, 36, &app);
+        for (index, (name, _)) in postio_ui::schedule::remind_presets(chrono::Local::now())
+            .iter()
+            .enumerate()
+        {
+            assert!(drawn.contains(&format!("{} {name}", index + 1)), "{drawn}");
+        }
+        update(&mut app, press('2'));
+        let at = app.composer().unwrap().remind_at().expect("chosen");
+        let drawn = screen(120, 36, &app);
+        let said = postio_ui::compose::remind_words(Some(at));
+        assert!(lines_of(&drawn)[4].contains(&said), "{said}:\n{drawn}");
+        let effects = update(&mut app, key(KeyCode::Char('s'), KeyModifiers::ALT));
+        let sent = effects.iter().find_map(|effect| match effect {
+            Effect::QueueSend { draft, .. } => Some(draft.remind_at),
+            _ => None,
+        });
+        assert_eq!(sent, Some(Some(at)), "{effects:?}");
+    }
+
+    #[test]
+    fn each_verb_in_the_header_is_a_click_for_its_command() {
+        let mut app = composing((120, 36), DraftKind::Reply);
+        let drawn = screen(120, 36, &app);
+        let (y, line) = lines_of(&drawn)
+            .into_iter()
+            .enumerate()
+            .find(|(_, line)| line.contains("Attach"))
+            .unwrap();
+        let x = u16::try_from(line[..line.find("Attach").unwrap()].chars().count()).unwrap();
+        let hit = hits_of(120, 36, &app)
+            .at(x, u16::try_from(y).unwrap())
+            .expect("a target");
+        update(
+            &mut app,
+            Input::Pointer(Pointer::Click {
+                hit,
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        assert!(app.path_prompt().is_some(), "Attach asks for a path");
+        // Close: the draft goes where an Escape takes it.
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        let (y, line) = lines_of(&screen(120, 36, &app))
+            .into_iter()
+            .map(str::to_owned)
+            .enumerate()
+            .find(|(_, line)| line.contains("Esc ✕"))
+            .unwrap();
+        let x = u16::try_from(
+            line.find("Esc ✕")
+                .map(|at| line[..at].chars().count())
+                .unwrap(),
+        )
+        .unwrap();
+        let hit = hits_of(120, 36, &app)
+            .at(x, u16::try_from(y).unwrap())
+            .expect("a target");
+        update(
+            &mut app,
+            Input::Pointer(Pointer::Click {
+                hit,
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        assert!(app.composer().is_none());
+        assert_eq!(app.front(), Front::List);
+    }
+
+    #[test]
+    fn replying_from_the_open_message_writes_in_the_frame_and_escape_goes_back_to_the_message() {
+        let mut app = inbox((120, 36));
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        update(
+            &mut app,
+            Input::Body {
+                message: MessageId::new(1),
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: Some("Hello".into()),
+                        html: None,
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+        for (key_char, kind) in [
+            ('e', postio_body::replying::ReplyKind::Reply),
+            ('E', postio_body::replying::ReplyKind::ReplyAll),
+            ('f', postio_body::replying::ReplyKind::Forward),
+        ] {
+            let effects = update(&mut app, press(key_char));
+            assert!(
+                effects.contains(&Effect::ReplySource {
+                    kind,
+                    message: MessageId::new(1)
+                }),
+                "{effects:?}"
+            );
+        }
+        let found = crate::composer::tests::a_message_and_its_account();
+        app.compose(postio_body::replying::reply_draft(
+            postio_body::replying::ReplyKind::Reply,
+            &found.0,
+            &found.1,
+        ));
+        assert_eq!(app.front(), Front::Composer);
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.front(),
+            Front::Reader,
+            "back to the message it answered"
+        );
+        assert!(screen(120, 36, &app).contains("Hello"));
+    }
 }

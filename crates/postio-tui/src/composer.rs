@@ -614,6 +614,31 @@ impl Composer {
         &self.body
     }
 
+    /// What the draft is: new, a reply, a reply to all, or a forward.
+    pub fn kind(&self) -> postio_model::DraftKind {
+        self.draft.kind
+    }
+
+    /// When a reminder is asked for if nobody replies, once one is chosen.
+    pub fn remind_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.draft.remind_at
+    }
+
+    /// Ask for a reminder at `at` if nobody replies, or for none.
+    pub fn set_remind_at(&mut self, at: Option<chrono::DateTime<chrono::Utc>>) {
+        self.draft.remind_at = at;
+        self.edits += 1;
+    }
+
+    /// How many words the body holds.
+    pub fn words(&self) -> usize {
+        self.body
+            .lines()
+            .iter()
+            .map(|line| line.split_whitespace().count())
+            .sum()
+    }
+
     /// The draft as it stands, with what is sent derived from the Markdown.
     pub fn draft(&self) -> Draft {
         let mut draft = self.draft.clone();

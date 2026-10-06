@@ -20,12 +20,18 @@ use postio_core::CommandId;
 
 /// A key as a cap is spelled on a screen: the registry's `Escape` is `Esc`.
 pub fn cap(key: &str) -> String {
-    match key {
-        "Escape" => "Esc".to_owned(),
-        "Delete" => "Del".to_owned(),
-        "Return" => "↵".to_owned(),
-        other => other.to_owned(),
+    if key == "+" {
+        return key.to_owned();
     }
+    key.split('+')
+        .map(|piece| match piece {
+            "Escape" => "Esc",
+            "Delete" => "Del",
+            "Return" => "↵",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// The toast as it is drawn: `✓ Archived 3 messages · Undo ctrl+z`, or
