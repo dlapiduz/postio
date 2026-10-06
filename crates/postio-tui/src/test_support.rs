@@ -480,8 +480,8 @@ pub fn wheel(target: hit::Target, down: bool) -> Input {
 
 /// The keys `spec` spells, in order: a character is that key, and a name in
 /// angle brackets is a named key (`<Enter>`, `<Esc>`, `<Tab>`, `<Del>`, `<Up>`,
-/// `<Down>`, `<Left>`, `<Right>`, `<F5>`, `<F8>`), optionally after `C-` for
-/// ctrl or `A-` for alt (`<C-z>`, `<A-Enter>`).
+/// `<Down>`, `<Left>`, `<Right>`, `<F3>`, `<F5>`, `<F8>`), optionally after `C-` for
+/// ctrl, `A-` for alt or `S-` for shift (`<C-z>`, `<A-Enter>`, `<S-F3>`).
 pub fn keys_of(spec: &str) -> Vec<Input> {
     let mut out = Vec::new();
     let mut rest = spec;
@@ -493,12 +493,12 @@ pub fn keys_of(spec: &str) -> Vec<Input> {
             let mut modifiers = KeyModifiers::NONE;
             while let Some((prefix, after)) = name
                 .split_once('-')
-                .filter(|(prefix, _)| matches!(*prefix, "C" | "A") && !name.is_empty())
+                .filter(|(prefix, _)| matches!(*prefix, "C" | "A" | "S") && !name.is_empty())
             {
-                modifiers |= if prefix == "C" {
-                    KeyModifiers::CONTROL
-                } else {
-                    KeyModifiers::ALT
+                modifiers |= match prefix {
+                    "C" => KeyModifiers::CONTROL,
+                    "A" => KeyModifiers::ALT,
+                    _ => KeyModifiers::SHIFT,
                 };
                 name = after;
             }
@@ -511,6 +511,7 @@ pub fn keys_of(spec: &str) -> Vec<Input> {
                 "Down" => KeyCode::Down,
                 "Left" => KeyCode::Left,
                 "Right" => KeyCode::Right,
+                "F3" => KeyCode::F(3),
                 "F5" => KeyCode::F(5),
                 "F8" => KeyCode::F(8),
                 _ if name.chars().count() == 1 => {

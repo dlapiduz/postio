@@ -65,6 +65,8 @@ pub(super) struct Open {
     pub dwell: u64,
     /// The message whose marker was dismissed while it was open.
     pub dismissed: Option<MessageId>,
+    /// The find field, while it is open.
+    pub find: Option<super::find::Find>,
 }
 
 impl App {
@@ -177,23 +179,24 @@ impl App {
 
     /// The width the open message is laid out in, the width of what scrolls,
     /// and how many rows the column shows at once.
-    fn open_geometry(&self) -> (u16, u16, u16) {
+    pub(super) fn open_geometry(&self) -> (u16, u16, u16) {
+        let find = self.find_rows();
         if let Some(pane) = self.pane() {
             let list = self.window().list;
-            return (pane, pane - 1, list.height.saturating_sub(4));
+            return (pane, pane - 1, list.height.saturating_sub(4 + find));
         }
         let area = ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1);
         let frame = crate::layout::open_frame(area);
         (
             frame.width,
             frame.width.saturating_sub(2),
-            frame.height.saturating_sub(2 + 4),
+            frame.height.saturating_sub(2 + 4 + find),
         )
     }
 
     /// How many rows the open message's column has, and how many it shows
     /// at once.
-    fn open_extent(&self) -> (usize, usize) {
+    pub(super) fn open_extent(&self) -> (usize, usize) {
         let (outer, inner, height) = self.open_geometry();
         let length = match &self.open.raw {
             Some(raw) => raw.text.as_ref().map_or(1, |text| {
@@ -316,8 +319,12 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// Escape: a menu first, then the source, then the message.
+    /// Escape: the find field first, then a menu, then the source, then the
+    /// message.
     pub(super) fn back_from_message(&mut self) -> Vec<Effect> {
+        if self.open.find.is_some() {
+            return self.close_find();
+        }
         if self.open.menu.take().is_some() {
             return vec![Effect::Redraw];
         }

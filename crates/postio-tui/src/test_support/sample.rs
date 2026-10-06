@@ -11,6 +11,7 @@ use postio_model::{AccountId, EmailAddress, MailboxId, MessageId};
 
 use crate::app::{App, Effect, Input, update};
 use crate::caps::Colour;
+use crate::test_support::press_keys;
 
 /// Every state [`state`] knows, in the order terminal.md draws them.
 pub const STATES: &[&str] = &[
@@ -235,7 +236,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
     );
 
     // The first message open, for `reading`; otherwise the list.
-    if matches!(state, "open" | "open-narrow" | "pane") {
+    if matches!(state, "open" | "open-narrow" | "find" | "pane") {
         crate::test_support::open_message(
         &mut app,
         MessageId::new(1),
@@ -384,6 +385,10 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
         }
         "bar-folder" => {
             crate::test_support::type_text(&mut app, "/in:arch");
+        }
+        "find" => {
+            // The find field, over a word the message has twice.
+            press_keys(&mut app, "<C-f>gate");
         }
         "keys" => {
             typed(&mut app, "?");

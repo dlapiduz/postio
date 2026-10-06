@@ -9,7 +9,7 @@
 //! magick /tmp/tui.svg /tmp/tui.png
 //! ```
 //!
-//! `state` is what is open over the mail (the states are `test_support::sample`'s; a `-nocolor` suffix draws it under `NO_COLOR`): `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
+//! `state` is what is open over the mail (`find` is the find field over the open message; the states are `test_support::sample`'s; a `-nocolor` suffix draws it under `NO_COLOR`): `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
 //! `bar-commands`, `bar-folder`, `folders`, `snooze`, `remind`, `label`, `move`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
 //! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
 //! `capture` (the capture sheet over a to-do), `rules` and `rule` (the digest rules, and the rule dialog over them), `digest`, `digest-list` and `digest-email` (a digest's window on its summary, its list and an email from a reference), `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),

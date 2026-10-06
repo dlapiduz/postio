@@ -24,10 +24,12 @@ use postio_ui::surfaced::Spliced;
 mod capture;
 mod digest;
 mod filtered;
+mod find;
 mod open;
 mod rules;
 mod surface;
 
+pub use find::Find;
 pub use open::{Menu, MenuAction, MenuItem, Raw};
 
 use crate::input::Keys;
@@ -3262,6 +3264,9 @@ impl App {
         }
         let last = self.list.total().saturating_sub(1);
         match id {
+            "find_in_message" => return self.open_find(),
+            "find_next" => return self.find_step(true),
+            "find_previous" => return self.find_step(false),
             "next_message" if self.focus == Focus::Reader => return self.step_open(1),
             "prev_message" if self.focus == Focus::Reader => return self.step_open(-1),
             "next_message" => self.move_to(self.cursor.saturating_add(1)),
@@ -4315,6 +4320,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.open.menu.is_some() && app.focus == Focus::Reader => {
             app.menu_key(&key)
         }
+        Input::Key(key) if app.open.find.is_some() && app.focus == Focus::Reader => {
+            app.find_key(&key)
+        }
         Input::Key(key) if app.surfaces.sweep.is_some() => app.sweep_key(&key),
         Input::Key(key) if app.focus == Focus::FirstRun => app.first_run_key(&key),
         Input::Key(key) if app.focus == Focus::Settings => app.settings_key(&key),
@@ -5255,20 +5263,6 @@ pub(crate) mod tests {
         assert_eq!(app.focus(), Focus::Reader);
     }
 
-    /// Commands the terminal does not answer yet, each named in the table
-    /// at `docs/book/src/desktop-and-terminal.md`. Taking one off is how
-    /// the fix proves itself; the list is allowed to shrink and never to
-    /// grow.
-    const GAPS: &[&str] = &[
-        // Spec 006's find, built for the desktop reader's text index; the
-        // terminal's reader has no find yet.
-        "find_in_message",
-        "find_next",
-        "find_previous",
-        // Focus's commands the terminal is offered since it became Focus
-        // (C29) and cannot answer yet; tasks T309-T326 empty this list.
-    ];
-
     fn opens(effects: &[Effect]) -> Vec<ListScope> {
         effects
             .iter()
@@ -5507,13 +5501,13 @@ pub(crate) mod tests {
             let dropped = effects
                 .iter()
                 .any(|effect| matches!(effect, Effect::Send(sent) if !wired.contains(&sent.id())));
-            if dropped != GAPS.contains(&id) {
-                unanswered.push((id, dropped));
+            if dropped {
+                unanswered.push(id);
             }
         }
         assert!(
             unanswered.is_empty(),
-            "(command, sent to nothing) that disagree with GAPS: {unanswered:?}"
+            "commands this terminal offers and sends to nothing: {unanswered:?}"
         );
     }
 

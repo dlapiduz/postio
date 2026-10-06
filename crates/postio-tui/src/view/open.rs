@@ -557,7 +557,30 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
     if let Some((line, at)) = closing_fold {
         rows.push(line, at, Vec::new());
     }
+    if let Some(find) = app.find() {
+        let text: Vec<String> = rows.lines.iter().map(|row| row.line.to_string()).collect();
+        let found = postio_ui::find::matches(&text, find.query());
+        let on = find
+            .current()
+            .map(|at| at.min(found.len().saturating_sub(1)));
+        for (index, at) in found.iter().enumerate() {
+            let style = find_style(theme, on == Some(index));
+            let row = &mut rows.lines[at.line];
+            row.line = restyle(&row.line, at.from, at.to, style);
+        }
+    }
     Document { lines: rows.lines }
+}
+
+/// A find match: the accent reversed, so it reads without colour; the one the
+/// field is on besides bold and underlined.
+pub(super) fn find_style(theme: &Theme, current: bool) -> Style {
+    let style = theme.style(Role::Accent).add_modifier(Modifier::REVERSED);
+    if current {
+        style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        style
+    }
 }
 
 /// A part chip's click regions are drawn as parts of the row: every chip
@@ -903,9 +926,19 @@ pub fn draw(
 
     // The hairline, then the column.
     frame.render_widget(Line::styled("─".repeat(inner), dim), at(3));
-    let body = Rect::new(area.x, area.y + 4, area.width, area.height - 4);
+    let find_height = app.find_rows().min(area.height.saturating_sub(5));
+    let body = Rect::new(
+        area.x,
+        area.y + 4,
+        area.width,
+        area.height - 4 - find_height,
+    );
+    if find_height > 0 {
+        let field = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+        draw_find(frame, field, app, theme, hits);
+    }
     if let Some(raw) = app.raw() {
-        draw_raw(frame, body, raw, app.reader_top(), theme, hits);
+        draw_raw(frame, body, raw, app, theme, hits);
         return;
     }
     let column = crate::layout::column_width(outer).min(area.width);
@@ -933,15 +966,103 @@ pub fn draw(
     let _ = reading;
 }
 
+/// The find field, on the last row inside the frame: what is typed, how
+/// many matches it has and which it is on, and the keys that step and close,
+/// each a click.
+fn draw_find(frame: &mut Frame, row: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
+    let Some(find) = app.find() else {
+        return;
+    };
+    let dim = theme.style(Role::Dim);
+    let text = theme.style(Role::Text);
+    let accent = theme.style(Role::Accent);
+    let total = app.find_total();
+    let says = find.says(total);
+    // From the right: the words and keys that act, then the count.
+    let mut hints: Vec<(String, &'static str)> = Vec::new();
+    for (command, word) in [
+        (CommandId::FindNext, "next"),
+        (CommandId::FindPrevious, "previous"),
+        (CommandId::Back, "close"),
+    ] {
+        if let Some(key) = app.hint(command) {
+            hints.push((format!("{} {word}", cap(&key)), command.as_str()));
+        }
+    }
+    let inner = usize::from(row.width);
+    let query_room = inner.saturating_sub(4 + says.width() + 2);
+    // Keys give way first when the row is narrow, the last first.
+    let mut keep = hints.len();
+    let used = |keep: usize| {
+        hints[..keep]
+            .iter()
+            .map(|(h, _)| h.width() + 2)
+            .sum::<usize>()
+    };
+    while keep > 0 && used(keep) + says.width() + 12 > inner {
+        keep -= 1;
+    }
+    let _ = query_room;
+    let mut right: Vec<Span<'static>> = Vec::new();
+    let mut targets: Vec<(usize, usize, &'static str)> = Vec::new();
+    let mut at = 0;
+    if !says.is_empty() {
+        right.push(Span::styled(says.clone(), text));
+        at += says.width();
+    }
+    for (hint, command) in &hints[..keep] {
+        right.push(Span::raw("  "));
+        at += 2;
+        right.push(Span::styled(hint.clone(), dim));
+        targets.push((at, at + hint.width(), command));
+        at += hint.width();
+    }
+    let right_width = at;
+    let query = find.query();
+    let typed = fit(query, inner.saturating_sub(right_width + 5).max(1));
+    let mut left = vec![Span::styled(" ⌕ ", accent)];
+    if query.is_empty() {
+        left.push(Span::styled("Find in message", dim));
+    } else {
+        left.push(Span::styled(typed.clone(), text));
+    }
+    frame.render_widget(Line::from(left), Rect::new(row.x, row.y, row.width, 1));
+    let before: String = query.chars().take(find.caret()).collect();
+    frame.set_cursor_position(ratatui::layout::Position::new(
+        (row.x + 3 + u16::try_from(before.width()).unwrap_or(0)).min(row.x + row.width - 1),
+        row.y,
+    ));
+    let rx = row.x
+        + row
+            .width
+            .saturating_sub(u16::try_from(right_width + 1).unwrap_or(0));
+    frame.render_widget(
+        Line::from(right),
+        Rect::new(rx, row.y, u16::try_from(right_width).unwrap_or(0), 1),
+    );
+    for (from, to, command) in targets {
+        hits.add(
+            Rect::new(
+                rx + u16::try_from(from).unwrap_or(0),
+                row.y,
+                u16::try_from(to - from).unwrap_or(0),
+                1,
+            ),
+            Target::Command(command),
+        );
+    }
+}
+
 /// The message as it came off the wire, wrapped to the frame.
 fn draw_raw(
     frame: &mut Frame,
     area: Rect,
     raw: &crate::app::Raw,
-    top: usize,
+    app: &App,
     theme: &Theme,
     hits: &mut Hits,
 ) {
+    let top = app.reader_top();
     let width = usize::from(area.width).saturating_sub(2).max(1);
     let Some(text) = &raw.text else {
         frame.render_widget(
@@ -951,15 +1072,30 @@ fn draw_raw(
         return;
     };
     let lines = raw_lines(text, width);
+    let found = app
+        .find()
+        .map(|find| (find, postio_ui::find::matches(&lines, find.query())));
+    let first = top.min(lines.len().saturating_sub(1));
     for (offset, line) in lines
         .iter()
-        .skip(top.min(lines.len().saturating_sub(1)))
+        .skip(first)
         .take(usize::from(area.height))
         .enumerate()
     {
         let y = area.y + u16::try_from(offset).unwrap_or(0);
         let rect = Rect::new(area.x + 1, y, area.width - 1, 1);
-        frame.render_widget(Line::styled(line.clone(), theme.style(Role::Text)), rect);
+        let mut drawn = Line::styled(line.clone(), theme.style(Role::Text));
+        if let Some((find, found)) = &found {
+            let on = find
+                .current()
+                .map(|at| at.min(found.len().saturating_sub(1)));
+            for (index, at) in found.iter().enumerate() {
+                if at.line == first + offset {
+                    drawn = restyle(&drawn, at.from, at.to, find_style(theme, on == Some(index)));
+                }
+            }
+        }
+        frame.render_widget(drawn, rect);
         hits.add(Rect::new(area.x, y, area.width, 1), Target::Reader(None));
     }
 }

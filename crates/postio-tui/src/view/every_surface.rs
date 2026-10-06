@@ -261,6 +261,22 @@ fn cases() -> Vec<Case> {
             ..case("open message frame", "open", (120, 36))
         },
         Case {
+            marks: vec![
+                Has("⌕ gate"),
+                Has("1 of 2"),
+                StyledAt("gate", 0, REVERSED),
+                StyledAt("gate", 0, Modifier::UNDERLINED),
+                StyledAt("gate", 1, REVERSED),
+            ],
+            controls: vec![
+                ctl("ctrl+g next", "<C-g>"),
+                ctl("shift+F3 previous", "<S-F3>"),
+                ctl("Esc close", "<Esc>"),
+            ],
+            holds: false,
+            ..case("find in the open message", "find", (120, 36))
+        },
+        Case {
             then: ".",
             marks: vec![Has("▌Label"), Has("╭ More")],
             controls: vec![ctl("Move", "m"), ctl("Delete", "<Del>")],
