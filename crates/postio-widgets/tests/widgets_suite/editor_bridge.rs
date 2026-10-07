@@ -310,3 +310,59 @@ pub fn the_editor_page_says_when_its_script_is_listening() {
         "a loaded editor page does not say its script is listening"
     );
 }
+
+/// A freshly loaded page holds its caret at the start of the body.
+///
+/// A reply is written above the quote, so typing into a page nobody has
+/// clicked yet has to land there. The composer used to ask for the caret
+/// with a script sent straight after `load`, which is asynchronous: the
+/// script ran against the page being replaced, the new page had no
+/// selection at all, and what was typed went nowhere -- the storyboard
+/// review of `body-typing-is-not-eaten` showed the reply queued as a bare
+/// quote.
+pub fn a_loaded_page_takes_typing_at_the_start_of_the_body() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under the headless runner to exercise this)");
+        return;
+    }
+    let window = gtk::Window::new();
+    window.set_default_size(600, 400);
+    let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_millis(1));
+    window.set_child(Some(editor.widget()));
+    window.present();
+
+    let mut quoted = Document::new();
+    quoted.blocks.push(paragraph("the quote"));
+    editor.load(quoted);
+    settle("the editor page to listen", || {
+        eval(editor.widget(), crate::support_compose::EDITOR_LISTENING) == "true"
+    });
+
+    assert_eq!(
+        eval(
+            editor.widget(),
+            "(() => { const s = window.getSelection(); \
+               if (s.rangeCount === 0) return 'no caret'; \
+               const r = document.createRange(); \
+               r.selectNodeContents(document.body); r.collapse(true); \
+               return s.isCollapsed && s.getRangeAt(0).compareBoundaryPoints( \
+                 Range.START_TO_START, r) === 0 ? 'start' : 'elsewhere'; })()",
+        ),
+        "start",
+        "a freshly loaded page has no caret at the start of the body"
+    );
+
+    // No selection is made here: this is a keystroke into an untouched page.
+    eval(
+        editor.widget(),
+        "(() => { document.execCommand('insertText', false, 'typed '); return 'ok'; })()",
+    );
+    settle("the typing to reach the document", || {
+        editor.document().blocks == vec![paragraph("typed the quote")]
+    });
+    assert_eq!(
+        editor.document().blocks,
+        vec![paragraph("typed the quote")],
+        "typing into a fresh page did not land at the start of the body"
+    );
+}

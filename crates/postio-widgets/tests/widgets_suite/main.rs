@@ -474,6 +474,10 @@ const CASES: &[(&str, fn())] = &[
         editor_bridge::the_editor_page_says_when_its_script_is_listening as fn(),
     ),
     (
+        "editor_bridge::a_loaded_page_takes_typing_at_the_start_of_the_body",
+        editor_bridge::a_loaded_page_takes_typing_at_the_start_of_the_body as fn(),
+    ),
+    (
         "editor_format::every_formatting_command_lands_as_canonical_structure",
         editor_format::every_formatting_command_lands_as_canonical_structure as fn(),
     ),

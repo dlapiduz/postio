@@ -259,6 +259,19 @@ function reportFormat() {
 document.addEventListener('selectionchange', reportFormat);
 document.addEventListener('input', reportFormat);
 
+/* A fresh page holds its caret at the start of the body, which is where a
+ * reply is written (above the quote) and where a new message starts. Done
+ * here rather than by the host after `load`, because loading is
+ * asynchronous: a script the host sends straight after it runs against the
+ * page being replaced, and the new page then has no selection at all, so
+ * typing into it goes nowhere. */
+if (window.getSelection().rangeCount === 0 && document.body) {
+    const start = document.createRange();
+    start.selectNodeContents(document.body);
+    start.collapse(true);
+    window.getSelection().addRange(start);
+}
+
 /* Last, on purpose: every listener above is attached. The page's HTML makes
  * the body editable as soon as it is parsed, before this script runs at
  * document end, so an editable body says nothing about whether an edit will
