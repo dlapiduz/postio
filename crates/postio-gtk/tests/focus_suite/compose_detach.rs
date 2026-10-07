@@ -101,6 +101,13 @@ pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
             "pressing Detach ({:?}) left the composer in its dialog",
             CommandId::DetachComposer
         );
+        // The keyboard went with the composition: the window observes the
+        // composer as holding it, not the list left behind.
+        assert_eq!(
+            window.observe().keyboard.region,
+            postio_ui::observe::Region::Composer,
+            "a detached composition left the keyboard on the list"
+        );
         composer.dispatch(CommandId::DetachComposer);
         assert!(
             crate::settle_until(async || !composer.is_detached()).await,

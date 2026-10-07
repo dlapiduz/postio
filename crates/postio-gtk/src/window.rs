@@ -5078,7 +5078,9 @@ impl FocusWindow {
             || sign_in
         {
             Region::Dialog
-        } else if compose_open {
+        } else if compose_open || composition_detached {
+            // A detached composition is in a window of its own, where the
+            // keyboard went with it: what is typed next is the message's.
             Region::Composer
         } else if dialog_named(crate::open::DIALOG_NAME) || reading_here {
             Region::Reader
