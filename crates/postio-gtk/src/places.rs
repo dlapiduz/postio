@@ -207,13 +207,16 @@ impl Places {
     /// Read every key the popover shows from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
-        self.show();
+        // The keys are drawn on the rows but are not part of what is listed,
+        // so a new keymap redraws even when the places are the same.
+        self.draw(true);
     }
 
     /// Open the popover, unfiltered, and read the places.
     pub fn open(&self) {
         self.entry.set_text("");
         self.show();
+        self.highlight_first();
         self.popover.popup();
         self.entry.grab_focus();
         self.read();
@@ -311,11 +314,38 @@ impl Places {
 
     /// List the places the filter matches, in their sections.
     fn show(&self) {
+        self.draw(false);
+    }
+
+    /// Put the highlight on the first place listed.
+    fn highlight_first(&self) {
+        let mut at = 0;
+        while let Some(row) = self.list.row_at_index(at) {
+            if row.is_selectable() {
+                self.list.select_row(Some(&row));
+                return;
+            }
+            at += 1;
+        }
+    }
+
+    /// Draw the places the filter matches -- unless they are what is drawn
+    /// already and nothing else asks for it (`force`).
+    ///
+    /// Drawing tears every row down, and a click landing across that is a
+    /// click on a row that no longer exists: it goes nowhere. The rows are
+    /// redrawn from many places -- the entry's delayed `search-changed`, a
+    /// read landing, the filtered count moving -- so the guard is here, on
+    /// the one thing they all call, rather than on each of them.
+    fn draw(&self, force: bool) {
+        let filtered = self.filtered_today.get().map(rules::filtered_entry);
+        let shown = rules::listed(&self.all.borrow(), filtered.as_ref(), &self.entry.text());
+        if !force && self.list.first_child().is_some() && *self.shown.borrow() == shown {
+            return;
+        }
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
-        let filtered = self.filtered_today.get().map(rules::filtered_entry);
-        let shown = rules::listed(&self.all.borrow(), filtered.as_ref(), &self.entry.text());
         let keymap = self.keymap.borrow();
         let accent_hue = accent_hue();
         let mut rows = Vec::new();
@@ -411,13 +441,8 @@ impl Places {
                     found.push(rules::label_entry(&label));
                 }
             }
-            // `open` has already drawn the rows from the last read. Drawing
-            // them again tears every row down, and a click landing across
-            // that is a click on a row that no longer exists -- it goes
-            // nowhere. So only a read that changed something redraws.
-            if *all.borrow() == found {
-                return;
-            }
+            // `open` has already drawn the rows from the last read; `show`
+            // redraws only if this one found something different.
             all.replace(found);
             if let Some(places) = weak.upgrade() {
                 places.show();
