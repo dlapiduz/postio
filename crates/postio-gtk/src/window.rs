@@ -2028,6 +2028,34 @@ impl FocusWindow {
         self.remember_removed(rows);
     }
 
+    /// An archive or delete of selected rows is about to take the cursor's
+    /// row with them: stand the cursor on the first row below it that stays.
+    /// The list slides it up as the rows above go, so it lands on the row
+    /// that followed, not on the slot the old row held (a slot skips a row
+    /// when others above the cursor go too).
+    fn cursor_past_removed(&self) {
+        let Selection::These(gone) = self.selection() else {
+            return;
+        };
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let at = pane.cursor().selected();
+        if gone.is_empty() || at == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let list = pane.feed().list().clone();
+        let rows = (at..list.n_items()).map(|place| {
+            list.item(place)
+                .and_downcast::<RowObject>()
+                .and_then(|row| row.item())
+                .map(|row| row.id())
+        });
+        if let Some(offset) = postio_ui::selection::survivor_below(rows, &gone) {
+            self.cursor_to(Some(at + offset as u32));
+        }
+    }
+
     /// Keep `rows` as taken out of the list, for the undo that returns them.
     fn remember_removed(&self, rows: Vec<MessageId>) {
         let mut removed = self.imp().removed.borrow_mut();
@@ -2105,6 +2133,7 @@ impl FocusWindow {
         };
         if matches!(command, Command::Archive { .. } | Command::Delete { .. }) {
             self.note_removed();
+            self.cursor_past_removed();
         }
         self.clear_selection();
         glib::spawn_future_local(async move {

@@ -314,12 +314,51 @@ pub fn cursor_after_change(
     Some(at.min(len - 1))
 }
 
+/// Where the cursor should stand before `gone` leave the list: on the first
+/// row after its own that survives, when its own row is going.
+///
+/// `rows` is the list from the cursor's row on, `None` where a page has not
+/// arrived (a row nobody has named is not going). The answer is an offset
+/// into `rows`, so the caller puts the cursor there and lets the list slide
+/// it up as the rows above it go -- by place, not by slot number: with
+/// rows above the cursor going too, "the same index" skips a row (#468).
+/// `None` when the cursor's row is staying, or nothing survives below it.
+pub fn survivor_below(
+    rows: impl IntoIterator<Item = Option<MessageId>>,
+    gone: &[MessageId],
+) -> Option<usize> {
+    let mut rows = rows.into_iter().enumerate();
+    let (_, own) = rows.next()?;
+    if !own.is_some_and(|own| gone.contains(&own)) {
+        return None;
+    }
+    rows.find(|(_, row)| row.is_none_or(|row| !gone.contains(&row)))
+        .map(|(offset, _)| offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn id(value: i64) -> MessageId {
         MessageId::new(value)
+    }
+
+    #[test]
+    fn the_cursor_goes_to_the_first_survivor_below_its_own_row() {
+        let rows = |ids: &[i64]| ids.iter().map(|n| Some(id(*n))).collect::<Vec<_>>();
+        let gone = [id(1), id(3), id(4)];
+        // Cursor on 4, which goes; 5 follows and stays.
+        assert_eq!(survivor_below(rows(&[4, 5, 6]), &gone), Some(1));
+        // The row right below goes as well: the one after it.
+        assert_eq!(survivor_below(rows(&[3, 4, 7]), &gone), Some(2));
+        // The cursor's own row is staying: nothing to move.
+        assert_eq!(survivor_below(rows(&[2, 3, 7]), &gone), None);
+        // Nothing survives below.
+        assert_eq!(survivor_below(rows(&[4]), &gone), None);
+        assert_eq!(survivor_below(rows(&[3, 4]), &gone), None);
+        // A page that has not arrived is not a row that is going.
+        assert_eq!(survivor_below([Some(id(3)), None], &gone), Some(1));
     }
 
     #[test]
