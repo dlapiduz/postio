@@ -150,6 +150,13 @@ pub struct OpenMessage {
     thread: Rc<RefCell<Vec<MessageId>>>,
     at: Rc<Cell<usize>>,
     position: Cell<Position>,
+    /// The enabled accounts' addresses, by id, while there is more than one:
+    /// the place line names the message's account only then.
+    accounts: RefCell<Vec<(postio_model::AccountId, String)>>,
+    /// The account the message on screen is in, as that line names it.
+    account_said: Rc<RefCell<Option<String>>>,
+    /// The place line without its account.
+    line_said: Rc<RefCell<String>>,
     /// The results a message found by search was opened from, in the bar's
     /// order, and which of them is on screen: what `j` and `k` walk. Empty
     /// for a message opened from the list.
@@ -482,6 +489,9 @@ impl OpenMessage {
             chip: RefCell::default(),
             thread: Rc::default(),
             at: Rc::default(),
+            accounts: RefCell::default(),
+            account_said: Rc::default(),
+            line_said: Rc::default(),
             position: Cell::new(Position { index: 0, total: 0 }),
             found: RefCell::default(),
             found_at: Cell::new(0),
@@ -1178,6 +1188,8 @@ impl OpenMessage {
         self.body.replace(None);
         self.show_marker_card(message);
         self.header_card.clear();
+        self.account_said.replace(None);
+        self.draw_place_line();
         self.fold_line.set_visible(false);
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
@@ -1344,8 +1356,27 @@ impl OpenMessage {
                 self.send_state.get(),
             )
         };
-        self.subtitle.set_text(&said);
+        self.line_said.replace(said);
+        self.draw_place_line();
         self.show_thread_chip(messages, latest);
+    }
+
+    /// Say which accounts are enabled: the place line names the message's
+    /// account only while there is more than one to tell apart.
+    pub fn set_accounts(&self, accounts: Vec<(postio_model::AccountId, String)>) {
+        let several = accounts.len() > 1;
+        self.accounts
+            .replace(if several { accounts } else { Vec::new() });
+        self.account_said.replace(None);
+        self.draw_place_line();
+    }
+
+    /// The place line, with the account the message is in.
+    fn draw_place_line(&self) {
+        let line = self.line_said.borrow();
+        let account = self.account_said.borrow();
+        self.subtitle
+            .set_text(&focus_dialog::with_account(&line, account.as_deref()));
     }
 
     /// Read `message` from the store, and draw it if it is still the one on
@@ -1358,6 +1389,10 @@ impl OpenMessage {
         let shown_body = Rc::clone(&self.body);
         let inline = Rc::clone(&self.inline);
         let header_card = Rc::clone(&self.header_card);
+        let accounts = self.accounts.borrow().clone();
+        let account_said = Rc::clone(&self.account_said);
+        let line_said = Rc::clone(&self.line_said);
+        let subtitle = self.subtitle.clone();
         let preparing = Arc::clone(&self.preparing.borrow());
         shown_parts.borrow_mut().clear();
         inline.borrow_mut().clear();
@@ -1373,6 +1408,15 @@ impl OpenMessage {
                 return;
             };
             if let Some(row) = reading.row.as_deref() {
+                let account = accounts
+                    .iter()
+                    .find(|(id, _)| *id == row.account_id)
+                    .map(|(_, address)| address.clone());
+                subtitle.set_text(&focus_dialog::with_account(
+                    &line_said.borrow(),
+                    account.as_deref(),
+                ));
+                account_said.replace(account);
                 header_card.set(
                     &row.from,
                     &row.to,

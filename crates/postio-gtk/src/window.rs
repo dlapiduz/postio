@@ -1309,6 +1309,14 @@ impl FocusWindow {
             if let Some(account) = enabled.first() {
                 window.mount_compose(&client, account.id);
             }
+            if let Some(reading) = window.reading() {
+                reading.set_accounts(
+                    enabled
+                        .iter()
+                        .map(|account| (account.id, account.address.address.clone()))
+                        .collect(),
+                );
+            }
             window.imp().facts.replace(
                 enabled
                     .iter()
@@ -4030,6 +4038,14 @@ impl FocusWindow {
                     move |_| window.focus_cursor_soon()
                 ));
                 reading.set_capture(self.imp().focus_config.borrow().vault.is_some());
+                reading.set_accounts(
+                    self.imp()
+                        .facts
+                        .borrow()
+                        .iter()
+                        .map(|facts| (facts.id, facts.address.clone()))
+                        .collect(),
+                );
                 // The zoom `[reader]` says (T235).
                 if let Some(zoom) = self.imp().zoom.get() {
                     reading.reader().set_zoom(zoom);

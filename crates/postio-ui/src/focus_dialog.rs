@@ -286,6 +286,17 @@ pub fn result_line(
     line("Result", index, total, messages, thread_at, latest, None)
 }
 
+/// `line` with the account the message is in, when more than one account is
+/// enabled: two copies of one conversation in two accounts read alike
+/// otherwise, and an Archive or a Reply from here would act in an account
+/// nobody can see.
+pub fn with_account(line: &str, account: Option<&str>) -> String {
+    match account {
+        Some(account) => format!("{line} \u{b7} {account}"),
+        None => line.to_owned(),
+    }
+}
+
 fn line(
     noun: &str,
     index: usize,
@@ -548,6 +559,15 @@ mod tests {
             result_line(0, 8, 3, 1, false),
             "Result 1 of 8 \u{b7} 2 of 3 in the thread"
         );
+    }
+
+    #[test]
+    fn the_place_line_names_the_account_only_when_there_is_one_to_name() {
+        assert_eq!(
+            with_account("Result 2 of 8", Some("home@example.net")),
+            "Result 2 of 8 \u{b7} home@example.net"
+        );
+        assert_eq!(with_account("Result 2 of 8", None), "Result 2 of 8");
     }
 
     #[test]

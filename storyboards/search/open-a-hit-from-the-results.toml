@@ -35,14 +35,14 @@ expect  = "The first hit, the Tide gate interlock proposal, is highlighted."
 
 [[step]]
 key     = "Return"
-check   = { view = "reader", keyboard.region = "reader", reading.id = "57", overlay.kind = "none" }
-expect  = "The reader shows the first hit, the Tide gate interlock proposal, over the list."
+check   = { view = "reader", keyboard.region = "reader", reading.id = "57", overlay.kind = "none", app.focus.reading.position = "Result 1 of 8 · thread of 8 · test@example.com" }
+expect  = "The reader shows the first hit, the Tide gate interlock proposal, over the list, and its header names the account it is in: with two accounts enabled, two copies of one conversation must not read alike."
 
 [[step]]
 id      = "first"
 command = "next_message"
-check   = { view = "reader", reading.id = { changed = true }, keyboard.region = "reader" }
-expect  = "`j` steps to the next hit in the bar's order, not to the list's next row behind the dialog."
+check   = { view = "reader", reading.id = { changed = true }, keyboard.region = "reader", app.focus.reading.position = "Result 2 of 8 · thread of 8 · home@example.net" }
+expect  = "`j` steps to the next hit in the bar's order, not to the list's next row behind the dialog. This one is the same conversation in the other account, and the header says so."
 
 [[step]]
 command = "prev_message"
