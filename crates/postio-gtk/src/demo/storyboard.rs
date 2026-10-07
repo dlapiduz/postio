@@ -274,18 +274,7 @@ impl Preset {
                 let panel = open_settings(window, Section::Sync)?;
                 // The mail's weight, as a backfill measures it, and the
                 // folders it is backing up, which sit below the pane's fold.
-                panel.set_mail_weights(
-                    &[(
-                        started.account,
-                        postio_core::event::MailFootprint {
-                            total_bytes: 12_884_901_888,
-                            attachment_bytes: 11_811_160_064,
-                            local_bytes: 933_232_640,
-                            complete: true,
-                        },
-                    )],
-                    false,
-                );
+                show_mail_weight(&panel, started.account);
                 pump(Duration::from_millis(800));
                 // Sync & storage opens at its top, as it does for a person;
                 // the folders are a second view, scrolled to.
@@ -293,6 +282,14 @@ impl Preset {
                     panel.reveal_backfill();
                     pump(Duration::from_millis(200));
                 }
+                Ok(())
+            }
+            Preset::Settings(Section::Accounts) => {
+                // The same measurement Sync & storage shows: one account,
+                // one weight, wherever Settings says it.
+                let panel = open_settings(window, Section::Accounts)?;
+                show_mail_weight(&panel, started.account);
+                pump(Duration::from_millis(300));
                 Ok(())
             }
             Preset::Settings(section) => open_settings(window, section).map(drop),
@@ -374,6 +371,26 @@ fn open_settings(
     // A section's rows land a read after the pane does.
     pump(Duration::from_millis(500));
     Ok(panel)
+}
+
+/// The one account's mail weight, as a backfill measures it, which no seed
+/// has a server to measure: Accounts and Sync & storage both read it.
+fn show_mail_weight(
+    panel: &postio_widgets::settings::SettingsPanel,
+    account: postio_model::AccountId,
+) {
+    panel.set_mail_weights(
+        &[(
+            account,
+            postio_core::event::MailFootprint {
+                total_bytes: 12_884_901_888,
+                attachment_bytes: 11_811_160_064,
+                local_bytes: 933_232_640,
+                complete: true,
+            },
+        )],
+        false,
+    );
 }
 
 /// Three accounts and how much mail each holds, hand-fed to Settings: the
