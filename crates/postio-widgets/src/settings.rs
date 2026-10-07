@@ -325,6 +325,7 @@ pub use postio_ui::settings::{Group, Section, find_section, humanize_interval, s
 pub fn icon(section: Section) -> &'static str {
     match section {
         Section::Accounts => "avatar-default-symbolic",
+        Section::Filtering => "mail-mark-junk-symbolic",
         Section::Filters => "view-list-symbolic",
         Section::Composing => "document-edit-symbolic",
         Section::Appearance => "preferences-desktop-appearance-symbolic",
@@ -487,6 +488,59 @@ fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
     crate::widgets::field(label, control, "postio-settings-account-detail-row")
 }
 
+/// A sentence under a control: wrapped rather than cut, because half of a
+/// sentence says less than two lines of it.
+fn note(class: &str) -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.add_css_class("postio-settings-note");
+    label.add_css_class(class);
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_wrap_mode(pango::WrapMode::WordChar);
+    label
+}
+
+/// [`note`], saying `text`.
+fn note_with(class: &str, text: &str) -> gtk::Label {
+    let label = note(class);
+    label.set_label(text);
+    label
+}
+
+/// A column of read-only lines -- a `[focus.filter]` list -- named for a
+/// screen reader by its heading.
+fn listed_box(class: &str, name: &str) -> gtk::Box {
+    let column = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
+    column.add_css_class("postio-settings-filtering-list");
+    column.add_css_class(class);
+    column.set_accessible_role(gtk::AccessibleRole::List);
+    column.update_property(&[gtk::accessible::Property::Label(name)]);
+    column
+}
+
+/// `column` holding one line per entry of `listed`, and `empty` showing in
+/// its place when there are none.
+fn fill_listed(column: &gtk::Box, empty: &gtk::Label, listed: &[postio_ui::filtering::Listed]) {
+    while let Some(child) = column.first_child() {
+        column.remove(&child);
+    }
+    for entry in listed {
+        let line = gtk::Label::new(Some(&entry.says));
+        line.add_css_class("postio-settings-filtering-entry");
+        if !entry.acts {
+            line.add_css_class("postio-settings-filtering-entry-inert");
+        }
+        line.set_xalign(0.0);
+        line.set_wrap(true);
+        line.set_wrap_mode(pango::WrapMode::WordChar);
+        line.set_selectable(false);
+        line.set_accessible_role(gtk::AccessibleRole::ListItem);
+        column.append(&line);
+    }
+    column.set_visible(!listed.is_empty());
+    empty.set_visible(listed.is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // The widget
 // ---------------------------------------------------------------------------
@@ -528,6 +582,30 @@ pub struct SyncControls {
     pub backfill_heading: gtk::Label,
     /// The folders' checks.
     pub backfill: gtk::Box,
+}
+
+/// Filtering's controls (spec 007 US9): the switch, and the lines that say
+/// what it does and what `[focus.filter]` holds, in
+/// `postio_ui::filtering`'s words.
+pub struct FilteringControls {
+    /// `[focus] filtering`.
+    pub switch: CheckRow,
+    /// What filtering does now.
+    pub state: gtk::Label,
+    /// "186 filtered today", while filtering is on and the count is known.
+    pub today: gtk::Label,
+    /// Open Filtered, with `g f` in it.
+    pub open: std::rc::Rc<crate::widgets::KeycapButton>,
+    /// The keys Filtered answers: restore, and the sweep.
+    pub keys: crate::widgets::keyhint::KeyLine,
+    /// `[focus.filter] never`, one line each.
+    pub never: gtk::Box,
+    /// What the never list says with nobody in it.
+    pub never_empty: gtk::Label,
+    /// `[focus.filter] stop_markers`, one line each.
+    pub stopped: gtk::Box,
+    /// What the stopped list says with nothing in it.
+    pub stopped_empty: gtk::Label,
 }
 
 /// Composing's controls.
@@ -597,8 +675,9 @@ mod imp {
         /// Who to tell when a folder's backfill check is changed by hand.
         #[allow(clippy::type_complexity)]
         pub backfill_handlers: RefCell<Vec<Box<dyn Fn(postio_model::ids::MailboxId, bool)>>>,
-        /// The eight panes themselves.
+        /// The nine panes themselves.
         pub accounts_pane: gtk::Box,
+        pub filtering_pane: gtk::Box,
         pub filters_pane: gtk::Box,
         pub composing_pane: gtk::Box,
         pub keyboard_pane: gtk::Box,
@@ -616,6 +695,12 @@ mod imp {
         /// that window's life.
         pub sync_controls: OnceCell<SyncControls>,
         pub composing_controls: OnceCell<ComposingControls>,
+        pub filtering_controls: OnceCell<FilteringControls>,
+        /// How many messages were filtered today, as the host counts them:
+        /// what Filtering's count line says. `None` until it is told.
+        pub filtered_today: Cell<Option<u32>>,
+        /// The keys in force, for the lines that teach one.
+        pub keymap: RefCell<postio_core::Keymap>,
         pub tag: gtk::Label,
         pub nav: gtk::ListBox,
         pub buffer: gtk::TextBuffer,
@@ -839,6 +924,7 @@ mod imp {
                 folders: RefCell::default(),
                 backfill_handlers: RefCell::default(),
                 accounts_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                filtering_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 filters_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 composing_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 keyboard_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -847,6 +933,9 @@ mod imp {
                 config_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 sync_controls: OnceCell::new(),
                 composing_controls: OnceCell::new(),
+                filtering_controls: OnceCell::new(),
+                filtered_today: Cell::new(None),
+                keymap: RefCell::new(postio_core::Keymap::defaults().clone()),
                 tag: gtk::Label::new(None),
                 nav: gtk::ListBox::new(),
                 buffer: gtk::TextBuffer::new(None),
@@ -3331,6 +3420,140 @@ impl SettingsPanel {
     }
 
     /// Draws Composing from the buffer's current `[compose]`.
+    /// How many messages were filtered today, for Filtering's count line:
+    /// the host's count, as the header strip shows it. `None` while it is
+    /// not known, and the line says nothing rather than a guess.
+    pub fn set_filtered_today(&self, count: Option<u32>) {
+        if self.imp().filtered_today.replace(count) != count
+            && self.imp().filtering_controls.get().is_some()
+        {
+            self.redraw_filtering();
+        }
+    }
+
+    /// Draws Filtering from the buffer's `[focus]` (spec 007 US9): the
+    /// switch, what it does now, today's count, and what `[focus.filter]`
+    /// holds. The controls come first and unconditionally, as on Sync &
+    /// storage: a file that does not parse leaves them showing what they
+    /// last showed.
+    fn redraw_filtering(&self) {
+        let controls = self.ensure_filtering();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        let imp = self.imp();
+        let page = postio_ui::filtering::page(
+            &config.focus,
+            imp.filtered_today.get(),
+            &imp.keymap.borrow(),
+        );
+        controls.switch.set_active(page.on);
+        controls.state.set_label(&page.state);
+        controls
+            .today
+            .set_label(page.today.as_deref().unwrap_or_default());
+        controls.today.set_visible(page.today.is_some());
+        controls
+            .open
+            .set_key(imp.keymap.borrow().binding(CommandId::GoToFiltered));
+        controls.keys.set(&page.keys);
+        controls.keys.widget().set_visible(!page.keys.is_empty());
+        fill_listed(&controls.never, &controls.never_empty, &page.never);
+        controls.never_empty.set_label(&page.never_empty);
+        fill_listed(&controls.stopped, &controls.stopped_empty, &page.stopped);
+    }
+
+    /// Builds Filtering's controls once -- see
+    /// [`ensure_sync_controls`](Self::ensure_sync_controls) for why lazily.
+    fn ensure_filtering(&self) -> &FilteringControls {
+        use postio_ui::filtering;
+        let imp = self.imp();
+        if let Some(controls) = imp.filtering_controls.get() {
+            return controls;
+        }
+
+        let switch = CheckRow::new(filtering::SWITCH);
+        switch
+            .widget()
+            .add_css_class("postio-settings-filtering-switch");
+        switch.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |on| panel.apply_filtering(on)
+        ));
+        let state = note("postio-settings-filtering-state");
+
+        let today = gtk::Label::new(None);
+        today.add_css_class("postio-settings-filtering-today");
+        today.set_xalign(0.0);
+        today.set_hexpand(true);
+        let open = std::rc::Rc::new(crate::widgets::KeycapButton::new(
+            Some(CommandId::GoToFiltered),
+            filtering::OPEN,
+            "postio-settings-filtering-open",
+            false,
+        ));
+        crate::widgets::KeycapButton::arm(&open);
+        open.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move || panel.request_command(CommandId::GoToFiltered)
+        ));
+        let count_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+        count_row.add_css_class("postio-settings-filtering-count");
+        count_row.append(&today);
+        count_row.append(&open.widget());
+        let keys = crate::widgets::keyhint::KeyLine::new("postio-settings-filtering-keys");
+
+        let never = listed_box("postio-settings-filtering-never", filtering::NEVER);
+        let never_empty = note("postio-settings-filtering-never-empty");
+        let stopped = listed_box("postio-settings-filtering-stopped", filtering::STOPPED);
+        let stopped_empty = note("postio-settings-filtering-stopped-empty");
+        stopped_empty.set_label(filtering::STOPPED_EMPTY);
+
+        let group = SettingsGroup::on(&imp.filtering_pane);
+        group.control(switch.widget()).note(&state);
+        group.section(filtering::FILTERED);
+        group.control(&count_row);
+        group.block(&note_with(
+            "postio-settings-filtering-kept",
+            filtering::KEPT,
+        ));
+        group.block(keys.widget());
+        group.section(filtering::NEVER);
+        group.block(&note_with(
+            "postio-settings-filtering-guards",
+            filtering::GUARDS,
+        ));
+        group.append(&never).append(&never_empty);
+        group.section(filtering::STOPPED);
+        group.append(&stopped).append(&stopped_empty);
+
+        let _ = imp.filtering_controls.set(FilteringControls {
+            switch,
+            state,
+            today,
+            open,
+            keys,
+            never,
+            never_empty,
+            stopped,
+            stopped_empty,
+        });
+        imp.filtering_controls.get().expect("just set")
+    }
+
+    /// Turns `[focus] filtering` on or off in the buffer, which reaches the
+    /// file through the same debounced write every edit here does, and the
+    /// running app through its watcher (FR-162).
+    fn apply_filtering(&self, on: bool) {
+        match postio_config::focus_edit::set_filtering(&self.text(), on) {
+            Ok(Some(written)) => self.imp().buffer.set_text(&written),
+            Ok(None) => {}
+            Err(error) => tracing::error!(%error, "could not write [focus] filtering: {error}"),
+        }
+    }
+
     fn redraw_compose(&self) {
         // Controls first — see `redraw_sync` for why.
         let controls = self.ensure_composing();
@@ -3705,6 +3928,7 @@ impl SettingsPanel {
         // Panes that build their controls on first draw (#873) draw here,
         // which is the first moment one of them is actually looked at.
         match section {
+            Section::Filtering => self.redraw_filtering(),
             Section::Sync => self.redraw_sync(),
             Section::Composing => self.redraw_compose(),
             Section::Keyboard => {
@@ -3953,6 +4177,10 @@ impl SettingsPanel {
         }
         if let Some(add) = self.imp().add_account_button.get() {
             add.set_key(keymap.binding(CommandId::AddAccount));
+        }
+        self.imp().keymap.replace(keymap.clone());
+        if self.imp().filtering_controls.get().is_some() {
+            self.redraw_filtering();
         }
     }
 
@@ -4477,6 +4705,7 @@ impl SettingsPanel {
         imp.stack.set_vexpand(true);
         for (section, pane) in [
             (Section::Accounts, &imp.accounts_pane),
+            (Section::Filtering, &imp.filtering_pane),
             (Section::Filters, &imp.filters_pane),
             (Section::Composing, &imp.composing_pane),
             (Section::Keyboard, &imp.keyboard_pane),
@@ -4491,7 +4720,7 @@ impl SettingsPanel {
             // height less 80, and one column of Sync & storage is taller.
             if matches!(
                 section,
-                Section::Composing | Section::Sync | Section::Privacy
+                Section::Filtering | Section::Composing | Section::Sync | Section::Privacy
             ) {
                 let scroller = gtk::ScrolledWindow::builder()
                     .hscrollbar_policy(gtk::PolicyType::Never)
@@ -4571,6 +4800,7 @@ impl SettingsPanel {
     /// 250ms write debounce turns into a stutter.
     fn redraw_visible_pane(&self) {
         match self.imp().current.get() {
+            Section::Filtering => self.redraw_filtering(),
             Section::Sync => self.redraw_sync(),
             Section::Composing => self.redraw_compose(),
             Section::Keyboard => {

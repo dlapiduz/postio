@@ -118,6 +118,19 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     } else if section == Section::Privacy {
         privacy(&mut pane, app, settings.in_list(), columns, theme);
     } else {
+        if section == Section::Filtering {
+            // The desktop's page in words: what filtering does, today's
+            // count while it is on, and that nothing is lost. The switch
+            // and the lists are the file's, edited where it lives.
+            let (on, today) = app.filtering();
+            let mut said = vec![postio_ui::filtering::state(on)];
+            said.extend(postio_ui::filtering::today(on, today));
+            said.push(postio_ui::filtering::KEPT.to_owned());
+            for line in said {
+                pane.push(Line::styled(fit(&line, columns), theme.style(Role::Text)));
+            }
+            pane.push(Line::default());
+        }
         let table = section.table().unwrap_or("the whole file");
         pane.push(Line::styled(
             fit(

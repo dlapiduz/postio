@@ -307,11 +307,13 @@ pub struct FilterFfi {
     pub pinned: bool,
 }
 
-/// Every settings section, in canvas 3f's nav order.
+/// Every settings section the Mac shows ([`Section::shown_in`]), in canvas
+/// 3f's nav order.
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
     Section::ALL
         .into_iter()
+        .filter(|section| section.shown_in(postio_core::Frontend::Macos))
         .map(|section| SettingsSectionFfi {
             key: section.key().to_string(),
             label: section.label().to_string(),

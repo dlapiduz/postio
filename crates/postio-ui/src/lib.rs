@@ -23,6 +23,7 @@ pub mod digest;
 pub mod dwell;
 pub mod editor;
 pub mod filtered;
+pub mod filtering;
 pub mod find;
 pub mod finder;
 pub mod focus;

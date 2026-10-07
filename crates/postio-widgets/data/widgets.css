@@ -726,6 +726,30 @@ button.postio-icon-button.postio-recipient-chip-remove {
   padding: 20px 22px;
 }
 
+/* A sentence under a control: what it does, in a person's words. */
+.postio-settings-note {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+}
+
+/* Filtering's lists are addresses and domains: mono, as every address is
+   (C25). An entry that pins nobody says why, in the secondary ink. */
+.postio-settings-filtering-entry {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink);
+}
+
+.postio-settings-filtering-entry-inert {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-filtering-today {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink);
+}
+
 /* The pane's own bottom row of verbs — Reset to defaults, Revert file. */
 .postio-settings-pane-actions {
   padding-top: 14px;

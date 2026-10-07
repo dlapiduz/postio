@@ -2353,6 +2353,15 @@ impl App {
         Some((self.places_box.as_ref()?, self.folders_reach()))
     }
 
+    /// Whether filtering is on, and how many were filtered today when the
+    /// count is in: what Settings' Filtering section says.
+    pub fn filtering(&self) -> (bool, Option<u32>) {
+        (
+            self.features.filtering,
+            self.counts.map(|counts| counts.filtered_today),
+        )
+    }
+
     fn folders_reach(&self) -> crate::folders::Reach<'_> {
         crate::folders::Reach {
             folders: &self.folders,
@@ -6776,7 +6785,7 @@ pub(crate) mod tests {
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects.contains(&Effect::EditConfig(Some(
-                postio_ui::settings::Section::Filters
+                postio_ui::settings::Section::Filtering
             ))),
             "{effects:?}"
         );

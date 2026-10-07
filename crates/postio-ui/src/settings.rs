@@ -16,11 +16,15 @@
 //! keeps its own `icon` beside this, because a GTK symbolic icon name is not
 //! an SF Symbol and neither frontend should carry the other's.
 
-/// One of the eight sections the nav lists, in canvas order.
+/// One of the nine sections the nav lists, in canvas order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     /// One row per account, and the form for the selected one.
     Accounts,
+    /// `[focus] filtering` and `[focus.filter]` -- whether Focus files spam
+    /// and automated updates away, and what the person has told it about
+    /// that (spec 007 US9). The words are [`crate::filtering`]'s.
+    Filtering,
     /// `[saved_searches]` — named saved queries.
     Filters,
     /// `[compose]` — signatures, and where one goes above a quote.
@@ -53,7 +57,7 @@ pub enum Section {
 /// looking under the same heading as one looking for "what is my address".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// Accounts, Filters, Composing.
+    /// Accounts, Filtering, Saved searches, Composing.
     Mail,
     /// Appearance, Keyboard, Sync & storage, Privacy, Config file.
     Application,
@@ -79,8 +83,9 @@ impl Group {
 
 impl Section {
     /// Every section, in nav order — the drawing's order, grouped.
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
         Section::Accounts,
+        Section::Filtering,
         Section::Filters,
         Section::Composing,
         Section::Appearance,
@@ -93,7 +98,9 @@ impl Section {
     /// Which sidebar heading this pane sits under.
     pub fn group(self) -> Group {
         match self {
-            Section::Accounts | Section::Filters | Section::Composing => Group::Mail,
+            Section::Accounts | Section::Filtering | Section::Filters | Section::Composing => {
+                Group::Mail
+            }
             Section::Appearance
             | Section::Keyboard
             | Section::Sync
@@ -114,6 +121,10 @@ impl Section {
             Section::Appearance => "ui",
             Section::Keyboard => "keys",
             Section::Accounts => "accounts",
+            // `[focus]` holds `filtering` and the `[focus.filter]` table the
+            // page lists; the rest of `[focus]` (digests, the vault, the
+            // model) is edited where it is used, and in the file.
+            Section::Filtering => "focus",
             Section::Sync => "sync",
             Section::Filters => "saved_searches",
             Section::Composing => "compose",
@@ -127,11 +138,12 @@ impl Section {
     ///
     /// The pane repeats its sidebar name as its heading on purpose: with one
     /// pane on screen at a time, the title is the only thing that says which
-    /// of the eight you are looking at without moving your eyes back to the
+    /// of them you are looking at without moving your eyes back to the
     /// sidebar.
     pub fn label(self) -> &'static str {
         match self {
             Section::Accounts => "Accounts",
+            Section::Filtering => "Filtering",
             Section::Filters => "Saved searches",
             Section::Composing => "Composing",
             Section::Appearance => "Appearance",
@@ -146,6 +158,9 @@ impl Section {
     pub fn description(self) -> &'static str {
         match self {
             Section::Accounts => "Every account this installation signs in to.",
+            Section::Filtering => {
+                "Spam and automated updates, archived as they arrive, each with its reason."
+            }
             Section::Filters => {
                 "Saved searches, and which of them are pinned across the command bar."
             }
@@ -169,6 +184,10 @@ impl Section {
     pub fn keywords(self) -> &'static str {
         match self {
             Section::Accounts => "account address imap smtp password oauth signature server remove",
+            Section::Filtering => {
+                "filtering filtered spam promotion notification receipt shipping social \
+                 automated updates archive never pinned restore sweep marker"
+            }
             Section::Filters => "saved search query pinned command bar filter",
             Section::Composing => "signature reply forward quote compose",
             Section::Appearance => "theme dark light density row height avatars hover font",
@@ -186,8 +205,16 @@ impl Section {
     /// follows the system's scheme (`specs/007-postio-focus`
     /// classic-parity.md rows 18, 19) -- so a control there would change
     /// nothing a person could see.
+    ///
+    /// The Mac does not show Filtering: Focus's rules act only while Focus
+    /// runs, on the desktop or in the terminal (spec 007 US11, scenario 4),
+    /// so a switch there would turn something the Mac never does.
     pub fn shown_in(self, frontend: postio_core::Frontend) -> bool {
-        !(self == Section::Appearance && frontend == postio_core::Frontend::Focus)
+        use postio_core::Frontend;
+        !matches!(
+            (self, frontend),
+            (Section::Appearance, Frontend::Focus) | (Section::Filtering, Frontend::Macos)
+        )
     }
 
     /// The `config.toml` table this pane owns, for the footer line.
@@ -203,6 +230,7 @@ impl Section {
             // otherwise sends somebody to edit a file that does not describe
             // their account, which is worse than saying nothing.
             Section::Accounts => None,
+            Section::Filtering => Some("[focus]"),
             Section::Filters => Some("[saved_searches]"),
             Section::Composing => Some("[compose]"),
             Section::Appearance => Some("[ui]"),
@@ -223,6 +251,7 @@ impl Section {
             // The one people most need told, because every other pane in the
             // window *is* about the file.
             Section::Accounts => "accounts are in the encrypted store, not in config.toml",
+            Section::Filtering => "[focus] in config.toml · applied live",
             Section::Filters => "[saved_searches] in config.toml · applied live",
             Section::Composing => "[compose] in config.toml · applied live",
             Section::Appearance => "[ui] in config.toml · applied live",
@@ -349,6 +378,7 @@ mod tests {
             focus,
             [
                 Section::Accounts,
+                Section::Filtering,
                 Section::Filters,
                 Section::Composing,
                 Section::Keyboard,
@@ -360,9 +390,41 @@ mod tests {
         assert!(
             Section::ALL
                 .into_iter()
-                .all(|section| section.shown_in(postio_core::Frontend::Macos)),
-            "macOS shows all eight"
+                .all(|section| section.shown_in(postio_core::Frontend::Terminal)),
+            "the terminal shows all nine: filtering runs while it has the store"
         );
+    }
+
+    #[test]
+    fn macos_shows_no_filtering_page_because_filtering_does_not_run_there() {
+        // Focus's rules act only while Focus runs, on the desktop or in the
+        // terminal (spec 007 US11, scenario 4): a switch on the Mac would
+        // turn something the Mac never does.
+        let macos: Vec<Section> = Section::ALL
+            .into_iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Macos))
+            .collect();
+        assert!(!macos.contains(&Section::Filtering), "{macos:?}");
+        assert_eq!(macos.len(), Section::ALL.len() - 1, "{macos:?}");
+    }
+
+    #[test]
+    fn filtering_is_a_mail_page_over_the_focus_table() {
+        assert_eq!(Section::Filtering.label(), "Filtering");
+        assert_eq!(Section::Filtering.group(), Group::Mail);
+        assert_eq!(Section::Filtering.table(), Some("[focus]"));
+        let said = Section::Filtering.description();
+        assert!(said.contains("reason"), "{said:?}");
+        // Found by what a person would type looking for it.
+        for word in ["spam", "promotion", "filtered", "never"] {
+            assert!(
+                Section::Filtering.keywords().contains(word),
+                "{word} finds Filtering"
+            );
+        }
+        let text = "[ui]\ndensity = \"compact\"\n\n[focus.filter]\nnever = []\n\n[focus]\nfiltering = false\n";
+        assert_eq!(find_section(text, Section::Filtering), Some(3));
+        assert_eq!(section_at_line(text, 7), Some(Section::Filtering));
     }
 
     const SAMPLE: &str = "\

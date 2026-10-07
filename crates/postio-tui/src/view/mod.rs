@@ -778,6 +778,32 @@ mod tests {
     }
 
     #[test]
+    fn the_filtering_section_says_what_filtering_does_and_where_it_lives() {
+        // The desktop's words (`postio_ui::filtering`), and the file is where
+        // the terminal edits it, as every section that owns a table.
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = with_places((200, 30));
+        update(
+            &mut app,
+            Input::Key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::ALT)),
+        );
+        while app.settings().expect("open").current() != postio_ui::settings::Section::Filtering {
+            update(
+                &mut app,
+                Input::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            );
+        }
+        let screen = screen(200, 30, &app);
+        for said in [
+            postio_ui::filtering::state(false).as_str(),
+            postio_ui::filtering::KEPT,
+            "Lives in config.toml, [focus]. Enter edits it there, in $EDITOR.",
+        ] {
+            assert!(screen.contains(said), "{said} missing:\n{screen}");
+        }
+    }
+
+    #[test]
     fn the_privacy_section_shows_what_left_this_machine() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = with_places((160, 30));

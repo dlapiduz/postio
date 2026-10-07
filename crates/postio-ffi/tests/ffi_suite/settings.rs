@@ -112,7 +112,10 @@ fn appearance_is_unreadable_from_a_file_that_will_not_parse() {
 }
 
 #[test]
-fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
+fn the_nav_lists_the_macs_eight_sections_by_human_name_under_two_headings() {
+    // Filtering is not among them: Focus's rules act only while Focus runs,
+    // on the desktop or in the terminal (spec 007 US11, scenario 4), so the
+    // Mac has nothing for its switch to turn.
     let sections = settings_sections();
     let labels: Vec<&str> = sections.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(
@@ -127,7 +130,7 @@ fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
             "Privacy",
             "Config file",
         ],
-        "the nav order and names are the ones the GTK window already shows"
+        "the nav order and names are the shared table's"
     );
 
     // The grouping is the nav's shape, and a frontend that guessed it would
