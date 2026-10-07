@@ -557,6 +557,13 @@ pub fn title(kind: postio_model::DraftKind) -> &'static str {
     }
 }
 
+/// What the composer says when the message a reply or forward answers has
+/// no body here yet: the quote below the attribution is not there, and the
+/// person should not send believing it is. `None` when the body is local.
+pub fn unquoted_note(source: &postio_model::Message) -> Option<&'static str> {
+    (!source.sync.body_state.has_body()).then_some("Original still downloading \u{2014} not quoted")
+}
+
 /// What the subtitle says will be sent: "Plain text · 58 words", or "Rich
 /// text" once the body carries structure the text part cannot (the
 /// composer sends an HTML part only then).
@@ -645,6 +652,24 @@ mod frame_tests {
         assert_eq!(summary(&draft), "Plain text \u{b7} 1 word");
         draft.body.html = Some("<p><b>One</b></p>".to_owned());
         assert_eq!(summary(&draft), "Rich text \u{b7} 1 word");
+    }
+
+    #[test]
+    fn a_message_without_its_body_says_it_is_not_quoted() {
+        use postio_model::{BodyState, Message};
+        let mut source = Message::new(
+            AccountId::UNASSIGNED,
+            postio_model::ids::MailboxId::UNASSIGNED,
+            chrono::Utc::now(),
+        );
+        for state in [BodyState::NotFetched, BodyState::HeadersOnly] {
+            source.sync.body_state = state;
+            assert!(unquoted_note(&source).is_some(), "{state:?} said nothing");
+        }
+        for state in [BodyState::Partial, BodyState::Full] {
+            source.sync.body_state = state;
+            assert_eq!(unquoted_note(&source), None, "{state:?} has a body");
+        }
     }
 
     #[test]

@@ -366,3 +366,38 @@ pub fn escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row() {
         );
     });
 }
+
+/// A reply to a message whose body has not arrived says so in the composer
+/// instead of leaving an attribution with nothing under it.
+pub fn a_reply_to_a_message_still_downloading_says_it_is_not_quoted() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j", "e"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "e opened no composer"
+        );
+        let dialog = window.compose_dialog().expect("the compose dialog");
+        assert!(
+            crate::settle_until(async || {
+                support::texts(&dialog)
+                    .iter()
+                    .any(|text| text.contains("Original still downloading"))
+            })
+            .await,
+            "the composer says nothing about the missing quote: {:?}",
+            support::texts(&dialog)
+        );
+    });
+}

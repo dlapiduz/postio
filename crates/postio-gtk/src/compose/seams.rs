@@ -201,6 +201,15 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
                 None => Vec::new(),
             };
             let generation = weak.upgrade().map(|composer| composer.generation());
+            // A source whose body has not arrived quotes nothing: ask for it
+            // for the next time, and say so rather than leave an attribution
+            // with nothing under it.
+            let unquoted = found
+                .as_ref()
+                .and_then(|(source, _)| postio_ui::compose::unquoted_note(source));
+            if unquoted.is_some() {
+                client.fetch_body(message);
+            }
             answer(found);
             let (Some(composer), Some(frame)) = (weak.upgrade(), frame.upgrade()) else {
                 return;
@@ -208,13 +217,19 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
             // Only a reply the answer just opened: a refusal (a draft still
             // open) leaves the composition where it was.
             let opened = Some(composer.generation()) != generation;
-            if !opened || composer.draft().kind == postio_model::DraftKind::Forward {
+            if !opened {
                 return;
             }
-            let ids = labels.iter().map(|label| label.id).collect();
-            frame.know(labels);
-            composer.start_with_labels(ids);
-            frame.from_the_thread(&composer);
+            if composer.draft().kind != postio_model::DraftKind::Forward {
+                let ids = labels.iter().map(|label| label.id).collect();
+                frame.know(labels);
+                composer.start_with_labels(ids);
+                frame.from_the_thread(&composer);
+            }
+            // Last: opening a composition clears the note.
+            if let Some(note) = unquoted {
+                frame.note(note);
+            }
         });
     });
 }
