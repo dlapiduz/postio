@@ -1473,6 +1473,10 @@ const CASES: &[(&str, fn())] = &[
         "settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows",
         settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows as fn(),
     ),
+    (
+        "settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings",
+        settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings as fn(),
+    ),
 ];
 
 use gtk::glib;

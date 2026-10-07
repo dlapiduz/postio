@@ -824,3 +824,88 @@ pub fn filtering_turned_off_in_settings_is_written_and_the_strip_follows() {
         );
     });
 }
+
+/// Settings' Filtering lists can be undone where they are read: a pinned
+/// sender has "Filter again", a turned-off marker "Turn back on", and each
+/// writes `config.toml` without the entry, leaving the rest of it.
+pub fn a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
+            .await;
+        let (window, _directory, path) = open_under(
+            &fixture,
+            "[focus]\nfiltering = true\n\n[focus.filter]\nnever = [\"@example.net\"]\n\
+             stop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }]\n",
+        )
+        .await;
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        let row = section_rows(&dialog)
+            .into_iter()
+            .find(|(name, _)| name == "Filtering")
+            .map(|(_, row)| row)
+            .expect("Settings lists Filtering");
+        support::click(&window, &row, 1);
+        assert!(
+            crate::settle_until(async || pane_title(&dialog) == "Filtering").await,
+            "Filtering shows its page"
+        );
+        let said = || support::texts(&dialog);
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text == "Filter again")).await,
+            "a pinned sender offers Filter again: {:?}",
+            said()
+        );
+        assert!(
+            said().iter().any(|text| text == "Turn back on"),
+            "a turned-off marker offers Turn back on: {:?}",
+            said()
+        );
+
+        let again = support::only(&dialog, "postio-settings-filtering-undo-never");
+        support::click(&window, &again, 1);
+        assert!(
+            crate::settle_until(async || {
+                !std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("@example.net")
+            })
+            .await,
+            "Filter again wrote the file without the pin: {}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+        let back = support::only(&dialog, "postio-settings-filtering-undo-stopped");
+        support::click(&window, &back, 1);
+        assert!(
+            crate::settle_until(async || {
+                !std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("news@ledger.example")
+            })
+            .await,
+            "Turn back on wrote the file without the marker: {}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .contains("filtering = true"),
+            "and left the rest of the file"
+        );
+        assert!(
+            crate::settle_until(async || {
+                !said()
+                    .iter()
+                    .any(|text| text == "Filter again" || text == "Turn back on")
+            })
+            .await,
+            "both lists are empty on the page: {:?}",
+            said()
+        );
+    });
+}

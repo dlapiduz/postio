@@ -518,9 +518,15 @@ fn listed_box(class: &str, name: &str) -> gtk::Box {
     column
 }
 
-/// `column` holding one line per entry of `listed`, and `empty` showing in
-/// its place when there are none.
-fn fill_listed(column: &gtk::Box, empty: &gtk::Label, listed: &[postio_ui::filtering::Listed]) {
+/// `column` holding one line per entry of `listed`, each with the control
+/// that takes it back, and `empty` showing in its place when there are none.
+fn fill_listed(
+    column: &gtk::Box,
+    empty: &gtk::Label,
+    listed: &[postio_ui::filtering::Listed],
+    undo_class: &str,
+    on_undo: &std::rc::Rc<dyn Fn(postio_ui::filtering::Undo)>,
+) {
     while let Some(child) = column.first_child() {
         column.remove(&child);
     }
@@ -531,11 +537,26 @@ fn fill_listed(column: &gtk::Box, empty: &gtk::Label, listed: &[postio_ui::filte
             line.add_css_class("postio-settings-filtering-entry-inert");
         }
         line.set_xalign(0.0);
+        line.set_hexpand(true);
         line.set_wrap(true);
         line.set_wrap_mode(pango::WrapMode::WordChar);
         line.set_selectable(false);
-        line.set_accessible_role(gtk::AccessibleRole::ListItem);
-        column.append(&line);
+        let undo = crate::widgets::button::button(
+            entry.undo.label(),
+            crate::widgets::Kind::Ghost,
+            crate::widgets::Size::Small,
+        );
+        undo.add_css_class("postio-settings-filtering-undo");
+        undo.add_css_class(undo_class);
+        undo.set_valign(gtk::Align::Center);
+        let what = entry.undo.clone();
+        let on_undo = std::rc::Rc::clone(on_undo);
+        undo.connect_clicked(move |_| on_undo(what.clone()));
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+        row.set_accessible_role(gtk::AccessibleRole::ListItem);
+        row.append(&line);
+        row.append(&undo);
+        column.append(&row);
     }
     column.set_visible(!listed.is_empty());
     empty.set_visible(listed.is_empty());
@@ -3458,9 +3479,28 @@ impl SettingsPanel {
             .set_key(imp.keymap.borrow().binding(CommandId::GoToFiltered));
         controls.keys.set(&page.keys);
         controls.keys.widget().set_visible(!page.keys.is_empty());
-        fill_listed(&controls.never, &controls.never_empty, &page.never);
+        let panel = self.downgrade();
+        let on_undo: std::rc::Rc<dyn Fn(postio_ui::filtering::Undo)> =
+            std::rc::Rc::new(move |undo| {
+                if let Some(panel) = panel.upgrade() {
+                    panel.take_back(&undo);
+                }
+            });
+        fill_listed(
+            &controls.never,
+            &controls.never_empty,
+            &page.never,
+            "postio-settings-filtering-undo-never",
+            &on_undo,
+        );
         controls.never_empty.set_label(&page.never_empty);
-        fill_listed(&controls.stopped, &controls.stopped_empty, &page.stopped);
+        fill_listed(
+            &controls.stopped,
+            &controls.stopped_empty,
+            &page.stopped,
+            "postio-settings-filtering-undo-stopped",
+            &on_undo,
+        );
     }
 
     /// Builds Filtering's controls once -- see
@@ -3541,6 +3581,24 @@ impl SettingsPanel {
             stopped_empty,
         });
         imp.filtering_controls.get().expect("just set")
+    }
+
+    /// Writes the buffer without the `[focus.filter]` entry `undo` names:
+    /// the same write the Filtered list's `R` makes, reversed.
+    fn take_back(&self, undo: &postio_ui::filtering::Undo) {
+        use postio_ui::filtering::Undo;
+        let text = self.text();
+        let written = match undo {
+            Undo::Never(entry) => postio_config::focus_edit::set_never(&text, entry, false),
+            Undo::Marker { sender, kind } => {
+                postio_config::focus_edit::set_stop_marker(&text, sender, kind, false)
+            }
+        };
+        match written {
+            Ok(Some(written)) => self.imp().buffer.set_text(&written),
+            Ok(None) => {}
+            Err(error) => tracing::error!(%error, "could not take back a filter entry: {error}"),
+        }
     }
 
     /// Turns `[focus] filtering` on or off in the buffer, which reaches the
@@ -4766,7 +4824,10 @@ impl SettingsPanel {
         imp.status.set_xalign(0.0);
         imp.status.set_hexpand(true);
         imp.status.add_css_class("postio-settings-footer");
-        imp.status.set_ellipsize(pango::EllipsizeMode::End);
+        // An error line is the one thing on the strip that must be read
+        // whole, so it wraps rather than ending in an ellipsis.
+        imp.status.set_wrap(true);
+        imp.status.set_wrap_mode(pango::WrapMode::WordChar);
 
         // The drawing puts `Open in $EDITOR` on the strip, so it is here.
         // The command already had a binding and a palette entry; what it did

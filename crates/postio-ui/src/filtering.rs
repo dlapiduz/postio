@@ -72,7 +72,40 @@ pub struct Listed {
     /// Whether the entry does what it was written to do. One that does not
     /// says why, in the validator's terms.
     pub acts: bool,
+    /// What taking the entry back writes, and what the control is called.
+    pub undo: Undo,
 }
+
+/// The write that takes a listed entry back, as `focus_edit` spells it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Undo {
+    /// Remove this entry from `[focus.filter] never`: filter the sender again.
+    Never(String),
+    /// Remove this `{ sender, kind }` from `stop_markers`: turn the marker
+    /// back on.
+    Marker {
+        /// The entry's sender, as written.
+        sender: String,
+        /// The entry's kind, as written.
+        kind: String,
+    },
+}
+
+impl Undo {
+    /// What the control that does it says.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Undo::Never(_) => NEVER_UNDO,
+            Undo::Marker { .. } => STOPPED_UNDO,
+        }
+    }
+}
+
+/// The control on a pinned sender: the sender is filtered like anyone else.
+pub const NEVER_UNDO: &str = "Filter again";
+
+/// The control on a turned-off marker.
+pub const STOPPED_UNDO: &str = "Turn back on";
 
 /// The page for `focus`, with `filtered_today` messages filtered so far
 /// today when the count is known, its keys read from `keymap`.
@@ -176,14 +209,20 @@ fn who(entry: &str) -> Option<String> {
 
 /// A `never` entry, as the page lists it.
 fn never(entry: &str) -> Listed {
+    let undo = Undo::Never(entry.to_owned());
     match who(entry) {
-        Some(says) => Listed { says, acts: true },
+        Some(says) => Listed {
+            says,
+            acts: true,
+            undo,
+        },
         None => Listed {
             says: format!(
                 "{} \u{b7} neither an address nor a whole domain, so it pins nobody",
                 entry.trim()
             ),
             acts: false,
+            undo,
         },
     }
 }
@@ -195,10 +234,15 @@ fn stopped(sender: &str, kind: &str, well_formed: bool) -> Listed {
         "todo" => Some("To-dos"),
         _ => None,
     };
+    let undo = Undo::Marker {
+        sender: sender.to_owned(),
+        kind: kind.to_owned(),
+    };
     match (well_formed, kinds, who(sender)) {
         (true, Some(kinds), Some(who)) => Listed {
             says: format!("{kinds} in mail from {who}"),
             acts: true,
+            undo,
         },
         _ => Listed {
             says: format!(
@@ -207,6 +251,7 @@ fn stopped(sender: &str, kind: &str, well_formed: bool) -> Listed {
                 kind.trim()
             ),
             acts: false,
+            undo,
         },
     }
 }
@@ -277,24 +322,47 @@ mod tests {
             None,
             Keymap::defaults(),
         );
+        let seen: Vec<(&str, bool)> = page
+            .never
+            .iter()
+            .map(|entry| (entry.says.as_str(), entry.acts))
+            .collect();
         assert_eq!(
-            page.never,
+            seen,
             [
-                Listed {
-                    says: "ada@example.org".to_owned(),
-                    acts: true
-                },
-                Listed {
-                    says: "everyone at example.net".to_owned(),
-                    acts: true
-                },
-                Listed {
-                    says: "grace \u{b7} neither an address nor a whole domain, so it pins nobody"
-                        .to_owned(),
-                    acts: false
-                },
+                ("ada@example.org", true),
+                ("everyone at example.net", true),
+                (
+                    "grace \u{b7} neither an address nor a whole domain, so it pins nobody",
+                    false
+                ),
             ]
         );
+    }
+
+    #[test]
+    fn each_listed_entry_carries_the_write_that_takes_it_back() {
+        let page = page(
+            &focus(
+                "[focus.filter]\nnever = [\"ada@example.org\"]\nstop_markers = [\
+                 { sender = \"news@ledger.example\", kind = \"question\" }]\n",
+            ),
+            None,
+            Keymap::defaults(),
+        );
+        assert_eq!(
+            page.never[0].undo,
+            Undo::Never("ada@example.org".to_owned())
+        );
+        assert_eq!(page.never[0].undo.label(), "Filter again");
+        assert_eq!(
+            page.stopped[0].undo,
+            Undo::Marker {
+                sender: "news@ledger.example".to_owned(),
+                kind: "question".to_owned()
+            }
+        );
+        assert_eq!(page.stopped[0].undo.label(), "Turn back on");
     }
 
     #[test]
@@ -340,23 +408,21 @@ mod tests {
             None,
             Keymap::defaults(),
         );
+        let seen: Vec<(&str, bool)> = page
+            .stopped
+            .iter()
+            .map(|entry| (entry.says.as_str(), entry.acts))
+            .collect();
         assert_eq!(
-            page.stopped,
+            seen,
             [
-                Listed {
-                    says: "Questions in mail from news@ledger.example".to_owned(),
-                    acts: true
-                },
-                Listed {
-                    says: "To-dos in mail from everyone at example.net".to_owned(),
-                    acts: true
-                },
-                Listed {
-                    says: "news@ledger.example \u{b7} invite \u{b7} not a sender and a kind of \
-                           marker, so it turns nothing off"
-                        .to_owned(),
-                    acts: false
-                },
+                ("Questions in mail from news@ledger.example", true),
+                ("To-dos in mail from everyone at example.net", true),
+                (
+                    "news@ledger.example \u{b7} invite \u{b7} not a sender and a kind of \
+                     marker, so it turns nothing off",
+                    false
+                ),
             ]
         );
         assert!(STOPPED_EMPTY.starts_with("None."));
