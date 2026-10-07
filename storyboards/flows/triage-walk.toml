@@ -6,11 +6,11 @@
 # seed is long enough that nothing runs out.
 #
 # Re-expressed for Focus (T265): its cursor starts on no row, so `j` puts it
-# on index 0. Red on #1746 until it lands: the archived row's cursor is not
+# on index 0. It was red on #1746, where the archived row's cursor was not
 # handed to the row below.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
-proof  = "open"
+proof  = "pinned"
 seed   = "thirty-threads"
 
 [[step]]

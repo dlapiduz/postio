@@ -1209,6 +1209,10 @@ const CASES: &[(&str, fn())] = &[
         selection::three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three as fn(),
     ),
     (
+        "selection::archive_hands_the_cursor_to_the_row_below",
+        selection::archive_hands_the_cursor_to_the_row_below as fn(),
+    ),
+    (
         "selection::escape_clears_the_selection_and_the_cursor_stays",
         selection::escape_clears_the_selection_and_the_cursor_stays as fn(),
     ),

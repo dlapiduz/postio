@@ -97,9 +97,7 @@ impl ListPane {
 
         // The cursor, not the selection: GTK's name, Postio's meaning
         // (`postio_ui::selection`). What `a` would archive is kept apart.
-        let cursor = gtk::SingleSelection::new(Some(feed.list().clone()));
-        cursor.set_autoselect(false);
-        cursor.set_can_unselect(true);
+        let cursor = keep_the_cursor(feed.list());
         let view = gtk::ListView::new(Some(cursor.clone()), Some(factory));
         view.set_header_factory(Some(&day_headings(feed.list())));
         // A page landing may move where a day starts.
@@ -380,6 +378,51 @@ fn hold_the_top(
         }
     });
     pinned
+}
+
+/// The cursor over `list`, which keeps its place when its row goes.
+///
+/// Without autoselect -- the cursor starts on no row -- a
+/// `GtkSingleSelection` whose row is removed selects nothing, so after an
+/// archive the next `a` acted on nothing (#1746). The row that slides into
+/// the removed one's place takes the cursor instead,
+/// by `postio_ui::selection::cursor_after_change`.
+///
+/// A signal's handlers run in the order they were connected, so the one
+/// connected to `list` before the selection exists sees the cursor as it was
+/// before the change, and the selection's own `items-changed` after it.
+fn keep_the_cursor(list: &super::model::FocusList) -> gtk::SingleSelection {
+    let weak: Rc<glib::WeakRef<gtk::SingleSelection>> = Rc::default();
+    let before = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
+    list.connect_items_changed({
+        let weak = weak.clone();
+        let before = before.clone();
+        move |_, _, _, _| {
+            if let Some(cursor) = weak.upgrade() {
+                before.set(cursor.selected());
+            }
+        }
+    });
+    let cursor = gtk::SingleSelection::new(Some(list.clone()));
+    cursor.set_autoselect(false);
+    cursor.set_can_unselect(true);
+    weak.set(Some(&cursor));
+    cursor.connect_items_changed(move |cursor, position, removed, added| {
+        let was = before.replace(gtk::INVALID_LIST_POSITION);
+        if was == gtk::INVALID_LIST_POSITION || cursor.selected() != gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        if let Some(at) = postio_ui::selection::cursor_after_change(
+            Some(was),
+            position,
+            removed,
+            added,
+            cursor.n_items(),
+        ) {
+            cursor.set_selected(at);
+        }
+    });
+    cursor
 }
 
 /// How tall the list's first day heading asks to be. Measured, not read

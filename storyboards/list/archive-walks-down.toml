@@ -3,13 +3,13 @@
 # The defect: archiving or deleting under the cursor moved the cursor
 # somewhere else, so the next `a` archived a message the person never looked
 # at. The classic app's #1687 was fixed and pinned here; Focus has its own
-# form of it, #1746: the archived row's cursor is not handed to the row that
-# takes its place, so the cursor is gone and the next `a` archives nothing.
-# Red until #1746 lands. Focus starts with no cursor row, so the two `j`
-# leave it on index 0 and then 1.
+# form of it, #1746: the archived row's cursor was not handed to the row
+# that takes its place, so the cursor was gone and the next `a` archived
+# nothing. Focus starts with no cursor row, so the two `j` leave it on index
+# 0 and then 1.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
-proof  = "open"
+proof  = "pinned"
 
 [[step]]
 id      = "down"

@@ -50,6 +50,46 @@ pub fn three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three() {
     });
 }
 
+/// `a a` works down the list (#1746): the row below the archived one takes
+/// the cursor, so the second `a` archives it rather than nothing.
+pub fn archive_hands_the_cursor_to_the_row_below() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        support::keys(&window, &["j", "j"]);
+        let cursor = || window.pane().expect("the inbox").cursor().selected();
+        assert_eq!(cursor(), 1, "two j put the cursor on the second row");
+
+        support::keys(&window, &["a"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 4).await,
+            "a archived the cursor's row: {:?}",
+            support::subjects(&window)
+        );
+        assert_eq!(
+            cursor(),
+            1,
+            "the row below slid into the archived one's place and holds the cursor"
+        );
+
+        support::keys(&window, &["a"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "the second a archived the row that took the cursor: {:?}",
+            support::subjects(&window)
+        );
+        assert_eq!(cursor(), 1, "and the cursor is still on the second row");
+        assert_eq!(
+            support::subjects(&window)[0],
+            "First",
+            "the row above the cursor was never touched"
+        );
+    });
+}
+
 pub fn escape_clears_the_selection_and_the_cursor_stays() {
     crate::gtk_case(async {
         if !support::display() {

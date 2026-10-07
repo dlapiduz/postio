@@ -6,15 +6,15 @@
 # cursor must stay at the same index (the next row slid into it). On the
 # thirty-six-thread seed so there is always a row below.
 #
-# Focus's form of the defect is #1746: the cursor is not handed to the row
-# below, so after the first delete there is no cursor and the next presses
-# delete nothing. Red until #1746 lands.
+# Focus's form of the defect is #1746: the cursor was not handed to the row
+# below, so after the first delete there was no cursor and the next presses
+# deleted nothing.
 #
 # Re-expressed for Focus (T265): its cursor starts on no row, so two `j`
 # leave it on index 1, and `delete` is Focus's own binding for it.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
-proof  = "open"
+proof  = "pinned"
 seed   = "thirty-threads"
 
 [[step]]
