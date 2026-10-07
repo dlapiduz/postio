@@ -241,5 +241,35 @@ pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
             "the draft's subject: {:?}",
             field(&dialog, "Subject")
         );
+        // Recipient and subject are written: writing continues in the body,
+        // the caret after what is there, not in To.
+        let composer = window.composer().expect("the composer");
+        assert!(
+            crate::settle_until(async || {
+                composer.focused_field() == Some(postio_widgets::composer::Field::Body)
+            })
+            .await,
+            "the keyboard is in {:?}, not the body of a draft already addressed",
+            composer.focused_field()
+        );
+        assert!(
+            crate::settle_until(async || {
+                composer.test_body_eval(
+                    "(() => { const s = window.getSelection(); \
+                       if (!s.rangeCount) return 'none'; \
+                       const end = document.createRange(); \
+                       end.selectNodeContents(document.body); end.collapse(false); \
+                       return s.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, end) === 0 \
+                         ? 'end' : 'elsewhere'; })()",
+                ) == "end"
+            })
+            .await,
+            "the caret is not at the end of the resumed body: {}",
+            composer.test_body_eval(
+                "(() => { const s = window.getSelection(); \
+                   return s.rangeCount ? s.anchorNode.nodeName + ':' + s.anchorOffset \
+                     + ' of ' + document.body.innerText.length : 'none'; })()"
+            )
+        );
     });
 }

@@ -182,6 +182,20 @@ pub fn seed(view: &webkit6::WebView, inner_html: &str) {
     view.load_html(&shell, Some(EDITOR_BASE_URI));
 }
 
+/// Script that puts the caret after everything in the body.
+fn run_caret_end(view: &webkit6::WebView) {
+    view.evaluate_javascript(
+        "const r = document.createRange(); \
+         r.selectNodeContents(document.body); r.collapse(false); \
+         const s = window.getSelection(); \
+         s.removeAllRanges(); s.addRange(r);",
+        None,
+        None,
+        None::<&gtk::gio::Cancellable>,
+        |_| {},
+    );
+}
+
 /// How the surface should be drawn right now.
 ///
 /// The scheme comes from libadwaita rather than from the engine: a web view
@@ -404,6 +418,9 @@ struct EditorState {
     /// which is tens of milliseconds, and it would otherwise all fall on the
     /// first composition somebody writes. See [`Editor::warm`].
     loaded: Cell<bool>,
+    /// The caret goes to the end of the body once the document being loaded
+    /// is there: a script run before then lands on the page being replaced.
+    caret_end_pending: Cell<bool>,
     /// The palette variables a host's column supplies, each read from a
     /// probe its stylesheet colours ([`Editor::flow_in`]); empty for a
     /// surface that keeps the generated palette.
@@ -465,6 +482,7 @@ impl Editor {
             format: Cell::new(FormatState::default()),
             format_watchers: RefCell::new(Vec::new()),
             loaded: Cell::new(false),
+            caret_end_pending: Cell::new(false),
             flow: RefCell::default(),
         });
 
@@ -574,6 +592,12 @@ impl Editor {
         let state = Rc::downgrade(&self.state);
         self.view.connect_load_changed(move |view, event| {
             if event == webkit6::LoadEvent::Finished
+                && let Some(state) = state.upgrade()
+                && state.caret_end_pending.take()
+            {
+                run_caret_end(view);
+            }
+            if event == webkit6::LoadEvent::Finished
                 && view.is_mapped()
                 && let Some(state) = state.upgrade()
             {
@@ -610,6 +634,7 @@ impl Editor {
     pub fn load(&self, document: Document) {
         self.state.history.borrow_mut().clear();
         self.state.last_edit.set(None);
+        self.state.caret_end_pending.set(false);
         self.seed(&document.editor_html());
         self.state.loaded.set(true);
         *self.state.document.borrow_mut() = document;
@@ -784,6 +809,17 @@ impl Editor {
              const s = window.getSelection(); \
              s.removeAllRanges(); s.addRange(r);",
         );
+    }
+
+    /// Put the caret at the end of the body — where a draft that was left
+    /// half written is picked up again. Waits for the document being loaded
+    /// when one is on its way.
+    pub fn place_caret_end(&self) {
+        if self.view.is_loading() || !self.state.loaded.get() {
+            self.state.caret_end_pending.set(true);
+        } else {
+            run_caret_end(&self.view);
+        }
     }
 
     /// Pump until the editing shell is loaded and editable.

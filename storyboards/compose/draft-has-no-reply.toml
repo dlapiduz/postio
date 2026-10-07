@@ -24,5 +24,5 @@ expect  = "Drafts lists the left-over draft, Notes for Thursday, under the curso
 
 [[step]]
 command = "open_message"
-check   = { composer.open = true, view = "composer" }
-expect  = "Opening the draft puts it back in the composer, where it can be finished. It is not shown as received mail with a Reply button."
+check   = { composer.open = true, view = "composer", keyboard.field = "body" }
+expect  = "Opening the draft puts it back in the composer, where it can be finished, the keyboard at the end of its body because its recipient and subject are already written. It is not shown as received mail with a Reply button."

@@ -125,6 +125,19 @@ pub fn first_field(kind: DraftKind) -> Field {
     }
 }
 
+/// Where the keyboard goes when `draft` is put in front of a person: where
+/// writing continues. A draft whose recipient and subject are already
+/// written goes to the body, as a reply does; an empty To still gets the
+/// keyboard first.
+pub fn starting_field(draft: &Draft) -> Field {
+    let addressed = !draft.to.is_empty() && !draft.subject.trim().is_empty();
+    if addressed {
+        Field::Body
+    } else {
+        first_field(draft.kind)
+    }
+}
+
 /// What the composer's heading says it is.
 ///
 /// The vocabulary is the app's: **Compose**, never "New" or "Write".
@@ -928,6 +941,13 @@ impl Composer {
         self.set_status(UNSAVED);
         self.take_pane();
         self.set_visible(true);
+        // Writing continues where it stopped: a draft that is already
+        // addressed takes the keyboard to the end of its body, not the top
+        // where a fresh message starts.
+        let continuing = starting_field(&self.imp().draft.borrow()) == Field::Body;
+        if continuing {
+            self.imp().body.place_caret_end();
+        }
         self.focus_first();
 
         for handler in self.imp().opened.borrow().iter() {
@@ -2683,7 +2703,7 @@ impl Composer {
     /// tick can be the one the mapping happens in.
     fn focus_first(&self) {
         let imp = self.imp();
-        let field: gtk::Widget = self.widget_for(first_field(imp.draft.borrow().kind));
+        let field: gtk::Widget = self.widget_for(starting_field(&imp.draft.borrow()));
         if !field.grab_focus() {
             let ticks = Cell::new(0u8);
             field.clone().add_tick_callback(move |field, _| {
@@ -4074,6 +4094,18 @@ mod tests {
         for kind in [DraftKind::Reply, DraftKind::ReplyAll] {
             assert_eq!(first_field(kind), Field::Body, "{kind:?}");
         }
+    }
+
+    #[test]
+    fn a_draft_with_recipient_and_subject_starts_in_the_body() {
+        let mut draft = Draft::new(AccountId::new(1));
+        assert_eq!(starting_field(&draft), Field::To, "empty To comes first");
+        draft.subject = "Notes".to_owned();
+        assert_eq!(starting_field(&draft), Field::To, "nobody to send it to");
+        draft.to = vec![EmailAddress::new(Some("Ada"), "ada@example.com")];
+        assert_eq!(starting_field(&draft), Field::Body);
+        draft.subject.clear();
+        assert_eq!(starting_field(&draft), Field::To, "no subject yet");
     }
 
     #[test]
