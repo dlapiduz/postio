@@ -297,7 +297,7 @@ pub const TODAY: &[Row] = &[
         name: "Hollis Varga",
         address: "hollis@example.com",
         subject: "Invitation: Harbor design review",
-        preview: "Tuesday 10:00\u{2013}10:45, Room 3B. Agenda: navigation, empty states, the export flow.",
+        preview: "Friday 10:00\u{2013}10:45, Room 3B. Agenda: navigation, empty states, the export flow.",
         minutes: 7,
         unread: true,
         labels: &["Harbor"],
@@ -346,7 +346,7 @@ pub const TODAY: &[Row] = &[
         attachment: false,
         messages: 6,
         ask: Some(Ask::Todo {
-            days: 4,
+            days: 1,
             sentence: "Please leave comments by Wednesday",
         }),
     },
@@ -421,7 +421,7 @@ pub const TODAY: &[Row] = &[
         attachment: true,
         messages: 1,
         ask: Some(Ask::Todo {
-            days: 2,
+            days: 6,
             sentence: "Please sign and return the attached form by Monday.",
         }),
     },
@@ -510,7 +510,7 @@ pub const TODAY: &[Row] = &[
         attachment: false,
         messages: 1,
         ask: Some(Ask::Todo {
-            days: 1,
+            days: 5,
             sentence: "Please clear the counters by Sunday night.",
         }),
     },
@@ -1303,4 +1303,64 @@ pub fn start(
         account,
         _blobs: blobs_dir,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Datelike, TimeZone, Weekday};
+
+    const WEEKDAYS: [(&str, Weekday); 7] = [
+        ("Monday", Weekday::Mon),
+        ("Tuesday", Weekday::Tue),
+        ("Wednesday", Weekday::Wed),
+        ("Thursday", Weekday::Thu),
+        ("Friday", Weekday::Fri),
+        ("Saturday", Weekday::Sat),
+        ("Sunday", Weekday::Sun),
+    ];
+
+    /// The first weekday a text names, if any.
+    fn weekday_named(text: &str) -> Option<Weekday> {
+        WEEKDAYS
+            .iter()
+            .filter_map(|(name, day)| text.find(name).map(|at| (at, *day)))
+            .min_by_key(|(at, _)| *at)
+            .map(|(_, day)| day)
+    }
+
+    /// A marker's date agrees with the weekday its own words name, on the
+    /// clock the storyboards freeze (Tuesday 2 June): a person reads the
+    /// sentence and the date side by side.
+    #[test]
+    fn a_marker_date_agrees_with_the_weekday_its_row_names() {
+        let today = Utc.with_ymd_and_hms(2026, 6, 2, 16, 9, 0).unwrap();
+        let mut checked = 0;
+        for row in TODAY {
+            let Some(ask) = &row.ask else { continue };
+            let (words, date) = match ask {
+                Ask::Invite { .. } => (
+                    row.preview,
+                    marker(MessageId::new(1), ask, today).starts_at,
+                ),
+                Ask::Todo { sentence, .. } => {
+                    (*sentence, marker(MessageId::new(1), ask, today).due_at)
+                }
+                Ask::Question(_) => continue,
+            };
+            let Some(named) = weekday_named(words) else {
+                continue;
+            };
+            let date = date.expect("a dated marker").date_naive();
+            assert_eq!(
+                date.weekday(),
+                named,
+                "{:?} says {named} but its marker is {date}",
+                row.subject
+            );
+            assert!(date > today.date_naive(), "{:?} is in the past", row.subject);
+            checked += 1;
+        }
+        assert!(checked >= 4, "only {checked} rows were checked");
+    }
 }
