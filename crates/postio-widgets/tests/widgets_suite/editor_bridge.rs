@@ -366,3 +366,56 @@ pub fn a_loaded_page_takes_typing_at_the_start_of_the_body() {
         "typing into a fresh page did not land at the start of the body"
     );
 }
+
+/// The caret is drawn only while the body has the keyboard.
+///
+/// The page keeps a selection from load so that typing lands at the start,
+/// and WebKit draws that selection as a caret even while the keyboard is in
+/// To: a person looking for where to type saw the caret in the body and
+/// started the message there. The page paints it transparent until the web
+/// view has the keyboard, and the selection is untouched either way.
+pub fn the_caret_is_drawn_only_while_the_body_has_the_keyboard() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under the headless runner to exercise this)");
+        return;
+    }
+    let window = gtk::Window::new();
+    window.set_default_size(600, 400);
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let address = gtk::Entry::new();
+    let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_millis(1));
+    editor.widget().set_vexpand(true);
+    row.append(&address);
+    row.append(editor.widget());
+    window.set_child(Some(&row));
+    window.present();
+    address.grab_focus();
+
+    let mut quoted = Document::new();
+    quoted.blocks.push(paragraph("the quote"));
+    editor.load(quoted);
+    settle("the editor page to listen", || {
+        eval(editor.widget(), crate::support_compose::EDITOR_LISTENING) == "true"
+    });
+
+    let caret = "getComputedStyle(document.body).caretColor";
+    let selection = "String(window.getSelection().rangeCount)";
+    settle("the caret to be hidden while To has the keyboard", || {
+        eval(editor.widget(), caret) == "rgba(0, 0, 0, 0)"
+    });
+    assert_eq!(
+        eval(editor.widget(), selection),
+        "1",
+        "hiding the caret must keep the selection, so typing lands at the start"
+    );
+
+    editor.widget().grab_focus();
+    settle("the caret to be drawn once the body has the keyboard", || {
+        eval(editor.widget(), caret) != "rgba(0, 0, 0, 0)"
+    });
+
+    address.grab_focus();
+    settle("the caret to be hidden again when the keyboard leaves", || {
+        eval(editor.widget(), caret) == "rgba(0, 0, 0, 0)"
+    });
+}

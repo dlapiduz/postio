@@ -272,6 +272,18 @@ if (window.getSelection().rangeCount === 0 && document.body) {
     window.getSelection().addRange(start);
 }
 
+/* The caret is drawn only while the web view has the keyboard. The selection
+ * above is kept from load so that typing lands at the start of the body, but
+ * WebKit draws a selection as a caret whether or not the page has the
+ * keyboard: with the keyboard in To, a caret blinking in the body says "type
+ * here" and is wrong. Hiding the colour leaves the selection where it is. */
+function showCaret(on) {
+    document.documentElement.style.caretColor = on ? '' : 'transparent';
+}
+showCaret(document.hasFocus());
+window.addEventListener('focus', () => showCaret(true));
+window.addEventListener('blur', () => showCaret(false));
+
 /* Last, on purpose: every listener above is attached. The page's HTML makes
  * the body editable as soon as it is parsed, before this script runs at
  * document end, so an editable body says nothing about whether an edit will
