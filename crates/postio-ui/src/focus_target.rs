@@ -22,6 +22,17 @@ pub const TOAST_SECONDS: u32 = 8;
 /// Said when a send verb names a message that is no draft on its way.
 pub const NOT_BEING_SENT: &str = "That message is not one being sent";
 
+/// Said when a reply names a message still on its way out, or a draft: it
+/// has no other party yet, and answering it would be replying to oneself.
+pub const NO_REPLY_TO_OUTGOING: &str = "An outgoing message cannot be replied to";
+
+/// Whether a reply to a message in `state` is refused: a draft being written
+/// or on its way, or stopped. A message that was sent is mail like any other
+/// -- replying to your own sent message answers its recipients.
+pub fn refuses_reply(state: Option<postio_model::DraftState>) -> bool {
+    state.is_some_and(|state| state != postio_model::DraftState::Sent)
+}
+
 /// Said when `d` on a digest finds its rule gone from the configuration.
 pub const RULE_MISSING: &str = "That digest's rule is no longer in config.toml";
 
@@ -274,6 +285,22 @@ mod tests {
     use postio_model::listing::{MessageSummary, ThreadSummary};
 
     use super::*;
+
+    #[test]
+    fn only_a_message_not_yet_sent_refuses_a_reply() {
+        use postio_model::DraftState;
+        assert!(!refuses_reply(None));
+        assert!(!refuses_reply(Some(DraftState::Sent)));
+        for state in [
+            DraftState::Editing,
+            DraftState::Queued,
+            DraftState::Sending,
+            DraftState::Failed,
+            DraftState::Unconfirmed,
+        ] {
+            assert!(refuses_reply(Some(state)), "{state:?} answered a reply");
+        }
+    }
 
     fn row(id: i64, thread: Option<i64>, copies: &[i64]) -> FocusRow {
         FocusRow::conversation(ThreadSummary {

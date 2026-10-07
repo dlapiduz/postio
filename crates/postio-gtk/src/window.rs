@@ -1662,6 +1662,15 @@ impl FocusWindow {
                 Some(compose) => compose.dispatch(id),
                 None => self.offer_add_account_for_compose(),
             },
+            // Not on mail still on its way out (#1749): a notice says why.
+            CommandId::Reply | CommandId::ReplyAll
+                if postio_ui::focus_target::refuses_reply(self.aimed_send_state()) =>
+            {
+                self.imp()
+                    .toast
+                    .show_notice(postio_ui::focus_target::NO_REPLY_TO_OUTGOING);
+                self.follow_toast();
+            }
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 if let Some(compose) = self.compose() {
                     compose.dispatch(id);
@@ -2338,6 +2347,17 @@ impl FocusWindow {
             .filter(|reading| reading.is_open())
             .map(|reading| reading.shown());
         postio_ui::focus_target::aimed_message(open, self.cursor_row().as_ref())
+    }
+
+    /// The send state of the message a verb is aimed at: the open message's,
+    /// else the cursor's row.
+    fn aimed_send_state(&self) -> Option<postio_model::DraftState> {
+        if let Some(reading) = self.reading().filter(|reading| reading.is_open()) {
+            return reading.send_state();
+        }
+        self.cursor_row()?
+            .as_conversation()
+            .and_then(|row| row.summary.representative.send_state)
     }
 
     /// Whether the open message is a draft on its way or stopped whose
@@ -4641,6 +4661,12 @@ impl FocusWindow {
     }
 
     /// Keep track of the toast just shown until it goes.
+    /// Say `sentence` in a toast whose Undo runs `on_undo`.
+    pub(crate) fn show_removable(&self, sentence: &str, on_undo: impl Fn() + 'static) {
+        self.imp().toast.show_removable(sentence, on_undo);
+        self.follow_toast();
+    }
+
     fn follow_toast(&self) {
         let Some(toast) = self.imp().toast.showing() else {
             return;
@@ -4661,12 +4687,6 @@ impl FocusWindow {
     /// The words of the toast on screen, if one is.
     pub fn toast_showing(&self) -> Option<String> {
         self.imp()
-    /// Say `sentence` in a toast whose Undo runs `on_undo`.
-    pub(crate) fn show_removable(&self, sentence: &str, on_undo: impl Fn() + 'static) {
-        self.imp().toast.show_removable(sentence, on_undo);
-        self.follow_toast();
-    }
-
             .on_screen
             .borrow()
             .as_ref()
