@@ -129,12 +129,12 @@ picker_choose_1	1
 picker_choose_2	2
 picker_choose_3	3
 picker_choose_4	4
-picker_type_date	Tab
+picker_type_date	tab
 picker_toggle	space
 picker_confirm	Return
 next_reference	]
 prev_reference	[
-toggle_digest_summary	Tab
+toggle_digest_summary	tab
 restore_filtered	R
 filtered_tab_1	1
 filtered_tab_2	2

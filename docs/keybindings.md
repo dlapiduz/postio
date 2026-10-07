@@ -176,12 +176,12 @@ command from inside a text field.
 | `2` | Choose option 2 | Picker (not macOS) |  | `picker_choose_2` |
 | `3` | Choose option 3 | Picker (not macOS) |  | `picker_choose_3` |
 | `4` | Choose option 4 | Picker (not macOS) |  | `picker_choose_4` |
-| `Tab` | Type a date | Picker (not macOS) |  | `picker_type_date` |
+| `tab` | Type a date | Picker (not macOS) |  | `picker_type_date` |
 | `space` | Toggle option | Picker (not macOS) |  | `picker_toggle` |
 | `Return` | Confirm | Picker (not macOS) |  | `picker_confirm` |
 | `]` | Next reference | Digest (not macOS) |  | `next_reference` |
 | `[` | Previous reference | Digest (not macOS) |  | `prev_reference` |
-| `Tab` | Summary or messages | Digest (not macOS) |  | `toggle_digest_summary` |
+| `tab` | Summary or messages | Digest (not macOS) |  | `toggle_digest_summary` |
 | `R` | Restore to inbox | Filtered view (not macOS) | Undoable | `restore_filtered` |
 | `1` | Reason 1 | Filtered view (not macOS) |  | `filtered_tab_1` |
 | `2` | Reason 2 | Filtered view (not macOS) |  | `filtered_tab_2` |

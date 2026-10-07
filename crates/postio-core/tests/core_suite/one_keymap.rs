@@ -225,7 +225,7 @@ const CONTRACT: &[Row] = &[
     with("picker_choose_2", "2", &[], Focus, &[Context::Picker]),
     with("picker_choose_3", "3", &[], Focus, &[Context::Picker]),
     with("picker_choose_4", "4", &[], Focus, &[Context::Picker]),
-    with("picker_type_date", "Tab", &[], Focus, &[Context::Picker]),
+    with("picker_type_date", "tab", &[], Focus, &[Context::Picker]),
     with("picker_toggle", "space", &[], Focus, &[Context::Picker]),
     with("picker_confirm", "Return", &[], Focus, &[Context::Picker]),
     // -- Obsidian: the capture sheet (milestone 3, T158) ------------------
@@ -286,7 +286,7 @@ const CONTRACT: &[Row] = &[
     with("prev_reference", "[", &[], Focus, &[Context::Digest]),
     with(
         "toggle_digest_summary",
-        "Tab",
+        "tab",
         &[],
         Focus,
         &[Context::Digest],

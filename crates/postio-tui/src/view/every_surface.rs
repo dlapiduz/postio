@@ -387,12 +387,12 @@ fn cases() -> Vec<Case> {
         },
         Case {
             marks: vec![Has("▌"), Has("╭")],
-            controls: vec![ctl("Tomorrow morning", "2"), ctl("Tab", "<Tab>")],
+            controls: vec![ctl("Tomorrow morning", "2"), ctl("tab", "<Tab>")],
             ..case("snooze picker", "snooze", (120, 36))
         },
         Case {
             marks: vec![Has("▌"), Has("╭")],
-            controls: vec![ctl("In 2 working days", "2"), ctl("Tab", "<Tab>")],
+            controls: vec![ctl("In 2 working days", "2"), ctl("tab", "<Tab>")],
             ..case("remind picker", "remind", (120, 36))
         },
         Case {
@@ -467,13 +467,13 @@ fn cases() -> Vec<Case> {
             marks: vec![Has("≡"), Has("[1]"), Styled("[1]", REVERSED)],
             controls: vec![
                 ctl("Archive all 14 A", "A"),
-                ctl("14 messages  Tab", "<Tab>"),
+                ctl("14 messages  tab", "<Tab>"),
                 ctl("Edit rule and cadence d", "d"),
                 ctl("The 8:10 train moves", "]"),
                 ctl("↵ open the full email", "<Enter>"),
                 ctl("] [ next / previous reference", "]"),
                 ctl("↵ open", "<Enter>").nth(1),
-                ctl("Tab summary / messages", "<Tab>"),
+                ctl("tab summary / messages", "<Tab>"),
                 ctl("D stop digesting the sender", "D"),
                 ctl("Esc ✕", "<Esc>"),
             ],
@@ -492,7 +492,7 @@ fn cases() -> Vec<Case> {
                 ctl("Summary", "<Tab>"),
                 ctl("Rail Notes", "j"),
                 ctl("↵ open", "<Enter>").nth(0),
-                ctl("Tab summary / messages", "<Tab>"),
+                ctl("tab summary / messages", "<Tab>"),
                 ctl("D stop digesting the sender", "D"),
                 ctl("U unsubscribe", "U"),
             ],

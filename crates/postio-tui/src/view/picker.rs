@@ -319,7 +319,7 @@ mod tests {
             assert!(line.contains(&when_label(*at, now)), "{line}");
         }
         assert!(drawn.contains("Or type a date: “tue 9am”"), "{drawn}");
-        assert!(drawn.contains("Tab"), "{drawn}");
+        assert!(drawn.contains("tab"), "{drawn}");
         assert!(
             drawn.contains("Snoozed mail is") && drawn.contains("under g z."),
             "{drawn}"

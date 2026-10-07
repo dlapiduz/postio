@@ -2267,7 +2267,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::PickerTypeDate,
         title: "Type a date",
-        default_binding: "Tab",
+        default_binding: "tab",
         alternate_bindings: &[],
         contexts: Context::Picker.as_set(),
         destructive: false,
@@ -2318,7 +2318,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ToggleDigestSummary,
         title: "Summary or messages",
-        default_binding: "Tab",
+        default_binding: "tab",
         alternate_bindings: &[],
         contexts: Context::Digest.as_set(),
         destructive: false,

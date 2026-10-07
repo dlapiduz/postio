@@ -492,7 +492,7 @@ mod tests {
             "{drawn}"
         );
         let tabs = line_with(&drawn, "Summary  14 messages");
-        assert!(tabs.contains("Tab"), "{tabs}");
+        assert!(tabs.contains("tab"), "{tabs}");
         assert!(
             tabs.contains("Weekly, Sunday 09:00 · Edit rule and cadence d"),
             "{tabs}"
@@ -855,7 +855,7 @@ mod tests {
         let keys = line_with(&drawn, "next / previous reference");
         assert!(keys.contains("] [ next / previous reference"), "{keys}");
         assert!(keys.contains("↵ open"), "{keys}");
-        assert!(keys.contains("Tab summary / messages"), "{keys}");
+        assert!(keys.contains("tab summary / messages"), "{keys}");
         assert!(keys.contains("D stop digesting the sender"), "{keys}");
     }
 
