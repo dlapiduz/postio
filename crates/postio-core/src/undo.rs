@@ -119,6 +119,9 @@ impl UndoKind {
             // Singular for the same reason: both act on the one draft a
             // person is looking at, never on a selection.
             UndoKind::RetriedSend => "Sending again".to_owned(),
+            // Says where the message went: a toast that only said the send
+            // was cancelled left the person unsure whether the reply was
+            // thrown away.
             UndoKind::CancelledSend => "Send cancelled \u{2014} back in Drafts".to_owned(),
             // Never counted either: it is about a folder, not about messages.
             UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
@@ -178,6 +181,11 @@ pub struct UndoEntry {
     /// for a whole-mailbox one, which knows its size from a `count(*)` and
     /// deliberately does not know its members. See [`UndoEntry::bulk`].
     count: usize,
+    /// How many rows the person acted on, when that is not how many
+    /// messages they hold: a conversation of three messages is one row, one
+    /// archive and one line in the toast ([`UndoEntry::acting_on`]).
+    #[serde(default)]
+    rows: Option<usize>,
     inverse: Vec<Command>,
 }
 
@@ -191,6 +199,7 @@ impl UndoEntry {
             kind,
             window: None,
             count: messages.len(),
+            rows: None,
             messages,
             inverse,
         }
@@ -211,8 +220,27 @@ impl UndoEntry {
             window: None,
             messages: Vec::new(),
             count,
+            rows: None,
             inverse,
         }
+    }
+
+    /// The same entry, said in `rows`: the conversations, or the rows of
+    /// whatever list the person acted on, and not the messages inside them.
+    ///
+    /// *Archived 3 messages* is what the person chose -- three rows -- even
+    /// when the third is a thread of three; the toast that said five told
+    /// them about mail they never picked out. Every message still has its
+    /// way back: only what the toast says is counted this way.
+    #[must_use]
+    pub fn acting_on(mut self, rows: usize) -> Self {
+        self.rows = Some(rows);
+        self
+    }
+
+    /// What the toast counts: the rows acted on, else the messages.
+    fn shown(&self) -> usize {
+        self.rows.unwrap_or(self.count)
     }
 
     /// The same entry, offered only for `window` from when it is recorded:
@@ -257,7 +285,14 @@ impl UndoEntry {
     /// Derived from the kind and the count rather than stored, so a unit that
     /// grows by coalescing always describes itself correctly.
     pub fn description(&self) -> String {
-        self.kind.describe(self.count)
+        self.kind.describe(self.shown())
+    }
+
+    /// What `u` says once it has taken the unit back: *Archived 12 messages,
+    /// undone*. The same sentence as the toast that offered the undo, so the
+    /// two cannot be mistaken for one another.
+    pub fn undone_description(&self) -> String {
+        format!("{}, undone", self.description())
     }
 
     /// Whether this unit and `other` overlap, which would make replaying their
@@ -279,6 +314,9 @@ impl UndoEntry {
     }
 
     fn absorb(&mut self, other: UndoEntry) {
+        if self.rows.is_some() || other.rows.is_some() {
+            self.rows = Some(self.shown() + other.shown());
+        }
         self.messages.extend(other.messages);
         self.count += other.count;
         self.inverse.extend(other.inverse);
@@ -500,6 +538,62 @@ mod tests {
             Some("Archived 40000 messages".into()),
             "and the bulk one is still behind it, whole"
         );
+    }
+
+    #[test]
+    fn the_toast_counts_the_rows_acted_on_not_the_messages_inside_them() {
+        // Three conversations of five messages between them: the person
+        // chose three things and is told about three.
+        let ids = (1..=5).map(MessageId::new).collect();
+        let entry = UndoEntry::new(UndoKind::Archive, ids, vec![Command::Undo]).acting_on(3);
+
+        assert_eq!(entry.description(), "Archived 3 messages");
+        assert_eq!(
+            entry.messages().len(),
+            5,
+            "every message still has its way back"
+        );
+        assert!(!entry.is_bulk(), "the rows named are the messages it holds");
+    }
+
+    #[test]
+    fn a_burst_counts_the_rows_of_every_action_in_it() {
+        let mut stack = UndoStack::new();
+        let now = Instant::now();
+        let two = UndoEntry::new(
+            UndoKind::Archive,
+            vec![MessageId::new(1), MessageId::new(2)],
+            vec![Command::Undo],
+        )
+        .acting_on(1);
+        stack.record_at(two, now);
+        let merged = stack.record_at(entry(UndoKind::Archive, 3), now);
+
+        assert_eq!(merged.description(), "Archived 2 messages");
+        assert_eq!(merged.messages().len(), 3);
+    }
+
+    #[test]
+    fn a_cancelled_send_says_the_message_is_a_draft_again() {
+        assert_eq!(
+            UndoKind::CancelledSend.describe(1),
+            "Send cancelled \u{2014} back in Drafts"
+        );
+    }
+
+    #[test]
+    fn an_undone_unit_says_it_was_undone() {
+        // The toast after `u` must not repeat the one before it: "Archived 6
+        // messages" right after they came back says the opposite of what
+        // happened.
+        let entry = UndoEntry::new(
+            UndoKind::Archive,
+            vec![MessageId::new(1), MessageId::new(2)],
+            vec![Command::Undo],
+        );
+
+        assert_eq!(entry.description(), "Archived 2 messages");
+        assert_eq!(entry.undone_description(), "Archived 2 messages, undone");
     }
 
     #[test]

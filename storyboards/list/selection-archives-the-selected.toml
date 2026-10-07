@@ -47,5 +47,5 @@ expect  = "Three rows are selected: the first, the third and the fourth. The bul
 
 [[step]]
 command = "archive"
-check   = { keyboard.region = "list", selection.count = 0, rows.count = 75, notice.undo = true }
-expect  = "The three selected rows are gone, the other 75 are all still there, the bulk bar is gone, and undo is offered."
+check   = { keyboard.region = "list", selection.count = 0, rows.count = 75, notice.undo = true, notice.text = "Archived 3 messages" }
+expect  = "The three selected rows are gone, the other 75 are all still there, the bulk bar is gone, and undo is offered. The toast says three: what was chosen, not the messages the three conversations hold."

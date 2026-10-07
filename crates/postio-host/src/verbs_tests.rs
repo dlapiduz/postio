@@ -804,7 +804,7 @@ fn an_answer_taken_back_inside_its_window_sends_nothing() {
     assert_eq!(
         undone,
         Event::UndoPerformed {
-            description: "Declined".to_owned()
+            description: "Declined, undone".to_owned()
         }
     );
     assert_eq!(

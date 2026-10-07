@@ -198,6 +198,9 @@ struct Applied {
     messages: Vec<MessageId>,
     /// How many messages it touched. `messages.len()` unless it was bulk.
     count: usize,
+    /// How many rows -- conversations -- the person acted on, when that is
+    /// not `count`: what the toast says (`UndoEntry::acting_on`).
+    rows: Option<usize>,
     /// Rows that left a mailbox, grouped by the mailbox they left.
     removed: Vec<(MailboxId, Vec<MessageId>)>,
     /// The mailbox that gained rows, when one did. The list showing it has to
@@ -223,6 +226,18 @@ struct Applied {
     /// Whether the rows Focus's inbox surfaces changed: a surfaced reminder
     /// cleared, a digest archived (`Event::SurfacedChanged`).
     surfaced: bool,
+}
+
+/// How many conversations `messages` come from: the rows a person would
+/// count, for the toast. A message with no thread is a conversation of one.
+fn conversations<'a>(messages: impl Iterator<Item = &'a Message>) -> usize {
+    messages
+        .map(|message| match message.thread_id {
+            Some(thread) => (Some(thread), None),
+            None => (None, Some(message.id)),
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
 }
 
 /// Everything a verb needs: the store to write, the state to resolve targets
@@ -492,7 +507,7 @@ impl Actions {
             self.act(command, events, Recording::Replay).await?;
         }
         events.emit(Event::UndoPerformed {
-            description: entry.description(),
+            description: entry.undone_description(),
         });
         Ok(())
     }
@@ -845,6 +860,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -899,6 +915,10 @@ impl Actions {
         let destination = mailbox_for(connection, account, to).await?;
 
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
+        let moved_rows = conversations(
+            rows.iter()
+                .filter(|message| message.mailbox_id != destination),
+        );
         for message in &rows {
             // Already filed: not a failure, just nothing to do for this row.
             if message.mailbox_id == destination {
@@ -941,6 +961,7 @@ impl Actions {
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
         Ok(Applied {
+            rows: Some(moved_rows),
             lasts: None,
             surfaced: false,
             account,
@@ -1069,6 +1090,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -1126,6 +1148,7 @@ impl Actions {
                 .push(message.id);
         }
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -1206,6 +1229,7 @@ impl Actions {
             }
         }
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -1350,6 +1374,7 @@ impl Actions {
             on: Some(!wanted),
         };
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -1573,6 +1598,7 @@ impl Actions {
             },
         };
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -1649,6 +1675,7 @@ impl Actions {
             },
         };
         Ok(Applied {
+            rows: Some(conversations(touched.iter().copied())),
             lasts: None,
             surfaced: false,
             account,
@@ -1710,6 +1737,10 @@ impl Actions {
             UndoEntry::new(applied.kind, applied.messages, applied.inverse)
         } else {
             UndoEntry::bulk(applied.kind, applied.count, applied.inverse)
+        };
+        let entry = match applied.rows {
+            Some(rows) if !entry.is_bulk() => entry.acting_on(rows),
+            _ => entry,
         };
         let entry = match applied.lasts {
             Some(window) => entry.lasting(window),
@@ -1994,6 +2025,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -2045,6 +2077,7 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account,
@@ -2099,6 +2132,7 @@ impl Actions {
                 let reloaded = drafts_folder(&transaction, account).await?;
                 transaction.commit().await.map_err(store_failure)?;
                 Ok(Applied {
+                    rows: None,
                     lasts: None,
                     surfaced: false,
                     account,
@@ -2202,6 +2236,7 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         Ok(Applied {
+            rows: None,
             lasts: None,
             surfaced: false,
             account: draft.account_id,
@@ -2922,6 +2957,13 @@ mod tests {
         })
     }
 
+    fn undone(events: &[Event]) -> Option<String> {
+        events.iter().find_map(|event| match event {
+            Event::UndoPerformed { description } => Some(description.clone()),
+            _ => None,
+        })
+    }
+
     // ── Archive ──────────────────────────────────────────────────────────
 
     /// ADR 0005 Q4 (#182). A unified view spans every enabled account, so a
@@ -3122,7 +3164,7 @@ mod tests {
             "the server has to be told the way back too"
         );
         assert!(world.drained().await.contains(&Event::UndoPerformed {
-            description: "Archived 1 message".into(),
+            description: "Archived 1 message, undone".into(),
         }));
     }
 
@@ -3160,6 +3202,25 @@ mod tests {
         );
         assert_eq!(world.queued().await.len(), 2);
         let _ = thread;
+        assert_eq!(
+            completion(&world.drained().await).await,
+            Some(("Archived 1 message", true)),
+            "one conversation was archived, and the toast counts what was chosen"
+        );
+
+        world.run(Command::Undo).await.expect("undo");
+        for message in [first, second] {
+            assert_eq!(
+                world.mailbox_of(message).await,
+                world.inbox,
+                "the one `u` brings the whole conversation back"
+            );
+        }
+        assert_eq!(
+            undone(&world.drained().await),
+            Some("Archived 1 message, undone".to_owned()),
+            "and says it was undone, not that it was archived"
+        );
     }
 
     // ── Delete ───────────────────────────────────────────────────────────

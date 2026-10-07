@@ -1270,6 +1270,10 @@ const CASES: &[(&str, fn())] = &[
         newsletter_seed::the_newsletters_row_says_nothing_of_the_message_it_was_made_from as fn(),
     ),
     (
+        "undo::the_toast_counts_the_row_and_says_when_it_was_undone",
+        undo::the_toast_counts_the_row_and_says_when_it_was_undone as fn(),
+    ),
+    (
         "undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone",
         undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone as fn(),
     ),
