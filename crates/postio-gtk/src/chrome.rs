@@ -178,7 +178,7 @@ impl Chrome {
         has_action.add_css_class("focus-has-action");
         has_action.set_valign(gtk::Align::Center);
         let has_action_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
-        let flag = gtk::Image::from_icon_name("emoji-flags-symbolic");
+        let flag = gtk::Image::from_icon_name(crate::places::HAS_ACTION_ICON);
         flag.set_accessible_role(gtk::AccessibleRole::Presentation);
         let has_action_label = gtk::Label::new(Some("Has action"));
         has_action_label.add_css_class("focus-has-action-label");

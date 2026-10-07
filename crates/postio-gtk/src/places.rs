@@ -472,6 +472,13 @@ impl Places {
     }
 }
 
+/// The flag: the mark of flagged mail, wherever it is named.
+pub const FLAG_ICON: &str = "emoji-flags-symbolic";
+
+/// The mark of the strip's "Has action" toggle -- mail waiting on a task,
+/// which is not flagging, so it does not wear the flag.
+pub const HAS_ACTION_ICON: &str = "task-due-symbolic";
+
 /// The icon a mailbox of `role` is marked with.
 fn icon(role: MailboxRole) -> &'static str {
     match role {
@@ -481,7 +488,7 @@ fn icon(role: MailboxRole) -> &'static str {
         // What is on its way out, not what went: an arrow leaving a box.
         MailboxRole::Outbox => "send-to-symbolic",
         MailboxRole::Snoozed => "alarm-symbolic",
-        MailboxRole::Flagged => "mail-mark-important-symbolic",
+        MailboxRole::Flagged => FLAG_ICON,
         MailboxRole::Junk => "mail-mark-junk-symbolic",
         MailboxRole::Trash => "user-trash-symbolic",
         MailboxRole::Archive | MailboxRole::Regular => "folder-symbolic",
@@ -565,6 +572,17 @@ fn accent_hue() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The flag is the mailbox of flagged mail, and nothing else wears it:
+    /// the strip's "Has action" toggle has a mark of its own.
+    #[test]
+    fn the_flag_is_flagged_and_has_action_wears_another_mark() {
+        assert_eq!(icon(MailboxRole::Flagged), FLAG_ICON);
+        assert_ne!(HAS_ACTION_ICON, FLAG_ICON);
+        for role in [MailboxRole::Inbox, MailboxRole::Snoozed, MailboxRole::Junk] {
+            assert_ne!(icon(role), HAS_ACTION_ICON);
+        }
+    }
 
     /// Two places that mean different things do not wear the same mark.
     #[test]
