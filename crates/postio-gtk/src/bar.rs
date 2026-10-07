@@ -1322,6 +1322,35 @@ impl Bar {
         }
         if let Some(row) = self.list.row_at_index(at) {
             self.list.select_row(Some(&row));
+            self.reveal(&row);
+        }
+    }
+
+    /// Scroll the results so `row` is wholly in view, moving them no further
+    /// than that. The keyboard stays in the entry while the arrows walk the
+    /// results, so the list never scrolls to its selection by itself: the
+    /// highlight walked off the bottom and the results stayed put.
+    fn reveal(&self, row: &gtk::ListBoxRow) {
+        let Some(scroller) = self
+            .list
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_downcast::<gtk::ScrolledWindow>()
+        else {
+            return;
+        };
+        let Some(bounds) = row.compute_bounds(&self.list) else {
+            return;
+        };
+        let adjustment = scroller.vadjustment();
+        let (top, bottom) = (
+            f64::from(bounds.y()),
+            f64::from(bounds.y() + bounds.height()),
+        );
+        let (shown, page) = (adjustment.value(), adjustment.page_size());
+        if top < shown {
+            adjustment.set_value(top);
+        } else if bottom > shown + page {
+            adjustment.set_value(bottom - page);
         }
     }
 

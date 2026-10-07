@@ -1067,3 +1067,78 @@ fn chain(window: &postio_gtk::window::FocusWindow, key: &str) {
     );
     crate::settle();
 }
+
+/// Walking the results with the arrows keeps the highlighted row in view:
+/// the highlight went below the bottom of the results and the list stayed
+/// where it was, so the row Return would open could not be seen.
+pub fn the_arrows_scroll_the_results_to_the_highlighted_row() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        for n in 0..25 {
+            fixture
+                .file(
+                    ("Ada Moreno", "ada@example.com"),
+                    &format!("Standup notes {n}"),
+                    "Who is doing what.",
+                    n + 1,
+                )
+                .await;
+        }
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        let bar = open_bar(&window);
+        type_in(&bar, "standup").await;
+        assert!(
+            crate::settle_until(async || bar.result_subjects().len() == 25).await,
+            "standup did not list the 25: {:?}",
+            bar.result_subjects()
+        );
+        let list = support::with_class(bar.widget(), "focus-bar-results")
+            .into_iter()
+            .next()
+            .and_downcast::<gtk::ListBox>()
+            .expect("the results list");
+        let scroller = list
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_downcast::<gtk::ScrolledWindow>()
+            .expect("the results scroll");
+        assert!(
+            crate::settle_until(async || scroller.height() > 0).await,
+            "the results never took a height"
+        );
+        assert!(
+            crate::settle_until(async || list.height() > scroller.height() + 100).await,
+            "the results must overflow for this to mean anything: list {} in a scroller of {}",
+            list.height(),
+            scroller.height()
+        );
+        // Whether the highlighted row lies wholly inside what the scroller
+        // shows.
+        let in_view = || {
+            let Some(row) = list.selected_row() else {
+                return false;
+            };
+            let Some(bounds) = row.compute_bounds(&scroller) else {
+                return false;
+            };
+            bounds.y() >= -0.5 && bounds.y() + bounds.height() <= scroller.height() as f32 + 0.5
+        };
+        for step in 1..=24 {
+            bar.press(gtk::gdk::Key::Down, gtk::gdk::ModifierType::empty());
+            assert!(
+                crate::settle_until(async || in_view()).await,
+                "after {step} presses of Down the highlighted row is out of view"
+            );
+        }
+        for step in 1..=24 {
+            bar.press(gtk::gdk::Key::Up, gtk::gdk::ModifierType::empty());
+            assert!(
+                crate::settle_until(async || in_view()).await,
+                "after {step} presses of Up the highlighted row is out of view"
+            );
+        }
+    });
+}
