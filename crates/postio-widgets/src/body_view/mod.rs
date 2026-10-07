@@ -368,6 +368,13 @@ impl BodyView {
             return;
         };
         let top = self.window().0;
+        // At the very top there is no place inside the body to keep: the
+        // first line is not "where the reader is", and anchoring it would
+        // carry the column down to wherever the next layout puts it.
+        if top <= 0.0 {
+            imp.anchor.set(None);
+            return;
+        }
         let offset = document.text.char_at_top(top);
         let at = document
             .text

@@ -5,11 +5,9 @@
 # every render, so switching the treatment with `O` -- or anything else that
 # redraws the body -- pulled the reader back to that sentence from wherever
 # they had scrolled. The column goes there once, when the message opens.
-# Fixed on the Focus branch (T213) for an office mail on paper, but the long
-# newsletter shows it again: from the top of the body, `O` scrolls the column
-# 330 px down (406 with the card up), so the sender block is gone, and the
-# frame shows the body's first heading at the top. Open until Focus holds the
-# column through that redraw too.
+# Fixed for an office mail on paper (T213), and for the long newsletter: with
+# the top of the body in view there is no place inside it to keep, so the
+# column stays at the top through the redraw.
 #
 # The long newsletter has no marked sentence (that needs a summary's
 # citation), so the "reopen lands on the sentence once" half is not covered
@@ -21,7 +19,7 @@
 # offset cannot be compared exactly across a switch; the reviewer reads the
 # frames for the second half.
 source = { kind = "commit", ref = "2ba0e97c" }
-proof  = "open"
+proof  = "pinned"
 apps   = ["focus"]
 seed   = "long-newsletter"
 
