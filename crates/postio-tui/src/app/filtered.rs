@@ -102,7 +102,7 @@ impl App {
             "open_message" => return Some(self.open_filtered_row()),
             "back" | "go_to_inbox" => return Some(self.leave_filtered()),
             "sweep_inbox" => return Some(self.ask_sweep()),
-            "quit" | "undo" | "cheat_sheet" => return Some(self.global(id)),
+            "undo" | "cheat_sheet" => return Some(self.global(id)),
             other => {
                 let index = filtered::TAB_COMMANDS
                     .iter()

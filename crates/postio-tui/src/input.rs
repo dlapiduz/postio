@@ -103,6 +103,22 @@ impl Keys {
         &self.commands
     }
 
+    /// Whether `key` is `command`'s own key, the first `[keys]` left it,
+    /// when that is one chord -- asked without touching a sequence half
+    /// typed. It is how quitting is recognised before any surface sees the
+    /// key; an alternate (`ctrl+w`) is left to the surface, where a text
+    /// field may use it for editing.
+    pub fn is_primary(&self, key: &KeyEvent, command: postio_core::CommandId) -> bool {
+        let Some(chord) = chord_of(key) else {
+            return false;
+        };
+        self.commands
+            .bindings(command)
+            .first()
+            .and_then(|binding| binding.parse::<postio_ui::keymap::Binding>().ok())
+            .is_some_and(|binding| binding.chords() == [chord])
+    }
+
     /// What `key` means with the keyboard in `context`.
     pub fn press(&mut self, key: &KeyEvent, context: KeyContext, in_text_entry: bool) -> Outcome {
         match chord_of(key) {

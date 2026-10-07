@@ -940,3 +940,40 @@ fn a_click_outside_a_frame_does_nothing() {
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+/// `ctrl+q` quits from wherever the person is: the one key that has to work
+/// on every surface, text fields and frames included.
+#[test]
+fn ctrl_q_quits_from_every_surface() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut stuck = Vec::new();
+    for state in std::iter::once("list").chain(crate::test_support::sample::STATES.iter().copied())
+    {
+        let (mut app, _) = crate::test_support::sample::state(state, 120, 36);
+        let effects = crate::app::update(
+            &mut app,
+            crate::app::Input::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+        );
+        if !effects.contains(&crate::app::Effect::Quit) {
+            stuck.push(format!("{state}: {effects:?}"));
+        }
+    }
+    assert!(
+        stuck.is_empty(),
+        "ctrl+q did not quit from:\n{}",
+        stuck.join("\n")
+    );
+}
+
+/// Quit's other key, `ctrl+w`, is a text field's "delete the word before",
+/// so in the command bar it edits what was typed and quits nothing.
+#[test]
+fn ctrl_w_in_the_bar_edits_and_does_not_quit() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let (mut app, _) = crate::test_support::sample::state("bar", 120, 36);
+    let effects = crate::app::update(
+        &mut app,
+        crate::app::Input::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+    );
+    assert!(!effects.contains(&crate::app::Effect::Quit), "{effects:?}");
+}

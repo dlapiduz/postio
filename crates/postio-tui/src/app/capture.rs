@@ -161,7 +161,7 @@ impl App {
                     return Some(self.close_capture());
                 }
             }
-            "quit" | "undo" | "cheat_sheet" => return Some(self.global(id)),
+            "undo" | "cheat_sheet" => return Some(self.global(id)),
             _ => return Some(Vec::new()),
         }
         Some(vec![Effect::Redraw])

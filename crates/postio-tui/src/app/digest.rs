@@ -244,7 +244,7 @@ impl App {
                 let message = window.focused().map(|row| row.id)?;
                 return Some(vec![Effect::Unsubscribe(message)]);
             }
-            "quit" | "undo" | "cheat_sheet" => return Some(self.global(id)),
+            "undo" | "cheat_sheet" => return Some(self.global(id)),
             _ => return None,
         }
         self.reveal_digest(column, height);

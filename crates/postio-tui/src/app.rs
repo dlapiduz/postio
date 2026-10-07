@@ -1452,12 +1452,6 @@ impl App {
 
     /// A key in the first run.
     fn first_run_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        // Quitting works here as anywhere; everything else is typed.
-        if let Outcome::Command(id) = self.keys.press(key, KeyContext::Global, true)
-            && id == "quit"
-        {
-            return vec![Effect::Quit];
-        }
         let Some(first_run) = self.first_run.as_mut() else {
             return Vec::new();
         };
@@ -3259,6 +3253,18 @@ impl App {
     /// screen and nothing in the store. Everything else is aimed by
     /// `postio_core::aim` -- the rule every frontend shares for what a verb
     /// acts on -- mirrored into [`App::state`], and sent.
+    /// Leave Postio, from wherever the person is. What is being written is
+    /// saved on the way out.
+    fn quit(&mut self) -> Vec<Effect> {
+        let mut effects = if self.composer.is_some() {
+            self.close_composer()
+        } else {
+            Vec::new()
+        };
+        effects.push(Effect::Quit);
+        effects
+    }
+
     fn command(&mut self, id: &str) -> Vec<Effect> {
         if self.focus == Focus::Filtered
             && let Some(effects) = self.filtered_command(id)
@@ -3316,16 +3322,7 @@ impl App {
             "select_all" => self
                 .selection
                 .select_all(postio_ui::selection::Reach::default()),
-            "quit" => {
-                // What is being written is saved on the way out.
-                let mut effects = if self.composer.is_some() {
-                    self.close_composer()
-                } else {
-                    Vec::new()
-                };
-                effects.push(Effect::Quit);
-                return effects;
-            }
+            "quit" => return self.quit(),
             "reply" | "reply_all" | "forward" => {
                 let kind = match id {
                     "reply" => ReplyKind::Reply,
@@ -4334,6 +4331,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.size = (width, height);
             vec![Effect::Redraw]
         }
+        // Quit's key means the same on every surface, a text field's and a
+        // frame's included, so no surface gets to answer it first.
+        Input::Key(key) if app.keys.is_primary(&key, postio_core::CommandId::Quit) => app.quit(),
         Input::Key(key) if app.focus == Focus::Keys => app.keys_key(&key),
         Input::Key(key) if app.open.menu.is_some() && app.focus == Focus::Reader => {
             app.menu_key(&key)

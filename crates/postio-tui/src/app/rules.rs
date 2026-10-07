@@ -124,7 +124,7 @@ impl App {
             }
             "delete" => list.ask_remove(),
             "back" | "go_to_inbox" => return Some(self.leave_rules()),
-            "quit" | "undo" | "cheat_sheet" => return Some(self.global(id)),
+            "undo" | "cheat_sheet" => return Some(self.global(id)),
             _ => return None,
         }
         list.reveal(height);

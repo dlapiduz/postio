@@ -161,7 +161,6 @@ impl App {
                 "find_next" => return self.find_step(true),
                 "find_previous" => return self.find_step(false),
                 "back" => return self.close_find(),
-                "quit" => return self.command("quit"),
                 _ => return Vec::new(),
             },
             Outcome::Pending(_) => return Vec::new(),
