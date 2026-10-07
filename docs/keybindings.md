@@ -56,7 +56,7 @@ command from inside a text field.
 | `X` or `ctrl+a` | Select all | List, conversation, reader, search |  | `select_all` |
 | `Left` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
-| `O` | Toggle result order | Search |  | `toggle_result_order` |
+| `alt+o` | Toggle result order | Search |  | `toggle_result_order` |
 | `]` or `alt+Down` | Next message in conversation | Conversation, reader |  | `next_in_conversation` |
 | `[` or `alt+Up` | Previous message in conversation | Conversation, reader |  | `prev_in_conversation` |
 | `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |

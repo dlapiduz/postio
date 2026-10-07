@@ -9,7 +9,7 @@ extend_selection_up	K | shift+Up
 select_all	X | ctrl+a
 prev_view	Left
 back	Escape
-toggle_result_order	O
+toggle_result_order	alt+o
 next_in_conversation	] | alt+Down
 prev_in_conversation	[ | alt+Up
 toggle_fold	z

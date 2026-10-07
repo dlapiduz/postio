@@ -600,10 +600,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ToggleResultOrder,
         // The same title as the thread's own toggle, deliberately: "the
-        // order of what I am looking at" is one idea (#499). Shifted since
-        // the one keymap gave `o` to opening an attachment or a link.
+        // order of what I am looking at" is one idea (#499). `alt+o`, because
+        // the query holds the keyboard and a bare `O` is a letter in it.
         title: "Toggle result order",
-        default_binding: "O",
+        default_binding: "alt+o",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Search]),
         destructive: false,

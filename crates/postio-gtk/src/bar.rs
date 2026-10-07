@@ -12,8 +12,9 @@
 //!
 //! Results arrive as the words are typed, under the "Search mail for" row,
 //! which stays above them. A result set can be switched between relevance
-//! and date: the row that says which it is in switches it when run. `O` is
-//! a letter in the box, always -- typing wins over a bare key.
+//! and date: the row that says which it is in switches it when run, and so
+//! does `alt+o` with the query holding the keyboard. `O` is a letter in the
+//! box, always -- typing wins over a bare key.
 //!
 //! Everything here is local. Nothing typed leaves the machine.
 
@@ -479,15 +480,15 @@ impl Bar {
             gtk::gdk::Key::Down => self.step(1),
             gtk::gdk::Key::Up => self.step(-1),
             gtk::gdk::Key::Tab if state.is_empty() => return self.next_chip(),
-            // Typing wins: the order key is a letter for the entry, and the
-            // order row is what switches it.
+            // Typing wins: `O` is a letter for the entry. The order key
+            // carries `alt` and is the window's command.
             _ => return false,
         }
         true
     }
 
     /// Switch the results between relevance and date, and ask again.
-    fn toggle_order(&self) {
+    pub fn toggle_order(&self) {
         self.order.set(match self.order.get() {
             postio_search::ResultOrder::Relevance => postio_search::ResultOrder::Newest,
             postio_search::ResultOrder::Newest => postio_search::ResultOrder::Relevance,
@@ -923,8 +924,8 @@ impl Bar {
         }
         if !rows.is_empty() {
             let (title, detail) = rules::order_words(order);
-            // No key beside it: `O` is a letter in the box.
-            self.append_row(Row::Order, &title, Some(&detail), None);
+            let key = postio_ui::hints::key(&self.keymap.borrow(), CommandId::ToggleResultOrder);
+            self.append_row(Row::Order, &title, Some(&detail), key.as_deref());
         }
         let names = self.folders.borrow().clone();
         let owners = self.owners.borrow().clone();

@@ -219,7 +219,7 @@ const CONTRACT: &[Row] = &[
         Focus,
         &[Context::Search],
     ),
-    with("toggle_result_order", "O", &[], All, &[Context::Search]),
+    with("toggle_result_order", "alt+o", &[], All, &[Context::Search]),
     // -- Pickers --------------------------------------------------------
     with("picker_choose_1", "1", &[], Focus, &[Context::Picker]),
     with("picker_choose_2", "2", &[], Focus, &[Context::Picker]),

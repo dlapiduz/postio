@@ -123,7 +123,7 @@ it.
 |---|---|---|
 | `mod+s` | `save_search` | All |
 | `mod+BackSpace` (alt `alt+BackSpace`, which a terminal delivers) | `back_to_words` | Focus |
-| `O` | `toggle_result_order` | All |
+| `alt+o` | `toggle_result_order` | All |
 | `Tab` | the bar's own chip navigation, not a registry command | All |
 
 The `>` prefix in the command bar is the finder's mode prefix, not a key.

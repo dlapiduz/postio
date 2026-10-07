@@ -1639,6 +1639,11 @@ impl FocusWindow {
                 }
             }
             CommandId::SaveSearch => self.save_search(),
+            CommandId::ToggleResultOrder => {
+                if let Some(bar) = self.bar() {
+                    bar.toggle_order();
+                }
+            }
             CommandId::GoToDigestRules => self.show_rules(),
             CommandId::RestoreFiltered => {
                 if let Some(message) = self.filtered().and_then(|view| view.focused()) {

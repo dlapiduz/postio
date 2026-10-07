@@ -837,12 +837,22 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
             relevance,
             "a typed O reordered the rows"
         );
-        // The order row switches it, and keeps the highlight on itself.
-        support::click_row_saying(&window, bar.widget(), "Sorted by relevance");
+        // `alt+o` switches it while the query has the keyboard.
+        assert!(
+            support::deliver_with(&window, "o", gtk::gdk::ModifierType::ALT_MASK),
+            "alt+o was not taken"
+        );
         assert!(
             crate::settle_until(async || bar.result_subjects() == by_date).await,
-            "the order row did not reorder: {:?}",
+            "alt+o did not reorder: {:?}",
             bar.result_subjects()
+        );
+        assert_eq!(bar.typed(), "report", "alt+o typed nothing");
+        // The row says the key.
+        assert!(
+            bar.texts().iter().any(|line| line == "alt+o"),
+            "the order row shows no key: {:?}",
+            bar.texts()
         );
         assert!(
             bar.texts().iter().any(|line| line == "Sorted by date"),

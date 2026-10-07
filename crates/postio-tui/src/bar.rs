@@ -14,19 +14,19 @@
 //! conversations. Everything is local: nothing typed leaves this machine.
 
 use chrono::{DateTime, Utc};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use postio_core::{ActionId, Availability, CommandId, Context, Keymap};
 use postio_model::{MailboxId, MessageId};
 use postio_search::ResultOrder;
 use postio_ui::command_bar::{self as rules, BarAction, Row, Run};
 use postio_ui::finder::{self, Place};
-use postio_ui::keymap::{Chord, KeyContext, Outcome};
+use postio_ui::keymap::{KeyContext, Outcome};
 use postio_ui::names::Names;
 use postio_ui::terminal::SafeText;
 use tui_input::backend::crossterm::EventHandler;
 
 use crate::app::Focus;
-use crate::input::{Keys, chord_of};
+use crate::input::Keys;
 
 /// What the bar needs of the app while a key is handled: the keys it may
 /// show, and what can run where it opened.
@@ -729,6 +729,8 @@ impl Bar {
                     "back" => Step::Close,
                     "save_search" => self.save(),
                     "back_to_words" => self.back_to_words(),
+                    // Typing wins: `O` is a letter; this one carries `alt`.
+                    "toggle_result_order" => self.toggle_order(),
                     "saved_search_1" => self.open_saved(0),
                     "saved_search_2" => self.open_saved(1),
                     "saved_search_3" => self.open_saved(2),
@@ -754,9 +756,6 @@ impl Bar {
             }
             KeyCode::Tab if key.modifiers.is_empty() => return self.next_chip(),
             KeyCode::Enter => return self.enter(ctx),
-            // Typing wins: with no row chosen by an arrow, the order key is a
-            // letter. Once one has, it is the key.
-            _ if self.stepped && self.is_order_key(key, ctx) => return self.toggle_order(),
             _ => {
                 let before = self.input.value().to_owned();
                 self.input.handle_event(&crossterm::event::Event::Key(*key));
@@ -766,18 +765,6 @@ impl Bar {
             }
         }
         Step::Stay
-    }
-
-    /// Whether `key` is the keymap's key for switching the results' order.
-    fn is_order_key(&self, key: &KeyEvent, ctx: &Ctx<'_>) -> bool {
-        let Some(bound) = ctx
-            .keymap
-            .binding(CommandId::ToggleResultOrder)
-            .and_then(|binding| binding.parse::<Chord>().ok())
-        else {
-            return false;
-        };
-        key.modifiers - KeyModifiers::SHIFT == KeyModifiers::NONE && chord_of(key) == Some(bound)
     }
 }
 
@@ -935,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn o_switches_the_order_only_once_an_arrow_has_chosen_a_row() {
+    fn o_is_a_letter_and_alt_o_switches_the_order() {
         let mut app = opened();
         update(&mut app, press('/'));
         let sequence = asked(&type_text(&mut app, "from:ada"))
@@ -943,18 +930,20 @@ mod tests {
             .unwrap()
             .sequence;
         answer(&mut app, sequence, vec![hit(11, 7, "Tide gate")]);
-        // Before an arrow, `O` is a letter.
+        // `O` is a letter, before an arrow and after one.
         update(&mut app, press('O'));
         assert!(app.bar_typed().unwrap().ends_with('O'));
-        let sequence = {
-            update(&mut app, key(KeyCode::Backspace, KeyModifiers::NONE));
-            let effects = update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
-            assert!(asked(&effects).is_empty());
-            // A fresh answer for the unchanged question.
-            let effects = update(&mut app, press('O'));
-            asked(&effects).pop()
-        };
-        let ask = sequence.expect("O switches the order and asks again");
+        update(&mut app, key(KeyCode::Backspace, KeyModifiers::NONE));
+        let effects = update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
+        assert!(asked(&effects).is_empty());
+        update(&mut app, press('O'));
+        assert!(app.bar_typed().unwrap().ends_with('O'));
+        update(&mut app, key(KeyCode::Backspace, KeyModifiers::NONE));
+        // `alt+o` switches the order with the query holding the keyboard.
+        let effects = update(&mut app, key(KeyCode::Char('o'), KeyModifiers::ALT));
+        let ask = asked(&effects)
+            .pop()
+            .expect("alt+o switches the order and asks again");
         assert_eq!(ask.order, ResultOrder::Newest);
         assert_eq!(app.bar_typed(), Some("from:ada"));
     }

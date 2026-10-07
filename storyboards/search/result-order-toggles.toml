@@ -4,8 +4,8 @@
 # nothing, and there was no key. `toggle_result_order` is the keyboard path.
 #
 # Re-expressed for Focus (T265): the bar lists its order as a row ("Sorted
-# by relevance"); running that row switches it. `O` is a letter in the box
-# whatever is highlighted, so a name like O'Brien can be typed. The order
+# by relevance"); running that row, or `alt+o`, switches it. `O` is a letter
+# in the box whatever is highlighted, so a name like O'Brien can be typed. The order
 # row is what is read back.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#499" }
@@ -28,15 +28,19 @@ key     = "Up"
 check   = { app.focus.bar.highlighted = "order" }
 
 [[step]]
-key     = "Return"
-check   = { keyboard.region = "search", app.focus.bar.highlighted = "order", app.focus.bar.messages = { same_as = "relevance" } }
-expect  = "Running the order row switches the results to newest first, and the row says so."
+command = "toggle_result_order"
+settle  = { until = { app.focus.bar.highlighted_text = "Sorted by date switch to relevance alt+o" } }
+check   = { keyboard.region = "search", app.focus.bar.highlighted = "order", app.focus.bar.highlighted_text = "Sorted by date switch to relevance alt+o", app.focus.bar.messages = { same_as = "relevance" } }
+expect  = "alt+o switches the results to newest first while the query has the keyboard, and the order row says so."
 
 [[step]]
 key     = "Return"
-check   = { app.focus.bar.highlighted = "order", app.focus.bar.messages = { same_as = "relevance" } }
-expect  = "Back to relevance order."
+settle  = { until = { app.focus.bar.highlighted_text = "Sorted by relevance switch to date alt+o" } }
+check   = { app.focus.bar.highlighted = "order", app.focus.bar.highlighted_text = "Sorted by relevance switch to date alt+o" }
+expect  = "Running the order row switches it back."
 
+[[step]]
+key     = "Return"
 [[step]]
 type    = "O"
 check   = { keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = "harbourO" }
