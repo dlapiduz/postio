@@ -490,6 +490,7 @@ pub fn a_folder_left_out_of_backfill_is_written_and_shown() {
         );
         // Brought into view, as a person scrolls to it.
         scroll_into_view(&trash().expect("Trash's check"));
+        support::settle_still(&trash().expect("Trash's check"), &dialog);
         support::click(&window, &trash().expect("Trash's check"), 1);
 
         let database = fixture.database.clone();
@@ -773,6 +774,7 @@ pub fn filtering_turned_off_in_settings_is_written_and_the_strip_follows() {
         // Off: written to the file, said on the page, and the inbox's strip
         // stops counting (C10).
         let switch = support::only(&dialog, "postio-settings-filtering-switch");
+        support::settle_still(&switch, &dialog);
         support::click(&window, &switch, 1);
         assert!(
             crate::settle_until(async || {
@@ -873,7 +875,9 @@ pub fn a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings() {
             said()
         );
 
+        // The page has just slid in; on CI the press landed mid-slide.
         let again = support::only(&dialog, "postio-settings-filtering-undo-never");
+        support::settle_still(&again, &dialog);
         support::click(&window, &again, 1);
         assert!(
             crate::settle_until(async || {
@@ -886,6 +890,7 @@ pub fn a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings() {
             std::fs::read_to_string(&path).unwrap_or_default()
         );
         let back = support::only(&dialog, "postio-settings-filtering-undo-stopped");
+        support::settle_still(&back, &dialog);
         support::click(&window, &back, 1);
         assert!(
             crate::settle_until(async || {
