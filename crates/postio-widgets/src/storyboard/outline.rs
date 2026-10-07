@@ -75,18 +75,47 @@ pub fn outlined_with_window(
     let (_, text) = layout.pixel_extents();
     let plate_height = text.height() as f32 + 2.0 * CAPTION_PAD;
     let plate_width = text.width() as f32 + 2.0 * CAPTION_PAD;
-    let left = ((window.width() - other.width()) as f32 / 2.0).max(0.0);
-    let top_of_other = ((window.height() - other.height()) as f32 / 2.0).max(0.0);
+    // Off to the right and down, as a second window sits on a desktop -- not
+    // centred, where a dialog over the main window would be, which is what a
+    // centred picture said (round-five review of compose-detached).
+    let left = (window.width() - other.width() - 24).max(0) as f32;
+    let top_of_other = ((window.height() - other.height()) as f32 - 24.0).max(48.0);
+    let label = window.create_pango_layout(Some("a window of its own"));
+    let (_, label_text) = label.pixel_extents();
 
     crate::capture::texture_with(window, |snapshot| {
         // Over the whole picture: the main window's own is replaced, so no
         // outline of its focus shows through.
         let whole = graphene::Rect::new(0.0, 0.0, window.width() as f32, window.height() as f32);
+        // The main window as it is: nothing over it any more, so not dimmed.
         snapshot.append_texture(&main, &whole);
-        snapshot.append_color(&gdk::RGBA::new(0.0, 0.0, 0.0, 0.25), &whole);
         snapshot.save();
         snapshot.translate(&graphene::Point::new(left, top_of_other));
         let own = graphene::Rect::new(0.0, 0.0, other.width() as f32, other.height() as f32);
+        // A window's shadow, and a caption above it naming what it is.
+        snapshot.append_outset_shadow(
+            &gsk::RoundedRect::from_rect(own, 8.0),
+            &gdk::RGBA::new(0.0, 0.0, 0.0, 0.35),
+            0.0,
+            6.0,
+            4.0,
+            18.0,
+        );
+        let tag_height = label_text.height() as f32 + 2.0 * CAPTION_PAD;
+        let tag = graphene::Rect::new(
+            0.0,
+            -tag_height,
+            label_text.width() as f32 + 2.0 * CAPTION_PAD,
+            tag_height,
+        );
+        snapshot.append_color(&gdk::RGBA::new(0.2, 0.2, 0.2, 0.9), &tag);
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(
+            CAPTION_PAD,
+            -tag_height + CAPTION_PAD,
+        ));
+        snapshot.append_layout(&label, &gdk::RGBA::WHITE);
+        snapshot.restore();
         // The window's own paper: a window's picture is its content, and
         // under it the main window would show through.
         let paper = if adw::StyleManager::default().is_dark() {
