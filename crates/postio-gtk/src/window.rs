@@ -4057,8 +4057,7 @@ impl FocusWindow {
             if let Some(bar) = self.bar()
                 && let Some(typed) = bar.take_held()
             {
-                bar.open();
-                bar.set_text(&typed);
+                bar.reopen(&typed, reading.shown());
             }
         }
         self.show_pane_page();
@@ -5091,6 +5090,13 @@ impl FocusWindow {
             // design: `Bar::close`), and the window's own key controller
             // is where its list's keys are handled.
             Region::List
+        } else if focus.as_ref().is_some_and(|widget| {
+            std::iter::successors(Some(widget.clone()), |widget| widget.parent())
+                .any(|widget| widget.type_().name() == "AdwToastWidget")
+        }) {
+            // On a toast's own button: Return or Space there answers the
+            // toast, and the list's keys are not the ones this is.
+            Region::Other
         } else if bar
             .as_ref()
             .is_some_and(|bar| within(&bar.widget().clone().upcast()))

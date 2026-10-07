@@ -22,6 +22,7 @@ check   = { keyboard.region = "search", app.focus.bar.messages = { changed = tru
 expect  = "The bar lists the mail that matches as the word is typed, under the Search mail for row."
 
 [[step]]
+id      = "first-hit"
 key     = "Return"
 check   = { keyboard.region = "search", app.focus.bar.highlighted = "message" }
 expect  = "Return takes the highlight to the first hit."
@@ -44,8 +45,8 @@ expect  = "Escape leaves the composer and the hit is back."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, overlay.kind = "finder", keyboard.region = "search", app.focus.bar.messages = { same_as = "found" } }
-expect  = "A second Escape leaves the hit for the results it was opened from, the words still typed."
+check   = { composer.open = false, overlay.kind = "finder", keyboard.region = "search", app.focus.bar.messages = { same_as = "found" }, app.focus.bar.highlighted = "message", app.focus.bar.highlighted_id = { same_as = "first-hit" } }
+expect  = "A second Escape leaves the hit for the results it was opened from, the words still typed and the highlight on the hit that was open."
 
 [[step]]
 command = "back"

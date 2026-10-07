@@ -51,5 +51,5 @@ expect  = "`k` steps back to the first hit."
 
 [[step]]
 command = "back"
-check   = { view = "search", overlay.kind = "finder", app.focus.bar.messages = 8 }
-expect  = "Escape returns to the results with the bar as it was."
+check   = { view = "search", overlay.kind = "finder", app.focus.bar.messages = 8, app.focus.bar.highlighted = "message", app.focus.bar.highlighted_id = { same_as = "hit" } }
+expect  = "Escape returns to the results with the bar as it was, the highlight on the hit that was open and not back on the Search mail row."

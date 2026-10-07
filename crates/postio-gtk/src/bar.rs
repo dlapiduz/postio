@@ -121,6 +121,9 @@ enum Pending {
     FirstHit,
     /// The order row, which was just run.
     Order,
+    /// The hit that was opened and has just been closed: the person is
+    /// back among the results where they left them.
+    Hit(MessageId),
 }
 
 impl Bar {
@@ -623,6 +626,16 @@ impl Bar {
             .collect()
     }
 
+    /// Reopen the bar on `typed`, the highlight going to the hit `opened`
+    /// once the results are drawn: where a closed hit returns to.
+    pub fn reopen(&self, typed: &str, opened: Option<MessageId>) {
+        self.open();
+        self.set_text(typed);
+        if let Some(opened) = opened {
+            self.pending.set(Pending::Hit(opened));
+        }
+    }
+
     /// What was typed when a hit was opened, once: the window reopens the
     /// bar with it when that message closes.
     pub fn take_held(&self) -> Option<String> {
@@ -957,6 +970,9 @@ impl Bar {
                 .iter()
                 .position(|row| matches!(row, Row::Message { .. })),
             Pending::Order => self.rows.borrow().iter().position(|row| *row == Row::Order),
+            Pending::Hit(wanted) => self.rows.borrow().iter().position(
+                |row| matches!(row, Row::Message { message, .. } if *message == wanted),
+            ),
         };
         if let Some(row) = wanted.and_then(|at| self.list.row_at_index(at as i32)) {
             self.list.select_row(Some(&row));
