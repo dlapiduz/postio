@@ -208,6 +208,10 @@ impl ComposerHost for DialogHost {
             return;
         }
         if let Some(window) = self.window.upgrade() {
+            // The message under the composer is off screen, so not read.
+            if let Some(reading) = window.reading() {
+                reading.set_covered(true);
+            }
             self.follow(&window);
             if self.in_pane() {
                 // The pane shows the composer in the open message's place.
@@ -231,6 +235,9 @@ impl ComposerHost for DialogHost {
         // field of a closed dialog would otherwise hold it, and the
         // resolver's "typing wins" would swallow the next key.
         if let Some(window) = self.window.upgrade() {
+            if let Some(reading) = window.reading() {
+                reading.set_covered(false);
+            }
             // The pane gives its place back to the message, or to nothing.
             window.show_pane_page();
             gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);

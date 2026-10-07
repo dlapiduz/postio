@@ -187,6 +187,8 @@ pub struct OpenMessage {
     /// Whether the window is not the active one: nobody is reading, so no
     /// clock runs.
     away: Cell<bool>,
+    /// Another composition has taken the message's place on screen.
+    covered: Cell<bool>,
     /// Who is told when the clock runs out.
     read: RefCell<Option<ReadHandler>>,
 }
@@ -505,6 +507,7 @@ impl OpenMessage {
             dwell: RefCell::default(),
             settled: Cell::new(None),
             away: Cell::new(false),
+            covered: Cell::new(false),
             read: RefCell::default(),
         });
 
@@ -1236,7 +1239,7 @@ impl OpenMessage {
     /// the other frontends; only the timer is this toolkit's.
     fn arm_dwell(&self, message: MessageId) {
         self.stop_dwell();
-        if !self.open.get() || self.away.get() {
+        if !self.open.get() || self.away.get() || self.covered.get() {
             return;
         }
         let postio_ui::dwell::Arm::Start { after, .. } =
@@ -1278,6 +1281,22 @@ impl OpenMessage {
     pub fn set_window_active(&self, active: bool) {
         self.away.set(!active);
         if !active {
+            self.stop_dwell();
+        } else if self.open.get()
+            && let Some(message) = self.shown.get()
+            && self.settled.get() != Some(message)
+        {
+            self.arm_dwell(message);
+        }
+    }
+
+    /// The composer took the message's place on screen, or gave it back. A
+    /// message that is not on screen is not being read: the clock stops, and
+    /// starts again from the top when the message is back, if it has not
+    /// already been read.
+    pub fn set_covered(&self, covered: bool) {
+        self.covered.set(covered);
+        if covered {
             self.stop_dwell();
         } else if self.open.get()
             && let Some(message) = self.shown.get()

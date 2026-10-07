@@ -916,6 +916,10 @@ const CASES: &[(&str, fn())] = &[
         read_on_dwell::a_message_left_open_in_the_dialog_is_marked_read as fn(),
     ),
     (
+        "read_on_dwell::a_message_the_composer_replaced_is_not_marked_read",
+        read_on_dwell::a_message_the_composer_replaced_is_not_marked_read as fn(),
+    ),
+    (
         "read_on_dwell::stepping_the_pane_past_a_message_leaves_it_unread",
         read_on_dwell::stepping_the_pane_past_a_message_leaves_it_unread as fn(),
     ),

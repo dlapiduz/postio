@@ -75,6 +75,35 @@ pub fn a_message_left_open_in_the_dialog_is_marked_read() {
     });
 }
 
+/// A reply opened over the message replaces it on screen, and a message
+/// that is no longer on screen is not being read: the clock stops, and the
+/// row stays bold under the composer.
+pub fn a_message_the_composer_replaced_is_not_marked_read() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        read_in_pane(&window);
+        all_bold(&window).await;
+
+        support::deliver(&window, "Return");
+        assert!(crate::settle_until(async || showing(&window).as_deref() == Some("First")).await);
+        support::deliver(&window, "e");
+        assert!(
+            crate::settle_until(async || window.composer().is_some_and(|c| c.is_open())).await,
+            "e opened no composer"
+        );
+        crate::settle_for(DWELL_TO_READ * 2).await;
+        assert_eq!(
+            bold(&window, "First"),
+            Some(true),
+            "First was marked read after the composer had replaced it"
+        );
+    });
+}
+
 /// `j` and `k` with a message open beside the list step the pane through
 /// the rows; a message passed faster than the dwell stays unread, and only
 /// the one the pane rests on is marked.
