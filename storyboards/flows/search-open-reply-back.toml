@@ -15,6 +15,7 @@ command = "search"
 check   = { overlay.kind = "finder", keyboard.region = "search" }
 
 [[step]]
+id      = "found"
 type    = "harbour"
 settle  = { until = { app.focus.bar.messages = { changed = true } } }
 check   = { keyboard.region = "search", app.focus.bar.messages = { changed = true } }
@@ -43,5 +44,10 @@ expect  = "Escape leaves the composer and the hit is back."
 
 [[step]]
 command = "back"
+check   = { composer.open = false, overlay.kind = "finder", keyboard.region = "search", app.focus.bar.messages = { same_as = "found" } }
+expect  = "A second Escape leaves the hit for the results it was opened from, the words still typed."
+
+[[step]]
+command = "back"
 check   = { composer.open = false, overlay.kind = "none", view = "list", rows.count = { same_as = 0 } }
-expect  = "A second Escape leaves the hit: the list is the whole Inbox, as it was."
+expect  = "A third Escape leaves the search: the list is the whole Inbox, as it was."
