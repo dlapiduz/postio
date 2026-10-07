@@ -263,7 +263,7 @@ impl Toast {
             .over
             .borrow()
             .clone()
-            .filter(|over| gtk::prelude::WidgetExt::is_mapped(over))
+            .filter(gtk::prelude::WidgetExt::is_mapped)
             .unwrap_or_else(|| self.overlay.clone());
         host.add_toast(toast.clone());
         *self.host.borrow_mut() = Some(host);

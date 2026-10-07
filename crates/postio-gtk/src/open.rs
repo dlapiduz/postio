@@ -1339,9 +1339,7 @@ impl OpenMessage {
             self.thread_chip
                 .append(&gtk::Label::new(Some(focus_dialog::EARLIER_MESSAGE)));
         }
-        if !latest
-            && let Some(key) = hints::key(&keymap, CommandId::NextInConversation)
-        {
+        if !latest && let Some(key) = hints::key(&keymap, CommandId::NextInConversation) {
             self.thread_chip.append(&keyhint::cap(&key));
             self.thread_chip
                 .append(&gtk::Label::new(Some(focus_dialog::LATER_MESSAGE)));
