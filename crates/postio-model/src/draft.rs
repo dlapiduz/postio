@@ -364,11 +364,12 @@ pub fn closing(draft: &Draft) -> Closing {
 ///
 /// A reply opens with a recipient, a subject, an attribution and a quote --
 /// all the app's doing -- so [`closing`] alone would keep every reply ever
-/// opened. A composition still exactly as it opened (same recipients, same
-/// subject, same body bar whitespace and signature) has nothing the person
-/// wrote, and is dropped like an untouched new message. `opened` only counts
-/// when it was never saved: a draft resumed from the Drafts folder is
-/// something the person wrote, and stays kept.
+/// opened. A reply or forward still exactly as it opened (same recipients,
+/// same subject, same body bar whitespace and signature) has nothing the
+/// person wrote, and is dropped like an untouched new message. Only a
+/// composition the app built counts: a new message opened with content in
+/// it came from somewhere (a link, an undone send) and is kept, and so is
+/// a draft resumed from the Drafts folder, which the person wrote.
 pub fn closing_since(draft: &Draft, opened: &Draft) -> Closing {
     if closing(draft) == Closing::Drop {
         return Closing::Drop;
@@ -377,7 +378,8 @@ pub fn closing_since(draft: &Draft, opened: &Draft) -> Closing {
         let body = draft.body.text.as_deref().unwrap_or_default();
         crate::signature::split(body).0.trim().to_owned()
     };
-    let untouched = !opened.id.is_assigned()
+    let untouched = opened.kind != DraftKind::New
+        && !opened.id.is_assigned()
         && draft.to == opened.to
         && draft.cc == opened.cc
         && draft.bcc == opened.bcc
@@ -424,6 +426,13 @@ mod tests {
         let mut recipient = opened.clone();
         recipient.cc = vec![EmailAddress::new(None::<String>, "grace@example.net")];
         assert_eq!(closing_since(&recipient, &opened), Closing::Keep);
+    }
+
+    #[test]
+    fn a_new_message_opened_with_content_is_kept_even_untouched() {
+        let mut opened = opened_reply();
+        opened.kind = DraftKind::New;
+        assert_eq!(closing_since(&opened, &opened), Closing::Keep);
     }
 
     #[test]
