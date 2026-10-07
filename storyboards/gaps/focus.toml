@@ -121,10 +121,6 @@ reason  = "the cursor is on the first row, so there is nothing above it"
 
 # -- digest: the Weekly digest window, on its summary
 [[gap]]
-command = "next_message"
-context = "digest"
-reason  = "CANDIDATE: the window reports its keyboard unreachable from the moment it opens, and the key changes nothing (storyboards/list/digest-window-keeps-the-keyboard)"
-[[gap]]
 command = "prev_message"
 context = "digest"
 reason  = "CANDIDATE: the same unreachable keyboard (storyboards/list/digest-window-keeps-the-keyboard)"
@@ -161,17 +157,9 @@ command = "mark_sent"
 context = "composer"
 reason  = "an Outbox verb; nothing is in the Outbox (flickers: one run of two in T265 saw an effect, the composer still settling, so a stale report here is noise)"
 [[gap]]
-command = "numbered_list"
-context = "composer"
-reason  = "formatting an empty body changes nothing visible until text is typed"
-[[gap]]
 command = "quit"
 context = "composer"
 reason  = "the composer's dialog has no arm for it; Escape closes the dialog"
-[[gap]]
-command = "quote_block"
-context = "composer"
-reason  = "formatting an empty body changes nothing visible until text is typed"
 [[gap]]
 command = "save_draft"
 context = "composer"
