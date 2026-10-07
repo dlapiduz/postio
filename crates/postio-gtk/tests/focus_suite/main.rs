@@ -74,6 +74,7 @@ mod open_measure;
 mod open_message;
 mod open_reading;
 mod pickers;
+mod place_strip;
 mod places;
 mod pointer_pairs;
 mod read_on_dwell;
@@ -1233,6 +1234,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "keyboard_home::the_keyboard_follows_the_cursor_row",
         keyboard_home::the_keyboard_follows_the_cursor_row as fn(),
+    ),
+    (
+        "place_strip::flagged_counts_what_is_flagged_not_the_inbox",
+        place_strip::flagged_counts_what_is_flagged_not_the_inbox as fn(),
+    ),
+    (
+        "place_strip::an_empty_snoozed_place_says_why_and_the_way_back",
+        place_strip::an_empty_snoozed_place_says_why_and_the_way_back as fn(),
     ),
     (
         "cursor::j_and_k_move_only_the_cursor",

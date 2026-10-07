@@ -80,6 +80,11 @@ impl EmptyInbox {
         self.tray.set_visible(false);
     }
 
+    /// The bold line the page says now.
+    pub fn heading(&self) -> String {
+        self.heading.text().to_string()
+    }
+
     /// The page, to place where the list goes.
     pub fn widget(&self) -> &gtk::Box {
         &self.root

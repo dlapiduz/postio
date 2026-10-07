@@ -40,6 +40,8 @@ pub struct Chrome {
     place_name: gtk::Label,
     place_key: gtk::Box,
     counts: gtk::Label,
+    /// The rule between the counts and the has-action toggle.
+    divider: gtk::Separator,
     has_action: gtk::ToggleButton,
     has_action_label: gtk::Label,
     has_action_key: gtk::Box,
@@ -249,6 +251,7 @@ impl Chrome {
             place_name,
             place_key,
             counts,
+            divider: divider.clone(),
             has_action: has_action.clone(),
             has_action_label,
             has_action_key,
@@ -392,8 +395,40 @@ impl Chrome {
 
     /// The counts the strip shows: the conversations and the unread.
     pub fn set_counts(&self, conversations: u32, unread: u32) {
+        self.show_has_action(true);
         self.counts
             .set_text(&postio_ui::focus_row::strip_counts(conversations, unread));
+    }
+
+    /// The counts of a place that is not the inbox: how many conversations
+    /// it lists, once it has said, and no has-action toggle -- the toggle
+    /// narrows the inbox, and its count is the inbox's.
+    pub fn set_place_counts(&self, conversations: Option<u32>) {
+        self.counts.set_text(
+            &conversations
+                .map(postio_ui::focus_row::place_counts)
+                .unwrap_or_default(),
+        );
+        self.show_has_action(false);
+    }
+
+    /// What the strip's counts say now.
+    pub fn counts_said(&self) -> String {
+        self.counts.text().to_string()
+    }
+
+    /// Whether the strip offers the has-action toggle now.
+    pub fn has_action_shown(&self) -> bool {
+        self.has_action.is_visible()
+    }
+
+    /// Whether the strip offers the has-action toggle: in the inbox only.
+    pub fn show_has_action(&self, shown: bool) {
+        self.divider.set_visible(shown);
+        self.has_action.set_visible(shown);
+        if !shown {
+            self.showing.set_visible(false);
+        }
     }
 
     /// What the sync label says, and its icon.

@@ -192,6 +192,9 @@ mod imp {
         pub places: RefCell<Option<Rc<crate::places::Places>>>,
         /// Whether the list shows Focus's own inbox, rather than a folder.
         pub at_inbox: Cell<bool>,
+        /// The place the list shows when it is not the inbox: what its
+        /// strip counts and what it says when it has nothing in it.
+        pub place: RefCell<Option<postio_ui::focus_state::EmptyPlace>>,
         /// The last key press `handle_key` was given, by its event time and
         /// key: so a press the window's controller and a dialog's both see
         /// is handled once (`keys_under_dialogs`).
@@ -322,6 +325,7 @@ mod imp {
                 saved: RefCell::default(),
                 places: RefCell::default(),
                 at_inbox: Cell::new(true),
+                place: RefCell::default(),
                 last_key: Cell::new(None),
                 dialogs: RefCell::default(),
                 snooze: RefCell::default(),
@@ -2345,6 +2349,11 @@ impl FocusWindow {
     /// stays on the same message when that message is still shown.
     fn toggle_has_action(&self) {
         let imp = self.imp();
+        // It narrows the inbox: a place has no marked rows of its own to
+        // narrow to, and the toggle is not offered there.
+        if imp.place.borrow().is_some() {
+            return;
+        }
         let Some(pane) = self.pane() else {
             return;
         };
@@ -2378,6 +2387,8 @@ impl FocusWindow {
                 None => {}
             }
         }
+        // A place counts what the list now holds.
+        self.show_counts();
         self.update_counts();
     }
 
@@ -2520,6 +2531,10 @@ impl FocusWindow {
         };
         self.imp().at_inbox.set(false);
         self.imp().has_action.set(false);
+        self.imp().place.replace(Some(match role {
+            postio_model::MailboxRole::Snoozed => postio_ui::focus_state::EmptyPlace::Snoozed,
+            _ => postio_ui::focus_state::EmptyPlace::Flagged,
+        }));
         self.clear_selection();
         pane.feed().list().set_single_heading(None);
         pane.feed().open(scope);
@@ -2536,6 +2551,19 @@ impl FocusWindow {
             return;
         };
         chrome.set_digest_rules(imp.focus_config.borrow().digests.len());
+        // A place that is not the inbox counts what it lists. The host's
+        // counts are the inbox's, and beside "Flagged" they described a
+        // place the person had left.
+        if imp.place.borrow().is_some() {
+            let listed = self
+                .pane()
+                .filter(|pane| pane.feed().has_landed())
+                .map(|pane| pane.feed().total());
+            chrome.set_place_counts(listed);
+            chrome.set_filtered_today(None);
+            self.show_empty_or_list();
+            return;
+        }
         let counts = imp.counts.get();
         if let Some(counts) = counts {
             chrome.set_counts(counts.conversations, counts.unread);
@@ -2580,15 +2608,30 @@ impl FocusWindow {
         let Some(stack) = imp.list_or_empty.borrow().clone() else {
             return;
         };
+        // A place with nothing in it says why, once its first page has
+        // landed: a list still waiting for it is loading, not empty.
+        let empty_place = imp.place.borrow().clone().filter(|_| {
+            self.pane()
+                .is_some_and(|pane| pane.feed().has_landed() && pane.feed().total() == 0)
+        });
         let empty = match imp.counts.get() {
             Some(counts)
-                if counts.conversations == 0 && !imp.has_action.get() && imp.at_inbox.get() =>
+                if counts.conversations == 0
+                    && !imp.has_action.get()
+                    && imp.at_inbox.get()
+                    && imp.place.borrow().is_none() =>
             {
                 Some(counts)
             }
             _ => None,
         };
         match (empty, imp.empty.borrow().as_ref()) {
+            _ if empty_place.is_some() && imp.empty.borrow().is_some() => {
+                if let (Some(place), Some(page)) = (empty_place, imp.empty.borrow().as_ref()) {
+                    page.show(&postio_ui::focus_state::empty_place(&place, &self.keymap()));
+                }
+                stack.set_visible_child_name(EMPTY);
+            }
             (Some(counts), Some(page)) => {
                 // "Empty" is only said once a pass has finished (T220).
                 let statuses = imp.trackers.borrow().statuses(&imp.tracked.borrow());
@@ -4286,6 +4329,11 @@ impl FocusWindow {
                     return;
                 }
                 self.imp().has_action.set(false);
+                self.imp()
+                    .place
+                    .replace(Some(postio_ui::focus_state::EmptyPlace::Folder(
+                        name.to_owned(),
+                    )));
                 pane.feed().list().set_single_heading(None);
                 pane.feed().open(ListScope::Mailbox(mailbox));
                 chrome.set_place(name);
@@ -4308,6 +4356,9 @@ impl FocusWindow {
             Destination::Outbox(account) => {
                 self.imp().at_inbox.set(false);
                 self.imp().has_action.set(false);
+                self.imp()
+                    .place
+                    .replace(Some(postio_ui::focus_state::EmptyPlace::Outbox));
                 self.clear_selection();
                 pane.feed().list().set_single_heading(None);
                 pane.feed().open(ListScope::Outbox(account));
@@ -4325,6 +4376,7 @@ impl FocusWindow {
         };
         self.imp().at_inbox.set(true);
         self.imp().has_action.set(false);
+        self.imp().place.replace(None);
         self.clear_selection();
         pane.feed().list().set_single_heading(None);
         pane.feed().open(ListScope::Focus(FocusScope::Inbox));
@@ -5041,6 +5093,28 @@ impl FocusWindow {
             serde_json::Value::Bool(self.close_button_showing()),
         );
         let bulk = imp.bulk.borrow().as_ref().and_then(|bulk| bulk.summary());
+        // What the empty page says, when it is the page showing in place of
+        // the list: a place with nothing in it is not a blank pane.
+        let empty = self
+            .imp()
+            .list_or_empty
+            .borrow()
+            .as_ref()
+            .filter(|stack| stack.visible_child_name().as_deref() == Some(EMPTY))
+            .and(imp.empty.borrow().as_ref())
+            .map(|page| page.heading());
+        app.insert("focus.empty.heading".to_owned(), serde_json::json!(empty));
+        // What the header strip counts beside the place's name.
+        if let Some(chrome) = self.chrome() {
+            app.insert(
+                "focus.strip.counts".to_owned(),
+                serde_json::json!(chrome.counts_said()),
+            );
+            app.insert(
+                "focus.strip.has_action_shown".to_owned(),
+                serde_json::json!(chrome.has_action_shown()),
+            );
+        }
         app.insert(
             "focus.bulk".to_owned(),
             serde_json::json!({ "shown": bulk.is_some(), "summary": bulk }),

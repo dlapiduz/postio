@@ -20,7 +20,8 @@ type    = "Outbox"
 
 [[step]]
 key     = "Return"
-check   = { scope = "Outbox", rows.count = 1 }
+check   = { scope = "Outbox", rows.count = 1, keyboard.region = "list", app.focus.strip.counts = "1", app.focus.strip.has_action_shown = false }
+expect  = "The Outbox lists the one queued message and the strip counts one, not the inbox's numbers."
 
 [[step]]
 id      = "outbox"

@@ -501,6 +501,86 @@ fn cadence(written: &str) -> String {
     }
 }
 
+/// A place that is not the inbox, and has nothing in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmptyPlace {
+    /// What is snoozed.
+    Snoozed,
+    /// What is flagged.
+    Flagged,
+    /// The drafts.
+    Drafts,
+    /// What is queued to send.
+    Outbox,
+    /// Any other folder, by its name.
+    Folder(String),
+}
+
+/// What a place with no rows says: why it is empty, and the way out -- never
+/// a blank page that looks like a list that failed to load (ux-architect:
+/// nothing is a dead end). The same page the empty inbox draws, so Focus has
+/// one empty pattern; every place offers the inbox, and the ones a person
+/// fills offer how.
+pub fn empty_place(place: &EmptyPlace, keymap: &Keymap) -> EmptyInbox {
+    let key = |command| crate::hints::key(keymap, command);
+    let press = |command, what: &str| match key(command) {
+        Some(key) => format!("Press {} {what}", crate::hints::short(&key)),
+        None => {
+            let mut said = what.to_owned();
+            said.get_mut(..1).map(str::make_ascii_uppercase);
+            said
+        }
+    };
+    let (heading, detail, extra) = match place {
+        EmptyPlace::Snoozed => (
+            "Nothing snoozed".to_owned(),
+            press(
+                CommandId::Snooze,
+                "on a message in the list to snooze it; it comes back when you said.",
+            ),
+            None,
+        ),
+        EmptyPlace::Flagged => (
+            "Nothing flagged".to_owned(),
+            press(
+                CommandId::Flag,
+                "on a message in the list to flag it, and it waits here.",
+            ),
+            None,
+        ),
+        EmptyPlace::Drafts => (
+            "No drafts".to_owned(),
+            "A message you start and leave is kept here until you send it.".to_owned(),
+            Some(CommandId::Compose),
+        ),
+        EmptyPlace::Outbox => (
+            "Nothing waiting to send".to_owned(),
+            "A message you send waits here until it is on its way; a cancelled send goes back to Drafts."
+                .to_owned(),
+            Some(CommandId::Compose),
+        ),
+        EmptyPlace::Folder(name) => (
+            format!("{name} is empty"),
+            "Mail filed here shows up as it arrives.".to_owned(),
+            None,
+        ),
+    };
+    let mut shortcuts = vec![(
+        key(CommandId::GoToInbox),
+        "back to the inbox".to_owned(),
+        CommandId::GoToInbox,
+    )];
+    if let Some(command) = extra {
+        shortcuts.push((key(command), "compose".to_owned(), command));
+    }
+    EmptyInbox {
+        heading,
+        detail: Some(detail),
+        next_digest: None,
+        shortcuts,
+    }
+}
+
 /// What the reading pane says with no message open (T232): never blank,
 /// and never a dead end -- the key that opens one, and the key that puts
 /// messages back over the list, each a shortcut a click runs too. Drawn by
@@ -1042,5 +1122,44 @@ mod tests {
             ]
         );
         assert_eq!(said.next_digest, None);
+    }
+
+    #[test]
+    fn every_empty_place_says_why_and_offers_the_inbox() {
+        let places = [
+            (EmptyPlace::Snoozed, "Nothing snoozed"),
+            (EmptyPlace::Flagged, "Nothing flagged"),
+            (EmptyPlace::Drafts, "No drafts"),
+            (EmptyPlace::Outbox, "Nothing waiting to send"),
+            (EmptyPlace::Folder("Travel".into()), "Travel is empty"),
+        ];
+        for (place, heading) in places {
+            let said = empty_place(&place, Keymap::defaults());
+            assert_eq!(said.heading, heading);
+            assert!(
+                said.detail
+                    .as_deref()
+                    .is_some_and(|detail| !detail.is_empty()),
+                "{place:?} says why it is empty"
+            );
+            assert!(
+                said.shortcuts
+                    .iter()
+                    .any(|(_, _, command)| *command == CommandId::GoToInbox),
+                "{place:?} is not a dead end"
+            );
+            assert_eq!(said.next_digest, None);
+        }
+    }
+
+    #[test]
+    fn an_empty_snoozed_place_names_the_key_that_snoozes() {
+        let said = empty_place(&EmptyPlace::Snoozed, Keymap::defaults());
+        let snooze = crate::hints::key(Keymap::defaults(), CommandId::Snooze)
+            .expect("snooze is bound by default");
+        assert!(
+            said.detail.as_deref().unwrap().contains(&snooze),
+            "{said:?} names {snooze}"
+        );
     }
 }

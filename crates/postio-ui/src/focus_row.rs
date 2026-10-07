@@ -528,6 +528,14 @@ pub fn strip_counts(conversations: u32, unread: u32) -> String {
     )
 }
 
+/// The header strip's count for a place that is not the inbox: how many
+/// conversations it lists, and nothing about unread -- the unread count of
+/// the inbox describes the inbox, and beside "Flagged" it described a place
+/// the person had left.
+pub fn place_counts(conversations: u32) -> String {
+    crate::selection::count(conversations)
+}
+
 /// The has-action toggle's words: `Has action · 7`, or `Has action` before
 /// the count is known.
 pub fn has_action_label(count: Option<u32>) -> String {
@@ -555,6 +563,12 @@ pub fn showing(shown: u32, total: u32, key: Option<&str>) -> String {
 #[cfg(test)]
 mod strip_tests {
     use super::*;
+
+    #[test]
+    fn a_place_counts_what_it_lists_and_never_the_inboxs_unread() {
+        assert_eq!(place_counts(8), "8");
+        assert_eq!(place_counts(1_200), "1,200");
+    }
 
     #[test]
     fn the_strip_counts_conversations_and_unread() {

@@ -14,7 +14,8 @@ seed   = "draft-left-over"
 
 [[step]]
 command = "go_to_drafts"
-check   = { scope = "Drafts", keyboard.region = "list" }
+check   = { scope = "Drafts", keyboard.region = "list", rows.count = 7, app.focus.strip.counts = "7", app.focus.strip.has_action_shown = false }
+expect  = "Drafts lists its seven and the strip counts seven, not the inbox's numbers."
 
 [[step]]
 command = "next_message"
