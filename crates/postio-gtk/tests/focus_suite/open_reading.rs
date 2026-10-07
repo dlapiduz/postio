@@ -301,7 +301,7 @@ pub fn the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full() {
             .text();
         let full = support::now()
             .with_timezone(&chrono::Local)
-            .format("%a, %-d %b %Y at %H:%M")
+            .format("%-d %b %Y, %H:%M")
             .to_string();
         assert_eq!(date, full);
     });
