@@ -68,7 +68,7 @@ async fn a_locked_keyring_refuses_and_says_how_to_unlock() {
     );
     let said = postio_session::key_refusal(&refused).sentence;
     assert!(
-        said.contains("locked") && said.contains("Unlock"),
+        said.contains("locked") && said.contains("unlock it"),
         "and it has to tell the user what to do: {said}"
     );
     assert!(

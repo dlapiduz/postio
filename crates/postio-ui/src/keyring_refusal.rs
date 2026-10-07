@@ -16,8 +16,8 @@ const UNLOCK: &str = "log in again, or open Keychain Access and unlock the login
 /// The keyring is locked: say what that costs and how to get past it.
 pub fn locked() -> String {
     format!(
-        "Your mail is encrypted, and the key to it is kept in your system \
-         keyring, which is locked. Unlock it ({UNLOCK}), then try again."
+        "Your mail is encrypted, and your system keyring holds the key. The \
+         keyring is locked: unlock it ({UNLOCK}), then try again."
     )
 }
 
@@ -44,7 +44,10 @@ mod tests {
         for jargon in ["encryption key", "local store", "cannot read the password"] {
             assert!(!said.contains(jargon), "{jargon}: {said}");
         }
-        assert!(said.contains("locked") && said.contains("Unlock"), "{said}");
+        assert!(
+            said.contains("locked") && said.contains("unlock it"),
+            "{said}"
+        );
         // One spelling of the keyring, not "login keyring" and "Login keyring".
         assert!(!said.contains("Login"), "{said}");
     }
@@ -52,7 +55,10 @@ mod tests {
     #[test]
     fn an_unreadable_keyring_names_its_reason_without_a_stray_full_stop() {
         let said = unreadable("the Secret Service is not running.");
-        assert!(said.contains("(the Secret Service is not running)"), "{said}");
+        assert!(
+            said.contains("(the Secret Service is not running)"),
+            "{said}"
+        );
         assert!(said.starts_with(char::is_uppercase) && said.ends_with('.'));
     }
 }
