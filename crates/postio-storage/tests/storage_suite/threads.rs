@@ -1316,3 +1316,141 @@ async fn a_folder_s_page_boundaries_are_where_its_pages_begin() {
         assert_eq!(ids(&sought), ids(&skipped), "the page at {offset}");
     }
 }
+
+#[tokio::test]
+async fn a_threads_aggregates_are_written_back_and_a_missing_thread_is_refused() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = test_support::account_with_inbox(&connection).await;
+    let threads = ThreadRepository::new(&connection);
+    let mut thread = a_thread(&connection, account.id).await;
+
+    thread.subject = Some("tide gate, revised".to_owned());
+    thread.message_count = 4;
+    thread.unread_count = 1;
+    thread.has_attachments = true;
+    thread.is_flagged = true;
+    thread.first_at = at(10);
+    thread.last_at = at(500);
+    threads.update(&thread).await.expect("written back");
+    let read = threads
+        .get(thread.id)
+        .await
+        .expect("a read")
+        .expect("there");
+    assert_eq!(read.subject.as_deref(), Some("tide gate, revised"));
+    assert_eq!(
+        (
+            read.message_count,
+            read.unread_count,
+            read.has_attachments,
+            read.is_flagged
+        ),
+        (4, 1, true, true)
+    );
+    assert_eq!((read.first_at, read.last_at), (at(10), at(500)));
+
+    let mut missing = thread.clone();
+    missing.id = ThreadId::new(thread.id.get() + 1_000);
+    assert!(
+        threads.update(&missing).await.is_err(),
+        "writing back a thread that is not there is an error, not a silent no-op"
+    );
+    assert!(
+        threads.update(&Thread::new(account.id)).await.is_err(),
+        "an unpersisted thread has no row to write to"
+    );
+    assert!(
+        threads
+            .add_message(thread.id, MessageId::new(9_999))
+            .await
+            .is_err(),
+        "a message that is not there cannot join"
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_knows_its_newest_message_whether_the_person_wrote_in_it_and_what_sleeps() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let sent = test_support::mailbox(&connection, &account, "Sent")
+        .await
+        .id;
+    let threads = ThreadRepository::new(&connection);
+    let thread = a_thread(&connection, account.id).await;
+    assert_eq!(
+        threads.latest_member(thread.id).await.expect("a read"),
+        None
+    );
+    assert!(!threads.took_part(thread.id).await.expect("a read"));
+
+    let first = message(&connection, account.id, inbox, "ada", 10).await;
+    let second = message(&connection, account.id, inbox, "grace", 20).await;
+    for member in [&first, &second] {
+        threads
+            .add_message(thread.id, member.id)
+            .await
+            .expect("joined");
+    }
+    assert_eq!(
+        threads.latest_member(thread.id).await.expect("a read"),
+        Some(second.id)
+    );
+    assert!(
+        !threads.took_part(thread.id).await.expect("a read"),
+        "nothing of the person's own is in it yet"
+    );
+    let reply = message(&connection, account.id, sent, "me", 30).await;
+    threads
+        .add_message(thread.id, reply.id)
+        .await
+        .expect("joined");
+    assert!(threads.took_part(thread.id).await.expect("a read"));
+
+    assert!(
+        threads
+            .snoozed_messages(thread.id)
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+    MessageRepository::new(&connection)
+        .snooze(&[first.id], at(1_000))
+        .await
+        .expect("snoozed");
+    let asleep = threads.snoozed_messages(thread.id).await.expect("a read");
+    assert_eq!(
+        asleep.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![first.id]
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_with_no_copies_elsewhere_folds_into_itself() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let threads = ThreadRepository::new(&connection);
+    let thread = a_thread(&connection, account.id).await;
+    let member = message(&connection, account.id, inbox, "ada", 10).await;
+    threads
+        .add_message(thread.id, member.id)
+        .await
+        .expect("joined");
+
+    assert!(
+        threads
+            .with_folded_copies(&[])
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+    assert_eq!(
+        threads
+            .with_folded_copies(&[thread.id])
+            .await
+            .expect("a read"),
+        vec![thread.id]
+    );
+}

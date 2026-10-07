@@ -305,3 +305,239 @@ async fn the_store_refuses_a_marker_it_has_no_word_for() {
         assert!(refused.is_err(), "{column} = {value:?} was stored");
     }
 }
+
+#[tokio::test]
+async fn an_answer_waits_out_its_window_and_is_then_made_final() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let [accepting, declining, none] = messages(&connection, 3).await[..] else {
+        unreachable!("three messages")
+    };
+    let markers = MarkerRepository::new(&connection);
+    for message in [accepting, declining] {
+        markers.insert(&invitation(message)).await.expect("written");
+    }
+    assert!(
+        !markers
+            .answer(none, Some(InviteAnswer::Accepting), Some(at(12)))
+            .await
+            .expect("a write"),
+        "a message with no marker has nothing to answer"
+    );
+
+    markers
+        .answer(accepting, Some(InviteAnswer::Accepting), Some(at(12)))
+        .await
+        .expect("answered");
+    markers
+        .answer(declining, Some(InviteAnswer::Declining), Some(at(14)))
+        .await
+        .expect("answered");
+    assert!(
+        markers
+            .answers_due(at(11))
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+    assert_eq!(
+        markers.answers_due(at(13)).await.expect("a read"),
+        vec![accepting]
+    );
+    assert_eq!(
+        markers.answers_due(at(15)).await.expect("a read"),
+        vec![accepting, declining],
+        "soonest window first"
+    );
+
+    assert!(markers.settle_answer(accepting).await.expect("settled"));
+    assert!(markers.settle_answer(declining).await.expect("settled"));
+    assert!(
+        !markers.settle_answer(accepting).await.expect("a write"),
+        "final already: nothing waiting"
+    );
+    assert_eq!(
+        markers
+            .get(accepting)
+            .await
+            .expect("a read")
+            .expect("one")
+            .answer,
+        Some(InviteAnswer::Accepted)
+    );
+    assert_eq!(
+        markers
+            .get(declining)
+            .await
+            .expect("a read")
+            .expect("one")
+            .answer,
+        Some(InviteAnswer::Declined)
+    );
+    assert!(
+        markers
+            .answers_due(at(15))
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+
+    // Undo inside the window takes the answer back, window and all.
+    markers
+        .answer(accepting, Some(InviteAnswer::Declining), Some(at(20)))
+        .await
+        .expect("answered");
+    markers
+        .answer(accepting, None, None)
+        .await
+        .expect("taken back");
+    let back = markers.get(accepting).await.expect("a read").expect("one");
+    assert_eq!(back.answer, None);
+    assert!(
+        markers
+            .answers_due(at(99))
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn dismissals_are_counted_per_sender_and_kind() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let mut ids = Vec::new();
+    for (hour, sender) in [
+        (0, "ada@example.com"),
+        (1, "ada@example.com"),
+        (2, "grace@example.com"),
+    ] {
+        let mut message = Message::new(account.id, inbox, at(hour));
+        message.from = vec![postio_model::EmailAddress::new(None::<String>, sender)];
+        ids.push(
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message"),
+        );
+    }
+    let markers = MarkerRepository::new(&connection);
+    for id in &ids {
+        markers.insert(&question(*id)).await.expect("written");
+    }
+    assert_eq!(
+        markers
+            .dismissed_from("ada@example.com", MarkerKind::Question)
+            .await
+            .expect("a count"),
+        0
+    );
+
+    markers
+        .dismiss(ids[0], Some(at(5)))
+        .await
+        .expect("dismissed");
+    markers
+        .dismiss(ids[1], Some(at(6)))
+        .await
+        .expect("dismissed");
+    markers
+        .dismiss(ids[2], Some(at(6)))
+        .await
+        .expect("dismissed");
+    assert_eq!(
+        markers
+            .dismissed_from("ada@example.com", MarkerKind::Question)
+            .await
+            .expect("a count"),
+        2
+    );
+    assert_eq!(
+        markers
+            .dismissed_from("grace@example.com", MarkerKind::Question)
+            .await
+            .expect("a count"),
+        1
+    );
+    assert_eq!(
+        markers
+            .dismissed_from("ada@example.com", MarkerKind::Todo)
+            .await
+            .expect("a count"),
+        0,
+        "another kind is another count"
+    );
+
+    markers.dismiss(ids[1], None).await.expect("taken back");
+    assert_eq!(
+        markers
+            .dismissed_from("ada@example.com", MarkerKind::Question)
+            .await
+            .expect("a count"),
+        1
+    );
+}
+
+#[tokio::test]
+async fn every_marker_kind_source_state_and_answer_round_trips() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages(&connection, 4).await;
+    let markers = MarkerRepository::new(&connection);
+    let cases = [
+        (
+            MarkerKind::NoReply,
+            MarkerSource::Reminder,
+            InviteState::Past,
+            InviteAnswer::Accepting,
+        ),
+        (
+            MarkerKind::Todo,
+            MarkerSource::Model,
+            InviteState::Cancelled,
+            InviteAnswer::Declining,
+        ),
+        (
+            MarkerKind::Invite,
+            MarkerSource::Calendar,
+            InviteState::Open,
+            InviteAnswer::Accepted,
+        ),
+        (
+            MarkerKind::Question,
+            MarkerSource::Detector,
+            InviteState::Past,
+            InviteAnswer::Declined,
+        ),
+    ];
+    for (id, (kind, source, state, answer)) in ids.iter().zip(cases) {
+        let mut marker = invitation(*id);
+        marker.kind = kind;
+        marker.source = source;
+        marker.invite_state = Some(state);
+        marker.answer = Some(answer);
+        assert!(markers.insert(&marker).await.expect("written"));
+        assert_eq!(markers.get(*id).await.expect("a read"), Some(marker));
+    }
+}
+
+#[tokio::test]
+async fn a_negative_character_offset_is_refused_when_read() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let message = message(&connection).await;
+    postio_storage::sql::execute(
+        &connection,
+        "INSERT INTO markers (message_id, kind, source, span_start, span_end)
+         VALUES (?1, 'question', 'detector', -3, 4)",
+        [message.get()],
+    )
+    .await
+    .expect("written");
+    let error = MarkerRepository::new(&connection)
+        .get(message)
+        .await
+        .expect_err("a span no text has");
+    assert!(error.to_string().contains("markers.span_start"), "{error}");
+}

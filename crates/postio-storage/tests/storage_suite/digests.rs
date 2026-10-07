@@ -423,3 +423,160 @@ async fn which_messages_a_digest_holds_is_one_statement_by_key() {
         "each message by its key"
     );
 }
+
+/// `senders.len()` messages in one inbox, each from the sender at its index.
+async fn messages_from(connection: &Connection, senders: &[(&str, &str)]) -> Vec<MessageId> {
+    let (account, inbox) = test_support::account_with_inbox(connection).await;
+    let mut ids = Vec::new();
+    for (hour, (name, address)) in senders.iter().enumerate() {
+        let mut message = Message::new(account.id, inbox, at(23, hour as u32));
+        message.from = vec![postio_model::EmailAddress::new(Some(*name), *address)];
+        ids.push(
+            MessageRepository::new(connection)
+                .create(&mut message)
+                .await
+                .expect("a message"),
+        );
+    }
+    ids
+}
+
+#[tokio::test]
+async fn stopping_a_sender_releases_only_what_the_rule_still_waits_on() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages_from(
+        &connection,
+        &[
+            ("Ada", "ada@example.com"),
+            ("Ada", "ada@example.com"),
+            ("Grace", "grace@example.com"),
+            ("Ada", "ada@example.com"),
+        ],
+    )
+    .await;
+    let digests = DigestRepository::new(&connection);
+    for id in &ids[..3] {
+        digests
+            .hold(*id, "Newsletters", at(23, 9))
+            .await
+            .expect("held");
+    }
+    digests
+        .hold(ids[3], "Receipts", at(23, 9))
+        .await
+        .expect("held");
+    // Ada's first message is already in a delivery; it stays there.
+    let delivered = digests
+        .deliver("Newsletters", at(24, 9), at(24, 9))
+        .await
+        .expect("delivered")
+        .expect("a delivery");
+    assert!(
+        !digests
+            .hold(ids[1], "Newsletters", at(25, 9))
+            .await
+            .expect("a write"),
+        "a delivered message is not held again"
+    );
+    assert_eq!(
+        digests.delivery_messages(delivered).await.expect("a read"),
+        ids[..3].to_vec()
+    );
+
+    let waiting = messages_from(
+        &connection,
+        &[("Ada", "ada@example.com"), ("Grace", "grace@example.com")],
+    )
+    .await;
+    for id in &waiting {
+        digests
+            .hold(*id, "Newsletters", at(25, 9))
+            .await
+            .expect("held");
+    }
+    let released = digests
+        .release_sender("Newsletters", "ada@example.com")
+        .await
+        .expect("released");
+    assert_eq!(
+        released,
+        vec![waiting[0]],
+        "delivered mail stays in its digest"
+    );
+    assert_eq!(hold_of(&connection, waiting[0]).await, None);
+    assert_eq!(
+        hold_of(&connection, waiting[1]).await,
+        Some(None),
+        "another sender's mail waits on"
+    );
+    assert_eq!(
+        hold_of(&connection, ids[3]).await,
+        Some(None),
+        "another rule's mail waits on"
+    );
+    assert!(
+        digests
+            .release_sender("Newsletters", "ada@example.com")
+            .await
+            .expect("released")
+            .is_empty(),
+        "nothing left to release"
+    );
+}
+
+#[tokio::test]
+async fn a_delivery_names_its_senders_most_first_and_can_be_archived_and_reopened() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ids = messages_from(
+        &connection,
+        &[
+            ("Grace", "grace@example.com"),
+            ("Ada", "ada@example.com"),
+            ("Ada", "ada@example.com"),
+        ],
+    )
+    .await;
+    let digests = DigestRepository::new(&connection);
+    for id in &ids {
+        digests
+            .hold(*id, "Newsletters", at(23, 9))
+            .await
+            .expect("held");
+    }
+    let delivery = digests
+        .deliver("Newsletters", at(24, 9), at(24, 9))
+        .await
+        .expect("delivered")
+        .expect("a delivery");
+
+    assert!(digests.senders_of(&[]).await.expect("a read").is_empty());
+    let senders = digests.senders_of(&[delivery]).await.expect("a read");
+    assert_eq!(senders.len(), 2);
+    assert_eq!(
+        (senders[0].0, senders[0].1.normalized(), senders[0].2),
+        (delivery, "ada@example.com".to_owned(), 2)
+    );
+    assert_eq!(senders[0].1.name.as_deref(), Some("Ada"));
+    assert_eq!(
+        (senders[1].1.normalized(), senders[1].2),
+        ("grace@example.com".to_owned(), 1)
+    );
+
+    assert!(
+        !digests.reopen_delivery(delivery).await.expect("a write"),
+        "not archived yet"
+    );
+    assert!(
+        digests
+            .archive_delivery(delivery, at(24, 10))
+            .await
+            .expect("archived")
+    );
+    assert!(
+        digests.reopen_delivery(delivery).await.expect("reopened"),
+        "undo brings the row back"
+    );
+    assert!(!digests.reopen_delivery(delivery).await.expect("a write"));
+}

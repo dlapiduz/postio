@@ -200,3 +200,78 @@ async fn whether_the_person_wrote_to_someone_is_one_lookup() {
         test_support::plan(&connection, &sql).await
     );
 }
+
+#[tokio::test]
+async fn the_people_written_to_are_found_in_one_statement_and_counted() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = sender(&connection).await;
+    let first = sent(
+        &connection,
+        (&account, mailbox),
+        9,
+        &["grace@example.com"],
+        &["Linus@Example.Org"],
+        &[],
+    )
+    .await;
+    let second = sent(
+        &connection,
+        (&account, mailbox),
+        10,
+        &["grace@example.com"],
+        &[],
+        &[],
+    )
+    .await;
+    let correspondents = CorrespondentRepository::new(&connection);
+    correspondents
+        .record_sent(account.id, &[first, second])
+        .await
+        .expect("counted");
+    correspondents
+        .record_sent(account.id, &[])
+        .await
+        .expect("nothing to count");
+
+    let mut found = correspondents
+        .written_to(&[
+            address("GRACE@example.com"),
+            address("linus@example.org"),
+            address("stranger@example.net"),
+        ])
+        .await
+        .expect("a read");
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            "grace@example.com".to_owned(),
+            "linus@example.org".to_owned()
+        ]
+    );
+    assert!(
+        correspondents
+            .written_to(&[])
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+
+    let counts = correspondents.sent_counts().await.expect("counts");
+    assert_eq!(counts.len(), 2);
+    assert_eq!(counts["grace@example.com"], 2);
+    assert_eq!(counts["linus@example.org"], 1);
+
+    // A send that failed takes its count back; zero is not "written to".
+    correspondents
+        .unrecord_sent(account.id, first)
+        .await
+        .expect("taken back");
+    let counts = correspondents.sent_counts().await.expect("counts");
+    assert_eq!(counts["grace@example.com"], 1);
+    assert!(
+        !counts.contains_key("linus@example.org"),
+        "a count of zero is nobody"
+    );
+}
