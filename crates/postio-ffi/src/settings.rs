@@ -292,12 +292,12 @@ pub struct SyncingFfi {
 
 /// One saved search, as the Filters pane draws it.
 ///
-/// The `key` is the `[filters.<key>]` identity and is **not** what the user
+/// The `key` is the `[saved_searches.<key>]` identity and is **not** what the user
 /// sees: #292 keeps the key stable and TOML-safe so a rename cannot orphan a
 /// filter, and `name` is whatever they actually called it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilterFfi {
-    /// The stable `[filters.<key>]` identity. Never shown as a label.
+    /// The stable `[saved_searches.<key>]` identity. Never shown as a label.
     pub key: String,
     /// What the user called it, or the key when nobody has renamed it.
     pub name: String,
@@ -463,7 +463,7 @@ pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<Strin
 
 /// Every filter in `text`, in the order the sidebar shows them.
 ///
-/// Empty for a file with no `[filters]` in it — which is different from a
+/// Empty for a file with no `[saved_searches]` in it — which is different from a
 /// file that will not parse, and the pane says so differently.
 #[uniffi::export]
 pub fn settings_filters(text: String) -> Option<Vec<FilterFfi>> {

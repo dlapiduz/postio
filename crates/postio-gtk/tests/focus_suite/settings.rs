@@ -561,7 +561,7 @@ pub fn mod_e_opens_config_toml_in_the_persons_editor() {
 }
 
 /// Filters (classic-parity row 42): deleting a saved search in Settings
-/// writes `[filters]`, and Focus follows the file, so `alt+1` runs the one
+/// writes `[saved_searches]`, and Focus follows the file, so `alt+1` runs the one
 /// that is first now.
 pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
     crate::gtk_case(async {
@@ -569,9 +569,9 @@ pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
             return;
         }
         let (_fixture, window, _directory, path) = one_message_under(
-            "[filters.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\n\
+            "[saved_searches.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\n\
              name = \"Waiting on reply\"\n\n\
-             [filters.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\n\
+             [saved_searches.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\n\
              name = \"Atlas\"\n",
         )
         .await;

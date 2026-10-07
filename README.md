@@ -297,7 +297,7 @@ attachment_fetch = "on_open"
 [keys]
 archive = "w"             # overrides the default binding for `archive`
 
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query  = "is:unread from:team"
 pinned = true             # a pinned search, one key away in the command bar
 ```

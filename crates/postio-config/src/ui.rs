@@ -147,7 +147,7 @@ mod tests {
     fn patch_ui_rewrites_only_the_ui_table_leaving_everything_else_verbatim() {
         let original = "\
 # a hand-written comment nobody wants to lose
-[filters.old]
+[saved_searches.old]
 query = \"is:unread\"
 pinned = true
 
@@ -166,7 +166,7 @@ density = \"airy\"
             "a comment outside [ui] must survive verbatim: {patched}"
         );
         assert!(
-            patched.contains("[filters.old]") && patched.contains("query = \"is:unread\""),
+            patched.contains("[saved_searches.old]") && patched.contains("query = \"is:unread\""),
             "an unrelated section must survive untouched: {patched}"
         );
 

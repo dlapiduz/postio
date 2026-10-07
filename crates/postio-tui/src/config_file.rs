@@ -50,7 +50,7 @@ impl Read {
     }
 }
 
-/// Add `query` to `[filters]` at `path` as a pinned saved search, as the
+/// Add `query` to `[saved_searches]` at `path` as a pinned saved search, as the
 /// desktop's Ctrl+S does, and answer the pinned searches now.
 pub fn save_search(path: &Path, query: &str) -> Result<Read, String> {
     rewrite(path, |config| {

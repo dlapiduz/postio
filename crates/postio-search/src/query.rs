@@ -224,7 +224,7 @@ pub enum Filter {
     ///
     /// Deliberately still text. Resolving it to an `AccountId` needs the
     /// store, which this crate does not have and must not grow: a saved
-    /// search in `[filters]` is the string the user typed, and it has to keep
+    /// search in `[saved_searches]` is the string the user typed, and it has to keep
     /// meaning the same thing after an account is removed and re-added under
     /// a new id.
     Account(String),

@@ -19,7 +19,7 @@ theme = "dark"
 archive = "x"
 summarize = "g s"
 
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query = "is:unread from:team"
 pinned = true
 
@@ -253,9 +253,9 @@ fn zero_valued_sync_settings_are_reported() {
 
 #[test]
 fn an_empty_filter_query_is_reported() {
-    let checked = check("[filters.needs-reply]\nquery = \"\"\npinned = true\n");
+    let checked = check("[saved_searches.needs-reply]\nquery = \"\"\npinned = true\n");
     let err = checked.validation.first_error().expect("an error");
-    assert_eq!(err.path, "filters.needs-reply.query");
+    assert_eq!(err.path, "saved_searches.needs-reply.query");
     assert!(err.message.contains("needs-reply"), "{}", err.message);
 }
 
@@ -288,7 +288,7 @@ density = "enormous"
 [keys]
 reply = "ctrl+"
 
-[filters.x]
+[saved_searches.x]
 query = ""
 "#;
     let checked = check(text);

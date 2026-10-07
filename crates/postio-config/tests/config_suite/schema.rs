@@ -23,7 +23,7 @@ fn empty_file_yields_defaults() {
 
 #[test]
 fn empty_sections_yield_defaults() {
-    let cfg = Config::from_toml_str("[ui]\n[keys]\n[sync]\n[filters]\n")
+    let cfg = Config::from_toml_str("[ui]\n[keys]\n[sync]\n[saved_searches]\n")
         .expect("empty sections must parse");
     assert_eq!(cfg, Config::default());
 }
@@ -158,7 +158,7 @@ port = 465
 security = "implicit-tls"
 "#;
 
-// ------------------------------------------------------- [sync] / [filters] --
+// ------------------------------------------------------- [sync] / [saved_searches] --
 
 #[test]
 fn parses_the_sync_section() {
@@ -207,7 +207,7 @@ fn attachments_are_fetched_on_open_unless_the_file_says_otherwise() {
 fn parses_named_filters() {
     let cfg = Config::from_toml_str(
         r#"
-        [filters.needs-reply]
+        [saved_searches.needs-reply]
         query = "is:unread from:team"
         pinned = true
         "#,
@@ -257,7 +257,7 @@ account_future = { nested = true }
 host = "imap.example.com"
 imap_future = "kept"
 
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query = "is:unread"
 filter_future = 1
 "#;

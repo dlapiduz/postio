@@ -280,14 +280,14 @@ wearing a different hat.
 | A search | A query | Built |
 | A saved search | A query with a name | Built (`Ctrl+S` in the command bar; the macOS sidebar renames, reorders and deletes them) |
 | A pinned search | A saved search that is pinned | Built (the desktop app offers it in the command bar, `Alt+1`…`Alt+4`; macOS in its sidebar) |
-| A rule | An ordered `[[rules]]` entry naming actions, optionally reusing a named `[filters]` query rather than `[filters]` itself growing actions (ADR 0008 Q4) | Not built ([#5](https://github.com/dlapiduz/postio/issues/5)); the engine lives on `feature/rules` |
+| A rule | An ordered `[[rules]]` entry naming actions, optionally reusing a named `[saved_searches]` query rather than `[saved_searches]` itself growing actions (ADR 0008 Q4) | Not built ([#5](https://github.com/dlapiduz/postio/issues/5)); the engine lives on `feature/rules` |
 
 `crates/postio-config/src/filters.rs` implements the schema and names it
-exactly this way — *"`[filters]` — named saved queries"* — with a `pinned`
+exactly this way — *"`[saved_searches]` — named saved queries"* — with a `pinned`
 field meaning "offer this filter where the app keeps its places":
 
 ```toml
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query  = "is:unread from:team"
 pinned = true
 ```
@@ -575,6 +575,6 @@ What remains open, as of 0.4.0:
 
 | Gap | Effect | Where |
 |---|---|---|
-| The rules engine is designed and not on `main` | `[filters]` are saved searches only; nothing files mail on arrival | ADR 0008/0028/0030, [#5](https://github.com/dlapiduz/postio/issues/5) |
+| The rules engine is designed and not on `main` | `[saved_searches]` are saved searches only; nothing files mail on arrival | ADR 0008/0028/0030, [#5](https://github.com/dlapiduz/postio/issues/5) |
 | `[sync] notify_roles` does not cross the FFI | The macOS build notifies for every folder, not the configured ones | `docs/notes/2026-09-13-what-the-frontend-audit-found-and-what-remains.md` |
 | Wall-clock performance figures predate the engine swap | The counted budgets hold; the timings in `PERFORMANCE.md` have not been re-measured on Turso against a real mailbox | [`PERFORMANCE.md`](PERFORMANCE.md) |

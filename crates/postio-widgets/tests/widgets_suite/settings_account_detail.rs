@@ -3,7 +3,7 @@
 //!
 //! ADR 0005 Q6b retired `[accounts]` from `config.toml` -- an account is
 //! database state, not preference -- so this is not a `[table]` pane like
-//! `[ui]`/`[sync]`/`[filters]`: there is no buffer to patch. The panel only
+//! `[ui]`/`[sync]`/`[saved_searches]`: there is no buffer to patch. The panel only
 //! reports what changed (`connect_account_edited`); the settings presenter
 //! is what writes it, the same split `connect_account_enabled_changed` and
 //! `connect_account_action` already use.

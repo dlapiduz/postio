@@ -15,7 +15,7 @@ use postio_widgets::settings::{Section, SettingsPanel};
 const SAMPLE: &str = "\
 # a hand-written comment nobody wants to lose -- deliberately on an
 # untouched section, not the sync table this pane owns.
-[filters.old]
+[saved_searches.old]
 query = \"is:unread\"
 pinned = true
 
@@ -86,7 +86,7 @@ pub fn pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone()
         "an edit here must not disturb an unrelated section's comment: {text}"
     );
     assert!(
-        text.contains("[filters.old]") && text.contains("query = \"is:unread\""),
+        text.contains("[saved_searches.old]") && text.contains("query = \"is:unread\""),
         "nor an unrelated section: {text}"
     );
 

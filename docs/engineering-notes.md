@@ -80,7 +80,7 @@ query; a saved search is a named query; a pinned search is a saved search the
 app keeps a place for (the command bar on the desktop, the sidebar on macOS);
 a filter/rule is a saved search plus actions evaluated on arrival.
 `crates/postio-config/src/filters.rs` already implements the schema and names
-it this way (`[filters]` — named saved queries, with `pinned`), and the
+it this way (`[saved_searches]` — named saved queries, with `pinned`), and the
 desktop app's command bar and the macOS sidebar offer pinned filters now;
 there is still no rules engine on `main` (#5, the work is on
 `feature/rules`). The boundary that keeps this honest: parsing

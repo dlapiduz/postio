@@ -20,7 +20,7 @@ same kind underneath:
 | Inbox, Archive, Sent, Drafts, Trash, Junk | A real `Mailbox`, `id > 0`, a server path, a `MailboxRole` |
 | An ordinary folder | The same `Mailbox`, role `Regular`, drawn as a tree |
 | Flagged, Snoozed | A `Mailbox` **invented in the GTK feed** with a negative id and an empty path, summed from the real folders' counts |
-| A saved search | Not a `Mailbox` at all — a `[filters]` entry in its own section, handing back a query string |
+| A saved search | Not a `Mailbox` at all — a `[saved_searches]` entry in its own section, handing back a query string |
 
 Three consequences follow, and this feature exists because of them.
 

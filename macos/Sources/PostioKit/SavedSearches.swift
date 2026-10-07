@@ -3,7 +3,7 @@ import PostioFFI
 
 /// The saved searches in the sidebar, and which one the keyboard is on.
 ///
-/// A saved search is a `[filters]` entry in `config.toml`. **Swift never
+/// A saved search is a `[saved_searches]` entry in `config.toml`. **Swift never
 /// parses or writes TOML** (ADR 0031): what crosses is a list of rows and
 /// four verbs, and the file is read, patched and written by
 /// `postio_ui::saved_search` — the same code the classic app ran, so a search

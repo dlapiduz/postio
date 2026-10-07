@@ -1812,7 +1812,7 @@ screen, not on what a layer was handed, that each surface shows what
   exclusion, ADR 0016), Privacy and Config file, and no key Focus does not
   honour. Every account verb MUST be reachable from the keyboard. `mod+e`
   MUST open `config.toml` in the person's editor from anywhere in Focus.
-  Changes to `[keys]`, `[filters]`, `[sync]`, `[focus]`, `[compose]`,
+  Changes to `[keys]`, `[saved_searches]`, `[sync]`, `[focus]`, `[compose]`,
   `[reader]` and `[storage]` MUST take effect without a restart.
 - **FR-163**: Focus's first run MUST add an account (the form, or OAuth
   sign-in), then ask how much history to sync, through the shared

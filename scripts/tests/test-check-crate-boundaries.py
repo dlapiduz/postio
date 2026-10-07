@@ -294,7 +294,7 @@ def main() -> int:
 
         # 10. postio-search is the query *language*, and stays pure so the
         #     same query string means the same thing in the search bar, the
-        #     sidebar and `[filters]` -- postio-index is the FTS5 executor.
+        #     sidebar and `[saved_searches]` -- postio-index is the FTS5 executor.
         check_case(
             "postio-search gains a direct turso dependency",
             build_fixture(

@@ -522,7 +522,7 @@ account row, `Return` (enable or disable), `Delete` (remove, undone by
 roles) act on that row, and the command bar lists them. A Keyboard row
 waiting for a key takes every key, Escape included, until it has one.
 Changes write `config.toml` as they are made, and Focus follows the file
-live (`Session::follow_config`): `[keys]`, `[filters]`, `[sync]`, `[focus]`,
+live (`Session::follow_config`): `[keys]`, `[saved_searches]`, `[sync]`, `[focus]`,
 `[compose]`, `[reader]` and `[storage]` take effect without a restart.
 
 **States.** Accounts with none says so and offers Add account; a folder list

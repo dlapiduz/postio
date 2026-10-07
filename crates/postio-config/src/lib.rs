@@ -141,8 +141,8 @@ pub struct Config {
     /// `[sync]` — IDLE, polling, connection budget.
     #[serde(default)]
     pub sync: SyncConfig,
-    /// `[filters]` — named saved queries.
-    #[serde(default)]
+    /// `[saved_searches]` — named saved queries.
+    #[serde(default, rename = "saved_searches")]
     pub filters: BTreeMap<String, FilterConfig>,
     /// `[mailboxes]` — role to the server's own folder path.
     ///

@@ -1,9 +1,9 @@
-//! The settings panel's structured `[filters]` pane (#869).
+//! The settings panel's structured `[saved_searches]` pane (#869).
 //!
 //! `Section::Filters` used to be raw-TOML-textview-jump only; this is the
 //! rendered row list layered above it, the same shape `set_accounts` already
 //! established for `[accounts]` (`gtk_settings_accounts.rs`). Unlike
-//! accounts, `[filters]` lives entirely in `config.toml`, so this pane reads
+//! accounts, `[saved_searches]` lives entirely in `config.toml`, so this pane reads
 //! and writes the panel's own buffer directly rather than needing an
 //! external host: every row action is expected to reach `panel.text()`
 //! through `postio_config::patch_filters`, and from there the panel's
@@ -21,17 +21,17 @@ const SAMPLE: &str = "\
 [ui]
 theme = \"dark\" # inline comment, also not to be lost
 
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query = \"is:unread from:team\"
 pinned = true
 order = 0
 
-[filters.has-attach]
+[saved_searches.has-attach]
 query = \"has:attach\"
 pinned = true
 order = 1
 
-[filters.archived-search]
+[saved_searches.archived-search]
 query = \"is:archived\"
 pinned = false
 ";
@@ -97,9 +97,12 @@ pub fn toggling_pinned_writes_straight_to_the_buffer() {
     pump();
 
     assert!(
-        panel.text().contains("[filters.archived-search]") && {
+        panel.text().contains("[saved_searches.archived-search]") && {
             let text = panel.text();
-            let after = text.split("[filters.archived-search]").nth(1).unwrap();
+            let after = text
+                .split("[saved_searches.archived-search]")
+                .nth(1)
+                .unwrap();
             after.contains("pinned = true")
         },
         "toggling the switch must flip pinned in the buffer: {}",

@@ -280,7 +280,7 @@ message) and collapses for a search (`header:x-mailer` alone would read the
 mailbox), splits the executor into a SQL half and a Rust half, and makes the
 counting harness blind to the expensive part.
 
-**Index the headers named by the user's own `[[rules]]` and `[filters]`.**
+**Index the headers named by the user's own `[[rules]]` and `[saved_searches]`.**
 Adding a rule would trigger a reindex of the whole mailbox, and a `header:`
 typed ad hoc in the search bar would answer nothing until saved. One query
 language means one string means one thing (`PRODUCT.md` §7), including when it

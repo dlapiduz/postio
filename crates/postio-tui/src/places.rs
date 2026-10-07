@@ -78,10 +78,10 @@ pub struct PlaceDetails {
     pub outbox: Vec<(AccountId, u32)>,
 }
 
-/// A saved search from `config.toml`'s `[filters]`.
+/// A saved search from `config.toml`'s `[saved_searches]`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Saved {
-    /// Its key in `[filters]`, which a rename leaves alone.
+    /// Its key in `[saved_searches]`, which a rename leaves alone.
     pub key: String,
     /// What it is called.
     pub name: String,

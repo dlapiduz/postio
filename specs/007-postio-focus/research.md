@@ -282,7 +282,7 @@ The output is tokens of the one language, shown as chips; the chips are the
 query (constitution III). "Invoice" stays free text, which already searches
 subjects.
 
-**Saved searches** are the `[filters]` entries with `pinned = true`, in their
+**Saved searches** are the `[saved_searches]` entries with `pinned = true`, in their
 `order`, bound to `alt+1`–`alt+4` by four registry commands. `mod+s` is
 `SaveSearch`.
 

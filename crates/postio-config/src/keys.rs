@@ -255,7 +255,7 @@ impl KeyBindings {
 ///
 /// `KeyBindings` is `#[serde(transparent)]`, so `[keys]`'s own shape is
 /// already just `command = "binding"` pairs with no wrapper table the way
-/// `[filters.<key>]` needs one — but `toml_edit`'s fragment splice still
+/// `[saved_searches.<key>]` needs one — but `toml_edit`'s fragment splice still
 /// needs *some* struct to serialize from, hence [`KeysOnly`].
 pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<String> {
     let mut doc = text
@@ -282,7 +282,7 @@ pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<St
 /// Serializes as just `[keys]`, with no other section — [`patch_keys`]'s
 /// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
 /// splice in, the same role `filters.rs`'s own `FiltersOnly` plays for
-/// `[filters]`.
+/// `[saved_searches]`.
 #[derive(Serialize)]
 struct KeysOnly<'a> {
     keys: &'a BTreeMap<String, String>,

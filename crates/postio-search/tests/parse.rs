@@ -128,7 +128,7 @@ fn list_operator() {
 fn account_operator() {
     // The value stays text here. This crate never resolves it to an id — that
     // needs the store, and keeping the parse pure is what lets a saved search
-    // survive in `[filters]` as the string the user typed (ADR 0005 Q5, #186).
+    // survive in `[saved_searches]` as the string the user typed (ADR 0005 Q5, #186).
     assert_eq!(
         filters("account:work"),
         vec![Filter::Account("work".into())]

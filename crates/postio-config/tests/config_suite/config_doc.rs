@@ -494,7 +494,7 @@ fn reference_config() -> Config {
 /// `[section]` then its leaves, and one level further for the tables in
 /// [`NESTED`], whose keys are documented as a section of their own; an
 /// array of tables contributes the keys of its entries. Everything else
-/// is a leaf. `[accounts]`/`[filters]`/`[mailboxes]`/`[keys]` are dynamic
+/// is a leaf. `[accounts]`/`[saved_searches]`/`[mailboxes]`/`[keys]` are dynamic
 /// maps that serialise as bare, empty tables with no leaves of their own to
 /// collect -- they are documented as sections in the rendered prose
 /// instead, not as rows in this table.
@@ -641,7 +641,7 @@ fn render() -> String {
          security = \"implicit-tls\"\n\
          ```\n\
          \n\
-         ## `[filters.<id>]`\n\
+         ## `[saved_searches.<id>]`\n\
          \n\
          A named, pinned search -- one table per saved search, keyed the same\n\
          way accounts are.\n\

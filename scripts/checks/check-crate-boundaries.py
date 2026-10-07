@@ -19,7 +19,7 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-search`` must not depend on ``rusqlite``/``turso``/``gtk4``. It is the query
     *language* -- parser, highlighter, facets -- and stays pure so the same
     query string means the same thing in the search bar, the sidebar and
-    ``[filters]``; ``postio-index`` is the FTS5 executor that runs it.
+    ``[saved_searches]``; ``postio-index`` is the FTS5 executor that runs it.
   * ``postio-body`` must not depend on ``rusqlite``/``turso``/``gtk4``. It is the other
     pure leaf: the composer's document, the HTML subset, quoting and
     sanitising, kept out of ``postio-model`` only because ``ammonia`` pulls an
@@ -579,7 +579,7 @@ RULES: dict[str, dict[str, object]] = {
             "FTS5 executor; the desktop app, postio-runtime and the terminal "
             "all depend on postio-search directly, so the same query string has "
             "to mean the same thing in the search bar, the sidebar and "
-            "[filters], which only holds if this crate does no SQL of its own."
+            "[saved_searches], which only holds if this crate does no SQL of its own."
         ),
     },
     "postio-body": {

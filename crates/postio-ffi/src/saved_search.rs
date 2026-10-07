@@ -1,6 +1,6 @@
 //! Keeping a query, as a frontend does it.
 //!
-//! A saved search is a `[filters]` entry in `config.toml`, so **Swift never
+//! A saved search is a `[saved_searches]` entry in `config.toml`, so **Swift never
 //! parses or writes TOML** applies here exactly as it does to the settings
 //! panes (ADR 0031): what crosses is a list of rows and four verbs, and the
 //! file is read, patched and written on this side by
@@ -30,13 +30,13 @@ use crate::settings::SettingsError;
 
 /// One saved search, as a sidebar row.
 ///
-/// The `key` is the `[filters.<key>]` identity and is **not** a label: #292
+/// The `key` is the `[saved_searches.<key>]` identity and is **not** a label: #292
 /// keeps it stable and TOML-safe so a rename cannot orphan the entry, and
 /// `name` is whatever the user actually called it — the key itself, until
 /// they call it something.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SavedSearchFfi {
-    /// The stable `[filters.<key>]` identity, and what every verb below
+    /// The stable `[saved_searches.<key>]` identity, and what every verb below
     /// names. Never drawn.
     pub key: String,
     /// What the row shows.

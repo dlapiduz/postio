@@ -3272,7 +3272,7 @@ impl FocusWindow {
     }
 
     /// `Ctrl+S` in the bar (T086): save its query to `config.toml` as a
-    /// pinned search -- `[filters]` alone, the rest of the file as it
+    /// pinned search -- `[saved_searches]` alone, the rest of the file as it
     /// was -- and show it in the saved row.
     fn save_search(&self) {
         let Some(bar) = self.bar().filter(|bar| bar.is_open()) else {

@@ -22,7 +22,7 @@
 //! their own table with `toml_edit`'s format-preserving document model
 //! ([`SettingsPanel::apply_filters_mutation`]), and the result is written into
 //! *this* buffer, so it reaches disk through the exact same debounced write
-//! every raw edit already does. `[keys]` and `[filters]`'s advanced escape
+//! every raw edit already does. `[keys]` and `[saved_searches]`'s advanced escape
 //! hatch stay on the raw view below until their own issues convert them the
 //! same way.
 //!
@@ -742,7 +742,7 @@ mod imp {
         pub account_detail_test_status: OnceCell<gtk::Label>,
         /// One row per saved search, pinned or not (#869) — the structured
         /// pane [`Section::Filters`] now shows instead of only jumping the
-        /// raw text view to `[filters]`.
+        /// raw text view to `[saved_searches]`.
         pub filters_list: gtk::ListBox,
         pub filters_scroller: gtk::ScrolledWindow,
         /// Shown instead of `filters_scroller` when there is nothing saved
@@ -2740,7 +2740,7 @@ impl SettingsPanel {
 
     /// Rebuilds the filter rows from the buffer's current text.
     ///
-    /// Unlike accounts, `[filters]` lives entirely in `config.toml` — there
+    /// Unlike accounts, `[saved_searches]` lives entirely in `config.toml` — there
     /// is no second store to read, so this parses the buffer itself rather
     /// than waiting on an outside caller to hand over what to show. Invalid
     /// TOML mid-edit leaves whatever was last drawn rather than clearing it:
@@ -2761,7 +2761,7 @@ impl SettingsPanel {
         ListOrEmpty::show(&imp.filters_scroller, &imp.filters_empty, !order.is_empty());
     }
 
-    /// Applies `mutate` to the buffer's current `[filters]` state and writes
+    /// Applies `mutate` to the buffer's current `[saved_searches]` state and writes
     /// the result back into the buffer — which is what actually reaches disk,
     /// through the same debounced write every other edit in this panel goes
     /// through. Invalid TOML mid-edit is left alone: there is no sensible
@@ -2774,7 +2774,7 @@ impl SettingsPanel {
         mutate(&mut config);
         match patch_filters(&original, &config.filters) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [filters]: {error}"),
+            Err(error) => tracing::error!(%error, "could not patch [saved_searches]: {error}"),
         }
     }
 
@@ -2868,7 +2868,7 @@ impl SettingsPanel {
     /// Applies `mutate` to the buffer's current `[sync]` state and writes
     /// the result back into the buffer, the same way
     /// [`apply_filters_mutation`](Self::apply_filters_mutation) does for
-    /// `[filters]`.
+    /// `[saved_searches]`.
     fn apply_sync_mutation(&self, mutate: impl FnOnce(&mut SyncConfig)) {
         let original = self.text();
         let Ok(mut config) = Config::from_toml_str(&original) else {
@@ -4592,21 +4592,21 @@ mod tests {
      {
         let config = Config::from_toml_str(
             "\
-[filters.b]
+[saved_searches.b]
 query = \"subject:b\"
 pinned = false
 
-[filters.zebra]
+[saved_searches.zebra]
 query = \"is:unread\"
 pinned = true
 order = 1
 
-[filters.apple]
+[saved_searches.apple]
 query = \"has:attach\"
 pinned = true
 order = 0
 
-[filters.a]
+[saved_searches.a]
 query = \"subject:a\"
 pinned = false
 ",

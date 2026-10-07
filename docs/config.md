@@ -202,7 +202,7 @@ port = 465
 security = "implicit-tls"
 ```
 
-## `[filters.<id>]`
+## `[saved_searches.<id>]`
 
 A named, pinned search -- one table per saved search, keyed the same
 way accounts are.

@@ -250,7 +250,7 @@ Two small additions:
 - The query language gains `account:` as a `Field`, so a saved search can pin
   itself to one account regardless of the scope it is run from. This is one row
   in `postio-search::Field` and one arm in the parser, and it keeps
-  `[filters]` expressive enough to survive multi-account without a second
+  `[saved_searches]` expressive enough to survive multi-account without a second
   syntax.
 
 ### Q5a — Unified search needs an index of its own (#435)
@@ -409,7 +409,7 @@ class of lie Q10 forbids of aggregate views.
 
 `postio-search` gains `Field::Account` and `Filter::Account(String)` and stops
 there: the value stays the text the user typed, because resolving it needs the
-store and a saved search in `[filters]` has to keep meaning the same thing
+store and a saved search in `[saved_searches]` has to keep meaning the same thing
 after an account is removed and re-added under a new id.
 
 The executor resolves it the way `in:` already resolves a mailbox — as a
@@ -573,7 +573,7 @@ domain vocabulary, kept in sync by hand, which is the thing the one-registry
 rule exists to prevent.
 
 **An account is state, not preference.** Every other section of `config.toml`
-solely owns what it describes: `[ui]`, `[keys]`, `[sync]`, `[filters]`,
+solely owns what it describes: `[ui]`, `[keys]`, `[sync]`, `[saved_searches]`,
 `[mailboxes]`, `[logging]`, `[storage]`, `[compose]`. An account owns
 mailboxes, messages, threads, sync state and an operation queue by
 `ON DELETE CASCADE`; it is created by a flow that probes servers and writes a

@@ -1789,7 +1789,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::SavedSearch1,
         title: "Saved search 1",
-        // The pinned `[filters]` entries, in their order: a saved search is a
+        // The pinned `[saved_searches]` entries, in their order: a saved search is a
         // place a person goes, so the four come with the destinations.
         default_binding: "alt+1",
         alternate_bindings: &[],

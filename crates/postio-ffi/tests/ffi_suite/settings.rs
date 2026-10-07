@@ -28,7 +28,7 @@ density = \"compact\"
 theme = \"dark\"
 some_future_key = 42
 
-[filters.urgent]
+[saved_searches.urgent]
 query = \"is:unread\"
 ";
 
@@ -50,7 +50,7 @@ fn patching_appearance_leaves_everything_outside_the_ui_table_verbatim() {
         "sync moved:\n{patched}"
     );
     assert!(
-        patched.contains("[filters.urgent]\nquery = \"is:unread\""),
+        patched.contains("[saved_searches.urgent]\nquery = \"is:unread\""),
         "filters moved:\n{patched}"
     );
     assert!(
@@ -500,12 +500,12 @@ fn every_sync_field_survives_a_round_trip() {
 // --- the Filters pane (#1156) ----------------------------------------------
 
 const FILTERS: &str = "\
-[filters.urgent]
+[saved_searches.urgent]
 query = \"is:unread flag:flagged\"
 pinned = true
 order = 1
 
-[filters.newsletters]
+[saved_searches.newsletters]
 query = \"list:*\"
 name = \"Mailing lists\"
 a_key_this_build_does_not_know = true

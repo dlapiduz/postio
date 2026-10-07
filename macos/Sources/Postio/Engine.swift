@@ -1312,7 +1312,7 @@ final class Engine {
         case Intercepted.deleteSavedSearch:
             // Asked about, never done: PRODUCT.md's rule is that a
             // destructive operation is confirmed or undoable, and taking a
-            // `[filters]` entry out of a file nobody kept a copy of cannot
+            // `[saved_searches]` entry out of a file nobody kept a copy of cannot
             // be the second.
             guard let row = savedSearches.focused else { return false }
             savedSearches.ask(.confirmDelete(key: row.key, name: row.name))

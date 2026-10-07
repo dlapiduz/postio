@@ -147,8 +147,8 @@ pub fn alt_2_runs_the_second_saved_search() {
             .await;
         fixture.index().await;
         let config = postio_config::Config::from_toml_str(
-            "[filters.tickets]\nquery = \"subject:ticket\"\npinned = true\norder = 1\n\n\
-             [filters.from-ada]\nquery = \"from:ada\"\npinned = true\norder = 2\nname = \"From Ada\"\n",
+            "[saved_searches.tickets]\nquery = \"subject:ticket\"\npinned = true\norder = 1\n\n\
+             [saved_searches.from-ada]\nquery = \"from:ada\"\npinned = true\norder = 2\nname = \"From Ada\"\n",
         )
         .expect("a config");
         let window = postio_gtk::window::FocusWindow::new(None);

@@ -84,7 +84,7 @@ pub fn places() -> Places {
     }
 }
 
-/// A saved search, as `[filters]` pins one.
+/// A saved search, as `[saved_searches]` pins one.
 pub fn saved_search(key: &str, name: &str, query: &str) -> Saved {
     Saved {
         key: key.into(),

@@ -169,7 +169,7 @@ import Testing
         // The keys `SettingsPaneView` switches on, kept beside the switch
         // rather than inferred: the point is to fail when the core grows a
         // section and this frontend has not caught up.
-        let drawn: Set<String> = ["accounts", "filters", "compose", "ui", "keys", "sync", "privacy", ""]
+        let drawn: Set<String> = ["accounts", "saved_searches", "compose", "ui", "keys", "sync", "privacy", ""]
 
         let sections = Set(settingsSections().map(\.key))
 

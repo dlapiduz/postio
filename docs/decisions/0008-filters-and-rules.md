@@ -11,7 +11,7 @@
   and gains a **second evaluator** — an in-memory matcher in `postio-search`
   beside the SQL executor in `postio-index`, held to agreement by a
   differential test. Rules live in a new **ordered `[[rules]]` array**, not in
-  `[filters]`, because a map has no order and the issue requires one. A rule
+  `[saved_searches]`, because a map has no order and the issue requires one. A rule
   fires **when every fact it needs exists**, which is not always on arrival.
 
 ---
@@ -23,7 +23,7 @@
 | Query parser, `Field`, `Filter`, `Clause`, `ParsedQuery` | Built (`postio-search`) |
 | Negation with a leading `-`, on operators and free text | Built |
 | Execution of a parsed query as SQL plus a full-text match over a `USING fts` index | Built (`postio-index/src/executor.rs`) |
-| `[filters.<name>] { query, pinned }` | Built (`config/src/filters.rs`): pinned entries are saved searches, on `alt+1`–`alt+4` and in the command bar |
+| `[saved_searches.<name>] { query, pinned }` | Built (`config/src/filters.rs`): pinned entries are saved searches, on `alt+1`–`alt+4` and in the command bar |
 | `postio-config` deliberately keeping the query as *text* | Built, and the idiom this ADR extends |
 | The matcher (Q1), for `from:`, `to:`, `subject:`, `filename:` and `list:`, each possibly negated | Built (`postio_search::matcher`) for spec 007's digest rules, held equal to the executor by `postio-index`'s `digest_matcher` differential test |
 | The rules engine: `[[rules]]`, `postio-model::rule`, the rules pass in sync | On `feature/rules`, not on `main`; [ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md) and [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md) extend it there |
@@ -131,9 +131,9 @@ split across the two points.
 
 ---
 
-## Q4 — Rules are an ordered array; `[filters]` stays what it is
+## Q4 — Rules are an ordered array; `[saved_searches]` stays what it is
 
-`[filters]` is a map, `HashMap<String, FilterConfig>`. A map has no order.
+`[saved_searches]` is a map, `HashMap<String, FilterConfig>`. A map has no order.
 Issue #5 requires that "rule evaluation order is deterministic and documented",
 and the only way to get order out of a map is an `order = 3` field on every
 entry — which users duplicate, skip, and have to renumber to insert a rule in
@@ -151,19 +151,19 @@ stop    = true
 
 [[rules]]
 name   = "needs-reply"
-filter = "needs-reply"       # reuse a named [filters] query
+filter = "needs-reply"       # reuse a named [saved_searches] query
 actions = ["flag"]
 enabled = false              # dry-run it first
 ```
 
-And **`[filters]` keeps its existing job**: named saved queries, `pinned = true`
+And **`[saved_searches]` keeps its existing job**: named saved queries, `pinned = true`
 making one a saved search the app offers on a key. That is a *view*, not a rule, and conflating them
 would mean every saved search had to think about actions and ordering.
 A rule may name a filter (`filter = "needs-reply"`) so a query the user already
 tuned is not written twice.
 
 A rule is a saved search plus actions, spelled `[[rules]]` referencing
-`[filters]` (`ARCHITECTURE.md` §6), not `[filters]` growing an `actions`
+`[saved_searches]` (`ARCHITECTURE.md` §6), not `[saved_searches]` growing an `actions`
 key.
 
 **Config keeps everything as text.** `postio-config` does not parse the query,
@@ -274,7 +274,7 @@ then moved, so the user watches their mail get filed after they have already
 seen it. It also makes rule application a second write of every row on every
 sync pass.
 
-**`[filters]` grows `actions` and `order`.** The literal reading of §6.
+**`[saved_searches]` grows `actions` and `order`.** The literal reading of §6.
 Rejected in Q4: hand-numbered ordering in a map is a bad configuration surface,
 and views and rules want different fields.
 

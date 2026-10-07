@@ -898,7 +898,9 @@ impl Onboarding {
             self,
             move |_| {
                 if let Some(dialog) = screen.ancestor(adw::Dialog::static_type()) {
-                    dialog.downcast_ref::<adw::Dialog>().map(|dialog| dialog.close());
+                    dialog
+                        .downcast_ref::<adw::Dialog>()
+                        .map(|dialog| dialog.close());
                 }
             }
         ));

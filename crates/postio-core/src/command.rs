@@ -983,17 +983,17 @@ pub enum Command {
     GoToFiltered,
     /// Go to the digest rules.
     GoToDigestRules,
-    /// Run the first pinned `[filters]` entry.
+    /// Run the first pinned `[saved_searches]` entry.
     ///
     /// One variant for each of the four, for the reason the destinations
     /// above are: [`Self::id`] is total, and `SavedSearch(9)` would be a
     /// value with no command id.
     SavedSearch1,
-    /// Run the second pinned `[filters]` entry.
+    /// Run the second pinned `[saved_searches]` entry.
     SavedSearch2,
-    /// Run the third pinned `[filters]` entry.
+    /// Run the third pinned `[saved_searches]` entry.
     SavedSearch3,
-    /// Run the fourth pinned `[filters]` entry.
+    /// Run the fourth pinned `[saved_searches]` entry.
     SavedSearch4,
     /// Show only the mail that asks something of you, or everything again.
     ToggleHasAction,

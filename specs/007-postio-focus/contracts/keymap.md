@@ -114,7 +114,7 @@ it.
 | `g f` | `go_to_filtered` | Focus | |
 | `g d` | `go_to_digest_rules` | Focus | |
 | `g a` | `next_scope` | All | Withheld on macOS |
-| `alt+1` … `alt+4` | `saved_search_1` … `saved_search_4` | All | The pinned `[filters]` entries, in their order |
+| `alt+1` … `alt+4` | `saved_search_1` … `saved_search_4` | All | The pinned `[saved_searches]` entries, in their order |
 | `!` | `toggle_has_action` | Focus | A punctuation alias in `postio-ui`'s keymap |
 
 ## Search: `Context::Search`

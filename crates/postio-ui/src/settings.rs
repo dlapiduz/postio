@@ -21,7 +21,7 @@
 pub enum Section {
     /// One row per account, and the form for the selected one.
     Accounts,
-    /// `[filters]` — named saved queries.
+    /// `[saved_searches]` — named saved queries.
     Filters,
     /// `[compose]` — signatures, and where one goes above a quote.
     Composing,
@@ -104,7 +104,7 @@ impl Section {
 
     /// The top-level TOML key this section's headers start with.
     ///
-    /// `[accounts]` and `[filters]` never appear as a bare header — every
+    /// `[accounts]` and `[saved_searches]` never appear as a bare header — every
     /// account and filter is its own dotted table, `[accounts.personal]` —
     /// so matching is by prefix, not by literal line. `Privacy` never
     /// appears at all, the same as `Accounts` since #470: the nav item
@@ -115,7 +115,7 @@ impl Section {
             Section::Keyboard => "keys",
             Section::Accounts => "accounts",
             Section::Sync => "sync",
-            Section::Filters => "filters",
+            Section::Filters => "saved_searches",
             Section::Composing => "compose",
             Section::Privacy => "privacy",
             // Not a table: the pane shows every table there is.
@@ -203,7 +203,7 @@ impl Section {
             // otherwise sends somebody to edit a file that does not describe
             // their account, which is worse than saying nothing.
             Section::Accounts => None,
-            Section::Filters => Some("[filters]"),
+            Section::Filters => Some("[saved_searches]"),
             Section::Composing => Some("[compose]"),
             Section::Appearance => Some("[ui]"),
             Section::Keyboard => Some("[keys]"),
@@ -223,7 +223,7 @@ impl Section {
             // The one people most need told, because every other pane in the
             // window *is* about the file.
             Section::Accounts => "accounts are in the encrypted store, not in config.toml",
-            Section::Filters => "[filters] in config.toml · applied live",
+            Section::Filters => "[saved_searches] in config.toml · applied live",
             Section::Composing => "[compose] in config.toml · applied live",
             Section::Appearance => "[ui] in config.toml · applied live",
             Section::Keyboard => "[keys] in config.toml · applied live",
@@ -484,7 +484,10 @@ idle = true
     #[test]
     fn a_dotted_header_is_matched_by_its_first_segment() {
         assert_eq!(header_key("[accounts.personal.imap]"), Some("accounts"));
-        assert_eq!(header_key("[filters.urgent]"), Some("filters"));
+        assert_eq!(
+            header_key("[saved_searches.urgent]"),
+            Some("saved_searches")
+        );
     }
 
     #[test]

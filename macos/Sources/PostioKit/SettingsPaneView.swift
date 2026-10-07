@@ -213,7 +213,7 @@ public struct SettingsPaneView: View {
     private func symbol(for key: String) -> String {
         switch key {
         case "accounts": return "person.crop.circle"
-        case "filters": return "line.3.horizontal.decrease.circle"
+        case "saved_searches": return "line.3.horizontal.decrease.circle"
         case "compose": return "square.and.pencil"
         case "ui": return "paintbrush"
         case "keys": return "keyboard"
@@ -250,7 +250,7 @@ public struct SettingsPaneView: View {
         case "sync": syncing
         case "keys": keyboard
         case "privacy": privacy
-        case "filters": filters
+        case "saved_searches": filters
         case "": configFile
         default: unbuilt
         }
@@ -623,7 +623,7 @@ public struct SettingsPaneView: View {
                     } description: {
                         Text(
                             "A filter is a saved search. Add one below, or write "
-                                + "`[filters.<name>]` in the config file."
+                                + "`[saved_searches.<name>]` in the config file."
                         )
                     }
                     .frame(maxHeight: .infinity)

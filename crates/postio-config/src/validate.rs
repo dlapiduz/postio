@@ -544,7 +544,7 @@ fn check_filters(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationEr
             push(
                 errors,
                 map,
-                format!("filters.{name}.query"),
+                format!("saved_searches.{name}.query"),
                 false,
                 format!("filter `{name}` has an empty query"),
             );

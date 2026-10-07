@@ -531,10 +531,10 @@ pub const TODAY: &[Row] = &[
 /// The demo's config.toml: filtering on, and one digest rule.
 pub const CONFIG: &str = "[focus]\nfiltering = true\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
 match = [\"from:news@ledger.example\", \"from:hello@soil.example\", \"from:notes@crate.example\", \"from:tides@tide.example\", \"from:digest@harbor.example\"]\ncadence = \"weekly\"\nday = \"saturday\"\nat = \"16:00\"\n\n\
-[filters.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\nname = \"Waiting on reply\"\n\n\
-[filters.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\nname = \"Atlas\"\n\n\
-[filters.receipts]\nquery = \"in:Receipts\"\npinned = true\norder = 3\nname = \"Receipts this month\"\n\n\
-[filters.school]\nquery = \"from:northfield\"\npinned = true\norder = 4\nname = \"From school\"\n";
+[saved_searches.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\nname = \"Waiting on reply\"\n\n\
+[saved_searches.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\nname = \"Atlas\"\n\n\
+[saved_searches.receipts]\nquery = \"in:Receipts\"\npinned = true\norder = 3\nname = \"Receipts this month\"\n\n\
+[saved_searches.school]\nquery = \"from:northfield\"\npinned = true\norder = 4\nname = \"From school\"\n";
 
 /// Screen 25's vault: three projects in `Projects/`, each with open tasks,
 /// and the tasks note.
@@ -1339,10 +1339,9 @@ mod tests {
         for row in TODAY {
             let Some(ask) = &row.ask else { continue };
             let (words, date) = match ask {
-                Ask::Invite { .. } => (
-                    row.preview,
-                    marker(MessageId::new(1), ask, today).starts_at,
-                ),
+                Ask::Invite { .. } => {
+                    (row.preview, marker(MessageId::new(1), ask, today).starts_at)
+                }
                 Ask::Todo { sentence, .. } => {
                     (*sentence, marker(MessageId::new(1), ask, today).due_at)
                 }
@@ -1358,7 +1357,11 @@ mod tests {
                 "{:?} says {named} but its marker is {date}",
                 row.subject
             );
-            assert!(date > today.date_naive(), "{:?} is in the past", row.subject);
+            assert!(
+                date > today.date_naive(),
+                "{:?} is in the past",
+                row.subject
+            );
             checked += 1;
         }
         assert!(checked >= 4, "only {checked} rows were checked");

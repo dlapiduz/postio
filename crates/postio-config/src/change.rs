@@ -45,7 +45,7 @@ pub struct ConfigChanged {
     pub keys: bool,
     /// `[sync]` — IDLE, polling, connection budget.
     pub sync: bool,
-    /// `[filters]` — the saved queries in the sidebar.
+    /// `[saved_searches]` — the saved queries in the sidebar.
     pub filters: bool,
     /// `[logging]` — the level, so a running app can be made louder without
     /// being restarted. This is the one section whose whole point is to be
@@ -175,7 +175,7 @@ mod tests {
             }
         );
 
-        let new_filters = config("[filters.urgent]\nquery = \"is:flagged\"\n");
+        let new_filters = config("[saved_searches.urgent]\nquery = \"is:flagged\"\n");
         assert_eq!(
             ConfigChanged::between(&old, &new_filters),
             ConfigChanged {
