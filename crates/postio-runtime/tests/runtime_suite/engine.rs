@@ -1476,14 +1476,17 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
                 .await
                 .expect("list");
             drop(connection);
-            if !found.is_empty() {
+            // All six, not the first: discovery writes the server's three
+            // and then creates the rest, and a poll between the two (a
+            // loaded machine finds it) read three.
+            if found.len() >= 6 {
                 return found;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("the engine connected and never wrote down a single folder");
+    .expect("the engine connected and never wrote down its folders");
 
     // Six: the three the mock server lists, plus the Archive, Drafts and Junk
     // discovery creates because it has none (spec 003 FR-026). What this test
