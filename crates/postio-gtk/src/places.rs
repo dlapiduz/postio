@@ -337,6 +337,13 @@ impl Places {
                     found.push(rules::label_entry(&label));
                 }
             }
+            // `open` has already drawn the rows from the last read. Drawing
+            // them again tears every row down, and a click landing across
+            // that is a click on a row that no longer exists -- it goes
+            // nowhere. So only a read that changed something redraws.
+            if *all.borrow() == found {
+                return;
+            }
             all.replace(found);
             if let Some(places) = weak.upgrade() {
                 places.show();
