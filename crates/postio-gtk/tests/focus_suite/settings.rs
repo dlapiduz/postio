@@ -122,27 +122,6 @@ pub fn section_rows(dialog: &adw::Dialog) -> Vec<(String, gtk::Widget)> {
 }
 
 /// Scroll the pane `widget` is in until it is in view.
-/// Wait for `widget` to stop moving within `root`: the account's detail page
-/// slides in when its row is clicked, carrying its buttons with it, and a
-/// press and a release that land at two places are no click -- on a slow
-/// runner the case pressed "Add signature" mid-slide and nothing opened.
-fn settle_still(widget: &impl IsA<gtk::Widget>, root: &impl IsA<gtk::Widget>) {
-    let widget = widget.as_ref();
-    let deadline =
-        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(2));
-    let mut last = widget.compute_bounds(root);
-    while std::time::Instant::now() < deadline {
-        crate::settle();
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        crate::settle();
-        let now = widget.compute_bounds(root);
-        if now.is_some() && now == last {
-            return;
-        }
-        last = now;
-    }
-}
-
 fn scroll_into_view(widget: &impl IsA<gtk::Widget>) {
     let widget = widget.as_ref();
     let Some(scroller) = widget
@@ -363,7 +342,7 @@ pub fn a_signature_made_in_settings_signs_the_next_message() {
         for (called, body) in [("Plain", "Ada"), ("Work", "Ada Moreno\nAtlas team")] {
             let add = support::button_labelled(&dialog, "Add signature");
             scroll_into_view(&add);
-            settle_still(&add, &dialog);
+            support::settle_still(&add, &dialog);
             support::click(&window, &add, 1);
             assert!(
                 crate::settle_until(async || {
@@ -621,7 +600,7 @@ pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
         // The Saved searches pane has just been switched to; its rows settle
         // into place before the press, or the press and release land apart.
         let first = delete().expect("the first Delete");
-        settle_still(&first, &dialog);
+        support::settle_still(&first, &dialog);
         support::click(&window, &first, 1);
         assert!(
             crate::settle_until(async || {
@@ -679,7 +658,7 @@ pub fn the_signature_editor_has_the_keyboard_and_says_what_it_is() {
         support::click(&window, &row().expect("the account's row"), 1);
         let add = support::button_labelled(&dialog, "Add signature");
         scroll_into_view(&add);
-        settle_still(&add, &dialog);
+        support::settle_still(&add, &dialog);
         support::click(&window, &add, 1);
         assert!(
             crate::settle_until(async || {

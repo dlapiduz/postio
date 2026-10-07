@@ -1279,3 +1279,28 @@ pub fn focus_path(window: &postio_gtk::window::FocusWindow) -> String {
 /// not text, so a save that went through a string would show.
 pub const ATTACHED: &[u8] = b"%PDF-1.4\n\x00\xff\x10 the plan\r\n";
 const ATTACHED_BASE64: &str = "JVBERi0xLjQKAP8QIHRoZSBwbGFuDQo=";
+
+/// Wait for `widget` to stop moving within `root`: a settings detail page
+/// slides in when its row is clicked, carrying its buttons with it, and a
+/// press and a release that land at two places are no click -- on a slow
+/// runner the case pressed "Add signature" mid-slide and nothing opened.
+pub fn settle_still(
+    widget: &impl gtk::prelude::IsA<gtk::Widget>,
+    root: &impl gtk::prelude::IsA<gtk::Widget>,
+) {
+    use gtk::prelude::*;
+    let widget = widget.as_ref();
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(2));
+    let mut last = widget.compute_bounds(root);
+    while std::time::Instant::now() < deadline {
+        crate::settle();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        crate::settle();
+        let now = widget.compute_bounds(root);
+        if now.is_some() && now == last {
+            return;
+        }
+        last = now;
+    }
+}

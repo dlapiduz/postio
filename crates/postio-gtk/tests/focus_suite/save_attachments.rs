@@ -70,6 +70,7 @@ pub fn save_in_the_chooser_writes_the_part_where_the_person_chose() {
         assert!(asked.borrow().is_empty(), "the portal opened before Save");
         let dialog = dialog(&window);
         let save = support::button_labelled(&dialog, "Save");
+        support::settle_still(&save, &window);
         support::click(&window, &save, 1);
         assert_eq!(
             *asked.borrow(),
@@ -96,7 +97,10 @@ pub fn save_all_in_the_chooser_writes_every_part_into_the_chosen_folder() {
         let (window, asked) = opened(&fixture, Some(into.path().to_path_buf())).await;
         support::keys(&window, &["o"]);
         assert!(crate::settle_until(async || !window.choices_shown().is_empty()).await);
+        // The chooser is still finding its size when it first lists the
+        // parts; a press and a release that land apart are no click.
         let save_all = support::button_labelled(&dialog(&window), "Save all");
+        support::settle_still(&save_all, &window);
         support::click(&window, &save_all, 1);
         assert_eq!(*asked.borrow(), [SavePick::Folder]);
         assert_eq!(
@@ -116,6 +120,7 @@ pub fn a_cancelled_portal_writes_nothing() {
         support::keys(&window, &["o"]);
         assert!(crate::settle_until(async || !window.choices_shown().is_empty()).await);
         let save = support::button_labelled(&dialog(&window), "Save");
+        support::settle_still(&save, &window);
         support::click(&window, &save, 1);
         crate::settle_for(std::time::Duration::from_millis(300)).await;
         assert_eq!(asked.borrow().len(), 1, "Save did not ask");
@@ -177,6 +182,7 @@ pub fn a_click_on_a_chip_shows_the_chooser_at_that_part() {
             assert_eq!(window.choice_focused().as_deref(), Some("report.pdf"));
             assert!(asked.borrow().is_empty(), "the portal opened on a click");
             let save = support::button_labelled(&window.visible_dialog().expect("up"), "Save");
+            support::settle_still(&save, &window);
             support::click(&window, &save, 1);
             assert_eq!(written(&target).await.as_deref(), Some(support::ATTACHED));
         }
