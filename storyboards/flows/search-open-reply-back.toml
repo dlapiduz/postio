@@ -35,7 +35,7 @@ expect  = "The hit is open over the list."
 
 [[step]]
 command = "reply"
-check   = { composer.open = true, keyboard.field = "body" }
+check   = { composer.open = true, keyboard.field = "body", app.focus.composer.quoted = true }
 expect  = "The reply opens, quoting the hit."
 
 [[step]]

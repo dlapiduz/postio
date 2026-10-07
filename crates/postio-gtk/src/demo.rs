@@ -808,7 +808,7 @@ pub const HARBOR: u32 = 3;
 /// The demo store: the storage seed, and today's inbox on top of it.
 pub async fn demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
-    let report = postio_storage::seed::seed_small(&database, 1).await;
+    let report = postio_storage::seed::seed_small_downloaded(&database, 1).await;
     let inbox = report
         .mailbox(MailboxRole::Inbox)
         .expect("the seed files an inbox")

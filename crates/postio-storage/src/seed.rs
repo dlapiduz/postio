@@ -136,6 +136,21 @@ fn anchor() -> DateTime<Utc> {
 /// worth panicking on rather than threading a `Result` through every call site
 /// that wants one.
 pub async fn seed_small(database: &Store, seed: u64) -> SeedReport {
+    seed_corpus(database, seed, false).await
+}
+
+/// [`seed_small`] with every body already downloaded: the store of an
+/// account that has been open a while, where a hit from search or a reply
+/// finds the message's text and not an "original still downloading" note.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn seed_small_downloaded(database: &Store, seed: u64) -> SeedReport {
+    seed_corpus(database, seed, true).await
+}
+
+async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedReport {
     let connection = database.connect().await.expect("a checked-out connection");
     let account = seeded_account(&connection).await;
     let folders = create_folders(&connection, &account).await;
@@ -153,8 +168,25 @@ pub async fn seed_small(database: &Store, seed: u64) -> SeedReport {
         message.date = Some(message.received_at);
         message.flags = assign_flags(&mut rng, mailbox.role);
         message.sync.body_state = BodyState::NotFetched;
+        let body = message.body.clone();
 
-        file_message(&connection, account.id, message).await;
+        let id = file_message(&connection, account.id, message).await;
+        if downloaded && !body.is_empty() {
+            MessageRepository::new(&connection)
+                .set_body(
+                    id,
+                    &crate::repository::StoredBody {
+                        text: body.text,
+                        html: body.html,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    BodyState::Full,
+                )
+                .await
+                .expect("store a seeded body");
+        }
         message_count += 1;
     }
 

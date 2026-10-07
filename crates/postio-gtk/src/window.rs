@@ -5432,6 +5432,17 @@ impl FocusWindow {
                 serde_json::json!(chrome.has_action_shown()),
             );
         }
+        // What the composition holds, for a check that names it: whether a
+        // reply carries anything of what it answers.
+        if let Some(compose) = self.compose()
+            && let composer = compose.composer()
+            && composer.is_open()
+        {
+            app.insert(
+                "focus.composer.quoted".to_owned(),
+                serde_json::json!(composer.draft().body.text.is_some()),
+            );
+        }
         app.insert(
             "focus.bulk".to_owned(),
             serde_json::json!({ "shown": bulk.is_some(), "summary": bulk }),
