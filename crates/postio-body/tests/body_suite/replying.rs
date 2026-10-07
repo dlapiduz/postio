@@ -883,3 +883,35 @@ fn a_forward_carries_the_originals_structure_the_way_a_reply_does() {
         forwarded.to_text()
     );
 }
+
+// ---------------------------------------------------------------------------
+// A source whose body has not arrived
+// ---------------------------------------------------------------------------
+
+/// A reply to a message whose body is still on the server must not carry an
+/// attribution that introduces nothing: "On 2026-05-29, Ada wrote:" above an
+/// empty quote reads as a quote that failed to load, and sent as it stands
+/// says something the sender never said. The composer says the original is
+/// still downloading; the body is left for the person to write.
+#[test]
+fn a_reply_to_a_message_with_no_body_yet_has_no_attribution() {
+    let fixture = postio_model::test_corpus::get(HOSTILE)
+        .unwrap_or_else(|| panic!("{HOSTILE} is not in the corpus"));
+    let mut source = fixture.parse();
+    assert!(
+        postio_body::replying::quoted_body(&source, false)
+            .text
+            .unwrap_or_default()
+            .contains("wrote:"),
+        "a message with a body does get its attribution, so this test can fail"
+    );
+    source.body = postio_model::MessageBody::default();
+    for forward in [false, true] {
+        let body = postio_body::replying::quoted_body(&source, forward);
+        assert!(
+            body.text.as_deref().unwrap_or_default().trim().is_empty()
+                && body.html.as_deref().is_none_or(|html| !html.contains("wrote:")),
+            "a source with nothing to quote left {body:?} (forward: {forward})"
+        );
+    }
+}
