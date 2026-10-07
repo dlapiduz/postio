@@ -75,7 +75,11 @@ pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
     // Nothing has been presented yet, so nothing in the tree is realized —
     // the very condition `focus_first`'s doc comment describes, forced
     // rather than hoped for.
-    composer.open(started(DraftKind::New));
+    // New mail with nobody to send to yet: an addressed draft starts in the
+    // body (`composer::starting_field`), whatever its kind.
+    let mut fresh = started(DraftKind::New);
+    fresh.to.clear();
+    composer.open(fresh);
 
     window.present();
     settle_until(|| composer.focused_field().is_some());
