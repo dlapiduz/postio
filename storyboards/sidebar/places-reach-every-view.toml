@@ -38,3 +38,13 @@ key     = "Return"
 settle  = { until = { rows.count = 1 } }
 check   = { scope = "Outbox", rows.count = 1, overlay.kind = "none" }
 expect  = "The Outbox opens: the one queued send."
+
+[[step]]
+command = "go_to_flagged"
+settle  = { until = { rows.count = 8 } }
+
+[[step]]
+command = "go_to_outbox"
+settle  = { until = { rows.count = 1 } }
+check   = { scope = "Outbox", rows.count = 1 }
+expect  = "The Outbox has a key of its own, `g b`, as every other mailbox has."

@@ -181,6 +181,9 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::GoToSent
         | C::GoToArchive
         | C::GoToSnoozed
+        | C::GoToOutbox
+        | C::GoToJunk
+        | C::GoToTrash
         | C::GoToFlagged
         | C::SavedSearch1
         | C::SavedSearch2

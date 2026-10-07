@@ -3526,6 +3526,9 @@ impl App {
             // T162), by role like the others, as the desktop reaches them.
             "go_to_archive" => return self.go_to(postio_model::mailbox::MailboxRole::Archive),
             "go_to_snoozed" => return self.go_to(postio_model::mailbox::MailboxRole::Snoozed),
+            "go_to_outbox" => return self.go_to(postio_model::mailbox::MailboxRole::Outbox),
+            "go_to_junk" => return self.go_to(postio_model::mailbox::MailboxRole::Junk),
+            "go_to_trash" => return self.go_to(postio_model::mailbox::MailboxRole::Trash),
             "saved_search_1" => return self.pinned_search(0),
             "saved_search_2" => return self.pinned_search(1),
             "saved_search_3" => return self.pinned_search(2),
@@ -3614,6 +3617,8 @@ impl App {
             // Views, not folders (ADR 0036): opened by their role.
             MailboxRole::Flagged => Some(ListScope::Flagged(account)),
             MailboxRole::Snoozed => Some(ListScope::Snoozed(account)),
+            // A view over Drafts, not a folder.
+            MailboxRole::Outbox => Some(ListScope::Outbox(account)),
             // Focus's inbox is every account's, as one.
             MailboxRole::Inbox => Some(ListScope::Focus(postio_model::FocusScope::Inbox)),
             role => self

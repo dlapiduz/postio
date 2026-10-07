@@ -239,6 +239,12 @@ command_ids! {
     GoToArchive => "go_to_archive",
     /// Go to the snoozed mail.
     GoToSnoozed => "go_to_snoozed",
+    /// Go to the outbox: the sends under way.
+    GoToOutbox => "go_to_outbox",
+    /// Go to the junk.
+    GoToJunk => "go_to_junk",
+    /// Go to the trash.
+    GoToTrash => "go_to_trash",
     /// Go to what was filtered out of the inbox.
     GoToFiltered => "go_to_filtered",
     /// Go to the digest rules.
@@ -967,6 +973,12 @@ pub enum Command {
     GoToArchive,
     /// Go to the snoozed mail.
     GoToSnoozed,
+    /// Go to the outbox: the sends under way.
+    GoToOutbox,
+    /// Go to the junk.
+    GoToJunk,
+    /// Go to the trash.
+    GoToTrash,
     /// Go to what was filtered out of the inbox.
     GoToFiltered,
     /// Go to the digest rules.
@@ -1333,6 +1345,9 @@ impl Command {
             Command::GoToFlagged => CommandId::GoToFlagged,
             Command::GoToArchive => CommandId::GoToArchive,
             Command::GoToSnoozed => CommandId::GoToSnoozed,
+            Command::GoToOutbox => CommandId::GoToOutbox,
+            Command::GoToJunk => CommandId::GoToJunk,
+            Command::GoToTrash => CommandId::GoToTrash,
             Command::GoToFiltered => CommandId::GoToFiltered,
             Command::GoToDigestRules => CommandId::GoToDigestRules,
             Command::SavedSearch1 => CommandId::SavedSearch1,
@@ -1526,6 +1541,9 @@ impl Command {
             CommandId::GoToFlagged => Command::GoToFlagged,
             CommandId::GoToArchive => Command::GoToArchive,
             CommandId::GoToSnoozed => Command::GoToSnoozed,
+            CommandId::GoToOutbox => Command::GoToOutbox,
+            CommandId::GoToJunk => Command::GoToJunk,
+            CommandId::GoToTrash => Command::GoToTrash,
             CommandId::GoToFiltered => Command::GoToFiltered,
             CommandId::GoToDigestRules => Command::GoToDigestRules,
             CommandId::SavedSearch1 => Command::SavedSearch1,

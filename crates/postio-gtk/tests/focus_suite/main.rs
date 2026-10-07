@@ -399,8 +399,20 @@ const CASES: &[(&str, fn())] = &[
         drafts::g_t_lists_drafts_and_enter_opens_one_to_edit as fn(),
     ),
     (
-        "bar::a_plain_word_offers_commands_and_searches_only_when_asked",
-        bar::a_plain_word_offers_commands_and_searches_only_when_asked as fn(),
+        "bar::a_plain_word_searches_as_it_is_typed_under_the_search_row",
+        bar::a_plain_word_searches_as_it_is_typed_under_the_search_row as fn(),
+    ),
+    (
+        "bar::a_word_no_command_is_named_by_searches_first",
+        bar::a_word_no_command_is_named_by_searches_first as fn(),
+    ),
+    (
+        "bar::at_offers_correspondents",
+        bar::at_offers_correspondents as fn(),
+    ),
+    (
+        "bar::a_result_names_its_account_when_there_are_two",
+        bar::a_result_names_its_account_when_there_are_two as fn(),
     ),
     (
         "bar::offline_search_answers_locally_one_request_a_keystroke",

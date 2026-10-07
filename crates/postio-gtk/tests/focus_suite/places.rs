@@ -135,6 +135,76 @@ pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
     });
 }
 
+/// Every mailbox the popover lists shows the key that goes there, `g #`
+/// takes the Trash by that key, the line under the places follows the
+/// highlighted row, and the Inbox's count is the strip's.
+pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
+            .await;
+        let junk = fixture.folder("Junk").await;
+        fixture.file_in(junk, "Old news", 60).await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
+            "the inbox never reached the screen"
+        );
+
+        support::keys(&window, &["g", "o"]);
+        let places = window.places().expect("g o opened the folders popover");
+        assert!(
+            crate::settle_until(async || places.names().contains(&"Junk".to_owned())).await,
+            "the popover never listed Junk: {:?}",
+            places.names()
+        );
+        let said = row_saying(&window, "Junk").await;
+        assert!(
+            said.iter().any(|text| text == "g j"),
+            "the Trash row shows no key: {said:?}"
+        );
+        // The Inbox's count is the conversations the strip counts.
+        let strip = support::texts(&window)
+            .into_iter()
+            .find(|text| text.contains(" unread") && text.contains('\u{b7}'))
+            .expect("the strip counts the inbox");
+        let inbox = row_saying(&window, "Inbox").await;
+        let count = strip.split_whitespace().next().unwrap_or_default();
+        assert!(
+            inbox.iter().any(|text| text == count),
+            "the Inbox row says {inbox:?}, the strip {strip:?}"
+        );
+        // The footer says what Return does on the highlighted row.
+        assert!(
+            places.footer().contains("in:Inbox"),
+            "the first row is the Inbox: {:?}",
+            places.footer()
+        );
+        support::press(&window, "Down", gtk::gdk::ModifierType::empty());
+        assert!(
+            !places.footer().contains("in:Inbox"),
+            "the footer did not move with the highlight: {:?}",
+            places.footer()
+        );
+
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        support::keys(&window, &["g", "j"]);
+        assert!(
+            crate::settle_until(async || {
+                window.place_name() == "Junk" && support::subjects(&window) == ["Old news"]
+            })
+            .await,
+            "g j listed {:?} under {:?}",
+            support::subjects(&window),
+            window.place_name()
+        );
+    });
+}
+
 /// What the popover's row for `name` says, key included.
 async fn row_saying(window: &postio_gtk::window::FocusWindow, name: &str) -> Vec<String> {
     use gtk::prelude::*;

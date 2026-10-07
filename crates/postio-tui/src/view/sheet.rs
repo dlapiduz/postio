@@ -235,15 +235,15 @@ mod tests {
 
     #[test]
     fn what_does_not_fit_scrolls_and_the_wheel_and_arrows_move_it() {
-        let mut app = opened((60, 14));
+        let mut app = opened((60, 17));
         update(&mut app, press('?'));
-        let before = screen(60, 14, &app);
+        let before = screen(60, 17, &app);
         assert!(before.contains("Move and select"), "{before}");
         assert!(!before.contains("Digests and filtering"), "{before}");
         for _ in 0..80 {
             update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
         }
-        let after = screen(60, 14, &app);
+        let after = screen(60, 17, &app);
         assert!(!after.contains("Move and select"), "{after}");
         assert!(
             after.contains("Digests and filtering") || after.contains("In search"),
@@ -252,7 +252,7 @@ mod tests {
         for _ in 0..80 {
             update(&mut app, wheel(Target::Overlay, false));
         }
-        assert!(screen(60, 14, &app).contains("Move and select"));
+        assert!(screen(60, 17, &app).contains("Move and select"));
     }
 
     #[test]

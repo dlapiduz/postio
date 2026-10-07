@@ -108,6 +108,9 @@ it.
 | `g r` | `go_to_archive` | All | |
 | `g z` | `go_to_snoozed` | All | |
 | `g *` | `go_to_flagged` | All | |
+| `g b` | `go_to_outbox` | Focus | The Outbox view of the first account |
+| `g j` | `go_to_junk` | Focus | |
+| `g #` | `go_to_trash` | Focus | |
 | `g f` | `go_to_filtered` | Focus | |
 | `g d` | `go_to_digest_rules` | Focus | |
 | `g a` | `next_scope` | All | Withheld on macOS |

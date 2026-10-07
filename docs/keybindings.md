@@ -135,6 +135,9 @@ command from inside a text field.
 | `g *` | Go to flagged | List, conversation, reader, search, folder list |  | `go_to_flagged` |
 | `g r` | Go to archive | List, conversation, reader, search, folder list |  | `go_to_archive` |
 | `g z` | Go to snoozed | List, conversation, reader, search, folder list |  | `go_to_snoozed` |
+| `g b` | Go to outbox | List, conversation, reader, search, folder list (not macOS) |  | `go_to_outbox` |
+| `g j` | Go to junk | List, conversation, reader, search, folder list (not macOS) |  | `go_to_junk` |
+| `g #` | Go to trash | List, conversation, reader, search, folder list (not macOS) |  | `go_to_trash` |
 | `g f` | Go to Filtered | List, conversation, reader, search, folder list (not macOS) |  | `go_to_filtered` |
 | `g d` | Go to digest rules | List, conversation, reader, search, folder list (not macOS) |  | `go_to_digest_rules` |
 | `alt+1` | Saved search 1 | List, conversation, reader, search, folder list |  | `saved_search_1` |

@@ -130,6 +130,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // the inbox, and this is where they look for it.
         C::GoToInbox | C::GoToDrafts | C::GoToSent | C::GoToFlagged => Some(M::Go),
         C::GoToArchive | C::GoToSnoozed => Some(M::Go),
+        C::GoToOutbox | C::GoToJunk | C::GoToTrash => Some(M::Go),
         // The pinned searches are places too, and a person who does not know
         // `alt+1` looks for them where the other places are.
         C::SavedSearch1 | C::SavedSearch2 | C::SavedSearch3 | C::SavedSearch4 => Some(M::Go),

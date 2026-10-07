@@ -1734,6 +1734,38 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::GoToOutbox,
+        title: "Go to outbox",
+        // `b`, the box that holds what is on its way out: `o` is the folders.
+        default_binding: "g b",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToJunk,
+        title: "Go to junk",
+        default_binding: "g j",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToTrash,
+        title: "Go to trash",
+        // `#`, the key that deletes, as `*` is the key that flags.
+        default_binding: "g #",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_MAIL,
+    },
+    CommandSpec {
         id: CommandId::GoToFiltered,
         title: "Go to Filtered",
         // What Focus filtered out of the inbox, and why.

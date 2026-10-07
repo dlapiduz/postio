@@ -18,9 +18,22 @@ pub const OUTBOX: &str = "Outbox";
 /// The placeholder over the places' filter.
 pub const FILTER_PLACEHOLDER: &str = "Go to folder or label";
 
-/// The line under the places.
-pub const FOOTER: &str =
-    "\u{21b5} open \u{b7} Esc close \u{b7} same as in:Receipts in the command bar";
+/// The line under the places while `highlighted` is the row under the
+/// highlight: what Return does, and the words that do the same in the
+/// command bar.
+pub fn footer(highlighted: Option<&Entry>) -> String {
+    let Some(entry) = highlighted else {
+        return "Esc close".to_owned();
+    };
+    let name = &entry.name;
+    // The command bar's `in:` completes folders and labels; the views have
+    // no `in:` of their own.
+    if entry.command.is_some() || matches!(entry.destination, Destination::Outbox(_)) {
+        format!("\u{21b5} open {name} \u{b7} Esc close")
+    } else {
+        format!("\u{21b5} open {name} \u{b7} Esc close \u{b7} same as in:{name} in the command bar")
+    }
+}
 
 /// Which section a place is listed under, in the order they appear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,7 +116,7 @@ pub fn outbox_entry(account: postio_model::AccountId, waiting: u32) -> Entry {
         name: OUTBOX.to_owned(),
         count: Some(waiting.to_string()),
         command: None,
-        go: None,
+        go: Some(CommandId::GoToOutbox),
         destination: Destination::Outbox(account),
         mark: Mark::Role(MailboxRole::Outbox),
     }
@@ -214,10 +227,13 @@ pub fn direct_commands() -> Vec<CommandId> {
     [
         MailboxRole::Inbox,
         MailboxRole::Drafts,
+        MailboxRole::Outbox,
         MailboxRole::Sent,
         MailboxRole::Archive,
         MailboxRole::Snoozed,
         MailboxRole::Flagged,
+        MailboxRole::Junk,
+        MailboxRole::Trash,
     ]
     .into_iter()
     .filter_map(go_to)
@@ -247,6 +263,9 @@ pub fn go_to(role: MailboxRole) -> Option<CommandId> {
         MailboxRole::Archive => CommandId::GoToArchive,
         MailboxRole::Snoozed => CommandId::GoToSnoozed,
         MailboxRole::Flagged => CommandId::GoToFlagged,
+        MailboxRole::Outbox => CommandId::GoToOutbox,
+        MailboxRole::Junk => CommandId::GoToJunk,
+        MailboxRole::Trash => CommandId::GoToTrash,
         _ => return None,
     })
 }
@@ -339,6 +358,50 @@ mod tests {
             ]
         );
         assert_eq!(names(listed(&all, None, "REC")), ["Receipts"]);
+    }
+
+    /// Every mailbox the popover lists shows the key that goes there, the
+    /// Outbox, Junk and Trash included.
+    #[test]
+    fn every_role_with_a_row_has_a_key() {
+        let junk = mailbox_entry(&mailbox("Junk", MailboxRole::Junk));
+        let trash = mailbox_entry(&mailbox("Trash", MailboxRole::Trash));
+        assert_eq!(junk.go, Some(CommandId::GoToJunk));
+        assert_eq!(trash.go, Some(CommandId::GoToTrash));
+        assert_eq!(
+            outbox_entry(AccountId::new(1), 1).go,
+            Some(CommandId::GoToOutbox)
+        );
+        for command in [
+            CommandId::GoToOutbox,
+            CommandId::GoToJunk,
+            CommandId::GoToTrash,
+        ] {
+            assert!(direct_commands().contains(&command), "{command:?}");
+        }
+        let keymap = postio_core::Keymap::resolve(&postio_config::KeyBindings::default());
+        for entry in [&junk, &trash, &outbox_entry(AccountId::new(1), 1)] {
+            let key = entry.go.and_then(|go| crate::hints::key(&keymap, go));
+            assert!(key.is_some(), "{} shows no key", entry.name);
+        }
+    }
+
+    /// The line under the places says what Return does on the row the
+    /// highlight is on, in that row's own words.
+    #[test]
+    fn the_footer_describes_the_highlighted_row() {
+        let receipts = mailbox_entry(&mailbox("Receipts", MailboxRole::Regular));
+        let label = {
+            let mut label = Label::new(AccountId::new(1), "Travel");
+            label.id = LabelId::new(1);
+            label_entry(&label)
+        };
+        let outbox = outbox_entry(AccountId::new(1), 1);
+        assert!(footer(Some(&receipts)).contains("in:Receipts"));
+        assert!(footer(Some(&label)).contains("in:Travel"));
+        assert!(footer(Some(&outbox)).contains("Outbox"));
+        assert!(!footer(Some(&outbox)).contains("in:Receipts"));
+        assert!(footer(None).contains("Esc close"));
     }
 
     #[test]

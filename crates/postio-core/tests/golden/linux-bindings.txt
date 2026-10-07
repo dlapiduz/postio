@@ -88,6 +88,9 @@ go_to_sent	g s
 go_to_flagged	g *
 go_to_archive	g r
 go_to_snoozed	g z
+go_to_outbox	g b
+go_to_junk	g j
+go_to_trash	g #
 go_to_filtered	g f
 go_to_digest_rules	g d
 saved_search_1	alt+1

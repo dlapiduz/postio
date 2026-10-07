@@ -45,6 +45,8 @@ pub struct Places {
     popover: gtk::Popover,
     entry: gtk::SearchEntry,
     list: gtk::ListBox,
+    /// The line under the places, which says what the highlighted row does.
+    footer: gtk::Label,
     /// Every place, as last read.
     all: Rc<RefCell<Vec<Entry>>>,
     /// The places listed now, in order.
@@ -82,7 +84,7 @@ impl Places {
             .propagate_natural_height(true)
             .max_content_height(640)
             .build();
-        let footer = gtk::Label::new(Some(rules::FOOTER));
+        let footer = gtk::Label::new(Some(&rules::footer(None)));
         footer.add_css_class("dim-label");
         footer.add_css_class("focus-places-footer");
         footer.set_xalign(0.0);
@@ -117,6 +119,7 @@ impl Places {
             popover,
             entry,
             list,
+            footer,
             all: Rc::default(),
             shown: RefCell::default(),
             rows: RefCell::default(),
@@ -141,6 +144,31 @@ impl Places {
             move |_| {
                 if let Some(places) = weak.upgrade() {
                     places.activate();
+                }
+            }
+        });
+        // The arrows walk the places while the keyboard stays in the filter.
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed({
+            let weak = weak.clone();
+            move |_, key, _, _| {
+                let by = match key {
+                    gtk::gdk::Key::Down => 1,
+                    gtk::gdk::Key::Up => -1,
+                    _ => return glib::Propagation::Proceed,
+                };
+                if let Some(places) = weak.upgrade() {
+                    places.step(by);
+                }
+                glib::Propagation::Stop
+            }
+        });
+        places.entry.add_controller(keys);
+        places.list.connect_row_selected({
+            let weak = weak.clone();
+            move |_, row| {
+                if let Some(places) = weak.upgrade() {
+                    places.say_footer(row);
                 }
             }
         });
@@ -205,6 +233,35 @@ impl Places {
     pub fn set_filter(&self, text: &str) {
         self.entry.set_text(text);
         self.show();
+    }
+
+    /// The line under the places, as a person reads it.
+    pub fn footer(&self) -> String {
+        self.footer.text().to_string()
+    }
+
+    /// Move the highlight `by` places, skipping the headings.
+    fn step(&self, by: i32) {
+        let mut at = self.list.selected_row().map_or(-1, |row| row.index());
+        loop {
+            at += by;
+            let Some(row) = self.list.row_at_index(at) else {
+                return;
+            };
+            if row.is_selectable() {
+                self.list.select_row(Some(&row));
+                return;
+            }
+        }
+    }
+
+    /// Say what Return does on `row`, the one now highlighted.
+    fn say_footer(&self, row: Option<&gtk::ListBoxRow>) {
+        let shown = self.shown.borrow();
+        let entry = row
+            .and_then(|row| self.place_at(row))
+            .and_then(|index| shown.get(index));
+        self.footer.set_text(&rules::footer(entry));
     }
 
     /// The names listed now, top to bottom.
@@ -298,11 +355,11 @@ impl Places {
             first.get_or_insert(item);
             rows.push(Some(index));
         }
+        self.rows.replace(rows);
+        self.shown.replace(shown);
         if let Some(first) = first {
             self.list.select_row(Some(&first));
         }
-        self.rows.replace(rows);
-        self.shown.replace(shown);
     }
 
     /// Read every account's mailboxes and labels.
@@ -321,7 +378,19 @@ impl Places {
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.mailboxes(account.id).await;
                 for mailbox in read.unwrap_or_default() {
-                    found.push(rules::mailbox_entry(&mailbox));
+                    let mut entry = rules::mailbox_entry(&mailbox);
+                    // The count is conversations, as the strip counts them:
+                    // the inbox's is Focus's, which is what the strip reads.
+                    let scope = if mailbox.role == MailboxRole::Inbox {
+                        postio_model::ListScope::Focus(postio_model::FocusScope::Inbox)
+                    } else {
+                        postio_model::ListScope::Mailbox(mailbox.id)
+                    };
+                    // POSTIO-GLIB-SAFE: as above.
+                    if let Ok(conversations) = client.list_count(scope).await {
+                        entry.count = Some(conversations.to_string());
+                    }
+                    found.push(entry);
                 }
                 // The Outbox, while anything waits in it (T239): a view over
                 // Drafts, so it has no mailbox row of its own to be listed by.
@@ -357,7 +426,9 @@ fn icon(role: MailboxRole) -> &'static str {
     match role {
         MailboxRole::Inbox => "mail-read-symbolic",
         MailboxRole::Drafts => "document-edit-symbolic",
-        MailboxRole::Sent | MailboxRole::Outbox => "mail-send-symbolic",
+        MailboxRole::Sent => "mail-send-symbolic",
+        // What is on its way out, not what went: an arrow leaving a box.
+        MailboxRole::Outbox => "send-to-symbolic",
         MailboxRole::Snoozed => "alarm-symbolic",
         MailboxRole::Flagged => "mail-mark-important-symbolic",
         MailboxRole::Junk => "mail-mark-junk-symbolic",
@@ -438,4 +509,24 @@ fn accent_hue() -> f64 {
         byte(accent.blue()),
     )
     .hue()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two places that mean different things do not wear the same mark.
+    #[test]
+    fn no_two_roles_share_an_icon_but_the_folders() {
+        use MailboxRole::*;
+        let marked = [
+            Inbox, Drafts, Sent, Outbox, Snoozed, Flagged, Junk, Trash, Archive,
+        ];
+        for (at, one) in marked.iter().enumerate() {
+            for other in &marked[at + 1..] {
+                // Archive is a folder like any other the person made.
+                assert_ne!(icon(*one), icon(*other), "{one:?} and {other:?}");
+            }
+        }
+    }
 }

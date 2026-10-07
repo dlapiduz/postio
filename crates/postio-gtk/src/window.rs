@@ -1638,6 +1638,19 @@ impl FocusWindow {
             CommandId::GoToArchive => self.go_to_role(postio_model::MailboxRole::Archive),
             CommandId::GoToSnoozed => self.go_to_view(postio_model::MailboxRole::Snoozed),
             CommandId::GoToFlagged => self.go_to_view(postio_model::MailboxRole::Flagged),
+            CommandId::GoToJunk => self.go_to_role(postio_model::MailboxRole::Junk),
+            CommandId::GoToTrash => self.go_to_role(postio_model::MailboxRole::Trash),
+            // A view over Drafts, of the first account, as the popover's row
+            // for it is of the account it lists.
+            CommandId::GoToOutbox => {
+                let account = self.imp().accounts.borrow().first().copied();
+                if let Some(account) = account {
+                    self.go_to(
+                        postio_ui::finder::Destination::Outbox(account),
+                        postio_ui::places::OUTBOX,
+                    );
+                }
+            }
             // A Focus row is a whole conversation, so `A` is `a` here.
             CommandId::ArchiveThread => self.act(CommandId::Archive),
             // A send on its way or stopped, from the list or the open
