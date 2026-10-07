@@ -5,6 +5,7 @@
 # for that state. The view must say locked, and the keyboard must be
 # somewhere a person can act from; the card's words are judged from the
 # frame.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#404" }
 proof  = "pinned"
 preset = "locked"
