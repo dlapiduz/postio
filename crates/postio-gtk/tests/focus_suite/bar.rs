@@ -857,3 +857,142 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
         );
     });
 }
+
+/// A message opened from search steps the results it came from: `j` and `k`
+/// walk the bar's hits, "Result n of m" says where, `[` and `]` step the
+/// hit's own thread, and Escape returns to the results with the bar as it
+/// was.
+pub fn a_hit_steps_the_results_and_its_own_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Harbor budget",
+                "Numbers for harbor.",
+                5,
+            )
+            .await;
+        fixture.thread_of("Harbor draft", 3, 20).await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        type_in(&bar, "harbor").await;
+        assert!(
+            crate::settle_until(async || bar.result_subjects().len() >= 2).await,
+            "the search found {:?}",
+            bar.result_subjects()
+        );
+        let hits = bar.result_subjects();
+        bar.run_search();
+        assert_eq!(
+            bar.highlighted().map(|(kind, _, _)| kind),
+            Some("message"),
+            "{:?}",
+            bar.texts()
+        );
+        chain(&window, "Return");
+        assert!(
+            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+            "the hit never opened"
+        );
+        let reading = window.reading().expect("the hit opened");
+        assert!(
+            crate::settle_until(async || reading.is_open() && reading.title() == hits[0]).await,
+            "the first hit did not open: {:?}",
+            reading.title()
+        );
+        assert!(
+            reading
+                .subtitle()
+                .starts_with(&format!("Result 1 of {}", hits.len())),
+            "{:?}",
+            reading.subtitle()
+        );
+
+        assert!(
+            crate::settle_until(async || reading.reader().view().is_mapped()).await,
+            "the dialog never drew"
+        );
+        chain(&window, "j");
+        assert!(
+            crate::settle_until(async || reading.title() == hits[1]).await,
+            "j did not step to the next result: {:?}",
+            reading.title()
+        );
+        assert!(
+            reading
+                .subtitle()
+                .starts_with(&format!("Result 2 of {}", hits.len())),
+            "{:?}",
+            reading.subtitle()
+        );
+        chain(&window, "k");
+        assert!(
+            crate::settle_until(async || reading.title() == hits[0]).await,
+            "k did not step back: {:?}",
+            reading.title()
+        );
+
+        // The hit's own thread: step to the three-message conversation and
+        // back through it with `[` and `]`.
+        let thread_hit = hits
+            .iter()
+            .position(|subject| subject == "Harbor draft")
+            .expect("the thread is among the hits");
+        while reading.title() != hits[thread_hit] {
+            chain(&window, "j");
+            crate::settle();
+        }
+        assert!(
+            crate::settle_until(async || reading.thread_known() == 3).await,
+            "the hit's thread was never read: {}",
+            reading.thread_known()
+        );
+        chain(&window, "bracketright");
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("Message 2")).await,
+            "] did not step the hit's thread: {:?}",
+            reading.body_text()
+        );
+        assert!(
+            reading.subtitle().contains("2 of 3 in the thread"),
+            "{:?}",
+            reading.subtitle()
+        );
+
+        // Escape closes the message and the results are back.
+        chain(&window, "Escape");
+        assert!(
+            crate::settle_until(async || {
+                window.bar().is_some_and(|bar| bar.is_open())
+                    && bar.result_subjects().len() == hits.len()
+            })
+            .await,
+            "the results did not come back: {:?}",
+            window.bar().map(|bar| bar.result_subjects())
+        );
+    });
+}
+
+/// A key pressed along the real focus chain, as a storyboard does.
+fn chain(window: &postio_gtk::window::FocusWindow, key: &str) {
+    let chord: postio_ui::keymap::Chord = key.parse().expect("a chord");
+    let delivery = postio_widgets::storyboard::deliver::press(window.upcast_ref(), &chord)
+        .expect("a deliverable chord");
+    assert!(
+        matches!(
+            delivery,
+            postio_widgets::storyboard::deliver::Delivery::Delivered { .. }
+        ),
+        "{key} was dropped"
+    );
+    crate::settle();
+}

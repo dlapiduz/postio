@@ -293,6 +293,10 @@ const CASES: &[(&str, fn())] = &[
         compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
     ),
     (
+        "bar::a_hit_steps_the_results_and_its_own_thread",
+        bar::a_hit_steps_the_results_and_its_own_thread as fn(),
+    ),
+    (
         "bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search",
         bar::ctrl_k_opens_the_bar_for_commands_and_slash_for_search as fn(),
     ),

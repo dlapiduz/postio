@@ -37,3 +37,19 @@ expect  = "The first hit, the Tide gate interlock proposal, is highlighted."
 key     = "Return"
 check   = { view = "reader", keyboard.region = "reader", reading.id = "57", overlay.kind = "none" }
 expect  = "The reader shows the first hit, the Tide gate interlock proposal, over the list."
+
+[[step]]
+id      = "first"
+command = "next_message"
+check   = { view = "reader", reading.id = { changed = true }, keyboard.region = "reader" }
+expect  = "`j` steps to the next hit in the bar's order, not to the list's next row behind the dialog."
+
+[[step]]
+command = "prev_message"
+check   = { view = "reader", reading.id = "57" }
+expect  = "`k` steps back to the first hit."
+
+[[step]]
+command = "back"
+check   = { view = "search", overlay.kind = "finder", app.focus.bar.messages = 8 }
+expect  = "Escape returns to the results with the bar as it was."

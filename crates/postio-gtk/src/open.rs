@@ -150,6 +150,11 @@ pub struct OpenMessage {
     thread: Rc<RefCell<Vec<MessageId>>>,
     at: Rc<Cell<usize>>,
     position: Cell<Position>,
+    /// The results a message found by search was opened from, in the bar's
+    /// order, and which of them is on screen: what `j` and `k` walk. Empty
+    /// for a message opened from the list.
+    found: RefCell<Vec<(MessageId, String)>>,
+    found_at: Cell<usize>,
     messages: Cell<u32>,
     /// The parts of the message on screen, as its row lists them.
     parts: Rc<RefCell<Vec<Attachment>>>,
@@ -465,6 +470,8 @@ impl OpenMessage {
             thread: Rc::default(),
             at: Rc::default(),
             position: Cell::new(Position { index: 0, total: 0 }),
+            found: RefCell::default(),
+            found_at: Cell::new(0),
             messages: Cell::new(1),
             parts: Rc::default(),
             marker: RefCell::default(),
@@ -913,6 +920,17 @@ impl OpenMessage {
     }
 
     fn run(&self, command: CommandId) {
+        // The step buttons walk the results a hit was opened from.
+        let by = match command {
+            CommandId::NextMessage => Some(1),
+            CommandId::PrevMessage => Some(-1),
+            _ => None,
+        };
+        if let Some(by) = by
+            && self.step_found(by)
+        {
+            return;
+        }
         let handler = self.handler.borrow().clone();
         if let Some(handler) = handler {
             handler(command);
@@ -970,6 +988,7 @@ impl OpenMessage {
         self.title.set_text(&subject);
         self.subject.set_text(&subject);
         self.position.set(position);
+        self.found.borrow_mut().clear();
         self.messages.set(summary.message_count.max(1));
         self.thread.borrow_mut().clear();
         self.at.set(0);
@@ -988,22 +1007,90 @@ impl OpenMessage {
     }
 
     /// Show `message`, found by a search rather than a row of the list:
-    /// its subject, no position in the list, and no marker or labels until
-    /// the reading has them.
-    pub fn show_found(&self, parent: &impl IsA<gtk::Widget>, message: MessageId, subject: &str) {
+    /// its subject, its place among the `hits` the bar held, and no marker
+    /// or labels until the reading has them. `j` and `k` walk the hits.
+    pub fn show_found(
+        &self,
+        parent: &impl IsA<gtk::Widget>,
+        message: MessageId,
+        subject: &str,
+        hits: Vec<(MessageId, String)>,
+    ) {
+        let at = hits.iter().position(|(id, _)| *id == message).unwrap_or(0);
+        self.found.replace(hits);
+        self.found_at.set(at);
+        self.begin_hit(message, subject);
+        self.present(parent.upcast_ref());
+        self.show_message(message);
+        self.read_hit_thread(message);
+    }
+
+    /// Step to the next (`1`) or previous (`-1`) result, when the message
+    /// was opened from search. Whether it was: a message opened from the
+    /// list is stepped by the list.
+    pub fn step_found(&self, by: isize) -> bool {
+        let (message, subject) = {
+            let found = self.found.borrow();
+            if found.is_empty() {
+                return false;
+            }
+            let Some(next) = self.found_at.get().checked_add_signed(by) else {
+                return true;
+            };
+            let Some(hit) = found.get(next) else {
+                return true;
+            };
+            self.found_at.set(next);
+            hit.clone()
+        };
+        self.begin_hit(message, &subject);
+        self.show_message(message);
+        self.read_hit_thread(message);
+        true
+    }
+
+    /// What a hit shows before its message is read.
+    fn begin_hit(&self, message: MessageId, subject: &str) {
+        let _ = message;
         self.title.set_text(subject);
         self.subject.set_text(subject);
-        self.subtitle.set_text("Found by search");
         self.messages.set(1);
         self.thread.borrow_mut().clear();
         self.at.set(0);
-        self.show_thread_chip(1, true);
+        self.show_position(true);
         self.show_labels(&[]);
         self.marker.replace(None);
         self.row.set(None);
         self.set_send_state(None);
-        self.present(parent.upcast_ref());
-        self.show_message(message);
+    }
+
+    /// The hit's own conversation: how many messages it has, and the list
+    /// `[` and `]` step through, once the store has said.
+    fn read_hit_thread(&self, message: MessageId) {
+        use postio_model::listing::MailStore as _;
+        let client = self.client.clone();
+        let generation = Rc::clone(&self.generation);
+        let asked = generation.get();
+        let weak = self.this.borrow().clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let Ok(rows) = client.message_rows(vec![message]).await else {
+                return;
+            };
+            let Some(row) = rows.into_iter().next() else {
+                return;
+            };
+            if generation.get() != asked {
+                return;
+            }
+            let Some(page) = weak.upgrade() else { return };
+            page.messages.set(row.thread_count.max(1));
+            page.show_position(true);
+            if let (Some(thread), true) = (row.thread, row.thread_count > 1) {
+                page.read_thread(thread, message);
+            }
+        });
     }
 
     /// Show `message` of the conversation on screen: clear what the last
@@ -1170,14 +1257,21 @@ impl OpenMessage {
         let messages = self.messages.get();
         let thread_len = self.thread.borrow().len();
         let latest = latest || thread_len == 0 || self.at.get() + 1 == thread_len;
-        let said = focus_dialog::position_line(
-            position.index as usize,
-            position.total as usize,
-            messages,
-            self.at.get(),
-            latest,
-            self.send_state.get(),
-        );
+        let found = self.found.borrow().len();
+        let said = if found == 0 && position.total == 0 {
+            "Found by search".to_owned()
+        } else if found > 0 {
+            focus_dialog::result_line(self.found_at.get(), found, messages, self.at.get(), latest)
+        } else {
+            focus_dialog::position_line(
+                position.index as usize,
+                position.total as usize,
+                messages,
+                self.at.get(),
+                latest,
+                self.send_state.get(),
+            )
+        };
         self.subtitle.set_text(&said);
         self.show_thread_chip(messages, latest);
     }

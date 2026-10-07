@@ -1093,6 +1093,10 @@ impl FocusWindow {
             }
             Ok(CommandId::FindNext) => reading.reader().find_step(true),
             Ok(CommandId::FindPrevious) => reading.reader().find_step(false),
+            // A message found by search walks the results it came from; one
+            // opened from the list walks the list.
+            Ok(CommandId::NextMessage) if reading.step_found(1) => {}
+            Ok(CommandId::PrevMessage) if reading.step_found(-1) => {}
             Ok(CommandId::NextMessage) => {
                 self.move_cursor(1);
                 self.open_message();
@@ -3022,7 +3026,7 @@ impl FocusWindow {
                 if let Some(reading) = self.reading_dialog() {
                     // Over the digest, not in the pane behind it.
                     self.place_reading();
-                    reading.show_found(self, message, &subject);
+                    reading.show_found(self, message, &subject, Vec::new());
                 }
             }
         }
@@ -3558,7 +3562,7 @@ impl FocusWindow {
             FilteredAction::Back => self.leave_filtered(),
             FilteredAction::Open { message, subject } => {
                 if let Some(reading) = self.reading_dialog() {
-                    reading.show_found(self, message, &subject);
+                    reading.show_found(self, message, &subject, Vec::new());
                 }
             }
             FilteredAction::Restore(message) => self.restore_filtered(message),
@@ -3715,7 +3719,12 @@ impl FocusWindow {
                     return;
                 };
                 if let Some(reading) = window.reading_dialog() {
-                    reading.show_found(&window, message, &row.subject.unwrap_or_default());
+                    reading.show_found(
+                        &window,
+                        message,
+                        &row.subject.unwrap_or_default(),
+                        Vec::new(),
+                    );
                 }
             }
         ));
@@ -4009,6 +4018,14 @@ impl FocusWindow {
         // goes back to where messages open, once it closes.
         if !reading.is_open() {
             self.place_reading();
+            // A hit closed returns to the results it was opened from, the
+            // bar as it was.
+            if let Some(bar) = self.bar()
+                && let Some(typed) = bar.take_held()
+            {
+                bar.open();
+                bar.set_text(&typed);
+            }
         }
         self.show_pane_page();
         if reading.in_pane() && !reading.is_open() {
@@ -4508,7 +4525,12 @@ impl FocusWindow {
             // key puts one there -- opened nothing at all.
             crate::bar::BarAction::Open { message, subject } => {
                 if let Some(reading) = self.reading_dialog() {
-                    reading.show_found(self, message, &subject);
+                    reading.show_found(
+                        self,
+                        message,
+                        &subject,
+                        self.bar().map(|bar| bar.hits()).unwrap_or_default(),
+                    );
                     crate::a11y::teach_shortcuts(&reading.view());
                     crate::motion::keep_to_budget(&reading.view());
                 }

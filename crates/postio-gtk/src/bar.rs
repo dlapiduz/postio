@@ -61,6 +61,8 @@ pub struct Bar {
     names: Rc<RefCell<postio_ui::names::Names>>,
     /// What each row of the list runs, in order.
     rows: Rc<RefCell<Vec<Row>>>,
+    /// The words typed when a hit was opened, until the window takes them.
+    held: RefCell<Option<String>>,
     /// Moves with every keystroke, so a late answer to an earlier one is
     /// dropped.
     generation: Rc<Cell<u64>>,
@@ -221,6 +223,7 @@ impl Bar {
             names: Rc::default(),
             folders: Rc::default(),
             rows: Rc::default(),
+            held: RefCell::default(),
             generation: Rc::default(),
             open: Cell::new(false),
             field: RefCell::default(),
@@ -604,6 +607,25 @@ impl Bar {
     pub fn set_text(&self, text: &str) {
         self.entry.set_text(text);
         self.entry.set_position(-1);
+    }
+
+    /// The messages the results list, with their subjects, in the bar's
+    /// order: what `j` and `k` walk once one is opened.
+    pub fn hits(&self) -> Vec<(MessageId, String)> {
+        self.rows
+            .borrow()
+            .iter()
+            .filter_map(|row| match row {
+                Row::Message { message, subject } => Some((*message, subject.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// What was typed when a hit was opened, once: the window reopens the
+    /// bar with it when that message closes.
+    pub fn take_held(&self) -> Option<String> {
+        self.held.take()
     }
 
     /// The results' heading.
@@ -1270,6 +1292,9 @@ impl Bar {
             }
             Run::Action(action) => action,
         };
+        if matches!(action, BarAction::Open { .. }) {
+            self.held.replace(Some(self.entry.text().to_string()));
+        }
         self.close();
         let handler = self.handler.borrow().clone();
         if let Some(handler) = handler {

@@ -269,7 +269,33 @@ pub fn position_line(
     latest: bool,
     send_state: Option<postio_model::DraftState>,
 ) -> String {
-    let mut said = format!("Message {} of {}", index + 1, total);
+    line(
+        "Message", index, total, messages, thread_at, latest, send_state,
+    )
+}
+
+/// [`position_line`] for a message opened from search: "Result 2 of 8", then
+/// where it is in its own conversation.
+pub fn result_line(
+    index: usize,
+    total: usize,
+    messages: u32,
+    thread_at: usize,
+    latest: bool,
+) -> String {
+    line("Result", index, total, messages, thread_at, latest, None)
+}
+
+fn line(
+    noun: &str,
+    index: usize,
+    total: usize,
+    messages: u32,
+    thread_at: usize,
+    latest: bool,
+    send_state: Option<postio_model::DraftState>,
+) -> String {
+    let mut said = format!("{noun} {} of {}", index + 1, total);
     if messages > 1 {
         if latest {
             said.push_str(&format!(" \u{b7} thread of {messages}"));
@@ -509,6 +535,19 @@ mod tests {
         assert_eq!(step_thread(0, 4, -1), None);
         assert_eq!(step_thread(3, 4, 1), None);
         assert_eq!(step_thread(0, 0, 1), None);
+    }
+
+    #[test]
+    fn a_hit_says_which_result_it_is_and_where_in_its_thread() {
+        assert_eq!(result_line(1, 8, 1, 0, true), "Result 2 of 8");
+        assert_eq!(
+            result_line(1, 8, 3, 0, true),
+            "Result 2 of 8 \u{b7} thread of 3"
+        );
+        assert_eq!(
+            result_line(0, 8, 3, 1, false),
+            "Result 1 of 8 \u{b7} 2 of 3 in the thread"
+        );
     }
 
     #[test]
