@@ -590,7 +590,8 @@ pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
-        support::keys(&window, &["j", "j"]);
+        // The list opens on its first row, so one j is the second.
+        support::keys(&window, &["j"]);
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
