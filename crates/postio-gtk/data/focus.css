@@ -914,6 +914,12 @@ button.focus-row-menu-item:focus-visible {
   background-color: var(--postio-hover-bg);
 }
 
+/* A menu opened by a key highlights where the keyboard is and nowhere else:
+   a pointer resting under it does not, until it moves. */
+.focus-keyboard-led button.focus-row-menu-item:hover:not(:focus-visible) {
+  background-color: transparent;
+}
+
 popover.focus-row-menu-popover separator.focus-row-menu-rule {
   margin: var(--postio-space-1) var(--postio-space-2);
   min-height: 1px;

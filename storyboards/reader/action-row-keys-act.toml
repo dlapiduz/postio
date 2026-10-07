@@ -20,15 +20,15 @@ check   = { view = "reader", keyboard.region = "reader" }
 
 [[step]]
 command = "add_label"
-check   = { overlay.kind = "picker" }
-expect  = "`l` opens the label picker over the message, as the Label button does."
+check   = { overlay.kind = "picker", keyboard.region = "picker", keyboard.field = "query", keyboard.typing = true }
+expect  = "`l` opens the label picker over the message, as the Label button does, with the caret in its filter field: typing filters."
 
 [[step]]
 key     = "Escape"
-check   = { view = "reader", overlay.kind = "none" }
-expect  = "Escape closes the picker, and the message is still open."
+check   = { view = "reader", overlay.kind = "none", app.focus.keyboard.in_message = true }
+expect  = "Escape closes the picker, and the message is still open with the keyboard back on it."
 
 [[step]]
 command = "move"
-check   = { overlay.kind = "picker" }
-expect  = "`m` opens the folder picker."
+check   = { overlay.kind = "picker", keyboard.region = "picker", keyboard.field = "query", keyboard.typing = true }
+expect  = "`m` opens the folder picker, the caret in its filter field as the label picker's is."

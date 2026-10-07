@@ -68,6 +68,10 @@ pub enum Delivery {
 /// Press `chord` in `window` and let the main loop run until idle.
 pub fn press(window: &gtk::Window, chord: &Chord) -> Result<Delivery, ChordError> {
     let (key, state) = chord_to_gdk(chord)?;
+    // A real key press turns the window's focus rings on, so a menu opened
+    // by it shows where the keyboard is; a synthesised one must say so too,
+    // or the film shows a keyboard nobody can see.
+    window.set_focus_visible(true);
     let delivery = deliver(window, key, state);
     drain();
     Ok(delivery)

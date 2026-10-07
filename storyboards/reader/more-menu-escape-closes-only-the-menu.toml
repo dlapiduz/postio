@@ -37,8 +37,8 @@ check   = { view = "reader", reading.id = "90" }
 
 [[step]]
 command = "more_actions"
-check   = { view = "reader", reading.id = "90" }
-expect  = "More's menu is open under its button: Label, Move, Delete, each with its key."
+check   = { view = "reader", reading.id = "90", app.focus.keyboard.item = "Label" }
+expect  = "More's menu is open under its button: Label, Move, Delete, each with its key. The keyboard is on Label, the first, and it is the one item drawn highlighted."
 
 [[step]]
 key     = "Escape"
@@ -47,5 +47,5 @@ expect  = "Escape closes the menu only. The message is still open and the keyboa
 
 [[step]]
 key     = "Escape"
-check   = { view = "list", keyboard.region = "list" }
-expect  = "A second Escape closes the message."
+check   = { view = "list", keyboard.region = "list", app.focus.keyboard.row = "90" }
+expect  = "A second Escape closes the message. The keyboard is on the row it was opened from, the one the cursor draws, not on the first row."

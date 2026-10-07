@@ -1812,6 +1812,22 @@ impl FocusWindow {
         ));
     }
 
+    /// The keyboard on the cursor's row, once a dialog that was over the list
+    /// has finished handing it back to the row it last held.
+    fn focus_cursor_soon(&self) {
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || {
+                if window.keyboard_is_free()
+                    && let Some(pane) = window.pane()
+                {
+                    pane.focus_cursor();
+                }
+            }
+        ));
+    }
+
     /// Whether nothing is holding the keyboard for itself: no dialog over
     /// the window, no open bar or popover, and nothing being typed.
     fn keyboard_is_free(&self) -> bool {
@@ -3996,6 +4012,14 @@ impl FocusWindow {
                     move |message| window.post(Command::MarkReadOnDwell { message })
                 ));
                 self.imp().toast.set_over(Some(reading.toast_overlay()));
+                // The dialog gives the keyboard back to what had it before,
+                // which for the list is its first row: the cursor's row is
+                // where it belongs.
+                reading.dialog().connect_closed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |_| window.focus_cursor_soon()
+                ));
                 reading.set_capture(self.imp().focus_config.borrow().vault.is_some());
                 // The zoom `[reader]` says (T235).
                 if let Some(zoom) = self.imp().zoom.get() {
@@ -4893,7 +4917,17 @@ impl FocusWindow {
 
     /// Where a picker hangs: from the list, under the cursor's row, at the
     /// subject column (screens 11-14).
-    fn at_the_row(&self) -> Option<(gtk::ListView, gdk::Rectangle)> {
+    fn at_the_row(&self) -> Option<(gtk::Widget, gdk::Rectangle)> {
+        // With the message open over the list, the list is behind a modal
+        // dialog and cannot hold the keyboard, so a picker hung from it
+        // would never get the caret: it hangs from the dialog, under its
+        // action row.
+        if let Some(reading) = self.reading()
+            && reading.is_open()
+            && let Some(hung) = reading.picker_anchor()
+        {
+            return Some(hung);
+        }
         let pane = self.pane()?;
         let view = pane.view().clone();
         let cursor = self.cursor_row()?;
@@ -4913,7 +4947,7 @@ impl FocusWindow {
             ),
             None => gdk::Rectangle::new(crate::list::row::subject_x(view.width()) as i32, 0, 1, 1),
         };
-        Some((view, rect))
+        Some((view.upcast(), rect))
     }
 
     /// What a picker names as its target: the cursor's conversation, or
@@ -5231,10 +5265,20 @@ impl FocusWindow {
         };
 
         let imp = self.imp();
-        let notice = Notice {
-            text: self.toast_showing(),
-            tone: imp.toast.tone(),
-            undo: imp.toast.offers_undo(),
+        // A toast whose overlay is not on screen -- the message dialog's,
+        // once the dialog has gone -- is not a notice anyone can read.
+        let notice = if imp.toast.host().is_some_and(|host| host.is_mapped()) {
+            Notice {
+                text: self.toast_showing(),
+                tone: imp.toast.tone(),
+                undo: imp.toast.offers_undo(),
+            }
+        } else {
+            Notice {
+                text: None,
+                tone: None,
+                undo: false,
+            }
         };
 
         let locked = self.unavailable_reason().is_some();
@@ -5279,6 +5323,55 @@ impl FocusWindow {
             serde_json::Value::Bool(self.close_button_showing()),
         );
         let bulk = imp.bulk.borrow().as_ref().and_then(|bulk| bulk.summary());
+        // The row that really holds GTK's focus, and the More item that
+        // does: the cursor's ring is drawn from the cursor, so only these
+        // say whether the keyboard and what a person sees are the same row.
+        if let Some(widget) = focus.as_ref()
+            && let Some(pane) = self.pane()
+            && widget.is_ancestor(pane.view())
+        {
+            let row = widget
+                .first_child()
+                .and_downcast::<crate::list::row::RowWidget>()
+                .or_else(|| {
+                    widget
+                        .ancestor(crate::list::row::RowWidget::static_type())
+                        .and_downcast::<crate::list::row::RowWidget>()
+                })
+                .and_then(|row| row.item());
+            if let Some(row) = row {
+                app.insert(
+                    "focus.keyboard.row".to_owned(),
+                    serde_json::json!(row.id().get().to_string()),
+                );
+            }
+        }
+        // Whether the keyboard is on the message itself -- its column, where
+        // Space scrolls and the verbs' keys act -- and not on a control
+        // around it, which Space or Return would press instead.
+        if let Some(reading) = reading.as_ref()
+            && view == View::Reader
+        {
+            app.insert(
+                "focus.keyboard.in_message".to_owned(),
+                serde_json::json!(reading.message_has(&target)),
+            );
+        }
+        // What the open message's header says of where it is: its place in
+        // the list, which must agree with the list's own.
+        if let Some(reading) = reading.as_ref()
+            && view == View::Reader
+        {
+            app.insert(
+                "focus.reading.position".to_owned(),
+                serde_json::json!(reading.subtitle()),
+            );
+        }
+        if let Some(reading) = reading.as_ref()
+            && let Some(item) = reading.more_item_with_focus()
+        {
+            app.insert("focus.keyboard.item".to_owned(), serde_json::json!(item));
+        }
         // Which statement of the digest's summary holds the keyboard.
         if let Some(digest) = digest.as_ref() {
             app.insert(

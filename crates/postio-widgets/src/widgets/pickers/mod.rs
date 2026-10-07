@@ -112,6 +112,9 @@ pub struct Picker {
     /// The press-anywhere-else watcher on the window the picker last
     /// opened in.
     outside: RefCell<Option<(glib::WeakRef<gtk::Widget>, gtk::GestureClick)>>,
+    /// What held the keyboard before the picker took it: where it goes back
+    /// to when the picker closes.
+    before: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
 }
 
 impl Picker {
@@ -204,6 +207,25 @@ impl Picker {
             shown: RefCell::default(),
             handler: RefCell::default(),
             outside: RefCell::default(),
+            before: RefCell::default(),
+        });
+        picker.popover.connect_closed({
+            let weak = Rc::downgrade(&picker);
+            move |popover| {
+                let Some(picker) = weak.upgrade() else { return };
+                let before = picker.before.take().and_then(|before| before.upgrade());
+                // Only when the keyboard is still in the picker (or nowhere):
+                // a close that already put it somewhere has said where.
+                let held = popover
+                    .root()
+                    .and_then(|root| root.focus())
+                    .is_none_or(|focus| {
+                        focus == *popover.upcast_ref::<gtk::Widget>() || focus.is_ancestor(popover)
+                    });
+                if held && let Some(before) = before.filter(|before| before.is_mapped()) {
+                    before.grab_focus();
+                }
+            }
         });
         let weak = Rc::downgrade(&picker);
         let keys = gtk::EventControllerKey::new();
@@ -312,6 +334,13 @@ impl Picker {
             });
         }
         self.popover.set_pointing_to(rect);
+        self.before.replace(
+            parent
+                .root()
+                .and_then(|root| root.focus())
+                .filter(|focus| !focus.is_ancestor(&self.popover))
+                .map(|focus| focus.downgrade()),
+        );
         self.watch_outside(parent);
         self.entry.set_text("");
         self.popover.popup();

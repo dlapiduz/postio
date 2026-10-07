@@ -302,6 +302,19 @@ impl OpenMessage {
             .build();
         more.add_css_class("focus-row-menu-popover");
         more.add_css_class("focus-open-more-menu");
+        // Opened from the keyboard, the menu draws one highlight, where the
+        // keyboard is: a pointer resting under it highlights nothing until
+        // it moves.
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_motion({
+            let items = more_items.downgrade();
+            move |_, _, _| {
+                if let Some(items) = items.upgrade() {
+                    items.remove_css_class("focus-keyboard-led");
+                }
+            }
+        });
+        more_items.add_controller(motion);
         if let Some(button) = toolbar.button(CommandId::MoreActions) {
             let button = button.widget();
             more.set_parent(&button);
@@ -838,6 +851,7 @@ impl OpenMessage {
             });
             self.more_items.append(&item);
         }
+        self.more_items.add_css_class("focus-keyboard-led");
         self.more.popup();
         if let Some(first) = self.more_items.first_child() {
             first.grab_focus();
@@ -860,6 +874,64 @@ impl OpenMessage {
         if let Some(button) = self.toolbar.button(CommandId::MoreActions) {
             button.widget().grab_focus();
         }
+    }
+
+    /// Where a picker opened over the message hangs from: the dialog, under
+    /// its action row and level with the column's left edge. `None` while
+    /// the message is in the reading pane, whose list is no obstacle.
+    pub fn picker_anchor(&self) -> Option<(gtk::Widget, gtk::gdk::Rectangle)> {
+        if self.in_pane() || !self.dialog.is_mapped() {
+            return None;
+        }
+        let child = self.dialog.child()?;
+        let bar = self.toolbar.widget();
+        let below = bar
+            .compute_bounds(&child)
+            .map_or(100, |bounds| (bounds.y() + bounds.height()).ceil() as i32);
+        Some((child, gtk::gdk::Rectangle::new(56, below, 1, 1)))
+    }
+
+    /// Whether `widget` is the message's column or inside it.
+    pub fn message_has(&self, widget: &gtk::Widget) -> bool {
+        self.reader
+            .view()
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .is_some_and(|scroller| *widget == scroller || widget.is_ancestor(&scroller))
+    }
+
+    /// Give the keyboard to the message's column: where it is when the
+    /// message opens, and where it returns after a composer closes over it.
+    pub fn focus_message(&self) {
+        if self.in_pane() {
+            return;
+        }
+        if let Some(scroller) = self
+            .reader
+            .view()
+            .ancestor(gtk::ScrolledWindow::static_type())
+        {
+            self.dialog.set_focus(Some(&scroller));
+        }
+    }
+
+    /// The words of the More item that holds the keyboard, while More's menu
+    /// is open.
+    pub fn more_item_with_focus(&self) -> Option<String> {
+        if !self.more.is_visible() {
+            return None;
+        }
+        let mut child = self.more_items.first_child();
+        while let Some(item) = child {
+            if item.has_focus() {
+                return item
+                    .first_child()
+                    .and_then(|row| row.first_child())
+                    .and_downcast::<gtk::Label>()
+                    .map(|label| label.text().to_string());
+            }
+            child = item.next_sibling();
+        }
+        None
     }
 
     /// More's menu, for a test to read.
