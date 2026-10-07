@@ -806,7 +806,12 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
             .await;
         fixture.index().await;
         let (window, _client) = fixture.open().await;
-        let _ = crate::settle_until(async || support::subjects(&window).len() >= 20).await;
+        // The list has landed. `subjects` is the rows on screen, fewer than
+        // the twenty-two filed, so waiting for twenty sat out the deadline.
+        assert!(
+            crate::settle_until(async || !support::subjects(&window).is_empty()).await,
+            "the inbox never listed its mail"
+        );
         let bar = open_bar(&window);
         type_in(&bar, "report").await;
         let relevance = vec!["Report".to_owned(), "One report".to_owned()];
