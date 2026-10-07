@@ -97,7 +97,7 @@ impl Folders {
             }
         }
         for label in &self.details.labels {
-            let mut entry = rules::label_entry(label);
+            let mut entry = rules::label_entry(label, None);
             entry.count = self
                 .details
                 .label_counts

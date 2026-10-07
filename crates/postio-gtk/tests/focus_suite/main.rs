@@ -575,6 +575,10 @@ const CASES: &[(&str, fn())] = &[
         places::every_mailbox_shows_its_key_and_the_footer_follows_the_highlight as fn(),
     ),
     (
+        "places::every_place_shows_its_count",
+        places::every_place_shows_its_count as fn(),
+    ),
+    (
         "bar::alt_2_runs_the_second_saved_search",
         bar::alt_2_runs_the_second_saved_search as fn(),
     ),

@@ -205,6 +205,57 @@ pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
     });
 }
 
+/// Every place says how many conversations it holds, the same number its own
+/// view shows: Flagged and Snoozed, which are views over mail filed
+/// elsewhere, and each label, as the mailboxes are.
+pub fn every_place_shows_its_count() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (atlas, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
+            .await;
+        let (harbor, _) = fixture
+            .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
+            .await;
+        let (staffing, _) = fixture
+            .file(("Tomas Reyes", "tomas@example.net"), "Staffing plan", "x", 10)
+            .await;
+        fixture.label(atlas, &["Atlas"]).await;
+        fixture.label(harbor, &["Harbor"]).await;
+        crate::commands::snooze(&fixture, staffing).await;
+        let (window, client) = fixture.open().await;
+        crate::commands::flag(&client, atlas).await;
+        crate::commands::flag(&client, harbor).await;
+
+        support::keys(&window, &["g", "o"]);
+        let places = window.places().expect("g o opened the folders popover");
+        assert!(
+            crate::settle_until(async || places.names().contains(&"Harbor".to_owned())).await,
+            "the popover never listed the labels: {:?}",
+            places.names()
+        );
+        for (name, count) in [
+            ("Flagged", "2"),
+            ("Snoozed", "1"),
+            ("Atlas", "1"),
+            ("Harbor", "1"),
+        ] {
+            let said = row_saying(&window, name).await;
+            let counted = crate::settle_until(async || {
+                row_saying(&window, name).await.iter().any(|text| text == count)
+            })
+            .await;
+            assert!(
+                counted,
+                "the {name} row should say {count}, as its view lists: {said:?}"
+            );
+        }
+    });
+}
+
 /// What the popover's row for `name` says, key included.
 async fn row_saying(window: &postio_gtk::window::FocusWindow, name: &str) -> Vec<String> {
     use gtk::prelude::*;

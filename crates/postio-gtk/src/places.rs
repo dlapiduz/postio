@@ -13,7 +13,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_client::Client;
 use postio_core::{CommandId, Keymap};
-use postio_model::MailboxRole;
+use postio_model::{FocusScope, ListScope, MailboxRole};
 use postio_model::listing::MailStore as _;
 use postio_ui::finder::Destination;
 use postio_ui::label_colour::{Rgb, label_colour};
@@ -437,9 +437,30 @@ impl Places {
                 }
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.labels(account.id).await;
+                // POSTIO-GLIB-SAFE: as above.
+                let counted = client.label_counts(account.id).await.unwrap_or_default();
                 for label in read.unwrap_or_default() {
-                    found.push(rules::label_entry(&label));
+                    // A label nothing carries is left out of the counts: it
+                    // holds none.
+                    let held = counted
+                        .iter()
+                        .find(|(id, _)| *id == label.id)
+                        .map_or(0, |(_, held)| *held);
+                    found.push(rules::label_entry(&label, Some(held)));
                 }
+            }
+            // Snoozed and Flagged: views over every account's mail, counted
+            // as the views list it.
+            for (role, scope) in [
+                (MailboxRole::Snoozed, FocusScope::Snoozed),
+                (MailboxRole::Flagged, FocusScope::Flagged),
+            ] {
+                // POSTIO-GLIB-SAFE: as above.
+                let held = client.list_count(ListScope::Focus(scope)).await.ok();
+                let view = rules::view_entry(role, held);
+                // A mailbox the server calls Flagged is this view's row.
+                found.retain(|entry| entry.go != view.go);
+                found.push(view);
             }
             // `open` has already drawn the rows from the last read; `show`
             // redraws only if this one found something different.

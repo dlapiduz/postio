@@ -123,12 +123,14 @@ pub fn outbox_entry(account: postio_model::AccountId, waiting: u32) -> Entry {
 }
 
 /// The entry for a label.
-pub fn label_entry(label: &Label) -> Entry {
+///
+/// `count` is how many conversations carry it, when that is known.
+pub fn label_entry(label: &Label, count: Option<u32>) -> Entry {
     Entry {
         section: Section::Labels,
         rank: 0,
         name: label.name.clone(),
-        count: None,
+        count: count.map(|count| count.to_string()),
         command: None,
         go: None,
         destination: Destination::Label(label.id),
@@ -151,27 +153,34 @@ pub fn filtered_entry(today: u32) -> Entry {
     }
 }
 
-/// The entries for Snoozed and Flagged: views over mail filed elsewhere, not
-/// folders with an id of their own, so they are listed always, whatever the
-/// accounts' mailboxes say. Each runs the command its key runs, which lists
-/// the same cross-account view.
-pub fn view_entries() -> Vec<Entry> {
-    [
-        (MailboxRole::Snoozed, "Snoozed", CommandId::GoToSnoozed),
-        (MailboxRole::Flagged, "Flagged", CommandId::GoToFlagged),
-    ]
-    .into_iter()
-    .map(|(role, name, command)| Entry {
+/// The entry for Snoozed or Flagged -- `role` says which -- with how many
+/// conversations its view lists, when that is known. A view over mail filed
+/// elsewhere, not a folder with an id of its own, so it runs the command its
+/// key runs, which lists the same cross-account view.
+pub fn view_entry(role: MailboxRole, count: Option<u32>) -> Entry {
+    let (name, command) = match role {
+        MailboxRole::Snoozed => ("Snoozed", CommandId::GoToSnoozed),
+        _ => ("Flagged", CommandId::GoToFlagged),
+    };
+    Entry {
         section: Section::Mailboxes,
         rank: role_rank(role),
         name: name.to_owned(),
-        count: None,
+        count: count.map(|count| count.to_string()),
         go: Some(command),
         command: Some(command),
         destination: Destination::Search(String::new()),
         mark: Mark::Role(role),
-    })
-    .collect()
+    }
+}
+
+/// The entries for Snoozed and Flagged, uncounted: listed always, whatever
+/// the accounts' mailboxes say, until a read has counted them.
+pub fn view_entries() -> Vec<Entry> {
+    [MailboxRole::Snoozed, MailboxRole::Flagged]
+        .into_iter()
+        .map(|role| view_entry(role, None))
+        .collect()
 }
 
 /// The places to list: every entry, Snoozed and Flagged (the views, unless a
@@ -338,7 +347,7 @@ mod tests {
         let mut label = Label::new(AccountId::new(1), "Travel");
         label.id = LabelId::new(1);
         let all = vec![
-            label_entry(&label),
+            label_entry(&label, None),
             mailbox_entry(&mailbox("Receipts", MailboxRole::Regular)),
             mailbox_entry(&mailbox("Archive", MailboxRole::Archive)),
             mailbox_entry(&mailbox("INBOX", MailboxRole::Inbox)),
@@ -394,7 +403,7 @@ mod tests {
         let label = {
             let mut label = Label::new(AccountId::new(1), "Travel");
             label.id = LabelId::new(1);
-            label_entry(&label)
+            label_entry(&label, None)
         };
         let outbox = outbox_entry(AccountId::new(1), 1);
         assert!(footer(Some(&receipts)).contains("in:Receipts"));
