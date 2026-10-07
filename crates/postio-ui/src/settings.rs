@@ -308,8 +308,31 @@ pub const MAPPABLE_ROLES: [(postio_model::mailbox::MailboxRole, &str); 5] = [
     (postio_model::mailbox::MailboxRole::Junk, "Junk"),
 ];
 
+/// What the signature editor is headed: whether it makes a signature or
+/// changes one, and whose account it is for.
+pub fn signature_heading(editing: bool, account: &str) -> String {
+    let verb = if editing {
+        "Edit signature"
+    } else {
+        "New signature"
+    };
+    format!("{verb} \u{b7} {account}")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_signature_editor_names_what_it_makes_and_for_whom() {
+        assert_eq!(
+            super::signature_heading(false, "ada@example.com"),
+            "New signature \u{b7} ada@example.com"
+        );
+        assert_eq!(
+            super::signature_heading(true, "ada@example.com"),
+            "Edit signature \u{b7} ada@example.com"
+        );
+    }
+
     use super::*;
 
     #[test]

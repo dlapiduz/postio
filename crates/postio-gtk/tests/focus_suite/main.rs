@@ -1257,6 +1257,10 @@ const CASES: &[(&str, fn())] = &[
         settings::every_section_focus_shows_is_reachable_and_appearance_is_not as fn(),
     ),
     (
+        "settings::the_signature_editor_has_the_keyboard_and_says_what_it_is",
+        settings::the_signature_editor_has_the_keyboard_and_says_what_it_is as fn(),
+    ),
+    (
         "settings::a_signature_made_in_settings_signs_the_next_message",
         settings::a_signature_made_in_settings_signs_the_next_message as fn(),
     ),

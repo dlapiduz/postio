@@ -55,7 +55,8 @@ pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
 /// What a send became once the store had queued it: the draft waiting to
 /// go, and when -- `None` for now. The window that sent it says so and
 /// offers to take it back.
-pub type OnQueued = Rc<dyn Fn(postio_client::protocol::Queued, Option<chrono::DateTime<chrono::Utc>>)>;
+pub type OnQueued =
+    Rc<dyn Fn(postio_client::protocol::Queued, Option<chrono::DateTime<chrono::Utc>>)>;
 
 /// Which message `e`, `E` and `f` answer: the row the cursor is on, or the
 /// reading pane is showing.

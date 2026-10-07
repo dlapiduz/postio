@@ -624,3 +624,61 @@ pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
         );
     });
 }
+
+/// Opening the signature editor puts the keyboard in its name field and
+/// heads it as a new signature for the account, so the first thing typed
+/// names the signature rather than searching Settings.
+pub fn the_signature_editor_has_the_keyboard_and_says_what_it_is() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
+            .await;
+        let (window, _directory, _path) = open_under(&fixture, "").await;
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        let row = || {
+            support::with_class(&dialog, "postio-settings-account-row")
+                .into_iter()
+                .find(|row| row.is_mapped())
+        };
+        assert!(
+            crate::settle_until(async || row().is_some()).await,
+            "the account has a row"
+        );
+        support::click(&window, &row().expect("the account's row"), 1);
+        let add = support::button_labelled(&dialog, "Add signature");
+        scroll_into_view(&add);
+        support::click(&window, &add, 1);
+        assert!(
+            crate::settle_until(async || {
+                support::with_class(&dialog, "postio-settings-signature-editor")
+                    .iter()
+                    .any(|editor| editor.is_mapped())
+            })
+            .await,
+            "Add signature opened no editor"
+        );
+        let name = support::only(&dialog, "postio-settings-signature-name");
+        let held = || {
+            dialog
+                .focus()
+                .is_some_and(|focus| focus == name || focus.is_ancestor(&name))
+        };
+        assert!(
+            crate::settle_until(async || held()).await,
+            "the keyboard is on {:?}, not in the signature's name",
+            dialog.focus().map(|focus| focus.type_().name())
+        );
+        assert!(
+            support::texts(&dialog)
+                .iter()
+                .any(|text| text.starts_with("New signature")),
+            "the editor says nothing of what it makes: {:?}",
+            support::texts(&dialog)
+        );
+    });
+}

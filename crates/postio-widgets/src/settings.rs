@@ -732,6 +732,7 @@ mod imp {
         pub account_detail_signature_list: OnceCell<gtk::ListBox>,
         pub account_detail_signature_ids_listed: RefCell<Vec<SignatureId>>,
         pub signature_editor: gtk::Box,
+        pub signature_editor_heading: OnceCell<gtk::Label>,
         pub signature_editor_name: OnceCell<gtk::Entry>,
         pub signature_editor_text: OnceCell<gtk::TextView>,
         pub signature_editor_error: OnceCell<gtk::Label>,
@@ -887,6 +888,7 @@ mod imp {
                 account_detail_signature_list: OnceCell::new(),
                 account_detail_signature_ids_listed: RefCell::new(Vec::new()),
                 signature_editor: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                signature_editor_heading: OnceCell::new(),
                 signature_editor_name: OnceCell::new(),
                 signature_editor_text: OnceCell::new(),
                 signature_editor_error: OnceCell::new(),
@@ -2261,6 +2263,14 @@ impl SettingsPanel {
         ));
         imp.signature_editor.append(&back);
 
+        // What this is, and whose: the bare arrow alone said neither.
+        let heading = gtk::Label::new(None);
+        heading.set_xalign(0.0);
+        heading.add_css_class("postio-settings-account-detail-group");
+        heading.set_margin_bottom(space::S1);
+        imp.signature_editor.append(&heading);
+        let _ = imp.signature_editor_heading.set(heading);
+
         let name = gtk::Entry::new();
         name.add_css_class("postio-settings-signature-name");
         name.update_property(&[gtk::accessible::Property::Label("Signature name")]);
@@ -2372,6 +2382,20 @@ impl SettingsPanel {
                         .cloned()
                 })
         });
+        let address = imp
+            .accounts
+            .borrow()
+            .iter()
+            .find(|candidate| candidate.id == account)
+            .map(|candidate| candidate.address.address.clone())
+            .unwrap_or_default();
+        imp.signature_editor_heading
+            .get()
+            .expect("built above")
+            .set_text(&postio_ui::settings::signature_heading(
+                id.is_some(),
+                &address,
+            ));
         let name = imp.signature_editor_name.get().expect("built above");
         let text = imp.signature_editor_text.get().expect("built above");
         name.set_text(signature.as_ref().map_or("", |s| s.name.as_str()));
@@ -2386,6 +2410,9 @@ impl SettingsPanel {
         *imp.signature_editor_on.borrow_mut() = Some((account, id));
         imp.account_detail.set_visible(false);
         imp.signature_editor.set_visible(true);
+        // The keyboard goes with the eye: still in "Find a setting", the
+        // first thing typed would search instead of naming the signature.
+        name.grab_focus();
     }
 
     /// Close the editor and show the account again.

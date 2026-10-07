@@ -324,7 +324,10 @@ pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
 /// item, as the list draws it.
 fn focused_row_subject(window: &postio_gtk::window::FocusWindow) -> Option<String> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
-    let row = focus.first_child()?.downcast::<postio_gtk::list::RowWidget>().ok()?;
+    let row = focus
+        .first_child()?
+        .downcast::<postio_gtk::list::RowWidget>()
+        .ok()?;
     let item = row.item()?;
     item.as_conversation()
         .and_then(|row| row.summary.representative.subject.clone())
