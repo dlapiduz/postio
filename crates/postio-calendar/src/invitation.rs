@@ -49,7 +49,7 @@ pub struct Invitation {
     /// When a recurring event's last occurrence ends, for a series whose
     /// rule says it ends (`COUNT` or `UNTIL`, or a set of `RDATE`s).
     /// `None` for a series with no end, for one longer than the adapter
-    /// walks ([`crate::parse`]), and for an event that does not recur.
+    /// walks ([`crate::parse()`]), and for an event that does not recur.
     pub series_ends_at: Option<EventTime>,
 }
 

@@ -349,6 +349,8 @@ impl SessionOptions {
 #[derive(Debug, Clone)]
 enum ConfigSource {
     /// Exactly this document. An empty one is the built-in defaults.
+    /// Only a test asks for one, so a build without `testing` never makes it.
+    #[cfg_attr(not(feature = "testing"), allow(dead_code))]
     Document(String),
     /// Whatever `config.toml` this installation has, or the defaults if there
     /// is none. What a shipping application wants, and what a test gets only
@@ -2768,8 +2770,6 @@ impl Session {
     /// A read of its own rather than a field on the document, because the
     /// document is a string handed to a web view and this is native chrome
     /// above it — the same split every notice in the strip has.
-    ///
-    /// See [`decode_caveat_ffi`](Self::decode_caveat_ffi).
     pub async fn decode_caveat(&self, message: i64) -> Option<String> {
         // A view over `reader_answers` — see `reader_notice`.
         self.reader_answers(message, crate::RemoteImagesFfi::Blocked, false)
@@ -2786,8 +2786,6 @@ impl Session {
     /// than a habit of whoever writes the frontend: drawing a message can
     /// reach this and cannot reach
     /// [`activate_unsubscribe`](Self::activate_unsubscribe).
-    ///
-    /// See [`unsubscribe_offer_ffi`](Self::unsubscribe_offer_ffi).
     pub async fn unsubscribe_offer(&self, message: i64) -> Option<crate::UnsubscribeOfferFfi> {
         // A view over `message_facts` — see `reader_notice`.
         self.message_facts(message).await.offer

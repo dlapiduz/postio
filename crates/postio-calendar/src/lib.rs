@@ -7,7 +7,7 @@
 //!
 //! Three calls are the whole of it, as `contracts/engine.md` names them:
 //!
-//! - [`parse`]: a calendar part's bytes to an [`Invitation`], with its start
+//! - [`parse()`]: a calendar part's bytes to an [`Invitation`], with its start
 //!   and end resolved to instants wherever the calendar says where they are;
 //! - [`reply()`]: the `METHOD:REPLY` that accepts or declines one;
 //! - [`supersedes`]: whether one version of an event replaces another.

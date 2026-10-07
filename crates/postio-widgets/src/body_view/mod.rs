@@ -134,11 +134,11 @@ pub(super) mod imp {
         pub(super) flow: RefCell<Option<glib::WeakRef<gtk::ScrolledWindow>>>,
         /// What the column's ground is read from, when the view flows: a
         /// widget whose CSS `color` is the column's ground token
-        /// ([`BodyView::set_ground`]).
+        /// ([`super::BodyView::set_ground`]).
         pub(super) ground: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
         /// The rest of the column's palette, read the same way: each a
         /// reader variable (`--r-ink`) and the widget whose `color` is the
-        /// token it stands for ([`BodyView::add_palette_probe`]).
+        /// token it stands for ([`super::BodyView::add_palette_probe`]).
         pub(super) palette: RefCell<Vec<(&'static str, glib::WeakRef<gtk::Widget>)>>,
         /// The ground the last render was asked for.
         pub(super) ground_drawn: RefCell<Option<String>>,
