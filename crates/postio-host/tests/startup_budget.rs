@@ -11,9 +11,10 @@
 //! `open_store_at` makes -- started the host over it, connected its client,
 //! switched Focus mode on before anything could sync (the terminal is
 //! Focus, FR-186), connected its client, and read through that client the
-//! accounts, the account's folders and the inbox's first page: what
-//! `postio-tui`'s `run` and `first_scope` and its first `Open` do, and what the desktop app's `open_the_store` does before
-//! its list reads.
+//! accounts, Focus's inbox -- its count, the rows Focus surfaces, its first
+//! page and that page's labels -- and the strip's counts: what
+//! `postio-tui`'s `run` and `first_scope` and its first `Open` do, and what
+//! the desktop app's `open_the_store` does before its list reads.
 //!
 //! Two waits are deliberately in neither number. The keyring round trip is a
 //! D-Bus call to a Secret Service this measurement cannot assume is there; the
@@ -25,9 +26,8 @@ use std::time::{Duration, Instant};
 
 use postio_client::protocol::ClientKind;
 use postio_host::{FocusSetup, Host};
+use postio_model::ListScope;
 use postio_model::listing::{MailStore, PageRequest};
-use postio_model::mailbox::MailboxRole;
-use postio_model::{ListScope, MailboxId};
 
 /// SC-003: the first usable frame within this.
 const BUDGET: Duration = Duration::from_millis(500);
@@ -38,32 +38,41 @@ const MESSAGES: usize = 5_000;
 /// The first page a terminal of ordinary height asks for.
 const FIRST_PAGE: u32 = 60;
 
-/// What the first frame reads, over `client`: the accounts, the first
-/// account's folders, and its inbox's first page.
+/// What the first frame reads, over `client`, as `postio-tui`'s `run` does
+/// for Focus's inbox: the accounts, the first account's folders, how many
+/// conversations the inbox holds, what Focus surfaces among them, its first
+/// page with that page's labels, and the strip's counts.
 async fn first_frame(client: &postio_client::Client) -> usize {
     let accounts = client.accounts().await.expect("the accounts");
-    let account = accounts
-        .iter()
-        .find(|account| account.enabled)
-        .expect("an enabled account");
-    let folders = client.mailboxes(account.id).await.expect("the folders");
-    let inbox: MailboxId = folders
-        .iter()
-        .find(|folder| folder.role == MailboxRole::Inbox)
-        .expect("an inbox")
-        .id;
+    assert!(
+        accounts.iter().any(|account| account.enabled),
+        "an enabled account"
+    );
+    let scope = ListScope::Focus(postio_model::FocusScope::Inbox);
+    let total = client.list_count(scope).await.expect("the inbox's count");
+    client.surfaced().await.expect("the surfaced rows");
     let page = client
         .list_page(PageRequest {
-            scope: ListScope::Mailbox(inbox),
+            scope,
             offset: 0,
             limit: FIRST_PAGE,
         })
         .await
         .expect("the first page");
-    match page {
+    let rows = match page {
         postio_model::listing::ListPage::Messages(page) => page.rows.len(),
-        postio_model::listing::ListPage::Threads(page) => page.rows.len(),
-    }
+        postio_model::listing::ListPage::Threads(page) => {
+            let threads = page.rows.iter().filter_map(|row| row.id).collect();
+            client.thread_labels(threads).await.expect("the labels");
+            page.rows.len()
+        }
+    };
+    client.focus_counts().await.expect("the strip's counts");
+    assert!(
+        u64::from(total) >= rows as u64,
+        "a count that holds the page"
+    );
+    rows
 }
 
 #[test]
