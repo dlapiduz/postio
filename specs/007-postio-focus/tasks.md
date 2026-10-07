@@ -558,8 +558,8 @@ Each moves toolkit-free code from `crates/postio-gtk` to `postio-ui` (or `postio
 
 ### Closing
 
-- [ ] T327 [US16] `examples/shot.rs` renders every surface in terminal.md, and each is compared with its drawing there, with differences recorded (FR-199)
-- [ ] T328 [US16] Spec 005 says what is true now: `contracts/tui-surface.md`'s Layout, Mouse and Colour tables point at terminal.md, FR-002's sidebar goes, and the README, `docs/keybindings.md` (through the registry) and the book describe the terminal as Focus
+- [X] T327 [US16] `examples/shot.rs` renders every surface in terminal.md, and each is compared with its drawing there, with differences recorded (FR-199)
+- [X] T328 [US16] Spec 005 says what is true now: `contracts/tui-surface.md`'s Layout, Mouse and Colour tables point at terminal.md, FR-002's sidebar goes, and the README, `docs/keybindings.md` (through the registry) and the book describe the terminal as Focus Done: the README and `docs/keybindings.md` with T255; the book's terminal and side-by-side pages here
 - [X] T329 [US16] Budgets (FR-197, SC-017): the startup, keystroke and rows-read counts hold for the new inbox and frame; `GAPS` and `NOT_YET` are empty Done: `postio-host`'s `startup_budget` reads what Focus's first frame reads (count, surfaced rows, first page and labels, strip counts); `postio-tui`'s `tests/budgets.rs` counts what an open of a 100,000-message inbox reads at 120x36 and 50x12, what `j` held across the edge of what was read asks for, that a cursor move reads no content and an open reads one body, and that a keystroke's `update` and `draw` stay within 16 ms; `GAPS` is gone and nothing named `NOT_YET` exists
 
 ## Dependencies and order

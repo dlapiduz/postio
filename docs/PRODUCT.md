@@ -106,8 +106,8 @@ constitution's Scope).
 commands, keys and verbs in a terminal, local or over SSH, with the mouse as
 well as the keyboard, and mail read and written as Markdown. It draws the
 Focus design in character cells (spec 007, C29,
-[`terminal.md`](../specs/007-postio-focus/terminal.md)); that work is under
-way in spec 007's terminal tasks. Only one app has the store open at a time:
+[`terminal.md`](../specs/007-postio-focus/terminal.md)), and Focus's
+filtering, digests and reminders act while it has the store. Only one app has the store open at a time:
 whichever starts first has the mailbox, and the other says so and asks for it
 to be closed ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
 It ships as its own package, smaller than the desktop one. Images are labelled

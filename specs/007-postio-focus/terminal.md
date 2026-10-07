@@ -157,6 +157,16 @@ bold, then `focus_row::digest_line` dimmed, the message count and the time.
   raw source; `Esc` closes on the same row with the selection kept. Read on
   dwell is the desktop's ("Reading marks it read" in screens.md).
 
+## Find in the message
+
+`ctrl+f` opens a one-line field at the foot of the open message's frame, or
+the pane: `⌕ <typed>`, then "N of M" or "No matches" and the step and close
+keys. Every match is reversed in the accent and the current one is also bold
+and underlined, so they hold under `NO_COLOR`. `Return` and `ctrl+g` step
+forward, `shift+F3` back, wrapping at the ends and scrolling the match into
+view; `Esc` closes the field before the message. While `v` shows the raw
+source, find searches that.
+
 ## Reading beside the list (`F8`)
 
 `[focus] reading = "pane"` places the open message beside the list when the
@@ -263,7 +273,9 @@ many as fit, scrolling when they do not. Its footer names `[keys]` in
 
 ## Filtered (21)
 
-`g f` replaces the strip and the list. The strip becomes
+`g f` replaces the strip and the list; `Return` opens the focused message
+in the frame, aimed at that message, and `Esc` comes back to the same row.
+The strip becomes
 `‹ Inbox g i   Filtered · 186 today   Nothing here is deleted automatically      Sweep the inbox… F`.
 Next comes a tab line (`1 All 186  2 Promotions 90  …`, the current tab in
 bold and underlined), then the day-headed rows, each with its reason pill
@@ -289,6 +301,25 @@ bold and underlined), then the day-headed rows, each with its reason pill
 `t` and `n` open a frame 72 wide: the Task/Note pair, the text, due quick
 picks, the project with its reason, and the exact markdown line as the
 preview. `ctrl+↵` writes.
+
+## Compared with the drawings
+
+Each surface is rendered by `cargo run -p postio-tui --example shot
+--features test-support -- <out.svg> <width> <height> <state>` from the
+states in `test_support::sample`, and read beside its drawing above. The
+sample mail and its dates are the example's, not the drawings'. What still
+differs, and why:
+
+| Surface | Difference | Reason |
+|---|---|---|
+| Every surface | Keys read as the registry spells them, shortened in a tight place (`Esc`, `Del`, `↵`), and a chord the terminal cannot deliver shows its alternate: Send is `alt+s` and capture's write is `alt+↵` without the kitty keyboard protocol | C22; `postio_ui::terminal::deliverable_binding` |
+| Inbox | Unread rows' times are bold, as the senders are | The row's unread rule, as on the desktop |
+| Command bar | A dim echo line under the input says what was typed or which chip is being edited, and chips take a row of their own | The editing hint does not fit beside the input |
+| Pickers | The title and the target sit in the box's top border | One row more for the presets in a short terminal |
+| Filtered, digest rules | A line of keys at the foot of the view: restore, tabs, open and back; edit, remove and back | A full view has no frame to carry its keys, and the desktop's buttons have none to show |
+| Digest window | `Archive all N A` is on the header's left, with the title centred and `Esc ✕` right | The frame's header has one shape: steps or primary on the left |
+| Rule dialog, capture | The frame's buttons are bracketed, `[ Save ↵ ]`, and the primary is bold | A button in cells needs an edge to read as one |
+| Capture | The due day's quick picks take a row of their own under the date | The date and five picks do not fit side by side in the frame |
 
 ## Colour and marks
 
