@@ -394,6 +394,10 @@ const CASES: &[(&str, fn())] = &[
         composer_recipient_select::destroying_a_composer_releases_recipient_completion as fn(),
     ),
     (
+        "composer_recipient_select::replacing_the_text_keeps_the_popover_up",
+        composer_recipient_select::replacing_the_text_keeps_the_popover_up as fn(),
+    ),
+    (
         "composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field",
         composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field as fn(),
     ),

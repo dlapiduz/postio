@@ -3801,6 +3801,13 @@ pub(crate) struct Completion {
     /// What `list`'s rows currently show, in the same order, so accepting a
     /// selected row can look up what it stands for.
     candidates: RefCell<Vec<RecipientCandidate>>,
+    /// A hide waiting for the main loop to come round, so that a change
+    /// the next one undoes -- `set_text`'s empty-then-filled, a paste,
+    /// typing over a selection -- leaves the popover up rather than taking
+    /// it down and putting it up again. On Wayland that is a new popup each
+    /// time, and one repositioned before it has drawn waits on a reply the
+    /// compositor does not send: GTK blocks the main loop there.
+    hiding: Rc<RefCell<Option<glib::SourceId>>>,
 }
 
 impl Completion {
@@ -3838,6 +3845,7 @@ impl Completion {
             popover,
             list,
             candidates: RefCell::new(Vec::new()),
+            hiding: Rc::default(),
         });
 
         entry.connect_changed(glib::clone!(
@@ -3908,7 +3916,7 @@ impl Completion {
         // in bytes would ask more of a name written in one script than
         // another.
         if token.chars().count() < MIN_COMPLETION_PREFIX {
-            self.popover.popdown();
+            self.hide_soon();
             return;
         }
         let candidates = {
@@ -3934,13 +3942,34 @@ impl Completion {
         *self.candidates.borrow_mut() = candidates;
 
         if empty {
-            self.popover.popdown();
+            self.hide_soon();
         } else {
+            if let Some(hiding) = self.hiding.take() {
+                hiding.remove();
+            }
             self.list.select_row(self.list.row_at_index(0).as_ref());
             if !self.popover.is_visible() {
                 self.popover.popup();
             }
         }
+    }
+
+    /// Hide the popover once the main loop comes round, unless something
+    /// shows it again first. See `hiding`.
+    fn hide_soon(&self) {
+        if !self.popover.is_visible() || self.hiding.borrow().is_some() {
+            return;
+        }
+        let popover = self.popover.downgrade();
+        let hiding = Rc::clone(&self.hiding);
+        let source = glib::idle_add_local_once(move || {
+            // Run, so no longer pending: nothing may remove it now.
+            hiding.take();
+            if let Some(popover) = popover.upgrade() {
+                popover.popdown();
+            }
+        });
+        self.hiding.replace(Some(source));
     }
 
     /// Handles the keys that only mean something while the popover is open;

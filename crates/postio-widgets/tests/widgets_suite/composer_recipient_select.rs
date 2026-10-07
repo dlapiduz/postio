@@ -293,3 +293,59 @@ pub fn nothing_is_offered_until_four_characters_are_typed() {
          field already is"
     );
 }
+
+/// Replacing what `To` says keeps the open popover open.
+///
+/// `set_text` empties an entry and then fills it, so `changed` fires twice,
+/// and the completion used to answer each one: the empty text hid the
+/// popover and the new text showed it again. On Wayland that destroys the
+/// popup and makes a new one, and a new popup repositioned before it has
+/// drawn waits on a compositor reply that can never come -- GTK blocked the
+/// main loop there and focus_suite's `typing_a_recipient_*` hung one run in
+/// two. A paste, or typing over a selection, is the same two changes.
+pub fn replacing_the_text_keeps_the_popover_up() {
+    fn completions(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
+        if widget.has_css_class("postio-recipient-completion")
+            && let Some(popover) = widget.downcast_ref::<gtk::Popover>()
+        {
+            out.push(popover.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            completions(&current, out);
+            child = current.next_sibling();
+        }
+    }
+
+    let Some((_window, composer, _asked)) = a_composer_offering_two() else {
+        return;
+    };
+    composer.test_set_to("grah");
+    settle();
+    assert!(
+        composer.test_recipient_popover_visible(),
+        "four characters offer Grace and Graham"
+    );
+
+    let mut popovers = Vec::new();
+    completions(composer.upcast_ref(), &mut popovers);
+    assert!(!popovers.is_empty(), "recipient completion is mounted");
+    let closed = Rc::new(Cell::new(0));
+    for popover in &popovers {
+        popover.connect_closed({
+            let closed = closed.clone();
+            move |_| closed.set(closed.get() + 1)
+        });
+    }
+
+    composer.test_set_to("graha");
+    settle();
+    composer.test_set_to("grah");
+    settle();
+    assert!(composer.test_recipient_popover_visible());
+    assert_eq!(
+        closed.get(),
+        0,
+        "replacing the text closed the popover and opened a new one"
+    );
+}
