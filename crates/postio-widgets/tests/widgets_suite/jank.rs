@@ -40,7 +40,10 @@ pub fn a_blocked_main_loop_is_reported_with_the_action_before_it() {
 
     let context = glib::MainContext::default();
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_millis(3000));
-    while !captured.text().contains("archive") && Instant::now() < deadline {
+    // Wait for the main loop's report, not merely for "archive": under load a
+    // slow *frame* is reported with the same action first, and stopping there
+    // left the stall this case is about unread.
+    while !captured.text().contains("main loop") && Instant::now() < deadline {
         context.iteration(true);
     }
     let log = captured.text();
