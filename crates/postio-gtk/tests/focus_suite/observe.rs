@@ -93,8 +93,20 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert_eq!(seen.reading.id, cursor.id, "the dialog names its message");
         assert!(seen.reading.scroll.is_some(), "{seen:#?}");
 
-        // `Escape` closes it: the list again, the cursor unmoved.
+        // `Escape` closes it: the list again, the cursor unmoved. The
+        // keyboard starts on the message, which a key can reach once the
+        // dialog has drawn its first frame.
+        let reading = window.reading().expect("open");
+        assert!(
+            crate::settle_until(async || reading.reader().view().is_mapped()).await,
+            "the dialog never drew"
+        );
         press(&window, "Escape");
+        // The dialog is drawn out over its closing frames.
+        assert!(
+            crate::settle_until(async || window.observe().keyboard.region == Region::List).await,
+            "the dialog never closed"
+        );
         let seen = window.observe();
         assert_eq!(seen.view, View::List, "{seen:#?}");
         assert_eq!(seen.keyboard.region, Region::List);
