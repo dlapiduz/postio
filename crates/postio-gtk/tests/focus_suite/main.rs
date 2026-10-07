@@ -106,6 +106,7 @@ mod storyboards;
 mod support;
 mod surfaced;
 mod treatments;
+mod newsletter_seed;
 mod undo;
 mod unsubscribe;
 mod view_source;
@@ -1263,6 +1264,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",
         starts_offline::the_inbox_is_listed_from_the_store_with_no_network as fn(),
+    ),
+    (
+        "newsletter_seed::the_newsletters_row_says_nothing_of_the_message_it_was_made_from",
+        newsletter_seed::the_newsletters_row_says_nothing_of_the_message_it_was_made_from as fn(),
     ),
     (
         "undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone",

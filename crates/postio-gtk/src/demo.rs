@@ -760,6 +760,12 @@ pub async fn treatment_demo(database: &Store, account: AccountId, screen: &str) 
         message.subject = Some(subject.to_owned());
         message.to = vec![to];
         message.cc = Vec::new();
+        // The row's first line is the message's own, not the draft's.
+        message.preview = Some(format!("{subject}. Read the release notes in your browser."));
+        if newsletter {
+            // Nor the draft's attachments.
+            message.attachments.clear();
+        }
         messages.update(&mut message).await.expect("its headers");
     }
     let body = postio_model::mime::parse(postio_model::test_corpus::load(fixture).bytes()).body;
@@ -779,7 +785,12 @@ pub async fn treatment_demo(database: &Store, account: AccountId, screen: &str) 
         .expect("a body");
     let markers = MarkerRepository::new(&connection);
     if newsletter {
-        markers.dismiss(id, None).await.expect("no card");
+        // A newsletter carries no marker: `None` would take a dismissal
+        // back, so the day says it is gone.
+        markers
+            .dismiss(id, Some(today()))
+            .await
+            .expect("no card");
     } else {
         markers
             .replace(&marker(
