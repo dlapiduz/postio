@@ -101,6 +101,10 @@ command = "open_message"
 context = "search"
 reason  = "an empty query has no result to open"
 [[gap]]
+command = "toggle_result_order"
+context = "search"
+reason  = "an empty query has no results to put in another order"
+[[gap]]
 command = "save_search"
 context = "search"
 reason  = "an empty query has nothing to save"
