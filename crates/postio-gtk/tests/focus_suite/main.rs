@@ -964,6 +964,10 @@ const CASES: &[(&str, fn())] = &[
         reading_pane::archiving_steps_the_pane_past_the_message as fn(),
     ),
     (
+        "reading_pane::a_key_pressed_while_archiving_settles_keeps_its_cursor",
+        reading_pane::a_key_pressed_while_archiving_settles_keeps_its_cursor as fn(),
+    ),
+    (
         "reading_pane::a_message_opened_away_from_the_inbox_opens_in_the_dialog",
         reading_pane::a_message_opened_away_from_the_inbox_opens_in_the_dialog as fn(),
     ),

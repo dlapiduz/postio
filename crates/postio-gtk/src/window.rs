@@ -1222,7 +1222,15 @@ impl FocusWindow {
                 if len == 0 {
                     reading.close();
                 } else {
-                    window.cursor_to(Some(index.min(len - 1)));
+                    let place = index.min(len - 1);
+                    // The cursor has been taken elsewhere while the archive
+                    // settled (a key is never lost): the pane follows it,
+                    // and this step does not drag it back.
+                    let at = pane.cursor().selected();
+                    if at != gtk::INVALID_LIST_POSITION && at != place {
+                        return glib::ControlFlow::Break;
+                    }
+                    window.cursor_to(Some(place));
                     window.open_message();
                 }
             }

@@ -578,6 +578,43 @@ pub fn archiving_steps_the_pane_past_the_message() {
     });
 }
 
+/// A key pressed while the archive is still settling is not undone by the
+/// archive: the step to the next message follows the cursor where the person
+/// has taken it, and does not drag it back to the row that took the archived
+/// one's place.
+pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        read_in_pane(&window);
+        support::keys(&window, &["j", "j"]);
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
+        );
+        support::deliver(&window, "a");
+        support::deliver(&window, "G");
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 4).await,
+            "the archive never left the list"
+        );
+        // Let the step past the archived message run its course.
+        for _ in 0..30 {
+            crate::settle();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(cursor(&window), 3, "the archive pulled the cursor back");
+        assert_eq!(
+            pane_title(&window).as_deref(),
+            Some("Fifth"),
+            "the pane did not stay with the cursor"
+        );
+    });
+}
+
 /// The pane is the inbox's: a message opened from Filtered, which has no
 /// list beside a pane, opens in the dialog over it, and back in the inbox
 /// the next one opens beside the list again.
