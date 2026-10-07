@@ -624,6 +624,10 @@ const CASES: &[(&str, fn())] = &[
         bar::a_misspelled_word_says_what_it_found_and_offers_the_typed_one as fn(),
     ),
     (
+        "bar::a_result_gives_its_subject_room_before_its_first_line",
+        bar::a_result_gives_its_subject_room_before_its_first_line as fn(),
+    ),
+    (
         "bar::o_is_a_letter_and_the_order_row_switches_the_results",
         bar::o_is_a_letter_and_the_order_row_switches_the_results as fn(),
     ),

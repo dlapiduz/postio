@@ -941,6 +941,7 @@ impl Bar {
         // (ADR 0037); the typed word is one row away, quoted, which is how
         // the query language says "this word, exactly".
         if let Some(instead) = &instead {
+            self.retitle_search(&rules::search_title(&instead.typed, Some(&instead.term)));
             self.append_heading(&rules::showing_results_for(&instead.term));
             let (title, detail) = rules::search_instead(&instead.typed);
             self.append_row(
@@ -973,6 +974,23 @@ impl Bar {
         self.inserting.set(None);
         self.loaded.set(generation);
         self.apply_pending();
+    }
+
+    /// Say on the search row which query the results under it are for.
+    fn retitle_search(&self, title: &str) {
+        let at = self
+            .rows
+            .borrow()
+            .iter()
+            .position(|row| *row == Row::Search);
+        let name = at
+            .and_then(|at| self.list.row_at_index(at as i32))
+            .and_then(|row| row.child())
+            .and_then(|line| line.first_child())
+            .and_then(|name| name.downcast::<gtk::Label>().ok());
+        if let Some(name) = name {
+            name.set_text(title);
+        }
     }
 
     /// Move the highlight where the last run asked it to go.
@@ -1232,12 +1250,14 @@ impl Bar {
         sender.set_xalign(0.0);
         let title = gtk::Label::new(Some(subject));
         title.add_css_class("focus-bar-subject");
-        // Long subjects give way, but never so far that the first line goes:
-        // it keeps room for a few words whatever else the row carries.
+        // The first line gives way before the subject (gtk-design): the
+        // subject keeps room for an ordinary one, and only longer ones are
+        // cut; the first line has what is left.
         title.set_ellipsize(pango::EllipsizeMode::End);
+        title.set_width_chars(36);
         let first = gtk::Label::new(preview);
         first.add_css_class("dim-label");
-        first.set_width_chars(14);
+        first.set_width_chars(8);
         first.set_ellipsize(pango::EllipsizeMode::End);
         first.set_hexpand(true);
         first.set_xalign(0.0);

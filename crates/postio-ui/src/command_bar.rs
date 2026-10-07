@@ -265,7 +265,7 @@ pub fn blend_lines(blend: &Blend<'_>) -> Vec<Line> {
 fn search_line(blend: &Blend<'_>) -> Option<Line> {
     blend.search.as_ref().map(|query| Line::Row {
         row: Row::Search,
-        title: format!("Search mail for \u{201c}{query}\u{201d}"),
+        title: search_title(query, None),
         detail: Some(SEARCH_DETAIL.to_owned()),
         key: None,
     })
@@ -358,6 +358,17 @@ pub fn conversations(hits: Vec<SearchHit>) -> Vec<SearchHit> {
         }
     }
     rows
+}
+
+/// The search row's title: what Return searches for. When the results are
+/// for a correction of the typed word (ADR 0037), `instead` is that
+/// correction and the row names it, so no two rows name one query and the
+/// highlighted row matches the results under it.
+pub fn search_title(query: &str, instead: Option<&str>) -> String {
+    format!(
+        "Search mail for \u{201c}{}\u{201d}",
+        instead.unwrap_or(query)
+    )
 }
 
 /// The results' heading: "Conversations · 3 matches".
@@ -606,6 +617,21 @@ mod tests {
             Row::Command(ActionId::Builtin(CommandId::Archive)).run(),
             Run::Action(BarAction::Command(CommandId::Archive))
         );
+    }
+
+    #[test]
+    fn the_search_row_names_the_query_the_results_are_for() {
+        // Typed words are what Return searches...
+        assert_eq!(
+            search_title("harbour", None),
+            "Search mail for \u{201c}harbour\u{201d}"
+        );
+        // ...unless the results are for a correction (ADR 0037): then the
+        // row names the correction, and "Search instead" is the only row
+        // that names the typed word.
+        let shown = search_title("harbourO", Some("harbour"));
+        assert_eq!(shown, "Search mail for \u{201c}harbour\u{201d}");
+        assert!(!shown.contains("harbourO"));
     }
 
     #[test]

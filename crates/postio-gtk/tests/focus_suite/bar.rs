@@ -744,6 +744,21 @@ pub fn a_misspelled_word_says_what_it_found_and_offers_the_typed_one() {
             said.iter().any(|line| line == offer),
             "no row offers the typed word: {said:?}"
         );
+        // ADR 0037: one row names the typed word, and it is the offer; the
+        // search row names what the results under it are for.
+        let naming_typed = said
+            .iter()
+            .filter(|line| line.starts_with("Search") && line.contains("qarterly"))
+            .count();
+        assert_eq!(
+            naming_typed, 1,
+            "two rows name the typed word, so Return's query is unclear: {said:?}"
+        );
+        assert!(
+            said.iter()
+                .any(|line| line == "Search mail for \u{201c}quarterly\u{201d}"),
+            "the search row does not name the results' query: {said:?}"
+        );
         support::click_row_saying(&window, bar.widget(), offer);
         assert_eq!(
             bar.typed(),
@@ -761,6 +776,52 @@ pub fn a_misspelled_word_says_what_it_found_and_offers_the_typed_one() {
             .await,
             "the exact word still lists the rewritten mail: {:?}",
             bar.texts()
+        );
+    });
+}
+
+/// gtk-design: in a result the first line gives way before the subject.
+/// A subject of ordinary length, under a long first line, is drawn whole at
+/// 1280 px.
+pub fn a_result_gives_its_subject_room_before_its_first_line() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let subject = "[harbour-dev] Tide gate interlock";
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                subject,
+                "The proposal below changes how the tide gate interlock is armed during maintenance windows and why.",
+                5,
+            )
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open_sized(Some((1280, 800))).await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        let bar = open_bar(&window);
+        type_in(&bar, "harbour").await;
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == [subject]).await,
+            "typing searched nothing: {:?}",
+            bar.result_subjects()
+        );
+        let label = support::only(bar.widget(), "focus-bar-subject")
+            .downcast::<gtk::Label>()
+            .expect("the subject is a label");
+        assert!(
+            crate::settle_until(async || label.width() > 0).await,
+            "the result was never laid out"
+        );
+        assert!(
+            !label.layout().is_ellipsized(),
+            "the subject was cut ({} px) while the first line kept its room",
+            label.width()
         );
     });
 }
