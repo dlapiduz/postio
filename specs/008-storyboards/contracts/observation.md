@@ -53,6 +53,7 @@ specs/007-postio-focus T265).
 | `app.focus.bulk` | Whether the bulk bar is shown, and its summary (`Bulk::summary`) |
 | `app.focus.cursor.unread` | How many messages of the cursor's conversation are unread, as the list row carries it: a message read by the dwell takes one off |
 | `app.focus.digest_page` | `digest().showing()` |
+| `app.focus.settings.section`, `.listed` | While Settings is open: the pane on screen (`current_section()`, its label), and the sections its list shows for what the find-a-setting field holds (`listed_sections()`), as one string joined by ", " |
 | `app.focus.bar.typed`, `.heading`, `.messages` | The bar's field, its results heading ("Conversations · 8 matches") and how many messages it lists: the hits, which the list behind it never shows |
 | `app.focus.bar.highlighted`, `.highlighted_id`, `.highlighted_text` | The row Return would run: its kind (`message`, `order`, `search`, `command`, `place`, ...), the message it opens, and what it says |
 

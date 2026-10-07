@@ -158,9 +158,7 @@ impl Section {
     pub fn description(self) -> &'static str {
         match self {
             Section::Accounts => "Every account this installation signs in to.",
-            Section::Filtering => {
-                "Spam and automated updates, archived as they arrive, each with its reason."
-            }
+            Section::Filtering => "Spam and updates, archived as they arrive, with a reason.",
             Section::Filters => {
                 "Saved searches, and which of them are pinned across the command bar."
             }

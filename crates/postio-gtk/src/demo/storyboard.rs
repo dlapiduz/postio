@@ -203,14 +203,21 @@ pub enum Preset {
     /// Sync & storage scrolled down to the folders it backs up locally,
     /// below the pane's fold.
     SyncBackfill,
+    /// Filtering, turned off: what the page says while every message
+    /// arrives in the inbox.
+    FilteringOff,
+    /// Filtering with what a person has told it: senders never filtered,
+    /// one entry that pins nobody, and a marker kind turned off.
+    FilteringLists,
     /// The page a store that will not open leaves: here, a locked keyring.
     Locked,
 }
 
 impl Preset {
     /// Every preset Focus can apply.
-    pub const ALL: [Preset; 15] = [
+    pub const ALL: [Preset; 18] = [
         Preset::Settings(Section::Accounts),
+        Preset::Settings(Section::Filtering),
         Preset::Settings(Section::Filters),
         Preset::Settings(Section::Composing),
         Preset::Settings(Section::Keyboard),
@@ -224,6 +231,8 @@ impl Preset {
         Preset::AddAccountBrowser,
         Preset::AddAccountSyncWindow,
         Preset::SyncBackfill,
+        Preset::FilteringOff,
+        Preset::FilteringLists,
         Preset::Locked,
     ];
 
@@ -231,6 +240,7 @@ impl Preset {
     /// Focus does not show it (`Section::shown_in`).
     pub fn id(self) -> &'static str {
         match self {
+            Preset::Settings(Section::Filtering) => "settings/filtering",
             Preset::Settings(Section::Filters) => "settings/filters",
             Preset::Settings(Section::Composing) => "settings/composing",
             Preset::Settings(Section::Keyboard) => "settings/keyboard",
@@ -245,6 +255,8 @@ impl Preset {
             Preset::AddAccountBrowser => "add-account/browser",
             Preset::AddAccountSyncWindow => "add-account/syncwindow",
             Preset::SyncBackfill => "settings/storage-backfill",
+            Preset::FilteringOff => "settings/filtering-off",
+            Preset::FilteringLists => "settings/filtering-lists",
             Preset::Locked => "locked",
         }
     }
@@ -284,6 +296,22 @@ impl Preset {
                 Ok(())
             }
             Preset::Settings(section) => open_settings(window, section).map(drop),
+            Preset::FilteringOff | Preset::FilteringLists => {
+                let panel = open_settings(window, Section::Filtering)?;
+                // What the switch writes, or what `R` in Filtered and a
+                // third dismissal write: the file, which the page reads.
+                let text = panel.text();
+                let text = if self == Preset::FilteringOff {
+                    postio_config::focus_edit::set_filtering(&text, false)
+                        .map_err(|error| format!("filtering off: {error}"))?
+                        .unwrap_or(text)
+                } else {
+                    format!("{text}\n{FILTER_LISTS}")
+                };
+                panel.set_text(&text);
+                pump(Duration::from_millis(300));
+                Ok(())
+            }
             Preset::AccountForm | Preset::SignatureEditor => {
                 let panel = open_settings(window, Section::Accounts)?;
                 if !pump_until(Duration::from_secs(5), || {
@@ -322,6 +350,12 @@ impl Preset {
         }
     }
 }
+
+/// `[focus.filter]` as a person's corrections leave it: two senders never
+/// filtered, an entry that pins nobody, and a marker kind turned off.
+const FILTER_LISTS: &str = "[focus.filter]\n\
+never = [\"ada@example.org\", \"@harbor.example\", \"grace\"]\n\
+stop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }]\n";
 
 /// Opens Settings by its command, as `ctrl+,` does, and shows `section`.
 fn open_settings(

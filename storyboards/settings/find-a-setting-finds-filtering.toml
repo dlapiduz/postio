@@ -1,0 +1,23 @@
+# Typing what a person is after into Settings' find-a-setting field finds
+# the Filtering page (spec 007 US9; the maintainer's call of 2026-10-07 that
+# filtering has a page of its own). "spam" is not in the page's name: the
+# field matches the words each page is about (`Section::keywords`), and a
+# person looking for where spam goes types that, not "Filtering".
+#
+# Settings opens with the keyboard in its find field (screens.md,
+# "Settings"), so the typing lands there.
+source = { kind = "design", ref = "none" }
+apps   = ["focus"]
+preset = "settings"
+
+[[step]]
+id     = "opened"
+wait   = { ms = 100 }
+check  = { keyboard.region = "settings", app.focus.settings.section = "Accounts",
+           app.focus.settings.listed = "Accounts, Filtering, Saved searches, Composing, Keyboard, Sync & storage, Privacy, Config file" }
+expect = "Settings is open on Accounts, the keyboard in the find field, every section listed: Filtering second under MAIL."
+
+[[step]]
+type   = "spam"
+check  = { keyboard.region = "settings", app.focus.settings.listed = "Filtering" }
+expect = "The list narrows to Filtering alone. The pane is still Accounts: finding narrows the list, it does not switch the page."

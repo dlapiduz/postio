@@ -1,0 +1,11 @@
+# Settings, Filtering, with what a person has told it (spec 007 FR-111,
+# FR-116, FR-108, FR-161): under Never filtered an address, a whole domain
+# as "everyone at harbor.example", and an entry that pins nobody saying so
+# in the secondary ink; under Markers turned off, questions from one
+# sender.
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "none" }
+preset = "settings/filtering-lists"

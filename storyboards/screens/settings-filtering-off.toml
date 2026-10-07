@@ -1,0 +1,11 @@
+# Settings, Filtering, turned off (spec 007 FR-119): the switch is clear,
+# the sentence says all new mail arrives in the inbox and what was filtered
+# stays in Filtered, there is no count (C10), and the keys name restore
+# only -- there is nothing to sweep with. Open Filtered stays: what was
+# filtered before is still there.
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "none" }
+preset = "settings/filtering-off"

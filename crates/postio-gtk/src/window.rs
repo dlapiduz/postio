@@ -5540,6 +5540,26 @@ impl FocusWindow {
                 app.insert(key.to_owned(), value);
             }
         }
+        if let Some(settings) = self.settings().filter(|settings| settings.is_open()) {
+            let panel = settings.panel();
+            app.insert(
+                "focus.settings.section".to_owned(),
+                serde_json::json!(panel.current_section().label()),
+            );
+            app.insert(
+                "focus.settings.listed".to_owned(),
+                // One string, as a check compares a literal: "Accounts,
+                // Filtering, ...".
+                serde_json::json!(
+                    panel
+                        .listed_sections()
+                        .into_iter()
+                        .map(|section| section.label())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
         if let Some(digest) = &digest {
             app.insert(
                 "focus.digest_page".to_owned(),

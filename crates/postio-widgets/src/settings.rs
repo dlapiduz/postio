@@ -3486,7 +3486,6 @@ impl SettingsPanel {
         let today = gtk::Label::new(None);
         today.add_css_class("postio-settings-filtering-today");
         today.set_xalign(0.0);
-        today.set_hexpand(true);
         let open = std::rc::Rc::new(crate::widgets::KeycapButton::new(
             Some(CommandId::GoToFiltered),
             filtering::OPEN,
@@ -3515,19 +3514,20 @@ impl SettingsPanel {
         group.control(switch.widget()).note(&state);
         group.section(filtering::FILTERED);
         group.control(&count_row);
-        group.block(&note_with(
+        group.note(&note_with(
             "postio-settings-filtering-kept",
             filtering::KEPT,
         ));
-        group.block(keys.widget());
+        group.note(keys.widget());
         group.section(filtering::NEVER);
-        group.block(&note_with(
+        group.control(&note_with(
             "postio-settings-filtering-guards",
             filtering::GUARDS,
         ));
-        group.append(&never).append(&never_empty);
+        // The list, or the sentence saying it is empty: one of the two shows.
+        group.note(&never).note(&never_empty);
         group.section(filtering::STOPPED);
-        group.append(&stopped).append(&stopped_empty);
+        group.control(&stopped).control(&stopped_empty);
 
         let _ = imp.filtering_controls.set(FilteringControls {
             switch,
@@ -4021,6 +4021,15 @@ impl SettingsPanel {
                 child = widget.next_sibling();
             }
         }
+    }
+
+    /// The sections the list shows now: every one this panel shows that the
+    /// find-a-setting field's words match, in list order.
+    pub fn listed_sections(&self) -> Vec<Section> {
+        Section::ALL
+            .into_iter()
+            .filter(|section| self.shown(*section) && self.matches_search(*section))
+            .collect()
     }
 
     /// Whether this panel shows `section` at all: every section Focus
