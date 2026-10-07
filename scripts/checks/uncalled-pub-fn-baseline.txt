@@ -74,7 +74,6 @@ recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
-reopen                            # crates/postio-account/src/secret.rs:670
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
 requeue_in_flight                 # crates/postio-storage/src/repository/operations.rs:510
 resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:144

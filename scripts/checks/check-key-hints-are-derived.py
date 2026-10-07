@@ -52,9 +52,10 @@ OWNER = "widgets/keyhint.rs"
 # file -> (count, why no command carries it)
 ALLOWED_FIXED: dict[str, tuple[int, str]] = {
     "onboarding.rs": (
-        2,
-        "Return submits the sign-in form from any field, and Tab moves between "
-        "its fields: both are the toolkit's, not registry commands",
+        3,
+        "Return submits the sign-in form from any field, Tab moves between "
+        "its fields, and Return activates the sync step's one button, which "
+        "holds the keyboard: all three are the toolkit's, not registry commands",
     ),
     "unavailable.rs": (1, "Return is the default action of the screen's only button"),
     "search.rs": (1, "Tab into the refine column is the toolkit's focus order"),

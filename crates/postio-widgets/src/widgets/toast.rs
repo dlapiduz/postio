@@ -39,6 +39,9 @@ use postio_ui::observe::Tone;
 /// not quietly break.
 pub const TOAST_TIMEOUT: u32 = 8;
 
+/// What makes a toast again, the same each time it is called.
+type Remake = Rc<dyn Fn() -> adw::Toast>;
+
 /// The undo toast, and the overlay it appears over.
 ///
 /// Not a widget of its own: [`Toast::overlay`] is what a window puts its
@@ -65,7 +68,7 @@ pub struct Toast {
     shown: Rc<RefCell<Option<(adw::Toast, Tone, bool)>>>,
     /// How to make the toast now showing again, for [`Self::rehome`], and
     /// the key its button shows.
-    remake: RefCell<Option<(Rc<dyn Fn() -> adw::Toast>, Option<String>)>>,
+    remake: RefCell<Option<(Remake, Option<String>)>>,
     /// The key that undoes, for the cap on an Undo button: the window's
     /// keymap says it, and says it again when that changes.
     undo_key: RefCell<Option<String>>,
