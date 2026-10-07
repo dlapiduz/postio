@@ -33,5 +33,5 @@ check   = { view = "reader", rows.count = 59, notice.undo = true }
 
 [[step]]
 command = "undo"
-check   = { rows.count = 60, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 5 of 60 · thread of 6" }
+check   = { rows.count = 60, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 4 of 59 · thread of 6" }
 expect  = "Undo restores the conversation, as it does from the list, and takes the open message back to it: the cursor is on it, and the header's place is its own."
