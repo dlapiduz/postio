@@ -569,7 +569,9 @@ pub fn an_inbox_whose_first_pass_is_running_says_syncing_not_empty() {
             )
             .build();
         // Every call takes a moment, so the pass is observably in flight.
-        backend.set_latency(std::time::Duration::from_millis(400));
+        // Not longer: the pass makes many calls, and at 400 ms each a loaded
+        // machine ran it past the deadline before the rows arrived.
+        backend.set_latency(std::time::Duration::from_millis(150));
         let (window, _backend) = opened(backend).await;
         sign_in(&window).await;
 
@@ -674,8 +676,15 @@ pub fn an_interrupted_first_pass_still_says_syncing_not_empty() {
         sign_in(&window).await;
         backend.fail_all(postio_account::backend::Fault::Rejected("no".to_owned()));
 
-        // Long enough for the pass to have been tried and to have failed.
-        crate::settle_until(async || backend.calls() > 6).await;
+        // The pass has been tried and turned away: the form's own check is
+        // the first call, the pass's first is the second, and the fault
+        // answers it. (This waited for "more than six", which a pass turned
+        // away at its first call never makes, so it sat out the deadline.)
+        assert!(
+            crate::settle_until(async || backend.calls() >= 2).await,
+            "the first pass never reached the server: {} calls",
+            backend.calls()
+        );
         for _ in 0..20 {
             crate::settle();
         }
