@@ -718,7 +718,17 @@ impl Bar {
             Row::Instead(word) => ("instead", None, word.clone()),
             Row::Order => ("order", None, said()),
             Row::Correspondent(_) => ("correspondent", None, said()),
+            Row::Hint => ("hint", None, said()),
         })
+    }
+
+    /// How many lines of the empty bar's hints are showing.
+    pub fn hints(&self) -> usize {
+        self.rows
+            .borrow()
+            .iter()
+            .filter(|row| **row == Row::Hint)
+            .count()
     }
 
     /// The chips the words were lowered to.
@@ -775,6 +785,11 @@ impl Bar {
             }
             rules::Route::Plain => {
                 self.show_blend(typed);
+                if typed.is_empty() {
+                    for line in rules::empty_lines() {
+                        self.append_line(&line);
+                    }
+                }
                 self.show_chips(&[]);
                 self.heading.set_visible(false);
                 return;
@@ -945,13 +960,13 @@ impl Bar {
         for hit in rows {
             let subject = hit.subject.clone().unwrap_or_default();
             let place = rules::result_place(&hit, held, &names);
-            let place = rules::result_place_in(&hit, place, &owners);
+            let account = rules::result_account(&hit, &owners);
             self.append_message(
                 hit.message_id,
                 hit.from.as_ref().map(said_of),
                 &subject,
                 hit.preview.as_deref(),
-                place.as_deref(),
+                [place.as_deref(), account.as_deref()],
                 hit.received_at,
             );
         }
@@ -1032,7 +1047,7 @@ impl Bar {
                             from,
                             &thread.subject.clone().unwrap_or_default(),
                             thread.representative.preview.as_deref(),
-                            None,
+                            [None, None],
                             thread.last_at,
                         );
                     }
@@ -1045,7 +1060,7 @@ impl Bar {
                             from,
                             &message.subject.clone().unwrap_or_default(),
                             message.preview.as_deref(),
-                            None,
+                            [None, None],
                             message.received_at,
                         );
                     }
@@ -1174,6 +1189,10 @@ impl Bar {
         let row = gtk::ListBoxRow::new();
         row.add_css_class("focus-bar-row");
         row.set_child(Some(&line));
+        if !target.is_selectable() {
+            row.set_selectable(false);
+            row.set_activatable(false);
+        }
         self.put(&row, target);
         self.select_first();
     }
@@ -1194,13 +1213,14 @@ impl Bar {
         }
     }
 
+    /// `wheres` is the folder and the account, each when there is one.
     fn append_message(
         &self,
         message: MessageId,
         from: Option<String>,
         subject: &str,
         preview: Option<&str>,
-        place: Option<&str>,
+        wheres: [Option<&str>; 2],
         at: chrono::DateTime<chrono::Utc>,
     ) {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
@@ -1212,18 +1232,30 @@ impl Bar {
         sender.set_xalign(0.0);
         let title = gtk::Label::new(Some(subject));
         title.add_css_class("focus-bar-subject");
+        // Long subjects give way, but never so far that the first line goes:
+        // it keeps room for a few words whatever else the row carries.
+        title.set_ellipsize(pango::EllipsizeMode::End);
         let first = gtk::Label::new(preview);
         first.add_css_class("dim-label");
+        first.set_width_chars(14);
         first.set_ellipsize(pango::EllipsizeMode::End);
         first.set_hexpand(true);
         first.set_xalign(0.0);
         line.append(&sender);
         line.append(&title);
         line.append(&first);
-        if let Some(place) = place {
-            let place = gtk::Label::new(Some(place));
-            place.add_css_class("focus-bar-place");
-            line.append(&place);
+        // The folder, and under it the account when there are several: one
+        // column two lines tall, not one long line.
+        if wheres.iter().any(Option::is_some) {
+            let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            lines.set_valign(gtk::Align::Center);
+            for text in wheres.into_iter().flatten() {
+                let label = gtk::Label::new(Some(text));
+                label.add_css_class("focus-bar-place");
+                label.set_xalign(1.0);
+                lines.append(&label);
+            }
+            line.append(&lines);
         }
         let date = gtk::Label::new(Some(&postio_ui::row::timestamp(
             at,

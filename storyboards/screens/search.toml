@@ -7,6 +7,8 @@ source = { kind = "design", ref = "focus 07" }
 
 [[step]]
 command = "search"
+check   = { app.focus.bar.hints = 3 }
+expect  = "The empty bar is not a blank band: under the saved searches it says what typing does -- search mail, `>` for commands, `@` for people -- in the rows' own style."
 
 [[step]]
 type    = "harbour"

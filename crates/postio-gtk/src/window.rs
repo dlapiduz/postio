@@ -5480,6 +5480,7 @@ impl FocusWindow {
             let fields = [
                 ("focus.bar.typed", serde_json::json!(bar.typed())),
                 ("focus.bar.heading", serde_json::json!(bar.heading())),
+                ("focus.bar.hints", serde_json::json!(bar.hints())),
                 (
                     "focus.bar.messages",
                     serde_json::json!(bar.result_subjects().len()),

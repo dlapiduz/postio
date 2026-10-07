@@ -164,6 +164,8 @@ pub enum Row {
     /// A correspondent `@` offered: running it searches their mail, as the
     /// `from:` query it stands for.
     Correspondent(String),
+    /// A line of the empty bar saying what typing does; runs nothing.
+    Hint,
 }
 
 /// What running a row comes to.
@@ -185,7 +187,7 @@ impl Row {
     /// What running this row does.
     pub fn run(self) -> Run {
         match self {
-            Row::Heading => Run::Nothing,
+            Row::Heading | Row::Hint => Run::Nothing,
             Row::Search => Run::Search,
             Row::Instead(typed) => Run::SearchFor(format!("\"{typed}\"")),
             Row::Order => Run::ToggleOrder,
@@ -199,7 +201,7 @@ impl Row {
 
     /// Whether the arrows may rest on this row.
     pub fn is_selectable(&self) -> bool {
-        !matches!(self, Row::Heading)
+        !matches!(self, Row::Heading | Row::Hint)
     }
 }
 
@@ -267,6 +269,37 @@ fn search_line(blend: &Blend<'_>) -> Option<Line> {
         detail: Some(SEARCH_DETAIL.to_owned()),
         key: None,
     })
+}
+
+/// What the empty bar says instead of a blank band: what typing does, one
+/// line each, in the rows' own style. Nothing here runs.
+pub fn empty_lines() -> Vec<Line> {
+    let mode = |marker: &str| {
+        finder::MODES
+            .iter()
+            .find(|mode| mode.marker == marker)
+            .map_or("", |mode| mode.purpose)
+    };
+    vec![
+        Line::Row {
+            row: Row::Hint,
+            title: "Search mail".to_owned(),
+            detail: Some("just start typing".to_owned()),
+            key: None,
+        },
+        Line::Row {
+            row: Row::Hint,
+            title: mode(">").to_owned(),
+            detail: Some("start with".to_owned()),
+            key: Some(">".to_owned()),
+        },
+        Line::Row {
+            row: Row::Hint,
+            title: mode("@").to_owned(),
+            detail: Some("start with".to_owned()),
+            key: Some("@".to_owned()),
+        },
+    ]
 }
 
 /// The lines `@` draws: the correspondents it matched, each under one
@@ -377,22 +410,16 @@ pub fn result_place(
     }
 }
 
-/// A result's place with the account it belongs to, when there is more than
-/// one account to tell apart (`owners` is empty with one): the same message
-/// filed in two accounts is two rows, and the row says which it is.
-pub fn result_place_in(
-    hit: &SearchHit,
-    place: Option<String>,
-    owners: &[(MailboxId, String)],
-) -> Option<String> {
-    let account = owners
+/// The account a result belongs to, when there is more than one account to
+/// tell apart (`owners` is empty with one): the same message filed in two
+/// accounts is two rows, and the row says which it is. It is drawn under the
+/// place, on its own line: beside it, one long line squeezed the message's
+/// first line out of the row.
+pub fn result_account(hit: &SearchHit, owners: &[(MailboxId, String)]) -> Option<String> {
+    owners
         .iter()
         .find(|(id, _)| *id == hit.mailbox_id)
-        .map(|(_, account)| account.clone());
-    match (place, account) {
-        (Some(place), Some(account)) => Some(format!("{place} \u{b7} {account}")),
-        (place, account) => place.or(account),
-    }
+        .map(|(_, account)| account.clone())
 }
 
 /// A sender as a result row names them: their name, or their address.
@@ -484,13 +511,10 @@ mod tests {
         let one = hit(1, None);
         let owners = vec![(MailboxId::new(1), "ada@example.com".to_owned())];
         assert_eq!(
-            result_place_in(&one, Some("in:Archive".to_owned()), &owners).as_deref(),
-            Some("in:Archive \u{b7} ada@example.com")
+            result_account(&one, &owners).as_deref(),
+            Some("ada@example.com")
         );
-        assert_eq!(
-            result_place_in(&one, Some("in:Archive".to_owned()), &[]).as_deref(),
-            Some("in:Archive")
-        );
+        assert_eq!(result_account(&one, &[]), None);
     }
 
     #[test]
@@ -543,6 +567,32 @@ mod tests {
             Some(("Receipts".to_owned(), MailboxId::new(2)))
         );
         assert_eq!(folder_for(&places, "tra"), None);
+    }
+
+    #[test]
+    fn the_empty_bar_says_what_typing_does_and_runs_nothing() {
+        let lines = empty_lines();
+        let said: Vec<(&str, Option<&str>)> = lines
+            .iter()
+            .map(|line| match line {
+                Line::Row {
+                    title, key, row, ..
+                } => {
+                    assert_eq!(row.clone().run(), Run::Nothing);
+                    assert!(!row.is_selectable());
+                    (title.as_str(), key.as_deref())
+                }
+                Line::Heading(_) => panic!("hints are rows"),
+            })
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("Search mail", None),
+                ("Run a command", Some(">")),
+                ("Find a correspondent", Some("@")),
+            ]
+        );
     }
 
     #[test]
