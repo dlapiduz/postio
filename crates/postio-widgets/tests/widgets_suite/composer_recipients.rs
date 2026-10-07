@@ -97,7 +97,11 @@ pub fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
     // text), so typing a second prefix after it must not disturb the first.
     let existing = postio_model::address::format_list(&composer.draft().to);
     composer.test_set_to(&format!("{existing}, grac"));
-    settle();
+    // Accepting closed the popover a moment ago, and a closed popover waits
+    // a few frames before it shows again (Completion::show_settled).
+    crate::support_compose::settle_until("the second address's suggestions", || {
+        composer.test_recipient_popover_visible()
+    });
     assert!(
         composer.test_recipient_popover_visible(),
         "completion still works for a second address after the first"

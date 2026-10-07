@@ -203,3 +203,56 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
         );
     });
 }
+
+/// Typing across the four-character threshold and back, quickly, keeps the
+/// app connected.
+///
+/// Below four characters the suggestions hide; at four they show again. A
+/// hide and a show a frame apart gave the popup's surface a new role while
+/// the renderer still had a frame in flight on it, and the compositor
+/// dropped the client ("wl_surface already has a buffer committed", Gdk's
+/// "Error 71"): the whole app gone, from typing and backspacing one letter.
+pub fn typing_back_and_forth_across_the_threshold_stays_connected() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = writable().await;
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::ContactRepository::new(&connection)
+                .create(
+                    Some(fixture.account.id),
+                    &postio_model::EmailAddress::new(None::<String>, "wilhelmina@example.com"),
+                    Some("Wilhelmina Quartz"),
+                )
+                .await
+                .expect("create the contact");
+        }
+        let (_window, composer) = composing(&fixture).await;
+        let flip = std::cell::Cell::new(false);
+        assert!(
+            crate::settle_until(async || {
+                composer.test_set_to(if flip.replace(!flip.get()) {
+                    "wil"
+                } else {
+                    "wilh"
+                });
+                composer.test_recipient_suggestion_count() > 0
+            })
+            .await,
+            "the composer never offered the contact"
+        );
+        for _ in 0..40 {
+            composer.test_set_to("wilh");
+            crate::settle();
+            composer.test_set_to("wil");
+            crate::settle();
+        }
+        composer.test_set_to("wilh");
+        assert!(
+            crate::settle_until(async || composer.test_recipient_suggestion_count() > 0).await,
+            "four characters still offer the contact"
+        );
+    });
+}

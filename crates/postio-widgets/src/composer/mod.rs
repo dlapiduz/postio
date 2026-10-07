@@ -3868,7 +3868,19 @@ pub(crate) struct Completion {
     /// time, and one repositioned before it has drawn waits on a reply the
     /// compositor does not send: GTK blocks the main loop there.
     hiding: Rc<RefCell<Option<glib::SourceId>>>,
+    /// When the popover last closed. A popup shown again a frame after it
+    /// hid reuses its surface while the renderer can still have a frame in
+    /// flight on it, and the compositor drops the client for that ("already
+    /// has a buffer committed") -- or GTK waits for it for ever. Typing and
+    /// backspacing across the four-character threshold does exactly that.
+    hidden_at: Rc<Cell<Option<std::time::Instant>>>,
+    /// A show waiting for [`REAPPEAR_AFTER`] to pass since the last close.
+    showing: Rc<RefCell<Option<glib::SourceId>>>,
 }
+
+/// How long a closed suggestions popover waits before it shows again: a few
+/// frames, so the last one drawn on its surface is done with.
+const REAPPEAR_AFTER: std::time::Duration = std::time::Duration::from_millis(150);
 
 impl Completion {
     /// Wires completion onto `entry`. The returned value is not meant to be
@@ -3906,6 +3918,12 @@ impl Completion {
             list,
             candidates: RefCell::new(Vec::new()),
             hiding: Rc::default(),
+            hidden_at: Rc::default(),
+            showing: Rc::default(),
+        });
+        this.popover.connect_closed({
+            let hidden_at = Rc::clone(&this.hidden_at);
+            move |_| hidden_at.set(Some(std::time::Instant::now()))
         });
 
         entry.connect_changed(glib::clone!(
@@ -4008,15 +4026,47 @@ impl Completion {
                 hiding.remove();
             }
             self.list.select_row(self.list.row_at_index(0).as_ref());
-            if !self.popover.is_visible() {
-                self.popover.popup();
-            }
+            self.show_settled();
         }
+    }
+
+    /// Show the popover -- now, or once [`REAPPEAR_AFTER`] has passed since
+    /// it last closed. See `hidden_at`.
+    fn show_settled(&self) {
+        if self.popover.is_visible() || self.showing.borrow().is_some() {
+            return;
+        }
+        let since = self.hidden_at.get().map(|at| at.elapsed());
+        let wait = since.map_or(std::time::Duration::ZERO, |since| {
+            REAPPEAR_AFTER.saturating_sub(since)
+        });
+        if wait.is_zero() {
+            self.popover.popup();
+            return;
+        }
+        let popover = self.popover.downgrade();
+        let list = self.list.downgrade();
+        let showing = Rc::clone(&self.showing);
+        let source = glib::timeout_add_local_once(wait, move || {
+            showing.take();
+            if let (Some(popover), Some(list)) = (popover.upgrade(), list.upgrade())
+                && list.row_at_index(0).is_some()
+                && !popover.is_visible()
+            {
+                popover.popup();
+            }
+        });
+        self.showing.replace(Some(source));
     }
 
     /// Hide the popover once the main loop comes round, unless something
     /// shows it again first. See `hiding`.
     fn hide_soon(&self) {
+        // A show still waiting to happen is called off: there is nothing to
+        // offer now.
+        if let Some(showing) = self.showing.take() {
+            showing.remove();
+        }
         if !self.popover.is_visible() || self.hiding.borrow().is_some() {
             return;
         }

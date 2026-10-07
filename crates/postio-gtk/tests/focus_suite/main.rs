@@ -139,6 +139,10 @@ const CASES: &[(&str, fn())] = &[
         compose_counts::opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread as fn(),
     ),
     (
+        "compose_counts::typing_back_and_forth_across_the_threshold_stays_connected",
+        compose_counts::typing_back_and_forth_across_the_threshold_stays_connected as fn(),
+    ),
+    (
         "compose_counts::typing_a_recipient_opens_no_connections_and_still_completes",
         compose_counts::typing_a_recipient_opens_no_connections_and_still_completes as fn(),
     ),
