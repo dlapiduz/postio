@@ -116,6 +116,55 @@ pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
     });
 }
 
+/// A detached composition has everything the dialog's has: the title, the
+/// action row with Send, Send later, Attach and Remind, and the styling --
+/// a mouse user can send from the window of its own.
+pub fn a_detached_composition_keeps_its_frame_so_a_mouse_can_send() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        let composer = window.composer().expect("the composer is mounted");
+        support::keys(&window, &["c"]);
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "`c` did not open the composer"
+        );
+        composer.dispatch(CommandId::DetachComposer);
+        assert!(
+            crate::settle_until(async || composer.is_detached()).await,
+            "the command did not detach the composer"
+        );
+        let detached = composer.detached_window().expect("the window of its own");
+        for class in [
+            "focus-compose-title",
+            "focus-compose-send",
+            "focus-compose-send-later",
+            "focus-compose-attach",
+            "focus-compose-remind",
+        ] {
+            assert_eq!(
+                support::with_class(&detached, class).len(),
+                1,
+                "the detached window is missing {class}"
+            );
+        }
+        assert!(
+            !support::with_class(&detached, "focus-compose-surface").is_empty(),
+            "the detached window lost the dialog's styling"
+        );
+        // Home again, and the dialog has its frame back.
+        composer.dispatch(CommandId::DetachComposer);
+        assert!(crate::settle_until(async || !composer.is_detached()).await);
+        assert_eq!(
+            support::with_class(&window, "focus-compose-send").len(),
+            1,
+            "the frame did not come home with the composer"
+        );
+    });
+}
+
 /// Detaching moves the keyboard, not just the widgets: the window of its own
 /// is presented and holds the focus inside the composition, and the
 /// observation reads that window's focus rather than the list's.

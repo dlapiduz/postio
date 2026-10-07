@@ -45,6 +45,9 @@ pub struct DialogHost {
     /// (T232): shared with the resize follower, which fits the column to
     /// whichever host holds it.
     pane: Rc<RefCell<Option<gtk::Box>>>,
+    /// Whether the surface is out in a window of its own, a detached
+    /// composition's: neither the dialog nor the pane holds it then.
+    parked: Cell<bool>,
 }
 
 impl DialogHost {
@@ -65,6 +68,7 @@ impl DialogHost {
             showing: Cell::new(false),
             surface,
             pane: Rc::default(),
+            parked: Cell::new(false),
         }
     }
 
@@ -78,6 +82,12 @@ impl DialogHost {
     /// open, and is drawn where it now is.
     pub fn place(&self, slot: Option<&gtk::Box>) {
         let here = self.pane.borrow().clone();
+        if self.parked.get() {
+            // The surface is in its own window; only where it goes home to
+            // changes.
+            self.pane.replace(slot.cloned());
+            return;
+        }
         match (slot, here) {
             (Some(slot), Some(here)) if *slot == here => return,
             (None, None) => return,
@@ -195,12 +205,28 @@ impl ComposerHost for DialogHost {
         self.slot.append(composer);
     }
 
-    fn restore(&self, composer: &Composer) {
-        self.slot.append(composer);
+    // The detached window takes the whole surface -- header, action row and
+    // composer -- so what the dialog gives a mouse, the window does.
+    fn restore(&self, _composer: &Composer) {
+        self.parked.set(false);
+        let here = self.pane.borrow().clone();
+        match here {
+            Some(slot) => slot.append(&self.surface),
+            None => self.dialog.set_child(Some(&self.surface)),
+        }
     }
 
-    fn remove(&self, composer: &Composer) {
-        self.slot.remove(composer);
+    fn remove(&self, _composer: &Composer) {
+        self.parked.set(true);
+        let here = self.pane.borrow().clone();
+        match here {
+            Some(slot) => slot.remove(&self.surface),
+            None => self.dialog.set_child(None::<&gtk::Widget>),
+        }
+    }
+
+    fn frame(&self) -> Option<gtk::Widget> {
+        Some(self.surface.clone())
     }
 
     fn take_pane(&self) {

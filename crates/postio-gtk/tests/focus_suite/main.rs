@@ -243,6 +243,10 @@ const CASES: &[(&str, fn())] = &[
         add_account_running::the_add_account_dialog_is_as_tall_as_its_form as fn(),
     ),
     (
+        "compose_detach::a_detached_composition_keeps_its_frame_so_a_mouse_can_send",
+        compose_detach::a_detached_composition_keeps_its_frame_so_a_mouse_can_send as fn(),
+    ),
+    (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus",
         compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus as fn(),
     ),

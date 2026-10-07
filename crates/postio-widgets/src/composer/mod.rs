@@ -404,8 +404,18 @@ pub trait ComposerHost {
     /// Put `composer` back where the host draws it, after it was detached.
     fn restore(&self, composer: &Composer);
     /// Take `composer` out of where the host draws it, to detach it into a
-    /// window of its own.
+    /// window of its own. A host that frames the composer takes the frame
+    /// out with it: see [`frame`](Self::frame).
     fn remove(&self, composer: &Composer);
+    /// What the detached window shows instead of the composer alone, when
+    /// the host draws the composer inside a frame -- a title, the verbs --
+    /// that a person writing in a window of their own needs as much as one
+    /// writing in the pane. The frame holds the composer, so detaching it is
+    /// still the same widgets reparented, nothing rebuilt. `None` for a host
+    /// with no frame.
+    fn frame(&self) -> Option<gtk::Widget> {
+        None
+    }
     /// The composer takes the pane and the keyboard. The host remembers what
     /// it had, to give it back.
     fn take_pane(&self);
@@ -1806,11 +1816,23 @@ impl Composer {
         // rectangle would read as a bug rather than a window. This is also
         // what CLAUDE.md means by keeping real Adwaita chrome so Postio reads
         // as a GNOME application.
-        let layout = adw::ToolbarView::new();
-        layout.add_top_bar(&adw::HeaderBar::new());
         holder.remove(self);
-        layout.set_content(Some(self));
-        host.set_content(Some(&layout));
+        match holder.frame() {
+            // The host's frame carries its own header, with the title and
+            // the close button, so the window is the frame and nothing more;
+            // the handle keeps it draggable by the header's empty space.
+            Some(frame) => {
+                let handle = gtk::WindowHandle::new();
+                handle.set_child(Some(&frame));
+                host.set_content(Some(&handle));
+            }
+            None => {
+                let layout = adw::ToolbarView::new();
+                layout.add_top_bar(&adw::HeaderBar::new());
+                layout.set_content(Some(self));
+                host.set_content(Some(&layout));
+            }
+        }
         self.set_visible(true);
 
         // Its keys are the same keys. The controller is a forwarder to the
@@ -1908,6 +1930,9 @@ impl Composer {
         // GTK holding a child that is no longer there.
         if let Some(layout) = host.content().and_downcast::<adw::ToolbarView>() {
             layout.set_content(None::<&gtk::Widget>);
+        }
+        if let Some(handle) = host.content().and_downcast::<gtk::WindowHandle>() {
+            handle.set_child(None::<&gtk::Widget>);
         }
         host.set_content(None::<&gtk::Widget>);
         if let Some(holder) = self.host() {
