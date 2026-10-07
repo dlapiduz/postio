@@ -85,11 +85,16 @@ pub async fn part_bytes(
             // and returns as soon as it is queued -- `true` means "there was
             // something to fetch", not "here it is". The bytes land when the
             // engine's own loop claims the job, so the wait is ours.
-            if engine
+            let queued = engine
                 .request_payloads(message, vec![part_id.clone()])
                 .await
-                .map_err(|error| error.message().to_string())?
-            {
+                .map_err(|error| error.message().to_string())?;
+            tracing::debug!(
+                message = message.get(),
+                queued,
+                "asked the engine for a part"
+            );
+            if queued {
                 wait_for_part(database, message, &part_id).await?
             } else {
                 // "Nothing to fetch" has two readings, and the queue cannot
@@ -206,18 +211,27 @@ pub async fn wait_for_part(
     message: MessageId,
     part_id: &str,
 ) -> Result<PartSource, String> {
-    let deadline = std::time::Instant::now() + BODY_WAIT;
+    let started = std::time::Instant::now();
+    let deadline = started + BODY_WAIT;
     loop {
         // A read that fails here is usually the writer we are waiting for
         // holding the table, so contention is a reason to look again rather
         // than to give up. Only the deadline ends this.
         match locate_part(database, message, part_id).await {
-            Ok(Some(source)) => return Ok(source),
+            Ok(Some(source)) => {
+                tracing::debug!(
+                    message = message.get(),
+                    after_ms = started.elapsed().as_millis() as u64,
+                    "a part asked for arrived"
+                );
+                return Ok(source);
+            }
             Ok(None) => {}
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
             Err(_) => {}
         }
         if std::time::Instant::now() >= deadline {
+            tracing::debug!(message = message.get(), "a part asked for never arrived");
             return Err("That part did not arrive in time — it is still \
                         downloading, so try again in a moment"
                 .into());

@@ -800,7 +800,12 @@ impl Inner {
             Some(invocation) => entry.sink.with_origin(invocation),
             None => entry.sink.clone(),
         };
-        tracing::debug!(client = queued.client.0, kind = ?entry.kind, "running a command");
+        tracing::debug!(
+            client = queued.client.0,
+            kind = ?entry.kind,
+            command = %queued.command.id(),
+            "running a command"
+        );
         entry.verbs.dispatch(queued.command, sink).await;
     }
 

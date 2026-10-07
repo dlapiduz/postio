@@ -1240,6 +1240,13 @@ impl OpenMessage {
     fn arm_dwell(&self, message: MessageId) {
         self.stop_dwell();
         if !self.open.get() || self.away.get() || self.covered.get() {
+            tracing::debug!(
+                message = message.get(),
+                open = self.open.get(),
+                away = self.away.get(),
+                covered = self.covered.get(),
+                "the read clock did not start"
+            );
             return;
         }
         let postio_ui::dwell::Arm::Start { after, .. } =
@@ -1256,8 +1263,16 @@ impl OpenMessage {
             let _ = page.dwell.borrow_mut().take();
             page.settled.set(Some(message));
             if !page.open.get() || page.shown.get() != Some(message) {
+                tracing::debug!(
+                    message = message.get(),
+                    "the read clock ran out on a message no longer shown"
+                );
                 return;
             }
+            tracing::debug!(
+                message = message.get(),
+                "the read clock ran out: marking read"
+            );
             let read = page.read.borrow().clone();
             if let Some(read) = read {
                 read(message);
@@ -1279,6 +1294,7 @@ impl OpenMessage {
     /// when the window is back it starts again from the top -- for the same
     /// message, still open, that the clock has not already finished with.
     pub fn set_window_active(&self, active: bool) {
+        tracing::debug!(active, "the window's focus changed under an open message");
         self.away.set(!active);
         if !active {
             self.stop_dwell();
