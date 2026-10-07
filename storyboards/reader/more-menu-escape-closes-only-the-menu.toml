@@ -8,16 +8,14 @@
 # every other popover on the page does, and it is what a person who opened
 # More by mistake expects Escape to do.
 #
-# Open: on the branch's base, Escape in the menu closes the whole message
-# dialog (the reader is gone, the list is showing) and the keyboard lands on
-# the window's toolbar, not More. Possibly the dialog's capture controller
-# (a19c4bbb) takes Escape before the popover does; possibly this runner's
-# chain delivery differs from GTK's there, so confirm against a real key
-# press before fixing.
+# It was red on the branch: the dialog's own Escape handling took the key
+# before the popover did, so one Escape closed the menu and the message
+# together. The open message now closes More's menu first and gives the
+# keyboard back to More; a second Escape closes the message.
 #
 # Narrow, because More only exists when the action row folds (below 760 px).
 source = { kind = "commit", ref = "63641d47" }
-proof  = "open"
+proof  = "pinned"
 apps   = ["focus"]
 seed   = "long-newsletter"
 vary   = { width = ["narrow"] }
