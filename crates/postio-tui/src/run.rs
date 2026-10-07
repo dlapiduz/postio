@@ -15,7 +15,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use crossterm::event::{Event as TerminalEvent, EventStream};
-use futures_util::FutureExt;
 use futures_util::StreamExt;
 use postio_client::Client;
 use postio_client::protocol::ClientKind;
@@ -548,11 +547,18 @@ async fn drive(
             if !matches!(flow, Flow::Go) || handled >= BATCH {
                 break;
             }
-            next = match terminal_events.next().now_or_never() {
-                Some(Some(Ok(event))) => terminal_input(event, &hits),
-                Some(Some(Err(error))) => return Err(error),
-                Some(None) => return Ok(()),
-                None => None,
+            // A key already typed, asked inside this task so the stream keeps
+            // this task's waker: polled from anywhere else (`now_or_never`'s
+            // do-nothing waker), the next key would wake nothing and wait
+            // for some other event to be noticed.
+            next = tokio::select! {
+                biased;
+                event = terminal_events.next() => match event {
+                    Some(Ok(event)) => terminal_input(event, &hits),
+                    Some(Err(error)) => return Err(error),
+                    None => return Ok(()),
+                },
+                () = std::future::ready(()) => None,
             }
             .or_else(|| next_ready(&host_events, arriving));
         }
