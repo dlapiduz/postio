@@ -298,6 +298,10 @@ const CASES: &[(&str, fn())] = &[
         compose_layout::the_editor_is_drawn_on_the_dialogs_surface as fn(),
     ),
     (
+        "compose_layout::the_field_holding_the_keyboard_shows_it",
+        compose_layout::the_field_holding_the_keyboard_shows_it as fn(),
+    ),
+    (
         "compose_layout::the_close_is_the_shared_x",
         compose_layout::the_close_is_the_shared_x as fn(),
     ),

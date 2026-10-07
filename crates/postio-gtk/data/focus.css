@@ -1114,6 +1114,15 @@ button.focus-compose-detach {
   box-shadow: inset 0 -1px var(--postio-hairline);
 }
 
+/* The row the keyboard is in. The fields have no frame of their own, and a
+   caret alone blinks out of every other frame, so the hairline under the
+   row becomes the accent: the focus ring, at the weight of the rule it
+   replaces. */
+.focus-compose .postio-compose-row:focus-within,
+.focus-compose-surface .postio-compose-row:focus-within {
+  box-shadow: inset 0 -2px var(--postio-accent);
+}
+
 .focus-compose .postio-compose-label,
 .focus-compose-surface .postio-compose-label {
   font-size: var(--postio-text-body);

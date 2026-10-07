@@ -408,6 +408,61 @@ pub fn the_editor_is_drawn_on_the_dialogs_surface() {
     });
 }
 
+/// The field that holds the keyboard shows it: the composer's fields are
+/// flat rows with no frame of their own, and a caret alone blinks out of
+/// half the frames, so the row the keyboard is in draws the accent under it
+/// (reply-and-forward-focus, blank-compose). Read off the pixels.
+pub fn the_field_holding_the_keyboard_shows_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (window, dialog) = composing(None).await;
+        let composer = window.composer().expect("the composer");
+        let rows: Vec<gtk::Widget> = support::with_class(&dialog, "postio-compose-row")
+            .into_iter()
+            .filter(gtk::Widget::is_mapped)
+            .collect();
+        // To is the first row, Subject the third (To, From, Subject).
+        let (to, subject) = (&rows[0], &rows[2]);
+        // The row's bottom edge, a pixel in, mid-way along.
+        let edge = |row: &gtk::Widget| {
+            let at = bounds(row, &dialog);
+            (
+                (at.x() + at.width() / 2.0) as i32,
+                (at.y() + at.height()) as i32 - 1,
+            )
+        };
+        let sample = |row: &gtk::Widget| {
+            let picture = postio_widgets::capture::texture(&dialog).expect("the dialog was drawn");
+            let (x, y) = edge(row);
+            pixel(&picture.texture, x, y)
+        };
+
+        assert!(
+            crate::settle_until(async || composer.focused_field()
+                == Some(postio_widgets::composer::Field::To))
+            .await,
+            "a new composition does not put the keyboard in To"
+        );
+        crate::settle_for(std::time::Duration::from_millis(300)).await;
+        let (to_held, subject_idle) = (sample(to), sample(subject));
+        assert_ne!(
+            to_held, subject_idle,
+            "To holds the keyboard and its row is drawn like Subject's, which does not"
+        );
+
+        assert!(composer.test_focus_field(postio_widgets::composer::Field::Subject));
+        crate::settle_for(std::time::Duration::from_millis(300)).await;
+        let (to_idle, subject_held) = (sample(to), sample(subject));
+        assert_eq!(to_idle, subject_idle, "an idle row has one look");
+        assert_eq!(
+            to_held, subject_held,
+            "the row holding the keyboard has one look"
+        );
+    });
+}
+
 /// The close is the shared X, at the header's right end, and a click on it
 /// -- delivered as GTK delivers one -- closes the composer, keeping the
 /// draft.
