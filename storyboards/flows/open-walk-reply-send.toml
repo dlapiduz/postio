@@ -44,10 +44,10 @@ type    = "Thanks, that works for me."
 [[step]]
 id      = "send"
 command = "send"
-check   = { composer.open = false, view = "reader", reading.id = { same_as = "open" }, notice.undo = true }
-expect  = "The composer closes and the message is back where it was. The app says the message went (or is queued); silence here is the failure."
+check   = { composer.open = false, view = "reader", reading.id = { same_as = "open" }, notice.undo = true, app.focus.keyboard.in_message = true }
+expect  = "The composer closes and the message is back where it was, the keyboard on the message and not on a header button. The app says the message went (or is queued); silence here is the failure."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, view = "list", keyboard.region = "list", cursor.index = 0 }
-expect  = "Escape leaves the message to the list without losing the place."
+check   = { composer.open = false, view = "list", keyboard.region = "list", cursor.index = 0, notice.undo = true }
+expect  = "Escape leaves the message to the list without losing the place, and the notice that the message was queued, with its Undo, goes on showing over the list."

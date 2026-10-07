@@ -24,9 +24,9 @@
 //! closing.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use gtk::prelude::*;
-use std::rc::Rc;
 
 use postio_ui::observe::Tone;
 
@@ -63,6 +63,9 @@ pub struct Toast {
     /// (specs/008-storyboards research R6). Cleared when that toast is
     /// dismissed, so an observation never reports a toast nobody can see.
     shown: Rc<RefCell<Option<(adw::Toast, Tone, bool)>>>,
+    /// How to make the toast now showing again, for [`Self::rehome`], and
+    /// the key its button shows.
+    remake: RefCell<Option<(Rc<dyn Fn() -> adw::Toast>, Option<String>)>>,
     /// The key that undoes, for the cap on an Undo button: the window's
     /// keymap says it, and says it again when that changes.
     undo_key: RefCell<Option<String>>,
@@ -78,20 +81,21 @@ impl Toast {
             current: RefCell::new(None),
             pending_undo: RefCell::new(None),
             shown: Rc::new(RefCell::new(None)),
+            remake: RefCell::new(None),
             undo_key: RefCell::new(None),
         }
-    }
-
-    /// The key an Undo button shows beside its word, or none while nothing
-    /// undoes.
-    pub fn set_undo_key(&self, key: Option<String>) {
-        *self.undo_key.borrow_mut() = key;
     }
 
     /// The overlay: put the window's real content inside it with
     /// [`adw::ToastOverlay::set_child`].
     pub fn overlay(&self) -> &adw::ToastOverlay {
         &self.overlay
+    }
+
+    /// The key an Undo button shows beside its word, or none while nothing
+    /// undoes.
+    pub fn set_undo_key(&self, key: Option<String>) {
+        *self.undo_key.borrow_mut() = key;
     }
 
     /// Name the overlay of a dialog that opens over the window: while it is
@@ -146,16 +150,24 @@ impl Toast {
     /// (specs/007-postio-focus FR-102) -- so the toast offers Undo exactly as
     /// long as Undo works.
     pub fn show_action_completed_for(&self, description: &str, undoable: bool, seconds: u32) {
-        let toast = adw::Toast::builder()
-            .title(description)
-            .timeout(seconds)
-            .build();
-        if undoable {
-            toast.set_button_label(Some("Undo"));
-            toast.set_action_name(Some("win.undo"));
-        }
+        let description = description.to_owned();
         let key = undoable.then(|| self.undo_key.borrow().clone()).flatten();
-        self.push(toast, Tone::Info, undoable, key);
+        self.push(
+            Rc::new(move || {
+                let toast = adw::Toast::builder()
+                    .title(&description)
+                    .timeout(seconds)
+                    .build();
+                if undoable {
+                    toast.set_button_label(Some("Undo"));
+                    toast.set_action_name(Some("win.undo"));
+                }
+                toast
+            }),
+            Tone::Info,
+            undoable,
+            key,
+        );
     }
 
     /// A sentence, with nothing to press.
@@ -166,12 +178,15 @@ impl Toast {
     /// the same reason the plate that says the same sentence carries no key
     /// hint.
     pub fn show_notice(&self, sentence: &str) {
+        let sentence = sentence.to_owned();
         // A warning: a notice is a gesture that could not run.
         self.push(
-            adw::Toast::builder()
-                .title(sentence)
-                .timeout(TOAST_TIMEOUT)
-                .build(),
+            Rc::new(move || {
+                adw::Toast::builder()
+                    .title(&sentence)
+                    .timeout(TOAST_TIMEOUT)
+                    .build()
+            }),
             Tone::Warning,
             false,
             None,
@@ -192,18 +207,28 @@ impl Toast {
     /// *button*: #471 made removal a command with `Recovery::Undo`, so `u`
     /// in `Context::Accounts` reaches it through [`Self::activate_undo`].
     pub fn show_removable(&self, description: &str, on_undo: impl Fn() + 'static) {
-        let toast = adw::Toast::builder()
-            .title(description)
-            .timeout(TOAST_TIMEOUT)
-            .button_label("Undo")
-            .build();
+        let description = description.to_owned();
         let on_undo = std::rc::Rc::new(on_undo);
-        toast.connect_button_clicked({
-            let on_undo = std::rc::Rc::clone(&on_undo);
-            move |_| on_undo()
-        });
-        let key = self.undo_key.borrow().clone();
-        self.push(toast, Tone::Info, true, key);
+        self.push(
+            Rc::new({
+                let on_undo = Rc::clone(&on_undo);
+                move || {
+                    let toast = adw::Toast::builder()
+                        .title(&description)
+                        .timeout(TOAST_TIMEOUT)
+                        .button_label("Undo")
+                        .build();
+                    toast.connect_button_clicked({
+                        let on_undo = Rc::clone(&on_undo);
+                        move |_| on_undo()
+                    });
+                    toast
+                }
+            }),
+            Tone::Info,
+            true,
+            self.undo_key.borrow().clone(),
+        );
         // After `push`, which clears whatever the last toast left here.
         *self.pending_undo.borrow_mut() = Some(on_undo);
     }
@@ -227,11 +252,18 @@ impl Toast {
     /// *Archived 12 messages, undone.* What `u` (or the toast's own button)
     /// leaves behind: confirmation, not a second offer to undo the undo.
     pub fn show_undo_performed(&self, description: &str) {
-        let toast = adw::Toast::builder()
-            .title(description)
-            .timeout(TOAST_TIMEOUT)
-            .build();
-        self.push(toast, Tone::Success, false, None);
+        let description = description.to_owned();
+        self.push(
+            Rc::new(move || {
+                adw::Toast::builder()
+                    .title(&description)
+                    .timeout(TOAST_TIMEOUT)
+                    .build()
+            }),
+            Tone::Success,
+            false,
+            None,
+        );
     }
 
     /// A sentence with one button that runs `on_click`, replacing whatever
@@ -250,19 +282,55 @@ impl Toast {
         key: Option<String>,
         on_click: impl Fn() + 'static,
     ) {
-        let toast = adw::Toast::builder()
-            .title(sentence)
-            .timeout(TOAST_TIMEOUT)
-            .button_label(button_label)
-            .build();
-        toast.connect_button_clicked(move |_| on_click());
+        let (sentence, button_label) = (sentence.to_owned(), button_label.to_owned());
+        let on_click = Rc::new(on_click);
         // A warning, as `show_notice`'s: a gesture that could not run. The
         // button fixes what was missing; it is no undo.
-        self.push(toast, Tone::Warning, false, key);
+        self.push(
+            Rc::new(move || {
+                let toast = adw::Toast::builder()
+                    .title(&sentence)
+                    .timeout(TOAST_TIMEOUT)
+                    .button_label(&button_label)
+                    .build();
+                toast.connect_button_clicked({
+                    let on_click = Rc::clone(&on_click);
+                    move |_| on_click()
+                });
+                toast
+            }),
+            Tone::Warning,
+            false,
+            key,
+        );
     }
 
-    /// Dismisses whatever is showing and shows `toast` instead.
-    fn push(&self, toast: adw::Toast, tone: Tone, offers_undo: bool, key: Option<String>) {
+    /// Dismisses whatever is showing and shows what `make` makes instead.
+    fn push(
+        &self,
+        make: Rc<dyn Fn() -> adw::Toast>,
+        tone: Tone,
+        offers_undo: bool,
+        key: Option<String>,
+    ) {
+        let host = self
+            .over
+            .borrow()
+            .clone()
+            .filter(gtk::prelude::WidgetExt::is_mapped)
+            .unwrap_or_else(|| self.overlay.clone());
+        self.show_in(host, make, tone, offers_undo, key);
+    }
+
+    fn show_in(
+        &self,
+        host: adw::ToastOverlay,
+        make: Rc<dyn Fn() -> adw::Toast>,
+        tone: Tone,
+        offers_undo: bool,
+        key: Option<String>,
+    ) {
+        let toast = make();
         // A new toast replaces the old one's offer too: an undo whose toast
         // is gone is one the person can no longer see, and `u` must not
         // reach back past what is on screen.
@@ -280,12 +348,6 @@ impl Toast {
                 }
             }
         });
-        let host = self
-            .over
-            .borrow()
-            .clone()
-            .filter(gtk::prelude::WidgetExt::is_mapped)
-            .unwrap_or_else(|| self.overlay.clone());
         host.add_toast(toast.clone());
         // A toast's buttons are answered by the mouse and by the key their
         // command has: never by the keyboard focus, which would land on one
@@ -295,13 +357,41 @@ impl Toast {
         // a command draws it.
         dress(host.upcast_ref(), key.as_deref());
         let weak = host.downgrade();
+        let drawn = key.clone();
         gtk::glib::idle_add_local_once(move || {
             if let Some(host) = weak.upgrade() {
-                dress(host.upcast_ref(), key.as_deref());
+                dress(host.upcast_ref(), drawn.as_deref());
             }
         });
         *self.host.borrow_mut() = Some(host);
         *self.current.borrow_mut() = Some(toast);
+        *self.remake.borrow_mut() = Some((make, key));
+    }
+
+    /// Carry the toast on screen over to the window's own overlay, for when
+    /// the dialog it was raised in has gone: what a message's send or
+    /// archive said goes on being said over the list, with its Undo.
+    /// Answers whether there was a toast to carry.
+    pub fn rehome(&self) -> bool {
+        let in_a_dialog = self
+            .host
+            .borrow()
+            .as_ref()
+            .is_some_and(|host| *host != self.overlay);
+        if !in_a_dialog || self.current.borrow().is_none() {
+            return false;
+        }
+        let Some((_, tone, offers_undo)) = self.shown.borrow().clone() else {
+            return false;
+        };
+        let Some((make, key)) = self.remake.borrow().clone() else {
+            return false;
+        };
+        // The undo `u` reaches belongs to the toast, and survives it.
+        let pending = self.pending_undo.borrow().clone();
+        self.show_in(self.overlay.clone(), make, tone, offers_undo, key);
+        *self.pending_undo.borrow_mut() = pending;
+        true
     }
 }
 

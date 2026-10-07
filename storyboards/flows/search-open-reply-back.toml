@@ -40,8 +40,8 @@ expect  = "The reply opens, quoting the hit."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, view = "reader", reading.id = { same_as = "hit" } }
-expect  = "Escape leaves the composer and the hit is back."
+check   = { composer.open = false, view = "reader", reading.id = { same_as = "hit" }, app.focus.keyboard.in_message = true }
+expect  = "Escape leaves the composer and the hit is back, the keyboard on the message as it was before the reply."
 
 [[step]]
 command = "back"

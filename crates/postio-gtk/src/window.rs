@@ -4084,6 +4084,12 @@ impl FocusWindow {
         // A message opened where the pane does not reach -- over a digest --
         // goes back to where messages open, once it closes.
         if !reading.is_open() {
+            // What was said while the message was up -- a send queued, an
+            // archive done -- goes on being said, with its Undo, over the
+            // list the message leaves.
+            if self.imp().toast.rehome() {
+                self.follow_toast();
+            }
             self.place_reading();
             // A hit closed returns to the results it was opened from, the
             // bar as it was.

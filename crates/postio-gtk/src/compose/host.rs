@@ -237,9 +237,17 @@ impl ComposerHost for DialogHost {
             // Back to the message it was written from, when one is open;
             // to the list otherwise.
             match window.visible_dialog() {
-                Some(under) => {
-                    under.grab_focus();
-                }
+                // The message's own column, where it was before the reply:
+                // the dialog's first control is a step button, which Space
+                // would press and walk away from the message just answered.
+                Some(under) => match window.reading().filter(|reading| reading.is_open()) {
+                    Some(reading) if under.widget_name() == crate::open::DIALOG_NAME => {
+                        reading.focus_message();
+                    }
+                    _ => {
+                        under.grab_focus();
+                    }
+                },
                 None => {
                     if let Some(pane) = window.pane() {
                         pane.focus_cursor();
