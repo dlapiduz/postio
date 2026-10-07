@@ -271,6 +271,67 @@ pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
     });
 }
 
+/// Esc on a reply nobody typed in discards it silently, as it does an
+/// untouched new message; a reply with a word of the person's own is kept,
+/// and the toast says so.
+pub fn a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.harbor_thread().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["e"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "e opened no composer"
+        );
+        let dialog = window.compose_dialog().expect("the compose dialog");
+        assert!(
+            crate::settle_until(
+                async || field(&dialog, "Subject").is_some_and(|s| s.starts_with("Re:"))
+            )
+            .await,
+            "the reply never filled"
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_none()).await,
+            "Esc did not close the composer"
+        );
+        crate::settle_for(std::time::Duration::from_millis(400)).await;
+        assert_eq!(
+            window.toast_showing(),
+            None,
+            "an untouched reply is discarded without a word"
+        );
+
+        support::keys(&window, &["e"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "e opened no composer the second time"
+        );
+        window
+            .composer()
+            .expect("the composer")
+            .test_set_subject("Re: Harbor API draft v3, thanks");
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window
+                .toast_showing()
+                .is_some_and(|toast| toast.starts_with("Draft saved")))
+            .await,
+            "a reply with words in it is kept, and says so: {:?}",
+            window.toast_showing()
+        );
+    });
+}
+
 /// #1752: a send says it was queued, offers Undo, and Undo takes it
 /// off the queue and puts the draft back in the composer.
 pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {

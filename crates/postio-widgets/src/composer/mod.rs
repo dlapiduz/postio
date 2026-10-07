@@ -150,7 +150,7 @@ pub fn heading(kind: DraftKind) -> &'static str {
     }
 }
 
-pub use postio_model::draft::{Closing, closing};
+pub use postio_model::draft::{Closing, closing, closing_since};
 
 /// Which draft [`Composer::open`] puts on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -706,6 +706,9 @@ mod imp {
         /// before the closed handlers run.
         pub previous_generation: Cell<u64>,
         pub filling: Cell<bool>,
+        /// The composition as the last fill left it, once signed and
+        /// quoted: what "untouched" is measured against on closing.
+        pub began_as: RefCell<Option<Draft>>,
         /// The pending debounced autosave, if an edit is waiting out the
         /// quiet period before [`Composer::save`] runs again.
         pub autosave_source: Cell<Option<glib::SourceId>>,
@@ -790,6 +793,7 @@ mod imp {
                 previous_generation: Cell::new(0),
                 generation: Cell::new(0),
                 filling: Cell::new(false),
+                began_as: RefCell::new(None),
                 autosave_source: Cell::new(None),
                 to_completion: RefCell::new(None),
                 fields: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -1000,7 +1004,7 @@ impl Composer {
         // draft that replaced it (#1608).
         self.flush_autosave();
         let draft = self.draft();
-        let outcome = closing(&draft);
+        let outcome = self.closing_now();
         if outcome == Closing::Drop {
             self.fill(Draft::new(draft.account_id));
         } else {
@@ -1050,7 +1054,7 @@ impl Composer {
     ///
     /// [r]: postio_core::Recovery
     pub fn request_discard(&self) {
-        if closing(&self.draft()) == Closing::Drop {
+        if self.closing_now() == Closing::Drop {
             self.discard();
             return;
         }
@@ -1592,7 +1596,7 @@ impl Composer {
         // draft, and that timer used to insert an empty `Editing` row for a
         // composition nobody started -- the row `recover_empty_draft` has to
         // step around at the next launch (#1608).
-        if !draft.id.is_assigned() && closing(&draft) == Closing::Drop {
+        if !draft.id.is_assigned() && self.closing_now() == Closing::Drop {
             return;
         }
         for handler in self.imp().saved.borrow().iter() {
@@ -2684,7 +2688,18 @@ impl Composer {
         // Above the quote and above the signature, which is where a reply is
         // written and where a new message starts.
         imp.body.place_caret_start();
+        *imp.began_as.borrow_mut() = Some(self.draft());
         self.refresh();
+    }
+
+    /// [`closing`] for the composition in the fields, measured against how
+    /// it opened: a reply nobody wrote in has nothing to keep.
+    fn closing_now(&self) -> Closing {
+        let draft = self.draft();
+        match self.imp().began_as.borrow().as_ref() {
+            Some(began) => closing_since(&draft, began),
+            None => closing(&draft),
+        }
     }
 
     /// Puts the keyboard where this kind of composition starts.

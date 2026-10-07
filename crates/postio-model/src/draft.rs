@@ -360,11 +360,78 @@ pub fn closing(draft: &Draft) -> Closing {
     }
 }
 
+/// [`closing`] for a composition that began as `opened`.
+///
+/// A reply opens with a recipient, a subject, an attribution and a quote --
+/// all the app's doing -- so [`closing`] alone would keep every reply ever
+/// opened. A composition still exactly as it opened (same recipients, same
+/// subject, same body bar whitespace and signature) has nothing the person
+/// wrote, and is dropped like an untouched new message. `opened` only counts
+/// when it was never saved: a draft resumed from the Drafts folder is
+/// something the person wrote, and stays kept.
+pub fn closing_since(draft: &Draft, opened: &Draft) -> Closing {
+    if closing(draft) == Closing::Drop {
+        return Closing::Drop;
+    }
+    let written = |draft: &Draft| {
+        let body = draft.body.text.as_deref().unwrap_or_default();
+        crate::signature::split(body).0.trim().to_owned()
+    };
+    let untouched = !opened.id.is_assigned()
+        && draft.to == opened.to
+        && draft.cc == opened.cc
+        && draft.bcc == opened.bcc
+        && draft.subject == opened.subject
+        && draft.attachments.len() == opened.attachments.len()
+        && written(draft) == written(opened);
+    if untouched {
+        Closing::Drop
+    } else {
+        Closing::Keep
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::account::Signature;
     use crate::ids::IdentityId;
+
+    fn opened_reply() -> Draft {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.kind = DraftKind::Reply;
+        draft.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
+        draft.subject = "Re: Plans".to_owned();
+        draft.body.text = Some("\n\nOn 2026-08-26, Ada wrote:\n> hello\n\n-- \nGrace\n".to_owned());
+        draft
+    }
+
+    #[test]
+    fn a_reply_nobody_typed_in_is_dropped() {
+        let opened = opened_reply();
+        let mut now = opened.clone();
+        now.body.text = Some("\n\nOn 2026-08-26, Ada wrote:\n> hello\n".to_owned());
+        assert_eq!(closing_since(&now, &opened), Closing::Drop);
+        assert_eq!(closing_since(&opened, &opened), Closing::Drop);
+    }
+
+    #[test]
+    fn a_reply_with_a_word_written_is_kept() {
+        let opened = opened_reply();
+        let mut now = opened.clone();
+        now.body.text = Some("Thanks!\n\nOn 2026-08-26, Ada wrote:\n> hello\n".to_owned());
+        assert_eq!(closing_since(&now, &opened), Closing::Keep);
+        let mut recipient = opened.clone();
+        recipient.cc = vec![EmailAddress::new(None::<String>, "grace@example.net")];
+        assert_eq!(closing_since(&recipient, &opened), Closing::Keep);
+    }
+
+    #[test]
+    fn a_saved_draft_resumed_untouched_is_kept() {
+        let mut opened = opened_reply();
+        opened.id = DraftId::new(4);
+        assert_eq!(closing_since(&opened, &opened), Closing::Keep);
+    }
 
     #[test]
     fn a_new_draft_is_dated_by_the_clock_seam() {

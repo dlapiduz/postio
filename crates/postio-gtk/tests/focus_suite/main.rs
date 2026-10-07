@@ -391,6 +391,10 @@ const CASES: &[(&str, fn())] = &[
         motion::the_list_rows_cursor_has_no_transition as fn(),
     ),
     (
+        "compose::a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept",
+        compose::a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept as fn(),
+    ),
+    (
         "compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it",
         compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it as fn(),
     ),
