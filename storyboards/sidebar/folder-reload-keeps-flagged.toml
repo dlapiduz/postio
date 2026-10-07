@@ -14,13 +14,14 @@ proof  = "pinned"
 [[step]]
 command = "go_to_flagged"
 settle  = { until = { rows.count = 8 } }
-check   = { scope = "Flagged", rows.count = 8, cursor.index = 0 }
-expect  = "Flagged opens with the cursor ring on its first row."
+check   = { scope = "Flagged", rows.count = 8, cursor.index = 0, app.focus.keyboard.row = "70" }
+expect  = "Flagged opens with the cursor ring on its first row, and the keyboard on that same row."
 
 [[step]]
 id      = "down"
 command = "next_message"
-check   = { cursor.index = 1, keyboard.region = "list" }
+check   = { cursor.index = 1, keyboard.region = "list", cursor.id = "65", app.focus.keyboard.row = "65" }
+expect  = "The ring is on the second row and only there: the keyboard followed the cursor, so no second ring stays on the first."
 
 [[step]]
 event   = "mailboxes_changed"

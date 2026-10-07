@@ -1864,17 +1864,20 @@ impl FocusWindow {
         };
         // A click on a row gives GTK's focus to that row, and the cursor
         // moving on would leave it behind with a ring of its own.
-        if let Some(focus) = gtk::prelude::GtkWindowExt::focus(self)
-            && focus != *pane.view().upcast_ref::<gtk::Widget>()
-            && focus.is_ancestor(pane.view())
-        {
-            self.focus_list();
-        }
+        let on_a_row = gtk::prelude::GtkWindowExt::focus(self).is_some_and(|focus| {
+            focus != *pane.view().upcast_ref::<gtk::Widget>() && focus.is_ancestor(pane.view())
+        });
         match position {
             Some(position) if position < pane.feed().list().n_items() => {
                 pane.cursor().set_selected(position);
-                pane.view()
-                    .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+                if on_a_row {
+                    // The list view's own focus lands on its first row, so
+                    // the keyboard follows the cursor to its row instead.
+                    pane.focus_cursor();
+                } else {
+                    pane.view()
+                        .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+                }
                 if position == 0 {
                     pane.to_top();
                 }
