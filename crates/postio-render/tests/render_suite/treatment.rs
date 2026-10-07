@@ -377,3 +377,24 @@ fn app_colours_draws_the_stacked_cells_of_a_responsive_newsletter() {
         "{tall}px at 480px and {short}px at 700px"
     );
 }
+
+#[test]
+fn a_blocked_image_leaves_a_marked_strip_not_a_page_tall_hole() {
+    // The newsletter's sections each open on a remote picture, declared
+    // 260 by 160 and stretched to the column. Blocked, the picture has no
+    // source, and what it left was a blank the picture's height: the first
+    // screen of the message had no text on it at all.
+    let doc = drawn("html-newsletter-many-tables", None, LIGHT, 480.0);
+    let first = cluster_of(&doc, "Release notes, part 1");
+    assert!(
+        first.rect.y0 < 260.0,
+        "the first section's heading starts {}px down: a blocked picture left a hole",
+        first.rect.y0
+    );
+    let second = cluster_of(&doc, "Release notes, part 2");
+    assert!(
+        second.rect.y0 - first.rect.y0 < 330.0,
+        "a section is {}px tall",
+        second.rect.y0 - first.rect.y0
+    );
+}

@@ -173,6 +173,17 @@ img {
   height: auto;
 }
 
+/* A picture held back has no source, so what is left is the box the sender
+   gave it: for a hero image, a blank as tall as the picture, which reads as
+   a message that failed to load. A held picture is a marked strip, never
+   taller than a few lines of text. */
+img:not([src]) {
+  box-sizing: border-box;
+  max-height: 48px;
+  border: 1px dashed var(--r-hairline-strong);
+  border-radius: var(--r-radius);
+}
+
 table {
   max-width: 100%;
 }
