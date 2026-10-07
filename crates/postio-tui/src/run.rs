@@ -1593,7 +1593,16 @@ mod tests {
         }
         let tap = Tap::default();
         let backend = ratatui::backend::CrosstermBackend::new(tap.clone());
-        let mut terminal = ratatui::Terminal::new(backend).expect("a terminal");
+        // A fixed viewport, so the backend is never asked its size: that asks
+        // the controlling terminal, which a CI runner does not have ("a
+        // terminal: No such file or directory").
+        let mut terminal = ratatui::Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 40, 12)),
+            },
+        )
+        .expect("a terminal");
         let app = crate::test_support::app((40, 12));
         let theme = crate::test_support::plain_theme();
         draw(&mut terminal, &app, &theme).expect("drawn");
