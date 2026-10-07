@@ -233,6 +233,17 @@ impl ListPane {
         &self.view
     }
 
+    /// Give the keyboard to the list, on the row the cursor is on: a list
+    /// view asked to take focus lands on its first row, which would leave
+    /// the keyboard's outline and the cursor's ring on different rows.
+    pub fn focus_cursor(&self) {
+        self.view.grab_focus();
+        let at = self.cursor.selected();
+        if at != gtk::INVALID_LIST_POSITION {
+            self.view.scroll_to(at, gtk::ListScrollFlags::FOCUS, None);
+        }
+    }
+
     /// The cursor: where the keyboard is.
     pub fn cursor(&self) -> &gtk::SingleSelection {
         &self.cursor

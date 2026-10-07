@@ -319,3 +319,50 @@ pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
         );
     });
 }
+
+/// What the row holding the keyboard says: the first line of the focused list
+/// item, as the list draws it.
+fn focused_row_subject(window: &postio_gtk::window::FocusWindow) -> Option<String> {
+    let focus = gtk::prelude::GtkWindowExt::focus(window)?;
+    let row = focus.first_child()?.downcast::<postio_gtk::list::RowWidget>().ok()?;
+    let item = row.item()?;
+    item.as_conversation()
+        .and_then(|row| row.summary.representative.subject.clone())
+}
+
+/// Leaving the composer in the reading pane returns the keyboard to the row
+/// the cursor is on, not to the list's first row.
+pub fn escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        support::deliver(&window, "F8");
+        support::keys(&window, &["j", "j", "j"]);
+        let cursor = support::subjects(&window);
+        let at = window.pane().expect("the list").cursor().selected() as usize;
+        let want = cursor[at].clone();
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await,
+            "Return opened nothing beside the list"
+        );
+        support::keys(&window, &["c"]);
+        assert!(
+            crate::settle_until(async || window.composer().is_some_and(|c| c.is_open())).await,
+            "c opened no composer"
+        );
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window.composer().is_some_and(|c| !c.is_open())).await,
+            "Escape did not close the composer"
+        );
+        assert!(
+            crate::settle_until(async || focused_row_subject(&window).as_deref() == Some(&want))
+                .await,
+            "the keyboard is on {:?}, the cursor on {want:?}",
+            focused_row_subject(&window)
+        );
+    });
+}

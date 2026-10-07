@@ -383,6 +383,10 @@ const CASES: &[(&str, fn())] = &[
         compose::a_send_says_it_was_queued_and_undo_takes_it_back as fn(),
     ),
     (
+        "compose::escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row",
+        compose::escape_from_the_pane_composer_returns_the_keyboard_to_the_cursor_row as fn(),
+    ),
+    (
         "invitations::the_open_invitation_s_card_answers_with_its_keys",
         invitations::the_open_invitation_s_card_answers_with_its_keys as fn(),
     ),
