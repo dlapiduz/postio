@@ -415,6 +415,46 @@ impl Onboarding {
         self.imp().name.grab_focus();
     }
 
+    /// Put the keyboard in the first field on screen that is still empty --
+    /// the name on a fresh form, the password on a repair, the OAuth client
+    /// ID on a route that asks for one -- or, while the browser sign-in is
+    /// out, on Cancel sign-in. Nothing moves when every field shown is
+    /// filled.
+    ///
+    /// For the dialog to call once the form is on screen: a field grabs the
+    /// keyboard only while it is mapped, and the dialog gives its first
+    /// focusable widget the keyboard as it opens -- since the header ends in
+    /// the close X, that was the X.
+    pub fn focus_first_empty(&self) {
+        let imp = self.imp();
+        let fields: [&gtk::Widget; 10] = [
+            imp.name.upcast_ref(),
+            imp.address.upcast_ref(),
+            imp.password.upcast_ref(),
+            imp.oauth_client_id.upcast_ref(),
+            imp.oauth_client_secret.upcast_ref(),
+            imp.imap_host.upcast_ref(),
+            imp.imap_port.upcast_ref(),
+            imp.smtp_host.upcast_ref(),
+            imp.smtp_port.upcast_ref(),
+            imp.login.upcast_ref(),
+        ];
+        let empty = fields.into_iter().find(|field| {
+            field.is_mapped()
+                && field.is_sensitive()
+                && field
+                    .dynamic_cast_ref::<gtk::Editable>()
+                    .is_some_and(|editable| editable.text().is_empty())
+        });
+        if let Some(field) = empty {
+            field.grab_focus();
+        } else if imp.cancel_sign_in.is_mapped() && imp.cancel_sign_in.is_sensitive() {
+            // While the browser is out there is nothing to type, and the one
+            // thing to do here is stop waiting for it.
+            imp.cancel_sign_in.grab_focus();
+        }
+    }
+
     /// Put the keyboard on the address.
     ///
     /// Not where a fresh form starts — see [`focus_name`](Self::focus_name).
@@ -807,6 +847,17 @@ impl Onboarding {
         imp.manual.set_visible(imp.manual.is_visible() && asking);
         imp.cancel_sign_in.set_visible(waiting);
         imp.browser_box.set_visible(waiting);
+        if waiting {
+            // The button that sent the person to the browser is now
+            // "Waiting…" and can take no keyboard; Cancel sign-in can, once
+            // it is drawn.
+            let screen = self.downgrade();
+            glib::idle_add_local_once(move || {
+                if let Some(screen) = screen.upgrade() {
+                    screen.focus_first_empty();
+                }
+            });
+        }
 
         // The provider's own sentence, and where to act on it. iCloud's is
         // the reason this exists: an Apple ID password simply will not work,

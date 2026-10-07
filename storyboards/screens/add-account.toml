@@ -6,3 +6,8 @@
 apps   = ["focus"]
 source = { kind = "design", ref = "none" }
 preset = "add-account/route"
+
+[[step]]
+wait   = { ms = 300 }
+check  = { keyboard.region = "dialog", keyboard.typing = true }
+expect = "The form opens with the keyboard in the field still to fill, not on the close button."

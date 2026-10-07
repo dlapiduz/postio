@@ -847,6 +847,10 @@ const CASES: &[(&str, fn())] = &[
         close_buttons::every_closable_surface_has_the_same_x_at_the_right as fn(),
     ),
     (
+        "close_buttons::add_account_opens_with_the_keyboard_in_its_first_field",
+        close_buttons::add_account_opens_with_the_keyboard_in_its_first_field as fn(),
+    ),
+    (
         "close_buttons::add_account_has_the_same_x_at_the_right_on_every_step",
         close_buttons::add_account_has_the_same_x_at_the_right_on_every_step as fn(),
     ),

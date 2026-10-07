@@ -219,3 +219,61 @@ pub fn add_account_has_the_same_x_at_the_right_on_every_step() {
         );
     });
 }
+
+/// The add-account form opens with the keyboard in its first field, not on
+/// its close X: the X closes with the mouse, and Escape is its key. Putting
+/// the X first in the header put it first in the dialog's focus order, so the
+/// form opened with the keyboard on the one control that throws it away.
+pub fn add_account_opens_with_the_keyboard_in_its_first_field() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        support::deliver_with(
+            &window,
+            "N",
+            gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
+        );
+        assert!(crate::settle_until(async || window.add_account_dialog().is_some()).await);
+        let in_a_field =
+            || gtk::prelude::RootExt::focus(&window).is_some_and(|focus| focus.is::<gtk::Text>());
+        assert!(
+            crate::settle_until(async || in_a_field()).await,
+            "the form opened with the keyboard on {:?}",
+            gtk::prelude::RootExt::focus(&window).map(|focus| focus.type_().name())
+        );
+
+        // Waiting for the browser there is nothing to type: the keyboard
+        // goes to Cancel sign-in, still not to the X.
+        let dialog = window.add_account_dialog().expect("the dialog");
+        let form = support::descendants(dialog.upcast_ref::<gtk::Widget>())
+            .into_iter()
+            .find_map(|widget| {
+                widget
+                    .downcast::<postio_widgets::onboarding::Onboarding>()
+                    .ok()
+            })
+            .expect("the account form");
+        form.set_status(postio_widgets::onboarding::Status::WaitingForBrowser);
+        let on_cancel = || {
+            gtk::prelude::RootExt::focus(&window).is_some_and(|focus| {
+                let button = if focus.is::<gtk::Button>() {
+                    Some(focus)
+                } else {
+                    focus.ancestor(gtk::Button::static_type())
+                };
+                button.is_some_and(|button| {
+                    support::texts(&button)
+                        .iter()
+                        .any(|text| text == "Cancel sign-in")
+                })
+            })
+        };
+        assert!(
+            crate::settle_until(async || on_cancel()).await,
+            "waiting for the browser, the keyboard is on {:?}",
+            gtk::prelude::RootExt::focus(&window).map(|focus| focus.type_().name())
+        );
+    });
+}

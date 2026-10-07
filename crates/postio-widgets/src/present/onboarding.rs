@@ -385,6 +385,16 @@ fn dialog(
         let presenter = presenter.clone();
         move |_| presenter.stop()
     });
+    // The keyboard goes to the field still to fill once the form is on
+    // screen, after the dialog has given it to its first focusable widget.
+    screen.connect_map(|screen| {
+        let screen = screen.downgrade();
+        glib::idle_add_local_once(move || {
+            if let Some(screen) = screen.upgrade() {
+                screen.focus_first_empty();
+            }
+        });
+    });
     dialog
 }
 
