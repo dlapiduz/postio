@@ -303,8 +303,9 @@ pub fn a_key_typed_in_a_detached_composition_lands_in_it() {
         );
         let host: gtk::Window = composer.detached_window().expect("its own window").upcast();
         assert!(
-            crate::settle_until(async || composer.focused_field()
-                == Some(postio_widgets::composer::Field::To))
+            crate::settle_until(
+                async || composer.focused_field() == Some(postio_widgets::composer::Field::To)
+            )
             .await,
             "detaching did not leave the keyboard in To"
         );

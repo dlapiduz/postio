@@ -945,9 +945,9 @@ impl FocusWindow {
     /// in the reading pane or a window of its own, or a dialog holds it.
     fn list_holds_keyboard(&self) -> bool {
         self.visible_dialog().is_none()
-            && !self.compose().is_some_and(|compose| {
-                compose.is_showing() || compose.composer().is_detached()
-            })
+            && !self
+                .compose()
+                .is_some_and(|compose| compose.is_showing() || compose.composer().is_detached())
     }
 
     /// Draw the cursor row quietly while the list does not hold the keyboard

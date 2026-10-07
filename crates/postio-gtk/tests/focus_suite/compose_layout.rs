@@ -440,8 +440,9 @@ pub fn the_field_holding_the_keyboard_shows_it() {
         };
 
         assert!(
-            crate::settle_until(async || composer.focused_field()
-                == Some(postio_widgets::composer::Field::To))
+            crate::settle_until(
+                async || composer.focused_field() == Some(postio_widgets::composer::Field::To)
+            )
             .await,
             "a new composition does not put the keyboard in To"
         );
