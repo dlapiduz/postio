@@ -1333,7 +1333,7 @@ mod tests {
             "{drawn}"
         );
         assert!(
-            text[from].trim_end().ends_with("Wed, 23 Sep 2026 at 11:22")
+            text[from].trim_end().ends_with("23 Sep 2026, 11:22")
                 || text[from].trim_end().ends_with("Today, 11:22"),
             "{drawn}"
         );

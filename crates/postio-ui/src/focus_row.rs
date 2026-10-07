@@ -171,10 +171,7 @@ mod tests {
         };
         assert_eq!(message_date(at(29, 15, 22), now), "Today, 15:22");
         assert_eq!(message_date(at(29, 0, 5), now), "Today, 00:05");
-        assert_eq!(
-            message_date(at(28, 15, 22), now),
-            "28 Sep 2026, 15:22"
-        );
+        assert_eq!(message_date(at(28, 15, 22), now), "28 Sep 2026, 15:22");
         assert_eq!(message_date(at(3, 9, 0), now), "3 Sep 2026, 09:00");
     }
 
