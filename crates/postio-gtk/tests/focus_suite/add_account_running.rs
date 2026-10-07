@@ -80,3 +80,33 @@ pub fn the_add_account_key_opens_a_blank_form_over_the_running_window() {
         );
     });
 }
+
+/// The sheet is as tall as the form it holds: its header is at the top of
+/// the dialog, not floating in a tall empty sheet with as much blank below.
+pub fn the_add_account_dialog_is_as_tall_as_its_form() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        window.act(postio_core::CommandId::AddAccount);
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_some()).await,
+            "the add-account form did not open"
+        );
+        let dialog = window.add_account_dialog().expect("the dialog");
+        let form = form_in(dialog.upcast_ref()).expect("the account form in the dialog");
+        crate::settle();
+        // What the form asks for at the dialog's width, and what the
+        // dialog gave it.
+        let (_, natural, _, _) = form.measure(gtk::Orientation::Vertical, form.width());
+        // What the dialog asks for, which a fixed tall sheet answers with its
+        // fixed height however short the form is.
+        let (_, asked, _, _) = dialog.measure(gtk::Orientation::Vertical, 560);
+        assert!(
+            asked <= natural + 80,
+            "the dialog asks for {asked} px around a form that needs {natural}: \
+             the sheet should be as tall as what it holds"
+        );
+    });
+}

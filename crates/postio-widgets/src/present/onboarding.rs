@@ -351,34 +351,16 @@ pub fn open_in_browser(parent: &impl IsA<gtk::Widget>) -> impl Fn(&str) + 'stati
 /// close button, and its parent going away. Closing it stops the probe it
 /// started.
 ///
-/// Its height is the message dialog's rule, the window's less 40px at each
-/// end (`postio_ui::focus_dialog::dialog_height`), rather than the form's
-/// own height. The form changes height under the person: the provider's
-/// card arrives while they type the address, the server fields open, a
-/// refusal appears. A dialog fitted to it would grow and recentre each
-/// time, moving the field being typed in; one sized from the window holds
-/// still, matches the message and composer dialogs it is seen beside in
-/// Focus, and at its tallest the form fits it in a window 800 pixels tall.
-/// A shorter window -- 700 pixels, say -- scrolls the
-/// form's body, never its header.
-fn dialog(
-    parent: &gtk::Widget,
-    screen: &Onboarding,
-    title: &str,
-    presenter: &Presenter,
-) -> adw::Dialog {
-    let window = parent
-        .root()
-        .and_downcast::<gtk::Window>()
-        .map(|window| match window.height() {
-            0 => window.default_size().1,
-            height => height,
-        })
-        .unwrap_or(FALLBACK_WINDOW_HEIGHT);
+/// The sheet is as tall as the form it holds, so its header is at the top of
+/// the dialog and nothing floats in blank space above and below. The form
+/// does change height as it is filled in -- the provider's card arrives, the
+/// server fields open, a refusal appears -- and the dialog follows it; the
+/// form's body scrolls, never its header, when the window is too short for it.
+fn dialog(screen: &Onboarding, title: &str, presenter: &Presenter) -> adw::Dialog {
     let dialog = adw::Dialog::builder()
         .title(title)
         .content_width(560)
-        .content_height(postio_ui::focus_dialog::dialog_height(window))
+        .follows_content_size(true)
         .child(screen)
         .build();
     dialog.connect_closed({
@@ -398,10 +380,6 @@ fn dialog(
     dialog
 }
 
-/// The window height a dialog is sized for when its parent is not in one
-/// yet: the shortest window the form fits whole in.
-const FALLBACK_WINDOW_HEIGHT: i32 = 800;
-
 /// The add-account dialog over `parent` (#64, ADR 0012 Q1): a blank form,
 /// floating over the window rather than replacing it.
 ///
@@ -418,7 +396,7 @@ pub fn add_account(
     // A fresh form starts at its first field, which is the name.
     screen.focus_name();
     let presenter = Presenter::drive(&screen, client, open_link);
-    let dialog = dialog(parent.as_ref(), &screen, "Add account", &presenter);
+    let dialog = dialog(&screen, "Add account", &presenter);
     presenter.connect_saved({
         let dialog = dialog.downgrade();
         move |submission| {
@@ -445,7 +423,7 @@ pub fn add_account_asking_history(
     let screen = Onboarding::new();
     screen.focus_name();
     let presenter = Presenter::drive(&screen, client, open_link);
-    let dialog = dialog(parent.as_ref(), &screen, "Add account", &presenter);
+    let dialog = dialog(&screen, "Add account", &presenter);
     let on_saved = Rc::new(on_saved);
     let waiting: Rc<RefCell<Option<Submission>>> = Rc::default();
     presenter.connect_saved({
@@ -501,7 +479,7 @@ pub async fn update_credential(
     )));
     screen.focus_password();
     let presenter = Presenter::drive(&screen, client, open_link);
-    let dialog = dialog(parent.as_ref(), &screen, "Update credential", &presenter);
+    let dialog = dialog(&screen, "Update credential", &presenter);
     presenter.connect_saved({
         let dialog = dialog.downgrade();
         move |_| {

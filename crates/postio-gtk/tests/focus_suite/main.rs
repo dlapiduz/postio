@@ -239,6 +239,10 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "add_account_running::the_add_account_dialog_is_as_tall_as_its_form",
+        add_account_running::the_add_account_dialog_is_as_tall_as_its_form as fn(),
+    ),
+    (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus",
         compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus as fn(),
     ),
