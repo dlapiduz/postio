@@ -569,6 +569,10 @@ pub struct App {
     size: (u16, u16),
     keys: Keys,
     list: ListWindow<Row>,
+    /// The rows that were on screen when the list was read again, by
+    /// position, drawn until their pages land so a list sync touches does
+    /// not go blank for a moment each time.
+    shown: std::collections::HashMap<u32, Row>,
     paging: Paging,
     /// The row the keyboard is on.
     cursor: u32,
@@ -928,6 +932,7 @@ impl App {
             size,
             keys,
             list: ListWindow::new(),
+            shown: std::collections::HashMap::new(),
             paging: Paging::default(),
             cursor: 0,
             top: 0,
@@ -3057,7 +3062,19 @@ impl App {
 
     /// The row at `position`, when its page is here.
     pub fn row_at(&self, position: u32) -> Option<&Row> {
-        self.list.resident_at(position)
+        self.list
+            .resident_at(position)
+            .or_else(|| self.shown.get(&position))
+    }
+
+    /// Drop what is cached so the rows in view are read again, keeping the
+    /// rows on screen to draw until their pages land.
+    fn read_again(&mut self) {
+        let end = (self.top + self.fit_from(self.top)).min(self.list.total());
+        self.shown = (self.top..end)
+            .filter_map(|position| self.row_at(position).map(|row| (position, row.clone())))
+            .collect();
+        self.list.invalidate();
     }
 
     /// The heading that starts at `position` in a view whose first position
@@ -4238,7 +4255,7 @@ impl App {
             // Read for the inbox that is about to open.
             return Vec::new();
         }
-        self.list.invalidate();
+        self.read_again();
         let _ = self.list.set_total(self.spliced.total(stored));
         self.reveal();
         vec![Effect::Redraw]
@@ -4250,7 +4267,7 @@ impl App {
         if self.scope != Some(scope) {
             return Vec::new();
         }
-        self.list.invalidate();
+        self.read_again();
         let _ = self.list.set_total(self.total_over(total));
         self.move_to(self.cursor);
         let mut effects = vec![Effect::Redraw];
@@ -4261,6 +4278,8 @@ impl App {
     /// A list opened: show it from the top.
     fn open(&mut self, scope: ListScope, total: u32) -> Vec<Effect> {
         self.paging.open(scope);
+        // Another list's rows are not this one's, however briefly.
+        self.shown.clear();
         if let Some(previous) = self.scope.filter(|previous| *previous != scope) {
             if std::mem::take(&mut self.going_back) {
                 // Back is a step back, not another one forward.
@@ -4298,6 +4317,10 @@ impl App {
                     let _ = self.list.set_total(rows.total);
                 }
                 let delivered = self.list.deliver(generation, page, rows.rows);
+                let (list, total) = (&self.list, self.list.total());
+                self.shown.retain(|position, _| {
+                    *position < total && list.resident_at(*position).is_none()
+                });
                 if delivered.stale {
                     Vec::new()
                 } else {
@@ -7209,6 +7232,48 @@ pub(crate) mod tests {
             Effect::Settle { generation, after } => Some((*generation, *after)),
             _ => None,
         })
+    }
+
+    #[test]
+    fn a_list_read_again_keeps_its_rows_on_screen_until_they_land() {
+        use crate::test_support::{row_from, screen, serve_with};
+        let mut app = app((120, 36));
+        let opening = open_list(&mut app, 3);
+        serve(&mut app, opening);
+        assert!(screen(120, 36, &app).contains("Message 1"));
+        // Sync moved something: the list is counted and read again.
+        let effects = update(
+            &mut app,
+            Input::Recounted {
+                scope: ListScope::Mailbox(MailboxId::new(1)),
+                total: 3,
+            },
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Fetch { .. })),
+            "the rows in view are read again: {effects:?}"
+        );
+        let drawn = screen(120, 36, &app);
+        assert!(
+            drawn.contains("Message 1") && drawn.contains("Message 2"),
+            "what was on screen stays until its page lands, not a blank list:\n{drawn}"
+        );
+        serve_with(&mut app, effects, |position| {
+            row_from(
+                i64::from(position) + 1,
+                "Bea",
+                &format!("Updated {position}"),
+                "",
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 9, 20, 9, 0, 0).unwrap(),
+            )
+        });
+        let drawn = screen(120, 36, &app);
+        assert!(
+            drawn.contains("Updated 1") && !drawn.contains("Message 1"),
+            "then the page read again replaces it:\n{drawn}"
+        );
     }
 
     #[test]
