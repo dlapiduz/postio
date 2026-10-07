@@ -528,13 +528,24 @@ pub const TODAY: &[Row] = &[
     },
 ];
 
-/// The demo's config.toml: filtering on, and one digest rule.
-pub const CONFIG: &str = "[focus]\nfiltering = true\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
-match = [\"from:news@ledger.example\", \"from:hello@soil.example\", \"from:notes@crate.example\", \"from:tides@tide.example\", \"from:digest@harbor.example\"]\ncadence = \"weekly\"\nday = \"saturday\"\nat = \"16:00\"\n\n\
+/// The demo's config.toml: filtering on, and one digest rule that comes due
+/// on the demo's own day, 16:00 -- the delivery the seed makes is dated then,
+/// so the rule and the row's "came due" agree.
+pub fn config() -> String {
+    let day = today()
+        .with_timezone(&Local)
+        .format("%A")
+        .to_string()
+        .to_lowercase();
+    format!(
+        "[focus]\nfiltering = true\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
+match = [\"from:news@ledger.example\", \"from:hello@soil.example\", \"from:notes@crate.example\", \"from:tides@tide.example\", \"from:digest@harbor.example\"]\ncadence = \"weekly\"\nday = \"{day}\"\nat = \"16:00\"\n\n\
 [saved_searches.waiting]\nquery = \"from:juno\"\npinned = true\norder = 1\nname = \"Waiting on reply\"\n\n\
 [saved_searches.atlas]\nquery = \"subject:atlas\"\npinned = true\norder = 2\nname = \"Atlas\"\n\n\
 [saved_searches.receipts]\nquery = \"in:Receipts\"\npinned = true\norder = 3\nname = \"Receipts this month\"\n\n\
-[saved_searches.school]\nquery = \"from:northfield\"\npinned = true\norder = 4\nname = \"From school\"\n";
+[saved_searches.school]\nquery = \"from:northfield\"\npinned = true\norder = 4\nname = \"From school\"\n"
+    )
+}
 
 /// Screen 25's vault: three projects in `Projects/`, each with open tasks,
 /// and the tasks note.
@@ -1307,6 +1318,20 @@ pub fn start(
 
 #[cfg(test)]
 mod tests {
+    /// The digest rule comes due on the day the seed delivers it, so the
+    /// window's "came due today 16:00" and the rule's "Weekly, <day> 16:00"
+    /// never contradict each other.
+    #[test]
+    fn the_demo_digest_rule_comes_due_on_the_day_the_seed_delivers() {
+        let day = super::today()
+            .with_timezone(&chrono::Local)
+            .format("%A")
+            .to_string()
+            .to_lowercase();
+        let config = super::config();
+        assert!(config.contains(&format!("day = \"{day}\"")), "{config}");
+    }
+
     use super::*;
     use chrono::{Datelike, TimeZone, Weekday};
 

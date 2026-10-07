@@ -52,7 +52,7 @@
 //! pass is milestone 1's no-op), and the rows read them the same way either
 //! way. Today is 16:09 local, the time the references were drawn at, so the
 //! times on the rows are theirs, and the inbox last synced then. The config
-//! has one digest rule, weekly on Saturday at 16:00. Screens 17 to 19 are
+//! has one digest rule, weekly at 16:00 on the demo day. Screens 17 to 19 are
 //! said through the host's event sink, as the engine says them: the store
 //! has no server behind it.
 //!
@@ -256,13 +256,13 @@ fn render(args: &[String]) -> Result<String, String> {
         .transpose()
         .map_err(|error| format!("no vault: {error}"))?;
     let base = if PANE_SCREENS.contains(&request.screen.as_str()) {
-        demo::CONFIG.replacen(
+        demo::config().replacen(
             "filtering = true\n",
             "filtering = true\nreading = \"pane\"\n",
             1,
         )
     } else {
-        demo::CONFIG.to_owned()
+        demo::config()
     };
     let text = match &vault {
         Some(vault) => format!(

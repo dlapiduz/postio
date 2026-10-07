@@ -503,7 +503,13 @@ fn config_path(name: &str) -> PathBuf {
 /// until its first rows are drawn.
 async fn acting(seed: Seed, size: (i32, i32), name: &str) -> Result<Started, String> {
     let (database, account) = super::seeded(seed).await;
-    let started = super::start(database, account, super::CONFIG, &config_path(name), size)?;
+    let started = super::start(
+        database,
+        account,
+        &super::config(),
+        &config_path(name),
+        size,
+    )?;
     started.sink.emit(Event::ConnectionChanged {
         account,
         state: ConnectionState::Online,
