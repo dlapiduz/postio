@@ -66,6 +66,25 @@ impl Spliced {
         conversations.saturating_add(self.len())
     }
 
+    /// Where the row at `index` of the list stands among the messages alone,
+    /// and how many messages the list holds, when the surfaced rows given
+    /// by `digests` (indices as given to [`Spliced::new`]) are not messages:
+    /// a digest stands for many and opens as a window, so neither the
+    /// position line nor the strip's count includes it.
+    pub fn message_place(&self, digests: &[usize], index: u32, total: u32) -> (u32, u32) {
+        let before = self
+            .at
+            .iter()
+            .filter(|(at, which)| *at < index && digests.contains(which))
+            .count() as u32;
+        let held = self
+            .at
+            .iter()
+            .filter(|(_, which)| digests.contains(which))
+            .count() as u32;
+        (index.saturating_sub(before), total.saturating_sub(held))
+    }
+
     /// What fills the `count` positions from `start`, over a store of
     /// `conversations`, and which of its conversations to ask for.
     pub fn page(&self, start: u32, count: u32, conversations: u32) -> StorePage {
@@ -105,6 +124,17 @@ mod tests {
         let page = spliced.page(50, 50, 120);
         assert_eq!((page.offset, page.limit), (50, 50));
         assert_eq!(page.slots.first(), Some(&Slot::Stored(0)));
+    }
+
+    #[test]
+    fn a_digest_is_not_a_message_in_the_place_line() {
+        // Digest (index 0) at the top, a reminder (index 1) after two
+        // conversations: 7 rows, 6 messages.
+        let spliced = Spliced::new(&[0, 2]);
+        assert_eq!(spliced.message_place(&[0], 1, 7), (0, 6), "first message");
+        assert_eq!(spliced.message_place(&[0], 3, 7), (2, 6), "the reminder");
+        assert_eq!(spliced.message_place(&[0], 6, 7), (5, 6), "the last");
+        assert_eq!(spliced.message_place(&[], 3, 7), (3, 7), "no digests");
     }
 
     #[test]

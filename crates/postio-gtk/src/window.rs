@@ -4197,10 +4197,10 @@ impl FocusWindow {
         let Some(reading) = self.reading_dialog() else {
             return;
         };
-        let position = crate::open::Position {
-            index: pane.cursor().selected(),
-            total: pane.feed().list().n_items(),
-        };
+        let (index, total) = pane
+            .feed()
+            .message_place(pane.cursor().selected(), pane.feed().list().n_items());
+        let position = crate::open::Position { index, total };
         // The row already on screen is not read again: beside the list the
         // pane follows the cursor, and `j` both moves it and asks.
         if reading.showing_row() == Some(row.id()) && reading.in_pane() {

@@ -108,6 +108,25 @@ impl Feed {
         self.inner.total.get()
     }
 
+    /// The cursor's `index` among the messages of a list of `total` rows,
+    /// and how many messages it holds: digests are not counted, matching
+    /// the strip, which counts what the store holds.
+    pub fn message_place(&self, index: u32, total: u32) -> (u32, u32) {
+        let digests: Vec<usize> = self
+            .inner
+            .surfaced
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, FocusRow::Digest(_)))
+            .map(|(which, _)| which)
+            .collect();
+        self.inner
+            .spliced
+            .borrow()
+            .message_place(&digests, index, total)
+    }
+
     /// Every page this feed has asked the store for, in order.
     pub fn pages_asked(&self) -> Vec<u32> {
         self.inner.pages_asked.borrow().clone()
