@@ -70,6 +70,10 @@ pub struct MessageSummary {
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.
     pub thread_count: u32,
+    /// Who a draft or a queued message is to. Empty for received mail, whose
+    /// row names its sender; in Drafts and the Outbox the sender is the
+    /// person themselves and tells them nothing.
+    pub to: Vec<EmailAddress>,
 }
 
 /// One row of the threaded message list, as a frontend needs it.
@@ -497,6 +501,7 @@ mod tests {
                 send_at: None,
                 has_attachments: false,
                 thread_count: 2,
+                to: Vec::new(),
             },
             subject: Some("Tide gate".to_owned()),
             participants: Vec::new(),

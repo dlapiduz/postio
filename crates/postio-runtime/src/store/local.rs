@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use postio_model::FocusScope;
 use postio_storage::repository::{
-    FocusListQuery, ListCursor, ListQuery, MailboxRepository, MessageListRow, MessageRepository,
-    ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow, ThreadRepository,
+    DraftRepository, FocusListQuery, ListCursor, ListQuery, MailboxRepository, MessageListRow,
+    MessageRepository, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow, ThreadRepository,
     UnifiedThreadListQuery,
 };
 use postio_storage::{Checkout, Store};
@@ -498,7 +498,22 @@ impl LocalStore {
                     .remember(request.offset + rows.len() as u32, last.cursor());
             }
 
-            let rows = rows.into_iter().map(summarise).collect();
+            let mut rows: Vec<MessageSummary> = rows.into_iter().map(summarise).collect();
+            // A draft or queued message is from the person themselves, so
+            // its row names who it is to instead.
+            let writing: Vec<_> = rows
+                .iter()
+                .filter(|row| row.send_state.is_some())
+                .map(|row| row.id)
+                .collect();
+            if !writing.is_empty() {
+                let mut to = DraftRepository::new(&connection)
+                    .recipients_of(&writing)
+                    .await?;
+                for row in &mut rows {
+                    row.to = to.remove(&row.id).unwrap_or_default();
+                }
+            }
             Ok(MessagePage { total, rows })
         })
         .await
@@ -1098,6 +1113,7 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
             send_at: latest.send_at,
             has_attachments: latest.has_attachments,
             thread_count: row.message_count.max(1),
+            to: Vec::new(),
         },
     })
 }
@@ -1118,6 +1134,7 @@ fn summarise(row: MessageListRow) -> MessageSummary {
         send_at: row.send_at,
         has_attachments: row.has_attachments,
         thread_count: thread_count.max(1),
+        to: Vec::new(),
     }
 }
 

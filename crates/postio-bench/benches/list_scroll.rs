@@ -77,6 +77,7 @@ fn conversation(id: i64) -> FocusRow {
             send_at: None,
             has_attachments: id % 4 == 0,
             thread_count: (id % 9) as u32 + 1,
+            to: Vec::new(),
         },
         subject: Some(subject),
         participants: vec![from],

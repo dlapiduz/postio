@@ -7195,6 +7195,7 @@ pub(crate) mod tests {
             send_at: None,
             has_attachments: false,
             thread_count: 3,
+            to: Vec::new(),
         }
     }
 

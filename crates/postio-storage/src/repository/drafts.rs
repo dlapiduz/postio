@@ -591,6 +591,45 @@ impl<'a> DraftRepository<'a> {
         Ok(Some(draft))
     }
 
+    /// Who each of `messages` is to, for the ones that are drafts: the `To`
+    /// recipients in order, read for all of them in one statement.
+    ///
+    /// What a Drafts or Outbox row names, since its sender is the person
+    /// themselves. A message that is no draft has no entry.
+    pub async fn recipients_of(
+        &self,
+        messages: &[MessageId],
+    ) -> Result<std::collections::HashMap<MessageId, Vec<EmailAddress>>> {
+        let mut found: std::collections::HashMap<MessageId, Vec<EmailAddress>> =
+            std::collections::HashMap::new();
+        for chunk in messages.chunks(500) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let mut statement = sql::statement(
+                self.connection,
+                &format!(
+                    "SELECT drafts.message_id, r.name, a.address FROM recipients r
+                       JOIN drafts ON drafts.id = r.draft_id
+                       JOIN addresses a ON a.id = r.address_id
+                      WHERE r.kind = 'to' AND drafts.message_id IN ({placeholders})
+                      ORDER BY drafts.message_id, r.position, r.id"
+                ),
+            )
+            .await?;
+            let params: Vec<i64> = chunk.iter().map(|id| id.get()).collect();
+            let rows = sql::mapped(&mut statement, params, |row| {
+                Ok((
+                    MessageId::new(row.col::<i64>(0)?),
+                    EmailAddress::new(row.col::<Option<String>>(1)?, row.col::<String>(2)?),
+                ))
+            })
+            .await?;
+            for (message, address) in rows {
+                found.entry(message).or_default().push(address);
+            }
+        }
+        Ok(found)
+    }
+
     /// The draft a message row in the Drafts folder is listing, if it is
     /// listing one.
     ///

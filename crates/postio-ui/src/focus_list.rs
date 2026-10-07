@@ -299,6 +299,7 @@ mod tests {
                 send_at: None,
                 has_attachments: false,
                 thread_count: 1,
+                to: Vec::new(),
             },
             subject: None,
             participants: Vec::new(),

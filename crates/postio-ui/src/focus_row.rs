@@ -559,9 +559,80 @@ pub fn showing(shown: u32, total: u32, key: Option<&str>) -> String {
     }
 }
 
+/// Who a row names in its sender column. Received mail names who it is
+/// from; a draft or a queued message is from the person themselves, so in
+/// Drafts and the Outbox the row names who it is to, as every mail client
+/// does: `To Ada Lovelace`.
+pub fn row_names(message: &postio_model::listing::MessageSummary) -> String {
+    if message.send_state.is_none() {
+        return message
+            .from
+            .as_ref()
+            .map(|from| from.display().to_owned())
+            .unwrap_or_default();
+    }
+    match crate::conversation::participants(&message.to).as_str() {
+        "" => "No recipient".to_owned(),
+        names => format!("To {names}"),
+    }
+}
+
 #[cfg(test)]
 mod strip_tests {
     use super::*;
+
+    fn message(
+        from: &str,
+        to: &[(&str, &str)],
+        send_state: Option<postio_model::DraftState>,
+    ) -> postio_model::listing::MessageSummary {
+        use postio_model::EmailAddress;
+        postio_model::listing::MessageSummary {
+            id: postio_model::MessageId::new(1),
+            thread: None,
+            from: Some(EmailAddress::new(Some(from), "me@example.com")),
+            subject: None,
+            preview: None,
+            received_at: chrono::Utc::now(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state,
+            send_at: None,
+            has_attachments: false,
+            thread_count: 1,
+            to: to
+                .iter()
+                .map(|(name, address)| EmailAddress::new(Some(*name), *address))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn received_mail_names_its_sender_and_a_draft_names_who_it_is_to() {
+        let received = message("Ada Lovelace", &[("Grace Hopper", "g@example.com")], None);
+        assert_eq!(row_names(&received), "Ada Lovelace");
+
+        let draft = message(
+            "Test User",
+            &[("Ada Lovelace", "ada@example.com")],
+            Some(postio_model::DraftState::Editing),
+        );
+        assert_eq!(row_names(&draft), "To Ada Lovelace");
+
+        let queued = message(
+            "Test User",
+            &[
+                ("Ada Lovelace", "ada@example.com"),
+                ("Grace Hopper", "grace@example.com"),
+            ],
+            Some(postio_model::DraftState::Queued),
+        );
+        assert_eq!(row_names(&queued), "To Ada, Grace");
+
+        let nobody = message("Test User", &[], Some(postio_model::DraftState::Editing));
+        assert_eq!(row_names(&nobody), "No recipient");
+    }
 
     #[test]
     fn a_place_counts_what_it_lists_and_never_the_inboxs_unread() {

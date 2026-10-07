@@ -178,6 +178,7 @@ pub fn conversation(
             send_at: None,
             has_attachments: false,
             thread_count: 1,
+            to: Vec::new(),
         },
         subject: Some(subject.to_owned()),
         participants: vec![sender],

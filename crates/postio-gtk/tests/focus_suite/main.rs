@@ -415,6 +415,10 @@ const CASES: &[(&str, fn())] = &[
         invitations::the_open_invitation_s_card_answers_with_its_keys as fn(),
     ),
     (
+        "drafts::a_drafts_row_names_who_it_is_to",
+        drafts::a_drafts_row_names_who_it_is_to as fn(),
+    ),
+    (
         "drafts::g_t_lists_drafts_and_enter_opens_one_to_edit",
         drafts::g_t_lists_drafts_and_enter_opens_one_to_edit as fn(),
     ),

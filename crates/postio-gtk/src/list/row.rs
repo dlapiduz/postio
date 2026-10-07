@@ -691,12 +691,7 @@ impl RowWidget {
         let end = trailing - GAP;
 
         // The sender, then the subject, each as it arrived.
-        let sender = summary
-            .representative
-            .from
-            .as_ref()
-            .map(|from| from.display().to_owned())
-            .unwrap_or_default();
+        let sender = postio_ui::focus_row::row_names(&summary.representative);
         let columns = postio_ui::focus_row::row_columns(width);
         let sender_layout = self.layout(&sender, bold, 1.0);
         self.put(

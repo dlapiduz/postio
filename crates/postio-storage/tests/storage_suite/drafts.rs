@@ -1185,6 +1185,36 @@ async fn saving_a_draft_puts_it_in_the_drafts_folder_at_once() {
 }
 
 #[tokio::test]
+async fn a_drafts_list_row_can_be_told_who_it_is_to() {
+    // The row's sender is the person themselves; the list names the
+    // recipients instead, read for a whole page in one statement.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection).await;
+
+    let mut draft = a_draft(account.id);
+    let drafts = DraftRepository::new(&connection);
+    drafts.save(&mut draft).await.expect("save the draft");
+    let query = postio_storage::repository::ListQuery {
+        scope: postio_storage::repository::ListScope::Mailbox(drafts_mailbox),
+        limit: 50,
+        after: None,
+    };
+    let row = MessageRepository::new(&connection)
+        .page(&query)
+        .await
+        .expect("a page")
+        .remove(0);
+
+    let to = drafts
+        .recipients_of(&[row.id, MessageId::new(9_999)])
+        .await
+        .expect("recipients");
+    assert_eq!(to.get(&row.id), Some(&draft.to), "To only, not Cc");
+    assert_eq!(to.len(), 1, "a message that is no draft has none");
+}
+
+#[tokio::test]
 async fn the_row_a_draft_owns_is_marked_as_a_draft_and_as_read() {
     // The list already draws a draft mark and says "Draft" in the accessible
     // label off `MessageListRow::draft`; unread is for mail that arrived.

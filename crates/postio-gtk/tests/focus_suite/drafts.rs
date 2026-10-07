@@ -196,6 +196,47 @@ pub fn a_draft_the_terminal_kept_opens_in_focus() {
     });
 }
 
+/// A row in Drafts names who the draft is to, not the person writing it.
+pub fn a_drafts_row_names_who_it_is_to() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (fixture, window, terminal) = both_apps().await;
+        let mut kept = Draft::new(fixture.account.id);
+        kept.to = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
+        kept.subject = "Harbor notes".to_owned();
+        kept.body.text = Some("Two comments on the headers.".to_owned());
+        terminal
+            .save_draft(1, kept)
+            .await
+            .expect("the terminal saves its draft");
+
+        support::keys(&window, &["g", "t"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Harbor notes"]).await,
+            "g t did not list Drafts"
+        );
+        let drawn = |window: &postio_gtk::window::FocusWindow| {
+            window
+                .pane()
+                .map(|pane| {
+                    pane.rows_on_screen()
+                        .into_iter()
+                        .flat_map(|row| row.drawn().texts)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        assert!(
+            crate::settle_until(async || drawn(&window).iter().any(|t| t == "To Ben Adeyemi"))
+                .await,
+            "the row names {:?}, not who the draft is to",
+            drawn(&window)
+        );
+    });
+}
+
 /// US11 scenario 3 by the keyboard (T080): `g t` lists Drafts, and `Enter`
 /// on a draft opens it in the composer rather than in the reader.
 pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
