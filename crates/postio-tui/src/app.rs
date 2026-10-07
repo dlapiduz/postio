@@ -569,9 +569,9 @@ pub struct App {
     size: (u16, u16),
     keys: Keys,
     list: ListWindow<Row>,
-    /// The rows that were on screen when the list was read again, by
-    /// position, drawn until their pages land so a list sync touches does
-    /// not go blank for a moment each time.
+    /// The rows the list held when it was read again, by position, drawn
+    /// until their pages land so a list sync touches does not go blank for a
+    /// moment each time.
     shown: std::collections::HashMap<u32, Row>,
     paging: Paging,
     /// The row the keyboard is on.
@@ -3067,13 +3067,26 @@ impl App {
             .or_else(|| self.shown.get(&position))
     }
 
-    /// Drop what is cached so the rows in view are read again, keeping the
-    /// rows on screen to draw until their pages land.
+    /// Drop what is cached so the rows are read again, keeping every row that
+    /// was read -- in view and read ahead, and any still waiting from a read
+    /// before -- to draw until its page lands. While a first sync runs this
+    /// happens many times a second, and scrolling into rows that were there
+    /// a moment ago must not find them blank.
     fn read_again(&mut self) {
-        let end = (self.top + self.fit_from(self.top)).min(self.list.total());
-        self.shown = (self.top..end)
-            .filter_map(|position| self.row_at(position).map(|row| (position, row.clone())))
-            .collect();
+        let size = postio_ui::list::PAGE_SIZE;
+        for page in self.list.resident_pages() {
+            for position in page * size..(page + 1) * size {
+                if let Some(row) = self.list.resident_at(position) {
+                    self.shown.insert(position, row.clone());
+                }
+            }
+        }
+        // What is kept stays near the view: rows pages away are read again
+        // when they are scrolled to, like any row not read yet.
+        let near = 4 * size;
+        let (from, to) = (self.top.saturating_sub(near), self.top.saturating_add(near));
+        self.shown
+            .retain(|position, _| (from..to).contains(position));
         self.list.invalidate();
     }
 
@@ -7305,6 +7318,39 @@ pub(crate) mod tests {
                 );
             }
             last = shown;
+        }
+    }
+
+    #[test]
+    fn scrolling_while_the_list_is_read_again_draws_no_blank_rows() {
+        use crate::test_support::{screen, serve_with};
+        let mut app = app((120, 36));
+        let opening = open_list(&mut app, 400);
+        serve_with(&mut app, opening, varied);
+        // Far enough down that the next page is read ahead.
+        for _ in 0..20 {
+            let effects = update(&mut app, press('j'));
+            serve_with(&mut app, effects, varied);
+        }
+        let full = senders_shown(&screen(120, 36, &app)).len();
+        // Sync moved something; its re-read has not landed yet when j is
+        // pressed, as it often has not while a first sync runs.
+        update(
+            &mut app,
+            Input::Recounted {
+                scope: ListScope::Mailbox(MailboxId::new(1)),
+                total: 400,
+            },
+        );
+        for step in 0..30 {
+            update(&mut app, press('j'));
+            let shown = senders_shown(&screen(120, 36, &app));
+            assert!(
+                shown.len() + 1 >= full,
+                "step {step}: rows read before stay drawn until they are read \
+                 again, not blank: {} of {full} shown",
+                shown.len()
+            );
         }
     }
 
