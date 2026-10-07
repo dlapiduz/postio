@@ -1906,17 +1906,20 @@ impl FocusWindow {
     }
 
     /// `J`/`K`: take the cursor's row into the selection and the next one
-    /// with it, moving the cursor onto it.
+    /// with it, moving the cursor onto it. A digest row is walked over, not
+    /// taken in: no bulk verb reaches it, and `x` refuses it the same way.
     fn extend(&self, by: i32) {
-        if let Some(row) = self.cursor_row() {
-            self.imp()
-                .reach
-                .borrow_mut()
-                .insert(row.id(), row.threads());
-            self.imp().picked.extend_to(row.id());
-        }
+        self.take_cursor_row();
         self.move_cursor(by);
-        if let Some(row) = self.cursor_row() {
+        self.take_cursor_row();
+    }
+
+    /// Add the cursor's row to the selection, unless it is a digest's.
+    fn take_cursor_row(&self) {
+        if let Some(row) = self
+            .cursor_row()
+            .filter(|row| !matches!(row, FocusRow::Digest(_)))
+        {
             self.imp()
                 .reach
                 .borrow_mut()

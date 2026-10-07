@@ -1,0 +1,23 @@
+# A digest row is never part of a selection: `x` leaves it alone, and `J`
+# walks over it without taking it in.
+#
+# A digest stands for many messages and opens as a window of its own; the
+# bulk verbs reach conversations, and a digest has none, so selecting it
+# would count a row no verb can act on. `x` already refused it; `J` now
+# agrees with it.
+source = { kind = "flow", ref = "J over a digest row" }
+proof  = "pinned"
+apps   = ["focus"]
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "extend_selection_down"
+check   = { cursor.index = 1, selection.count = 1 }
+expect  = "J takes the first row and the cursor reaches the digest row, which is not taken in."
+
+[[step]]
+command = "extend_selection_down"
+check   = { cursor.index = 2, selection.count = 2 }
+expect  = "J again steps past the digest: the second conversation joins the first, and the digest is not counted."
