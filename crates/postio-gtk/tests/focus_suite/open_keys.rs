@@ -144,3 +144,51 @@ pub fn the_arrows_and_paging_keys_scroll_the_open_message_in_steps() {
         );
     });
 }
+
+/// A message opens with the keyboard on the message, not on a button of
+/// the header: Return or Space after opening scrolls it rather than
+/// stepping away.
+pub fn the_keyboard_lands_on_the_message_not_a_button() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        three(&fixture).await;
+        let window = opened(&fixture).await;
+        let focus = gtk::prelude::GtkWindowExt::focus(&window);
+        let on_the_message = focus.as_ref().is_some_and(|focus| {
+            focus.is::<gtk::ScrolledWindow>()
+                || focus.ancestor(gtk::ScrolledWindow::static_type()).is_some()
+        });
+        assert!(
+            on_the_message,
+            "the keyboard is on {}",
+            support::focus_path(&window)
+        );
+    });
+}
+
+/// The toast an act under the open message raises is drawn over the dialog,
+/// where its words and its Undo can be read and pressed.
+pub fn a_toast_raised_under_the_open_message_is_drawn_over_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        three(&fixture).await;
+        let window = opened(&fixture).await;
+        let reading = window.reading().expect("open");
+        support::deliver(&window, "a");
+        assert!(
+            crate::settle_until(async || window.toast_showing().is_some()).await,
+            "archiving raised no toast"
+        );
+        let host = window.toast_host().expect("a toast has a host");
+        assert!(
+            host.is_ancestor(&reading.dialog()),
+            "the toast is drawn in the window, under the dialog"
+        );
+    });
+}

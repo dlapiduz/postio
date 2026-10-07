@@ -3747,6 +3747,7 @@ impl FocusWindow {
                     self,
                     move |message| window.post(Command::MarkReadOnDwell { message })
                 ));
+                self.imp().toast.set_over(Some(reading.toast_overlay()));
                 reading.set_capture(self.imp().focus_config.borrow().vault.is_some());
                 // The zoom `[reader]` says (T235).
                 if let Some(zoom) = self.imp().zoom.get() {
@@ -4716,6 +4717,12 @@ impl FocusWindow {
             .borrow()
             .as_ref()
             .and_then(|toast| toast.title().map(|title| title.to_string()))
+    }
+
+    /// The overlay the toast on screen is drawn in: the dialog's while a
+    /// message is open over the window, the window's otherwise.
+    pub fn toast_host(&self) -> Option<adw::ToastOverlay> {
+        self.imp().toast.host()
     }
 
     /// The toast on screen, if one is: its words, its button and how long

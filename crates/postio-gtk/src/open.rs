@@ -75,6 +75,8 @@ pub struct Position {
 pub struct OpenMessage {
     client: Client,
     dialog: adw::Dialog,
+    /// What the dialog holds: the column, with room for a toast above it.
+    toasts: adw::ToastOverlay,
     title: gtk::Label,
     subtitle: gtk::Label,
     up_key: gtk::Box,
@@ -406,17 +408,24 @@ impl OpenMessage {
         content.append(reader.find_bar().widget());
         content.append(&scroller);
 
+        // Toasts raised under the dialog are drawn in this overlay, above it.
+        let toasts = adw::ToastOverlay::new();
+        toasts.set_child(Some(&content));
         let dialog = adw::Dialog::builder()
             .content_width(focus_dialog::dialog_width(WINDOW.0))
             .content_height(focus_dialog::dialog_height(WINDOW.1))
-            .child(&content)
+            .child(&toasts)
             .build();
         dialog.set_widget_name(DIALOG_NAME);
+        // The keyboard starts on the message: Space and Page Down read it,
+        // and Return does not press a step button in the header.
+        dialog.set_focus(Some(&scroller));
         let open = Rc::new(Cell::new(false));
 
         let page = Rc::new(OpenMessage {
             client,
             dialog,
+            toasts,
             title,
             subtitle,
             up_key,
@@ -574,6 +583,7 @@ impl OpenMessage {
                             self.placing.set(false);
                         }
                         self.dialog.set_child(None::<&gtk::Widget>);
+                        self.toasts.set_child(None::<&gtk::Widget>);
                     }
                     Some(here) => here.remove(&self.content),
                 }
@@ -583,7 +593,8 @@ impl OpenMessage {
             (None, Some(here)) => {
                 here.remove(&self.content);
                 self.slot.replace(None);
-                self.dialog.set_child(Some(&self.content));
+                self.toasts.set_child(Some(&self.content));
+                self.dialog.set_child(Some(&self.toasts));
                 let parent = self
                     .parent
                     .borrow()
@@ -829,6 +840,11 @@ impl OpenMessage {
     /// Whether More's menu is open.
     pub fn more_open(&self) -> bool {
         self.more.is_visible()
+    }
+
+    /// The overlay a toast is drawn in while the dialog is up.
+    pub fn toast_overlay(&self) -> adw::ToastOverlay {
+        self.toasts.clone()
     }
 
     /// Close More's menu and give the keyboard back to its button.

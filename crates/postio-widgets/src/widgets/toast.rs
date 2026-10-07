@@ -44,6 +44,11 @@ pub const TOAST_TIMEOUT: u32 = 8;
 /// needs — which toast, if any, is still showing.
 pub struct Toast {
     overlay: adw::ToastOverlay,
+    /// An overlay inside a dialog, preferred while it is on screen: a toast
+    /// in the window's own overlay is drawn under the dialog.
+    over: RefCell<Option<adw::ToastOverlay>>,
+    /// The overlay the toast now showing was added to.
+    host: RefCell<Option<adw::ToastOverlay>>,
     current: RefCell<Option<adw::Toast>>,
     /// The undo behind the toast now showing, if it has one.
     ///
@@ -63,6 +68,8 @@ impl Toast {
     pub fn new() -> Self {
         Self {
             overlay: adw::ToastOverlay::new(),
+            over: RefCell::new(None),
+            host: RefCell::new(None),
             current: RefCell::new(None),
             pending_undo: RefCell::new(None),
             shown: Rc::new(RefCell::new(None)),
@@ -73,6 +80,17 @@ impl Toast {
     /// [`adw::ToastOverlay::set_child`].
     pub fn overlay(&self) -> &adw::ToastOverlay {
         &self.overlay
+    }
+
+    /// Name the overlay of a dialog that opens over the window: while it is
+    /// on screen, toasts are shown in it, above the dialog.
+    pub fn set_over(&self, over: Option<adw::ToastOverlay>) {
+        *self.over.borrow_mut() = over;
+    }
+
+    /// The overlay the toast on screen was added to.
+    pub fn host(&self) -> Option<adw::ToastOverlay> {
+        self.host.borrow().clone()
     }
 
     /// Which undo toast is on screen, if any.
@@ -241,7 +259,14 @@ impl Toast {
                 }
             }
         });
-        self.overlay.add_toast(toast.clone());
+        let host = self
+            .over
+            .borrow()
+            .clone()
+            .filter(|over| gtk::prelude::WidgetExt::is_mapped(over))
+            .unwrap_or_else(|| self.overlay.clone());
+        host.add_toast(toast.clone());
+        *self.host.borrow_mut() = Some(host);
         *self.current.borrow_mut() = Some(toast);
     }
 }
