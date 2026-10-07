@@ -866,6 +866,15 @@ button.focus-marker-dismiss:hover {
   min-height: 0;
 }
 
+/* The highlighted place is the neutral selection ground, as the command bar's
+   highlighted row is: the two pickers say "this one" the same way, and
+   neither spends the accent on it (FR-091). */
+.focus-places-list > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+  border-radius: var(--postio-radius-md);
+}
+
 .focus-places-row {
   min-height: 30px;
   padding: 0 var(--postio-space-2);

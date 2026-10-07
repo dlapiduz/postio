@@ -185,6 +185,31 @@ mod tests {
         );
     }
 
+    /// The last word on `selector`'s `property` across `sheets`.
+    fn winning(sheets: &[&str], selector: &str, property: &str) -> Option<String> {
+        sheets
+            .iter()
+            .flat_map(|sheet| declarations(sheet))
+            .filter(|(found, name, _)| found == selector && name == property)
+            .map(|(_, _, value)| value)
+            .next_back()
+    }
+
+    /// A picker marks "this one" in the neutral selection ground, as the
+    /// command bar does -- not in libadwaita's accent tint, which a list row
+    /// wears unless its sheet says otherwise (FR-091).
+    #[test]
+    fn the_places_list_marks_its_highlighted_row_in_the_bar_s_neutral_ground() {
+        let sheets = [SHARED, COLOURS, SURFACES];
+        let bar = winning(&sheets, ".focus-bar-results > row:selected", "background-color");
+        assert_eq!(bar.as_deref(), Some("var(--postio-selected-bg)"));
+        assert_eq!(
+            winning(&sheets, ".focus-places-list > row:selected", "background-color"),
+            bar,
+            "the folders popover leaves its highlighted row in the accent tint"
+        );
+    }
+
     /// A selector's specificity, in this stylesheet's own narrow subset: one
     /// compound selector, no combinators -- an optional leading type, then
     /// any number of `.class` or `:pseudo-class` parts, which CSS weighs the
