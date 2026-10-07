@@ -126,6 +126,13 @@ pub fn ten_conversations_start_no_web_process_and_hold_what_one_holds() {
              see, so a zero below would prove nothing"
         );
         let reading = window.reading().expect("the message is open");
+        // The tiles are rasterised when the view draws, which a loaded
+        // machine reaches after the snapshot: a baseline read before then is
+        // 0, and every conversation after it looks like growth.
+        assert!(
+            crate::settle_until(async || reading.reader().view().tile_bytes() > 0).await,
+            "the first conversation never rasterised a tile"
+        );
         let tiles_after_one = reading.reader().view().tile_bytes();
         let live_after_one = postio_render::live_documents();
 
