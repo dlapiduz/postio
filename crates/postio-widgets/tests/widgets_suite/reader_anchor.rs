@@ -53,7 +53,21 @@ fn wait_laid_out(view: &BodyView, ready: impl Fn(&str) -> bool) {
 fn scroll_to(view: &BodyView, y: f64) -> f64 {
     let adjustment = view.vadjustment().expect("the view scrolls");
     adjustment.set_value(y);
-    settle_for(std::time::Duration::from_millis(50));
+    // The view draws only the window it shows, so the snapshot holds the
+    // text at the new top once it has redrawn there -- which a loaded
+    // machine takes longer than a fixed pause to do.
+    let deadline = std::time::Instant::now() + postio_test_support::patience();
+    loop {
+        settle_for(std::time::Duration::from_millis(10));
+        let top = adjustment.value();
+        let covered = view.document().is_some_and(|document| {
+            let offset = document.text.char_at_top(top);
+            document.text.clusters.iter().any(|c| c.range.end > offset)
+        });
+        if covered || std::time::Instant::now() >= deadline {
+            break;
+        }
+    }
     adjustment.value()
 }
 
