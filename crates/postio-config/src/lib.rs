@@ -82,7 +82,8 @@ pub use compose::{ComposeConfig, SignaturePlacement, patch_compose};
 pub use error::{ConfigError, Result};
 pub use filters::{FilterConfig, patch_filters};
 pub use focus::{
-    DigestRule, Due, DueError, FocusConfig, FocusFilter, FocusVault, Reading, StopMarker,
+    DigestRule, Due, DueError, FocusConfig, FocusFilter, FocusVault, NeverEntry, Reading,
+    StopMarker, never_entry,
 };
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};

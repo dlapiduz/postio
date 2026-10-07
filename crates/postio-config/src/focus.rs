@@ -256,7 +256,7 @@ impl FocusFilter {
 
 /// What a `[focus.filter] never` entry names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NeverEntry<'a> {
+pub enum NeverEntry<'a> {
     /// One address.
     Address(&'a str),
     /// Every address at a domain.
@@ -266,7 +266,7 @@ pub(crate) enum NeverEntry<'a> {
 /// What `entry` names, or `None` when it is neither an address nor a whole
 /// domain: an `@` with something on each side of it, or one at the start
 /// with a domain after it, and no space or second `@` anywhere.
-pub(crate) fn never_entry(entry: &str) -> Option<NeverEntry<'_>> {
+pub fn never_entry(entry: &str) -> Option<NeverEntry<'_>> {
     let entry = entry.trim();
     if entry.chars().any(char::is_whitespace) || entry.matches('@').count() != 1 {
         return None;

@@ -1,6 +1,7 @@
 //! Postio Focus's own writes to `config.toml` (spec 007, contracts/config.md):
-//! a sender restored from Filtered, a marker kind stopped by repeated
-//! dismissal, a digest rule made, edited, narrowed or removed.
+//! filtering turned on or off, a sender restored from Filtered, a marker
+//! kind stopped by repeated dismissal, a digest rule made, edited, narrowed
+//! or removed.
 //!
 //! Each is a function from the file's text to its new text, touching only
 //! the entry it is about, through `toml_edit`'s format-preserving document
@@ -131,6 +132,33 @@ pub fn set_reading(text: &str, reading: crate::Reading) -> Result<Option<String>
     // that it holds a key of its own.
     focus.set_implicit(false);
     focus.insert("reading", toml_edit::value(reading.as_str()));
+    Ok(Some(render(text, doc)))
+}
+
+/// `[focus] filtering` set to `on`: whether Focus files spam and automated
+/// updates away as they arrive (FR-119), as Settings' Filtering page turns
+/// it. `None` when the file already says so -- and a file that says nothing
+/// filters, the default.
+pub fn set_filtering(text: &str, on: bool) -> Result<Option<String>> {
+    let mut doc = document(text)?;
+    let says = doc
+        .get("focus")
+        .and_then(|focus| focus.get("filtering"))
+        .and_then(Item::as_bool)
+        .unwrap_or(true);
+    if says == on {
+        return Ok(None);
+    }
+    let focus = doc
+        .as_table_mut()
+        .entry("focus")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| shape("[focus] is not a table"))?;
+    // A section made implicit by `[focus.filter]` alone is written out now
+    // that it holds a key of its own.
+    focus.set_implicit(false);
+    focus.insert("filtering", toml_edit::value(on));
     Ok(Some(render(text, doc)))
 }
 
@@ -376,6 +404,46 @@ at = \"16:00\"
             set_reading("", Reading::Pane).expect("an edit").as_deref(),
             Some("[focus]\nreading = \"pane\"\n")
         );
+    }
+
+    #[test]
+    fn filtering_is_turned_off_in_place_and_on_again() {
+        let off = set_filtering(FILE, false)
+            .expect("an edit")
+            .expect("a change");
+        assert!(
+            off.starts_with("# My settings.\n[ui]\ndensity = \"compact\" # as I like it\n"),
+            "nothing above it moves: {off}"
+        );
+        assert!(off.contains("[focus]\nfiltering = false\n"), "{off}");
+        let config = Config::from_toml_str(&off).expect("it reads");
+        assert!(!config.focus.filtering);
+        assert_eq!(config.focus.digests.len(), 1, "the rule is untouched");
+        assert_eq!(set_filtering(&off, false).expect("an edit"), None);
+        let on = set_filtering(&off, true)
+            .expect("an edit")
+            .expect("a change");
+        assert!(
+            Config::from_toml_str(&on)
+                .expect("it reads")
+                .focus
+                .filtering
+        );
+
+        // A file that says nothing already filters.
+        assert_eq!(set_filtering("", true).expect("an edit"), None);
+        assert_eq!(
+            set_filtering("", false).expect("an edit").as_deref(),
+            Some("[focus]\nfiltering = false\n")
+        );
+        // A section made implicit by `[focus.filter]` is written out.
+        let pinned = "[focus.filter]\nnever = [\"@example.net\"]\n";
+        let written = set_filtering(pinned, false)
+            .expect("an edit")
+            .expect("a change");
+        let config = Config::from_toml_str(&written).expect("it reads");
+        assert!(!config.focus.filtering, "{written}");
+        assert_eq!(config.focus.filter.never, vec!["@example.net"]);
     }
 
     #[test]
