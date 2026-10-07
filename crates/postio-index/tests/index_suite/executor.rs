@@ -794,6 +794,53 @@ async fn free_text_reaches_the_body_index_and_the_metadata_index() {
 }
 
 #[tokio::test]
+async fn two_words_need_both_in_the_body_too() {
+    // The body half of the match is folded to meet the folded body text,
+    // and folding the whole expression lowercased its `AND` too: to the
+    // index a lowercase `and` is a word, not an operator, so two words
+    // asked the bodies for either word *or "and"*. On a real mailbox that
+    // was most of it -- 10,000 hits for a phrase that matched 87, and two
+    // hundred seconds to count them, which stopped the search box. One
+    // body has both words; the other has only "and".
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+
+    let both = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Thursday",
+        "the meeting agenda is attached",
+        at(9),
+    )
+    .await;
+    with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Groceries",
+        "bread and milk",
+        at(8),
+    )
+    .await;
+
+    assert_eq!(
+        found(&connection, account.id, "meeting agenda").await,
+        vec![both.id],
+        "two words matched a body holding neither, through its \"and\""
+    );
+    assert_eq!(
+        found(&connection, account.id, "Meeting Agenda").await,
+        vec![both.id],
+        "and the fold still meets the body however the words are cased"
+    );
+}
+
+#[tokio::test]
 async fn a_subject_match_outranks_a_body_match() {
     // The ranking decision, stated as the behaviour it exists to produce
     // rather than as a number. Somebody searching "invoice" wants the message

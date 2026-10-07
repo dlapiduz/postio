@@ -828,6 +828,9 @@ struct Plan {
     /// than, say, an unrelated `from:` value that happens to also be a valid
     /// (if redundant) constraint on the same rows.
     match_param: Option<turso::Value>,
+    /// The same expression for the body index: each term folded the way the
+    /// body text was, joined after folding. See [`Plan::match_params`].
+    body_match_param: Option<turso::Value>,
 }
 
 impl Plan {
@@ -867,6 +870,7 @@ impl Plan {
         let account = request.account;
         let mut has_match = false;
         let mut match_param = None;
+        let mut body_match_param = None;
 
         // Negated terms are excluded across both indexes rather than folded
         // into each one's own match, and that is a correctness fix rather
@@ -900,6 +904,13 @@ impl Plan {
             .collect::<Vec<_>>();
         if !positive.is_empty() {
             let expr = positive.join(" AND ");
+            body_match_param = Some(turso::Value::Text(
+                positive
+                    .iter()
+                    .map(|literal| postio_model::fold::fold(literal))
+                    .collect::<Vec<_>>()
+                    .join(" AND "),
+            ));
             // The match itself has moved into the join (see `Plan::join_sql`),
             // because free text now has to reach two indexes and a row that
             // matched in either one is a hit. `MATCH` cannot be written as an
@@ -940,6 +951,7 @@ impl Plan {
             account,
             has_match,
             match_param,
+            body_match_param,
         }
     }
 
@@ -1001,24 +1013,26 @@ impl Plan {
     /// composing a statement has to think about the order once, here, rather
     /// than each getting it right separately.
     fn match_params(&self, _form: Form) -> Vec<turso::Value> {
-        let Some(expr) = &self.match_param else {
+        let (Some(expr), Some(folded)) = (&self.match_param, &self.body_match_param) else {
             return Vec::new();
         };
         // The body index is built over folded text, so the body's half of the
         // expression is folded to match. The metadata index is not -- its
         // columns are stored as they read -- so that half goes through
         // unchanged. Both or neither, per `postio_model::fold`.
-        let folded = match expr {
-            turso::Value::Text(text) => turso::Value::Text(postio_model::fold::fold(text)),
-            other => other.clone(),
-        };
+        //
+        // Each term is folded before the terms are joined, never the joined
+        // expression: folding lowercases, and to the index a lowercase `and`
+        // is a word rather than the operator. Folding the whole of
+        // `"meeting" AND "agenda"` asked every body for "meeting", "and" or
+        // "agenda" -- most of a real mailbox, 200 seconds to count.
         // Two, either way. The driven form writes the term as `?1`/`?2` and
         // uses each twice -- once to score, once to match -- because
         // `fts_score` returns `0.0` when the two are different parameters;
         // see [`HITS_JOIN`]. The probed form has no score and one `fts_match`
         // per arm, and its `?`s are bare because its match sits in the
         // `WHERE`, after the conditions.
-        vec![expr.clone(), folded]
+        vec![expr.clone(), folded.clone()]
     }
 
     /// [`Plan::source_sql`], but for `fetch` specifically, where the join order
@@ -1718,6 +1732,7 @@ mod tests {
             account: AccountScope::Unified,
             has_match: true,
             match_param: Some(turso::Value::Text("invoice".to_owned())),
+            body_match_param: Some(turso::Value::Text("invoice".to_owned())),
         }
     }
 
