@@ -201,10 +201,18 @@ mod tests {
     #[test]
     fn the_places_list_marks_its_highlighted_row_in_the_bar_s_neutral_ground() {
         let sheets = [SHARED, COLOURS, SURFACES];
-        let bar = winning(&sheets, ".focus-bar-results > row:selected", "background-color");
+        let bar = winning(
+            &sheets,
+            ".focus-bar-results > row:selected",
+            "background-color",
+        );
         assert_eq!(bar.as_deref(), Some("var(--postio-selected-bg)"));
         assert_eq!(
-            winning(&sheets, ".focus-places-list > row:selected", "background-color"),
+            winning(
+                &sheets,
+                ".focus-places-list > row:selected",
+                "background-color"
+            ),
             bar,
             "the folders popover leaves its highlighted row in the accent tint"
         );

@@ -910,7 +910,10 @@ fn a_reply_to_a_message_with_no_body_yet_has_no_attribution() {
         let body = postio_body::replying::quoted_body(&source, forward);
         assert!(
             body.text.as_deref().unwrap_or_default().trim().is_empty()
-                && body.html.as_deref().is_none_or(|html| !html.contains("wrote:")),
+                && body
+                    .html
+                    .as_deref()
+                    .is_none_or(|html| !html.contains("wrote:")),
             "a source with nothing to quote left {body:?} (forward: {forward})"
         );
     }

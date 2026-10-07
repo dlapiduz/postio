@@ -410,12 +410,14 @@ pub fn the_caret_is_drawn_only_while_the_body_has_the_keyboard() {
     );
 
     editor.widget().grab_focus();
-    settle("the caret to be drawn once the body has the keyboard", || {
-        eval(editor.widget(), caret) != "rgba(0, 0, 0, 0)"
-    });
+    settle(
+        "the caret to be drawn once the body has the keyboard",
+        || eval(editor.widget(), caret) != "rgba(0, 0, 0, 0)",
+    );
 
     address.grab_focus();
-    settle("the caret to be hidden again when the keyboard leaves", || {
-        eval(editor.widget(), caret) == "rgba(0, 0, 0, 0)"
-    });
+    settle(
+        "the caret to be hidden again when the keyboard leaves",
+        || eval(editor.widget(), caret) == "rgba(0, 0, 0, 0)",
+    );
 }

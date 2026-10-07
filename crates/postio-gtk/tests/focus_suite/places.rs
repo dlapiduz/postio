@@ -221,7 +221,12 @@ pub fn every_place_shows_its_count() {
             .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
             .await;
         let (staffing, _) = fixture
-            .file(("Tomas Reyes", "tomas@example.net"), "Staffing plan", "x", 10)
+            .file(
+                ("Tomas Reyes", "tomas@example.net"),
+                "Staffing plan",
+                "x",
+                10,
+            )
             .await;
         fixture.label(atlas, &["Atlas"]).await;
         fixture.label(harbor, &["Harbor"]).await;
@@ -245,7 +250,10 @@ pub fn every_place_shows_its_count() {
         ] {
             let said = row_saying(&window, name).await;
             let counted = crate::settle_until(async || {
-                row_saying(&window, name).await.iter().any(|text| text == count)
+                row_saying(&window, name)
+                    .await
+                    .iter()
+                    .any(|text| text == count)
             })
             .await;
             assert!(

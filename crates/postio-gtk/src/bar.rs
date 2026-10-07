@@ -962,18 +962,19 @@ impl Bar {
 
     /// Move the highlight where the last run asked it to go.
     fn apply_pending(&self) {
-        let wanted = match self.pending.take() {
-            Pending::Nowhere => return,
-            Pending::FirstHit => self
-                .rows
-                .borrow()
-                .iter()
-                .position(|row| matches!(row, Row::Message { .. })),
-            Pending::Order => self.rows.borrow().iter().position(|row| *row == Row::Order),
-            Pending::Hit(wanted) => self.rows.borrow().iter().position(
-                |row| matches!(row, Row::Message { message, .. } if *message == wanted),
-            ),
-        };
+        let wanted =
+            match self.pending.take() {
+                Pending::Nowhere => return,
+                Pending::FirstHit => self
+                    .rows
+                    .borrow()
+                    .iter()
+                    .position(|row| matches!(row, Row::Message { .. })),
+                Pending::Order => self.rows.borrow().iter().position(|row| *row == Row::Order),
+                Pending::Hit(wanted) => self.rows.borrow().iter().position(
+                    |row| matches!(row, Row::Message { message, .. } if *message == wanted),
+                ),
+            };
         if let Some(row) = wanted.and_then(|at| self.list.row_at_index(at as i32)) {
             self.list.select_row(Some(&row));
         }
