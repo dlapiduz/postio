@@ -444,8 +444,9 @@ Screens 07, 08, 09 and 10.
   steps into the chips, and `mod+BackSpace` returns to the plain words.
 - **Results** are one line each: sender, subject, first line, where the
   conversation lives (`in:Inbox`, `in:Receipts`) and the date. `Enter` opens
-  one. A misspelt query offers "Search instead for …" (ADR 0037), and `O`
-  switches the results between relevance and date.
+  one. A misspelt query offers "Search instead for …" (ADR 0037), and
+  `alt+o` switches the results between relevance and date; `O` is a letter
+  of the query, never a key the bar takes from it.
 - **Folders**: `in:` completes folder names and lists a folder's
   conversations, newest first (08). There is no folder sidebar.
 - **Commands and places**: typing a word also lists:
@@ -1522,8 +1523,8 @@ screen, not on what a layer was handed, that each surface shows what
   MUST filter it, and `Enter` MUST go to the chosen place. A mailbox, folder
   or label shown this way MUST have the same rows and actions as the inbox.
 - **FR-066**: A query with a likely misspelling MUST offer "Search instead
-  for “…”" as a row the bar can run (ADR 0037), and `O` MUST switch a result
-  list between relevance and date once a result is chosen.
+  for “…”" as a row the bar can run (ADR 0037), and `alt+o` MUST switch a
+  result list between relevance and date while the query has the keyboard.
 
 **States**
 
