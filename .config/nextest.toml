@@ -60,6 +60,21 @@ default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(
 # on the second look (#70 twice). The narrow exception is below.
 retries = 0
 
+# The cases that need what the headless compositor has one of: its seat's
+# clipboard, and the keyboard focus a WebKit editing surface acts under.
+# Every test process shares that compositor, so two of these at once take
+# the clipboard or the focus from each other, and the loser waits out its
+# deadline for a paste or a formatting report that went to the other one --
+# "the clipboard to hold a texture", "bold to land as Strong", one full
+# widgets_suite run in two. One at a time, they pass every run; there are a
+# dozen and each takes a second or two.
+[test-groups]
+compositor-seat = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(widgets_suite) & (test(/^editor_/) | test(/^editable_dialect::/) | test(/^composer_toolbar::/) | test(/^composer_inline_image::/) | test(/^body_view_select::/))'
+test-group = 'compositor-seat'
+
 # The sync-wave cases, each a whole wave over an archive-sized fixture: ~31 s
 # alone, measured, and 183-190 s -- past their deadline -- in a full-workspace
 # run, where they share the machine with every other test process. Three
