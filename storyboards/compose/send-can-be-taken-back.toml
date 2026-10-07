@@ -51,5 +51,5 @@ expect  = "The queued reply opens to be read, offering Cancel send and Edit rath
 [[step]]
 command = "cancel_send"
 settle  = { until = { rows.count = 0 } }
-check   = { scope = "Outbox", rows.count = 0, app.focus.empty.heading = "Nothing waiting to send", notice.text = "Send cancelled — back in Drafts" }
+check   = { scope = "Outbox", rows.count = 0, keyboard.region = "list", app.focus.empty.heading = "Nothing waiting to send", notice.text = "Send cancelled — back in Drafts" }
 expect  = "The send is cancelled: the message leaves the Outbox, the toast says it is back in Drafts, and the Outbox says nothing is waiting instead of showing a blank pane."

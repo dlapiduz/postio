@@ -24,6 +24,8 @@
 //! closing.
 
 use std::cell::RefCell;
+
+use gtk::prelude::*;
 use std::rc::Rc;
 
 use postio_ui::observe::Tone;
@@ -266,8 +268,43 @@ impl Toast {
             .filter(gtk::prelude::WidgetExt::is_mapped)
             .unwrap_or_else(|| self.overlay.clone());
         host.add_toast(toast.clone());
+        // A toast's buttons are answered by the mouse and by the key their
+        // command has: never by the keyboard focus, which would land on one
+        // whenever the focus had nowhere else to go (an empty list behind a
+        // closed message) and make the next Return answer the toast.
+        keep_focus_off(host.upcast_ref());
+        let weak = host.downgrade();
+        gtk::glib::idle_add_local_once(move || {
+            if let Some(host) = weak.upgrade() {
+                keep_focus_off(host.upcast_ref());
+            }
+        });
         *self.host.borrow_mut() = Some(host);
         *self.current.borrow_mut() = Some(toast);
+    }
+}
+
+/// Take every button of the toasts drawn under `widget` out of the focus
+/// chain.
+fn keep_focus_off(widget: &gtk::Widget) {
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if current.type_().name() == "AdwToastWidget" {
+            let mut inside = vec![current.clone()];
+            while let Some(widget) = inside.pop() {
+                if widget.is::<gtk::Button>() {
+                    widget.set_focusable(false);
+                }
+                let mut next = widget.first_child();
+                while let Some(sibling) = next {
+                    next = sibling.next_sibling();
+                    inside.push(sibling);
+                }
+            }
+        } else {
+            keep_focus_off(&current);
+        }
+        child = current.next_sibling();
     }
 }
 
