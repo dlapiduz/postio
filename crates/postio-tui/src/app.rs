@@ -147,6 +147,11 @@ pub enum Input {
         /// What came off the wire.
         raw: Result<Vec<u8>, String>,
     },
+    /// An [`Effect::Settle`]'s time is up: paint the open message as it is.
+    Settled {
+        /// Which hold it was asked for.
+        generation: u64,
+    },
     /// An [`Effect::ArmDwell`]'s time is up.
     DwellDue {
         /// Which clock.
@@ -377,6 +382,14 @@ pub enum Effect {
     SetReading(postio_config::Reading),
     /// Read a message's source and answer with [`Input::Source`].
     ReadSource(postio_model::MessageId),
+    /// Ask for [`Input::Settled`] after `after`: the longest the paint is
+    /// held for a message's reads ([`App::holds_paint`]).
+    Settle {
+        /// Which hold.
+        generation: u64,
+        /// How long.
+        after: std::time::Duration,
+    },
     /// Ask for [`Input::DwellDue`] after `after`: how long the message has
     /// to stay open to count as read.
     ArmDwell {
@@ -4634,8 +4647,23 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 None => Vec::new(),
             }
         }
-        Input::Body { message, answer } => app.show(message, answer),
-        Input::Conversation { thread, members } => app.conversation(thread, members),
+        Input::Body { message, answer } => {
+            let current = app
+                .reading
+                .as_ref()
+                .is_some_and(|reading| reading.members.iter().any(|member| member.id == message));
+            if current {
+                app.release_paint();
+            }
+            app.show(message, answer)
+        }
+        Input::Conversation { thread, members } => {
+            if members.is_err() {
+                app.release_paint();
+            }
+            app.conversation(thread, members)
+        }
+        Input::Settled { generation } => app.settled(generation),
         Input::Surfaced(read) => app.surfaced_read(&read),
         Input::FocusCounts(counts) => {
             app.counts = Some(counts);
@@ -4653,6 +4681,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
     effects.extend(app.follow_cursor());
     effects.extend(app.fetches());
     effects.extend(app.filtered_fetches());
+    effects.extend(app.hold_paint(&effects));
     effects
 }
 
@@ -7160,6 +7189,156 @@ pub(crate) mod tests {
                 ]),
             },
         )
+    }
+
+    fn ready(message: MessageId) -> Input {
+        Input::Body {
+            message,
+            answer: Ok(postio_client::protocol::Body::Ready {
+                body: postio_model::MessageBody {
+                    text: Some("words".into()),
+                    html: None,
+                },
+                encoding_problems: false,
+            }),
+        }
+    }
+
+    fn settle_of(effects: &[Effect]) -> Option<(u64, std::time::Duration)> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Settle { generation, after } => Some((*generation, *after)),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn opening_a_message_holds_the_paint_until_its_body_lands() {
+        let mut app = app((120, 36));
+        let opening = crate::test_support::open_list(&mut app, 3);
+        crate::test_support::serve(&mut app, opening);
+        assert!(!app.holds_paint(), "a list is painted as it comes");
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let message = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::ReadBody(message) => Some(*message),
+                _ => None,
+            })
+            .expect("a body is asked for");
+        let (_, after) = settle_of(&effects).expect("a deadline for the hold");
+        assert!(
+            after <= std::time::Duration::from_millis(16),
+            "never longer than a frame: {after:?}"
+        );
+        assert!(app.holds_paint(), "the frame waits for what it will hold");
+        update(
+            &mut app,
+            Input::Addressed {
+                message,
+                to: vec![postio_model::EmailAddress::new(
+                    None::<String>,
+                    "bea@example.com",
+                )],
+                cc: Vec::new(),
+            },
+        );
+        assert!(
+            app.holds_paint(),
+            "the recipients alone would move the body down a row a moment later"
+        );
+        let effects = update(&mut app, ready(message));
+        assert!(!app.holds_paint(), "the whole message is painted at once");
+        assert!(effects.contains(&Effect::Redraw), "{effects:?}");
+    }
+
+    #[test]
+    fn a_conversation_holds_the_paint_across_both_of_its_reads() {
+        let mut app = app((160, 40));
+        let effects = open_list(&mut app, 1);
+        let (generation, page) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Fetch {
+                    generation, page, ..
+                } => Some((*generation, *page)),
+                _ => None,
+            })
+            .unwrap();
+        let mut conversation = row(0);
+        conversation.id = MessageId::new(3);
+        conversation.thread = Some(postio_model::ThreadId::new(9));
+        conversation.is_thread = true;
+        conversation.count = 3;
+        update(
+            &mut app,
+            Input::Page {
+                generation,
+                page,
+                rows: Ok(Page {
+                    total: 1,
+                    rows: vec![conversation],
+                }),
+            },
+        );
+        let opened = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            opened.contains(&Effect::ReadConversation(postio_model::ThreadId::new(9))),
+            "{opened:?}"
+        );
+        assert!(settle_of(&opened).is_some(), "{opened:?}");
+        let members = update(
+            &mut app,
+            Input::Conversation {
+                thread: postio_model::ThreadId::new(9),
+                members: Ok(vec![
+                    summary(1, "ada@example.com"),
+                    summary(3, "cy@example.com"),
+                ]),
+            },
+        );
+        assert!(
+            members.contains(&Effect::ReadBody(MessageId::new(3))),
+            "{members:?}"
+        );
+        assert!(
+            app.holds_paint(),
+            "its members are known and its body is not yet"
+        );
+        assert!(
+            settle_of(&members).is_none(),
+            "one deadline from the open, not a fresh one per read: {members:?}"
+        );
+        update(&mut app, ready(MessageId::new(3)));
+        assert!(!app.holds_paint());
+    }
+
+    #[test]
+    fn a_slow_body_is_painted_without_it_after_a_frame_and_a_closed_one_at_once() {
+        let mut app = app((120, 36));
+        let opening = crate::test_support::open_list(&mut app, 3);
+        crate::test_support::serve(&mut app, opening);
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let (generation, _) = settle_of(&effects).expect("a deadline");
+        update(
+            &mut app,
+            Input::Settled {
+                generation: generation + 1,
+            },
+        );
+        assert!(
+            app.holds_paint(),
+            "an older deadline does not end a newer hold"
+        );
+        let effects = update(&mut app, Input::Settled { generation });
+        assert!(!app.holds_paint(), "the frame is painted as it is");
+        assert!(effects.contains(&Effect::Redraw), "{effects:?}");
+
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.holds_paint());
+        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.holds_paint(), "closing is painted at once");
     }
 
     #[test]

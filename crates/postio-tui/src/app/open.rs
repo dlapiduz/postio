@@ -67,9 +67,65 @@ pub(super) struct Open {
     pub dismissed: Option<MessageId>,
     /// The find field, while it is open.
     pub find: Option<super::find::Find>,
+    /// The paint held for this message's reads, by which deadline; an
+    /// older deadline does nothing.
+    pub held: Option<u64>,
+    /// The last deadline asked for.
+    pub holds: u64,
 }
 
+/// The longest the paint waits for an open message's reads: one frame of the
+/// interaction budget (`docs/PRODUCT.md` §18). A thread and a body read from
+/// the store land in a few milliseconds, so the frame is painted once with
+/// them rather than three times as they arrive, each moving what the last
+/// one drew; a slow read is painted without them after a frame.
+pub(super) const SETTLE: std::time::Duration = std::time::Duration::from_millis(16);
+
 impl App {
+    /// Whether painting waits: a message is open and its thread or body is
+    /// still on its way, for at most [`SETTLE`].
+    pub fn holds_paint(&self) -> bool {
+        self.reading.is_some() && self.open.held.is_some()
+    }
+
+    /// Hold the paint when `effects` ask for the open message's thread or
+    /// body, and say when to stop waiting. One deadline from the first
+    /// read: a thread's body, asked for once its members land, waits under
+    /// the same one.
+    pub(super) fn hold_paint(&mut self, effects: &[Effect]) -> Option<Effect> {
+        if self.reading.is_none() {
+            self.open.held = None;
+            return None;
+        }
+        let reads = effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ReadBody(_) | Effect::ReadConversation(_)));
+        if self.open.held.is_some() || !reads {
+            return None;
+        }
+        self.open.holds += 1;
+        self.open.held = Some(self.open.holds);
+        Some(Effect::Settle {
+            generation: self.open.holds,
+            after: SETTLE,
+        })
+    }
+
+    /// What was waited for has landed, or failed: paint.
+    pub(super) fn release_paint(&mut self) {
+        self.open.held = None;
+    }
+
+    /// A hold's deadline: paint the message as it is, unless a newer hold
+    /// has begun.
+    pub(super) fn settled(&mut self, generation: u64) -> Vec<Effect> {
+        if self.open.held != Some(generation) {
+            return Vec::new();
+        }
+        self.open.held = None;
+        vec![Effect::Redraw]
+    }
+
     /// The source being shown in place of the message.
     pub fn raw(&self) -> Option<&Raw> {
         self.open.raw.as_ref()

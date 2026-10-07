@@ -127,6 +127,11 @@ bold, then `focus_row::digest_line` dimmed, the message count and the time.
  3 selected   Archive a  Snooze s  …
 ```
 
+- **Painting.** The frame is painted once its thread and body have
+  landed, or after 16 ms (one frame of the interaction budget) if they are
+  slow, so it does not jump as each read arrives. Every frame is written
+  inside a synchronized update, so a terminal that keeps them never shows
+  one half drawn.
 - **Frame.** Rounded border. It covers every row but the top bar and the
   bottom line, so the bulk bar stays in sight, as on 04. Width
   `clamp(76, W − 2·max(4, ⌊0.12·W⌋), 100)`, or the whole width below 80

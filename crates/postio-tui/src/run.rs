@@ -963,6 +963,13 @@ fn perform(
                     let _ = inputs.send(Input::Source { message, raw }).await;
                 });
             }
+            Effect::Settle { generation, after } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs.send(Input::Settled { generation }).await;
+                });
+            }
             Effect::ArmDwell {
                 generation,
                 message,
@@ -1417,20 +1424,67 @@ fn perform(
             }
         }
     }
-    if redraw {
+    // While an open message's reads are on their way, the frame is painted
+    // once they land (or after a frame's wait), not once per read.
+    if redraw && !app.holds_paint() {
         *hits = draw(terminal, app, theme)?;
     }
     Ok(flow)
 }
 
-fn draw(terminal: &mut Screen, app: &App, theme: &Theme) -> io::Result<crate::view::hit::Hits> {
+/// Paint a frame inside a synchronized update, so a terminal that keeps
+/// them shows the frame whole rather than half written over the last one;
+/// one that does not ignores the two sequences.
+fn draw<W: io::Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    app: &App,
+    theme: &Theme,
+) -> io::Result<crate::view::hit::Hits> {
     let mut hits = crate::view::hit::Hits::default();
+    crossterm::queue!(
+        terminal.backend_mut(),
+        crossterm::terminal::BeginSynchronizedUpdate
+    )?;
     terminal.draw(|frame| hits = crate::view::draw(frame, app, theme, chrono::Local::now()))?;
+    crossterm::execute!(
+        terminal.backend_mut(),
+        crossterm::terminal::EndSynchronizedUpdate
+    )?;
     Ok(hits)
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_frame_is_written_whole_inside_a_synchronized_update() {
+        /// What the terminal is sent, kept to read back.
+        #[derive(Clone, Default)]
+        struct Tap(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
+        impl io::Write for Tap {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.borrow_mut().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let tap = Tap::default();
+        let backend = ratatui::backend::CrosstermBackend::new(tap.clone());
+        let mut terminal = ratatui::Terminal::new(backend).expect("a terminal");
+        let app = crate::test_support::app((40, 12));
+        let theme = crate::test_support::plain_theme();
+        draw(&mut terminal, &app, &theme).expect("drawn");
+        let written = String::from_utf8_lossy(&tap.0.borrow()).into_owned();
+        let begin = written.find("\x1b[?2026h").expect("begun");
+        let end = written.rfind("\x1b[?2026l").expect("ended");
+        assert!(begin == 0 && end > begin, "{written:?}");
+        assert!(
+            written[begin..end].contains("\x1b[1;1H"),
+            "the frame is between the two: {written:?}"
+        );
+    }
     use super::*;
 
     #[test]
