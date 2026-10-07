@@ -41,4 +41,4 @@ expect  = "`]` steps forward again."
 [[step]]
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }
-expect  = "The composer opens as a reply to the message shown (message 6), not the newest, and the caret is in the body."
+expect  = "The composer opens as a reply to the message shown (message 6), not the newest, and the caret is in the body. Message 6 was sent by the person, so the reply is addressed to the people it was written to rather than left empty."

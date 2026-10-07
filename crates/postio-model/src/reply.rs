@@ -105,17 +105,24 @@ fn recipients_of(source: &Message) -> Vec<EmailAddress> {
 ///
 /// `To` answers whoever should see the reply at all: `source.reply_to` when
 /// the sender set one, since that is the whole point of the header, else
-/// `source.from`. `Cc` — only for reply-all — is every other original
+/// `source.from` -- or, on a message `account` sent itself, `source.to`. `Cc` — only for reply-all — is every other original
 /// recipient, so the rest of the conversation stays on it.
 fn reply_recipients(
     source: &Message,
     account: &Account,
     all: bool,
 ) -> (Vec<EmailAddress>, Vec<EmailAddress>) {
-    let primary: &[EmailAddress] = if !source.reply_to.is_empty() {
+    let answered: &[EmailAddress] = if !source.reply_to.is_empty() {
         &source.reply_to
     } else {
         &source.from
+    };
+    // Your own message has nobody of yours to answer: the reply goes to who
+    // it was written to, as every mail client does.
+    let primary: &[EmailAddress] = if answered.iter().all(|address| account.owns_address(address)) {
+        &source.to
+    } else {
+        answered
     };
 
     let mut claimed: Vec<EmailAddress> = Vec::new();
@@ -408,6 +415,29 @@ mod tests {
         assert!(
             !body.contains('>'),
             "nothing to quote, so nothing is quoted"
+        );
+    }
+
+    #[test]
+    fn a_reply_to_your_own_message_goes_to_who_you_wrote_to() {
+        let mut source = a_message();
+        source.from = vec![EmailAddress::new(None::<String>, "grace@example.com")];
+        source.to = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
+        source.cc = vec![EmailAddress::new(None::<String>, "turing@example.org")];
+
+        let draft = reply(&source, &account("grace@example.com"), plain_quote(&source));
+        assert_eq!(
+            draft.to,
+            vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")],
+            "answering your own message leaves nobody to send to"
+        );
+        assert!(draft.cc.is_empty());
+
+        let draft = reply_all(&source, &account("grace@example.com"), plain_quote(&source));
+        assert_eq!(draft.to.len(), 1);
+        assert_eq!(
+            draft.cc,
+            vec![EmailAddress::new(None::<String>, "turing@example.org")]
         );
     }
 
