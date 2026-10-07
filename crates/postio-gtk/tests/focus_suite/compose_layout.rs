@@ -400,10 +400,16 @@ pub fn the_editor_is_drawn_on_the_dialogs_surface() {
         }
         manager.set_color_scheme(adw::ColorScheme::Default);
         assert_ne!(seen[0], seen[1], "the dialog did not go dark");
-        assert_eq!(
-            composer.test_body_eval("getComputedStyle(document.body).paddingLeft"),
-            "0px",
-            "the text is inset from the column's edge"
+        // The scheme change just made sends the editor a new sheet, which a
+        // slow runner applies after the next read; the padding is judged
+        // once it has landed.
+        assert!(
+            crate::settle_until(async || composer
+                .test_body_eval("getComputedStyle(document.body).paddingLeft")
+                == "0px")
+            .await,
+            "the text is inset from the column's edge: {}",
+            composer.test_body_eval("getComputedStyle(document.body).paddingLeft")
         );
     });
 }

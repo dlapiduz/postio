@@ -172,11 +172,16 @@ pub fn a_select_all_drag_offers_no_files() {
 const PORTAL_MIME: &str = "application/vnd.portal.filetransfer";
 
 /// The drag offers the document portal's spelling beside `text/uri-list`:
-/// inside a sandbox it is the only one that carries a file out. Offering it
-/// needs no portal; serving it does (the ignored case below).
+/// inside a sandbox it is the only one that carries a file out. GTK
+/// registers that spelling only where the file-transfer portal answers, so
+/// a machine without one (a CI runner) has nothing to offer it with.
 pub fn a_dragged_row_offers_the_portal_spelling_too() {
     crate::gtk_case(async {
         if !support::display() {
+            return;
+        }
+        if !portal_available() {
+            eprintln!("skipping: no working org.freedesktop.portal.FileTransfer on this bus");
             return;
         }
         let (_fixture, window, messages) = five_with_sources().await;
