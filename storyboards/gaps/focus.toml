@@ -39,6 +39,10 @@ command = "find_previous"
 context = "list"
 reason  = "acts in the open message only"
 [[gap]]
+command = "go_to_inbox"
+context = "list"
+reason  = "the list is already the inbox"
+[[gap]]
 command = "first_message"
 context = "list"
 reason  = "the cursor is already on the first row"
@@ -134,10 +138,6 @@ reason  = "the first row is open, so there is nothing before it"
 # -- composer: the composer's dialog over the inbox, empty
 [[gap]]
 command = "bold"
-context = "composer"
-reason  = "formatting an empty body changes nothing visible until text is typed"
-[[gap]]
-command = "bullet_list"
 context = "composer"
 reason  = "formatting an empty body changes nothing visible until text is typed"
 [[gap]]
