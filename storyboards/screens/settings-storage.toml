@@ -1,4 +1,6 @@
-# Settings, Sync and storage, each folder's backfill.
+# Settings, Sync and storage, as it opens: at the top of the pane, with the
+# first control and its label whole. The folders it backs up are
+# `settings-storage-backfill`.
 #
 # Focus's design references are never committed
 # (specs/007-postio-focus/screens.md records each one).

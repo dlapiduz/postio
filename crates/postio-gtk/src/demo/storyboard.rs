@@ -200,13 +200,16 @@ pub enum Preset {
     AddAccountBrowser,
     /// The add-account dialog, asking how much mail to keep.
     AddAccountSyncWindow,
+    /// Sync & storage scrolled down to the folders it backs up locally,
+    /// below the pane's fold.
+    SyncBackfill,
     /// The page a store that will not open leaves: here, a locked keyring.
     Locked,
 }
 
 impl Preset {
     /// Every preset Focus can apply.
-    pub const ALL: [Preset; 14] = [
+    pub const ALL: [Preset; 15] = [
         Preset::Settings(Section::Accounts),
         Preset::Settings(Section::Filters),
         Preset::Settings(Section::Composing),
@@ -220,6 +223,7 @@ impl Preset {
         Preset::AddAccountRoute,
         Preset::AddAccountBrowser,
         Preset::AddAccountSyncWindow,
+        Preset::SyncBackfill,
         Preset::Locked,
     ];
 
@@ -240,6 +244,7 @@ impl Preset {
             Preset::AddAccountRoute => "add-account/route",
             Preset::AddAccountBrowser => "add-account/browser",
             Preset::AddAccountSyncWindow => "add-account/syncwindow",
+            Preset::SyncBackfill => "settings/storage-backfill",
             Preset::Locked => "locked",
         }
     }
@@ -253,7 +258,7 @@ impl Preset {
     fn apply(self, started: &Started) -> Result<(), String> {
         let window = &started.window;
         match self {
-            Preset::Settings(Section::Sync) => {
+            Preset::Settings(Section::Sync) | Preset::SyncBackfill => {
                 let panel = open_settings(window, Section::Sync)?;
                 // The mail's weight, as a backfill measures it, and the
                 // folders it is backing up, which sit below the pane's fold.
@@ -270,8 +275,12 @@ impl Preset {
                     false,
                 );
                 pump(Duration::from_millis(800));
-                panel.reveal_backfill();
-                pump(Duration::from_millis(200));
+                // Sync & storage opens at its top, as it does for a person;
+                // the folders are a second view, scrolled to.
+                if self == Preset::SyncBackfill {
+                    panel.reveal_backfill();
+                    pump(Duration::from_millis(200));
+                }
                 Ok(())
             }
             Preset::Settings(section) => open_settings(window, section).map(drop),

@@ -3891,14 +3891,14 @@ impl SettingsPanel {
                 controls.backfill.append(&heading);
             }
             for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
-                let check = CheckRow::new(&mailbox.path);
+                let name = postio_ui::sidebar::path_label(mailbox, mailboxes);
+                let check = CheckRow::new(&name);
                 check.set_active(!mailbox.backfill_excluded);
                 check.widget().set_widget_name(&mailbox.path);
                 check
                     .widget()
                     .update_property(&[gtk::accessible::Property::Label(&format!(
-                        "Back up {} locally",
-                        mailbox.path
+                        "Back up {name} locally",
                     ))]);
                 let id = mailbox.id;
                 check.connect_toggled(glib::clone!(

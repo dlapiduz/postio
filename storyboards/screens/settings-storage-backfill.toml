@@ -1,0 +1,9 @@
+# Settings, Sync and storage scrolled to each folder's backfill: the part of
+# the pane below its fold, with the folders named as the app names them
+# everywhere else (Inbox, not the server's INBOX).
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 41" }
+preset = "settings/storage-backfill"

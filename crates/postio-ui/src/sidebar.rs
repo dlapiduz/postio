@@ -227,6 +227,19 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
     }
 }
 
+/// What a folder is called where its place in the hierarchy matters, as in
+/// Settings' list of folders to back up: a folder with a role goes by the
+/// role's name ("Inbox", not the server's `INBOX`), any other by its full
+/// path, so `Archive/2024` is not mistaken for a folder of its own at the top.
+pub fn path_label(mailbox: &Mailbox, among: &[Mailbox]) -> String {
+    let shown = display_name(mailbox, among);
+    if shown == mailbox.name {
+        mailbox.path.clone()
+    } else {
+        shown
+    }
+}
+
 /// What Postio calls a role, with no folder in hand.
 ///
 /// `None` for `Regular`, which has no name of its own — an ordinary folder is
@@ -259,6 +272,18 @@ pub fn role_name(role: MailboxRole) -> Option<&'static str> {
 mod tests {
 
     // ── The view rows (spec 003, US4) ────────────────────────────────────
+
+    #[test]
+    fn a_folder_list_names_roles_and_paths() {
+        let among = vec![
+            folder(1, "INBOX", MailboxRole::Inbox),
+            folder(2, "Archive", MailboxRole::Archive),
+            folder(3, "Archives", MailboxRole::Archive),
+            folder(4, "Work/Receipts", MailboxRole::Regular),
+        ];
+        let labels: Vec<String> = among.iter().map(|m| path_label(m, &among)).collect();
+        assert_eq!(labels, ["Inbox", "Archive", "Archives", "Work/Receipts"]);
+    }
 
     #[test]
     fn a_view_row_is_built_here_rather_than_by_a_frontend() {
