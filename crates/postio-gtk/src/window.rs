@@ -2016,6 +2016,11 @@ impl FocusWindow {
             Selection::These(_) => self.cursor_row().map(|row| row.id()).into_iter().collect(),
             Selection::Everything { .. } => Vec::new(),
         };
+        self.remember_removed(rows);
+    }
+
+    /// Keep `rows` as taken out of the list, for the undo that returns them.
+    fn remember_removed(&self, rows: Vec<MessageId>) {
         let mut removed = self.imp().removed.borrow_mut();
         removed.extend(rows);
         // Only the last unit can be undone with any confidence about where
@@ -2947,6 +2952,8 @@ impl FocusWindow {
 
     /// Archive a whole delivery: one undo (FR-125).
     fn archive_digest(&self, delivery: postio_model::DeliveryId) {
+        // Its row goes with it, and comes back with the undo.
+        self.remember_removed(vec![MessageId::new(-delivery.get())]);
         self.post(Command::ArchiveDigest {
             delivery,
             archived: true,

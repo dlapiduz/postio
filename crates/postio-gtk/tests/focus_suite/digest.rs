@@ -142,6 +142,17 @@ pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
             "one Ctrl+Z did not bring the digest back: {:?}",
             support::subjects(&window)
         );
+        assert!(
+            crate::settle_until(async || {
+                matches!(
+                    window.cursor_row(),
+                    Some(postio_gtk::list::FocusRow::Digest(_))
+                )
+            })
+            .await,
+            "the cursor is not on the digest's row, which came back: {:?}",
+            window.cursor_row().map(|row| row.id())
+        );
     });
 }
 
