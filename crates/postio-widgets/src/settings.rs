@@ -858,6 +858,10 @@ mod imp {
         /// yet — canvas's "empty is never blank" rule; see
         /// `SettingsPanel::redraw_filters`.
         pub filters_empty: gtk::Label,
+        /// The line under the saved searches that says how one is made --
+        /// there is no add form; the search box saves one -- and the key
+        /// that does it, drawn from the keymap.
+        pub filters_hint_cap: gtk::Label,
         /// `[sync]`'s structured rows (#874) — always exactly five rows, so
         /// no empty state to draw, the same shape `[ui]`'s own pane (#873)
         /// established.
@@ -1011,9 +1015,8 @@ mod imp {
                 account_detail_test_status: OnceCell::new(),
                 filters_list: gtk::ListBox::new(),
                 filters_scroller: gtk::ScrolledWindow::new(),
-                filters_empty: gtk::Label::new(Some(
-                    "No saved searches yet — press Ctrl+S in search to save one.",
-                )),
+                filters_empty: gtk::Label::new(Some("No saved searches yet.")),
+                filters_hint_cap: crate::widgets::keyhint::cap(""),
                 sync_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 ui_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 privacy_list: gtk::ListBox::new(),
@@ -4245,6 +4248,12 @@ impl SettingsPanel {
         if let Some(add) = self.imp().add_account_button.get() {
             add.set_key(keymap.binding(CommandId::AddAccount));
         }
+        let save = keymap.binding(CommandId::SaveSearch);
+        self.imp().filters_hint_cap.set_label(save.unwrap_or(""));
+        // No binding, nothing to say: the sentence ends in the key.
+        if let Some(line) = self.imp().filters_hint_cap.parent() {
+            line.set_visible(save.is_some());
+        }
         self.imp().keymap.replace(keymap.clone());
         if self.imp().filtering_controls.get().is_some() {
             self.redraw_filtering();
@@ -4430,6 +4439,16 @@ impl SettingsPanel {
 
         imp.filters_pane.append(&imp.filters_scroller);
         imp.filters_pane.append(&imp.filters_empty);
+        // There is no add form on this page: a search is saved from the
+        // command bar, once it has a query worth keeping.
+        let hint = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        hint.add_css_class("postio-settings-filters-hint");
+        hint.set_halign(gtk::Align::Start);
+        let hint_words = gtk::Label::new(Some("Save a search from the command bar with"));
+        hint_words.add_css_class("postio-settings-pane-description");
+        hint.append(&hint_words);
+        hint.append(&imp.filters_hint_cap);
+        imp.filters_pane.append(&hint);
 
         // ── privacy: one row per allow-listed sender (#871) ───────────────
         ListOrEmpty::dress(

@@ -62,6 +62,42 @@ pub fn filters_render_as_rows_and_hide_when_there_are_none() {
     window.destroy();
 }
 
+/// The page has no add form: a saved search is made from the command bar.
+/// It says so, with the key out of the live keymap, whether or not there
+/// are rows (the storyboard frame showed four rows and no way to a fifth).
+pub fn the_page_says_how_a_saved_search_is_made() {
+    let Some((window, panel)) = panel_with_text(SAMPLE) else {
+        return;
+    };
+    let keymap = postio_core::Keymap::resolve(&postio_config::KeyBindings::default());
+    panel.set_keymap(&keymap);
+    pump();
+
+    let key = keymap
+        .binding(postio_core::CommandId::SaveSearch)
+        .expect("save search has a default binding");
+    for text in [SAMPLE, ""] {
+        panel.set_text(text);
+        pump();
+        let hints = collect(
+            panel.upcast_ref::<gtk::Widget>(),
+            "postio-settings-filters-hint",
+        );
+        let hint = hints
+            .iter()
+            .find(|w| w.is_visible())
+            .expect("a visible line saying how a saved search is made");
+        let caps: Vec<String> = collect(hint, "postio-keyhint")
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk::Label>().ok())
+            .map(|l| l.text().to_string())
+            .collect();
+        assert_eq!(caps, vec![key.to_string()], "the keycap is the keymap's");
+    }
+
+    window.destroy();
+}
+
 pub fn pinned_filters_come_first_in_order_then_unpinned_ones_alphabetically() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;

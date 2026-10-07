@@ -1,5 +1,6 @@
 # Settings, Saved searches: the searches pinned to the places list, each
-# with its query, and the form that adds one.
+# with its query. There is no form that adds one: the page says a search
+# is saved from the command bar, and names the key.
 #
 # Focus's design references are never committed
 # (specs/007-postio-focus/screens.md records each one).
