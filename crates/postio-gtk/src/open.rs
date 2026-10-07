@@ -997,7 +997,7 @@ impl OpenMessage {
         self.messages.set(1);
         self.thread.borrow_mut().clear();
         self.at.set(0);
-        self.show_thread_chip(1);
+        self.show_thread_chip(1, true);
         self.show_labels(&[]);
         self.marker.replace(None);
         self.row.set(None);
@@ -1179,7 +1179,7 @@ impl OpenMessage {
             self.send_state.get(),
         );
         self.subtitle.set_text(&said);
-        self.show_thread_chip(messages);
+        self.show_thread_chip(messages, latest);
     }
 
     /// Read `message` from the store, and draw it if it is still the one on
@@ -1320,22 +1320,53 @@ impl OpenMessage {
     }
 
     /// "Latest of 6 in this thread · [ earlier message", for a thread.
-    fn show_thread_chip(&self, messages: u32) {
+    fn show_thread_chip(&self, messages: u32, latest: bool) {
         while let Some(child) = self.thread_chip.first_child() {
             self.thread_chip.remove(&child);
         }
-        let chip = focus_dialog::thread_chip(messages);
+        let at = self.at.get();
+        let chip = focus_dialog::thread_chip_at(messages, at, latest);
         self.thread_chip.set_visible(chip.is_some());
         let Some(chip) = chip else {
             return;
         };
         let keymap = self.keymap.borrow();
         self.thread_chip.append(&gtk::Label::new(Some(&chip)));
-        if let Some(key) = hints::key(&keymap, CommandId::PrevInConversation) {
+        if at > 0
+            && let Some(key) = hints::key(&keymap, CommandId::PrevInConversation)
+        {
             self.thread_chip.append(&keyhint::cap(&key));
             self.thread_chip
                 .append(&gtk::Label::new(Some(focus_dialog::EARLIER_MESSAGE)));
         }
+        if !latest
+            && let Some(key) = hints::key(&keymap, CommandId::NextInConversation)
+        {
+            self.thread_chip.append(&keyhint::cap(&key));
+            self.thread_chip
+                .append(&gtk::Label::new(Some(focus_dialog::LATER_MESSAGE)));
+        }
+    }
+
+    /// The line above the subject as it reads: the words and the keys.
+    pub fn thread_chip_said(&self) -> String {
+        let mut words = Vec::new();
+        let mut child = self.thread_chip.first_child();
+        while let Some(widget) = child {
+            if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+                words.push(label.text().to_string());
+            } else {
+                let mut inner = widget.first_child();
+                while let Some(part) = inner {
+                    if let Some(label) = part.downcast_ref::<gtk::Label>() {
+                        words.push(label.text().to_string());
+                    }
+                    inner = part.next_sibling();
+                }
+            }
+            child = widget.next_sibling();
+        }
+        words.join(" ")
     }
 
     /// The conversation's label pills, and "+ Label".

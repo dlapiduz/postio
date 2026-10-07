@@ -241,12 +241,21 @@ pub fn brackets_step_through_the_thread() {
             reading.subtitle(),
             "Message 1 of 1 \u{b7} 2 of 3 in the thread"
         );
+        assert_eq!(
+            reading.thread_chip_said(),
+            "2 of 3 in this thread [ earlier message ] later message",
+            "the line above the subject says where the dialog is"
+        );
         support::press(&window, "bracketright", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || reading.body_text().contains("Message 3")).await,
             "] did not step back"
         );
         assert_eq!(reading.subtitle(), "Message 1 of 1 \u{b7} thread of 3");
+        assert_eq!(
+            reading.thread_chip_said(),
+            "Latest of 3 in this thread [ earlier message"
+        );
     });
 }
 

@@ -292,6 +292,18 @@ pub fn thread_chip(messages: u32) -> Option<String> {
     (messages > 1).then(|| format!("Latest of {messages} in this thread"))
 }
 
+/// The thread chip for the message at `at` of `messages`: the latest says
+/// so, an earlier one says which it is.
+pub fn thread_chip_at(messages: u32, at: usize, latest: bool) -> Option<String> {
+    if latest {
+        return thread_chip(messages);
+    }
+    (messages > 1).then(|| format!("{} of {messages} in this thread", at + 1))
+}
+
+/// What follows the key on the thread chip, for stepping to a newer one.
+pub const LATER_MESSAGE: &str = "later message";
+
 /// What follows the key on the thread chip.
 pub const EARLIER_MESSAGE: &str = "earlier message";
 
@@ -483,6 +495,16 @@ mod tests {
             thread_chip(6).as_deref(),
             Some("Latest of 6 in this thread")
         );
+        // Stepped back, the chip names the message shown, not the latest.
+        assert_eq!(
+            thread_chip_at(7, 5, false).as_deref(),
+            Some("6 of 7 in this thread")
+        );
+        assert_eq!(
+            thread_chip_at(7, 6, true).as_deref(),
+            Some("Latest of 7 in this thread")
+        );
+        assert_eq!(thread_chip_at(1, 0, true), None);
         assert_eq!(step_thread(2, 4, -1), Some(1));
         assert_eq!(step_thread(0, 4, -1), None);
         assert_eq!(step_thread(3, 4, 1), None);
