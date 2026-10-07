@@ -300,6 +300,11 @@ impl BodyView {
         }
     }
 
+    /// The range the highlight covers, if one is set.
+    pub fn highlighted(&self) -> Option<std::ops::Range<usize>> {
+        self.imp().highlight.borrow().clone()
+    }
+
     /// The highlight's rectangles, in document coordinates.
     pub fn highlight_rects(&self) -> Vec<postio_render::Rect> {
         match (self.imp().highlight.borrow().clone(), self.document()) {

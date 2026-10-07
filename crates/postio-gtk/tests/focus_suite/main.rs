@@ -604,6 +604,10 @@ const CASES: &[(&str, fn())] = &[
         bar::in_rec_lists_receipts_newest_first as fn(),
     ),
     (
+        "marker_card::the_highlight_starts_and_ends_on_the_sentences_own_words",
+        marker_card::the_highlight_starts_and_ends_on_the_sentences_own_words as fn(),
+    ),
+    (
         "marker_card::the_card_dismisses_its_marker",
         marker_card::the_card_dismisses_its_marker as fn(),
     ),

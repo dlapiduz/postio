@@ -120,3 +120,48 @@ pub fn the_card_dismisses_its_marker() {
         );
     });
 }
+
+/// The highlight sits on the sentence's own words: the first and last
+/// characters it covers are the sentence's, in a body that is one short
+/// paragraph (the Atlas question, which the reviewer saw start on the
+/// period before it and stop short of its "?").
+pub fn the_highlight_starts_and_ends_on_the_sentences_own_words() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        const ASK: &str = "Can you approve these by Friday so finance can close the quarter?";
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(
+                ("Lena Park", "lena@example.org"),
+                "Re: Atlas Q3 budget",
+                "x",
+                5,
+            )
+            .await;
+        fixture
+            .write_body(
+                message,
+                &format!("The final Q3 numbers are in the attached sheet. {ASK}\n"),
+            )
+            .await;
+        fixture.ask(message, ASK).await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        assert!(
+            crate::settle_until(async || !reading.reader().view().highlight_rects().is_empty())
+                .await,
+            "the sentence was not highlighted"
+        );
+        let document = reading.reader().view().document().expect("rendered");
+        let range = reading.reader().view().highlighted().expect("a range");
+        assert_eq!(document.text.slice(range), ASK);
+    });
+}

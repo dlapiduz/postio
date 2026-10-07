@@ -1332,7 +1332,7 @@ impl OpenMessage {
         };
         let keymap = self.keymap.borrow();
         self.thread_chip.append(&gtk::Label::new(Some(&chip)));
-        if at > 0
+        if (latest || at > 0)
             && let Some(key) = hints::key(&keymap, CommandId::PrevInConversation)
         {
             self.thread_chip.append(&keyhint::cap(&key));
