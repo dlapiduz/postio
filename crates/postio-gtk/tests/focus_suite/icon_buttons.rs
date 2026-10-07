@@ -181,7 +181,7 @@ pub fn the_settings_icon_buttons_keep_their_own_shape() {
         assert_icon_buttons_keep_their_shape("Settings", &dialog);
         let filters = crate::settings::section_rows(&dialog)
             .into_iter()
-            .find(|(name, _)| name == "Filters")
+            .find(|(name, _)| name == "Saved searches")
             .map(|(_, row)| row)
             .expect("Filters is listed");
         support::click(&window, &filters, 1);
@@ -194,6 +194,6 @@ pub fn the_settings_icon_buttons_keep_their_own_shape() {
             .await,
             "the saved search's own icon buttons are drawn"
         );
-        assert_icon_buttons_keep_their_shape("Settings' Filters", &dialog);
+        assert_icon_buttons_keep_their_shape("Settings' Saved searches", &dialog);
     });
 }

@@ -219,6 +219,19 @@ pub fn an_account_row_says_what_its_mail_weighs() {
         None,
         "an account nothing has measured makes no claim"
     );
+    // The line is the half of the row the weight is for, so a narrow row
+    // wraps it onto a second line rather than cutting it off at "would add".
+    let facts = collect(
+        rows(&panel)[0].upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-metadata",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .expect("the row's facts line");
+    assert!(
+        facts.wraps() && facts.ellipsize() == gtk::pango::EllipsizeMode::None,
+        "the facts line must wrap, not truncate"
+    );
     // Switching the policy re-reads the same footprint and asks the other
     // question of it.
     panel.set_mail_weights(&[(AccountId::new(1), ada)], true);

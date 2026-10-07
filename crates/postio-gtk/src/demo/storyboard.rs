@@ -253,6 +253,27 @@ impl Preset {
     fn apply(self, started: &Started) -> Result<(), String> {
         let window = &started.window;
         match self {
+            Preset::Settings(Section::Sync) => {
+                let panel = open_settings(window, Section::Sync)?;
+                // The mail's weight, as a backfill measures it, and the
+                // folders it is backing up, which sit below the pane's fold.
+                panel.set_mail_weights(
+                    &[(
+                        started.account,
+                        postio_core::event::MailFootprint {
+                            total_bytes: 12_884_901_888,
+                            attachment_bytes: 11_811_160_064,
+                            local_bytes: 933_232_640,
+                            complete: true,
+                        },
+                    )],
+                    false,
+                );
+                pump(Duration::from_millis(800));
+                panel.reveal_backfill();
+                pump(Duration::from_millis(200));
+                Ok(())
+            }
             Preset::Settings(section) => open_settings(window, section).map(drop),
             Preset::AccountForm | Preset::SignatureEditor => {
                 let panel = open_settings(window, Section::Accounts)?;
@@ -341,11 +362,11 @@ fn show_account_weights(panel: &postio_widgets::settings::SettingsPanel) {
             ),
             (
                 postio_model::AccountId::new(2),
-                footprint(1_503_238_553, 1_400_000_000, 933_232_640, true),
+                footprint(1_503_238_553, 1_400_000_000, 103_809_024, true),
             ),
             (
                 postio_model::AccountId::new(3),
-                footprint(12_884_901_888, 11_811_160_064, 933_232_640, false),
+                footprint(8_589_934_592, 7_516_192_768, 2_254_857_830, false),
             ),
         ],
         false,

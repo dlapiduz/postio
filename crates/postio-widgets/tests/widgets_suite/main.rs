@@ -718,6 +718,10 @@ const CASES: &[(&str, fn())] = &[
         settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent as fn(),
     ),
     (
+        "settings_sync::the_local_store_box_follows_the_accounts_and_their_weights",
+        settings_sync::the_local_store_box_follows_the_accounts_and_their_weights as fn(),
+    ),
+    (
         "settings_sync::the_pane_shows_the_files_values",
         settings_sync::the_pane_shows_the_files_values as fn(),
     ),

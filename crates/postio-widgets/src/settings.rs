@@ -1107,6 +1107,7 @@ impl SettingsPanel {
     pub fn set_accounts(&self, accounts: Vec<Account>) {
         *self.imp().accounts.borrow_mut() = accounts;
         self.redraw_accounts();
+        self.refresh_storage_stats();
     }
 
     /// What each account's mail weighs, and whether payloads are already
@@ -1130,6 +1131,7 @@ impl SettingsPanel {
         *imp.weights.borrow_mut() = weights.to_vec();
         imp.attachments_included.set(attachments_included);
         self.redraw_accounts();
+        self.refresh_storage_stats();
     }
 
     /// Every OAuth account's persisted token expiry (#878) — an id present
@@ -1573,6 +1575,11 @@ impl SettingsPanel {
         let facts = facts.join(" · ");
         let metadata = stat_line(&facts);
         metadata.add_css_class("postio-settings-account-metadata");
+        // What the row is for -- the weight, the sign-in, the rebuild -- is
+        // at the line's far end, so it wraps rather than being cut off.
+        metadata.set_ellipsize(gtk::pango::EllipsizeMode::None);
+        metadata.set_wrap(true);
+        metadata.set_wrap_mode(gtk::pango::WrapMode::WordChar);
 
         let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
         text.set_hexpand(true);
@@ -3440,12 +3447,12 @@ impl SettingsPanel {
 
         // A checkbox, not a switch: pinned is a value written to the file,
         // and ADR 0029 Q2 keeps switches for acts.
-        let pinned = CheckRow::new("In sidebar");
+        let pinned = CheckRow::new("Pinned");
         pinned.set_active(filter.pinned);
         pinned
             .widget()
             .update_property(&[gtk::accessible::Property::Label(&format!(
-                "Show {title} in the sidebar"
+                "Pin {title} across the command bar"
             ))]);
         pinned.connect_toggled(glib::clone!(
             #[weak(rename_to = panel)]
@@ -3790,6 +3797,26 @@ impl SettingsPanel {
         self.imp().folders.borrow_mut().insert(account, folders);
         if self.imp().sync_controls.get().is_some() {
             self.redraw_backfill();
+        }
+    }
+
+    /// Scrolls Sync & storage to "Back up locally", the part of the pane a
+    /// short window keeps below its fold. A no-op while there are no folders.
+    pub fn reveal_backfill(&self) {
+        let Some(controls) = self.imp().sync_controls.get() else {
+            return;
+        };
+        if !controls.backfill_heading.is_visible() {
+            return;
+        }
+        if let Some(scroller) = controls
+            .backfill_heading
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_downcast::<gtk::ScrolledWindow>()
+            && let Some(bounds) = controls.backfill_heading.compute_bounds(&scroller.child().unwrap())
+        {
+            let adjustment = scroller.vadjustment();
+            adjustment.set_value(f64::from(bounds.y()) - 24.0);
         }
     }
 

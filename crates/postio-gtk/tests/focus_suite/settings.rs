@@ -251,7 +251,7 @@ pub fn every_section_focus_shows_is_reachable_and_appearance_is_not() {
         };
         let shown = [
             "Accounts",
-            "Filters",
+            "Saved searches",
             "Composing",
             "Keyboard",
             "Sync & storage",
@@ -581,7 +581,7 @@ pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
         let filters = || {
             section_rows(&dialog)
                 .into_iter()
-                .find(|(name, _)| name == "Filters")
+                .find(|(name, _)| name == "Saved searches")
                 .map(|(_, row)| row)
         };
         assert!(crate::settle_until(async || filters().is_some()).await);

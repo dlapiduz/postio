@@ -132,7 +132,7 @@ impl Section {
     pub fn label(self) -> &'static str {
         match self {
             Section::Accounts => "Accounts",
-            Section::Filters => "Filters",
+            Section::Filters => "Saved searches",
             Section::Composing => "Composing",
             Section::Appearance => "Appearance",
             Section::Keyboard => "Keyboard",
@@ -146,11 +146,11 @@ impl Section {
     pub fn description(self) -> &'static str {
         match self {
             Section::Accounts => "Every account this installation signs in to.",
-            Section::Filters => "Saved searches, and which of them the sidebar shows.",
+            Section::Filters => "Saved searches, and which of them are pinned across the command bar.",
             Section::Composing => "Signatures, and where one goes when a quote sits under it.",
             Section::Appearance => "How the message list is drawn, and how much of it fits.",
             Section::Keyboard => "Every command and the key that runs it.",
-            Section::Sync => "When mail is fetched, and what the local store keeps.",
+            Section::Sync => "When mail syncs, and what the local store keeps.",
             Section::Privacy => "What Postio will not do without being asked.",
             Section::ConfigFile => "The whole file, as text. Everything above writes here.",
         }
@@ -167,7 +167,7 @@ impl Section {
     pub fn keywords(self) -> &'static str {
         match self {
             Section::Accounts => "account address imap smtp password oauth signature server remove",
-            Section::Filters => "saved search query pinned sidebar filter",
+            Section::Filters => "saved search query pinned command bar filter",
             Section::Composing => "signature reply forward quote compose",
             Section::Appearance => "theme dark light density row height avatars hover font",
             Section::Keyboard => "key binding shortcut rebind keys chord",
@@ -527,5 +527,20 @@ idle = true
     #[test]
     fn section_at_line_past_the_end_of_the_file_is_the_last_section() {
         assert_eq!(section_at_line(SAMPLE, 999), Some(Section::Sync));
+    }
+}
+
+#[cfg(test)]
+mod saved_search_words {
+    use super::Section;
+
+    /// Focus has no sidebar, and "Filters" is a mailbox's name there
+    /// (`Filtered`): the page says what it is and where its pins go.
+    #[test]
+    fn the_saved_searches_page_names_no_sidebar_and_borrows_no_mailbox_name() {
+        assert_eq!(Section::Filters.label(), "Saved searches");
+        let said = Section::Filters.description();
+        assert!(!said.contains("sidebar"), "{said:?}");
+        assert!(said.contains("command bar"), "{said:?}");
     }
 }

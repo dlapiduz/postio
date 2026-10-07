@@ -133,6 +133,46 @@ pub fn typing_new_roles_and_pressing_enter_writes_the_new_list() {
 
 /// A panel showing `text`, with Sync & storage on screen — the pane builds
 /// its controls on first display (#873), so it has to be shown first.
+/// The Local store box counts the accounts the panel was given, however
+/// late they arrive: Settings opens before the host has answered, and a box
+/// that says "0 accounts" beside a list of one contradicts the pane next to it.
+pub fn the_local_store_box_follows_the_accounts_and_their_weights() {
+    let Some((window, panel)) = panel_with_text(SAMPLE) else {
+        return;
+    };
+    assert!(
+        stat_lines(&panel).iter().any(|line| line == "0 accounts"),
+        "{:?}",
+        stat_lines(&panel)
+    );
+    let mut account = postio_model::Account::new(
+        "Ada",
+        postio_model::EmailAddress::new(Some("Ada"), "ada@example.com"),
+    );
+    account.id = postio_model::AccountId::new(1);
+    panel.set_accounts(vec![account]);
+    panel.set_mail_weights(
+        &[(
+            postio_model::AccountId::new(1),
+            postio_core::event::MailFootprint {
+                total_bytes: 12_884_901_888,
+                attachment_bytes: 11_811_160_064,
+                local_bytes: 933_232_640,
+                complete: true,
+            },
+        )],
+        false,
+    );
+    pump();
+    let lines = stat_lines(&panel);
+    assert!(lines.iter().any(|line| line == "1 account"), "{lines:?}");
+    assert!(
+        lines.iter().all(|line| !line.contains("not measured yet")),
+        "{lines:?}"
+    );
+    window.destroy();
+}
+
 fn panel_with_text(text: &str) -> Option<(gtk::Window, SettingsPanel)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

@@ -119,7 +119,7 @@ fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
         labels,
         [
             "Accounts",
-            "Filters",
+            "Saved searches",
             "Composing",
             "Appearance",
             "Keyboard",
@@ -137,7 +137,7 @@ fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
         .filter(|s| s.group == GroupFfi::Mail)
         .map(|s| s.label.as_str())
         .collect();
-    assert_eq!(mail, ["Accounts", "Filters", "Composing"]);
+    assert_eq!(mail, ["Accounts", "Saved searches", "Composing"]);
     assert_eq!(settings_group_label(GroupFfi::Application), "APPLICATION");
 }
 
