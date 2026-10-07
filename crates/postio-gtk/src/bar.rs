@@ -103,6 +103,9 @@ pub struct Bar {
     contacts: Rc<RefCell<Vec<postio_model::Contact>>>,
     /// Which account each mailbox belongs to, when more than one is enabled.
     owners: Rc<RefCell<Vec<(MailboxId, String)>>>,
+    /// Where the keyboard goes when the bar closes: the list, once the
+    /// window says which widget that is.
+    home: RefCell<Option<gtk::Widget>>,
 }
 
 /// Where the highlight goes when the results have been drawn.
@@ -238,6 +241,7 @@ impl Bar {
             result_heading: RefCell::default(),
             contacts: Rc::default(),
             owners: Rc::default(),
+            home: RefCell::default(),
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
@@ -388,6 +392,11 @@ impl Bar {
         self.digesting.set(digesting);
     }
 
+    /// Hand the keyboard to `home` whenever the bar closes.
+    pub fn set_home(&self, home: gtk::Widget) {
+        self.home.replace(Some(home));
+    }
+
     /// Open the bar, empty, and read the places it can go.
     pub fn open(&self) {
         self.open.set(true);
@@ -421,7 +430,10 @@ impl Bar {
                 .focus()
                 .is_some_and(|focus| focus.is_ancestor(&self.root) || focus == self.root)
         {
-            root.set_focus(None::<&gtk::Widget>);
+            // To the list when the window said where that is, to nothing
+            // otherwise: a window's own keys are heard from either.
+            let home = self.home.borrow().clone();
+            root.set_focus(home.as_ref());
         }
         self.over.set_visible(false);
         self.show_field(true);

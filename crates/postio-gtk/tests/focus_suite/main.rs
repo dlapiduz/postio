@@ -54,6 +54,7 @@ mod hostile_mail;
 mod icon_buttons;
 mod idle_passes;
 mod invitations;
+mod keyboard_home;
 mod keymap;
 mod list_contract;
 mod list_reload;
@@ -1216,6 +1217,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key",
         chrome::the_top_bar_and_the_header_strip_carry_each_control_and_its_key as fn(),
+    ),
+    (
+        "keyboard_home::the_window_opens_with_the_keyboard_in_the_list",
+        keyboard_home::the_window_opens_with_the_keyboard_in_the_list as fn(),
+    ),
+    (
+        "keyboard_home::escape_from_the_bar_returns_the_keyboard_to_the_list",
+        keyboard_home::escape_from_the_bar_returns_the_keyboard_to_the_list as fn(),
+    ),
+    (
+        "keyboard_home::going_to_a_place_leaves_the_keyboard_in_the_list",
+        keyboard_home::going_to_a_place_leaves_the_keyboard_in_the_list as fn(),
+    ),
+    (
+        "keyboard_home::the_keyboard_follows_the_cursor_row",
+        keyboard_home::the_keyboard_follows_the_cursor_row as fn(),
     ),
     (
         "cursor::j_and_k_move_only_the_cursor",

@@ -1751,11 +1751,56 @@ impl FocusWindow {
             .unwrap_or(0)
     }
 
+    /// Give the keyboard to the list: the one place it rests when nothing
+    /// else is being typed into. At launch, after the bar closes, after a
+    /// place is chosen and after an overlay goes, the window's real focus is
+    /// the list view -- not the top bar's Compose button, nor the header's
+    /// place button, where Space or Return would press a control instead of
+    /// acting on the row under the cursor. The view itself, not a row of
+    /// it: the cursor is the row that is drawn, and a row that also held
+    /// GTK's focus would be a second ring.
+    pub fn focus_list(&self) {
+        if let Some(pane) = self.pane() {
+            gtk::prelude::GtkWindowExt::set_focus(self, Some(pane.view()));
+        }
+    }
+
+    /// [`Self::focus_list`] once what is closing has had its say: a popover
+    /// hands the keyboard back to what had it before, on the way out.
+    fn focus_list_soon(&self) {
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || {
+                if window.keyboard_is_free() {
+                    window.focus_list();
+                }
+            }
+        ));
+    }
+
+    /// Whether nothing is holding the keyboard for itself: no dialog over
+    /// the window, no open bar or popover, and nothing being typed.
+    fn keyboard_is_free(&self) -> bool {
+        self.visible_dialog().is_none()
+            && !self.is_typing()
+            && self.bar().is_none_or(|bar| !bar.is_open())
+            && self.places().is_none_or(|places| !places.is_open())
+    }
+
     /// Put the cursor on `position`, or on nothing, and bring it into view.
     fn cursor_to(&self, position: Option<u32>) {
         let Some(pane) = self.pane() else {
             return;
         };
+        // A click on a row gives GTK's focus to that row, and the cursor
+        // moving on would leave it behind with a ring of its own.
+        if let Some(focus) = gtk::prelude::GtkWindowExt::focus(self)
+            && focus != *pane.view().upcast_ref::<gtk::Widget>()
+            && focus.is_ancestor(pane.view())
+        {
+            self.focus_list();
+        }
         match position {
             Some(position) if position < pane.feed().list().n_items() => {
                 pane.cursor().set_selected(position);
@@ -2205,6 +2250,8 @@ impl FocusWindow {
             self,
             move |action| window.bar_action(action)
         ));
+        // Closing it hands the keyboard to the list.
+        bar.set_home(pane.view().clone().upcast());
         // In place (spec C24): the bar's input is drawn over the top bar's
         // own field and its results hang below, so the bar lies over the
         // whole window rather than over the list.
@@ -2261,6 +2308,9 @@ impl FocusWindow {
         crate::motion::keep_to_budget(self);
         self.place_reading();
         feed.open(ListScope::Focus(FocusScope::Inbox));
+        // Opened with the keyboard in the list, not on the first control GTK
+        // finds in the top bar.
+        self.focus_list();
 
         // Exactly one reader of the client's events, on the main loop:
         // clones of the receiver would compete for them (research R3).
@@ -2475,6 +2525,7 @@ impl FocusWindow {
         pane.feed().open(scope);
         chrome.set_place(name);
         self.show_counts();
+        self.focus_list_soon();
     }
 
     /// Say the counts the host last gave: the strip's, the toggle's, and
@@ -3350,9 +3401,7 @@ impl FocusWindow {
     /// Back from Filtered to the inbox, as it was.
     fn leave_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
-        if let Some(pane) = self.pane() {
-            pane.view().grab_focus();
-        }
+        self.focus_list();
     }
 
     /// What the Filtered view asked for.
@@ -3815,11 +3864,8 @@ impl FocusWindow {
             self.place_reading();
         }
         self.show_pane_page();
-        if reading.in_pane()
-            && !reading.is_open()
-            && let Some(pane) = self.pane()
-        {
-            pane.view().grab_focus();
+        if reading.in_pane() && !reading.is_open() {
+            self.focus_list();
         }
     }
 
@@ -4201,6 +4247,13 @@ impl FocusWindow {
                     self,
                     move |command| window.act(command)
                 ));
+                // Chosen from or dismissed, the keyboard goes back to the
+                // list, not to the button the popover hangs from.
+                places.connect_closed(glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move || window.focus_list_soon()
+                ));
                 places
             })
             .clone();
@@ -4237,6 +4290,7 @@ impl FocusWindow {
                 pane.feed().open(ListScope::Mailbox(mailbox));
                 chrome.set_place(name);
                 self.show_counts();
+                self.focus_list_soon();
             }
             Destination::Label(_) => {
                 if let Some(bar) = self.bar() {
@@ -4259,6 +4313,7 @@ impl FocusWindow {
                 pane.feed().open(ListScope::Outbox(account));
                 chrome.set_place(name);
                 self.show_counts();
+                self.focus_list_soon();
             }
         }
     }
@@ -4275,6 +4330,7 @@ impl FocusWindow {
         pane.feed().open(ListScope::Focus(FocusScope::Inbox));
         chrome.set_place("Inbox");
         self.show_counts();
+        self.focus_list_soon();
     }
 
     /// Whether `mailbox` is an inbox: going there is going to Focus's.

@@ -219,6 +219,11 @@ impl Places {
         self.read();
     }
 
+    /// Run `handler` each time the popover closes, however it did.
+    pub fn connect_closed(&self, handler: impl Fn() + 'static) {
+        self.popover.connect_closed(move |_| handler());
+    }
+
     /// Close the popover without going anywhere.
     pub fn close(&self) {
         self.popover.popdown();
