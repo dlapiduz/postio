@@ -1283,3 +1283,15 @@ button.focus-compose-detach {
   border-color: var(--postio-ink);
   box-shadow: inset 0 0 0 1px var(--postio-ink);
 }
+
+/* ── The digest summary's focused statement ──────────────────────────────
+   Where the keyboard is, drawn as the list's cursor is: the focus ring. */
+.focus-digest-summary-statement {
+  padding: var(--postio-space-1) var(--postio-space-2);
+  border-radius: var(--postio-radius-sm);
+}
+
+.focus-digest-summary-statement.focus-digest-summary-focused {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}

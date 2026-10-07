@@ -301,6 +301,44 @@ pub fn topics(statements: &[postio_model::summary::SummaryStatement]) -> Vec<Top
     runs
 }
 
+/// A topic's heading with its count and its sources: `Rates · 3 statements
+/// from 2 messages`. Counted from the run itself, so the heading says what
+/// the group holds before a statement is read.
+pub fn topic_heading(topic: &Topic<'_>) -> String {
+    let statements = topic.statements.len();
+    let messages = topic
+        .statements
+        .iter()
+        .map(|statement| statement.reference.message)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    format!(
+        "{} \u{b7} {statements} {} from {messages} {}",
+        topic.name,
+        if statements == 1 {
+            "statement"
+        } else {
+            "statements"
+        },
+        if messages == 1 { "message" } else { "messages" },
+    )
+}
+
+/// What the focused reference's card says it is: its number, who wrote the
+/// message and its subject -- `Reference 3 · Ada Moreno · The rate decision`.
+/// A card that only repeated a subject read as a third heading under the
+/// last group.
+pub fn reference_title(number: u32, sender: Option<&str>, subject: Option<&str>) -> String {
+    let mut said = format!("Reference {number}");
+    for part in [sender, subject].into_iter().flatten() {
+        if !part.is_empty() {
+            said.push_str(" \u{b7} ");
+            said.push_str(part);
+        }
+    }
+    said
+}
+
 /// The line under a summary: where it was written and what it cites.
 pub fn summary_footer(messages: u32) -> String {
     format!(
@@ -509,6 +547,40 @@ pub const RULE_ROW_BUTTONS: [(postio_core::CommandId, &str); 2] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_topic_heading_carries_its_count_and_its_sources() {
+        let mut statements = vec![
+            statement("Rates", 1),
+            statement("Rates", 2),
+            statement("Rates", 3),
+            statement("Engineering reading", 4),
+        ];
+        // Two of the three cite one message.
+        statements[1].reference.message = statements[0].reference.message;
+        let runs = topics(&statements);
+        assert_eq!(
+            topic_heading(&runs[0]),
+            "Rates \u{b7} 3 statements from 2 messages"
+        );
+        assert_eq!(
+            topic_heading(&runs[1]),
+            "Engineering reading \u{b7} 1 statement from 1 message"
+        );
+    }
+
+    #[test]
+    fn a_reference_card_names_its_number_sender_and_subject() {
+        assert_eq!(
+            reference_title(3, Some("Ada Moreno"), Some("The rate decision")),
+            "Reference 3 \u{b7} Ada Moreno \u{b7} The rate decision"
+        );
+        assert_eq!(
+            reference_title(3, None, Some("Plans")),
+            "Reference 3 \u{b7} Plans"
+        );
+        assert_eq!(reference_title(3, None, None), "Reference 3");
+    }
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 9, 26).expect("a real date")

@@ -158,6 +158,7 @@ mod tests {
             || rule.contains(":focus")
             || rule.starts_with(".focus-list > row:selected ")
             || rule.starts_with(".focus-filtered-list > row:selected ")
+            || rule.starts_with(".focus-digest-summary-statement.focus-digest-summary-focused ")
             || rule.contains(".focus-marker")
             || rule.contains(".focus-has-action:checked")
     }

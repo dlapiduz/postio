@@ -5190,6 +5190,13 @@ impl FocusWindow {
             serde_json::Value::Bool(self.close_button_showing()),
         );
         let bulk = imp.bulk.borrow().as_ref().and_then(|bulk| bulk.summary());
+        // Which statement of the digest's summary holds the keyboard.
+        if let Some(digest) = digest.as_ref() {
+            app.insert(
+                "focus.digest.reference".to_owned(),
+                serde_json::json!(digest.focused_reference()),
+            );
+        }
         // What the empty page says, when it is the page showing in place of
         // the list: a place with nothing in it is not a blank pane.
         let empty = self

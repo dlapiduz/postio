@@ -4,6 +4,7 @@
 //! window makes of it.
 
 use gtk::gdk;
+use gtk::prelude::*;
 use postio_gtk::digest::DigestPage;
 
 use crate::digest::{delivered_holding, open_digest};
@@ -180,7 +181,7 @@ pub fn a_reference_opens_its_email_in_place_with_the_passage_highlighted() {
             digest
                 .texts()
                 .iter()
-                .any(|text| text == "The weekly numbers"),
+                .any(|text| text.contains("The weekly numbers")),
             "the focused reference does not show its message: {:?}",
             digest.texts()
         );
@@ -238,6 +239,79 @@ pub fn a_reference_opens_its_email_in_place_with_the_passage_highlighted() {
             digest.focused_reference(),
             Some(2),
             "back at the same reference"
+        );
+    });
+}
+
+/// The digest window's summary takes `j` and `k` as it takes `]` and `[`,
+/// and shows where the keyboard is: the focused statement wears the ring,
+/// the keyboard is on it, and a key pressed now is heard (the storyboard
+/// review of 2026-10: `j` did nothing, and the outline sat on an invisible
+/// row of the list behind the summary).
+pub fn the_summary_takes_j_and_k_and_rings_the_focused_statement() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (fixture, _) = summarised().await;
+        let (window, _client) = fixture.open().await;
+        let digest = open_digest(&window).await;
+        assert!(
+            crate::settle_until(async || digest.showing() == DigestPage::Summary).await,
+            "no summary"
+        );
+        assert!(
+            crate::settle_until(async || digest.keyboard_on_statement(0)).await,
+            "the keyboard never reached the first statement: {}",
+            support::focus_path(&window)
+        );
+        let ringed = |digest: &postio_gtk::digest::DigestWindow| -> Vec<usize> {
+            digest
+                .statement_rows()
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.has_css_class("focus-digest-summary-focused"))
+                .map(|(index, _)| index)
+                .collect()
+        };
+        assert_eq!(ringed(&digest), [0], "the first statement wears the ring");
+        assert!(
+            crate::settle_until(async || window.observe().keyboard.reachable).await,
+            "a key pressed now is heard: the keyboard is on {}",
+            support::focus_path(&window)
+        );
+        assert!(
+            digest.keyboard_on_statement(0),
+            "the keyboard is on the focused statement: {}",
+            support::focus_path(&window)
+        );
+
+        support::keys(&window, &["j"]);
+        assert_eq!(digest.focused_reference(), Some(1), "j moves to the next");
+        assert_eq!(ringed(&digest), [1], "and the ring moves with it");
+        assert!(
+            crate::settle_until(async || {
+                digest.keyboard_on_statement(1) && window.observe().keyboard.reachable
+            })
+            .await,
+            "the keyboard moved with it: {}",
+            support::focus_path(&window)
+        );
+        support::keys(&window, &["j", "j"]);
+        assert_eq!(digest.focused_reference(), Some(2), "not past the last");
+        support::keys(&window, &["k"]);
+        assert_eq!(digest.focused_reference(), Some(1), "k moves back");
+        assert_eq!(ringed(&digest), [1]);
+
+        let said = digest.texts();
+        assert!(
+            said.iter()
+                .any(|text| text == "Rates \u{b7} 2 statements from 1 message"),
+            "a group says what it holds and from where: {said:?}"
+        );
+        assert!(
+            said.iter().any(|text| text.starts_with("Reference ")),
+            "the card names which reference is focused: {said:?}"
         );
     });
 }

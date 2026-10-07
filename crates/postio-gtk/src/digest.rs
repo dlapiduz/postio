@@ -101,6 +101,9 @@ pub struct DigestWindow {
     paragraph_labels: RefCell<Vec<gtk::Label>>,
     /// The statements' reference chips, parallel to `paragraph_labels`.
     reference_chips: RefCell<Vec<gtk::Label>>,
+    /// The statements' rows, parallel to `paragraph_labels`: what holds the
+    /// keyboard and wears the ring while the summary is up.
+    statement_rows: RefCell<Vec<gtk::Box>>,
     /// The email on screen, from a reference.
     email_shown: Cell<Option<MessageId>>,
     /// The email's own text, once read: where the cited passage is found.
@@ -277,6 +280,7 @@ impl DigestWindow {
             focused_reference: Cell::new(None),
             paragraph_labels: RefCell::default(),
             reference_chips: RefCell::default(),
+            statement_rows: RefCell::default(),
             email_shown: Cell::default(),
             email_body: RefCell::default(),
             email_excerpt: RefCell::default(),
@@ -424,6 +428,13 @@ impl DigestWindow {
     /// reference, it steps to the digest's next or previous source instead
     /// (US13 scenario 2).
     pub fn step(&self, by: i32) {
+        // Over the summary the references are what there is to walk: the
+        // list behind it is not on screen, and a key that moved its cursor
+        // showed nothing.
+        if self.page.get() == DigestPage::Summary {
+            self.step_reference(by);
+            return;
+        }
         let at = self.list.selected_row().map_or(-1, |row| row.index());
         if let Some(row) = self.list.row_at_index((at + by).max(0)) {
             self.list.select_row(Some(&row));
@@ -517,6 +528,20 @@ impl DigestWindow {
         self.focused_reference.get()
     }
 
+    /// The summary's statement rows, as drawn.
+    pub fn statement_rows(&self) -> Vec<gtk::Box> {
+        self.statement_rows.borrow().clone()
+    }
+
+    /// Whether the keyboard is on statement `index`'s row.
+    pub fn keyboard_on_statement(&self, index: usize) -> bool {
+        let focus = self.dialog.focus();
+        self.statement_rows
+            .borrow()
+            .get(index)
+            .is_some_and(|row| focus.as_ref().is_some_and(|focus| focus == row))
+    }
+
     /// The summary's paragraphs, as drawn: plain text, one a statement.
     pub fn paragraphs(&self) -> Vec<gtk::Label> {
         self.paragraph_labels.borrow().clone()
@@ -591,6 +616,10 @@ impl DigestWindow {
         }
         if page == DigestPage::Summary {
             self.show_focused_reference();
+        } else if page == DigestPage::List
+            && let Some(row) = self.list.selected_row()
+        {
+            row.grab_focus();
         }
         crate::a11y::teach_shortcuts(&self.dialog);
         crate::motion::keep_to_budget(&self.dialog);
@@ -727,6 +756,7 @@ impl DigestWindow {
         }
         self.paragraph_labels.borrow_mut().clear();
         self.reference_chips.borrow_mut().clear();
+        self.statement_rows.borrow_mut().clear();
         let summary = self.summary.borrow().clone();
         let Some(summary) = summary.filter(|summary| !summary.is_empty()) else {
             self.tab_row.set_visible(false);
@@ -734,13 +764,17 @@ impl DigestWindow {
         };
         self.tab_row.set_visible(true);
         for topic in postio_ui::digest::topics(&summary.statements) {
-            let heading = gtk::Label::new(Some(topic.name));
+            let heading = gtk::Label::new(Some(&postio_ui::digest::topic_heading(&topic)));
             heading.add_css_class("focus-digest-summary-topic");
             heading.set_xalign(0.0);
             self.summary_box.append(&heading);
             for statement in topic.statements {
                 let row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
                 row.add_css_class("focus-digest-summary-statement");
+                // A real place for the keyboard: the focused statement holds
+                // it, so what the outline and the ring show is where a key
+                // goes.
+                row.set_focusable(true);
                 // Plain text, never markup (FR-174): a model's `<a href=…>` or a
                 // bare URL reads as its own characters, never a live link.
                 let text = gtk::Label::new(Some(&statement.text));
@@ -755,6 +789,7 @@ impl DigestWindow {
                 self.summary_box.append(&row);
                 self.paragraph_labels.borrow_mut().push(text);
                 self.reference_chips.borrow_mut().push(chip);
+                self.statement_rows.borrow_mut().push(row);
             }
         }
         self.summary_box.append(&self.reference_card);
@@ -773,6 +808,9 @@ impl DigestWindow {
         for chip in self.reference_chips.borrow().iter() {
             chip.remove_css_class("focus-digest-summary-reference-focused");
         }
+        for row in self.statement_rows.borrow().iter() {
+            row.remove_css_class("focus-digest-summary-focused");
+        }
         while let Some(child) = self.reference_card.first_child() {
             self.reference_card.remove(&child);
         }
@@ -790,6 +828,13 @@ impl DigestWindow {
         if let Some(chip) = self.reference_chips.borrow().get(index) {
             chip.add_css_class("focus-digest-summary-reference-focused");
         }
+        if let Some(row) = self.statement_rows.borrow().get(index) {
+            row.add_css_class("focus-digest-summary-focused");
+            if self.page.get() == DigestPage::Summary {
+                // The scroller brings a focused child into view.
+                row.grab_focus();
+            }
+        }
         let message = statement.reference.message;
         let row = self
             .rows
@@ -805,7 +850,13 @@ impl DigestWindow {
         let Some(row) = row else {
             return;
         };
-        let subject = gtk::Label::new(row.subject.as_deref());
+        let sender = row.from.as_ref().map(|from| from.display().to_owned());
+        let subject = gtk::Label::new(Some(&postio_ui::digest::reference_title(
+            statement.reference.number,
+            sender.as_deref(),
+            row.subject.as_deref(),
+        )));
+        subject.set_wrap(true);
         subject.add_css_class("focus-digest-reference-subject");
         subject.set_xalign(0.0);
         self.reference_card.append(&subject);

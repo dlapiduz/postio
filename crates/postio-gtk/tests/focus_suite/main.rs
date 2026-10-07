@@ -1244,6 +1244,10 @@ const CASES: &[(&str, fn())] = &[
         place_strip::an_empty_snoozed_place_says_why_and_the_way_back as fn(),
     ),
     (
+        "digest_summary::the_summary_takes_j_and_k_and_rings_the_focused_statement",
+        digest_summary::the_summary_takes_j_and_k_and_rings_the_focused_statement as fn(),
+    ),
+    (
         "rows::a_selected_digest_row_is_drawn_selected",
         rows::a_selected_digest_row_is_drawn_selected as fn(),
     ),

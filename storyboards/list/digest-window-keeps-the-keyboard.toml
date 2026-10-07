@@ -1,16 +1,15 @@
 # The digest window answers keys after it opens (found by the generated pass).
 #
-# The window that opens from the "Weekly digest" row reports its keyboard as
-# unreachable from the moment it is up, and a second `j` is dropped: nothing
-# on the focus chain takes it. The first `j` does something (the frame
-# changes, the ring lands on "Archive all 6"), so this is the 92a093b8 family
-# -- the keyboard left on a widget that cannot hand a key up -- in a dialog the
-# commit did not reach. Every key in `Context::Digest` (`j`, `k`, `Return`,
-# `Tab`, `g i`) depends on it.
-#
-# Open until the digest window keeps the keyboard where its keys are heard.
+# The window that opens from the "Weekly digest" row used to report its
+# keyboard as unreachable and drop a second `j`: the keyboard was left on a
+# row of the plain list that the summary hides, so nothing on the focus chain
+# took the key (the 92a093b8 family, in a dialog that commit did not reach).
+# Now the summary takes `j` and `k` as it takes `]` and `[`, the focused
+# statement holds the keyboard and wears the ring, and a key pressed in the
+# window is heard. Every key in `Context::Digest` (`j`, `k`, `Return`, `Tab`,
+# `g i`) depends on it.
 source = { kind = "commit", ref = "92a093b8" }
-proof  = "open"
+proof  = "pinned"
 apps   = ["focus"]
 
 [[step]]
@@ -22,15 +21,15 @@ check   = { cursor.index = 1 }
 [[step]]
 command = "open_message"
 settle  = { until = { view = "digest" } }
-check   = { view = "digest", keyboard.reachable = true }
-expect  = "The digest opens on its summary, and a key pressed now is heard."
+check   = { view = "digest", keyboard.reachable = true, app.focus.digest.reference = 0 }
+expect  = "The digest opens on its summary with its first statement ringed, and a key pressed now is heard."
 
 [[step]]
 command = "next_message"
-check   = { view = "digest", keyboard.reachable = true }
-expect  = "`j` is heard and the keyboard is still reachable afterwards."
+check   = { view = "digest", keyboard.reachable = true, app.focus.digest.reference = 1 }
+expect  = "`j` is heard: the ring moves to the next statement, and the keyboard is still reachable afterwards."
 
 [[step]]
 command = "next_message"
-check   = { view = "digest", keyboard.reachable = true }
-expect  = "A second `j` is heard too."
+check   = { view = "digest", keyboard.reachable = true, app.focus.digest.reference = 1 }
+expect  = "A second `j` is heard too: the summary has two statements, so the ring stays on the last."
