@@ -21,10 +21,10 @@ command = "next_message"
 [[step]]
 id      = "open"
 command = "open_message"
-check   = { view = "reader", reading.id = "7" }
-expect  = "The conversation opens on message 7; nothing has been marked yet."
+check   = { view = "reader", reading.id = "7", app.focus.cursor.unread = 2 }
+expect  = "The conversation opens on message 7; nothing has been marked yet, and both of the conversation's last messages are unread."
 
 [[step]]
 wait    = { ms = 1500 }
-check   = { reading.id = { same_as = "open" }, view = "reader", reading.scroll = { same_as = "open" } }
-expect  = "After the dwell the message is exactly as it was: no redraw, no scroll, still message 7, now read."
+check   = { reading.id = { same_as = "open" }, view = "reader", reading.scroll = { same_as = "open" }, app.focus.cursor.unread = 1 }
+expect  = "After the dwell the message is exactly as it was: no redraw, no scroll, still message 7, now read: one unread message is left."

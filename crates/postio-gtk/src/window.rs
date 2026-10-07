@@ -4989,6 +4989,14 @@ impl FocusWindow {
             "focus.bulk".to_owned(),
             serde_json::json!({ "shown": bulk.is_some(), "summary": bulk }),
         );
+        // How many of the cursor's conversation are still unread: a
+        // message read by the dwell takes one off.
+        if let Some(conversation) = row.as_ref().and_then(|row| row.as_conversation()) {
+            app.insert(
+                "focus.cursor.unread".to_owned(),
+                serde_json::json!(conversation.summary.unread_count),
+            );
+        }
         if let Some(bar) = &bar {
             // What the bar lists, which the list behind it never shows: its
             // heading, how many messages it found and the row Return runs.

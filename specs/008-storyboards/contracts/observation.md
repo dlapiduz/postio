@@ -51,6 +51,7 @@ specs/007-postio-focus T265).
 | `composer.*` | `open` as `view`, or a composition in a window of its own; `detached` is that composer's `is_detached()` |
 | `back_depth` | `None` (Back is a cascade) |
 | `app.focus.bulk` | Whether the bulk bar is shown, and its summary (`Bulk::summary`) |
+| `app.focus.cursor.unread` | How many messages of the cursor's conversation are unread, as the list row carries it: a message read by the dwell takes one off |
 | `app.focus.digest_page` | `digest().showing()` |
 | `app.focus.bar.typed`, `.heading`, `.messages` | The bar's field, its results heading ("Conversations · 8 matches") and how many messages it lists: the hits, which the list behind it never shows |
 | `app.focus.bar.highlighted`, `.highlighted_id`, `.highlighted_text` | The row Return would run: its kind (`message`, `order`, `search`, `command`, `place`, ...), the message it opens, and what it says |
