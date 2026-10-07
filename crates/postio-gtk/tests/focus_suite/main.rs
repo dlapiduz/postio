@@ -1244,6 +1244,10 @@ const CASES: &[(&str, fn())] = &[
         place_strip::an_empty_snoozed_place_says_why_and_the_way_back as fn(),
     ),
     (
+        "rows::a_selected_digest_row_is_drawn_selected",
+        rows::a_selected_digest_row_is_drawn_selected as fn(),
+    ),
+    (
         "cursor::j_and_k_move_only_the_cursor",
         cursor::j_and_k_move_only_the_cursor as fn(),
     ),

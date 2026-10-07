@@ -194,3 +194,90 @@ pub fn the_inbox_opens_with_its_first_heading_on_screen() {
         );
     });
 }
+
+/// Every colour node in `node`'s tree that covers the whole `width` by
+/// `height`: the ground a selected row is painted on.
+fn grounds(node: &gtk::gsk::RenderNode, width: f32, height: f32, found: &mut u32) {
+    use gtk::gsk::{ClipNode, ColorNode, ContainerNode, TransformNode};
+    if let Some(color) = node.downcast_ref::<ColorNode>() {
+        let at = color.bounds();
+        if at.x() <= 0.5
+            && at.y() <= 0.5
+            && at.width() >= width - 0.5
+            && at.height() >= height - 0.5
+        {
+            *found += 1;
+        }
+    } else if let Some(container) = node.downcast_ref::<ContainerNode>() {
+        for index in 0..container.n_children() {
+            grounds(&container.child(index), width, height, found);
+        }
+    } else if let Some(transform) = node.downcast_ref::<TransformNode>() {
+        grounds(&transform.child(), width, height, found);
+    } else if let Some(clip) = node.downcast_ref::<ClipNode>() {
+        grounds(&clip.child(), width, height, found);
+    }
+}
+
+/// How many full-row grounds `row` paints.
+fn ground_of(row: &postio_gtk::list::RowWidget) -> u32 {
+    let paintable = gtk::WidgetPaintable::new(Some(row));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, f64::from(row.width()), f64::from(row.height()));
+    let mut found = 0;
+    if let Some(node) = snapshot.to_node() {
+        grounds(&node, row.width() as f32, row.height() as f32, &mut found);
+    }
+    found
+}
+
+/// A row the selection reaches looks selected whatever it stands for: the
+/// digest row `J` extends onto was counted in the bar ("2 selected") and
+/// drawn exactly like an unselected row with the cursor on it, so a person
+/// could not tell which two rows an Archive would hit.
+pub fn a_selected_digest_row_is_drawn_selected() {
+    use postio_gtk::list::{RowObject, RowWidget};
+    use postio_ui::focus_list::{Digest, FocusRow};
+    use postio_widgets::list_model::ModelRow;
+
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let digest = FocusRow::Digest(Digest {
+            delivery: postio_model::DeliveryId::new(1),
+            rule: "Newsletters".to_owned(),
+            cadence: None,
+            count: 6,
+            senders: Vec::new(),
+            summary_line: None,
+            at: chrono::Utc::now(),
+        });
+        let picked = postio_ui::selection::SelectionState::new();
+        let row = RowWidget::default();
+        row.set_selection(picked.clone());
+        row.bind(&RowObject::with_contents(digest.clone()));
+        let window = gtk::Window::new();
+        window.set_default_size(900, 60);
+        window.set_child(Some(&row));
+        window.present();
+        assert!(
+            crate::settle_until(async || row.is_mapped() && row.width() > 0).await,
+            "the row never reached the screen"
+        );
+        assert_eq!(ground_of(&row), 0, "an unselected digest row has no ground");
+
+        picked.toggle(digest.id());
+        // The window redraws its rows when the selection moves.
+        row.queue_draw();
+        assert!(
+            crate::settle_until(async || row.drawn().picked).await,
+            "the row never drew itself selected"
+        );
+        assert_eq!(
+            ground_of(&row),
+            1,
+            "a selected digest row is painted on the selection's ground, as a conversation's is"
+        );
+    });
+}

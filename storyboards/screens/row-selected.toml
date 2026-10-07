@@ -15,3 +15,4 @@ command = "toggle_selection"
 [[step]]
 command = "extend_selection_down"
 check   = { selection.count = 2 }
+expect  = "Both rows look selected, a grey ground and a check each, and the cursor's ring on the second does not hide that it is selected."

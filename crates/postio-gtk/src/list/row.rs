@@ -610,20 +610,7 @@ impl RowWidget {
             ..Drawn::default()
         };
         if drawn.picked {
-            // Selected: a neutral ground and a checked box in the gutter,
-            // never the accent, which is the cursor's (FR-091).
-            let height = self.height() as f32;
-            snapshot.append_color(
-                &palette.raised,
-                &graphene::Rect::new(0.0, 0.0, width, height),
-            );
-            self.draw_icon(
-                snapshot,
-                "checkbox-checked-symbolic",
-                GUTTER_CENTRE - ICON / 2.0,
-                middle - ICON / 2.0,
-                &palette.ink,
-            );
+            self.draw_picked(snapshot, &palette, middle);
         }
 
         // The trailing column first, from the right edge in, so the middle
@@ -996,13 +983,18 @@ impl RowWidget {
             ink: palette.ink,
             ..Drawn::default()
         };
-        self.draw_icon(
-            snapshot,
-            "view-continuous-symbolic",
-            GUTTER_CENTRE - ICON / 2.0,
-            middle - ICON / 2.0,
-            &palette.dim,
-        );
+        if drawn.picked {
+            // The checked box stands where the stack would.
+            self.draw_picked(snapshot, &palette, middle);
+        } else {
+            self.draw_icon(
+                snapshot,
+                "view-continuous-symbolic",
+                GUTTER_CENTRE - ICON / 2.0,
+                middle - ICON / 2.0,
+                &palette.dim,
+            );
+        }
 
         let time = postio_ui::row::timestamp(digest.at, postio_ui::clock::now());
         let time_layout = self.layout(&time, true, 1.0);
@@ -1081,6 +1073,24 @@ impl RowWidget {
         }
         drawn.texts.extend(trailing_texts.into_iter().rev());
         self.imp().drawn.replace(drawn);
+    }
+
+    /// A selected row's mark, whatever the row stands for: a neutral ground
+    /// and a checked box in the gutter, never the accent, which is the
+    /// cursor's (FR-091). The cursor's ring is drawn over it, so a selected
+    /// row under the cursor still looks selected.
+    fn draw_picked(&self, snapshot: &gtk::Snapshot, palette: &Palette, middle: f32) {
+        snapshot.append_color(
+            &palette.raised,
+            &graphene::Rect::new(0.0, 0.0, self.width() as f32, self.height() as f32),
+        );
+        self.draw_icon(
+            snapshot,
+            "checkbox-checked-symbolic",
+            GUTTER_CENTRE - ICON / 2.0,
+            middle - ICON / 2.0,
+            &palette.ink,
+        );
     }
 
     fn draw_icon(&self, snapshot: &gtk::Snapshot, name: &str, x: f32, y: f32, colour: &gdk::RGBA) {
