@@ -104,7 +104,7 @@ const WRITE_DEBOUNCE: Duration = Duration::from_millis(250);
 const POLL_EVERY_FIVE_MINUTES: u64 = 300;
 
 /// How wide the sidebar is — fixed, never negotiable, so the pane beside it
-/// starts in the same place on all eight sections. That fixity is most of
+/// starts in the same place on every section. That fixity is most of
 /// what makes the navigation model legible (#1179).
 pub const NAV_WIDTH: i32 = 214;
 
@@ -312,7 +312,7 @@ impl ConnectionStatus {
 // ---------------------------------------------------------------------------
 
 // The section model moved to `postio_ui::settings`: both frontends navigate
-// the same eight sections of the same file, and a second copy of "which line
+// the same sections of the same file, and a second copy of "which line
 // does [sync] start on" is a second answer waiting to disagree. Re-exported
 // so every reference in this crate still reads as it did.
 pub use postio_ui::settings::{Group, Section, find_section, humanize_interval, section_at_line};
@@ -626,7 +626,7 @@ mod imp {
         /// host window mounts it (see [`super::SettingsPanel::header_bar`]).
         pub header_bar: adw::HeaderBar,
         pub search: gtk::SearchEntry,
-        /// Which of the eight panes is on screen. Exactly one ever is —
+        /// Which of the panes is on screen. Exactly one ever is —
         /// that is the whole navigation model, and the reason this is a
         /// `Stack` and not a column of cards (#1179).
         pub stack: gtk::Stack,
@@ -650,7 +650,7 @@ mod imp {
         pub footer_target: gtk::Label,
         /// What the find-a-setting field currently holds, folded to lower
         /// case — read by the sidebar's filter function, which GTK calls
-        /// once per row and must not do the folding eight times over.
+        /// once per row, so the folding is done once, here.
         /// Set while `redraw_accounts` is rebuilding the list, so the
         /// selection changes that rebuilding causes are not mistaken for a
         /// person choosing an account. See that method.

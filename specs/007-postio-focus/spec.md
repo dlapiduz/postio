@@ -101,6 +101,10 @@ spec raised (2026-09-26 unless dated):
   connected (FR-104 to FR-108).
 - **Postio is one product with several interfaces; its GTK interface is Focus** (2026-10-02, C27).
 - **The terminal is Focus too** (2026-10-02, C29).
+- **Filtering has a page of its own in Settings** (2026-10-07): it turns
+  filtering on and off, says what filtering does and that nothing is lost,
+  and shows what `[focus.filter]` holds in a person's words (FR-119,
+  FR-162).
 
 ## The inputs, and which one wins
 
@@ -1676,7 +1680,12 @@ screen, not on what a layer was handed, that each surface shows what
   Applying it to mail already in the inbox MUST be a deliberate command
   (`F`) that shows what would move, and MUST be one undoable action.
 - **FR-119**: Filtering MUST be on when Focus first opens, and
-  `[focus] filtering` MUST turn it off.
+  `[focus] filtering` MUST turn it off. Settings' Filtering page MUST turn
+  it on and off; say in a sentence what it does, that nothing is deleted,
+  and the key that opens Filtered; count what was filtered today while it
+  is on; and show `[focus.filter]`'s senders never filtered and marker
+  kinds turned off in a person's words, an entry that does nothing saying
+  why.
 
 **Digests**
 
@@ -1811,9 +1820,9 @@ screen, not on what a layer was handed, that each surface shows what
 - **FR-162**: Settings MUST open over the list (`mod+comma`, and the main
   menu) in the open message's dialog frame, as the shared settings window
   (ADR 0031) drawn in Focus's type and accent. It MUST show Accounts,
-  Filters, Composing, Keyboard, Sync & storage (with a per-folder backfill
-  exclusion, ADR 0016), Privacy and Config file, and no key Focus does not
-  honour. Every account verb MUST be reachable from the keyboard. `mod+e`
+  Filtering (FR-119), Saved searches, Composing, Keyboard, Sync & storage
+  (with a per-folder backfill exclusion, ADR 0016), Privacy and Config
+  file, and no key Focus does not honour. Every account verb MUST be reachable from the keyboard. `mod+e`
   MUST open `config.toml` in the person's editor from anywhere in Focus.
   Changes to `[keys]`, `[saved_searches]`, `[sync]`, `[focus]`, `[compose]`,
   `[reader]` and `[storage]` MUST take effect without a restart.

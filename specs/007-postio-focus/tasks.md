@@ -346,6 +346,7 @@ maintainer asks.
 - [X] T128 [US9] `sweep_inbox`: a preview count, then one undo unit, with its key chosen with the enumeration test. Test first: FR-118. The sweep reads each row once per batch of 50, one statement per row. That is acceptable in the background, but it is the one known N+1
 - [X] T129 [US9] Focus never notifies for mail it filtered or held. Test first: FR-153. The host half is done: `NewMail` names only the arrivals that stayed in Focus's inbox, and filing mail away emits `MessageListChanged`. The frontend half waits for Focus's notifications
 - [X] T130 [US9] Compare screen 21, and record it (C4's copy included)
+- [X] T330 [US9] Settings' Filtering page (FR-119, FR-162; the maintainer's call of 2026-10-07): the switch over `[focus] filtering`, what filtering does, today's count and Open Filtered `g f`, that nothing is deleted, the guards, and `[focus.filter]`'s lists in a person's words; a row of the shared section table the terminal reads too, and that the Mac leaves out. Test first: `postio_ui::filtering` and `settings` units, `focus_suite`'s `settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows`, and the storyboards. Done: screens.md, "Settings", Filtering
 
 ## Phase 15: User Story 10: digests on the user's cadence, by sender (P2)
 
@@ -684,7 +685,7 @@ this table against the spec.
 | FR-115, FR-117 | T124 |
 | FR-116 | T124, T125 |
 | FR-118 | T102, T128 |
-| FR-119 | T123 |
+| FR-119 | T123, T330 |
 | FR-120 | T138 |
 | FR-121 | T133, T139, T140 |
 | FR-122 | T133 |

@@ -501,12 +501,41 @@ type (C25) and accent (C26), which here paints only the keyboard focus ring:
 the current section, a checked box and a key being rebound are drawn in the
 neutral selection and the ink.
 
-**What Focus shows.** Accounts, Filters, Composing, Keyboard, Sync &
-storage, Privacy and Config file. Appearance is not shown: every key it sets
+**What Focus shows.** Accounts, Filtering, Saved searches, Composing,
+Keyboard, Sync & storage, Privacy and Config file. Appearance is not shown: every key it sets
 (`[ui]` theme, density, hover actions, avatars) is one Focus does not honour.
 Keyboard lists the commands Focus offers, with their keys. Sync & storage
 has "Back up locally": a check per folder, under its account's address when
 there is more than one, cleared to skip that folder's backfill (ADR 0016).
+
+**Filtering** (US9, FR-119; the maintainer's call of 2026-10-07). One
+column, its words `postio_ui::filtering`'s:
+
+- the switch, "Filter spam and automated updates", over `[focus]
+  filtering`, and under it what filtering does now: on, the kinds Filtered
+  has tabs for are archived as they arrive, each with its reason, and never
+  reach the inbox; off, all new mail arrives in the inbox and what was
+  filtered before stays in Filtered;
+- **Filtered**: today's count while filtering is on ("186 filtered today",
+  or "Nothing filtered today"; none while it is off, as the strip has
+  none, C10) and Open Filtered with its `g f`, which closes Settings and
+  opens Filtered; that nothing is deleted; and the keys Filtered answers,
+  `R` to restore and, while filtering is on, `F` to sweep the inbox;
+- **Never filtered**: the four guards in one sentence, then
+  `[focus.filter] never`, an address as itself and a whole domain as
+  "everyone at" it, an entry that pins nobody saying so in the secondary
+  ink, or "Nobody yet" with the key that adds one;
+- **Markers turned off**: `[focus.filter] stop_markers` as what is no
+  longer marked ("Questions in mail from …"), or how one gets there.
+
+The lists are read here and corrected in the file, as the foot strip's
+`[focus] in config.toml` and Open in $EDITOR say. Of the six states, the
+page has empty (each list says so in its own words), off, and narrow (it
+scrolls); it reads only the file and the strip's count, so it has nothing
+to load, nothing partial, and nothing that goes offline or fails. The
+terminal says the page's sentences above its "Enter edits it there", and
+the Mac does not list the section: Focus's rules do not run there (US11,
+scenario 4).
 
 **One column.** The dialog is at most 820 px wide, so a pane is at most 606:
 a pane's two columns stack into one, the rule between them running across,
@@ -531,8 +560,11 @@ what each server answered, in its words. Nothing in Settings touches the
 network except "Test connection", when pressed.
 
 Pinned by `settings` (`mod+comma` and the menu, every section and not
-Appearance, Escape and the X, a privacy toggle and a signature persisting)
-and `settings_wiring`.
+Appearance, Escape and the X, a privacy toggle and a signature persisting,
+the Filtering switch writing the file and the inbox's strip following it)
+and `settings_wiring`; filmed by `screens/settings-filtering`,
+`settings-filtering-off`, `settings-filtering-lists` and
+`settings/find-a-setting-finds-filtering`.
 
 ## Rendering them
 

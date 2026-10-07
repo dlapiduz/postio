@@ -55,7 +55,7 @@ pub struct SettingsSectionFfi {
 /// The two headings the nav groups its sections under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum GroupFfi {
-    /// Accounts, Filters, Composing.
+    /// Accounts, Saved searches, Composing (the Mac shows no Filtering).
     Mail,
     /// Appearance, Keyboard, Sync & storage, Privacy, Config file.
     Application,
