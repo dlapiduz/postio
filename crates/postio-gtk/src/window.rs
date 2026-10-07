@@ -4752,6 +4752,9 @@ impl FocusWindow {
         let digest = self.digest();
         // The composer in its dialog or in the reading pane (T232).
         let compose_open = self.compose().is_some_and(|compose| compose.is_showing());
+        let composition_detached = self
+            .compose()
+            .is_some_and(|compose| compose.composer().is_detached());
         let sign_in = self.add_account_dialog().is_some();
         let settings = self.settings_dialog().is_some();
         // The raw source and the open chooser are dialogs of their own over
@@ -5043,8 +5046,10 @@ impl FocusWindow {
                 scroll,
             },
             composer: ComposerState {
-                open: compose_open,
-                detached: false,
+                // A composition in a window of its own is still open, though
+                // this window shows the list again.
+                open: compose_open || composition_detached,
+                detached: composition_detached,
             },
             back_depth: None,
             app,

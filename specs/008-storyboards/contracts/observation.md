@@ -48,7 +48,7 @@ specs/007-postio-focus T265).
 | `banner.title` | `banner_showing()` |
 | `reading.id` | The open message's `shown()`, while the view is `reader` |
 | `reading.scroll` | The open message's `scroll_extent()`. `reading.focused` is not observed: one message is shown at a time (C2) |
-| `composer.*` | `open` as `view`; `detached` is `false` |
+| `composer.*` | `open` as `view`, or a composition in a window of its own; `detached` is that composer's `is_detached()` |
 | `back_depth` | `None` (Back is a cascade) |
 | `app.focus.bulk` | Whether the bulk bar is shown, and its summary (`Bulk::summary`) |
 | `app.focus.digest_page` | `digest().showing()` |

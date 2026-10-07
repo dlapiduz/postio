@@ -7,6 +7,9 @@ source = { kind = "design", ref = "none" }
 
 [[step]]
 command = "compose"
+check   = { composer.open = true, composer.detached = false }
 
 [[step]]
 command = "detach_composer"
+check   = { composer.open = true, composer.detached = true, view = "list" }
+expect  = "The composition is in a window of its own and still open; the main window is the list again."
