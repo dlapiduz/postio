@@ -16,16 +16,14 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 
 [[step]]
 type    = "harbour"
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+check   = { keyboard.region = "search", app.focus.bar.messages = { changed = true } }
+expect  = "The bar lists the mail that matches as the word is typed, under the Search mail for row."
 
 [[step]]
 key     = "Return"
-settle  = { until = { app.focus.bar.messages = { changed = true } } }
-check   = { keyboard.region = "search", app.focus.bar.messages = { changed = true } }
-expect  = "The bar lists the mail that matches."
-
-[[step]]
-key     = "Down"
-check   = { app.focus.bar.highlighted = "message" }
+check   = { keyboard.region = "search", app.focus.bar.highlighted = "message" }
+expect  = "Return takes the highlight to the first hit."
 
 [[step]]
 id      = "hit"
