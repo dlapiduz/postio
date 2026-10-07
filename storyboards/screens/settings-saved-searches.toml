@@ -1,7 +1,8 @@
-# Settings, Filters.
+# Settings, Saved searches: the searches pinned to the places list, each
+# with its query, and the form that adds one.
 #
 # Focus's design references are never committed
 # (specs/007-postio-focus/screens.md records each one).
 apps   = ["focus"]
 source = { kind = "design", ref = "none" }
-preset = "settings/filters"
+preset = "settings/saved-searches"

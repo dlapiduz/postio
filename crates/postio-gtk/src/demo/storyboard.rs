@@ -241,7 +241,7 @@ impl Preset {
     pub fn id(self) -> &'static str {
         match self {
             Preset::Settings(Section::Filtering) => "settings/filtering",
-            Preset::Settings(Section::Filters) => "settings/filters",
+            Preset::Settings(Section::Filters) => "settings/saved-searches",
             Preset::Settings(Section::Composing) => "settings/composing",
             Preset::Settings(Section::Keyboard) => "settings/keyboard",
             Preset::Settings(Section::Sync) => "settings/storage",
