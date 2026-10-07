@@ -2686,6 +2686,28 @@ async fn a_pass_that_failed_is_not_announced_as_a_completed_sync() {
     // The link is up and cached once a pass has run; only then is the
     // fault certain to land on the next pass's own call.
     engine.sync(mailbox.id).await.expect("a first pass");
+    // The first pass's own completion can still be on its way when sync()
+    // returns; read until it has arrived, so nothing of the first pass is
+    // left to be counted against the second.
+    let first_done = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if announced(&events).iter().any(|event| {
+                matches!(
+                    event,
+                    Event::SyncProgress {
+                        done: 0,
+                        total: 0,
+                        ..
+                    }
+                )
+            }) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    assert!(first_done.is_ok(), "the first pass never said it finished");
     let _ = announced(&events);
     backend.fail_all(Fault::Rejected("no".to_owned()));
 
