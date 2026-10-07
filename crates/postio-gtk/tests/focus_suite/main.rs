@@ -379,6 +379,10 @@ const CASES: &[(&str, fn())] = &[
         compose::reply_all_from_the_open_message_answers_it_and_esc_returns_to_it as fn(),
     ),
     (
+        "compose::a_send_says_it_was_queued_and_undo_takes_it_back",
+        compose::a_send_says_it_was_queued_and_undo_takes_it_back as fn(),
+    ),
+    (
         "invitations::the_open_invitation_s_card_answers_with_its_keys",
         invitations::the_open_invitation_s_card_answers_with_its_keys as fn(),
     ),

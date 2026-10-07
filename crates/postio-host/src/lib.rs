@@ -754,11 +754,11 @@ impl Inner {
                 let hub = self.hub.clone();
                 InOrder::Pending(Box::pin(async move {
                     match queued.await {
-                        Ok(moved) => {
-                            if let Some(mailbox) = moved {
+                        Ok(queued) => {
+                            if let Some(mailbox) = queued.drafts {
                                 hub.emit(Event::MessageListChanged { account, mailbox });
                             }
-                            Resp::Queued(moved)
+                            Resp::Queued(queued)
                         }
                         Err(error) => Resp::Failed(error),
                     }

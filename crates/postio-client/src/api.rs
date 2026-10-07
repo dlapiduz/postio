@@ -24,7 +24,7 @@ use postio_model::mailbox::Mailbox;
 use postio_model::{Draft, DraftId};
 
 use crate::counting::Counts;
-use crate::protocol::{Req, Resp};
+use crate::protocol::{Queued, Req, Resp};
 
 /// The host is not answering: it exited, or the connection broke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -435,7 +435,7 @@ impl Client {
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
-    ) -> impl Future<Output = Result<Option<MailboxId>, StoreError>> + Send + 'static {
+    ) -> impl Future<Output = Result<Queued, StoreError>> + Send + 'static {
         let request = Req::QueueSend {
             generation,
             draft: Box::new(draft),
@@ -1666,7 +1666,10 @@ mod tests {
         // each is handed over at the call, before anything polls it.
         let (client, fake) = client(vec![
             Ok(Resp::DraftSaved(DraftId::new(9))),
-            Ok(Resp::Queued(None)),
+            Ok(Resp::Queued(Queued {
+                drafts: None,
+                draft: DraftId::new(9),
+            })),
             Ok(Resp::Done),
         ]);
         let draft = Draft::new(AccountId::new(1));
@@ -1678,7 +1681,7 @@ mod tests {
         // And nothing about the answers borrows the client.
         drop(client);
         assert_eq!(saved.await, Ok(DraftId::new(9)));
-        assert_eq!(queued.await, Ok(None));
+        assert_eq!(queued.await.map(|queued| queued.draft), Ok(DraftId::new(9)));
         assert_eq!(discarded.await, Ok(()));
     }
 }

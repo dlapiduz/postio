@@ -845,6 +845,27 @@ fn a_draft_sent_from_a_frontend_is_queued_and_a_discard_after_it_keeps_it() {
 }
 
 #[test]
+fn a_queued_send_names_the_draft_so_it_can_be_taken_back() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    world.rt.block_on(async {
+        let queued = client
+            .queue_send(7, a_draft(account, "Ready."), None)
+            .await
+            .expect("queued");
+        assert!(queued.draft.is_assigned(), "the answer names no draft");
+        let back = client
+            .cancel_send(queued.draft)
+            .await
+            .expect("answered")
+            .expect("the send was still waiting");
+        assert_eq!(back.id, queued.draft);
+        assert_eq!(back.state, postio_model::DraftState::Editing);
+    });
+}
+
+#[test]
 fn a_queued_send_is_dated_by_the_clock_seam() {
     // A reply sent during a storyboard was listed in the Outbox under the
     // real day, months after the frozen one, and moved between two runs.

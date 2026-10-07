@@ -1542,6 +1542,9 @@ impl FocusWindow {
             // which are aimed at mail and which are not. Undo is the last
             // action this window took, whatever it was and however long ago
             // the toast went (FR-041): the host keeps the stack.
+            // A toast with an Undo of its own -- a send, queued -- is the
+            // last thing said, so Undo takes that back first (#1752).
+            CommandId::Undo if self.imp().toast.activate_undo() => {}
             CommandId::Archive
             | CommandId::Delete
             | CommandId::ToggleRead
@@ -4658,6 +4661,12 @@ impl FocusWindow {
     /// The words of the toast on screen, if one is.
     pub fn toast_showing(&self) -> Option<String> {
         self.imp()
+    /// Say `sentence` in a toast whose Undo runs `on_undo`.
+    pub(crate) fn show_removable(&self, sentence: &str, on_undo: impl Fn() + 'static) {
+        self.imp().toast.show_removable(sentence, on_undo);
+        self.follow_toast();
+    }
+
             .on_screen
             .borrow()
             .as_ref()

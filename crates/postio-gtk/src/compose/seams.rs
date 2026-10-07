@@ -32,14 +32,25 @@ pub type Resume = shared::Resume;
 /// its send (#433).
 const SEND_CANCELLED: &str = "Send cancelled \u{2014} you're editing this draft again";
 
+/// What a send says to the person once it is queued: a sentence and what
+/// Undo does, in the window's toast.
+pub type Say = Rc<dyn Fn(&str, Rc<dyn Fn()>)>;
+
+/// What the toast says of a send that waits in the Outbox: now, or at a
+/// time the person chose.
+const QUEUED: &str = "Message queued to send";
+const SCHEDULED: &str = "Send scheduled";
+
 /// Answer every seam of `composer` through `client`, for `account`; the
-/// answer is how a Drafts row opens its draft here.
+/// answer is how a Drafts row opens its draft here. `say` is how a queued
+/// send tells the person, with an Undo that takes it back.
 pub fn wire(
     composer: &Composer,
     frame: &Rc<Frame>,
     client: &Client,
     account: AccountId,
     current: Current,
+    say: Say,
 ) -> Resume {
     composer.set_account(account);
     let identities_composer = composer.downgrade();
@@ -57,13 +68,64 @@ pub fn wire(
     // Focus has no folder selected, so the account's default decides.
     shared::install_signature_default(composer, client, account, || None);
     let last_id = autosave(composer, frame, client);
-    shared::install_send(composer, client, Rc::clone(&last_id), account, None);
+    let on_queued = queued(composer, frame, client, Rc::clone(&last_id), say);
+    shared::install_send(
+        composer,
+        client,
+        Rc::clone(&last_id),
+        account,
+        None,
+        Some(on_queued),
+    );
     shared::install_recipients(composer, client, account);
     reply_source(composer, frame, client, current);
     label_names(composer, frame, client, account);
     shared::install_attach(composer, client);
     shared::install_inline_images(composer, client);
     resume(composer, client, last_id, frame)
+}
+
+/// A send, once queued, is said in a toast that offers Undo for as long as
+/// the toast stays: Undo takes the send off the queue and puts the draft
+/// back in the composer, as opening it from the Outbox does (#1752).
+fn queued(
+    composer: &Composer,
+    frame: &Rc<Frame>,
+    client: &Client,
+    last_id: Rc<std::cell::Cell<Option<postio_model::DraftId>>>,
+    say: Say,
+) -> shared::OnQueued {
+    let composer = composer.downgrade();
+    let frame = Rc::downgrade(frame);
+    let client = client.clone();
+    Rc::new(move |queued, at| {
+        let undo: Rc<dyn Fn()> = {
+            let composer = composer.clone();
+            let frame = frame.clone();
+            let client = client.clone();
+            let last_id = Rc::clone(&last_id);
+            Rc::new(move || {
+                let composer = composer.clone();
+                let frame = frame.clone();
+                let client = client.clone();
+                let last_id = Rc::clone(&last_id);
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                    let Ok(Some(draft)) = client.cancel_send(queued.draft).await else {
+                        return;
+                    };
+                    let (Some(composer), Some(frame)) = (composer.upgrade(), frame.upgrade())
+                    else {
+                        return;
+                    };
+                    last_id.set(Some(draft.id));
+                    composer.resume(draft);
+                    frame.note(SEND_CANCELLED);
+                });
+            })
+        };
+        say(if at.is_some() { SCHEDULED } else { QUEUED }, undo);
+    })
 }
 
 /// Autosave, with the frame's "Draft saved locally HH:MM" subtitle stamped from

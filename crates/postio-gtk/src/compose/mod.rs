@@ -119,7 +119,13 @@ impl Compose {
             composer,
             move |_| composer.unmount()
         ));
-        let resume = seams::wire(&composer, &frame, client, account, current);
+        let toasting = window.downgrade();
+        let say: seams::Say = Rc::new(move |sentence, undo| {
+            if let Some(window) = toasting.upgrade() {
+                window.show_removable(sentence, move || undo());
+            }
+        });
+        let resume = seams::wire(&composer, &frame, client, account, current, say);
         let remind = WhenPicker::new(&keymap, When::Remind);
         remind.connect_chosen(glib::clone!(
             #[weak]

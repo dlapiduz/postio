@@ -13,6 +13,7 @@
 //! the address.
 
 use chrono::{DateTime, Utc};
+use postio_client::protocol::Queued;
 use postio_model::contact_group::RecipientCandidate;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::listing::StoreError;
@@ -93,7 +94,7 @@ enum DraftOp {
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
-        reply: tokio::sync::oneshot::Sender<Result<Option<MailboxId>, StoreError>>,
+        reply: tokio::sync::oneshot::Sender<Result<Queued, StoreError>>,
     },
     /// This composition was closed empty: its autosaved row goes.
     Discard {
@@ -191,10 +192,14 @@ impl DraftWriter {
                             current = None;
                         }
                         let moved = match queue_send(&database, &mut draft, at).await {
-                            Ok(()) if at.is_none() => {
-                                Ok(drafts_mailbox(&database, draft.account_id).await)
-                            }
-                            Ok(()) => Ok(None),
+                            Ok(()) if at.is_none() => Ok(Queued {
+                                drafts: drafts_mailbox(&database, draft.account_id).await,
+                                draft: draft.id,
+                            }),
+                            Ok(()) => Ok(Queued {
+                                drafts: None,
+                                draft: draft.id,
+                            }),
                             Err(error) => {
                                 tracing::error!(%error, "could not queue the draft for sending: {error}");
                                 Err(StoreError::from(error))
@@ -249,7 +254,7 @@ impl DraftWriter {
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
-    ) -> impl Future<Output = Result<Option<MailboxId>, StoreError>> + Send + 'static {
+    ) -> impl Future<Output = Result<Queued, StoreError>> + Send + 'static {
         let (reply, answer) = tokio::sync::oneshot::channel();
         self.hand_over(DraftOp::Send {
             generation,

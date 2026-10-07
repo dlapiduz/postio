@@ -28,7 +28,10 @@ impl Transport for Scripted {
     fn call(&self, request: Req) -> Call<'static> {
         let answer = match &request {
             Req::SaveDraft { .. } => Resp::DraftSaved(DraftId::new(1)),
-            Req::QueueSend { .. } => Resp::Queued(None),
+            Req::QueueSend { .. } => Resp::Queued(postio_client::protocol::Queued {
+                drafts: None,
+                draft: postio_model::DraftId::new(1),
+            }),
             _ => Resp::Done,
         };
         self.asked.lock().expect("never poisoned").push(request);
@@ -63,7 +66,7 @@ pub fn dispatching_send_queues_the_draft_through_the_client() {
     let composer = Composer::new();
     composer.set_account(account);
     let last_id = postio_widgets::present::compose::install_autosave(&composer, &client, None);
-    postio_widgets::present::compose::install_send(&composer, &client, last_id, account, None);
+    postio_widgets::present::compose::install_send(&composer, &client, last_id, account, None, None);
 
     let window = gtk::Window::new();
     window.set_default_size(900, 700);

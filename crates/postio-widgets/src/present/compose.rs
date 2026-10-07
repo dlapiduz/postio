@@ -52,6 +52,11 @@ pub const SUGGESTION_LIMIT: usize = 8;
 /// rather than something this module decides.
 pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
 
+/// What a send became once the store had queued it: the draft waiting to
+/// go, and when -- `None` for now. The window that sent it says so and
+/// offers to take it back.
+pub type OnQueued = Rc<dyn Fn(postio_client::protocol::Queued, Option<chrono::DateTime<chrono::Utc>>)>;
+
 /// Which message `e`, `E` and `f` answer: the row the cursor is on, or the
 /// reading pane is showing.
 pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
@@ -253,13 +258,16 @@ pub async fn recover_draft(
 ///
 /// `announce` is asked after an immediate send lands, with `account`, so a
 /// window whose own news does not otherwise reach it (`None`, see
-/// [`Announce`]) can say the list moved a row.
+/// [`Announce`]) can say the list moved a row. `on_queued` is told once the
+/// store has queued a send, now or later, so the window can say so and offer
+/// Undo.
 pub fn install_send(
     composer: &Composer,
     client: &Client,
     last_id: Rc<Cell<Option<DraftId>>>,
     account: AccountId,
     announce: Option<Announce>,
+    on_queued: Option<OnQueued>,
 ) {
     let weak = composer.downgrade();
     composer.connect_send({
@@ -267,6 +275,7 @@ pub fn install_send(
         let last_id = Rc::clone(&last_id);
         let weak = weak.clone();
         let announce = announce.clone();
+        let on_queued = on_queued.clone();
         move |draft| {
             let Some(composer) = weak.upgrade() else {
                 return;
@@ -276,33 +285,48 @@ pub fn install_send(
             // handed it: a send racing a first save in flight would insert a
             // second row.
             let queued = client.queue_send(composer.generation(), draft.clone(), None);
-            let Some(announce) = announce.clone() else {
+            if announce.is_none() && on_queued.is_none() {
                 drop(queued);
                 return;
-            };
+            }
+            let announce = announce.clone();
+            let on_queued = on_queued.clone();
             glib::spawn_future_local(async move {
                 // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the
                 // write ran on the host's runtime.
-                let Ok(Some(drafts)) = queued.await else {
+                let Ok(queued) = queued.await else {
                     return;
                 };
-                announce(&postio_core::Event::MessageListChanged {
-                    account,
-                    mailbox: drafts,
-                });
+                if let (Some(announce), Some(drafts)) = (announce, queued.drafts) {
+                    announce(&postio_core::Event::MessageListChanged {
+                        account,
+                        mailbox: drafts,
+                    });
+                }
+                if let Some(on_queued) = on_queued {
+                    on_queued(queued, None);
+                }
             });
         }
     });
     composer.connect_send_later({
         let client = client.clone();
         let last_id = Rc::clone(&last_id);
+        let on_queued = on_queued.clone();
         move |draft, send_at| {
             let Some(composer) = weak.upgrade() else {
                 return;
             };
             last_id.set(None);
-            // Handed over now, in order; nothing here waits for it to land.
-            drop(client.queue_send(composer.generation(), draft.clone(), Some(send_at)));
+            // Handed over now, in order; the answer arrives when it has landed.
+            let queued = client.queue_send(composer.generation(), draft.clone(), Some(send_at));
+            let on_queued = on_queued.clone();
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                if let (Ok(queued), Some(on_queued)) = (queued.await, on_queued) {
+                    on_queued(queued, Some(send_at));
+                }
+            });
         }
     });
 }

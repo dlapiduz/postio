@@ -528,6 +528,15 @@ pub struct DigestPreview {
     pub first: Vec<MessageSummary>,
 }
 
+/// What queueing a draft to send did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Queued {
+    /// The Drafts folder whose list moved, if one did.
+    pub drafts: Option<MailboxId>,
+    /// The draft now waiting to send: what taking the send back names.
+    pub draft: DraftId,
+}
+
 /// The host's answer to one [`Req`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resp {
@@ -567,8 +576,8 @@ pub enum Resp {
     SavedParts(u32),
     /// The id a saved draft has.
     DraftSaved(DraftId),
-    /// A draft was queued; the Drafts folder whose list moved, if one did.
-    Queued(Option<MailboxId>),
+    /// A draft was queued.
+    Queued(Queued),
     /// Recipient suggestions, best first.
     Recipients(Vec<RecipientCandidate>),
     /// Correspondents, most often seen first.

@@ -270,3 +270,52 @@ pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
         );
     });
 }
+
+/// #1752: a send says it was queued, offers Undo, and Undo takes it
+/// off the queue and puts the draft back in the composer.
+pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.harbor_thread().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j", "e"]);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "e opened no composer"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_none()).await,
+            "mod+Return did not close the composer"
+        );
+        assert!(
+            crate::settle_until(async || window.toast_showing().is_some()).await,
+            "a send said nothing"
+        );
+        let toast = window.toast().expect("the toast");
+        assert_eq!(toast.button_label().as_deref(), Some("Undo"));
+        assert!(
+            toast.title().unwrap_or_default().contains("queued"),
+            "the toast says {:?}",
+            toast.title()
+        );
+
+        support::press(&window, "z", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || window.compose_dialog().is_some()).await,
+            "Undo did not put the draft back in the composer"
+        );
+        let dialog = window.compose_dialog().expect("the compose dialog");
+        assert_eq!(
+            field(&dialog, "Subject").as_deref(),
+            Some("Re: Harbor API draft v3")
+        );
+    });
+}
