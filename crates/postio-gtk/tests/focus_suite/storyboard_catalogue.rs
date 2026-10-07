@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-use postio_gtk::demo::storyboard::{Options, run};
+use postio_gtk::demo::storyboard::{Options, run, variants_to_play};
 use postio_storyboard::check::Outcome;
 use postio_storyboard::format::{Proof, load};
 use postio_storyboard::run::{Status, StepOutcome};
@@ -57,10 +57,18 @@ pub fn the_catalogue_holds_on_focus() {
         let mut problems = Vec::new();
         for file in &files {
             let board = load(file).unwrap_or_else(|error| panic!("{}: {error}", file.display()));
+            // The variant the storyboard asks for, as `scripts/storyboards.sh
+            // run` plays it: a storyboard that says `vary = { width =
+            // ["narrow"] }` is about the narrow window, and at the default
+            // size its check holds or fails by how wide a row happens to
+            // measure.
+            let (variants, ignored_axes) = variants_to_play(&board, false);
             let played = run(
                 &board,
                 &Options {
                     frames: false,
+                    variant: variants.into_iter().next().unwrap_or_default(),
+                    ignored_axes,
                     ..Options::default()
                 },
             )
