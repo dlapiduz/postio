@@ -33,10 +33,10 @@ expect  = "The message opens in the pane beside the list."
 
 [[step]]
 command = "compose"
-check   = { composer.open = true, keyboard.region = "composer" }
-expect  = "The composer fills the whole reading pane, edge to edge, with the list still beside it. It is not a small box in a corner."
+check   = { composer.open = true, keyboard.region = "composer", app.focus.cursor.ring = "quiet" }
+expect  = "The composer fills the whole reading pane, edge to edge, with the list still beside it. It is not a small box in a corner. The list's cursor row is drawn quietly, not in the accent ring: the keyboard is in the composer."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, reading.id = { same_as = "open" } }
+check   = { composer.open = false, reading.id = { same_as = "open" }, app.focus.cursor.ring = "accent" }
 expect  = "The message is back in the pane, the same one that was there."

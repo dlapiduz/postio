@@ -50,6 +50,10 @@ const START_OVER: &str = "This version of Postio can\u{2019}t read the store an 
 /// What a window with nothing saved opens at.
 const DEFAULT_GEOMETRY: postio_widgets::state::Geometry =
     postio_widgets::state::Geometry::new(1440, 900);
+/// Put on the window while the list does not hold the keyboard (the composer
+/// or a dialog does): the cursor row then wears a neutral mark, so the accent
+/// ring is on screen once, where the keyboard is.
+const KEYBOARD_AWAY: &str = "focus-keyboard-away";
 const BLANK: &str = "blank";
 const OPENING: &str = "opening";
 const UNAVAILABLE: &str = "unavailable";
@@ -497,6 +501,7 @@ impl FocusWindow {
         self.set_content(Some(imp.toast.overlay()));
 
         self.drop_focus_that_leaves();
+        self.keep_cursor_ring_where_the_keyboard_is();
         self.connect_is_active_notify(|window| window.focus_changed(window.is_active()));
         self.connect_close_request(|window| {
             window.save_geometry();
@@ -934,6 +939,42 @@ impl FocusWindow {
                 glib::Propagation::Proceed
             }
         }
+    }
+
+    /// Whether the list is where the keyboard is: false while the composer,
+    /// in the reading pane or a window of its own, or a dialog holds it.
+    fn list_holds_keyboard(&self) -> bool {
+        self.visible_dialog().is_none()
+            && !self.compose().is_some_and(|compose| {
+                compose.is_showing() || compose.composer().is_detached()
+            })
+    }
+
+    /// Draw the cursor row quietly while the list does not hold the keyboard
+    /// (the `focus-keyboard-away` class the style sheet reads).
+    fn refresh_cursor_ring(&self) {
+        if self.list_holds_keyboard() {
+            self.remove_css_class(KEYBOARD_AWAY);
+        } else {
+            self.add_css_class(KEYBOARD_AWAY);
+        }
+    }
+
+    /// Keep that class true as the keyboard moves. The keyboard going into
+    /// the composer or a dialog moves GTK's focus, and a composer's showing
+    /// settles a moment after the focus does, so the class is read again
+    /// once the main loop is idle.
+    fn keep_cursor_ring_where_the_keyboard_is(&self) {
+        let settle = |window: &Self| {
+            window.refresh_cursor_ring();
+            glib::idle_add_local_once(glib::clone!(
+                #[weak]
+                window,
+                move || window.refresh_cursor_ring()
+            ));
+        };
+        self.connect_focus_widget_notify(move |window| settle(window));
+        self.connect_visible_dialog_notify(move |window| settle(window));
     }
 
     /// Whether the keyboard is on text entry: what the resolver is told, so
@@ -5434,6 +5475,17 @@ impl FocusWindow {
                 );
             }
         }
+        // The mark the list's cursor row wears: the accent ring while the
+        // list holds the keyboard, a quiet one while the composer or a
+        // dialog does. Read off the class the style sheet reads.
+        app.insert(
+            "focus.cursor.ring".to_owned(),
+            serde_json::json!(if self.has_css_class(KEYBOARD_AWAY) {
+                "quiet"
+            } else {
+                "accent"
+            }),
+        );
         // Whether the keyboard is on the message itself -- its column, where
         // Space scrolls and the verbs' keys act -- and not on a control
         // around it, which Space or Return would press instead.

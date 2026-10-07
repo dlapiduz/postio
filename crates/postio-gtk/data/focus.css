@@ -172,6 +172,15 @@ button.focus-has-action:checked {
   outline-offset: -2px;
 }
 
+/* The accent ring means the keyboard is here. While the composer or a dialog
+   holds it, the list's cursor row keeps its place in a quiet mark, so there
+   is one accent ring on screen. */
+.focus-keyboard-away .focus-list > row:selected,
+.focus-keyboard-away .focus-list > row:focus-visible {
+  outline: 2px solid var(--postio-hairline-strong);
+  outline-offset: -2px;
+}
+
 focusrow {
   color: var(--postio-ink);
   font-family: var(--postio-font-body);
