@@ -299,12 +299,14 @@ impl Preset {
                 show_add_account(window, self)
             }
             Preset::Locked => {
-                window.show_unavailable(
-                    "the login keyring is locked, so Postio cannot read the password \
-                     for ada@example.com. Unlock it in your keyring application \u{2014} on \
-                     GNOME that is Passwords and Keys \u{2014} and try again.",
-                    || {},
-                );
+                // The sentence the opener would say: the store is encrypted
+                // under a key the keyring holds, so a locked keyring is mail
+                // that cannot be opened, not a password that cannot be read.
+                let refusal = postio_account::secret::SecretError::Locked {
+                    keyring: "login".to_owned(),
+                    account: postio_session::STORE_KEY_ENTRY.to_owned(),
+                };
+                window.show_unavailable(&refusal.to_string(), || {});
                 pump(Duration::from_millis(200));
                 Ok(())
             }
