@@ -15,6 +15,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use crossterm::event::{Event as TerminalEvent, EventStream};
+use futures_util::FutureExt;
 use futures_util::StreamExt;
 use postio_client::Client;
 use postio_client::protocol::ClientKind;
@@ -237,8 +238,7 @@ async fn main_loop(
     session: &mut Session,
 ) -> io::Result<()> {
     let enhanced_keys = session.has(Mode::KeyboardEnhancement);
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend(io::stdout()))?;
     let size = terminal.size()?;
     let mut app = App::new((size.width, size.height), keys)
         .with_state(state)
@@ -306,6 +306,33 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+/// The most inputs handled before a frame is painted, so a flood of them
+/// cannot keep the screen from moving at all.
+const BATCH: usize = 64;
+
+/// What a terminal event asks of the app; `None` for one it does not use.
+fn terminal_input(event: TerminalEvent, hits: &crate::view::hit::Hits) -> Option<Input> {
+    match event {
+        TerminalEvent::Key(key) => Some(Input::Key(key)),
+        TerminalEvent::Resize(width, height) => Some(Input::Resize(width, height)),
+        TerminalEvent::Paste(pasted) => Some(Input::Paste(pasted)),
+        TerminalEvent::Mouse(mouse) => pointer(&mouse, hits).map(Input::Pointer),
+        _ => None,
+    }
+}
+
+/// An input already waiting -- a host event, or an answer to something
+/// asked -- taken without waiting for one.
+fn next_ready(
+    host: &async_channel::Receiver<postio_core::EventEnvelope>,
+    arriving: &async_channel::Receiver<Input>,
+) -> Option<Input> {
+    host.try_recv()
+        .ok()
+        .map(|envelope| Input::Host(envelope.event))
+        .or_else(|| arriving.try_recv().ok())
 }
 
 /// A mouse event as the app hears it: what it landed on in the last frame.
@@ -468,38 +495,29 @@ async fn drive(
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
-    // What is where on the screen, as last drawn: what a click lands on.
-    let mut hits = crate::view::hit::Hits::default();
     let contents = places_contents(client, senders.config.clone()).await;
     // The first list is opened by what the places say: Focus's inbox, once
     // there is an account to show.
     let effects = update(app, Input::Places(contents));
-    if let Flow::Quit = perform(client, app, terminal, theme, senders, effects, &mut hits)? {
+    let mut paint = false;
+    if let Flow::Quit = perform(client, senders, effects, &mut paint)? {
         return Ok(());
     }
-    hits = draw(terminal, app, theme)?;
+    // What is where on the screen, as last drawn: what a click lands on.
+    let mut hits = draw(terminal, app, theme)?;
 
     loop {
-        let input = tokio::select! {
+        let first = tokio::select! {
             event = terminal_events.next() => match event {
-                Some(Ok(TerminalEvent::Key(key))) => Input::Key(key),
-                Some(Ok(TerminalEvent::Resize(width, height))) => Input::Resize(width, height),
-                Some(Ok(TerminalEvent::Paste(pasted))) => Input::Paste(pasted),
-                Some(Ok(TerminalEvent::Mouse(mouse))) => match pointer(&mouse, &hits) {
-                    Some(pointer) => Input::Pointer(pointer),
+                Some(Ok(event)) => match terminal_input(event, &hits) {
+                    Some(input) => input,
                     None => continue,
                 },
-                Some(Ok(_)) => continue,
                 Some(Err(error)) => return Err(error),
                 None => return Ok(()),
             },
             heard = host_events.recv() => match heard {
-                Ok(envelope) => {
-                    if let postio_core::Event::NewMail { mailbox, messages, .. } = &envelope.event {
-                        tell(senders, *mailbox, messages.clone());
-                    }
-                    Input::Host(envelope.event)
-                }
+                Ok(envelope) => Input::Host(envelope.event),
                 // The host stopped: nothing on screen can be trusted to
                 // change any more, so leave rather than show a frozen mailbox.
                 Err(_) => return Err(io::Error::other("Postio's store stopped answering.")),
@@ -509,8 +527,41 @@ async fn drive(
                 Err(_) => return Ok(()),
             },
         };
-        let effects = update(app, input);
-        match perform(client, app, terminal, theme, senders, effects, &mut hits)? {
+        // Everything already waiting is handled before the frame is painted:
+        // a burst of keys, or of a sync's events, is one frame rather than
+        // one each, which over SSH is the difference between a list that
+        // moves and one that flickers on its way.
+        let mut paint = false;
+        let mut flow = Flow::Go;
+        let mut next = Some(first);
+        let mut handled = 0;
+        while let Some(input) = next.take() {
+            if let Input::Host(postio_core::Event::NewMail {
+                mailbox, messages, ..
+            }) = &input
+            {
+                tell(senders, *mailbox, messages.clone());
+            }
+            let effects = update(app, input);
+            flow = perform(client, senders, effects, &mut paint)?;
+            handled += 1;
+            if !matches!(flow, Flow::Go) || handled >= BATCH {
+                break;
+            }
+            next = match terminal_events.next().now_or_never() {
+                Some(Some(Ok(event))) => terminal_input(event, &hits),
+                Some(Some(Err(error))) => return Err(error),
+                Some(None) => return Ok(()),
+                None => None,
+            }
+            .or_else(|| next_ready(&host_events, arriving));
+        }
+        // While an open message's reads are on their way, the frame is
+        // painted once they land (or after a frame's wait), not once per read.
+        if paint && !app.holds_paint() {
+            hits = draw(terminal, app, theme)?;
+        }
+        match flow {
             Flow::Go => {}
             Flow::Quit => return Ok(()),
             Flow::EditConfig(section) => {
@@ -697,17 +748,26 @@ fn downloads() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-type Screen = Terminal<CrosstermBackend<io::Stdout>>;
+type Screen = Terminal<CrosstermBackend<io::BufWriter<io::Stdout>>>;
 
-/// Do what `update` asked, and say what the loop does next.
+/// Room for a whole frame: a full screen of styled cells is tens of
+/// kilobytes at most.
+const FRAME_BUFFER: usize = 1 << 16;
+
+/// A backend that sends a frame in one write when it is flushed, not a
+/// kilobyte at a time as standard output's own buffer would. Over SSH every
+/// write is a packet the far terminal may paint before the next arrives.
+fn backend<W: io::Write>(out: W) -> CrosstermBackend<io::BufWriter<W>> {
+    CrosstermBackend::new(io::BufWriter::with_capacity(FRAME_BUFFER, out))
+}
+
+/// Do what `update` asked, note in `paint` whether the screen changed, and
+/// say what the loop does next.
 fn perform(
     client: &Client,
-    app: &mut App,
-    terminal: &mut Screen,
-    theme: &Theme,
     senders: &Senders<'_>,
     effects: Vec<Effect>,
-    hits: &mut crate::view::hit::Hits,
+    paint: &mut bool,
 ) -> io::Result<Flow> {
     let Senders {
         inputs,
@@ -1424,11 +1484,7 @@ fn perform(
             }
         }
     }
-    // While an open message's reads are on their way, the frame is painted
-    // once they land (or after a frame's wait), not once per read.
-    if redraw && !app.holds_paint() {
-        *hits = draw(terminal, app, theme)?;
-    }
+    *paint |= redraw;
     Ok(flow)
 }
 
@@ -1455,6 +1511,65 @@ fn draw<W: io::Write>(
 
 #[cfg(test)]
 mod tests {
+
+    /// The writes the terminal is sent, one entry each, kept to read back.
+    #[derive(Clone, Default)]
+    struct Writes(std::rc::Rc<std::cell::RefCell<Vec<Vec<u8>>>>);
+    impl io::Write for Writes {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().push(bytes.to_vec());
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_frame_leaves_in_one_write_not_a_kilobyte_at_a_time() {
+        let writes = Writes::default();
+        let mut terminal = ratatui::Terminal::with_options(
+            backend(writes.clone()),
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 120, 36)),
+            },
+        )
+        .expect("a terminal");
+        let (app, _) = crate::test_support::sample::state("list", 120, 36);
+        let theme = crate::test_support::plain_theme();
+        draw(&mut terminal, &app, &theme).expect("drawn");
+        let sent = writes.0.borrow();
+        let frame = sent
+            .iter()
+            .find(|write| write.len() > 1024)
+            .expect("the whole frame in one write");
+        let text = String::from_utf8_lossy(frame);
+        assert!(
+            text.starts_with("\x1b[?2026h") && text.contains("Grace Oyelaran"),
+            "the synchronized update begins it and the mail is in it"
+        );
+        assert!(
+            sent.len() <= 2,
+            "the frame, then its end: {} writes",
+            sent.len()
+        );
+    }
+
+    #[test]
+    fn what_is_waiting_already_is_taken_without_waiting() {
+        let (host_tx, host) = async_channel::unbounded();
+        let (answers, arriving) = async_channel::unbounded();
+        assert!(next_ready(&host, &arriving).is_none(), "nothing waits");
+        host_tx
+            .try_send(postio_core::EventEnvelope::untracked(
+                postio_core::Event::SurfacedChanged,
+            ))
+            .unwrap();
+        answers.try_send(Input::Settled { generation: 1 }).unwrap();
+        let taken: Vec<_> = std::iter::from_fn(|| next_ready(&host, &arriving)).collect();
+        assert_eq!(taken.len(), 2, "both, at once: {taken:?}");
+        assert!(next_ready(&host, &arriving).is_none());
+    }
 
     #[test]
     fn a_frame_is_written_whole_inside_a_synchronized_update() {
