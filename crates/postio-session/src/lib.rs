@@ -267,6 +267,23 @@ async fn mint(
     Ok(key)
 }
 
+/// The refusal for a keyring that would not give up the store's key, in
+/// words for a person: [`SecretError`]'s own `Display` is for a log, and the
+/// page this lands on is the only thing between someone and their mail.
+///
+/// [`SecretError`]: postio_account::secret::SecretError
+pub fn key_refusal(error: &postio_account::secret::SecretError) -> Refusal {
+    use postio_account::secret::SecretError;
+    Refusal::try_again(match error {
+        SecretError::Locked { .. } => postio_ui::keyring_refusal::locked(),
+        SecretError::Backend { reason, .. } => postio_ui::keyring_refusal::unreadable(reason),
+        SecretError::Timeout { .. } => {
+            postio_ui::keyring_refusal::unreadable("it did not answer in time")
+        }
+        other => postio_ui::keyring_refusal::unreadable(&other.to_string()),
+    })
+}
+
 /// [`store_key`], for a caller that has no runtime yet.
 ///
 /// Startup is the one place this is needed, and the shape of the sequence is

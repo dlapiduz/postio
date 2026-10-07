@@ -66,10 +66,14 @@ async fn a_locked_keyring_refuses_and_says_how_to_unlock() {
         "the variant has to survive, because it is what routes to the unlock \
          surface rather than to onboarding: {refused:?}"
     );
-    let said = refused.to_string();
+    let said = postio_session::key_refusal(&refused).sentence;
     assert!(
-        said.contains("locked") && said.contains("unlock"),
+        said.contains("locked") && said.contains("Unlock"),
         "and it has to tell the user what to do: {said}"
+    );
+    assert!(
+        !said.contains("local store encryption key") && !said.contains("cannot read"),
+        "in a person's words, not the error's: {said}"
     );
     assert!(
         keyring.is_empty(),

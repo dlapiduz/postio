@@ -315,7 +315,7 @@ impl Preset {
                     keyring: "login".to_owned(),
                     account: postio_session::STORE_KEY_ENTRY.to_owned(),
                 };
-                window.show_unavailable(&refusal.to_string(), || {});
+                window.show_unavailable(&postio_session::key_refusal(&refusal).sentence, || {});
                 pump(Duration::from_millis(200));
                 Ok(())
             }

@@ -35,6 +35,7 @@ pub mod format;
 pub mod handoff;
 pub mod hints;
 pub mod keymap;
+pub mod keyring_refusal;
 pub mod keymap_sheet;
 pub mod label_colour;
 pub mod links;

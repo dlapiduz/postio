@@ -383,7 +383,7 @@ impl Host {
 
         report(Waiting::Keyring);
         let key = postio_session::store_key_blocking(secrets.as_ref())
-            .map_err(|error| Refusal::try_again(error.to_string()))?;
+            .map_err(|error| postio_session::key_refusal(&error))?;
         let (database, blobs) = {
             // Its own runtime, dropped before the host's exists: opening the
             // store is async, and nothing else is running yet to host it.
