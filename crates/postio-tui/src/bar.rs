@@ -369,7 +369,8 @@ impl Bar {
                 None => Step::Stay,
             },
             rules::Route::Plain => Step::Stay,
-            rules::Route::Blend => {
+            // The terminal has no correspondent rows yet: `@` is a word.
+            rules::Route::Correspondent(_) | rules::Route::Blend => {
                 let parsed = self.lowered(&typed);
                 match rules::chips(&parsed) {
                     Some(chips) => {
@@ -816,6 +817,7 @@ mod tests {
                 "ada@example.com",
             )),
             received_at: chrono::Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
+            preview: None,
             snippet: "the \u{1}tide\u{2} gate".to_owned(),
             score: 0.0,
         }

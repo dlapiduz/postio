@@ -297,6 +297,42 @@ pub struct Blend<'a> {
     pub search: Option<String>,
 }
 
+impl Blend<'_> {
+    /// Whether the search row leads: nothing the text matched is named by
+    /// it outright. A scattered-letter match on a command's title is not a
+    /// reason to put that command under the cursor, where Return would run
+    /// it -- "tide" must search, not allow images (see [`is_named_by`]).
+    pub fn search_first(&self) -> bool {
+        let Some(query) = &self.search else {
+            return false;
+        };
+        !self
+            .commands
+            .iter()
+            .any(|entry| is_named_by(query, entry.title))
+            && !self
+                .places
+                .iter()
+                .any(|hit| is_named_by(query, &hit.place.name))
+    }
+}
+
+/// Whether `query` names `title` outright, rather than being letters that
+/// happen to occur in it in order: every word of the query begins a word of
+/// the title, case aside. The palette's matcher ranks scattered letters too,
+/// which is right for finding a command and wrong for choosing what Return
+/// runs.
+pub fn is_named_by(query: &str, title: &str) -> bool {
+    let query = query.to_lowercase();
+    let title = title.to_lowercase();
+    let words: Vec<&str> = title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut asked = query.split_whitespace().peekable();
+    asked.peek().is_some() && asked.all(|ask| words.iter().any(|word| word.starts_with(ask)))
+}
+
 /// The bar's blended answer to `text` (spec 007 FR-060): the commands
 /// reachable in `context` that it matches, the `places` it names, and a
 /// search for it, or the commands alone after [`COMMANDS_ONLY`].
@@ -585,6 +621,38 @@ mod tests {
             Blend::default(),
             "and something typed is something to blend"
         );
+    }
+
+    /// The blocker: "tide" is a word to search for. The command whose
+    /// letters happen to contain it in order must not lead, because Return
+    /// on it would change a setting instead of searching.
+    #[test]
+    fn a_word_that_names_no_command_leads_with_the_search() {
+        let places = places();
+        let found = blend("tide", &places, &defaults(), Context::List, an_account());
+        assert!(found.search_first(), "{:?}", found.commands);
+        let found = blend("harbour", &places, &defaults(), Context::List, an_account());
+        assert!(found.search_first());
+    }
+
+    /// Typing what a command is called keeps that command first.
+    #[test]
+    fn a_word_that_names_a_command_leaves_it_first() {
+        let places = places();
+        let found = blend("arch", &places, &defaults(), Context::List, an_account());
+        assert!(!found.search_first());
+        let found = blend("always", &places, &defaults(), Context::List, an_account());
+        assert!(!found.search_first(), "a word of its title names it");
+    }
+
+    #[test]
+    fn naming_is_by_the_start_of_words_not_scattered_letters() {
+        assert!(is_named_by("arch", "Archive"));
+        assert!(is_named_by("mark read", "Mark as read"));
+        assert!(is_named_by("IMAGES", "Always show images from this sender"));
+        assert!(!is_named_by("tide", "Always show images from this sender"));
+        assert!(!is_named_by("", "Archive"));
+        assert!(!is_named_by("chive", "Archive"));
     }
 
     /// Every row on screen 09's list is a conversation: `m<n>` is thread

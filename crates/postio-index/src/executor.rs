@@ -775,6 +775,7 @@ struct Candidate {
     from_name: Option<String>,
     from_address: Option<String>,
     received_at: DateTime<Utc>,
+    preview: Option<String>,
     snippet: String,
     bm25: f64,
     sender_times_seen: i64,
@@ -792,6 +793,7 @@ impl Candidate {
                 .from_address
                 .map(|address| EmailAddress::new(self.from_name, address)),
             received_at: self.received_at,
+            preview: self.preview,
             snippet: self.snippet,
             score: self.score,
         }
@@ -1340,9 +1342,9 @@ impl Plan {
                  (SELECT max(c.times_seen) FROM contacts c
                     WHERE c.address_normalized = a.address_normalized
                       {affinity}) AS sender_times_seen,
-                 0 AS unused
+                 sub.preview
              FROM (SELECT
-                     m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
+                     m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at, m.preview,
                      (SELECT r.id FROM recipients r
                         WHERE r.message_id = m.id AND r.kind = 'from'
                         ORDER BY r.position LIMIT 1) AS from_recipient
@@ -1397,6 +1399,7 @@ impl Plan {
                         from_name: row.col(5)?,
                         from_address: row.col(6)?,
                         sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
+                        preview: row.col(8)?,
                         // Filled in below, from the pool.
                         bm25: 0.0,
                         // Filled by whoever can read the body — see

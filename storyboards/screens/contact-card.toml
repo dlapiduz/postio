@@ -10,3 +10,5 @@ command = "search"
 
 [[step]]
 type    = "@"
+check   = { app.focus.bar.highlighted = "correspondent" }
+expect  = "The correspondents the bar offers are listed, the first under the cursor."

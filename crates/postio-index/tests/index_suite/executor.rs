@@ -237,6 +237,52 @@ async fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
     assert!(results.hits.iter().all(|hit| hit.snippet.is_empty()));
 }
 
+/// A result row can show the message's first line without reading a body:
+/// the hit carries the preview the list shows.
+#[tokio::test]
+async fn a_hit_carries_the_messages_first_line() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+
+    let mut with = Message::new(account.id, mailbox, at(8));
+    with.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
+    with.subject = Some("Harbour".to_owned());
+    with.preview = Some("Three berths free this weekend.".to_owned());
+    MessageRepository::new(&connection)
+        .create(&mut with)
+        .await
+        .expect("create message");
+    message(
+        &connection,
+        &account,
+        mailbox,
+        "ada",
+        "Harbour again",
+        at(9),
+    )
+    .await;
+
+    let found = search_for(&connection, &account, "harbour").await;
+    let preview_of = |id| {
+        found
+            .hits
+            .iter()
+            .find(|hit| hit.message_id == id)
+            .expect("hit")
+            .preview
+            .clone()
+    };
+    assert_eq!(
+        preview_of(with.id).as_deref(),
+        Some("Three berths free this weekend.")
+    );
+    assert_eq!(found.hits.len(), 2);
+}
+
 #[tokio::test]
 async fn search_never_crosses_accounts() {
     let database = test_support::memory().await;

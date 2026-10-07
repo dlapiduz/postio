@@ -292,6 +292,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                     subject: Some(subject.to_owned()),
                     from: Some(EmailAddress::new(Some("Ada Moreno"), "ada@example.com")),
                     received_at: crate::test_support::local(23, 11, 51).with_timezone(&Utc),
+                    preview: None,
                     snippet: snippet.to_owned(),
                     score: 0.0,
                 }

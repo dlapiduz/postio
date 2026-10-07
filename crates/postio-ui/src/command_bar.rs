@@ -41,6 +41,12 @@ pub const ACCOUNT_VERBS: [CommandId; 5] = [
 /// The line under a search's chips-less answer: what "Search mail" covers.
 pub const SEARCH_DETAIL: &str = "subject, body, attachments";
 
+/// The character that asks for a correspondent: the finder's own prefix.
+pub const CORRESPONDENTS: char = '@';
+
+/// How many correspondents `@` lists.
+pub const CORRESPONDENT_ROWS: usize = 8;
+
 /// What typing in the bar means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route<'a> {
@@ -48,6 +54,8 @@ pub enum Route<'a> {
     Folder(&'a str),
     /// Nothing, or `>`: commands only, no chips.
     Plain,
+    /// `@` and a name: the correspondents it matches.
+    Correspondent(&'a str),
     /// Anything else: the blend, and chips when the words are a search.
     Blend,
 }
@@ -56,6 +64,9 @@ pub enum Route<'a> {
 pub fn route(typed: &str) -> Route<'_> {
     if let Some(name) = typed.strip_prefix("in:").filter(|name| !name.contains(' ')) {
         return Route::Folder(name);
+    }
+    if let Some(name) = typed.strip_prefix(CORRESPONDENTS) {
+        return Route::Correspondent(name);
     }
     if typed.is_empty() || typed.starts_with(finder::COMMANDS_ONLY) {
         Route::Plain
@@ -150,6 +161,9 @@ pub enum Row {
     Instead(String),
     /// The order the results are in, and what running it switches to.
     Order,
+    /// A correspondent `@` offered: running it searches their mail, as the
+    /// `from:` query it stands for.
+    Correspondent(String),
 }
 
 /// What running a row comes to.
@@ -175,6 +189,7 @@ impl Row {
             Row::Search => Run::Search,
             Row::Instead(typed) => Run::SearchFor(format!("\"{typed}\"")),
             Row::Order => Run::ToggleOrder,
+            Row::Correspondent(query) => Run::SearchFor(query),
             Row::Message { message, subject } => Run::Action(BarAction::Open { message, subject }),
             Row::Command(ActionId::Builtin(command)) => Run::Action(BarAction::Command(command)),
             Row::Command(ActionId::Ext(_)) => Run::Nothing,
@@ -210,6 +225,9 @@ pub enum Line {
 /// places, and the one search row.
 pub fn blend_lines(blend: &Blend<'_>) -> Vec<Line> {
     let mut lines = Vec::new();
+    if blend.search_first() {
+        lines.extend(search_line(blend));
+    }
     if !blend.commands.is_empty() {
         lines.push(Line::Heading("Commands".to_owned()));
         for entry in blend.commands.iter().take(BLEND_ROWS) {
@@ -235,11 +253,34 @@ pub fn blend_lines(blend: &Blend<'_>) -> Vec<Line> {
             });
         }
     }
-    if let Some(query) = &blend.search {
+    if !blend.search_first() {
+        lines.extend(search_line(blend));
+    }
+    lines
+}
+
+/// The one "Search mail for …" row, when there is something to search for.
+fn search_line(blend: &Blend<'_>) -> Option<Line> {
+    blend.search.as_ref().map(|query| Line::Row {
+        row: Row::Search,
+        title: format!("Search mail for \u{201c}{query}\u{201d}"),
+        detail: Some(SEARCH_DETAIL.to_owned()),
+        key: None,
+    })
+}
+
+/// The lines `@` draws: the correspondents it matched, each under one
+/// heading, running as the `from:` search for them.
+pub fn correspondent_lines(hits: &[finder::ContactHit]) -> Vec<Line> {
+    if hits.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![Line::Heading("Correspondents".to_owned())];
+    for hit in hits.iter().take(CORRESPONDENT_ROWS) {
         lines.push(Line::Row {
-            row: Row::Search,
-            title: format!("Search mail for \u{201c}{query}\u{201d}"),
-            detail: Some(SEARCH_DETAIL.to_owned()),
+            row: Row::Correspondent(finder::contact_query(hit)),
+            title: hit.name.clone(),
+            detail: Some(hit.address.clone()),
             key: None,
         });
     }
@@ -336,6 +377,24 @@ pub fn result_place(
     }
 }
 
+/// A result's place with the account it belongs to, when there is more than
+/// one account to tell apart (`owners` is empty with one): the same message
+/// filed in two accounts is two rows, and the row says which it is.
+pub fn result_place_in(
+    hit: &SearchHit,
+    place: Option<String>,
+    owners: &[(MailboxId, String)],
+) -> Option<String> {
+    let account = owners
+        .iter()
+        .find(|(id, _)| *id == hit.mailbox_id)
+        .map(|(_, account)| account.clone());
+    match (place, account) {
+        (Some(place), Some(account)) => Some(format!("{place} \u{b7} {account}")),
+        (place, account) => place.or(account),
+    }
+}
+
 /// A sender as a result row names them: their name, or their address.
 pub fn said_of(from: &postio_model::EmailAddress) -> String {
     from.name.clone().unwrap_or_else(|| from.address.clone())
@@ -356,6 +415,7 @@ mod tests {
             subject: None,
             from: None,
             received_at: Utc::now(),
+            preview: None,
             snippet: String::new(),
             score: 0.0,
         }
@@ -369,6 +429,68 @@ mod tests {
             go: None,
             destination: Destination::Mailbox(MailboxId::new(id)),
         }
+    }
+
+    fn first_row(lines: &[Line]) -> &Row {
+        lines
+            .iter()
+            .find_map(|line| match line {
+                Line::Row { row, .. } => Some(row),
+                Line::Heading(_) => None,
+            })
+            .expect("a row")
+    }
+
+    /// What Return runs first is the search for a word no command is named
+    /// by, and the command for one it is.
+    #[test]
+    fn the_first_row_is_the_search_unless_a_command_is_named() {
+        let keymap = Keymap::resolve(&postio_config::KeyBindings::default());
+        let state = postio_core::Availability::open(postio_core::Scope::Account(
+            postio_model::AccountId::new(1),
+        ));
+        let lines =
+            |typed: &str| blend_lines(&finder::blend(typed, &[], &keymap, Context::List, state));
+        assert_eq!(first_row(&lines("tide")), &Row::Search);
+        assert!(matches!(first_row(&lines("arch")), Row::Command(_)));
+    }
+
+    #[test]
+    fn at_offers_correspondents_and_a_pick_searches_their_mail() {
+        assert_eq!(route("@"), Route::Correspondent(""));
+        assert_eq!(route("@ada"), Route::Correspondent("ada"));
+        let contacts = [postio_model::Contact::new(postio_model::EmailAddress::new(
+            Some("Ada Moreno"),
+            "ada@example.com",
+        ))];
+        let lines = correspondent_lines(&finder::contacts(&contacts, ""));
+        let Some(Line::Row {
+            row, title, detail, ..
+        }) = lines.get(1)
+        else {
+            panic!("no correspondent row: {lines:?}");
+        };
+        assert_eq!(title, "Ada Moreno");
+        assert_eq!(detail.as_deref(), Some("ada@example.com"));
+        assert_eq!(
+            row.clone().run(),
+            Run::SearchFor("from:ada@example.com".to_owned())
+        );
+        assert!(correspondent_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_result_names_its_account_only_where_accounts_are_to_be_told_apart() {
+        let one = hit(1, None);
+        let owners = vec![(MailboxId::new(1), "ada@example.com".to_owned())];
+        assert_eq!(
+            result_place_in(&one, Some("in:Archive".to_owned()), &owners).as_deref(),
+            Some("in:Archive \u{b7} ada@example.com")
+        );
+        assert_eq!(
+            result_place_in(&one, Some("in:Archive".to_owned()), &[]).as_deref(),
+            Some("in:Archive")
+        );
     }
 
     #[test]

@@ -10,7 +10,9 @@ command = "search"
 
 [[step]]
 type    = "harbour"
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
 
 [[step]]
 key     = "Return"
-settle  = { until = { app.focus.bar.messages = { changed = true } } }
+check   = { app.focus.bar.highlighted = "message" }
+expect  = "Return takes the highlight to the first hit, not to the sort row; each hit shows the message's first line."

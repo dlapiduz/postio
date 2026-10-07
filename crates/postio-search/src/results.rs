@@ -64,6 +64,9 @@ pub struct SearchHit {
     pub from: Option<EmailAddress>,
     /// When the server received it.
     pub received_at: DateTime<Utc>,
+    /// The message's first line, as the list shows it: what tells two hits
+    /// with one subject apart without opening either.
+    pub preview: Option<String>,
     /// A snippet of the matching text, with each match wrapped in the
     /// markers [`crate::highlight`] defines. Empty for a query with no free
     /// text to snippet; [`crate::highlight::from_snippet`] reads it back.

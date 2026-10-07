@@ -4,8 +4,9 @@
 # nothing, and there was no key. `toggle_result_order` is the keyboard path.
 #
 # Re-expressed for Focus (T265): the bar lists its order as a row ("Sorted
-# by relevance"), and `O` switches it once the arrows have chosen a result
-# (before that `O` is a letter, T241). The order row is what is read back.
+# by relevance"); running that row switches it. `O` is a letter in the box
+# whatever is highlighted, so a name like O'Brien can be typed. The order
+# row is what is read back.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#499" }
 proof  = "pinned"
@@ -15,26 +16,28 @@ command = "search"
 
 [[step]]
 type    = "harbour"
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
 
 [[step]]
 key     = "Return"
-settle  = { until = { app.focus.bar.messages = { changed = true } } }
-check   = { keyboard.region = "search", app.focus.bar.highlighted = "order" }
+check   = { keyboard.region = "search", app.focus.bar.highlighted = "message" }
 
 [[step]]
 id      = "relevance"
-key     = "Down"
-check   = { app.focus.bar.highlighted = "message" }
+key     = "Up"
+check   = { app.focus.bar.highlighted = "order" }
 
 [[step]]
-command = "toggle_result_order"
+key     = "Return"
 check   = { keyboard.region = "search", app.focus.bar.highlighted = "order", app.focus.bar.messages = { same_as = "relevance" } }
-expect  = "The same hits, now newest first, and the order row says so."
+expect  = "Running the order row switches the results to newest first, and the row says so."
 
 [[step]]
-key     = "Down"
-
-[[step]]
-command = "toggle_result_order"
+key     = "Return"
 check   = { app.focus.bar.highlighted = "order", app.focus.bar.messages = { same_as = "relevance" } }
 expect  = "Back to relevance order."
+
+[[step]]
+type    = "O"
+check   = { keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = "harbourO" }
+expect  = "A capital O is typed into the query, with results on screen; the key is not taken from the box."

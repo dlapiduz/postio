@@ -7,8 +7,8 @@
 # across both accounts, and Return on the first puts exactly that message in
 # the reader.
 #
-# Re-expressed for Focus (T265): the bar lists the hits under its field once
-# Return has run the search; Down highlights the first, and Return opens it
+# Re-expressed for Focus (T265): the bar lists the hits under its field as
+# the word is typed; Return highlights the first, and a second Return opens it
 # over the list, in a fresh window with no cursor row. That last was red
 # when re-expressed -- the bar opened a hit through the list's cursor, so
 # with none nothing opened -- and is fixed beside it.
@@ -23,16 +23,13 @@ check   = { overlay.kind = "finder", keyboard.region = "search" }
 
 [[step]]
 type    = "harbour"
-
-[[step]]
-key     = "Return"
 settle  = { until = { app.focus.bar.messages = 8 } }
 check   = { app.focus.bar.messages = 8, app.focus.bar.heading = "Conversations · 8 matches" }
-expect  = "Eight hits from both accounts, each once."
+expect  = "Eight hits from both accounts, each saying which account it is in."
 
 [[step]]
 id      = "hit"
-key     = "Down"
+key     = "Return"
 check   = { app.focus.bar.highlighted = "message", app.focus.bar.highlighted_id = "57" }
 expect  = "The first hit, the Tide gate interlock proposal, is highlighted."
 

@@ -10,10 +10,10 @@
 //! first (screen 08). A half-typed operator is a partial, never an error:
 //! the bar draws no error at all.
 //!
-//! A result set can be switched between relevance and date: a row says which
-//! it is in, and `O` (`ToggleResultOrder`) switches it once an arrow has
-//! chosen a row -- before that, typing wins and `O` is a letter, so it never
-//! collides with the open message's `O` (`SwitchTreatment`, Reader context).
+//! Results arrive as the words are typed, under the "Search mail for" row,
+//! which stays above them. A result set can be switched between relevance
+//! and date: the row that says which it is in switches it when run. `O` is
+//! a letter in the box, always -- typing wins over a bare key.
 //!
 //! Everything here is local. Nothing typed leaves the machine.
 
@@ -89,10 +89,32 @@ pub struct Bar {
     /// Which order a search's results come back in; kept across queries
     /// while the bar is up, and relevance each time it opens.
     order: Cell<postio_search::ResultOrder>,
-    /// Whether the arrows have chosen a row since the rows were last drawn:
-    /// what lets `O` mean "switch the order" rather than the letter, which
-    /// typing always wins.
-    stepped: Cell<bool>,
+    /// Where the results go in the list: the index after the search row.
+    results_at: Cell<usize>,
+    /// While results are being drawn, where the next row is inserted.
+    inserting: Cell<Option<usize>>,
+    /// Where the highlight goes once the results are drawn.
+    pending: Cell<Pending>,
+    /// The generation the rows now show the results of.
+    loaded: Cell<u64>,
+    /// The results' heading, which is a row of the list.
+    result_heading: RefCell<String>,
+    /// Every correspondent, for `@`.
+    contacts: Rc<RefCell<Vec<postio_model::Contact>>>,
+    /// Which account each mailbox belongs to, when more than one is enabled.
+    owners: Rc<RefCell<Vec<(MailboxId, String)>>>,
+}
+
+/// Where the highlight goes when the results have been drawn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Pending {
+    /// Stay where it is.
+    #[default]
+    Nowhere,
+    /// The first hit: Return on the search row asked to be among them.
+    FirstHit,
+    /// The order row, which was just run.
+    Order,
 }
 
 impl Bar {
@@ -209,7 +231,13 @@ impl Bar {
             editing: Cell::new(None),
             shown_chips: RefCell::default(),
             order: Cell::default(),
-            stepped: Cell::new(false),
+            results_at: Cell::new(0),
+            inserting: Cell::new(None),
+            pending: Cell::default(),
+            loaded: Cell::new(0),
+            result_heading: RefCell::default(),
+            contacts: Rc::default(),
+            owners: Rc::default(),
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
@@ -403,7 +431,19 @@ impl Bar {
     /// Run the search row: search for what is typed, as choosing
     /// "Search mail for …" does.
     pub fn run_search(&self) {
-        self.search_typed();
+        let at = self
+            .rows
+            .borrow()
+            .iter()
+            .position(|row| *row == Row::Search);
+        if let Some(at) = at {
+            self.run(at);
+        }
+    }
+
+    /// Run the highlighted row, as Return does.
+    pub fn run_search_row(&self) {
+        self.run_selected();
     }
 
     /// Whether the places the bar can go have been read since it opened.
@@ -424,24 +464,11 @@ impl Bar {
             gtk::gdk::Key::Down => self.step(1),
             gtk::gdk::Key::Up => self.step(-1),
             gtk::gdk::Key::Tab if state.is_empty() => return self.next_chip(),
-            // Typing wins: with no result chosen, the order key is a letter
-            // for the entry. Once an arrow has chosen one, it is the key.
-            _ if self.stepped.get() && self.is_order_key(key, state) => self.toggle_order(),
+            // Typing wins: the order key is a letter for the entry, and the
+            // order row is what switches it.
             _ => return false,
         }
         true
-    }
-
-    /// Whether `key` is the keymap's key for switching the results' order.
-    fn is_order_key(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
-        let keymap = self.keymap.borrow();
-        let Some(bound) = keymap
-            .binding(CommandId::ToggleResultOrder)
-            .and_then(|binding| binding.parse::<postio_ui::keymap::Chord>().ok())
-        else {
-            return false;
-        };
-        postio_widgets::keys::chord(key, state) == Some(bound)
     }
 
     /// Switch the results between relevance and date, and ask again.
@@ -450,6 +477,7 @@ impl Bar {
             postio_search::ResultOrder::Relevance => postio_search::ResultOrder::Newest,
             postio_search::ResultOrder::Newest => postio_search::ResultOrder::Relevance,
         });
+        self.pending.set(Pending::Order);
         self.search_typed();
     }
 
@@ -571,7 +599,7 @@ impl Bar {
         if self.heading.is_visible() {
             self.heading.text().to_string()
         } else {
-            String::new()
+            self.result_heading.borrow().clone()
         }
     }
 
@@ -641,6 +669,7 @@ impl Bar {
             Row::Search => ("search", None, said()),
             Row::Instead(word) => ("instead", None, word.clone()),
             Row::Order => ("order", None, said()),
+            Row::Correspondent(_) => ("correspondent", None, said()),
         })
     }
 
@@ -702,20 +731,30 @@ impl Bar {
                 self.heading.set_visible(false);
                 return;
             }
+            rules::Route::Correspondent(name) => {
+                self.show_chips(&[]);
+                self.heading.set_visible(false);
+                let hits = finder::contacts(&self.contacts.borrow(), name);
+                for line in rules::correspondent_lines(&hits) {
+                    self.append_line(&line);
+                }
+                return;
+            }
             rules::Route::Blend => self.show_blend(typed),
         }
         let parsed = self.lowered(typed);
         // Words that name what they want are a search, shown as its chips
-        // (screen 07); a plain word makes none and searches when its row is
-        // chosen (screen 09).
-        if let Some(chips) = rules::chips(&parsed) {
-            self.show_chips(&chips);
-            self.show_editing();
-            self.search(parsed, generation);
-        } else {
-            self.show_chips(&[]);
-            self.heading.set_visible(false);
+        // (screen 07); a plain word makes none. Either way the results come
+        // as it is typed, under the search row (screen 07 d).
+        match rules::chips(&parsed) {
+            Some(chips) => {
+                self.show_chips(&chips);
+                self.show_editing();
+            }
+            None => self.show_chips(&[]),
         }
+        self.heading.set_visible(false);
+        self.search(parsed, generation);
     }
 
     /// `typed`, read as plain English against today and the address book.
@@ -734,7 +773,6 @@ impl Bar {
             return;
         }
         let parsed = self.lowered(typed);
-        self.clear_rows();
         self.search(parsed, self.generation.get());
     }
 
@@ -768,14 +806,21 @@ impl Bar {
         for line in rules::blend_lines(&blend) {
             self.append_line(&line);
         }
+        // The results go under the search row.
+        let after = self
+            .rows
+            .borrow()
+            .iter()
+            .position(|row| *row == Row::Search)
+            .map_or(self.rows.borrow().len(), |at| at + 1);
+        self.results_at.set(after);
     }
 
-    /// Search this machine's index for `parsed`, and list what it finds,
-    /// one row per conversation.
+    /// Search this machine's index for `parsed`, and list what it finds
+    /// under the search row, one row per conversation.
     fn search(&self, parsed: postio_search::ParsedQuery, generation: u64) {
         let client = self.client.clone();
         let current = Rc::clone(&self.generation);
-        let folders = Rc::clone(&self.folders);
         let digesting = self.digesting.get();
         let order = self.order.get();
         let weak = self.self_weak();
@@ -793,33 +838,10 @@ impl Bar {
             if current.get() != generation {
                 return;
             }
-            let Some(bar) = weak.upgrade() else {
-                return;
-            };
             let Ok(Some(results)) = found else {
                 return;
             };
             let rows = rules::conversations(results.hits);
-            bar.heading.set_text(&rules::results_heading(rows.len()));
-            bar.heading.set_visible(true);
-            // The list is for another word than the box holds, and says so
-            // (ADR 0037); the typed word is one row away, quoted, which is
-            // how the query language says "this word, exactly".
-            if let Some(instead) = &results.instead {
-                bar.append_heading(&rules::showing_results_for(&instead.term));
-                let (title, detail) = rules::search_instead(&instead.typed);
-                bar.append_row(
-                    Row::Instead(instead.typed.clone()),
-                    &title,
-                    Some(detail),
-                    None,
-                );
-            }
-            if !rows.is_empty() {
-                let (title, detail) = rules::order_words(order);
-                let key = postio_ui::hints::key(&bar.keymap.borrow(), CommandId::ToggleResultOrder);
-                bar.append_row(Row::Order, &title, Some(&detail), key.as_deref());
-            }
             // Held mail says where it waits, not the folder it is filed in.
             let held = if digesting {
                 let ids = rows.iter().map(|hit| hit.message_id).collect();
@@ -832,20 +854,88 @@ impl Bar {
             } else {
                 Vec::new()
             };
-            let names = folders.borrow().clone();
-            for hit in rows {
-                let subject = hit.subject.clone().unwrap_or_default();
-                let place = rules::result_place(&hit, &held, &names);
-                bar.append_message(
-                    hit.message_id,
-                    hit.from.as_ref().map(said_of),
-                    &subject,
-                    Some(&hit.snippet),
-                    place.as_deref(),
-                    hit.received_at,
-                );
+            if let Some(bar) = weak.upgrade() {
+                bar.show_results(rows, results.instead, order, &held, generation);
             }
         });
+    }
+
+    /// Draw a search's results under the search row, replacing the last.
+    fn show_results(
+        &self,
+        rows: Vec<postio_search::SearchHit>,
+        instead: Option<postio_search::Instead>,
+        order: postio_search::ResultOrder,
+        held: &[(MessageId, String, bool)],
+        generation: u64,
+    ) {
+        self.clear_results();
+        self.inserting.set(Some(self.results_at.get()));
+        let heading = rules::results_heading(rows.len());
+        self.result_heading.replace(heading.clone());
+        self.append_heading(&heading);
+        // The list is for another word than the box holds, and says so
+        // (ADR 0037); the typed word is one row away, quoted, which is how
+        // the query language says "this word, exactly".
+        if let Some(instead) = &instead {
+            self.append_heading(&rules::showing_results_for(&instead.term));
+            let (title, detail) = rules::search_instead(&instead.typed);
+            self.append_row(
+                Row::Instead(instead.typed.clone()),
+                &title,
+                Some(detail),
+                None,
+            );
+        }
+        if !rows.is_empty() {
+            let (title, detail) = rules::order_words(order);
+            // No key beside it: `O` is a letter in the box.
+            self.append_row(Row::Order, &title, Some(&detail), None);
+        }
+        let names = self.folders.borrow().clone();
+        let owners = self.owners.borrow().clone();
+        for hit in rows {
+            let subject = hit.subject.clone().unwrap_or_default();
+            let place = rules::result_place(&hit, held, &names);
+            let place = rules::result_place_in(&hit, place, &owners);
+            self.append_message(
+                hit.message_id,
+                hit.from.as_ref().map(said_of),
+                &subject,
+                hit.preview.as_deref(),
+                place.as_deref(),
+                hit.received_at,
+            );
+        }
+        self.inserting.set(None);
+        self.loaded.set(generation);
+        self.apply_pending();
+    }
+
+    /// Move the highlight where the last run asked it to go.
+    fn apply_pending(&self) {
+        let wanted = match self.pending.take() {
+            Pending::Nowhere => return,
+            Pending::FirstHit => self
+                .rows
+                .borrow()
+                .iter()
+                .position(|row| matches!(row, Row::Message { .. })),
+            Pending::Order => self.rows.borrow().iter().position(|row| *row == Row::Order),
+        };
+        if let Some(row) = wanted.and_then(|at| self.list.row_at_index(at as i32)) {
+            self.list.select_row(Some(&row));
+        }
+    }
+
+    /// Take away the results, leaving the rows above them.
+    fn clear_results(&self) {
+        let at = self.results_at.get();
+        while let Some(row) = self.list.row_at_index(at as i32) {
+            self.list.remove(&row);
+        }
+        self.rows.borrow_mut().truncate(at);
+        self.result_heading.replace(String::new());
     }
 
     /// `in:` and `name`: the first folder whose name starts with it, and its
@@ -929,11 +1019,13 @@ impl Bar {
             let mut found = Vec::new();
             let mut names = Vec::new();
             let mut correspondents = Vec::new();
+            let mut owned = Vec::new();
             for account in accounts.iter().filter(|account| account.enabled) {
                 // POSTIO-GLIB-SAFE: as above.
                 let read = client.mailboxes(account.id).await;
                 if let Ok(mailboxes) = read {
                     for mailbox in mailboxes {
+                        owned.push((mailbox.id, account.address.address.clone()));
                         names.push((mailbox.id, postio_ui::places::place_name(&mailbox)));
                         found.push(postio_ui::places::mailbox_place(&mailbox));
                     }
@@ -952,6 +1044,13 @@ impl Bar {
             places.replace(found);
             folders.replace(names);
             directory.replace(postio_ui::names::Names::new(&correspondents));
+            // Which account a result is from is said only where there is
+            // more than one to tell apart.
+            let several = accounts.iter().filter(|account| account.enabled).count() > 1;
+            if let Some(bar) = weak.upgrade() {
+                bar.owners.replace(if several { owned } else { Vec::new() });
+                bar.contacts.replace(correspondents);
+            }
             // `in:` typed before the places landed is answered again, now
             // that it has folders to complete. Nothing else needs them to
             // answer, and a search is not asked for twice.
@@ -971,7 +1070,8 @@ impl Bar {
     }
 
     fn clear_rows(&self) {
-        self.stepped.set(false);
+        self.results_at.set(0);
+        self.result_heading.replace(String::new());
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
@@ -998,8 +1098,7 @@ impl Bar {
         row.set_child(Some(&label));
         row.set_selectable(false);
         row.set_activatable(false);
-        self.list.append(&row);
-        self.rows.borrow_mut().push(Row::Heading);
+        self.put(&row, Row::Heading);
     }
 
     fn append_row(&self, target: Row, title: &str, detail: Option<&str>, key: Option<&str>) {
@@ -1023,9 +1122,24 @@ impl Bar {
         let row = gtk::ListBoxRow::new();
         row.add_css_class("focus-bar-row");
         row.set_child(Some(&line));
-        self.list.append(&row);
-        self.rows.borrow_mut().push(target);
+        self.put(&row, target);
         self.select_first();
+    }
+
+    /// Add `row`, which runs `target`: at the end, or where the results are
+    /// being drawn.
+    fn put(&self, row: &gtk::ListBoxRow, target: Row) {
+        match self.inserting.get() {
+            Some(at) => {
+                self.list.insert(row, at as i32);
+                self.rows.borrow_mut().insert(at, target);
+                self.inserting.set(Some(at + 1));
+            }
+            None => {
+                self.list.append(row);
+                self.rows.borrow_mut().push(target);
+            }
+        }
     }
 
     fn append_message(
@@ -1068,11 +1182,13 @@ impl Bar {
         let row = gtk::ListBoxRow::new();
         row.add_css_class("focus-bar-row");
         row.set_child(Some(&line));
-        self.list.append(&row);
-        self.rows.borrow_mut().push(Row::Message {
-            message,
-            subject: subject.to_owned(),
-        });
+        self.put(
+            &row,
+            Row::Message {
+                message,
+                subject: subject.to_owned(),
+            },
+        );
         self.select_first();
     }
 
@@ -1102,7 +1218,6 @@ impl Bar {
         }
         if let Some(row) = self.list.row_at_index(at) {
             self.list.select_row(Some(&row));
-            self.stepped.set(true);
         }
     }
 
@@ -1122,7 +1237,14 @@ impl Bar {
         let action = match row.run() {
             Run::Nothing => return,
             Run::Search => {
-                self.search_typed();
+                // The results are already under the row, from typing: Return
+                // takes the keyboard to the first of them.
+                self.pending.set(Pending::FirstHit);
+                if self.loaded.get() == self.generation.get() {
+                    self.apply_pending();
+                } else {
+                    self.search_typed();
+                }
                 return;
             }
             Run::SearchFor(text) => {

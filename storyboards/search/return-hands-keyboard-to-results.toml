@@ -4,9 +4,9 @@
 # the same handoff flaking. Chain delivery passes the key through every
 # controller on the real focus chain, which is what that flake was about.
 #
-# Re-expressed for Focus (T265): Return in the bar runs the search and lists
-# the hits under the field, which keeps the keyboard; the arrows walk the
-# hits from there, Down to the first.
+# Re-expressed for Focus (T265): the bar lists the hits under the field as
+# the word is typed; Return takes the highlight to the first, the field
+# keeping the keyboard, and the arrows walk the hits from there.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#693" }
 proof  = "pinned"
@@ -16,14 +16,14 @@ command = "search"
 
 [[step]]
 type    = "harbour"
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
 
 [[step]]
 key     = "Return"
-settle  = { until = { app.focus.bar.messages = { changed = true } } }
-check   = { keyboard.region = "search", keyboard.typing = true, keyboard.reachable = true, overlay.kind = "finder" }
-expect  = "Return runs the search; the hits are listed in the bar and the field keeps the keyboard and the query."
+check   = { keyboard.region = "search", keyboard.typing = true, keyboard.reachable = true, overlay.kind = "finder", app.focus.bar.highlighted = "message" }
+expect  = "Return reaches the first hit, highlighted; the field keeps the keyboard and the query."
 
 [[step]]
 key     = "Down"
 check   = { keyboard.region = "search", keyboard.reachable = true, app.focus.bar.highlighted = "message" }
-expect  = "Down reaches the first hit, highlighted, with the query still in the field."
+expect  = "Down walks on to the next hit, with the query still in the field."

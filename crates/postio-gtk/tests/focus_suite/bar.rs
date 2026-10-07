@@ -248,20 +248,20 @@ pub fn offline_search_answers_locally_one_request_a_keystroke() {
             .map(|(family, count)| (*family, count - before.get(family).copied().unwrap_or(0)))
             .filter(|(_, count)| *count > 0)
             .collect();
-        // "f" to "from" are plain words, which search nothing until asked;
-        // "from:" to "from:ada" name an operator, and each is one search.
+        // Every keystroke is one search, as it is typed, and nothing else.
         assert_eq!(
             asked,
-            [("SearchHits", 4)],
-            "one search a keystroke that names an operator, and nothing else asked for"
+            [("SearchHits", 8)],
+            "one search a keystroke, and nothing else asked for"
         );
     });
 }
 
-/// Screen 09: a plain word is answered with the commands and places it
-/// names and one search row, not a search; the search runs when that row
-/// is chosen. Words that lower to operators (screen 07) search at once.
-pub fn a_plain_word_offers_commands_and_searches_only_when_asked() {
+/// Screen 09, 07 (d): a plain word is answered with the commands and
+/// places it names, the one search row, and the results of the search as it
+/// is typed -- under the search row, which stays. Return on the row takes
+/// the keyboard to the first hit. Each hit shows the message's first line.
+pub fn a_plain_word_searches_as_it_is_typed_under_the_search_row() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -271,7 +271,7 @@ pub fn a_plain_word_offers_commands_and_searches_only_when_asked() {
             .file(
                 ("Ada Moreno", "ada@example.com"),
                 "Archive plan",
-                "Boxes.",
+                "Boxes for the move.",
                 5,
             )
             .await;
@@ -283,30 +283,132 @@ pub fn a_plain_word_offers_commands_and_searches_only_when_asked() {
         );
         let bar = open_bar(&window);
         type_in(&bar, "arch").await;
-        // Long enough for a search to have answered, had one been asked.
-        crate::settle_for(std::time::Duration::from_millis(500)).await;
+        assert!(
+            crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,
+            "typing searched nothing: {:?}",
+            bar.result_subjects()
+        );
         let said = bar.texts();
         assert!(
             said.iter().any(|line| line == "Archive"),
             "the command: {said:?}"
         );
+        let search = said
+            .iter()
+            .position(|line| line.starts_with("Search mail for"))
+            .expect("the search row stays");
+        let heading = said
+            .iter()
+            .position(|line| line.starts_with("Conversations"))
+            .expect("the results' heading");
         assert!(
-            said.iter().any(|line| line.starts_with("Search mail for")),
-            "the search row: {said:?}"
+            search < heading,
+            "the search row is above the results: {said:?}"
         );
-        assert!(bar.result_subjects().is_empty(), "no search until asked");
+        assert!(
+            said.iter().any(|line| line == "Boxes for the move."),
+            "a hit shows the message's first line: {said:?}"
+        );
         // A plain word is what the entry already shows; it is not a chip.
         assert!(
             bar.chips().is_empty(),
             "a plain word chipped: {:?}",
             bar.chips()
         );
+        // The command named by what was typed is under the cursor; Return
+        // on the search row hands the keyboard to the first hit.
+        assert_eq!(bar.highlighted().map(|(kind, _, _)| kind), Some("command"));
         bar.run_search();
+        assert_eq!(
+            bar.highlighted().map(|(kind, _, _)| kind),
+            Some("message"),
+            "Return on the search row did not reach the first hit"
+        );
+    });
+}
+
+/// A word no command is named by, which one command merely contains the
+/// letters of in order, is a search: the search row is what Return runs.
+pub fn a_word_no_command_is_named_by_searches_first() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Tide tables", "x", 5)
+            .await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || support::subjects(&window).len() == 1).await);
+        let bar = open_bar(&window);
+        type_in(&bar, "tide").await;
+        crate::settle();
+        assert_eq!(
+            bar.highlighted().map(|(kind, _, _)| kind),
+            Some("search"),
+            "Return would run {:?}",
+            bar.highlighted()
+        );
+    });
+}
+
+/// `@` offers the correspondents the address book holds, and choosing one
+/// puts their `from:` search in the box.
+pub fn at_offers_correspondents() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture.correspondent("Ada Moreno", "ada@example.com").await;
+        fixture.correspondent("Lena Park", "lena@example.org").await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Hello", "x", 5)
+            .await;
+        let (window, _client) = fixture.open().await;
+        let bar = open_bar(&window);
+        assert!(crate::settle_until(async || bar.places_known()).await);
+        type_in(&bar, "@").await;
+        let said = bar.texts();
         assert!(
-            crate::settle_until(async || bar.result_subjects() == ["Archive plan"]).await,
-            "choosing the search row did not search: {:?}",
+            said.iter().any(|line| line == "Ada Moreno")
+                && said.iter().any(|line| line == "lena@example.org"),
+            "no correspondents offered: {said:?}"
+        );
+        type_in(&bar, "@ada").await;
+        let said = bar.texts();
+        assert!(!said.iter().any(|line| line == "Lena Park"), "{said:?}");
+        bar.run_search_row();
+        assert_eq!(bar.typed(), "from:ada@example.com");
+    });
+}
+
+/// With two accounts the same message filed in each is two rows, and each
+/// row says which account it is in.
+pub fn a_result_names_its_account_when_there_are_two() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Harbour lights", "x", 5)
+            .await;
+        let (second, inbox) = fixture.second_account().await;
+        fixture.file_as(second.id, inbox, "Harbour lights", 6).await;
+        fixture.index().await;
+        let (window, _client) = fixture.open().await;
+        let bar = open_bar(&window);
+        assert!(crate::settle_until(async || bar.places_known()).await);
+        type_in(&bar, "harbour").await;
+        assert!(
+            crate::settle_until(async || bar.result_subjects().len() == 2).await,
+            "{:?}",
             bar.result_subjects()
         );
+        let said = bar.texts().join(" | ");
+        assert!(said.contains("second@example.org"), "{said}");
     });
 }
 
@@ -663,10 +765,10 @@ pub fn a_misspelled_word_says_what_it_found_and_offers_the_typed_one() {
     });
 }
 
-/// T241: `O` switches results between relevance and date, once a result is
-/// under the arrows; before that it is a capital O being typed, and a row
-/// says the same to a mouse.
-pub fn o_reorders_the_results_once_a_row_is_chosen() {
+/// `O` is a letter in the box, whatever is highlighted; the order row is
+/// what switches the results between relevance and date, with a click or
+/// Return, and a row says the same to a mouse.
+pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -707,7 +809,6 @@ pub fn o_reorders_the_results_once_a_row_is_chosen() {
         let _ = crate::settle_until(async || support::subjects(&window).len() >= 20).await;
         let bar = open_bar(&window);
         type_in(&bar, "report").await;
-        bar.run_search();
         let relevance = vec!["Report".to_owned(), "One report".to_owned()];
         let by_date = vec!["One report".to_owned(), "Report".to_owned()];
         assert!(
@@ -715,38 +816,34 @@ pub fn o_reorders_the_results_once_a_row_is_chosen() {
             "no results: {:?}",
             bar.result_subjects()
         );
-        let first = bar.result_subjects();
-        assert_eq!(first, relevance, "relevance puts the denser match first");
-        // Typing wins: `O` before any row is chosen is a letter, left for
-        // the entry to take, and it reorders nothing.
-        assert!(
-            !support::deliver(&window, "O"),
-            "O was claimed while nothing was chosen: it is a letter then"
+        assert_eq!(
+            bar.result_subjects(),
+            relevance,
+            "relevance puts the denser match first"
         );
-        assert_eq!(bar.result_subjects(), first, "a typed O reordered the rows");
-        let before = bar.result_subjects();
+        // Typing wins, with a result chosen or not: `O` is a letter.
         support::press(&window, "Down", gtk::gdk::ModifierType::empty());
         assert!(
-            support::deliver(&window, "O"),
-            "O was not taken with a result chosen"
+            !support::deliver(&window, "O"),
+            "O was claimed from the box"
         );
+        assert_eq!(
+            bar.result_subjects(),
+            relevance,
+            "a typed O reordered the rows"
+        );
+        // The order row switches it, and keeps the highlight on itself.
+        support::click_row_saying(&window, bar.widget(), "Sorted by relevance");
         assert!(
-            crate::settle_until(async || {
-                let now = bar.result_subjects();
-                now.len() == 2 && now != before
-            })
-            .await,
-            "O did not reorder the rows: {:?}",
+            crate::settle_until(async || bar.result_subjects() == by_date).await,
+            "the order row did not reorder: {:?}",
             bar.result_subjects()
         );
-        assert_eq!(bar.typed(), "report", "O was typed as well");
-        assert_eq!(bar.result_subjects(), by_date, "newest first");
         assert!(
             bar.texts().iter().any(|line| line == "Sorted by date"),
             "the bar does not say its order: {:?}",
             bar.texts()
         );
-        // The mouse has the same switch: the row that says the order.
         support::click_row_saying(&window, bar.widget(), "Sorted by date");
         assert!(
             crate::settle_until(async || bar.result_subjects() == relevance).await,

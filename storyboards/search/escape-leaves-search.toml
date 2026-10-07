@@ -4,9 +4,10 @@
 # stayed stuck on the hits. The folder's own rows must be what is left.
 #
 # Re-expressed for Focus (T265): Focus's command bar does not narrow the
-# inbox behind it. Typing offers to search, Return runs the search and lists
-# the matches in the bar, which keeps the keyboard, and Escape closes the
-# bar over an inbox that never changed.
+# inbox behind it. Typing lists the matches in the bar under the search row,
+# which stays above them; Return takes the highlight to the first hit, the
+# bar keeping the keyboard, and Escape closes the bar over an inbox that
+# never changed.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1474" }
 proof  = "pinned"
@@ -17,14 +18,14 @@ check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing
 
 [[step]]
 type    = "harbour"
-check   = { keyboard.region = "search", rows.count = { same_as = 0 }, app.focus.bar.highlighted = "search" }
-expect  = "The bar offers to search mail for what was typed; the inbox behind it is not narrowed."
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+check   = { keyboard.region = "search", rows.count = { same_as = 0 }, app.focus.bar.highlighted = "search", app.focus.bar.messages = { changed = true } }
+expect  = "The matches are listed as the word is typed, headed by their count, with the search row still above them; the inbox behind it is not narrowed."
 
 [[step]]
 key     = "Return"
-settle  = { until = { app.focus.bar.messages = { changed = true } } }
-check   = { keyboard.region = "search", keyboard.typing = true, overlay.kind = "finder", app.focus.bar.messages = { changed = true } }
-expect  = "Return runs the search and the bar lists the matches under the field, headed by their count; the keyboard stays in the bar."
+check   = { keyboard.region = "search", keyboard.typing = true, overlay.kind = "finder", app.focus.bar.highlighted = "message" }
+expect  = "Return takes the highlight to the first match; the keyboard stays in the bar."
 
 [[step]]
 command = "back"

@@ -30,7 +30,8 @@ check   = { keyboard.region = "search" }
 
 [[step]]
 type    = "tide"
-check   = { rows.count = { unchanged = true } }
+check   = { rows.count = { unchanged = true }, app.focus.bar.highlighted = "search" }
+expect  = "The search row is the one under the cursor: Return searches for the word, whatever commands its letters scatter through."
 
 [[step]]
 command = "back"
