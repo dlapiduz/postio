@@ -5644,7 +5644,18 @@ impl FocusWindow {
             keyboard: Keyboard {
                 region,
                 field,
-                typing: self.is_typing(),
+                // With the composition in a window of its own, the keyboard is
+                // that window's, and it is typing when its focus is a field.
+                // (`is_typing` stays the main window's: its keys are the
+                // list's, whatever the other window is doing.)
+                typing: match detached.as_ref() {
+                    Some(_) => {
+                        target.is::<gtk::Text>()
+                            || target.is::<gtk::TextView>()
+                            || self.composer_body_has_keyboard()
+                    }
+                    None => self.is_typing(),
+                },
                 // The window's own controller takes a key when nothing is
                 // focused and nothing is over it, so that is reachable.
                 reachable: reach::reachable(toplevel)

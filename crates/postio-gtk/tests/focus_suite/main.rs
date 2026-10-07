@@ -247,6 +247,10 @@ const CASES: &[(&str, fn())] = &[
         compose_detach::a_detached_composition_keeps_its_frame_so_a_mouse_can_send as fn(),
     ),
     (
+        "compose_detach::a_key_typed_in_a_detached_composition_lands_in_it",
+        compose_detach::a_key_typed_in_a_detached_composition_lands_in_it as fn(),
+    ),
+    (
         "compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus",
         compose_detach::the_detach_key_reaches_the_composer_in_a_wired_focus as fn(),
     ),

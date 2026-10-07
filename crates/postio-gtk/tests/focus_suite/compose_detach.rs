@@ -276,3 +276,68 @@ pub fn a_warm_ask_made_before_the_composer_is_mounted_still_warms_it() {
         );
     });
 }
+
+/// After detaching, the keyboard is in the detached window's To field, and
+/// what is typed there lands in the composition -- not in the list, and not
+/// nowhere -- and the observation says so: `keyboard.typing` reads the
+/// detached window's focus, not the main window's, whose focus is the list's
+/// (storyboards/screens/compose-detached.toml).
+pub fn a_key_typed_in_a_detached_composition_lands_in_it() {
+    use postio_widgets::storyboard::deliver;
+
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        let composer = window.composer().expect("the composer is mounted");
+        support::keys(&window, &["c"]);
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "`c` did not open the composer"
+        );
+        detach_key(&window);
+        assert!(
+            crate::settle_until(async || composer.detached_window().is_some()).await,
+            "the composer never left its dialog"
+        );
+        let host: gtk::Window = composer.detached_window().expect("its own window").upcast();
+        assert!(
+            crate::settle_until(async || composer.focused_field()
+                == Some(postio_widgets::composer::Field::To))
+            .await,
+            "detaching did not leave the keyboard in To"
+        );
+
+        let seen = window.observe();
+        assert_eq!(seen.keyboard.field.as_deref(), Some("to"));
+        assert!(
+            seen.keyboard.typing,
+            "the keyboard is in a text field of the detached window and the \
+             observation says it is not typing"
+        );
+
+        // A letter is not a command in a text field: nothing on the chain
+        // claims it, so GTK's own input method types it.
+        assert!(
+            matches!(
+                deliver::deliver(&host, gtk::gdk::Key::j, gtk::gdk::ModifierType::empty()),
+                deliver::Delivery::Dropped
+            ),
+            "a letter typed in the detached composer was taken as a command"
+        );
+        assert_eq!(
+            deliver::type_text(&host, "ada@example.com", None),
+            deliver::TypeOutcome::Typed
+        );
+        assert!(
+            composer
+                .draft()
+                .to
+                .iter()
+                .any(|address| address.to_string().contains("ada@example.com")),
+            "what was typed in the detached window did not reach the composition: {:?}",
+            composer.draft().to
+        );
+    });
+}
