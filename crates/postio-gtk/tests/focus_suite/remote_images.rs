@@ -45,7 +45,6 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
             crate::settle_until(async || support::subjects(&window).len() == 2).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
         let asked: Rc<RefCell<Vec<String>>> = Rc::default();
@@ -131,7 +130,6 @@ async fn shop(
         crate::settle_until(async || support::subjects(&window).len() == senders.len()).await,
         "the inbox never reached the screen"
     );
-    support::keys(&window, &["j"]);
     support::press(&window, "Return", gtk::gdk::ModifierType::empty());
     let reading = window.reading().expect("open");
     let asked: Rc<RefCell<Vec<String>>> = Rc::default();

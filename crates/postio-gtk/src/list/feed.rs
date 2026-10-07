@@ -44,6 +44,10 @@ struct Inner {
     pages_asked: RefCell<Vec<u32>>,
     /// Whether the first page of the scope in view has landed.
     landed: Cell<bool>,
+    /// Whether the scope in view was opened and its rows have not yet been
+    /// shown to a cursor: the window puts the cursor on the first row once
+    /// (`take_opened`).
+    opened: Cell<bool>,
     /// Called when a page lands or the list is re-read.
     on_filled: RefCell<Vec<Box<dyn Fn()>>>,
     /// The rows Focus's inbox surfaces among its conversations, in the
@@ -80,6 +84,7 @@ impl Feed {
                 total: Cell::new(0),
                 pages_asked: RefCell::new(Vec::new()),
                 landed: Cell::new(false),
+                opened: Cell::new(false),
                 on_filled: RefCell::new(Vec::new()),
                 surfaced: RefCell::default(),
                 spliced: RefCell::default(),
@@ -120,6 +125,7 @@ impl Feed {
     pub fn open(&self, scope: ListScope) {
         self.inner.paging.borrow_mut().open(scope);
         self.inner.landed.set(false);
+        self.inner.opened.set(true);
         let inner = Rc::clone(&self.inner);
         glib::spawn_future_local(async move {
             // Which folders are inboxes: what lets Focus's inbox ignore mail
@@ -168,6 +174,13 @@ impl Feed {
             // to nothing.
             Rc::clone(&inner).request(0);
         });
+    }
+
+    /// Whether a scope was opened and its first page has landed since this
+    /// was last asked: true once per opening, so the cursor goes to the new
+    /// list's first row once and a later re-read leaves it where it is.
+    pub fn take_opened(&self) -> bool {
+        self.inner.landed.get() && self.inner.opened.replace(false)
     }
 
     /// Whether the first page of the scope in view has landed: a list still

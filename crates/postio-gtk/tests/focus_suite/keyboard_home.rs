@@ -76,7 +76,7 @@ pub fn the_keyboard_follows_the_cursor_row() {
             return;
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
-        support::keys(&window, &["j", "j"]);
+        support::keys(&window, &["j"]);
         crate::settle();
         let pane = window.pane().expect("the inbox");
         assert_eq!(pane.cursor().selected(), 1);

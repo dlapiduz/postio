@@ -69,13 +69,16 @@ pub fn each_hostile_message_opens_and_the_app_keeps_answering() {
 
         for (at, hostile) in fixtures.iter().enumerate() {
             let name = hostile.name();
-            // The next keystroke moves the cursor onto this one.
-            let before = cursor_subject(&window);
-            support::keys(&window, &["j"]);
-            assert!(
-                crate::settle_until(async || cursor_subject(&window) != before).await,
-                "{name}: `j` was not answered after opening the one before it"
-            );
+            // The first row has the cursor already; the next keystroke moves
+            // it onto each of the others.
+            if at > 0 {
+                let before = cursor_subject(&window);
+                support::keys(&window, &["j"]);
+                assert!(
+                    crate::settle_until(async || cursor_subject(&window) != before).await,
+                    "{name}: `j` was not answered after opening the one before it"
+                );
+            }
             assert_eq!(
                 cursor_subject(&window).as_deref(),
                 Some(name),

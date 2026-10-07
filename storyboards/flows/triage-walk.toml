@@ -5,8 +5,8 @@
 # the archived one's place; `u` brings the last one back. The thirty-thread
 # seed is long enough that nothing runs out.
 #
-# Re-expressed for Focus (T265): its cursor starts on no row, so `j` puts it
-# on index 0. It was red on #1746, where the archived row's cursor was not
+# Re-expressed for Focus (T265): the cursor opens on index 0, so `j` moves it
+# to index 1. It was red on #1746, where the archived row's cursor was not
 # handed to the row below.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
@@ -16,7 +16,7 @@ seed   = "thirty-threads"
 [[step]]
 id      = "j1"
 command = "next_message"
-check   = { cursor.index = 0, keyboard.region = "list" }
+check   = { cursor.index = 1, keyboard.region = "list" }
 
 [[step]]
 id      = "a1"
@@ -27,7 +27,7 @@ expect  = "The row goes, the next one is under the cursor ring, and a toast offe
 [[step]]
 id      = "j2"
 command = "next_message"
-check   = { cursor.index = 1 }
+check   = { cursor.index = 2 }
 
 [[step]]
 id      = "a2"

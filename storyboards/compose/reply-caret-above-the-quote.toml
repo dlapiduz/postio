@@ -6,15 +6,14 @@
 # field, so this is judged from the frame: the empty first line the caret
 # sits on must be above the "wrote:" line.
 #
-# Re-expressed for Focus (T265): `j` puts the cursor on the row Reply
-# answers.
+# Re-expressed for Focus (T265): the cursor is on the first row, the
+# one Reply answers.
 apps   = ["focus"]
 source = { kind = "commit", ref = "15192fb5" }
 proof  = "pinned"
 
 [[step]]
-command = "next_message"
-
+wait    = { until = { cursor.index = 0 } }
 [[step]]
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }

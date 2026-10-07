@@ -17,8 +17,7 @@ proof  = "pinned"
 command = "toggle_reading_pane"
 
 [[step]]
-command = "next_message"
-
+wait    = { until = { cursor.index = 0 } }
 [[step]]
 command = "next_message"
 

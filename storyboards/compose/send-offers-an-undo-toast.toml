@@ -6,15 +6,14 @@
 # reopening already uses. Focus's send closes the composer and a toast says
 # the message is queued, with an Undo that puts the draft back.
 #
-# Re-expressed for Focus (T265): `j` puts the cursor on the row Reply
-# answers.
+# Re-expressed for Focus (T265): the cursor is on the first row, the
+# one Reply answers.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1752" }
 proof  = "pinned"
 
 [[step]]
-command = "next_message"
-
+wait    = { until = { cursor.index = 0 } }
 [[step]]
 command = "reply"
 check   = { composer.open = true }

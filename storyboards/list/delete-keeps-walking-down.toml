@@ -10,15 +10,15 @@
 # below, so after the first delete there was no cursor and the next presses
 # deleted nothing.
 #
-# Re-expressed for Focus (T265): its cursor starts on no row, so two `j`
-# leave it on index 1, and `delete` is Focus's own binding for it.
+# Re-expressed for Focus (T265): the list opens with the cursor on index 0,
+# so one `j` leaves it on index 1, and `delete` is Focus's own binding for it.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
 proof  = "pinned"
 seed   = "thirty-threads"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { keyboard.region = "list", cursor.index = 0 }
 
 [[step]]

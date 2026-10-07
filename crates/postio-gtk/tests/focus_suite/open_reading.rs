@@ -19,7 +19,6 @@ pub(crate) async fn opened(fixture: &Fixture, rows: usize) -> postio_gtk::window
         crate::settle_until(async || support::subjects(&window).len() == rows).await,
         "the inbox never reached the screen"
     );
-    support::keys(&window, &["j"]);
     enter(&window);
     let reading = window.reading().expect("Enter opened the message");
     assert!(

@@ -18,7 +18,7 @@ pub fn three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three() {
 
         // x on the first three, stepping with j, and j once more: the
         // cursor sits on the fourth, which is not selected.
-        support::keys(&window, &["j", "x", "j", "x", "j", "x", "j"]);
+        support::keys(&window, &["x", "j", "x", "j", "x", "j"]);
         let bar = only(&window, "focus-bulk-bar");
         assert!(
             bar.is_mapped(),
@@ -59,7 +59,7 @@ pub fn archive_hands_the_cursor_to_the_row_below() {
         }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
-        support::keys(&window, &["j", "j"]);
+        support::keys(&window, &["j"]);
         let cursor = || window.pane().expect("the inbox").cursor().selected();
         assert_eq!(cursor(), 1, "two j put the cursor on the second row");
 
@@ -97,7 +97,7 @@ pub fn escape_clears_the_selection_and_the_cursor_stays() {
         }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
-        support::keys(&window, &["j", "x", "J", "J"]);
+        support::keys(&window, &["x", "J", "J"]);
         let bar = only(&window, "focus-bulk-bar");
         assert!(
             texts(&bar).iter().any(|text| text == "3 selected"),
@@ -189,7 +189,7 @@ pub fn the_bulk_bar_has_a_delete_button_that_deletes_the_selection() {
         }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
-        support::keys(&window, &["j", "x", "j", "x", "j"]);
+        support::keys(&window, &["x", "j", "x", "j"]);
         let bar = only(&window, "focus-bulk-bar");
         let delete = button(&bar, "focus-bulk-delete");
         let key = postio_ui::hints::key(Keymap::defaults(), CommandId::Delete).expect("a key");

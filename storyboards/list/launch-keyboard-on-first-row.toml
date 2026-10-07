@@ -4,14 +4,19 @@
 # `j`, `a` and `?` typed letters into it. If the keyboard starts anywhere but
 # the list, `j` lands in a text field and the first check fails.
 #
-# Re-expressed for Focus (T265): Focus opens with no cursor row (its list is
-# windowed, and the cursor is a row a key puts there), so the first `j` puts
-# the cursor on the first row, index 0.
+# Re-expressed for Focus (T265): Focus opens with the cursor on the first row,
+# index 0, as every list does -- it is drawn there before any key -- and the
+# first `j` moves it to the second.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1473" }
 proof  = "pinned"
 
 [[step]]
-key    = "j"
+wait   = { until = { cursor.index = 0 } }
 check  = { keyboard.region = "list", keyboard.typing = false, overlay.kind = "none", cursor.index = 0 }
-expect = "The first key puts the cursor ring on the first row; nothing is typed anywhere."
+expect = "The window opens with the cursor ring on the first row and the keyboard in the list; nothing is open and nothing is typed anywhere."
+
+[[step]]
+key    = "j"
+check  = { keyboard.region = "list", keyboard.typing = false, overlay.kind = "none", cursor.index = 1 }
+expect = "The first key moves the cursor ring to the second row; nothing is typed anywhere."

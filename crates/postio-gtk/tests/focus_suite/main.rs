@@ -1301,6 +1301,14 @@ const CASES: &[(&str, fn())] = &[
         cursor::j_and_k_move_only_the_cursor as fn(),
     ),
     (
+        "cursor::a_list_opens_with_the_cursor_on_its_first_row",
+        cursor::a_list_opens_with_the_cursor_on_its_first_row as fn(),
+    ),
+    (
+        "cursor::a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row",
+        cursor::a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row as fn(),
+    ),
+    (
         "colours::the_roles_resolve_and_follow_the_system_into_dark",
         colours::the_roles_resolve_and_follow_the_system_into_dark as fn(),
     ),

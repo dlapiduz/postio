@@ -35,7 +35,7 @@ pub fn has_action_narrows_to_the_marked_rows_and_back() {
         );
 
         // First selected; the cursor on Fourth, which is marked.
-        support::keys(&window, &["j", "x", "j", "j", "j"]);
+        support::keys(&window, &["x", "j", "j", "j"]);
         assert!(!window.selection().is_empty());
 
         support::keys(&window, &["exclam"]);

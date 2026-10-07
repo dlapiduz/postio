@@ -5,8 +5,8 @@
 # between the steps: the runner presses them back to back, and the last
 # check pins the exact row.
 #
-# Re-expressed for Focus (T265): Focus starts with no cursor row, so five
-# `j` land on the fifth row, index 4.
+# Re-expressed for Focus (T265): Focus opens with the cursor on the first
+# row, so five `j` land on the sixth row, index 5.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1609" }
 proof  = "pinned"
@@ -26,13 +26,13 @@ command = "next_message"
 
 [[step]]
 command = "next_message"
-check   = { keyboard.region = "list", cursor.index = 4 }
-expect  = "Five presses, five rows: the cursor ring is on the fifth conversation."
+check   = { keyboard.region = "list", cursor.index = 5 }
+expect  = "Five presses, five rows: the cursor ring is on the sixth conversation."
 
 [[step]]
 command = "prev_message"
 
 [[step]]
 command = "prev_message"
-check   = { keyboard.region = "list", cursor.index = 2 }
+check   = { keyboard.region = "list", cursor.index = 3 }
 expect  = "Two presses back, two rows up."

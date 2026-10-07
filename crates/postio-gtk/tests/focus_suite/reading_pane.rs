@@ -90,7 +90,6 @@ pub fn f8_and_the_setting_switch_between_the_dialog_and_the_pane() {
         window.set_config_path(Some(config.clone()));
 
         // The default: the dialog.
-        support::deliver(&window, "j");
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || dialog_up(&window)).await,
@@ -153,7 +152,7 @@ pub fn return_shows_the_message_beside_the_list_and_keeps_its_cursor() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
-        support::keys(&window, &["j", "j", "j"]);
+        support::keys(&window, &["j", "j"]);
         assert_eq!(cursor(&window), 2);
         support::deliver(&window, "Return");
         assert!(
@@ -200,7 +199,7 @@ pub fn j_and_k_step_the_pane_with_the_cursor() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
-        support::keys(&window, &["j", "j", "j"]);
+        support::keys(&window, &["j", "j"]);
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await
@@ -235,7 +234,7 @@ pub fn escape_and_the_x_return_the_keyboard_to_the_list() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
-        support::keys(&window, &["j", "j"]);
+        support::keys(&window, &["j"]);
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
@@ -490,7 +489,6 @@ pub fn the_main_menus_check_item_is_the_pointers_f8() {
             Some(true),
             "checked once messages open beside the list"
         );
-        support::keys(&window, &["j"]);
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("First")).await,
@@ -547,7 +545,7 @@ pub fn archiving_steps_the_pane_past_the_message() {
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         read_in_pane(&window);
-        support::keys(&window, &["j", "j"]);
+        support::keys(&window, &["j"]);
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await

@@ -159,6 +159,9 @@ mod imp {
         /// A message to put the cursor back on once the list it is changing
         /// to has landed: `!` keeps the cursor on the same message.
         pub keep: Cell<Option<MessageId>>,
+        /// Set while the window itself puts the cursor on a list's first
+        /// row: that opens nothing, even with the reading pane beside.
+        pub placing_cursor: Cell<bool>,
         /// Where each account stands with its server, as sync has said.
         pub trackers: RefCell<postio_ui::status::Trackers>,
         /// The accounts sync has spoken about. Only those: a tracker says
@@ -322,6 +325,7 @@ mod imp {
                 has_action: Cell::default(),
                 counts: Cell::default(),
                 keep: Cell::default(),
+                placing_cursor: Cell::default(),
                 trackers: RefCell::default(),
                 tracked: RefCell::default(),
                 facts: RefCell::default(),
@@ -2549,6 +2553,7 @@ impl FocusWindow {
     /// it, and ask the host for the strip's counts again.
     fn list_landed(&self) {
         let imp = self.imp();
+        let opened = self.pane().is_some_and(|pane| pane.feed().take_opened());
         if let (Some(message), Some(pane)) = (imp.keep.get(), self.pane())
             && pane.feed().has_landed()
         {
@@ -2559,11 +2564,30 @@ impl FocusWindow {
                 None if list.n_items() > 0 => self.cursor_to(Some(0)),
                 None => {}
             }
+        } else if opened {
+            self.cursor_to_first();
         }
         self.place_restored();
         // A place counts what the list now holds.
         self.show_counts();
         self.update_counts();
+    }
+
+    /// Put the cursor on the list's first row, as every list opens: it shows
+    /// where the keyboard is, and `j` goes on to the second. Opening nothing
+    /// and marking nothing read -- placing the cursor is not reading.
+    fn cursor_to_first(&self) {
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        if pane.feed().list().n_items() == 0 {
+            return;
+        }
+        let imp = self.imp();
+        imp.placing_cursor.set(true);
+        pane.cursor().set_selected(0);
+        imp.placing_cursor.set(false);
+        pane.to_top();
     }
 
     /// Ask the host for the strip's counts, and show them when they come.
@@ -3622,6 +3646,7 @@ impl FocusWindow {
     /// Back from Filtered to the inbox, as it was.
     fn leave_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
+        self.cursor_to_first();
         self.focus_list();
     }
 
@@ -3935,7 +3960,7 @@ impl FocusWindow {
     /// dialog takes the pointer, so only the keys move it, and they open
     /// what they land on themselves.
     fn follow_cursor(&self) {
-        if !self.reading_beside() {
+        if self.imp().placing_cursor.get() || !self.reading_beside() {
             return;
         }
         let Some(row) = self.cursor_row() else {
@@ -4618,8 +4643,8 @@ impl FocusWindow {
     fn bar_action(&self, action: crate::bar::BarAction) {
         match action {
             // A hit opens by itself. It was opened through the list's
-            // cursor row first, so a fresh window -- no cursor row until a
-            // key puts one there -- opened nothing at all.
+            // cursor row first, so a window whose cursor was not on a row --
+            // an empty list -- opened nothing at all.
             crate::bar::BarAction::Open { message, subject } => {
                 if let Some(reading) = self.reading_dialog() {
                     reading.show_found(

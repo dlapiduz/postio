@@ -13,8 +13,7 @@ source = { kind = "issue", ref = "#1481" }
 proof  = "pinned"
 
 [[step]]
-command = "next_message"
-
+wait    = { until = { cursor.index = 0 } }
 [[step]]
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }

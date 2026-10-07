@@ -7,14 +7,14 @@
 # `c` must open an empty one, and Escape must leave it.
 #
 # Re-expressed for Focus (T265): the composer is a dialog over the list, and
-# Reply answers the row under the cursor, which `j` puts there first.
+# Reply answers the row under the cursor, the first row.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#491" }
 proof  = "pinned"
 seed   = "draft-left-over"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { composer.open = false, cursor.index = 0 }
 
 [[step]]

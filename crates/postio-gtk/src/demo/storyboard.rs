@@ -1158,14 +1158,14 @@ pub const NEVER_PRESSED: &[(&str, &str)] = &[
 /// composer -- and nothing else. A context the setup does not land in is
 /// reported, not pressed in.
 pub const CONTEXTS: &[(&str, &[&str])] = &[
-    // Focus opens with no cursor row, so a `j` puts it on the first.
-    ("list", &["next_message"]),
+    // Focus opens with the cursor on the first row: the list is the start.
+    ("list", &[]),
     ("search", &["search"]),
     ("filtered", &["go_to_filtered"]),
     // The digest row is the second row of the small seed's inbox.
-    ("digest", &["next_message", "next_message", "open_message"]),
+    ("digest", &["next_message", "open_message"]),
     // The first row is a message with an invitation card.
-    ("reader", &["next_message", "open_message"]),
+    ("reader", &["open_message"]),
     ("composer", &["compose"]),
 ];
 

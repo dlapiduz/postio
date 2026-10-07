@@ -18,7 +18,6 @@ pub fn s_then_2_snoozes_the_row_until_tomorrow_morning() {
             return;
         }
         let (fixture, window) = support::three_in_the_inbox().await;
-        support::press(&window, "j", gdk::ModifierType::empty());
         let row = window.cursor_row().expect("j put the cursor on a row");
         let subject = support::subjects(&window)[0].clone();
         support::press(&window, "s", gdk::ModifierType::empty());
@@ -293,7 +292,7 @@ pub fn m_moves_three_to_receipts_and_ctrl_z_returns_them() {
             crate::settle_until(async || support::subjects(&window).len() == 3).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["j", "x", "j", "x", "j", "x"]);
+        support::keys(&window, &["x", "j", "x", "j", "x"]);
         support::press(&window, "m", gdk::ModifierType::empty());
         let picker = window.open_picker().expect("m opened the move picker");
         assert!(
@@ -367,7 +366,6 @@ pub fn l_offers_the_labels_of_the_row_s_own_account() {
             support::subjects(&window)
         );
         // The newest first: the second account's row is on top.
-        support::press(&window, "j", gdk::ModifierType::empty());
         assert_eq!(
             window.cursor_row().map(|row| row.id()),
             Some(harbor),

@@ -11,7 +11,7 @@ source = { kind = "issue", ref = "#1751" }
 proof  = "pinned"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { keyboard.region = "list", cursor.index = 0 }
 
 [[step]]

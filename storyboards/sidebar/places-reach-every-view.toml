@@ -18,7 +18,7 @@ seed   = "outbox"
 [[step]]
 command = "go_to_flagged"
 settle  = { until = { rows.count = 8 } }
-check   = { scope = "Flagged", rows.count = 8, app.focus.strip.counts = "8", app.focus.strip.has_action_shown = false }
+check   = { scope = "Flagged", rows.count = 8, cursor.index = 0, app.focus.strip.counts = "8", app.focus.strip.has_action_shown = false }
 expect  = "The strip beside Flagged counts what Flagged lists, not the inbox's unread, and the inbox's has-action toggle is gone."
 
 [[step]]
@@ -37,7 +37,7 @@ type    = "Outbox"
 [[step]]
 key     = "Return"
 settle  = { until = { rows.count = 1 } }
-check   = { scope = "Outbox", rows.count = 1, overlay.kind = "none", keyboard.region = "list", app.focus.strip.counts = "1" }
+check   = { scope = "Outbox", rows.count = 1, cursor.index = 0, overlay.kind = "none", keyboard.region = "list", app.focus.strip.counts = "1" }
 expect  = "The Outbox opens: the one queued send, counted as one, and the keyboard is in the list rather than on the Outbox button."
 
 [[step]]
@@ -47,5 +47,5 @@ settle  = { until = { rows.count = 8 } }
 [[step]]
 command = "go_to_outbox"
 settle  = { until = { rows.count = 1 } }
-check   = { scope = "Outbox", rows.count = 1 }
+check   = { scope = "Outbox", rows.count = 1, cursor.index = 0 }
 expect  = "The Outbox has a key of its own, `g b`, as every other mailbox has."

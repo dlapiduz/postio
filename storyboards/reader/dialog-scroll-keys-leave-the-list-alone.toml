@@ -21,7 +21,7 @@ apps   = ["focus"]
 seed   = "long-newsletter"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 [[step]]
 command = "next_message"
 [[step]]

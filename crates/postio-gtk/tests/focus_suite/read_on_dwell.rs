@@ -58,7 +58,6 @@ pub fn a_message_left_open_in_the_dialog_is_marked_read() {
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;
 
-        support::deliver(&window, "j");
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || showing(&window).as_deref() == Some("First")).await,
@@ -89,7 +88,6 @@ pub fn stepping_the_pane_past_a_message_leaves_it_unread() {
         read_in_pane(&window);
         all_bold(&window).await;
 
-        support::deliver(&window, "j");
         support::deliver(&window, "Return");
         support::deliver(&window, "j");
         support::deliver(&window, "j");
@@ -156,8 +154,6 @@ pub fn r_in_the_open_message_marks_it_unread_again() {
                 assert!(crate::settle_until(async || showing(&window).is_none()).await);
                 read_in_pane(&window);
                 support::deliver(&window, "j");
-            } else {
-                support::deliver(&window, "j");
             }
             support::deliver(&window, "Return");
             assert!(
@@ -201,7 +197,6 @@ pub fn a_message_in_a_window_that_lost_focus_stays_unread() {
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;
 
-        support::deliver(&window, "j");
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || showing(&window).as_deref() == Some("First")).await,
@@ -237,7 +232,6 @@ pub fn refocusing_does_not_take_back_r() {
         let (window, _client) = fixture.five().await;
         all_bold(&window).await;
 
-        support::deliver(&window, "j");
         support::deliver(&window, "Return");
         assert!(
             crate::settle_until(async || bold(&window, "First") == Some(false)).await,

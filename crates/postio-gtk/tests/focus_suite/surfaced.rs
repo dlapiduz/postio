@@ -88,7 +88,6 @@ pub fn a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once() {
         );
 
         // Archived from its row, the reminder goes with its conversation.
-        support::press(&window, "j", gtk::gdk::ModifierType::empty());
         assert_eq!(
             window.cursor_row().map(|row| row.id()),
             Some(budget),
@@ -185,7 +184,7 @@ pub fn a_delivered_digest_is_one_row_where_it_came_due() {
 
         // `a` on the digest's row archives the whole delivery, and the row
         // goes; what it held does not come back to the inbox.
-        support::keys(&window, &["j", "j"]);
+        support::keys(&window, &["j"]);
         support::press(&window, "a", gtk::gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || {

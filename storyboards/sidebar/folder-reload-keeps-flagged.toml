@@ -14,12 +14,13 @@ proof  = "pinned"
 [[step]]
 command = "go_to_flagged"
 settle  = { until = { rows.count = 8 } }
-check   = { scope = "Flagged", rows.count = 8 }
+check   = { scope = "Flagged", rows.count = 8, cursor.index = 0 }
+expect  = "Flagged opens with the cursor ring on its first row."
 
 [[step]]
 id      = "down"
 command = "next_message"
-check   = { cursor.index = 0, keyboard.region = "list" }
+check   = { cursor.index = 1, keyboard.region = "list" }
 
 [[step]]
 event   = "mailboxes_changed"

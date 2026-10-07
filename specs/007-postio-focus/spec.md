@@ -167,6 +167,7 @@ ids.
 | C27 | — | **Maintainer (2026-10-02, 2026-10-06): Postio is one product with several interfaces (GTK, terminal, macOS, and others to come), and its GTK interface is Focus**, named "Postio": the crate `postio-gtk`, the binary `postio`, the app id `dev.postio.Postio` ([ADR 0043](../../docs/decisions/0043-focus-is-the-one-desktop-app.md)). The classic three-pane app was retired rather than kept as a mode, and removed (T256, approved 2026-10-02); where each of its capabilities lives now is [`classic-parity.md`](classic-parity.md) |
 | C28 | 05 | Send is `mod+Return`: `ctrl+Return` on Linux, `cmd+Return` (`⌘↩`) on the Mac, drawn `ctrl+↵` on the composer's keycap; `mod+shift+d` is unbound |
 | C29 | — | **Maintainer (2026-10-02): the terminal is Focus too.** `postio-tui` draws Focus's surfaces in character cells ([terminal.md](terminal.md)) and turns Focus's engine on while it runs. Its three-pane layout, sidebar, panes and parts panel are removed, with no mode or flag that keeps them (User Story 16) |
+| C30 | — | **Maintainer (2026-10-07): every list opens with the cursor on its first row.** At launch, on going to any place (`g i`, `g *`, `g b`, `g z`, the folders popover, Filtered), when a list's rows are replaced wholesale, and on coming back to the list from a page that replaced it (digest rules, Filtered), the cursor ring is on row 0 and the keyboard is on that row; `j` then moves to row 1. An empty list has no cursor. Opening a list with the cursor on a row opens nothing and marks nothing read (FR-016) |
 
 ## Milestones, and landing
 
@@ -265,6 +266,8 @@ widget tree (what a person sees, not what a layer was handed):
    the toast says "Archived 3 messages"; and one `mod+z` returns all three.
 4. **Given** the cursor on a row, **When** the user presses `j` or `k`,
    **Then** only the cursor moves: nothing opens and nothing is marked read.
+   A list opens with the cursor on its first row (C30), so the first `j`
+   goes to the second.
 5. **Given** rows with and without markers, **When** the user presses `!`,
    **Then**:
    - only rows with a marker remain;

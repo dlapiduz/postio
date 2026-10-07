@@ -12,7 +12,7 @@ proof  = "pinned"
 apps   = ["focus"]
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 [[step]]
 command = "open_message"
 settle  = { until = { view = "reader" } }

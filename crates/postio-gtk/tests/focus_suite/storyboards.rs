@@ -22,7 +22,7 @@ source = { kind = "flow", ref = "T076 fixture" }
 [[step]]
 id = "down"
 command = "next_message"
-# Focus starts with the cursor on no row; the first `j` moves it onto one.
+# Focus opens with the cursor on the first row; `j` moves it to the second.
 check = { keyboard.region = "list", cursor.index = { changed = true } }
 
 [[step]]

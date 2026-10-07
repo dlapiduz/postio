@@ -6,8 +6,8 @@
 # archived; exactly those three leave, the selection clears, and the list
 # does not lose any other row.
 #
-# Re-expressed for Focus (T265): Focus starts with no cursor row, so `j`
-# comes before the first `x`, and its one inbox across accounts lists both
+# Re-expressed for Focus (T265): Focus opens with the cursor on the first row,
+# so the first `x` selects it, and its one inbox across accounts lists both
 # accounts' mail (78 rows).
 apps   = ["focus"]
 source = { kind = "issue", ref = "#468" }
@@ -15,7 +15,7 @@ proof  = "pinned"
 seed   = "two-accounts"
 
 [[step]]
-command = "next_message"
+wait    = { until = { rows.count = 78 } }
 check   = { keyboard.region = "list", cursor.index = 0, rows.count = 78 }
 
 [[step]]

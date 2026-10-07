@@ -6,14 +6,14 @@
 # the cursor three rows away); the reviewer judges the look on the frame,
 # where Focus also shows the bulk bar.
 #
-# Re-expressed for Focus (T265): Focus starts with no cursor row, so `j`
-# first puts the cursor on the first row for `x` to select.
+# Re-expressed for Focus (T265): Focus opens with the cursor on the first row,
+# so `x` selects it at once and the cursor then walks three rows down.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#753" }
 proof  = "pinned"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { keyboard.region = "list", cursor.index = 0, selection.count = 0 }
 
 [[step]]

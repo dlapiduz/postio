@@ -7,7 +7,7 @@ source = { kind = "design", ref = "focus 04" }
 vary   = { width = ["wide"] }
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 [[step]]
 command = "next_message"
 [[step]]

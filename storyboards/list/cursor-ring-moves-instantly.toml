@@ -19,7 +19,7 @@ apps   = ["focus"]
 design = "01-inbox-reading"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 settle  = { watch_ms = 400 }
 check   = { keyboard.region = "list", cursor.index = 0 }
 [[step]]

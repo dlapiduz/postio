@@ -4,7 +4,7 @@
 # somebody else's mail, and the draft's own verbs were lost. Opening it
 # should resume writing it.
 #
-# Re-expressed for Focus (T265): `g t` lists Drafts, `j` puts the cursor on
+# Re-expressed for Focus (T265): `g t` lists Drafts, the cursor is on
 # the left-over draft, and Return opens it in the composer (US11 scenario
 # 3).
 apps   = ["focus"]
@@ -18,7 +18,7 @@ check   = { scope = "Drafts", keyboard.region = "list", rows.count = 7, app.focu
 expect  = "Drafts lists its seven and the strip counts seven, not the inbox's numbers."
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { cursor.subject = "Notes for Thursday", keyboard.region = "list" }
 expect  = "Drafts lists the left-over draft, Notes for Thursday, under the cursor."
 

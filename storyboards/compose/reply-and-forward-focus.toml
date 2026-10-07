@@ -4,14 +4,14 @@
 # no recipient yet, and Reply did nothing at all unless the row had first
 # been opened. Here the cursor is on a row that was never opened.
 #
-# Re-expressed for Focus (T265): `j` puts the cursor on the first row, which
+# Re-expressed for Focus (T265): the cursor opens on the first row, which
 # Reply and Forward answer from the list.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#690" }
 proof  = "pinned"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { cursor.index = 0, view = "list" }
 
 [[step]]

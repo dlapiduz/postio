@@ -167,7 +167,7 @@ fn surfaces() -> Vec<Surface> {
         Surface {
             name: "the digest window",
             open: |window| {
-                support::keys(window, &["j", "j"]);
+                support::keys(window, &["j"]);
                 support::press(window, "Return", gtk::gdk::ModifierType::empty());
             },
             shown: |window| window.digest().is_some(),

@@ -34,7 +34,6 @@ async fn three_with_bodies() -> (Fixture, postio_gtk::window::FocusWindow) {
         crate::settle_until(async || support::subjects(&window).len() == 3).await,
         "the inbox never reached the screen"
     );
-    support::keys(&window, &["j"]);
     (fixture, window)
 }
 
@@ -176,7 +175,7 @@ pub fn j_and_k_step_the_list_behind_the_dialog() {
             return;
         }
         let (_fixture, window) = five_with_bodies().await;
-        support::keys(&window, &["j", "j", "j"]);
+        support::keys(&window, &["j", "j"]);
         enter(&window);
         let reading = window.reading().expect("open");
         assert_eq!(reading.title(), "Subject 3");
@@ -281,7 +280,6 @@ async fn three_long_open() -> (Fixture, postio_gtk::window::FocusWindow) {
         crate::settle_until(async || support::subjects(&window).len() == 3).await,
         "the inbox never reached the screen"
     );
-    support::keys(&window, &["j"]);
     enter(&window);
     let reading = window.reading().expect("Enter opened the message");
     drawn_tall(&reading).await;
@@ -419,7 +417,7 @@ pub fn j_and_k_step_with_the_keyboard_on_each_control_of_the_dialog() {
             return;
         }
         let (_fixture, window) = five_with_bodies().await;
-        support::keys(&window, &["j", "j", "j"]);
+        support::keys(&window, &["j", "j"]);
         enter(&window);
         let reading = window.reading().expect("open");
         let mut title = "Subject 3".to_owned();

@@ -57,7 +57,8 @@ pub async fn delivered_holding() -> (
     (fixture, delivery, held)
 }
 
-/// Open the digest's row: the cursor on it, then `Enter`.
+/// Open the digest's row: the cursor on it (the list opens on the first
+/// row, and the digest is the second), then `Enter`.
 pub async fn open_digest(
     window: &postio_gtk::window::FocusWindow,
 ) -> std::rc::Rc<postio_gtk::digest::DigestWindow> {
@@ -66,7 +67,7 @@ pub async fn open_digest(
         "the inbox and its digest never reached the screen: {:?}",
         support::subjects(window)
     );
-    support::keys(window, &["j", "j"]);
+    support::keys(window, &["j"]);
     support::press(window, "Return", gtk::gdk::ModifierType::empty());
     let digest = window.digest().expect("Enter opened the digest");
     assert!(
@@ -268,7 +269,7 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
             "the inbox never reached the screen"
         );
         // The cursor on Ledger's newest: the second row.
-        support::keys(&window, &["j", "j"]);
+        support::keys(&window, &["j"]);
         support::press(&window, "d", gdk::ModifierType::empty());
         let dialog = window.rule_dialog().expect("d opened the rule dialog");
         assert!(

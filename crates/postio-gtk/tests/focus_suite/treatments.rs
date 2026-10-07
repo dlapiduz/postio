@@ -58,7 +58,6 @@ pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
             "the inbox never reached the screen"
         );
 
-        support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
         let reader = reading.reader();

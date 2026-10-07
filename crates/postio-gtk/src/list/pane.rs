@@ -393,7 +393,8 @@ fn hold_the_top(
 
 /// The cursor over `list`, which keeps its place when its row goes.
 ///
-/// Without autoselect -- the cursor starts on no row -- a
+/// Without autoselect -- the window puts the cursor on a list's first row
+/// itself, once the rows land -- a
 /// `GtkSingleSelection` whose row is removed selects nothing, so after an
 /// archive the next `a` acted on nothing (#1746). The row that slides into
 /// the removed one's place takes the cursor instead,

@@ -243,7 +243,7 @@ pub fn offline_an_archive_takes_effect_at_once_and_queues() {
             "the window never heard it was offline"
         );
 
-        support::keys(&window, &["j", "a"]);
+        support::keys(&window, &["a"]);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Draft"]).await,
             "the archived row stayed while offline: {:?}",
@@ -374,7 +374,7 @@ pub fn offline_a_label_shows_at_once_and_queues_and_search_answers() {
         );
 
         // `l` on Budget, a new label typed, and Enter: made and applied.
-        support::keys(&window, &["j", "l"]);
+        support::keys(&window, &["l"]);
         let picker = window.open_picker().expect("l opened the label picker");
         assert!(crate::settle_until(async || picker.is_shown()).await);
         picker.entry().set_text("Receipts");
@@ -504,8 +504,9 @@ pub fn during_a_first_sync_what_has_arrived_opens_and_is_found() {
             support::subjects(&window)
         );
 
-        // Read: Enter opens it, body and all.
-        support::keys(&window, &["j", "Return"]);
+        // The cursor stayed on the row it was on, now second: `k` goes up to
+        // the arrival, and Enter opens it, body and all.
+        support::keys(&window, &["k", "Return"]);
         let reading = window.reading().expect("Enter opened the message");
         assert!(reading.is_open(), "the dialog is up");
         assert_eq!(reading.title(), "Harbor draft");

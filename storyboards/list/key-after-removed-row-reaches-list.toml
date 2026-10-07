@@ -18,7 +18,7 @@ design = "01-inbox-reading"
 
 [[step]]
 id      = "first"
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { keyboard.region = "list", cursor.index = 0, keyboard.reachable = true }
 
 [[step]]

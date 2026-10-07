@@ -13,7 +13,7 @@
 # focus chain takes it) is not listed: it is counted as `dropped` in
 # coverage.json, not as a press with no effect.
 
-# -- list: the Inbox, the cursor on its first row (Focus opens with none, so one `j` puts it there)
+# -- list: the Inbox, the cursor on its first row (Focus opens there)
 [[gap]]
 command = "back"
 context = "list"

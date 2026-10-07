@@ -10,15 +10,15 @@
 # below, so after the first archive there was no cursor and the next two
 # presses archived nothing.
 #
-# Re-expressed for Focus (T265): its cursor starts on no row, so two `j`
-# leave it on index 1.
+# Re-expressed for Focus (T265): the list opens with the cursor on index 0,
+# so one `j` leaves it on index 1.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1746" }
 proof  = "pinned"
 seed   = "thirty-threads"
 
 [[step]]
-command = "next_message"
+wait    = { until = { cursor.index = 0 } }
 check   = { keyboard.region = "list", cursor.index = 0 }
 
 [[step]]

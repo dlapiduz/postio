@@ -18,7 +18,6 @@ async fn opened(fixture: &Fixture) -> postio_gtk::window::FocusWindow {
         crate::settle_until(async || support::subjects(&window).len() == 3).await,
         "the inbox never reached the screen"
     );
-    support::keys(&window, &["j"]);
     support::deliver(&window, "Return");
     let reading = window.reading().expect("Return opened the message");
     assert!(

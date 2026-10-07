@@ -13,7 +13,7 @@ pub fn one_ctrl_z_returns_all_three_after_the_toast_has_gone() {
         }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
-        support::keys(&window, &["j", "x", "j", "x", "j", "x", "j", "a"]);
+        support::keys(&window, &["x", "j", "x", "j", "x", "j", "a"]);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Fourth", "Fifth"]).await,
             "the three never left: {:?}",
@@ -126,7 +126,7 @@ pub fn an_undo_puts_the_cursor_on_the_row_it_brought_back() {
         }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
-        support::keys(&window, &["j", "j", "a"]);
+        support::keys(&window, &["j", "a"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 4).await,
             "Second did not leave: {:?}",

@@ -407,7 +407,7 @@ pub fn capital_a_archives_the_conversation() {
             return;
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
-        support::keys(&window, &["j", "A"]);
+        support::keys(&window, &["A"]);
         assert!(
             crate::settle_until(
                 async || support::subjects(&window) == ["Harbor draft", "Atlas budget"]

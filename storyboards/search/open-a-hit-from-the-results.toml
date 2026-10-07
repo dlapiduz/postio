@@ -9,9 +9,8 @@
 #
 # Re-expressed for Focus (T265): the bar lists the hits under its field as
 # the word is typed; Return highlights the first, and a second Return opens it
-# over the list, in a fresh window with no cursor row. That last was red
-# when re-expressed -- the bar opened a hit through the list's cursor, so
-# with none nothing opened -- and is fixed beside it.
+# over the list. The bar opens a hit itself, not through the list's cursor,
+# so it opens whatever row the cursor is on, or none.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#961" }
 proof  = "pinned"

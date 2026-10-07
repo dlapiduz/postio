@@ -121,7 +121,7 @@ pub fn a_dragged_selection_is_every_selected_message_and_nothing_is_written_earl
         }
         let (_fixture, window, messages) = five_with_sources().await;
         // `x` on the first, and on the third: a selection of two.
-        support::keys(&window, &["j", "x", "j", "j", "x"]);
+        support::keys(&window, &["x", "j", "j", "x"]);
 
         // A grabbed row that is in the selection offers the selection...
         let offer = window
