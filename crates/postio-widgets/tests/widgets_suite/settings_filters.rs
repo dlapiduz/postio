@@ -98,6 +98,47 @@ pub fn the_page_says_how_a_saved_search_is_made() {
     window.destroy();
 }
 
+/// A pinned search shows the key that runs it from the command bar (alt+1
+/// for the first, alt+2 for the next); an unpinned one shows none. This is
+/// the page where they are put in order, so it is where the keys are learnt.
+pub fn a_pinned_search_shows_the_key_that_runs_it() {
+    let Some((window, panel)) = panel_with_text(SAMPLE) else {
+        return;
+    };
+    let keymap = postio_core::Keymap::resolve(&postio_config::KeyBindings::default());
+    panel.set_keymap(&keymap);
+    panel.set_text(SAMPLE);
+    pump();
+
+    let caps = |row: &gtk::ListBoxRow| -> Vec<String> {
+        collect(
+            row.upcast_ref::<gtk::Widget>(),
+            "postio-settings-filter-key",
+        )
+        .into_iter()
+        .flat_map(|w| collect(&w, "postio-keyhint"))
+        .filter_map(|w| w.downcast::<gtk::Label>().ok())
+        .map(|l| l.text().to_string())
+        .collect()
+    };
+    let key = |id| keymap.binding(id).expect("a default binding").to_string();
+    let rows = rows(&panel);
+    assert_eq!(
+        caps(&rows[0]),
+        vec![key(postio_core::CommandId::SavedSearch1)]
+    );
+    assert_eq!(
+        caps(&rows[1]),
+        vec![key(postio_core::CommandId::SavedSearch2)]
+    );
+    assert!(
+        caps(&rows[2]).is_empty(),
+        "an unpinned search runs from no key"
+    );
+
+    window.destroy();
+}
+
 pub fn pinned_filters_come_first_in_order_then_unpinned_ones_alphabetically() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;

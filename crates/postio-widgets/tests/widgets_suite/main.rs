@@ -638,6 +638,10 @@ const CASES: &[(&str, fn())] = &[
         settings_filters::filters_render_as_rows_and_hide_when_there_are_none as fn(),
     ),
     (
+        "settings_filters::a_pinned_search_shows_the_key_that_runs_it",
+        settings_filters::a_pinned_search_shows_the_key_that_runs_it as fn(),
+    ),
+    (
         "settings_filters::the_page_says_how_a_saved_search_is_made",
         settings_filters::the_page_says_how_a_saved_search_is_made as fn(),
     ),

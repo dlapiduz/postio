@@ -3844,6 +3844,24 @@ impl SettingsPanel {
         box_.append(&lines);
         pinned.widget().set_valign(gtk::Align::Center);
         box_.append(pinned.widget());
+        // The key that runs it from the command bar, for the first four
+        // pinned: this is where they are put in order, so it is where the
+        // keys are learnt.
+        const RUN: [CommandId; 4] = [
+            CommandId::SavedSearch1,
+            CommandId::SavedSearch2,
+            CommandId::SavedSearch3,
+            CommandId::SavedSearch4,
+        ];
+        if filter.pinned
+            && let Some(command) = position.and_then(|index| RUN.get(index))
+            && let Some(key) = postio_ui::hints::key(&self.imp().keymap.borrow(), *command)
+        {
+            let cap = crate::widgets::keyhint::cap(&key);
+            cap.add_css_class("postio-settings-filter-key");
+            cap.set_valign(gtk::Align::Center);
+            box_.append(&cap);
+        }
         box_.append(&up);
         box_.append(&down);
         box_.append(&delete);
