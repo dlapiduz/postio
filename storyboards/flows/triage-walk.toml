@@ -38,5 +38,5 @@ expect  = "The same again: one row gone, the cursor on its replacement, the toas
 [[step]]
 id      = "undo"
 command = "undo"
-check   = { keyboard.region = "list", rows.count = { changed = true } }
-expect  = "The last archived row comes back in its place, and the keyboard is still on the list."
+check   = { keyboard.region = "list", rows.count = { changed = true }, cursor.index = { same_as = "j2" }, notice.undo = false }
+expect  = "The last archived row comes back in its place under the cursor, whole and under its day heading, and the keyboard is still on the list. The toast says it was undone."

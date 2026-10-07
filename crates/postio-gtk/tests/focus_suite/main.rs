@@ -1300,6 +1300,10 @@ const CASES: &[(&str, fn())] = &[
         undo::the_toast_counts_the_row_and_says_when_it_was_undone as fn(),
     ),
     (
+        "undo::an_undo_puts_the_cursor_on_the_row_it_brought_back",
+        undo::an_undo_puts_the_cursor_on_the_row_it_brought_back as fn(),
+    ),
+    (
         "undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone",
         undo::one_ctrl_z_returns_all_three_after_the_toast_has_gone as fn(),
     ),

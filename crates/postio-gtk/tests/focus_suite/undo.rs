@@ -115,3 +115,47 @@ pub fn the_toast_counts_the_row_and_says_when_it_was_undone() {
         );
     });
 }
+
+/// After an undo the cursor is on the row that came back, which a person
+/// is looking at: it lands where the row returned, and the list does not
+/// scroll to put it somewhere else.
+pub fn an_undo_puts_the_cursor_on_the_row_it_brought_back() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        support::keys(&window, &["j", "j", "a"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 4).await,
+            "Second did not leave: {:?}",
+            support::subjects(&window)
+        );
+        let subject = |window: &postio_gtk::window::FocusWindow| {
+            window.cursor_row().and_then(|row| {
+                row.as_conversation()
+                    .and_then(|row| row.summary.representative.subject.clone())
+            })
+        };
+        assert_eq!(subject(&window).as_deref(), Some("Third"));
+
+        support::press(&window, "z", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 5).await,
+            "Second did not come back: {:?}",
+            support::subjects(&window)
+        );
+        assert!(
+            crate::settle_until(async || subject(&window).as_deref() == Some("Second")).await,
+            "the cursor is on {:?}, not on the row that came back",
+            subject(&window)
+        );
+        let pane = window.pane().expect("the inbox");
+        assert_eq!(
+            pane.widget().vadjustment().value(),
+            0.0,
+            "the list stayed at its top, first heading showing"
+        );
+    });
+}

@@ -23,8 +23,8 @@ check   = { keyboard.region = "list", cursor.index = 0, keyboard.reachable = tru
 
 [[step]]
 command = "archive"
-check   = { keyboard.region = "list", keyboard.reachable = true, notice.undo = true }
-expect  = "The row is gone and the toast offers Undo. The keyboard is still on the list."
+check   = { keyboard.region = "list", keyboard.reachable = true, notice.undo = true, cursor.index = { same_as = "first" } }
+expect  = "The row is gone and the toast offers Undo. The keyboard is still on the list, and the row that took its place wears the cursor ring."
 
 [[step]]
 command = "next_message"

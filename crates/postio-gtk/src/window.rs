@@ -89,6 +89,17 @@ const LIST: &str = "list";
 const KEY_MAP: &str = "focus-key-map";
 const EMPTY: &str = "empty";
 
+/// What an undo put back into the list, until the cursor is on it.
+#[derive(Debug, Clone)]
+pub struct Restoring {
+    /// The rows that were taken out: the one that comes back is among them.
+    rows: Vec<MessageId>,
+    /// Whether the list stood at its top, first heading showing.
+    at_top: bool,
+    /// How many times the list has landed without showing it yet.
+    waited: u8,
+}
+
 mod imp {
     use super::*;
 
@@ -195,6 +206,12 @@ mod imp {
         /// The place the list shows when it is not the inbox: what its
         /// strip counts and what it says when it has nothing in it.
         pub place: RefCell<Option<postio_ui::focus_state::EmptyPlace>>,
+        /// The rows an archive or delete took out of the list, kept for the
+        /// undo that brings them back.
+        pub removed: RefCell<Vec<MessageId>>,
+        /// What an undo brought back, until the list shows it and the cursor
+        /// is on it: the rows, and whether the list was at its top.
+        pub restoring: RefCell<Option<Restoring>>,
         /// The last key press `handle_key` was given, by its event time and
         /// key: so a press the window's controller and a dialog's both see
         /// is handled once (`keys_under_dialogs`).
@@ -326,6 +343,8 @@ mod imp {
                 places: RefCell::default(),
                 at_inbox: Cell::new(true),
                 place: RefCell::default(),
+                removed: RefCell::default(),
+                restoring: RefCell::default(),
                 last_key: Cell::new(None),
                 dialogs: RefCell::default(),
                 snooze: RefCell::default(),
@@ -1987,6 +2006,79 @@ impl FocusWindow {
         });
     }
 
+    /// Remember the rows an archive or delete is about to take out: what
+    /// the cursor goes back to when the undo brings them back.
+    fn note_removed(&self) {
+        let rows = match self.selection() {
+            Selection::These(ids) if !ids.is_empty() => ids,
+            // Nothing selected: the cursor's row is what the verb takes.
+            // (Everything selected is a predicate, with no rows to name.)
+            Selection::These(_) => self.cursor_row().map(|row| row.id()).into_iter().collect(),
+            Selection::Everything { .. } => Vec::new(),
+        };
+        let mut removed = self.imp().removed.borrow_mut();
+        removed.extend(rows);
+        // Only the last unit can be undone with any confidence about where
+        // it was; the rest of the history is not the cursor's business.
+        let excess = removed.len().saturating_sub(64);
+        removed.drain(..excess);
+    }
+
+    /// An undo has run: the rows it brings back will be in the list once it
+    /// is read again, and the cursor goes to the first of them.
+    fn restore_cursor(&self) {
+        let imp = self.imp();
+        let rows = std::mem::take(&mut *imp.removed.borrow_mut());
+        if rows.is_empty() {
+            return;
+        }
+        let at_top = self
+            .pane()
+            .is_some_and(|pane| pane.widget().vadjustment().value() <= 0.0);
+        imp.restoring.replace(Some(Restoring {
+            rows,
+            at_top,
+            waited: 0,
+        }));
+    }
+
+    /// The list has landed: put the cursor on the row an undo brought back,
+    /// once it is in the list, and keep the list where it stood.
+    ///
+    /// GTK keeps the row it anchors on in place when a row appears above
+    /// it, which scrolls the list by one row and hides its first heading.
+    /// Nothing was scrolled by the person, so the list goes back to its top.
+    fn place_restored(&self) {
+        let imp = self.imp();
+        let Some(mut restoring) = imp.restoring.borrow().clone() else {
+            return;
+        };
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let list = pane.feed().list().clone();
+        let found = restoring
+            .rows
+            .iter()
+            .filter_map(|row| list.position_of(*row))
+            .min();
+        match found {
+            Some(position) => {
+                imp.restoring.replace(None);
+                self.cursor_to(Some(position));
+                if restoring.at_top {
+                    pane.to_top();
+                }
+            }
+            None => {
+                restoring.waited += 1;
+                // The first landings after an undo may be older reads.
+                imp.restoring
+                    .replace((restoring.waited < 4).then_some(restoring));
+            }
+        }
+    }
+
     /// Send `command` to the host, aimed as [`Self::aims`] says, and let
     /// the selection go: what it named has been acted on.
     fn send(&self, command: Command) {
@@ -1997,6 +2089,9 @@ impl FocusWindow {
         let Some(client) = self.imp().client.borrow().clone() else {
             return;
         };
+        if matches!(command, Command::Archive { .. } | Command::Delete { .. }) {
+            self.note_removed();
+        }
         self.clear_selection();
         glib::spawn_future_local(async move {
             for aim in aims {
@@ -2387,6 +2482,7 @@ impl FocusWindow {
                 None => {}
             }
         }
+        self.place_restored();
         // A place counts what the list now holds.
         self.show_counts();
         self.update_counts();
@@ -2720,6 +2816,7 @@ impl FocusWindow {
             Event::UndoPerformed { description } => {
                 self.imp().toast.show_undo_performed(description);
                 self.follow_toast();
+                self.restore_cursor();
             }
             Event::CommandRejected { reason, .. } => {
                 self.imp().answering.set(false);
