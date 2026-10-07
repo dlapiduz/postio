@@ -5449,12 +5449,10 @@ impl FocusWindow {
         {
             app.insert(
                 "focus.composer.holds_keyboard".to_owned(),
-                serde_json::json!(
-                    detached.as_ref().is_none_or(|host| {
-                        gtk::prelude::GtkWindowExt::focus(host)
-                            .is_some_and(|focus| focus.is_ancestor(composer))
-                    })
-                ),
+                serde_json::json!(detached.as_ref().is_none_or(|host| {
+                    gtk::prelude::GtkWindowExt::focus(host)
+                        .is_some_and(|focus| focus.is_ancestor(composer))
+                })),
             );
             app.insert(
                 "focus.composer.quoted".to_owned(),

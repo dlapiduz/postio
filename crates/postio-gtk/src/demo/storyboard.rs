@@ -887,12 +887,14 @@ fn settle_and_capture(
         .and_then(|composer| composer.detached_window())
         .filter(|host| host.is_visible());
     let outlined = match detached {
-        Some(host) => outline::outlined_with_window(window.upcast_ref(), host.upcast_ref(), &region),
+        Some(host) => {
+            outline::outlined_with_window(window.upcast_ref(), host.upcast_ref(), &region)
+        }
         None => outline::outlined(window.upcast_ref(), &region),
     }
     .save_to_png(writer.dir().join(&outlined_name))
-        .ok()
-        .map(|()| outlined_name);
+    .ok()
+    .map(|()| outlined_name);
     (verdict, frame, outlined)
 }
 
