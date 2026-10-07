@@ -1357,6 +1357,10 @@ const CASES: &[(&str, fn())] = &[
         marked_rows::a_marked_row_is_two_lines_whatever_its_state as fn(),
     ),
     (
+        "marked_rows::a_selected_marked_row_shows_its_check_not_its_dot",
+        marked_rows::a_selected_marked_row_shows_its_check_not_its_dot as fn(),
+    ),
+    (
         "rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived",
         rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived as fn(),
     ),

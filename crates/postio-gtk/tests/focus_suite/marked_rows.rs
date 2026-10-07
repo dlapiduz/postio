@@ -95,3 +95,92 @@ pub fn a_marked_row_is_two_lines_whatever_its_state() {
         assert_eq!(row.height(), 72, "with keyboard focus on it");
     });
 }
+
+/// A selected marked row shows one mark in its gutter, the checked box. The
+/// box and the marker's dot both stood at the gutter's centre on the first
+/// line, so selecting a row with an action drew the check over the dot; the
+/// box takes the dot's place, as it takes a digest's stack, and the second
+/// line still says what the marker is.
+pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (asked, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Re: Atlas Q3 budget",
+                "Can you approve these by Friday?",
+                10,
+            )
+            .await;
+        fixture.ask(asked, "Can you approve these by Friday?").await;
+        let (window, _client) = fixture.open().await;
+        let pane = window.pane().expect("the inbox");
+        let marked = || {
+            pane.rows_on_screen()
+                .into_iter()
+                .find(|row| row.item().is_some_and(|item| item.two_lines()))
+        };
+        assert!(
+            crate::settle_until(async || {
+                marked().is_some_and(|row| row.height() == 72 && row.drawn().accent.is_some())
+            })
+            .await,
+            "the marked row never drew its marker"
+        );
+        let row = marked().expect("just seen");
+        assert_eq!(
+            gutter_marks(&row),
+            1,
+            "unselected, the gutter holds the dot"
+        );
+
+        support::keys(&window, &["x"]);
+        row.queue_draw();
+        assert!(
+            crate::settle_until(async || row.drawn().picked).await,
+            "`x` never selected the marked row"
+        );
+        assert_eq!(
+            gutter_marks(&row),
+            1,
+            "selected, the gutter holds the checked box alone, not the box over the dot"
+        );
+        assert!(
+            row.drawn().texts.iter().any(|text| text == "Question"),
+            "and the second line still says what the marker is: {:?}",
+            row.drawn().texts
+        );
+    });
+}
+
+/// How many marks `row` paints in its gutter on the first line: the dot, the
+/// checked box, a digest's stack -- anything small standing there.
+fn gutter_marks(row: &postio_gtk::list::RowWidget) -> u32 {
+    let paintable = gtk::WidgetPaintable::new(Some(row));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, f64::from(row.width()), f64::from(row.height()));
+    let mut found = 0;
+    if let Some(node) = snapshot.to_node() {
+        in_gutter(&node, &mut found);
+    }
+    found
+}
+
+fn in_gutter(node: &gtk::gsk::RenderNode, found: &mut u32) {
+    use gtk::gsk::{ClipNode, ContainerNode};
+    let at = node.bounds();
+    let small = at.width() <= 20.0 && at.height() <= 20.0;
+    let centre = (at.x() + at.width() / 2.0, at.y() + at.height() / 2.0);
+    if small && (14.0..=46.0).contains(&centre.0) && (6.0..=38.0).contains(&centre.1) {
+        *found += 1;
+    } else if let Some(container) = node.downcast_ref::<ContainerNode>() {
+        for index in 0..container.n_children() {
+            in_gutter(&container.child(index), found);
+        }
+    } else if let Some(clip) = node.downcast_ref::<ClipNode>() {
+        in_gutter(&clip.child(), found);
+    }
+}

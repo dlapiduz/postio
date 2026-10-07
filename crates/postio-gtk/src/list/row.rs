@@ -787,15 +787,19 @@ impl RowWidget {
         let width = self.width() as f32;
         drawn.accent = Some(palette.accent);
 
-        let dot = graphene::Rect::new(
-            GUTTER_CENTRE - DOT / 2.0,
-            self.first_line() - DOT / 2.0,
-            DOT,
-            DOT,
-        );
-        snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
-        snapshot.append_color(&palette.accent, &dot);
-        snapshot.pop();
+        // The checked box stands where the dot would, as it stands where a
+        // digest's stack would: both at once drew the check over the dot.
+        if !drawn.picked {
+            let dot = graphene::Rect::new(
+                GUTTER_CENTRE - DOT / 2.0,
+                self.first_line() - DOT / 2.0,
+                DOT,
+                DOT,
+            );
+            snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
+            snapshot.append_color(&palette.accent, &dot);
+            snapshot.pop();
+        }
 
         // The actions first, from the right edge in, so the quote knows its
         // room.
