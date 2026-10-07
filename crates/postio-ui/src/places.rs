@@ -161,12 +161,19 @@ pub fn view_entries() -> Vec<Entry> {
     .collect()
 }
 
-/// The places to list: every entry (and Filtered, while it is one) whose
-/// name contains `wanted`, case aside, by section, rank, then name.
+/// The places to list: every entry, Snoozed and Flagged (the views, unless a
+/// server's own mailbox with that role already has the row), and Filtered
+/// while it is one, whose name contains `wanted`, case aside, by section,
+/// rank, then name.
 pub fn listed(all: &[Entry], filtered: Option<&Entry>, wanted: &str) -> Vec<Entry> {
     let wanted = wanted.to_lowercase();
+    let views: Vec<Entry> = view_entries()
+        .into_iter()
+        .filter(|view| !all.iter().any(|entry| entry.go == view.go))
+        .collect();
     let mut shown: Vec<Entry> = all
         .iter()
+        .chain(&views)
         .chain(filtered)
         .filter(|entry| wanted.is_empty() || entry.name.to_lowercase().contains(&wanted))
         .cloned()
@@ -267,6 +274,27 @@ mod tests {
     }
 
     #[test]
+    fn the_views_are_listed_always_and_once() {
+        let inbox = mailbox_entry(&mailbox("Inbox", MailboxRole::Inbox));
+        let names = |shown: Vec<Entry>| -> Vec<String> {
+            shown.into_iter().map(|entry| entry.name).collect()
+        };
+        let shown = names(listed(std::slice::from_ref(&inbox), None, ""));
+        assert_eq!(shown, ["Inbox", "Snoozed", "Flagged"], "by rank");
+
+        let own = mailbox_entry(&mailbox("Starred", MailboxRole::Flagged));
+        let shown = names(listed(&[inbox, own], None, ""));
+        assert_eq!(
+            shown
+                .iter()
+                .filter(|name| *name == "Flagged" || *name == "Starred")
+                .count(),
+            1,
+            "a server's own Flagged mailbox is the view's row: {shown:?}"
+        );
+    }
+
+    #[test]
     fn snoozed_and_flagged_are_views_that_run_their_go_to_commands() {
         let views = view_entries();
         let commands: Vec<_> = views.iter().map(|entry| entry.command).collect();
@@ -306,7 +334,8 @@ mod tests {
         assert_eq!(
             names(listed(&all, Some(&filtered_entry(3)), "")),
             [
-                "Inbox", "Outbox", "Archive", "Filtered", "Receipts", "Travel"
+                "Inbox", "Outbox", "Snoozed", "Archive", "Filtered", "Flagged", "Receipts",
+                "Travel"
             ]
         );
         assert_eq!(names(listed(&all, None, "REC")), ["Receipts"]);

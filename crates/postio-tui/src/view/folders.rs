@@ -259,6 +259,8 @@ mod tests {
         );
         assert!(row("Archive").contains("g r"), "{}", row("Archive"));
         assert!(row("Sent").contains("g s"), "{}", row("Sent"));
+        assert!(row("Snoozed").contains("g z"), "{}", row("Snoozed"));
+        assert!(row("Flagged").contains("g *"), "{}", row("Flagged"));
         assert!(row("Outbox").contains('2'), "{}", row("Outbox"));
         assert!(row("Filtered").contains("186 today") && row("Filtered").contains("g f"));
         assert!(row("Projects").contains("40"), "{}", row("Projects"));
