@@ -186,6 +186,26 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
         .await;
         assert!(offered, "the composer never offered the contact");
 
+        // The counter is process-wide, and the app's own startup work -- the
+        // first pass, the folder counts, the indexer -- opens connections on
+        // worker threads; on a loaded runner some of it landed inside the
+        // typing below (two, on CI). Let it finish, and outlast a pending
+        // autosave, before taking the reading.
+        let seen = std::cell::Cell::new((checkouts(), std::time::Instant::now()));
+        let quiet = crate::settle_until_within(std::time::Duration::from_secs(30), async || {
+            let (count, since) = seen.get();
+            if checkouts() != count {
+                seen.set((checkouts(), std::time::Instant::now()));
+                return false;
+            }
+            since.elapsed() >= std::time::Duration::from_secs(2)
+        })
+        .await;
+        assert!(
+            quiet,
+            "the store never went quiet after the composer opened"
+        );
+
         // Now the budget: a name typed letter by letter.
         let before = checkouts();
         for typed in ["w", "wi", "wil", "wilh", "wilhe", "quar", "quartz"] {
