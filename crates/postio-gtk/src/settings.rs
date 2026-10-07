@@ -368,7 +368,8 @@ const REFERENCE_WINDOW: (i32, i32) = (1440, 900);
 
 impl Settings {
     /// The commands Settings has a control for: its foot strip's "Open in
-    /// $EDITOR".
+    /// $EDITOR". (Filtering's Open Filtered runs `go_to_filtered`, which the
+    /// strip's count already answers for.)
     pub fn controls() -> Vec<postio_core::CommandId> {
         // The account verbs are on each account row's menu and its detail
         // view (T258 gives them keys).
@@ -439,9 +440,17 @@ impl crate::window::FocusWindow {
             settings.panel().connect_command({
                 let window = self.downgrade();
                 move |id| {
-                    if let Some(window) = window.upgrade() {
-                        window.act(id);
+                    let Some(window) = window.upgrade() else {
+                        return;
+                    };
+                    // A command that goes somewhere in the list goes there,
+                    // not behind the dialog: Filtering's Open Filtered.
+                    if id == postio_core::CommandId::GoToFiltered
+                        && let Some(settings) = window.settings()
+                    {
+                        settings.close();
                     }
+                    window.act(id);
                 }
             });
             if let Some(path) = self.config_path() {
@@ -453,6 +462,7 @@ impl crate::window::FocusWindow {
             self.imp_settings().replace(Some(Rc::clone(&settings)));
             settings
         });
+        settings.panel().set_filtered_today(self.filtered_today());
         settings.present(self.upcast_ref());
     }
 

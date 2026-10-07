@@ -251,6 +251,7 @@ pub fn every_section_focus_shows_is_reachable_and_appearance_is_not() {
         };
         let shown = [
             "Accounts",
+            "Filtering",
             "Saved searches",
             "Composing",
             "Keyboard",
@@ -679,6 +680,147 @@ pub fn the_signature_editor_has_the_keyboard_and_says_what_it_is() {
                 .any(|text| text.starts_with("New signature")),
             "the editor says nothing of what it makes: {:?}",
             support::texts(&dialog)
+        );
+    });
+}
+
+/// Settings' Filtering page (spec 007 US9, FR-119): it says what filtering
+/// does and today's count, its switch writes `[focus] filtering` and the
+/// inbox's strip follows the file, and Open Filtered goes there.
+pub fn filtering_turned_off_in_settings_is_written_and_the_strip_follows() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Budget", "A line.", 10)
+            .await;
+        // Filtered a minute and two ago by the real clock: today.
+        let ago = |minutes: i64| (support::now() - chrono::Utc::now()).num_minutes() + minutes;
+        for (subject, minutes) in [("Review requested", 1), ("Build passed", 2)] {
+            fixture
+                .filtered(
+                    ("Forge", "noreply@forge.test"),
+                    subject,
+                    "notification",
+                    Some("Forge"),
+                    ago(minutes),
+                )
+                .await;
+        }
+        let (window, _directory, path) = open_under(
+            &fixture,
+            "[focus]\nfiltering = true\n\n[focus.filter]\nnever = [\"@example.net\"]\n",
+        )
+        .await;
+        assert!(watched(), "the config is watched");
+        let chrome = window.chrome().expect("the strip");
+        assert!(
+            crate::settle_until(async || {
+                chrome.filtered_today_said().as_deref() == Some("2 filtered today")
+            })
+            .await,
+            "the strip counts today's: {:?}",
+            chrome.filtered_today_said()
+        );
+
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        let row = section_rows(&dialog)
+            .into_iter()
+            .find(|(name, _)| name == "Filtering")
+            .map(|(_, row)| row)
+            .expect("Settings lists Filtering");
+        support::click(&window, &row, 1);
+        assert!(
+            crate::settle_until(async || pane_title(&dialog) == "Filtering").await,
+            "Filtering shows its page, not {:?}",
+            pane_title(&dialog)
+        );
+        let said = || support::texts(&dialog);
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text == "2 filtered today"))
+                .await,
+            "the page counts what the strip counts: {:?}",
+            said()
+        );
+        let shown = said();
+        for line in [
+            postio_ui::filtering::SWITCH,
+            postio_ui::filtering::KEPT,
+            "everyone at example.net",
+            "g f",
+        ] {
+            assert!(
+                shown.iter().any(|text| text == line),
+                "the page says {line:?}: {shown:?}"
+            );
+        }
+        assert!(
+            shown
+                .iter()
+                .any(|text| text.contains("never reach the inbox")),
+            "and what filtering does: {shown:?}"
+        );
+
+        // Off: written to the file, said on the page, and the inbox's strip
+        // stops counting (C10).
+        let switch = support::only(&dialog, "postio-settings-filtering-switch");
+        support::click(&window, &switch, 1);
+        assert!(
+            crate::settle_until(async || {
+                std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("filtering = false")
+            })
+            .await,
+            "the switch wrote [focus] filtering: {}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .contains("never = [\"@example.net\"]"),
+            "and left the rest of [focus] where it was"
+        );
+        assert!(
+            crate::settle_until(async || said().iter().any(|text| text.starts_with("Off:"))).await,
+            "the page says filtering is off: {:?}",
+            said()
+        );
+        assert!(
+            !said().iter().any(|text| text == "2 filtered today"),
+            "and counts nothing while it is: {:?}",
+            said()
+        );
+        assert!(
+            crate::settle_until(async || chrome.filtered_today_said().is_none()).await,
+            "the inbox's strip followed the file: {:?}",
+            chrome.filtered_today_said()
+        );
+
+        // On again.
+        support::click(&window, &switch, 1);
+        assert!(
+            crate::settle_until(async || {
+                chrome.filtered_today_said().as_deref() == Some("2 filtered today")
+            })
+            .await,
+            "turned on again, the strip counts again: {:?}",
+            chrome.filtered_today_said()
+        );
+
+        // Open Filtered leaves Settings for Filtered.
+        let open = support::only(&dialog, "postio-settings-filtering-open");
+        support::click(&window, &open, 1);
+        assert!(
+            settings_gone(&window).await,
+            "Open Filtered closed Settings"
+        );
+        assert!(
+            crate::settle_until(async || window.filtered().is_some()).await,
+            "and opened Filtered"
         );
     });
 }

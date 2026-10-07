@@ -1461,6 +1461,10 @@ const CASES: &[(&str, fn())] = &[
         "settings::a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next",
         settings::a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next as fn(),
     ),
+    (
+        "settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows",
+        settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows as fn(),
+    ),
 ];
 
 use gtk::glib;

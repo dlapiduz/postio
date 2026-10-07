@@ -2776,6 +2776,10 @@ impl FocusWindow {
             if let Some(places) = imp.places.borrow().as_ref() {
                 places.set_filtered_today(filtered);
             }
+            // Settings' Filtering page says the same count (US9).
+            if let Some(settings) = imp.settings.borrow().as_ref() {
+                settings.panel().set_filtered_today(filtered);
+            }
         }
         let has_action = counts.map(|counts| counts.has_action);
         let label = postio_ui::focus_row::has_action_label(has_action);
@@ -2852,6 +2856,18 @@ impl FocusWindow {
         if beside != (stack.visible_child_name().as_deref() == Some(LIST)) {
             self.place_reading();
         }
+    }
+
+    /// How many messages were filtered today, while filtering is on and the
+    /// count is in: what the strip, the folders popover and Settings'
+    /// Filtering page say.
+    pub(crate) fn filtered_today(&self) -> Option<u32> {
+        let imp = self.imp();
+        let filtering = imp.focus_config.borrow().filtering;
+        imp.counts
+            .get()
+            .filter(|_| filtering)
+            .map(|counts| counts.filtered_today)
     }
 
     /// `[focus]`, for what the empty inbox names.
@@ -4543,14 +4559,7 @@ impl FocusWindow {
                 places
             })
             .clone();
-        let filtering = self.imp().focus_config.borrow().filtering;
-        places.set_filtered_today(
-            self.imp()
-                .counts
-                .get()
-                .filter(|_| filtering)
-                .map(|counts| counts.filtered_today),
-        );
+        places.set_filtered_today(self.filtered_today());
         places.open();
         crate::motion::keep_to_budget(self);
     }
