@@ -46,10 +46,10 @@ command = "next_message"
 [[step]]
 command = "open_message"
 check   = { view = "reader", composer.open = false }
-expect  = "The queued reply opens to be read, offering Cancel send, Retry send and Edit rather than Reply."
+expect  = "The queued reply opens to be read, offering Cancel send and Edit rather than Reply (Retry send is for a send that stopped)."
 
 [[step]]
 command = "cancel_send"
 settle  = { until = { rows.count = 0 } }
-check   = { scope = "Outbox", rows.count = 0 }
-expect  = "The send is cancelled: the message leaves the Outbox, and the app says it is a draft again."
+check   = { scope = "Outbox", rows.count = 0, notice.text = "Send cancelled — back in Drafts" }
+expect  = "The send is cancelled: the message leaves the Outbox, and a toast says it is back in Drafts."

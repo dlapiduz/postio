@@ -119,7 +119,7 @@ impl UndoKind {
             // Singular for the same reason: both act on the one draft a
             // person is looking at, never on a selection.
             UndoKind::RetriedSend => "Sending again".to_owned(),
-            UndoKind::CancelledSend => "Send cancelled".to_owned(),
+            UndoKind::CancelledSend => "Send cancelled \u{2014} back in Drafts".to_owned(),
             // Never counted either: it is about a folder, not about messages.
             UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
@@ -440,6 +440,11 @@ mod tests {
 
     #[test]
     fn the_toast_counts_and_pluralizes() {
+        assert_eq!(
+            UndoKind::CancelledSend.describe(1),
+            "Send cancelled \u{2014} back in Drafts",
+            "a cancelled send says where the message went"
+        );
         assert_eq!(UndoKind::Archive.describe(1), "Archived 1 message");
         assert_eq!(UndoKind::Archive.describe(12), "Archived 12 messages");
         assert_eq!(
