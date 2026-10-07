@@ -546,6 +546,16 @@ mod schedule_tests {
     }
 }
 
+/// What the toast says when Escape leaves a composition that holds writing:
+/// that it was kept, and the way back to it. `drafts_key` is the key that
+/// goes to Drafts, when one is bound.
+pub fn kept_note(drafts_key: Option<&str>) -> String {
+    match drafts_key {
+        Some(key) => format!("Draft saved to Drafts ({key})"),
+        None => "Draft saved to Drafts".to_owned(),
+    }
+}
+
 /// What the header calls a composition (contracts/focus-surface.md,
 /// "Compose"): "New message", or what it answers.
 pub fn title(kind: postio_model::DraftKind) -> &'static str {
@@ -710,5 +720,11 @@ mod frame_tests {
     fn the_header_names_a_composition_as_the_screens_do() {
         assert_eq!(title(DraftKind::New), "New message");
         assert_eq!(title(DraftKind::ReplyAll), "Reply to all");
+    }
+
+    #[test]
+    fn the_kept_note_names_where_the_draft_went_and_the_key_there() {
+        assert_eq!(kept_note(Some("g t")), "Draft saved to Drafts (g t)");
+        assert_eq!(kept_note(None), "Draft saved to Drafts");
     }
 }

@@ -36,5 +36,5 @@ expect  = "Typing carries on in the same body, still the one composer."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, cursor.index = 0 }
-expect  = "Back on the list, on the same row, which was neither archived nor moved."
+check   = { composer.open = false, cursor.index = 0, notice.text = "Draft saved to Drafts (g t)", notice.undo = false }
+expect  = "Back on the list, on the same row, which was neither archived nor moved, and a toast says the reply was kept and where to find it."

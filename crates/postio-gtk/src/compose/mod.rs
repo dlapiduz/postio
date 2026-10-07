@@ -125,6 +125,19 @@ impl Compose {
                 window.show_removable(sentence, move || undo());
             }
         });
+        // Escape from a composition that holds writing keeps it, and says
+        // so: silence reads as a draft thrown away. An untouched composer
+        // closes without a word.
+        let keeping = window.downgrade();
+        composer.connect_closed(move |outcome| {
+            if outcome != postio_widgets::composer::Closing::Keep {
+                return;
+            }
+            if let Some(window) = keeping.upgrade() {
+                let key = postio_ui::hints::key(&window.keymap(), CommandId::GoToDrafts);
+                window.say(&postio_ui::compose::kept_note(key.as_deref()));
+            }
+        });
         let resume = seams::wire(&composer, &frame, client, account, current, say);
         let remind = WhenPicker::new(&keymap, When::Remind);
         remind.connect_chosen(glib::clone!(
