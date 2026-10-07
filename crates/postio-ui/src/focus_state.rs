@@ -270,9 +270,11 @@ where
             icon: "network-offline-symbolic",
         };
     }
+    // A list pass, or the backfill that follows it: either is mail still
+    // arriving, and the label says how much.
     let passes: Vec<(u32, u32)> = statuses
         .iter()
-        .filter_map(|(_, status)| running(status))
+        .filter_map(|(_, status)| running(status).or_else(|| status.backfill_running()))
         .collect();
     if !passes.is_empty() {
         let done = passes.iter().map(|(done, _)| done).sum();
@@ -820,6 +822,17 @@ mod tests {
             "Syncing 12,408 of 18,204"
         );
         assert_eq!(label(ConnectionState::Online, None), "Synced 16:09");
+        // A backfill says how far it has got, and a drained one says nothing.
+        let backfill = |done, total| {
+            let status = SyncStatus {
+                state: ConnectionState::Online,
+                backfill: Some((done, total)),
+                ..SyncStatus::default()
+            };
+            sync_label(&[(account(1), status)], synced, &zone).text
+        };
+        assert_eq!(backfill(12_400, 81_744), "Syncing 12,400 of 81,744");
+        assert_eq!(backfill(81_744, 81_744), "Synced 16:09");
         // Reconnecting after a sync: when mail last arrived is still true.
         assert_eq!(label(ConnectionState::Connecting, None), "Synced 16:09");
         let never = sync_label(

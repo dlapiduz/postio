@@ -118,6 +118,10 @@ impl SyncStatus {
     /// `None` once the queue has drained, so a finished backfill falls back
     /// to the ordinary idle line rather than sticking at `2000 of 2000` —
     /// the same trap `syncing` fell into and the same answer.
+    pub fn backfill_running(&self) -> Option<(u32, u32)> {
+        self.filling()
+    }
+
     fn filling(&self) -> Option<(u32, u32)> {
         match self.backfill {
             // A queue with nothing in it is not a backfill in progress.

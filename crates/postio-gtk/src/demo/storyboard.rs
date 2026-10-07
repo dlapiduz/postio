@@ -123,6 +123,34 @@ pub fn variants_to_play(
     }
 }
 
+/// The system's Adwaita Sans and Adwaita Mono files under `roots`, in name
+/// order. The chrome is drawn in them (C25), so the runner's fontconfig has
+/// to be handed them beside Postio's own faces: without them regular text
+/// falls back to whichever installed face matches `sans-serif` -- the
+/// monospace one -- and the films misdraw the app.
+pub fn chrome_faces(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut pending: Vec<PathBuf> = roots.to_vec();
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && (name.starts_with("AdwaitaSans") || name.starts_with("AdwaitaMono"))
+                && name.ends_with(".ttf")
+            {
+                found.push(path);
+            }
+        }
+    }
+    found.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    found
+}
+
 /// What Focus's runner can do, for applicability and `runner list`.
 pub fn runner_info() -> RunnerInfo {
     // Each axis lists the app's default first
@@ -1282,4 +1310,43 @@ async fn fresh(setup: &[&str]) -> Option<Started> {
         pump(Duration::from_millis(300));
     }
     Some(started)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chrome_faces;
+
+    /// The chrome is Adwaita Sans and Mono (C25), which the hermetic
+    /// fontconfig must be handed or regular text falls back to whatever
+    /// face it finds first -- the monospace one.
+    #[test]
+    fn the_chrome_faces_are_found_under_the_system_font_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let sans = root.path().join("adwaita-sans-fonts");
+        let mono = root.path().join("adwaita-mono-fonts");
+        let other = root.path().join("dejavu");
+        for dir in [&sans, &mono, &other] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        for file in [
+            sans.join("AdwaitaSans-Regular.ttf"),
+            sans.join("AdwaitaSans-Italic.ttf"),
+            mono.join("AdwaitaMono-Bold.ttf"),
+            other.join("DejaVuSans.ttf"),
+        ] {
+            std::fs::write(file, b"font").unwrap();
+        }
+        let names: Vec<String> = chrome_faces(&[root.path().to_path_buf()])
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "AdwaitaMono-Bold.ttf",
+                "AdwaitaSans-Italic.ttf",
+                "AdwaitaSans-Regular.ttf"
+            ]
+        );
+    }
 }

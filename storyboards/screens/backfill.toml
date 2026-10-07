@@ -6,3 +6,8 @@
 apps   = ["focus"]
 source = { kind = "design", ref = "none" }
 seed   = "backfilling"
+
+[[step]]
+wait   = { ms = 300 }
+check  = { app.focus.sync = "Syncing 12,400 of 81,744" }
+expect = "The top bar's sync label says how far the backfill has got, not when mail last arrived."

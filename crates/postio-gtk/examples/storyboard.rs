@@ -19,8 +19,9 @@
 //!
 //! * `TZ=UTC` and a C UTF-8 locale, so dates and collation do not follow the
 //!   machine;
-//! * a fontconfig that knows only the faces Postio embeds, so a system font
-//!   update cannot move a glyph;
+//! * a fontconfig that knows only the faces Postio embeds and the system's
+//!   Adwaita Sans and Mono (the chrome's own, C25), so no other system font
+//!   can move a glyph;
 //! * `GSK_RENDERER=cairo`, the renderer that measured byte-identical across
 //!   processes (docs/notes/2026-10-01-what-a-storyboard-capture-costs.md);
 //! * throwaway `XDG_*` directories, so no user setting or state leaks in and
@@ -37,7 +38,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 use gtk::gdk;
-use postio_gtk::demo::storyboard::{Options, run, runner_info};
+use postio_gtk::demo::storyboard::{Options, chrome_faces, run, runner_info};
 use postio_storyboard::format::load;
 use postio_storyboard::run::{Delivery, Status};
 use postio_ui::reader::document::FACES;
@@ -85,6 +86,16 @@ fn reexec(args: &[String]) -> ExitCode {
         if std::fs::write(fonts.join(face.name), face.bytes).is_err() {
             eprintln!("storyboard: cannot unpack the embedded font {}", face.name);
             return ExitCode::from(2);
+        }
+    }
+    let system_roots = [
+        PathBuf::from("/usr/share/fonts"),
+        PathBuf::from("/usr/local/share/fonts"),
+    ];
+    for face in chrome_faces(&system_roots) {
+        if let Some(name) = face.file_name() {
+            // A missing system font leaves the run as it was.
+            let _ = std::fs::copy(&face, fonts.join(name));
         }
     }
     let conf = root.join("fonts.conf");

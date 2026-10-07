@@ -2015,8 +2015,30 @@ impl FocusWindow {
         imp.retry.set_label(action);
         imp.retry.set_sensitive(true);
         imp.on_retry.replace(Some(run));
+        // The inbox's own top bar took the close button when it opened and
+        // is behind this page now: the one before mail comes back, so the
+        // page that says why there is no mail can always be closed.
+        if imp.bar_before_mail.parent().is_none()
+            && let Some(before_mail) = imp.stage.child().and_downcast::<gtk::Box>()
+        {
+            before_mail.prepend(&imp.bar_before_mail);
+        }
         imp.pages.set_visible_child_name(UNAVAILABLE);
         imp.retry.grab_focus();
+    }
+
+    /// Whether the window has a close button on show: the inbox's top bar
+    /// has it over the inbox, the bar before mail over every other page.
+    pub fn close_button_showing(&self) -> bool {
+        let imp = self.imp();
+        if imp.pages.visible_child_name().as_deref() == Some(INBOX) {
+            imp.chrome
+                .borrow()
+                .as_ref()
+                .is_some_and(|chrome| chrome.close_button().is_drawable())
+        } else {
+            imp.bar_before_mail.parent().is_some() && imp.bar_before_mail.is_drawable()
+        }
     }
 
     /// The sentence the window shows when it has no mail, if it is showing
@@ -4890,6 +4912,14 @@ impl FocusWindow {
             });
 
         let mut app = std::collections::BTreeMap::new();
+        app.insert(
+            "focus.sync".to_owned(),
+            serde_json::Value::String(self.sync_said()),
+        );
+        app.insert(
+            "focus.close_button".to_owned(),
+            serde_json::Value::Bool(self.close_button_showing()),
+        );
         let bulk = imp.bulk.borrow().as_ref().and_then(|bulk| bulk.summary());
         app.insert(
             "focus.bulk".to_owned(),

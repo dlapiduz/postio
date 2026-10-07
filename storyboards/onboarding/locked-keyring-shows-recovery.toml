@@ -11,5 +11,5 @@ preset = "locked"
 
 [[step]]
 wait    = { ms = 300 }
-check   = { view = "locked", keyboard.reachable = true }
-expect  = "The window says the keyring is locked and offers a way to recover; it is not an empty inbox."
+check   = { view = "locked", keyboard.reachable = true, app.focus.close_button = true }
+expect  = "The window says the keyring is locked, offers a way to recover and has its close button; it is not an empty inbox."
