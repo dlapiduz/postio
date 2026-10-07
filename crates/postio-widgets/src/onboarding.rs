@@ -889,6 +889,20 @@ impl Onboarding {
             .first_child()
             .inspect(|title| title.set_hexpand(true));
         header.append(&imp.step);
+        // Every step ends its header in the one close control, and it
+        // closes the dialog the form is in as Esc does -- stopping a
+        // sign-in waiting on the browser with it.
+        let close = crate::widgets::close_button();
+        close.connect_clicked(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| {
+                if let Some(dialog) = screen.ancestor(adw::Dialog::static_type()) {
+                    dialog.downcast_ref::<adw::Dialog>().map(|dialog| dialog.close());
+                }
+            }
+        ));
+        header.append(&close);
 
         imp.name.set_placeholder_text(Some("Ada Lovelace"));
         imp.name.set_hexpand(true);

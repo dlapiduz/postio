@@ -822,6 +822,10 @@ const CASES: &[(&str, fn())] = &[
         close_buttons::every_closable_surface_has_the_same_x_at_the_right as fn(),
     ),
     (
+        "close_buttons::add_account_has_the_same_x_at_the_right_on_every_step",
+        close_buttons::add_account_has_the_same_x_at_the_right_on_every_step as fn(),
+    ),
+    (
         "close_buttons::the_digest_has_the_same_x_at_the_right",
         close_buttons::the_digest_has_the_same_x_at_the_right as fn(),
     ),

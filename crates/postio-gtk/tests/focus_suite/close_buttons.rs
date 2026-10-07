@@ -166,3 +166,56 @@ pub fn settings_has_the_same_x_at_the_right() {
         assert_one_close_at_the_right("Settings", &dialog);
     });
 }
+
+/// T216, again for the form that adds an account: each of its three steps
+/// ends its header in the shared X, and pressing it closes the dialog.
+pub fn add_account_has_the_same_x_at_the_right_on_every_step() {
+    use postio_widgets::onboarding::{Onboarding, Status};
+
+    fn form_in(widget: &gtk::Widget) -> Option<Onboarding> {
+        support::descendants(widget)
+            .into_iter()
+            .find_map(|widget| widget.downcast::<Onboarding>().ok())
+    }
+
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        support::deliver_with(
+            &window,
+            "N",
+            gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
+        );
+        assert!(crate::settle_until(async || window.add_account_dialog().is_some()).await);
+        let dialog = window.add_account_dialog().expect("the dialog");
+        let form = form_in(dialog.upcast_ref()).expect("the account form");
+        for (step, status) in [
+            ("1 / 3", Status::Idle),
+            ("2 / 3", Status::WaitingForBrowser),
+            ("3 / 3", Status::SyncWindow),
+        ] {
+            form.set_status(status);
+            assert!(
+                crate::settle_until(async || support::with_class(&dialog, "postio-close-button")
+                    .first()
+                    .is_some_and(|close| close.width() > 0))
+                .await,
+                "step {step} has no close button"
+            );
+            assert_one_close_at_the_right(&format!("add account, step {step}"), &dialog);
+        }
+
+        let close = support::with_class(&dialog, "postio-close-button")
+            .into_iter()
+            .next()
+            .and_downcast::<gtk::Button>()
+            .expect("the close button");
+        close.emit_clicked();
+        assert!(
+            crate::settle_until(async || window.add_account_dialog().is_none()).await,
+            "the close button left the add-account dialog open"
+        );
+    });
+}
