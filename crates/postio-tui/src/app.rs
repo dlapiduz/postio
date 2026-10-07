@@ -3126,20 +3126,23 @@ impl App {
     }
 
     /// The first position of a view that ends with `cursor` at its foot, as
-    /// well as the rows here say: walked back from the cursor, each row
-    /// with the heading it would start.
+    /// well as the rows here say: walked back from the cursor, each row with
+    /// the heading it draws inside the view -- one where its day begins --
+    /// and the one heading the view's first row always has.
     fn top_for_bottom(&self, cursor: u32) -> u32 {
         let room = self.list_lines();
+        // The day heading `position` draws when it is not the first in view.
+        let day = |position: u32| u16::from(position > 0 && self.heading_at(position, 0).is_some());
         let mut top = cursor;
-        let mut used = crate::view::list::lines_of(self.row_at(cursor)) + 1;
+        let mut used = crate::view::list::lines_of(self.row_at(cursor)) + day(cursor);
         while top > 0 {
             let before = top - 1;
-            let heading = self.heading_at(before, before).is_some();
-            let lines = crate::view::list::lines_of(self.row_at(before)) + u16::from(heading);
-            if used.saturating_add(lines) > room {
+            let lines = crate::view::list::lines_of(self.row_at(before));
+            // With `before` first, its heading is drawn whatever the day.
+            if used.saturating_add(lines + 1) > room {
                 break;
             }
-            used += lines;
+            used += lines + day(before);
             top = before;
         }
         top
@@ -7232,6 +7235,77 @@ pub(crate) mod tests {
             Effect::Settle { generation, after } => Some((*generation, *after)),
             _ => None,
         })
+    }
+
+    fn varied(position: u32) -> Row {
+        let when = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 9, 28, 9, 0, 0).unwrap()
+            - chrono::Duration::hours(i64::from(position) * 5);
+        let mut row = crate::test_support::row_from(
+            i64::from(position) + 1,
+            &format!("Sender {position}"),
+            &format!("Subject {position}"),
+            "",
+            when,
+        );
+        if position.is_multiple_of(3) {
+            row.marker = Some(postio_model::listing::MarkerSummary {
+                kind: postio_model::listing::MarkerKind::Question,
+                when: None,
+                excerpt: Some("Can you?".into()),
+                answer: None,
+                cancelled: false,
+            });
+        }
+        row
+    }
+
+    fn senders_shown(drawn: &str) -> Vec<u32> {
+        drawn
+            .lines()
+            .filter_map(|line| {
+                let at = line.find("Sender ")?;
+                line[at + 7..]
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scrolling_past_the_foot_moves_the_list_one_row_not_a_screenful() {
+        use crate::test_support::{screen, serve_with};
+        let mut app = app((120, 36));
+        let opening = open_list(&mut app, 400);
+        serve_with(&mut app, opening, varied);
+        let mut last = senders_shown(&screen(120, 36, &app));
+        for _ in 0..150 {
+            let effects = update(&mut app, press('j'));
+            serve_with(&mut app, effects, varied);
+            let shown = senders_shown(&screen(120, 36, &app));
+            if shown.first() != last.first() {
+                let below = shown.len()
+                    - 1
+                    - shown
+                        .iter()
+                        .position(|position| *position == app.cursor)
+                        .expect("the cursor is in view");
+                assert!(
+                    below <= 1,
+                    "the cursor stays at the foot as the list moves under it, \
+                     with at most a row's slack where row heights differ: \
+                     {last:?} became {shown:?}"
+                );
+                let moved = shown[0] - last[0];
+                assert!(
+                    moved <= 2,
+                    "one step moves the list by about a row, not {moved}: \
+                     {last:?} became {shown:?}"
+                );
+            }
+            last = shown;
+        }
     }
 
     #[test]

@@ -149,9 +149,11 @@ fn cases() -> Vec<Case> {
             ..case("fired reminder", "reminder", (120, 36))
         },
         Case {
+            // Ten lines of mail in a nine-line list, so there is a line to
+            // scroll.
             wheel: Some("Grace Oyelaran"),
             holds: false,
-            ..case("inbox, scrolling", "list", (120, 12))
+            ..case("inbox, scrolling", "reminder", (120, 12))
         },
         Case {
             marks: vec![
