@@ -44,7 +44,7 @@ type    = "Thanks, that works for me."
 [[step]]
 id      = "send"
 command = "send"
-check   = { composer.open = false, view = "reader", reading.id = { same_as = "open" } }
+check   = { composer.open = false, view = "reader", reading.id = { same_as = "open" }, notice.undo = true }
 expect  = "The composer closes and the message is back where it was. The app says the message went (or is queued); silence here is the failure."
 
 [[step]]
