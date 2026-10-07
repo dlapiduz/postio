@@ -83,13 +83,18 @@ fi
 # Portable BRE, not `\?`/`\+` (GNU extensions BSD sed matches literally) and
 # no `mapfile` (a bash-4 builtin absent from macOS's bash 3.2) -- both cost a
 # real release once. See git history on this file.
+#
+# On a runner the log is in colour -- Actions forces it, and nextest paints
+# each segment of a test's path apart -- so the escapes go first; read raw,
+# the summary matched nothing and a one-test flake failed the nightly.
+ESC="$(printf '\033')"
 FAILURES=()
 while IFS= read -r line; do
     [ -n "$line" ] && FAILURES+=("$line")
 done < <(
-    sed -n '/^ *Summary /,$ {
+    sed "s/${ESC}\[[0-9;]*m//g" "$LOG" | sed -n '/^ *Summary /,$ {
         s/^ *FAIL \[[^]]*\] ([0-9]*\/[0-9]*) \(.*\)$/\1/p
-    }' "$LOG"
+    }'
 )
 
 if [ "${#FAILURES[@]}" -eq 0 ]; then

@@ -57,6 +57,15 @@ if printf '%s' "$*" | grep -q -- "nextest run" \
         echo "error: could not compile \\`postio-core\\`" >&2
         exit 100
     fi
+    if [ -f "$STUB_DIR/coloured" ]; then
+        # What a runner prints: Actions forces colour, and nextest paints
+        # the status, the binary and each segment of the test's path apart.
+        e=$(printf '\033')
+        echo "$e[31;1m        FAIL$e[0m [   0.010s] (1/1) $e[35;1mfake-crate::fake_suite$e[0m $e[36mtests$e[0m$e[36m::$e[0m$e[34;1ma_thing$e[0m"
+        echo "$e[31;1m     Summary$e[0m [   0.030s] $e[1m400$e[0m tests run: $e[1m399$e[0m passed, $e[1m1$e[0m failed"
+        echo "$e[31;1m        FAIL$e[0m [   0.010s] (1/1) $e[35;1mfake-crate::fake_suite$e[0m $e[36mtests$e[0m$e[36m::$e[0m$e[34;1ma_thing$e[0m"
+        exit 100
+    fi
     echo "test result: FAILED"
     echo "        FAIL [   0.010s] (1/2) fake-crate::fake_suite tests::a_thing"
     echo "        FAIL [   0.020s] (2/2) fake-crate::fake_suite tests::b_thing"
@@ -241,6 +250,26 @@ def main() -> int:
             "b_thing is named as the real failure",
             "b_thing" in out,
             f"b_thing should be named as the blocker:\n{out}",
+        )
+
+    # ── a coloured summary is still read ────────────────────────────
+    # A runner's log is painted: the nightly re-run on PR #1784 failed one
+    # test and the gate said "no per-test summary to retry", because the
+    # pattern met escape codes where it expected spaces.
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory), flags=("coloured",))
+        result = run(stub_dir, actions=True)
+        out = result.stdout + result.stderr
+        calls = (stub_dir / "calls").read_text(encoding="utf-8")
+        case(
+            "a summary in colour is read, and its failure retried alone",
+            "binary_id(fake-crate::fake_suite) & test(=tests::a_thing)" in calls,
+            f"the coloured failure was not retried:\n{calls}\n{out}",
+        )
+        case(
+            "a coloured failure that passes alone is a flake",
+            result.returncode == 0,
+            f"exit {result.returncode}; output:\n{out}",
         )
 
     # ── a failure with nothing to retry: original status stands ──────
