@@ -4441,7 +4441,7 @@ impl SettingsPanel {
         imp.filters_pane.append(&imp.filters_empty);
         // There is no add form on this page: a search is saved from the
         // command bar, once it has a query worth keeping.
-        let hint = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let hint = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
         hint.add_css_class("postio-settings-filters-hint");
         hint.set_halign(gtk::Align::Start);
         let hint_words = gtk::Label::new(Some("Save a search from the command bar with"));
