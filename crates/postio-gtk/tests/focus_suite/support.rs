@@ -1087,6 +1087,16 @@ pub fn click(
 ) {
     use gtk::prelude::*;
     let widget = widget.as_ref();
+    // Its middle is only known once it is laid out: a widget a moment old
+    // has no size yet, and a click at its corner can miss it -- the click a
+    // person never makes, since they aim at what they see.
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while !(widget.is_mapped() && widget.width() > 0 && widget.height() > 0)
+        && std::time::Instant::now() < deadline
+    {
+        crate::settle();
+    }
     let (width, height) = (widget.width() as f32, widget.height() as f32);
     let native = native_of(widget, window);
     let (x, y) = wait_to_be_pickable(&native, widget, width / 2.0, height / 2.0);
