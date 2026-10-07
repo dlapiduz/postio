@@ -36,6 +36,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "pending",
         "what the background lanes still owe: backfill, index, queue",
     ),
+    (
+        "search <words>",
+        "the search box's own query, timed: hits, whether a spelling was offered",
+    ),
 ];
 
 /// Run report `command` over `connection`, a store whose file is `file`
@@ -55,7 +59,10 @@ pub async fn report(
         "encoding" => report.encoding().await,
         "shape" => report.shape().await,
         "pending" => report.pending().await,
-        other => return Err(format!("no such report {other:?}")),
+        other => match other.strip_prefix("search ") {
+            Some(words) => report.search(words.trim()).await,
+            None => return Err(format!("no such report {other:?}")),
+        },
     };
     outcome.map_err(|error| error.to_string())?;
     Ok(report.out.into_inner().unwrap_or_default())
@@ -70,6 +77,51 @@ struct Report {
 pub(crate) type Outcome = Result<(), postio_storage::Error>;
 
 impl Report {
+    /// `words` searched the way the search box searches them, timed, twice:
+    /// as typed, and quoted. A quoted word is never offered a spelling, so
+    /// the difference is what the offer cost -- the pass that runs only
+    /// when a search finds nothing. Counts and timings; the offered word is
+    /// the mailbox's own, and is not printed.
+    async fn search(&self, words: &str) -> Outcome {
+        use postio_model::AccountScope;
+        use postio_search::ResultOrder;
+        use postio_search::facets::Scope;
+
+        let today = postio_ui::clock::now().date_naive();
+        let quoted = format!("\"{words}\"");
+        for (label, typed) in [("as typed", words), ("quoted", quoted.as_str())] {
+            let parsed = postio_search::parse(typed, today);
+            for run in 1..=2 {
+                let started = std::time::Instant::now();
+                let found = crate::search::execute_with_snippets(
+                    &self.connection,
+                    AccountScope::Unified,
+                    &parsed,
+                    Scope::AllMail,
+                    ResultOrder::Relevance,
+                    0,
+                )
+                .await;
+                let took = started.elapsed();
+                match found {
+                    Some(results) => say!(
+                        self,
+                        "{label:>9} run {run}: {:>6} ms  {} hits  offered a spelling: {}",
+                        took.as_millis(),
+                        results.total_hits,
+                        if results.instead.is_some() {
+                            "yes"
+                        } else {
+                            "no"
+                        },
+                    ),
+                    None => say!(self, "{label:>9} run {run}: did not run"),
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Add a line to the report's text.
     fn line(&self, text: std::fmt::Arguments<'_>) {
         let mut out = self.out.lock().expect("the report's text");
