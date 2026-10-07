@@ -2128,6 +2128,15 @@ impl FocusWindow {
                 if restoring.at_top {
                     pane.to_top();
                 }
+                // With a message open, the undo takes it back to the
+                // conversation it brought back -- the one the cursor is on
+                // now -- so the dialog and the list never point at two.
+                if self
+                    .reading()
+                    .is_some_and(|reading| reading.is_open() && !reading.in_pane())
+                {
+                    self.open_message();
+                }
             }
             None => {
                 restoring.waited += 1;
