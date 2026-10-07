@@ -3840,7 +3840,9 @@ impl SettingsPanel {
             .backfill_heading
             .ancestor(gtk::ScrolledWindow::static_type())
             .and_downcast::<gtk::ScrolledWindow>()
-            && let Some(bounds) = controls.backfill_heading.compute_bounds(&scroller.child().unwrap())
+            && let Some(bounds) = controls
+                .backfill_heading
+                .compute_bounds(&scroller.child().unwrap())
         {
             let adjustment = scroller.vadjustment();
             adjustment.set_value(f64::from(bounds.y()) - 24.0);

@@ -146,7 +146,9 @@ impl Section {
     pub fn description(self) -> &'static str {
         match self {
             Section::Accounts => "Every account this installation signs in to.",
-            Section::Filters => "Saved searches, and which of them are pinned across the command bar.",
+            Section::Filters => {
+                "Saved searches, and which of them are pinned across the command bar."
+            }
             Section::Composing => "Signatures, and where one goes when a quote sits under it.",
             Section::Appearance => "How the message list is drawn, and how much of it fits.",
             Section::Keyboard => "Every command and the key that runs it.",

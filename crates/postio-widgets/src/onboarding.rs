@@ -842,8 +842,13 @@ impl Onboarding {
         } else {
             !self.password().is_empty()
         };
-        let blocker = postio_ui::onboarding::submit_blocker(&self.address(), oauth, credential_given, servers_known)
-            .filter(|_| asking && !busy);
+        let blocker = postio_ui::onboarding::submit_blocker(
+            &self.address(),
+            oauth,
+            credential_given,
+            servers_known,
+        )
+        .filter(|_| asking && !busy);
         imp.submit_hint.set_visible(blocker.is_some());
         imp.submit_hint.set_text(blocker.unwrap_or_default());
         imp.connect_label.set_text(match (&status, oauth) {
