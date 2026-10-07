@@ -67,3 +67,39 @@ pub fn a_repair_arrives_with_the_address_and_the_servers_already_filled_in() {
         "the repair opened the manual server form it had no reason to"
     );
 }
+
+/// A browser sign-in that is waiting for the person's own OAuth client ID
+/// says so beside the disabled button, and stops saying so once it is typed.
+pub fn a_disabled_browser_sign_in_says_what_it_waits_for() {
+    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
+        eprintln!("skipping: no display");
+        return;
+    }
+    let found = Settings {
+        imap: Server {
+            host: "imap.example.com".to_owned(),
+            port: 993,
+            security: Default::default(),
+        },
+        smtp: Server {
+            host: "smtp.example.com".to_owned(),
+            port: 465,
+            security: Default::default(),
+        },
+        login: "lena@example.com".to_owned(),
+        source: "the provider table".to_owned(),
+        oauth_sign_in: true,
+        ..Settings::default()
+    };
+    let screen = Onboarding::new();
+    screen.set_address("lena@example.com");
+    screen.set_status(Status::Found(found));
+    assert!(!screen.can_submit());
+    let hint = screen
+        .test_submit_hint()
+        .expect("a disabled button gives its reason");
+    assert!(hint.contains("OAuth client ID"), "{hint:?}");
+    screen.test_set_oauth_client_id("1234.apps.example.com");
+    assert!(screen.can_submit());
+    assert_eq!(screen.test_submit_hint(), None);
+}

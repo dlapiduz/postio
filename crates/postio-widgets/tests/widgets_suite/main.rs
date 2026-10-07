@@ -506,6 +506,10 @@ const CASES: &[(&str, fn())] = &[
         onboarding::a_repair_arrives_with_the_address_and_the_servers_already_filled_in as fn(),
     ),
     (
+        "onboarding::a_disabled_browser_sign_in_says_what_it_waits_for",
+        onboarding::a_disabled_browser_sign_in_says_what_it_waits_for as fn(),
+    ),
+    (
         "onboarding_enter::return_does_the_right_thing_in_every_field",
         onboarding_enter::return_does_the_right_thing_in_every_field as fn(),
     ),

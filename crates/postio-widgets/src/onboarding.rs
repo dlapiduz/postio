@@ -138,6 +138,9 @@ mod imp {
         pub(super) start_sync: gtk::Button,
         pub(super) on_start_sync: RefCell<Vec<StartSyncHandler>>,
         pub(super) status_line: gtk::Label,
+        /// Why the button is disabled, while it is and the reason is a thing
+        /// to fill in.
+        pub(super) submit_hint: gtk::Label,
         pub(super) status: RefCell<Status>,
         /// The last settings the screen was shown, kept across `Connecting`,
         /// `Failed` and `Saved`. A failure that also wiped the card would
@@ -558,6 +561,19 @@ impl Onboarding {
             && !self.status().is_busy()
     }
 
+    /// What the line above the buttons says about why Connect waits.
+    #[doc(hidden)]
+    pub fn test_submit_hint(&self) -> Option<String> {
+        let hint = &self.imp().submit_hint;
+        hint.is_visible().then(|| hint.text().to_string())
+    }
+
+    /// Types an OAuth client ID.
+    #[doc(hidden)]
+    pub fn test_set_oauth_client_id(&self, id: &str) {
+        self.imp().oauth_client_id.set_text(id);
+    }
+
     /// Sets the password field directly, without a key event.
     #[doc(hidden)]
     pub fn test_set_password(&self, password: &str) {
@@ -818,6 +834,18 @@ impl Onboarding {
         imp.address.set_sensitive(!busy);
         imp.password.set_sensitive(!busy);
         imp.connect.set_sensitive(self.can_submit());
+        let servers_known = settings
+            .as_ref()
+            .is_some_and(|s| !s.imap.host.is_empty() && !s.smtp.host.is_empty());
+        let credential_given = if oauth {
+            !imp.oauth_client_id.text().trim().is_empty()
+        } else {
+            !self.password().is_empty()
+        };
+        let blocker = postio_ui::onboarding::submit_blocker(&self.address(), oauth, credential_given, servers_known)
+            .filter(|_| asking && !busy);
+        imp.submit_hint.set_visible(blocker.is_some());
+        imp.submit_hint.set_text(blocker.unwrap_or_default());
         imp.connect_label.set_text(match (&status, oauth) {
             (Status::Connecting, _) => "Connecting…",
             (Status::WaitingForBrowser, _) => "Waiting…",
@@ -1246,7 +1274,7 @@ impl Onboarding {
         body.append(&password_row);
         let _ = imp.password_row.set(password_row);
         let oauth_rows = gtk::Box::new(gtk::Orientation::Vertical, 9);
-        oauth_rows.append(&field("OAuth client ID", &imp.oauth_client_id));
+        oauth_rows.append(&field("OAuth client ID (required)", &imp.oauth_client_id));
         oauth_rows.append(&field(
             "Client secret (only if your provider issued one)",
             &imp.oauth_client_secret,
@@ -1267,6 +1295,11 @@ impl Onboarding {
         body.append(&imp.browser_box);
         body.append(&imp.sync_window_box);
         body.append(&imp.status_line);
+        imp.submit_hint.add_css_class("postio-onboarding-note");
+        imp.submit_hint.set_xalign(0.0);
+        imp.submit_hint.set_wrap(true);
+        imp.submit_hint.set_visible(false);
+        body.append(&imp.submit_hint);
         body.append(&imp.buttons);
 
         // The body scrolls; the header does not. With the server fields open

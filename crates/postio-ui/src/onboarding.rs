@@ -327,6 +327,30 @@ pub fn looks_like_an_address(address: &str) -> bool {
     }
 }
 
+/// Why the button that adds the account does nothing yet, in the words that
+/// say what to do about it: `None` when it would act. A disabled button
+/// that is silent is a dead end, and the browser sign-in's missing piece --
+/// the person's own OAuth client ID -- is not on the form until the provider
+/// is known to need it.
+pub fn submit_blocker(
+    address: &str,
+    oauth: bool,
+    credential_given: bool,
+    servers_known: bool,
+) -> Option<&'static str> {
+    if !looks_like_an_address(address) {
+        return None;
+    }
+    if !servers_known {
+        return None;
+    }
+    match (oauth, credential_given) {
+        (true, false) => Some("Enter your OAuth client ID to sign in with your browser."),
+        (false, false) => Some("Enter your password to connect."),
+        _ => None,
+    }
+}
+
 /// Writes the chosen sync window (#876) to `[sync].initial_sync_messages`,
 /// touching only that key — the same [`postio_config::patch_sync`] every
 /// other structured write to `[sync]` goes through (#874), so a hand-written
@@ -405,5 +429,24 @@ impl std::fmt::Debug for OAuthClientSubmission {
                 &self.client_secret.as_ref().map(|_| "<withheld>"),
             )
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod blocker_tests {
+    use super::submit_blocker;
+
+    #[test]
+    fn a_disabled_button_says_what_it_is_waiting_for() {
+        let browser = submit_blocker("ada@example.com", true, false, true);
+        assert!(browser.is_some_and(|said| said.contains("OAuth client ID")));
+        let password = submit_blocker("ada@example.com", false, false, true);
+        assert!(password.is_some_and(|said| said.contains("password")));
+        // Nothing to say while the address is unfinished or unprobed: the
+        // person is still typing, and the card is not there yet.
+        assert_eq!(submit_blocker("ada@", true, false, true), None);
+        assert_eq!(submit_blocker("ada@example.com", true, false, false), None);
+        // And nothing when the button acts.
+        assert_eq!(submit_blocker("ada@example.com", true, true, true), None);
     }
 }
