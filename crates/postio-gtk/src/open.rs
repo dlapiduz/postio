@@ -831,6 +831,14 @@ impl OpenMessage {
         self.more.is_visible()
     }
 
+    /// Close More's menu and give the keyboard back to its button.
+    pub fn close_more(&self) {
+        self.more.popdown();
+        if let Some(button) = self.toolbar.button(CommandId::MoreActions) {
+            button.widget().grab_focus();
+        }
+    }
+
     /// More's menu, for a test to read.
     pub fn more_menu(&self) -> gtk::Popover {
         self.more.clone()

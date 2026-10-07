@@ -3,13 +3,12 @@
 #
 # The action row draws Archive `a`, Snooze `s`, Remind `h`, Label `l`, Move
 # `m` and Delete `Del`. The reader's key handler (`reading_key`, window.rs)
-# has arms for Archive and Delete and none for the other four, so `s`, `h`,
-# `l` and `m` are taken by nothing and the press is dropped. Label and Move
-# open pickers from the list, and from a button in the dialog.
+# gives each of them to the window, as the buttons do.
 #
-# Open until the four keys act with the message open.
+# Each key opens its picker over the message, and Escape closes the picker
+# only.
 source = { kind = "commit", ref = "88c1f0f7" }
-proof  = "open"
+proof  = "pinned"
 apps   = ["focus"]
 
 [[step]]

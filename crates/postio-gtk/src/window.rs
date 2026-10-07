@@ -1057,6 +1057,9 @@ impl FocusWindow {
             return glib::Propagation::Proceed;
         };
         match id.parse::<CommandId>() {
+            // Escape closes More's menu first, as it does any popover: the
+            // keyboard goes back to More and the message stays open.
+            Ok(CommandId::Back) if reading.more_open() => reading.close_more(),
             // Escape closes find first, the message only after (T203).
             Ok(CommandId::Back) if reading.reader().finding() => reading.reader().close_find(),
             Ok(CommandId::Back) => reading.close(),
@@ -1139,6 +1142,15 @@ impl FocusWindow {
                     self.step_past(index, message);
                 }
             }
+            // The action row's other verbs act on the message on screen:
+            // their pickers open over it, and Undo takes back the last act.
+            Ok(
+                id @ (CommandId::AddLabel
+                | CommandId::Move
+                | CommandId::Snooze
+                | CommandId::RemindIfNoReply
+                | CommandId::Undo),
+            ) => self.act(id),
             Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
             Ok(CommandId::NextInConversation) => reading.step_thread(1),
             _ => return glib::Propagation::Proceed,
