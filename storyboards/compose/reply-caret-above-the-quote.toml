@@ -19,3 +19,8 @@ command = "next_message"
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }
 expect  = "The caret is on an empty line above the quoted message."
+
+[[step]]
+type    = "Thanks."
+check   = { composer.open = true, keyboard.field = "body", keyboard.typing = true }
+expect  = "The typed word lands on the first line, above the 'wrote:' line and the folded quote. A blinking caret may be off in one frame, so the typed text is what shows where it was."
