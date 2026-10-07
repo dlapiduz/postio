@@ -443,8 +443,9 @@ Screens 07, 08, 09 and 10.
 
 `/` or `mod+k` opens one bar for search, commands and going places.
 
-- **Saved searches** are pinned across its top, with their counts and
-  `alt+1`–`alt+4`. `mod+s` saves the current query.
+- **Saved searches** are pinned across its top with `alt+1`–`alt+4`, and
+  carry no counts: a count per saved query is a query each (screens.md 07
+  (c)). `mod+s` saves the current query.
 - **Plain English** ("the invoice Ada sent last month") is lowered, on this
   machine, into editable operator chips of Postio's one query language. The
   bar shows the words the user typed and names the chip being edited. `Tab`
