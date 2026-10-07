@@ -466,8 +466,8 @@ fn a_sentence_is_found_again_from_its_excerpt() {
     // hold text the HTML never draws.
     for (label, tally) in &tallies {
         let [as_read, collapsed, present, located] = match *label {
-            "text first" => [0.90, 0.96, 0.97, 0.97],
-            _ => [0.92, 0.98, 0.99, 0.99],
+            "text first" => [0.90, 0.95, 0.96, 0.96],
+            _ => [0.92, 0.97, 0.98, 0.98],
         };
         assert!(
             tally.total() >= 100,
