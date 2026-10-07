@@ -73,6 +73,9 @@ async fn is_bulk_and_is_automated_find_what_the_corpus_s_headers_say() {
     let mut expected_bulk = vec![
         "html-designed-three-column",
         "html-newsletter",
+        "html-newsletter-many-tables",
+        "html-newsletter-own-page",
+        "html-responsive-stacked-cells",
         "list-thread-01-root",
         "list-thread-02-reply",
         "list-thread-03-reply-sibling",
