@@ -55,6 +55,7 @@ mod icon_buttons;
 mod idle_passes;
 mod invitations;
 mod keyboard_home;
+mod keycaps;
 mod keymap;
 mod list_contract;
 mod list_reload;
@@ -577,6 +578,22 @@ const CASES: &[(&str, fn())] = &[
     (
         "places::every_place_shows_its_count",
         places::every_place_shows_its_count as fn(),
+    ),
+    (
+        "keycaps::the_undo_toast_names_the_key_that_undoes",
+        keycaps::the_undo_toast_names_the_key_that_undoes as fn(),
+    ),
+    (
+        "keycaps::the_offline_banner_names_the_key_that_retries",
+        keycaps::the_offline_banner_names_the_key_that_retries as fn(),
+    ),
+    (
+        "keycaps::try_again_names_the_key_that_runs_it",
+        keycaps::try_again_names_the_key_that_runs_it as fn(),
+    ),
+    (
+        "keycaps::settings_add_account_names_its_key",
+        keycaps::settings_add_account_names_its_key as fn(),
     ),
     (
         "bar::alt_2_runs_the_second_saved_search",

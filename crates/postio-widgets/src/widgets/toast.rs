@@ -63,6 +63,9 @@ pub struct Toast {
     /// (specs/008-storyboards research R6). Cleared when that toast is
     /// dismissed, so an observation never reports a toast nobody can see.
     shown: Rc<RefCell<Option<(adw::Toast, Tone, bool)>>>,
+    /// The key that undoes, for the cap on an Undo button: the window's
+    /// keymap says it, and says it again when that changes.
+    undo_key: RefCell<Option<String>>,
 }
 
 impl Toast {
@@ -75,7 +78,14 @@ impl Toast {
             current: RefCell::new(None),
             pending_undo: RefCell::new(None),
             shown: Rc::new(RefCell::new(None)),
+            undo_key: RefCell::new(None),
         }
+    }
+
+    /// The key an Undo button shows beside its word, or none while nothing
+    /// undoes.
+    pub fn set_undo_key(&self, key: Option<String>) {
+        *self.undo_key.borrow_mut() = key;
     }
 
     /// The overlay: put the window's real content inside it with
@@ -144,7 +154,8 @@ impl Toast {
             toast.set_button_label(Some("Undo"));
             toast.set_action_name(Some("win.undo"));
         }
-        self.push(toast, Tone::Info, undoable);
+        let key = undoable.then(|| self.undo_key.borrow().clone()).flatten();
+        self.push(toast, Tone::Info, undoable, key);
     }
 
     /// A sentence, with nothing to press.
@@ -163,6 +174,7 @@ impl Toast {
                 .build(),
             Tone::Warning,
             false,
+            None,
         );
     }
 
@@ -190,7 +202,8 @@ impl Toast {
             let on_undo = std::rc::Rc::clone(&on_undo);
             move |_| on_undo()
         });
-        self.push(toast, Tone::Info, true);
+        let key = self.undo_key.borrow().clone();
+        self.push(toast, Tone::Info, true, key);
         // After `push`, which clears whatever the last toast left here.
         *self.pending_undo.borrow_mut() = Some(on_undo);
     }
@@ -218,7 +231,7 @@ impl Toast {
             .title(description)
             .timeout(TOAST_TIMEOUT)
             .build();
-        self.push(toast, Tone::Success, false);
+        self.push(toast, Tone::Success, false, None);
     }
 
     /// A sentence with one button that runs `on_click`, replacing whatever
@@ -230,7 +243,13 @@ impl Toast {
     /// Focus's compose with no account yet to write from
     /// (specs/007-postio-focus T172): the sentence names what is missing,
     /// and the button starts fixing it.
-    pub fn show_prompt(&self, sentence: &str, button_label: &str, on_click: impl Fn() + 'static) {
+    pub fn show_prompt(
+        &self,
+        sentence: &str,
+        button_label: &str,
+        key: Option<String>,
+        on_click: impl Fn() + 'static,
+    ) {
         let toast = adw::Toast::builder()
             .title(sentence)
             .timeout(TOAST_TIMEOUT)
@@ -239,11 +258,11 @@ impl Toast {
         toast.connect_button_clicked(move |_| on_click());
         // A warning, as `show_notice`'s: a gesture that could not run. The
         // button fixes what was missing; it is no undo.
-        self.push(toast, Tone::Warning, false);
+        self.push(toast, Tone::Warning, false, key);
     }
 
     /// Dismisses whatever is showing and shows `toast` instead.
-    fn push(&self, toast: adw::Toast, tone: Tone, offers_undo: bool) {
+    fn push(&self, toast: adw::Toast, tone: Tone, offers_undo: bool, key: Option<String>) {
         // A new toast replaces the old one's offer too: an undo whose toast
         // is gone is one the person can no longer see, and `u` must not
         // reach back past what is on screen.
@@ -271,12 +290,14 @@ impl Toast {
         // A toast's buttons are answered by the mouse and by the key their
         // command has: never by the keyboard focus, which would land on one
         // whenever the focus had nowhere else to go (an empty list behind a
-        // closed message) and make the next Return answer the toast.
-        keep_focus_off(host.upcast_ref());
+        // closed message) and make the next Return answer the toast. The
+        // key is drawn beside the button's word, as every control that runs
+        // a command draws it.
+        dress(host.upcast_ref(), key.as_deref());
         let weak = host.downgrade();
         gtk::glib::idle_add_local_once(move || {
             if let Some(host) = weak.upgrade() {
-                keep_focus_off(host.upcast_ref());
+                dress(host.upcast_ref(), key.as_deref());
             }
         });
         *self.host.borrow_mut() = Some(host);
@@ -285,11 +306,14 @@ impl Toast {
 }
 
 /// Take every button of the toasts drawn under `widget` out of the focus
-/// chain.
-fn keep_focus_off(widget: &gtk::Widget) {
+/// chain, and give the labelled one its `key`.
+fn dress(widget: &gtk::Widget, key: Option<&str>) {
     let mut child = widget.first_child();
     while let Some(current) = child {
         if current.type_().name() == "AdwToastWidget" {
+            if let Some(key) = key {
+                super::keyhint::dress_labelled_buttons(&current, key);
+            }
             let mut inside = vec![current.clone()];
             while let Some(widget) = inside.pop() {
                 if widget.is::<gtk::Button>() {
@@ -302,7 +326,7 @@ fn keep_focus_off(widget: &gtk::Widget) {
                 }
             }
         } else {
-            keep_focus_off(&current);
+            dress(&current, key);
         }
         child = current.next_sibling();
     }

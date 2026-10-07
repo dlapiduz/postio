@@ -35,6 +35,58 @@ pub fn cap(key: &str) -> gtk::Label {
     label
 }
 
+/// What a button [`dress`]ed carries, so a later key change finds its words
+/// again: once it has a child of its own, `GtkButton::label` is empty.
+const DRESSED: &str = "postio-keyhint-dressed";
+
+/// `button`, saying `label` with `key` beside it -- the shape a control that
+/// runs a command has everywhere (US7). `None` draws the words alone: a
+/// command nothing is bound to shows no cap rather than a blank one.
+///
+/// The accessible name stays the words; the cap is `Presentation`.
+pub fn dress(button: &gtk::Button, label: &str, key: Option<&str>) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.append(&gtk::Label::new(Some(label)));
+    if let Some(key) = key {
+        row.append(&cap(key));
+    }
+    button.set_child(Some(&row));
+    button.add_css_class(DRESSED);
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+}
+
+/// The words on `button`: its label, or what a [`dress`]ed one says.
+fn button_words(button: &gtk::Button) -> Option<String> {
+    if let Some(label) = button.label() {
+        return Some(label.to_string());
+    }
+    button
+        .has_css_class(DRESSED)
+        .then(|| button.child())
+        .flatten()
+        .and_then(|row| row.first_child())
+        .and_downcast::<gtk::Label>()
+        .map(|label| label.label().to_string())
+}
+
+/// Put `key` beside the words of every labelled button under `root`: for
+/// widgets whose own buttons take a label and nothing else -- an
+/// `AdwToast`'s action, an `AdwBanner`'s. A button already dressed, or drawn
+/// as an icon, has no label of its own and is left as it is.
+pub fn dress_labelled_buttons(root: &gtk::Widget, key: &str) {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Some(button) = widget.downcast_ref::<gtk::Button>()
+            && let Some(label) = button_words(button)
+        {
+            dress(button, &label, Some(key));
+        } else {
+            dress_labelled_buttons(&widget, key);
+        }
+    }
+}
+
 /// A cap standing on its own, framed: the `/` at the end of the search
 /// field. Framed because nothing beside it says it is a key; a cap inside a
 /// control has the control's words to lean on and stays unframed.

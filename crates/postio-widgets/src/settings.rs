@@ -583,6 +583,9 @@ mod imp {
         /// The footer's `Open in $EDITOR` cap, held so a keymap change can
         /// put the live key on it.
         pub editor_button: OnceCell<std::rc::Rc<crate::widgets::KeycapButton>>,
+        /// The pane header's `Add account`, held so a keymap change can
+        /// redraw its cap.
+        pub add_account_button: OnceCell<std::rc::Rc<crate::widgets::KeycapButton>>,
         /// Whether the panes are narrow enough that two columns stack
         /// (`set_narrow`).
         pub narrow: Cell<bool>,
@@ -831,6 +834,7 @@ mod imp {
                 nav_query: RefCell::new(String::new()),
                 command: RefCell::new(Vec::new()),
                 editor_button: OnceCell::new(),
+                add_account_button: OnceCell::new(),
                 narrow: Cell::new(false),
                 folders: RefCell::default(),
                 backfill_handlers: RefCell::default(),
@@ -3947,6 +3951,9 @@ impl SettingsPanel {
         if let Some(editor) = self.imp().editor_button.get() {
             editor.set_key(keymap.binding(CommandId::EditConfig));
         }
+        if let Some(add) = self.imp().add_account_button.get() {
+            add.set_key(keymap.binding(CommandId::AddAccount));
+        }
     }
 
     /// The footer strip: what is being written, and whether it is valid.
@@ -4085,18 +4092,20 @@ impl SettingsPanel {
         // `Add account` is the pane's one primary action, in the pane
         // header where the drawing puts it — not in the sidebar, which
         // names places rather than verbs.
-        let add_account = gtk::Button::with_label("Add account");
-        crate::widgets::button::style(
-            &add_account,
-            crate::widgets::button::Kind::Primary,
-            crate::widgets::button::Size::Regular,
-        );
+        let add_account = std::rc::Rc::new(crate::widgets::KeycapButton::new(
+            Some(CommandId::AddAccount),
+            "Add account",
+            "postio-settings-add-account",
+            true,
+        ));
+        crate::widgets::KeycapButton::arm(&add_account);
         add_account.connect_clicked(glib::clone!(
             #[weak(rename_to = panel)]
             self,
-            move |_| panel.request_command(CommandId::AddAccount)
+            move || panel.request_command(CommandId::AddAccount)
         ));
-        imp.pane_action.append(&add_account);
+        imp.pane_action.append(&add_account.widget());
+        let _ = imp.add_account_button.set(add_account);
 
         // The list and the form share one scrolling column, so a long
         // account list and a long form do not fight over which of them gets

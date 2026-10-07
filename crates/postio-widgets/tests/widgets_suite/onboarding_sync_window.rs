@@ -33,6 +33,28 @@ pub fn picking_a_window_updates_the_estimate_and_start_sync_fires_it() {
         "Status::SyncWindow must show the picker, the estimate and Start sync"
     );
 
+    // The step's one button says the key that presses it: it holds the
+    // keyboard, so Return starts the sync.
+    fn caps_in(widget: &gtk::Widget, found: &mut Vec<String>) {
+        use gtk::prelude::*;
+        if widget.has_css_class("postio-keyhint")
+            && let Some(label) = widget.downcast_ref::<gtk::Label>()
+        {
+            found.push(label.label().to_string());
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            caps_in(&next, found);
+            child = next.next_sibling();
+        }
+    }
+    let mut caps = Vec::new();
+    caps_in(gtk::prelude::Cast::upcast_ref(&screen), &mut caps);
+    assert!(
+        caps.iter().any(|cap| cap == "Return"),
+        "Start sync shows no Return cap: {caps:?}"
+    );
+
     // The default is a year, matching SyncConfig::initial_sync_messages's
     // own default — picking it changes nothing a fresh install would not
     // already do.

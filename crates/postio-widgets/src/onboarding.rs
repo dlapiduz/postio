@@ -868,7 +868,16 @@ impl Onboarding {
         // apply once the account is already saved.
         let on_sync_window = matches!(status, Status::SyncWindow);
         imp.buttons.set_visible(!on_sync_window);
+        let arriving = on_sync_window && !imp.sync_window_box.is_visible();
         imp.sync_window_box.set_visible(on_sync_window);
+        if arriving {
+            // The step's one button holds the keyboard, so Return -- the key
+            // its cap shows -- starts the sync.
+            let start = imp.start_sync.clone();
+            glib::idle_add_local_once(move || {
+                start.grab_focus();
+            });
+        }
         imp.sync_estimate.set_text(&self.sync_window().estimate());
         imp.step.set_text(step_of(&status));
 
@@ -1254,7 +1263,19 @@ impl Onboarding {
         imp.sync_estimate.set_xalign(0.0);
         imp.sync_estimate.set_wrap(true);
 
-        imp.start_sync.set_label("Start sync");
+        crate::widgets::keyhint::dress(
+            &imp.start_sync,
+            "Start sync",
+            Some(
+                &postio_ui::hints::fixed(
+                    "Return",
+                    "start sync",
+                    "the step's one button holds the keyboard, so Return is its own \
+                     activation, not a command in the registry",
+                )
+                .key,
+            ),
+        );
         crate::widgets::button::style(
             &imp.start_sync,
             crate::widgets::button::Kind::Primary,

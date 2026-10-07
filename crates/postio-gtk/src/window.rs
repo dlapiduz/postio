@@ -1458,6 +1458,7 @@ impl FocusWindow {
         self.imp().toast.show_prompt(
             "There's no account to write from yet.",
             "Add account",
+            postio_ui::hints::key(&self.keymap(), CommandId::AddAccount),
             move || {
                 if let Some(window) = window.upgrade() {
                     window.open_add_account();
@@ -2224,7 +2225,7 @@ impl FocusWindow {
     /// held until the store opens or says why not.
     pub fn show_starting_over(&self) {
         let imp = self.imp();
-        imp.retry.set_label("Starting a fresh store\u{2026}");
+        postio_widgets::widgets::keyhint::dress(&imp.retry, "Starting a fresh store\u{2026}", None);
         imp.retry.set_sensitive(false);
     }
 
@@ -2236,7 +2237,8 @@ impl FocusWindow {
         imp.unavailable
             .set_description(Some(&glib::markup_escape_text(reason)));
         imp.refusal.replace(reason.to_owned());
-        imp.retry.set_label(action);
+        // The button holds the keyboard (below), so Return answers it.
+        postio_widgets::widgets::keyhint::dress(&imp.retry, action, Some("Return"));
         imp.retry.set_sensitive(true);
         imp.on_retry.replace(Some(run));
         // The inbox's own top bar took the close button when it opened and
@@ -2840,6 +2842,7 @@ impl FocusWindow {
                 description,
                 undoable,
             } => {
+                self.teach_undo_key();
                 // An answer's Undo works while its reply waits, so its toast
                 // stays exactly that long (FR-102).
                 if self.imp().answering.replace(false) {
@@ -3654,7 +3657,13 @@ impl FocusWindow {
         let statuses = imp.trackers.borrow().statuses(&imp.tracked.borrow());
         let banner = postio_ui::focus_state::banner(&statuses, &imp.facts.borrow());
         if let Some(slot) = imp.state_banner.borrow().as_ref() {
-            slot.show(banner.as_ref());
+            let key = banner
+                .as_ref()
+                .and_then(postio_ui::focus_state::Banner::action)
+                .and_then(|(_, action)| {
+                    postio_ui::hints::key(&self.keymap(), banner_command(action))
+                });
+            slot.show(banner.as_ref(), key);
         }
         let label = postio_ui::focus_state::sync_label_here(&statuses, imp.last_synced.get());
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
@@ -4953,9 +4962,18 @@ impl FocusWindow {
         self.follow_toast();
     }
 
-    /// Keep track of the toast just shown until it goes.
+    /// Tell the toasts which key undoes, for the cap beside their Undo.
+    pub(crate) fn teach_undo_key(&self) {
+        let key = postio_ui::hints::key(&self.keymap(), CommandId::Undo);
+        self.imp().toast.set_undo_key(key.clone());
+        if let Some(settings) = self.settings() {
+            settings.set_undo_key(key);
+        }
+    }
+
     /// Say `sentence` in a toast whose Undo runs `on_undo`.
     pub(crate) fn show_removable(&self, sentence: &str, on_undo: impl Fn() + 'static) {
+        self.teach_undo_key();
         self.imp().toast.show_removable(sentence, on_undo);
         self.follow_toast();
     }

@@ -166,7 +166,7 @@ pub fn account_rows_persist_enable_default_and_removal() {
             support::descendants(&dialog).into_iter().find(|widget| {
                 widget.is::<gtk::Button>()
                     && widget.is_mapped()
-                    && support::texts(widget) == ["Undo"]
+                    && support::texts(widget).first().is_some_and(|word| word == "Undo")
             })
         };
         assert!(

@@ -25,6 +25,8 @@ pub struct StateBanner {
     progress: gtk::ProgressBar,
     shown: RefCell<Option<Banner>>,
     handler: RefCell<Option<Handler>>,
+    /// The key the button showed beside its words when it was drawn.
+    key: RefCell<Option<String>>,
 }
 
 impl StateBanner {
@@ -48,6 +50,7 @@ impl StateBanner {
             progress,
             shown: RefCell::default(),
             handler: RefCell::default(),
+            key: RefCell::default(),
         });
         let weak = Rc::downgrade(&slot);
         banner.connect_button_clicked(move |_| {
@@ -79,11 +82,15 @@ impl StateBanner {
     }
 
     /// Show `banner`, or hide the slot when there is none.
-    pub fn show(&self, banner: Option<&Banner>) {
-        if self.shown.borrow().as_ref() == banner {
+    ///
+    /// `key` is the one that runs the button's command, drawn beside its
+    /// words as every control that runs a command draws it.
+    pub fn show(&self, banner: Option<&Banner>, key: Option<String>) {
+        if self.shown.borrow().as_ref() == banner && *self.key.borrow() == key {
             return;
         }
         self.shown.replace(banner.cloned());
+        self.key.replace(key.clone());
         let Some(banner) = banner else {
             self.root.set_visible(false);
             return;
@@ -95,6 +102,9 @@ impl StateBanner {
         ));
         self.banner
             .set_button_label(banner.action().map(|(label, _)| label));
+        if let Some(key) = key.as_deref() {
+            postio_widgets::widgets::keyhint::dress_labelled_buttons(self.banner.upcast_ref(), key);
+        }
         if banner.is_error() {
             self.banner.add_css_class("focus-banner-error");
         } else {
@@ -118,7 +128,11 @@ impl StateBanner {
         }
         Some((
             self.shown.borrow().as_ref()?.title(),
-            self.banner.button_label().map(|label| label.to_string()),
+            self.shown
+                .borrow()
+                .as_ref()?
+                .action()
+                .map(|(label, _)| label.to_owned()),
             self.progress.is_visible().then(|| self.progress.fraction()),
         ))
     }

@@ -248,6 +248,11 @@ impl Settings {
         self.toast.activate_undo()
     }
 
+    /// The key the dialog's Undo shows beside its word.
+    pub fn set_undo_key(&self, key: Option<String>) {
+        self.toast.set_undo_key(key);
+    }
+
     /// `description` on the dialog's toast, with an Undo that runs `undo`.
     pub fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>) {
         self.toast.show_removable(description, undo);
@@ -599,6 +604,7 @@ impl crate::window::FocusWindow {
     /// `description` on the toast, with an Undo that runs `undo`: a removed
     /// account's, which the global undo stack never holds.
     pub(crate) fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>) {
+        self.teach_undo_key();
         match self.settings().filter(|settings| settings.is_open()) {
             Some(settings) => settings.offer_undo(description, undo),
             None => self.imp().toast.show_removable(description, undo),
