@@ -880,8 +880,17 @@ fn settle_and_capture(
         });
     let region = region_name(&window.observe());
     let outlined_name = RunWriter::outlined(step);
-    let outlined = outline::outlined(window.upcast_ref(), &region)
-        .save_to_png(writer.dir().join(&outlined_name))
+    // A composition in a window of its own is laid over the main window's
+    // picture, the keyboard outlined where it is, in that window.
+    let detached = window
+        .composer()
+        .and_then(|composer| composer.detached_window())
+        .filter(|host| host.is_visible());
+    let outlined = match detached {
+        Some(host) => outline::outlined_with_window(window.upcast_ref(), host.upcast_ref(), &region),
+        None => outline::outlined(window.upcast_ref(), &region),
+    }
+    .save_to_png(writer.dir().join(&outlined_name))
         .ok()
         .map(|()| outlined_name);
     (verdict, frame, outlined)

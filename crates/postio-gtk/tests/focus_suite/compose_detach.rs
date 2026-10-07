@@ -116,6 +116,50 @@ pub fn the_detach_command_moves_the_open_composer_to_a_window_and_back() {
     });
 }
 
+/// Detaching moves the keyboard, not just the widgets: the window of its own
+/// is presented and holds the focus inside the composition, and the
+/// observation reads that window's focus rather than the list's.
+pub fn a_detached_composer_window_holds_the_keyboard() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        let composer = window.composer().expect("the composer is mounted");
+        support::keys(&window, &["c"]);
+        assert!(
+            crate::settle_until(async || composer.is_open()).await,
+            "`c` did not open the composer"
+        );
+        composer.dispatch(CommandId::DetachComposer);
+        assert!(
+            crate::settle_until(async || composer.is_detached()).await,
+            "Detach left the composer in its dialog"
+        );
+        let host = composer.detached_window().expect("the detached window");
+        assert!(
+            crate::settle_until(async || {
+                gtk::prelude::GtkWindowExt::focus(&host)
+                    .is_some_and(|focus| focus.is_ancestor(&composer))
+            })
+            .await,
+            "the detached window's focus is {:?}, not inside the composition",
+            gtk::prelude::GtkWindowExt::focus(&host)
+        );
+        let seen = window.observe();
+        assert!(
+            seen.keyboard.widget.contains("PostioComposer"),
+            "the observation says the keyboard is on {:?}",
+            seen.keyboard.widget
+        );
+        assert_eq!(
+            seen.app.get("focus.composer.holds_keyboard"),
+            Some(&serde_json::json!(true)),
+            "the observation does not report the detached window holding the keyboard"
+        );
+    });
+}
+
 /// #1216: the editing surface's web process is started before anybody
 /// composes -- `app::run` asks for it on an idle turn after the first frame
 /// -- and warming it opens nothing. It does not matter whether the ask

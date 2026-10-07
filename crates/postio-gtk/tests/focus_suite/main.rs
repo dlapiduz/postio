@@ -247,6 +247,10 @@ const CASES: &[(&str, fn())] = &[
         compose_detach::the_detach_command_moves_the_open_composer_to_a_window_and_back as fn(),
     ),
     (
+        "compose_detach::a_detached_composer_window_holds_the_keyboard",
+        compose_detach::a_detached_composer_window_holds_the_keyboard as fn(),
+    ),
+    (
         "compose_detach::the_window_warms_its_editing_surface_without_being_asked_to_compose",
         compose_detach::the_window_warms_its_editing_surface_without_being_asked_to_compose
             as fn(),

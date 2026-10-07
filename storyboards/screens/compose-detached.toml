@@ -11,5 +11,5 @@ check   = { composer.open = true, composer.detached = false }
 
 [[step]]
 command = "detach_composer"
-check   = { composer.open = true, composer.detached = true, view = "list", keyboard.region = "composer" }
+check   = { composer.open = true, composer.detached = true, view = "list", keyboard.region = "composer", app.focus.composer.holds_keyboard = true }
 expect  = "The composition is in a window of its own and still open, and the keyboard went with it: what is typed next lands in the message, not in the list behind."

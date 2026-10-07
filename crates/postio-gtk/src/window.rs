@@ -5114,7 +5114,16 @@ impl FocusWindow {
         use postio_widgets::storyboard::{deliver, reach};
 
         let toplevel: &gtk::Window = self.upcast_ref();
-        let target = deliver::keyboard_target(toplevel);
+        // A composition in a window of its own holds the keyboard there: the
+        // widget a key reaches is that window's focus, not a row of this one.
+        let detached = self
+            .compose()
+            .and_then(|compose| compose.composer().detached_window())
+            .filter(|host| host.is_visible());
+        let target = match detached.as_ref() {
+            Some(host) => deliver::keyboard_target(host.upcast_ref()),
+            None => deliver::keyboard_target(toplevel),
+        };
         let focus = gtk::prelude::GtkWindowExt::focus(self);
         let within = |pane: &gtk::Widget| {
             focus
@@ -5438,6 +5447,15 @@ impl FocusWindow {
             && let composer = compose.composer()
             && composer.is_open()
         {
+            app.insert(
+                "focus.composer.holds_keyboard".to_owned(),
+                serde_json::json!(
+                    detached.as_ref().is_none_or(|host| {
+                        gtk::prelude::GtkWindowExt::focus(host)
+                            .is_some_and(|focus| focus.is_ancestor(composer))
+                    })
+                ),
+            );
             app.insert(
                 "focus.composer.quoted".to_owned(),
                 serde_json::json!(composer.draft().body.text.is_some()),

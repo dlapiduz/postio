@@ -54,3 +54,74 @@ pub fn outlined(window: &gtk::Window, region_name: &str) -> gdk::Texture {
     })
     .expect("a picture of the window")
 }
+
+/// The frame of a window with a second one open beside it: `window`'s picture
+/// with `other` laid over it, centred, and the outline round the keyboard
+/// inside `other`.
+///
+/// A camera on one window cannot show a composition detached into a window
+/// of its own, and the frame that does not show it cannot say the keyboard
+/// went with it. The outline is never drawn on `window` here: the keyboard
+/// is not in it.
+pub fn outlined_with_window(
+    window: &gtk::Window,
+    other: &gtk::Window,
+    region_name: &str,
+) -> gdk::Texture {
+    let main = crate::capture::texture_now(window).expect("a picture of the window");
+    let second = crate::capture::texture_now(other).expect("a picture of the second window");
+    let bounds = keyboard_target(other).compute_bounds(other);
+    let layout = window.create_pango_layout(Some(region_name));
+    let (_, text) = layout.pixel_extents();
+    let plate_height = text.height() as f32 + 2.0 * CAPTION_PAD;
+    let plate_width = text.width() as f32 + 2.0 * CAPTION_PAD;
+    let left = ((window.width() - other.width()) as f32 / 2.0).max(0.0);
+    let top_of_other = ((window.height() - other.height()) as f32 / 2.0).max(0.0);
+
+    crate::capture::texture_with(window, |snapshot| {
+        // Over the whole picture: the main window's own is replaced, so no
+        // outline of its focus shows through.
+        let whole = graphene::Rect::new(0.0, 0.0, window.width() as f32, window.height() as f32);
+        snapshot.append_texture(&main, &whole);
+        snapshot.append_color(&gdk::RGBA::new(0.0, 0.0, 0.0, 0.25), &whole);
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(left, top_of_other));
+        let own = graphene::Rect::new(0.0, 0.0, other.width() as f32, other.height() as f32);
+        // The window's own paper: a window's picture is its content, and
+        // under it the main window would show through.
+        let paper = if adw::StyleManager::default().is_dark() {
+            gdk::RGBA::new(0.14, 0.14, 0.14, 1.0)
+        } else {
+            gdk::RGBA::new(0.98, 0.98, 0.98, 1.0)
+        };
+        snapshot.append_color(&paper, &own);
+        snapshot.append_texture(&second, &own);
+        snapshot.append_border(
+            &gsk::RoundedRect::from_rect(own, 0.0),
+            &[1.0; 4],
+            &[gdk::RGBA::new(0.0, 0.0, 0.0, 0.6); 4],
+        );
+        let (x, top) = match &bounds {
+            Some(bounds) => {
+                snapshot.append_border(
+                    &gsk::RoundedRect::from_rect(*bounds, 0.0),
+                    &[BORDER; 4],
+                    &[OUTLINE; 4],
+                );
+                let above = bounds.y() - plate_height;
+                (bounds.x(), if above >= 0.0 { above } else { bounds.y() })
+            }
+            None => (0.0, 0.0),
+        };
+        snapshot.append_color(
+            &OUTLINE,
+            &graphene::Rect::new(x, top, plate_width, plate_height),
+        );
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(x + CAPTION_PAD, top + CAPTION_PAD));
+        snapshot.append_layout(&layout, &gdk::RGBA::WHITE);
+        snapshot.restore();
+        snapshot.restore();
+    })
+    .expect("a picture of the windows")
+}
