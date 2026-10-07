@@ -668,6 +668,10 @@ const CASES: &[(&str, fn())] = &[
         open_layout::the_action_cards_sentence_wraps_and_is_never_cut as fn(),
     ),
     (
+        "open_layout::the_senders_address_is_never_cut_while_there_is_room",
+        open_layout::the_senders_address_is_never_cut_while_there_is_room as fn(),
+    ),
+    (
         "open_layout::delete_s_cap_reads_del_in_the_action_row",
         open_layout::delete_s_cap_reads_del_in_the_action_row as fn(),
     ),

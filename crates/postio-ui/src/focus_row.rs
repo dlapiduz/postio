@@ -30,7 +30,7 @@ pub fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
 }
 
 /// The date on an open message's header card (screen 04): relative for
-/// today, "Today, 15:22", and the header's absolute date beyond it -- a
+/// today, "Today, 15:22", and the absolute date beyond it -- a
 /// message once opened is not "yesterday", it is dated.
 pub fn message_date(
     at: chrono::DateTime<chrono::Utc>,
@@ -40,7 +40,9 @@ pub fn message_date(
     if local.date_naive() == now.date_naive() {
         return format!("Today, {}", local.format("%H:%M"));
     }
-    crate::reader::header::absolute_date(at, now)
+    // The same shape as today's ("Today, 15:22"): a comma, no "at", and no
+    // weekday -- the card's line is short, and the date is not what it is for.
+    local.format("%-d %b %Y, %H:%M").to_string()
 }
 
 /// The badge a conversation's count draws, or none for a conversation of
@@ -171,9 +173,9 @@ mod tests {
         assert_eq!(message_date(at(29, 0, 5), now), "Today, 00:05");
         assert_eq!(
             message_date(at(28, 15, 22), now),
-            "Mon, 28 Sep 2026 at 15:22"
+            "28 Sep 2026, 15:22"
         );
-        assert_eq!(message_date(at(3, 9, 0), now), "Thu, 3 Sep 2026 at 09:00");
+        assert_eq!(message_date(at(3, 9, 0), now), "3 Sep 2026, 09:00");
     }
 
     #[test]

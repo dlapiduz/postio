@@ -1159,3 +1159,44 @@ pub fn paper_fit_multiplies_under_the_zoom() {
         );
     });
 }
+
+/// The sender's address is the part a person checks, so the card never cuts
+/// it short while the dialog has room: the name gives first, the date after
+/// it, and an address that must shorten keeps its domain.
+pub fn the_senders_address_is_never_cut_while_there_is_room() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(
+                ("Ada Norwood", "ada.norwood.accounts@example.com"),
+                "Harbor",
+                "x",
+                60 * 24 * 20,
+            )
+            .await;
+        fixture.write_body(message, "A body.").await;
+        let window = opened_at(&fixture, 1, NARROW).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        let address = shown(&dialog, "focus-open-address")
+            .downcast::<gtk::Label>()
+            .expect("a label");
+        assert_eq!(address.text(), "ada.norwood.accounts@example.com");
+        assert!(
+            !address.layout().is_ellipsized(),
+            "the address is cut short: {:?}",
+            address.layout().text()
+        );
+        let date = shown(&dialog, "focus-open-date")
+            .downcast::<gtk::Label>()
+            .expect("a label");
+        assert!(
+            !date.text().contains(" at "),
+            "the date is worded unlike today's: {:?}",
+            date.text()
+        );
+    });
+}

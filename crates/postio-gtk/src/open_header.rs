@@ -47,7 +47,13 @@ fn line() -> gtk::Box {
 fn address_label(address: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(address));
     label.add_css_class("focus-open-address");
-    label.set_ellipsize(pango::EllipsizeMode::End);
+    // The domain is the part a person checks to trust a sender, so an
+    // address is laid out whole before anything else gives: its least width
+    // is its full width (the face is mono, so a character is a character),
+    // and only an address wider than the whole line shortens, from the
+    // front, keeping its domain. The name and the date give first.
+    label.set_ellipsize(pango::EllipsizeMode::Start);
+    label.set_width_chars(address.chars().count() as i32);
     label
 }
 
@@ -64,6 +70,8 @@ impl HeaderCard {
         let date = gtk::Label::new(None);
         date.add_css_class("focus-open-date");
         date.set_valign(gtk::Align::Baseline);
+        // The date gives before the address does.
+        date.set_ellipsize(pango::EllipsizeMode::End);
         let to_label = field("To");
         let to = line();
         let cc_label = field("Cc");
