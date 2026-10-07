@@ -618,7 +618,11 @@ pub fn a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next() {
             crate::settle_until(async || delete().is_some()).await,
             "Filters lists the saved searches, each with Delete"
         );
-        support::click(&window, &delete().expect("the first Delete"), 1);
+        // The Saved searches pane has just been switched to; its rows settle
+        // into place before the press, or the press and release land apart.
+        let first = delete().expect("the first Delete");
+        settle_still(&first, &dialog);
+        support::click(&window, &first, 1);
         assert!(
             crate::settle_until(async || {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
