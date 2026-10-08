@@ -52,4 +52,18 @@ struct DemoModeTests {
         #expect(keys.map(\.character) == ["j", nil, "O", nil])
         #expect(keys.map(\.modifiers.shift) == [false, false, true, false])
     }
+
+    @Test func theBarsKeysAreReplayedWithTheirModifiersAndNames() {
+        // Screens 07 to 10 are the command bar and the folders popover:
+        // ⌘K opens one, the arrows walk it, Tab steps into the chips, ⌘⌫
+        // goes back to the words, and `␣` types the space a word list
+        // cannot hold.
+        let keys = DemoMode.keys(
+            in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_KEYS": "⌘k ↓ ↑ ⇥ ⌘⌫ ⌥1 ␣ from:ada"])
+        #expect(keys.map(\.character) == ["k", nil, nil, nil, nil, "1", " ", "from:ada"])
+        #expect(keys.map(\.name) == [nil, "down", "up", "tab", "backspace", nil, nil, nil])
+        #expect(keys.map(\.modifiers.command) == [true, false, false, false, true, false, false, false])
+        #expect(keys.map(\.modifiers.option) == [false, false, false, false, false, true, false, false])
+        #expect(keys.allSatisfy { !$0.modifiers.shift })
+    }
 }

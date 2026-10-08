@@ -243,3 +243,40 @@ public final class CommandBarModel {
         return NSRange(start..<end, in: text)
     }
 }
+
+extension CommandBarModel {
+    /// A click on the saved row's `index`th search: what its key runs
+    /// (`saved_search_<n>`), so the click and `⌥n` cannot disagree.
+    public func runSaved(_ index: Int) {
+        guard isOpen, saved.indices.contains(index), index < Self.savedCommands.count else { return }
+        engine.invoke(Self.savedCommands[index])
+    }
+}
+
+/// Where the command bar's panel goes (contracts/mac-surfaces.md, "Command
+/// bar"): its right edge on the search field's, its top just under the
+/// toolbar, as wide as the field or 640, whichever is wider, and inside
+/// its window. Screen coordinates, the origin at the bottom left, as
+/// AppKit has them.
+public enum CommandBarGeometry {
+    /// The narrowest the panel is.
+    public static let minWidth: CGFloat = 640
+    /// Between the toolbar's bottom and the panel's top.
+    public static let gap: CGFloat = 5
+    /// The least it keeps from its window's edges.
+    public static let margin: CGFloat = 8
+
+    /// The panel's frame for a field at `field` in a window at `window`
+    /// whose content (under the toolbar) starts at `contentTop`, wanting
+    /// `height`.
+    public static func frame(field: CGRect, window: CGRect, contentTop: CGFloat, height: CGFloat) -> CGRect {
+        let width = max(field.width, minWidth)
+        var x = field.maxX - width
+        x = max(x, window.minX + margin)
+        x = min(x, max(window.maxX - margin - width, window.minX + margin))
+        let top = contentTop - gap
+        let tallest = max(top - (window.minY + margin), 0)
+        let tall = min(height, tallest)
+        return CGRect(x: x, y: top - tall, width: width, height: tall)
+    }
+}

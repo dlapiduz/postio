@@ -30,6 +30,15 @@ import Testing
         #expect(words.digestRules == "4 digest rules")
     }
 
+    @Test func theButtonNamesThePlaceTheListShows() {
+        // `FocusPlace`: after `g a` or a pick in the popover, Inbox ▾ says
+        // where the list is (screen 10).
+        let words = HeaderStripWords(strip: Self.strip, place: "Receipts", hasActionOn: false) {
+            Self.keys[$0]
+        }
+        #expect(words.place == "Receipts")
+    }
+
     @Test func whatTheEngineLeavesOutIsNotDrawn() {
         // C10: the filtered and digest counts only while in use, decided in Rust.
         let quiet = FocusStripFfi(

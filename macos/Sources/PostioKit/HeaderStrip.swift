@@ -34,8 +34,12 @@ public struct HeaderStripWords: Equatable, Sendable {
     public let digestRules: String?
     public let digestRulesCap: String?
 
-    public init(strip: FocusStripFfi?, hasActionOn: Bool, binding: (String) -> String?) {
-        place = "Inbox"
+    /// `place` is the list's, as `FocusPlace` last named it.
+    public init(
+        strip: FocusStripFfi?, place: String = "Inbox", hasActionOn: Bool,
+        binding: (String) -> String?
+    ) {
+        self.place = place
         placeCap = KeyCapSpelling.cap(binding(Command.folders))
         counts = strip?.counts
         hasAction = strip?.hasAction ?? "Has action"

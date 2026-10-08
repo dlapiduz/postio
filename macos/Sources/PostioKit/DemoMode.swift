@@ -40,23 +40,45 @@ public enum DemoMode {
         // shifted symbol has Shift held, which is what the resolver sees
         // from a real press.
         return said.split(separator: " ").map { word in
-            let key = String(word)
-            // Return and Escape by their glyphs: named keys, as
-            // `KeyEvent.reduce` reports them from a real press.
-            if let name = namedKeys[key] {
+            var key = Substring(word)
+            // `⌘` and `⌥` before a key hold them: `⌘k` opens the command
+            // bar, `⌘⌫` takes its chips back to words, `⌥1` runs a saved
+            // search.
+            var command = false
+            var option = false
+            while key.count > 1, let held = key.first, held == "⌘" || held == "⌥" {
+                if held == "⌘" { command = true } else { option = true }
+                key = key.dropFirst()
+            }
+            let typed = String(key)
+            // Return, Escape, Tab and the arrows by their glyphs: named
+            // keys, as `KeyEvent.reduce` reports them from a real press.
+            if let name = namedKeys[typed] {
                 return KeyEvent.Reduced(
                     character: nil, name: name,
+                    modifiers: ModifiersFfi(control: false, option: option, shift: false, command: command))
+            }
+            // `␣` is the space a list of words cannot hold.
+            if typed == "␣" {
+                return KeyEvent.Reduced(
+                    character: " ", name: nil,
                     modifiers: ModifiersFfi(control: false, option: false, shift: false, command: false))
             }
-            let shifted = key != key.lowercased() || "!@#$%^&*()_+{}|:\"<>?~".contains(key)
+            // A word of several characters is typed whole into a field the
+            // bar or the popover holds; on the list it resolves to nothing.
+            let shifted = typed.count == 1
+                && (typed != typed.lowercased() || "!@#$%^&*()_+{}|:\"<>?~".contains(typed))
             return KeyEvent.Reduced(
-                character: key, name: nil,
-                modifiers: ModifiersFfi(control: false, option: false, shift: shifted, command: false))
+                character: typed, name: nil,
+                modifiers: ModifiersFfi(control: false, option: option, shift: shifted, command: command))
         }
     }
 
     /// The glyphs a replay may name a key by.
-    static let namedKeys = ["⏎": "return", "↩": "return", "⎋": "escape", "⇥": "tab", "⌫": "backspace"]
+    static let namedKeys = [
+        "⏎": "return", "↩": "return", "⎋": "escape", "⇥": "tab", "⌫": "backspace",
+        "↓": "down", "↑": "up",
+    ]
 
     static func appearance(in environment: [String: String]) -> String? {
         environment["POSTIO_APPEARANCE"].flatMap { ["light", "dark"].contains($0) ? $0 : nil }
