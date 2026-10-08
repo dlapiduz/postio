@@ -1,7 +1,7 @@
 //! The demo store and window Focus's `shot` and its storyboard runner share.
 //!
 //! `examples/shot.rs` and the storyboard runner both need a real
-//! [`FocusWindow`](crate::window::FocusWindow) over a real, migrated,
+//! [`FocusWindow`] over a real, migrated,
 //! seeded store, started and adopted the way the application starts it. That
 //! setup lives here so the two share it rather than each keeping a copy
 //! (specs/008-storyboards R11); argument parsing, staging a numbered screen
