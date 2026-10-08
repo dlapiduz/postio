@@ -151,7 +151,7 @@ mod tests {
                 .overrides_mut()
                 .insert((*command).to_owned(), (*binding).to_owned());
         }
-        Keys::new(&postio_core::Keymap::resolve(&bindings)).0
+        Keys::new(&postio_core::Keymap::for_terminal(&bindings)).0
     }
 
     #[test]

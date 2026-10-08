@@ -74,6 +74,17 @@ impl Keymap {
         Self::resolve_on(overrides, Platform::host())
     }
 
+    /// [`resolve`](Self::resolve) for an app that reads keys from a
+    /// terminal.
+    ///
+    /// A terminal delivers Ctrl and never ⌘, whatever it runs on, so `mod`
+    /// is Ctrl there on a Mac as on Linux. Resolving for the host instead
+    /// bound the terminal's `mod` keys to ⌘ on a Mac, where no key press
+    /// could reach them.
+    pub fn for_terminal(overrides: &KeyBindings) -> Self {
+        Self::resolve_on(overrides, Platform::Freedesktop)
+    }
+
     /// The registry's own bindings, resolved once for the whole process.
     ///
     /// This is what a widget wants when it has no config yet and still has to
@@ -503,6 +514,22 @@ mod tests {
     use super::*;
 
     use crate::CommandId;
+
+    #[test]
+    fn a_terminal_binds_mod_to_ctrl_on_every_host() {
+        let terminal = Keymap::for_terminal(&KeyBindings::default());
+        assert_eq!(
+            terminal.binding(CommandId::CommandPalette),
+            Some("ctrl+k"),
+            "a terminal never receives the command key"
+        );
+        assert_eq!(
+            Keymap::resolve_on(&KeyBindings::default(), Platform::Apple)
+                .binding(CommandId::CommandPalette),
+            Some("cmd+k"),
+            "the Mac app's own window does"
+        );
+    }
 
     #[test]
     fn a_command_the_platform_does_not_offer_has_no_key_there() {

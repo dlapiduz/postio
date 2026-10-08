@@ -571,7 +571,7 @@ mod tests {
         bindings
             .overrides_mut()
             .insert("compose".into(), "N".into());
-        let keymap = postio_core::Keymap::resolve(&bindings);
+        let keymap = postio_core::Keymap::for_terminal(&bindings);
         let compose = postio_ui::terminal::deliverable_binding(
             &keymap,
             postio_core::CommandId::Compose,

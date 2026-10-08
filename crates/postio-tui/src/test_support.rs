@@ -46,7 +46,10 @@ pub fn app(size: (u16, u16)) -> App {
 
 /// An app of `size` under the default keymap with `bindings` on top.
 pub fn app_with_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) -> App {
-    App::new(size, Keys::new(&postio_core::Keymap::resolve(bindings)).0)
+    App::new(
+        size,
+        Keys::new(&postio_core::Keymap::for_terminal(bindings)).0,
+    )
 }
 
 // -- Places ----------------------------------------------------------------

@@ -133,7 +133,7 @@ pub fn run() -> ExitCode {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .unwrap_or_default();
-    let (keys, problems) = Keys::new(&postio_core::Keymap::resolve(&config.keys));
+    let (keys, problems) = Keys::new(&postio_core::Keymap::for_terminal(&config.keys));
     for problem in &problems {
         eprintln!("postio-tui: {problem}");
     }
@@ -595,7 +595,7 @@ async fn drive(
                 if let Ok(config) =
                     postio_config::Config::from_toml_str(&crate::config_file::text(&path))
                 {
-                    app.rekey(Keys::new(&postio_core::Keymap::resolve(&config.keys)).0);
+                    app.rekey(Keys::new(&postio_core::Keymap::for_terminal(&config.keys)).0);
                 }
                 let _ = senders.inputs.try_send(Input::ConfigEdited(edited));
             }

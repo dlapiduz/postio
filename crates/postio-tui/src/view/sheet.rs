@@ -160,7 +160,7 @@ mod tests {
 
     fn map() -> Vec<(keymap_sheet::Group, Vec<keymap_sheet::KeyMapRow>)> {
         keymap_sheet::key_map(
-            &postio_core::Keymap::resolve(&Default::default()),
+            &postio_core::Keymap::for_terminal(&Default::default()),
             postio_core::Frontend::Terminal,
         )
     }
