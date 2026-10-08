@@ -1011,7 +1011,7 @@ impl FocusController {
 
     /// Close the bar, as running one of its lines does; the keyboard goes
     /// home unless what runs `opens` a surface of its own.
-    fn dismiss_bar(&mut self, opens: bool) -> Vec<Step> {
+    pub(crate) fn dismiss_bar(&mut self, opens: bool) -> Vec<Step> {
         self.bar.close();
         let mut steps = Vec::new();
         if self.surfaces.dismiss(SurfaceKind::Bar) {

@@ -974,9 +974,19 @@ fn back_closes_the_bar() {
     let mut focus = mac();
     let _ = bar_open(&mut focus, CommandId::Search, &rows);
     assert!(focus.answers(CommandId::Back));
+    // Off the stack here, as a line run takes it off: the frontend's
+    // `SurfaceClosed(Bar)` is then a repeat, never the thing that closes
+    // it -- an echo that did could land after the bar had been reopened.
     assert_eq!(
         shown(&run(&mut focus, CommandId::Back, &rows)),
-        vec![Intent::CloseSurface(SurfaceKind::Bar)]
+        vec![Intent::CloseSurface(SurfaceKind::Bar), Intent::KeyboardHome]
+    );
+    assert!(!focus.answers(CommandId::BackToWords), "the bar is gone");
+    assert!(
+        focus
+            .handle(Input::SurfaceClosed(SurfaceKind::Bar))
+            .is_empty(),
+        "the frontend's report changes nothing"
     );
 }
 

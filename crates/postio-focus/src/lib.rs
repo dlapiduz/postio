@@ -687,6 +687,12 @@ impl FocusController {
     /// A command while a surface is over the list, or `None` when the
     /// surface has no say and the list's rules apply (contract invariant 5).
     fn surface_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<feed::Step>> {
+        // Back on the bar takes it off the stack here, as running a line
+        // does, rather than waiting for the frontend's `SurfaceClosed`: the
+        // controller puts the bar up and takes it down itself (slice 8).
+        if self.surfaces.top() == Some(SurfaceKind::Bar) && id == CommandId::Back {
+            return Some(self.dismiss_bar(false));
+        }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
             return self.surfaces.close_top(id);
         }
