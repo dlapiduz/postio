@@ -327,6 +327,19 @@ impl FocusDriver {
         true
     }
 
+    /// Something the frontend reports that is not a command: a click, a
+    /// scroll to the top. Applied over the list as it is held now.
+    pub(crate) fn input(self: &Arc<Self>, input: Input) {
+        let effects = {
+            let list = self.list.lock().expect("list lock");
+            self.focus
+                .lock()
+                .expect("focus lock")
+                .handle_on(input, &RowsView(&list))
+        };
+        self.apply(effects);
+    }
+
     /// The message under the cursor, once its page has landed: what a verb
     /// that is not the list's own aims at.
     pub(crate) fn cursor_message(&self) -> Option<postio_model::MessageId> {

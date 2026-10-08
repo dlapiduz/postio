@@ -274,6 +274,45 @@ async fn list_keys_run_through_the_controller() {
     session.shutdown();
 }
 
+/// The pointer drives the same cursor and selection the keys do: a click
+/// moves the cursor, a Command-click toggles, a Shift-click takes the range.
+#[tokio::test(flavor = "multi_thread")]
+async fn clicks_reach_the_controller() {
+    use postio_ffi::UiEvent;
+    let session = inbox_of(&["First", "Second", "Third", "Fourth"]).await;
+    cursor_on_the_first_row(&session).await;
+
+    session.focus_point(2);
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position: 2, .. }
+        ))
+        .await,
+        "a click puts the cursor on its row"
+    );
+    session.focus_pick(1, false);
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusSelection { selected, .. } if selected.len() == 1
+        ))
+        .await,
+        "a Command-click takes its row in"
+    );
+    session.focus_pick(3, true);
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusSelection { selected, .. } if selected.len() == 3
+        ))
+        .await,
+        "a Shift-click takes the rows from the anchor to it"
+    );
+    session.focus_at_top(true);
+    session.shutdown();
+}
+
 /// Open Focus's inbox and wait until the cursor is on its first row: where
 /// a verb with nothing selected acts, as a person would find it.
 pub(crate) async fn cursor_on_the_first_row(session: &Session) {

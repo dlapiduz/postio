@@ -67,6 +67,27 @@ impl Session {
         self.focus_driver().row_at(position)
     }
 
+    /// The pointer put the cursor on `position`: a plain click on a row.
+    /// The controller says where the cursor went, as `FocusCursor`.
+    pub fn focus_point(&self, position: u32) {
+        self.focus_driver()
+            .input(postio_focus::Input::Point(position));
+    }
+
+    /// A modified click on `position`: `range` when Shift was held, a
+    /// toggle when the platform's toggle modifier was (Command on the Mac).
+    pub fn focus_pick(&self, position: u32, range: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::Pick { position, range });
+    }
+
+    /// Whether the list stands scrolled to its very top: where it goes back
+    /// to when an undo brings rows in above (`FocusListToTop`).
+    pub fn focus_at_top(&self, at_top: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::AtTop(at_top));
+    }
+
     /// The header strip's words, read now.
     pub fn focus_strip(&self) -> Result<FocusStripFfi, SessionError> {
         let counts = self.focus_counts()?;

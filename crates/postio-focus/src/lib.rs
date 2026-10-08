@@ -92,6 +92,16 @@ pub enum Input {
     /// Whether the list stands scrolled to its very top: where it goes back
     /// to after an undo brings rows in above.
     AtTop(bool),
+    /// The pointer put the cursor on this row: a plain click.
+    Point(u32),
+    /// A modified click on this row: Shift's `range` takes every row from
+    /// the anchor to it, the platform's toggle modifier takes it in or out.
+    Pick {
+        /// The row clicked.
+        position: u32,
+        /// Shift was held.
+        range: bool,
+    },
 }
 
 /// What the frontend does next.
@@ -340,6 +350,15 @@ impl FocusController {
             Input::AtTop(at_top) => {
                 self.verbs.set_at_top(at_top);
                 Vec::new()
+            }
+            Input::Point(position) => {
+                let steps = self.cursor.point(position, rows);
+                self.effects(steps)
+            }
+            Input::Pick { position, range } => {
+                let total = self.feed.total();
+                let steps = self.cursor.pick(position, range, rows, total);
+                self.effects(steps)
             }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
             Input::Reply(_, Reply::FocusCounts(Ok(counts))) => {

@@ -174,6 +174,60 @@ impl Cursor {
         Some(steps)
     }
 
+    /// The pointer put the cursor on `position`: a click on a row, which
+    /// selects nothing (spec 007 FR-016).
+    pub(crate) fn point(&mut self, position: u32, rows: &dyn Rows) -> Vec<Step> {
+        self.to(Some(position), rows)
+    }
+
+    /// A modified click on `position`: with the platform's toggle modifier,
+    /// the row goes in or out, as `x` would; with Shift, every row from the
+    /// anchor (the cursor, before there is one) to it goes in, digests
+    /// walked over. The cursor follows the click either way.
+    pub(crate) fn pick(
+        &mut self,
+        position: u32,
+        range: bool,
+        rows: &dyn Rows,
+        total: u32,
+    ) -> Vec<Step> {
+        if position >= rows.len() {
+            return Vec::new();
+        }
+        let changed = if range {
+            let from = self
+                .selector
+                .anchor()
+                .and_then(|anchor| rows.position_of(anchor))
+                .or(self.position)
+                .unwrap_or(position);
+            let walk: Vec<u32> = if position >= from {
+                (from..=position).collect()
+            } else {
+                (position..=from).rev().collect()
+            };
+            let mut changed = false;
+            for at in walk {
+                if let Some(row) = rows.facts(at).filter(|row| !row.digest) {
+                    self.reach.insert(row.id, row.threads);
+                    changed |= self.selector.extend_to(row.id);
+                }
+            }
+            changed
+        } else {
+            match rows.facts(position).filter(|row| !row.digest) {
+                Some(row) => {
+                    self.reach.insert(row.id, row.threads);
+                    self.selector.toggle(row.id)
+                }
+                None => false,
+            }
+        };
+        let mut steps = self.to(Some(position), rows);
+        steps.extend(self.selection_steps(changed, total));
+        steps
+    }
+
     /// Back's last rung: drop the selection; the cursor stays.
     pub(crate) fn clear(&mut self, total: u32) -> Vec<Step> {
         self.reach.clear();

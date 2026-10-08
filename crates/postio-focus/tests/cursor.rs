@@ -255,3 +255,102 @@ fn a_reread_that_is_not_an_opening_leaves_the_cursor_where_it_is() {
     assert_eq!(cursor_of(&effects), None);
     assert_eq!(focus.cursor(), Some(1));
 }
+
+#[test]
+fn a_click_moves_the_cursor_and_leaves_the_selection() {
+    // The pointer's cursor is the keyboard's: a click on a row is where `a`
+    // lands next, and it selects nothing (spec 007 FR-016).
+    let rows = List::of(4, &[]);
+    let mut focus = focus();
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let effects = focus.handle_on(Input::Point(2), &rows);
+    assert_eq!(cursor_of(&effects), Some(2));
+    assert_eq!(selection_of(&effects), None, "the selection is not touched");
+    assert_eq!(focus.cursor(), Some(2));
+    let effects = focus.handle_on(Input::Point(9), &rows);
+    assert!(effects.is_empty(), "a row off the list moves nothing");
+}
+
+#[test]
+fn a_command_click_toggles_the_row_it_lands_on() {
+    let rows = List::of(4, &[2]);
+    let mut focus = focus();
+    let _ = focus.landed(&rows, true);
+    let effects = focus.handle_on(
+        Input::Pick {
+            position: 3,
+            range: false,
+        },
+        &rows,
+    );
+    assert_eq!(cursor_of(&effects), Some(3));
+    assert_eq!(
+        selection_of(&effects),
+        Some(Selection::These(vec![MessageId::new(103)]))
+    );
+    let effects = focus.handle_on(
+        Input::Pick {
+            position: 2,
+            range: false,
+        },
+        &rows,
+    );
+    assert_eq!(cursor_of(&effects), Some(2), "the cursor still follows");
+    assert_eq!(selection_of(&effects), None, "a digest is never taken");
+}
+
+#[test]
+fn a_shift_click_takes_the_range_from_the_anchor_skipping_digests() {
+    let rows = List::of(6, &[3]);
+    let mut focus = focus();
+    let _ = focus.landed(&rows, true);
+    let _ = focus.handle_on(Input::Point(1), &rows);
+    let effects = focus.handle_on(
+        Input::Pick {
+            position: 4,
+            range: true,
+        },
+        &rows,
+    );
+    assert_eq!(cursor_of(&effects), Some(4));
+    assert_eq!(
+        selection_of(&effects),
+        Some(Selection::These(vec![
+            MessageId::new(101),
+            MessageId::new(102),
+            MessageId::new(104)
+        ])),
+        "rows 1 to 4, the digest at 3 walked over"
+    );
+    assert_eq!(
+        shown(&effects)
+            .iter()
+            .filter(|intent| matches!(intent, Intent::Selection { .. }))
+            .count(),
+        1,
+        "one gesture, one selection drawn"
+    );
+    // Upwards, from the same anchor: the gesture's start stays put.
+    let effects = focus.handle_on(
+        Input::Pick {
+            position: 0,
+            range: true,
+        },
+        &rows,
+    );
+    assert_eq!(cursor_of(&effects), Some(0));
+    let Some(Selection::These(mut picked)) = selection_of(&effects) else {
+        panic!("a range names its rows");
+    };
+    picked.sort();
+    assert_eq!(
+        picked,
+        vec![
+            MessageId::new(100),
+            MessageId::new(101),
+            MessageId::new(102),
+            MessageId::new(104)
+        ]
+    );
+}
