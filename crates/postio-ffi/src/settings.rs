@@ -307,17 +307,14 @@ pub struct FilterFfi {
     pub pinned: bool,
 }
 
-/// Every settings section the Mac shows, in canvas 3f's nav order: all of
-/// them but Filtering.
+/// Every settings section the Mac shows, in nav order: those its frontend
+/// honours (`Section::shown_in(crate::FRONTEND)`). The Mac is Focus, so
+/// Filtering is in and Appearance out (specs/009-focus-macos T131).
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
     Section::ALL
         .into_iter()
-        // The Mac's settings window keeps its own nav until it gains Focus's
-        // Filtering pane and drops Appearance (specs/009-focus-macos T131):
-        // `Section::shown_in(Frontend::Focus)` would hide Appearance, which
-        // this window draws, and list Filtering, which it cannot yet.
-        .filter(|section| *section != Section::Filtering)
+        .filter(|section| section.shown_in(crate::FRONTEND))
         .map(|section| SettingsSectionFfi {
             key: section.key().to_string(),
             label: section.label().to_string(),
@@ -605,6 +602,172 @@ pub fn settings_patch_reader_zoom(text: String, zoom: u16) -> Result<String, Set
     postio_config::patch_reader(&text, &reader).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
     })
+}
+
+/// The Filtering pane, as GTK's draws it (`postio_ui::filtering::page`):
+/// the switch, what filtering does now, today's count, the keys Filtered
+/// answers, and the two `[focus.filter]` lists, each entry with what takes
+/// it back (specs/009-focus-macos T131).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilteringPageFfi {
+    /// The switch's words: "Filter spam and automated updates".
+    pub switch: String,
+    /// Whether filtering is on: `[focus] filtering`.
+    pub on: bool,
+    /// What filtering does now, in a sentence, under the switch.
+    pub state: String,
+    /// The Filtered section's heading.
+    pub filtered: String,
+    /// "186 filtered today", or nothing while off or before it is counted.
+    pub today: Option<String>,
+    /// "Open Filtered": a click is `invoke("go_to_filtered")`.
+    pub open: String,
+    /// Its key, as `[keys]` spells it.
+    pub open_key: Option<String>,
+    /// What filtering keeps, under the count.
+    pub kept: String,
+    /// The keys Filtered answers that the page teaches.
+    pub keys: Vec<KeyHintFfi>,
+    /// The never-filtered section's heading.
+    pub never_heading: String,
+    /// What is never filtered whatever its headers say.
+    pub guards: String,
+    /// `[focus.filter] never`, one entry each.
+    pub never: Vec<FilteringEntryFfi>,
+    /// What the never list says with nobody in it.
+    pub never_empty: String,
+    /// The turned-off markers' heading.
+    pub stopped_heading: String,
+    /// `[focus.filter] stop_markers`, one entry each.
+    pub stopped: Vec<FilteringEntryFfi>,
+    /// What the stopped list says with nothing in it.
+    pub stopped_empty: String,
+}
+
+/// One entry of a `[focus.filter]` list.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilteringEntryFfi {
+    /// The line.
+    pub says: String,
+    /// Whether the entry does what it was written to do; one that does not
+    /// says why in `says`.
+    pub acts: bool,
+    /// The control that takes it back: "Filter again", "Turn back on".
+    pub undo_label: String,
+    /// What taking it back writes: hand it to `settings_take_back_filter`.
+    pub undo: FilteringUndoFfi,
+}
+
+/// What taking a `[focus.filter]` entry back removes.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum FilteringUndoFfi {
+    /// This entry of `never`: the sender is filtered again.
+    Never {
+        /// The entry, as written.
+        entry: String,
+    },
+    /// This `{ sender, kind }` of `stop_markers`: the marker comes back.
+    Marker {
+        /// Its sender, as written.
+        sender: String,
+        /// Its kind, as written.
+        kind: String,
+    },
+}
+
+impl From<postio_ui::filtering::Listed> for FilteringEntryFfi {
+    fn from(listed: postio_ui::filtering::Listed) -> Self {
+        FilteringEntryFfi {
+            says: listed.says,
+            acts: listed.acts,
+            undo_label: listed.undo.label().to_owned(),
+            undo: match listed.undo {
+                postio_ui::filtering::Undo::Never(entry) => FilteringUndoFfi::Never { entry },
+                postio_ui::filtering::Undo::Marker { sender, kind } => {
+                    FilteringUndoFfi::Marker { sender, kind }
+                }
+            },
+        }
+    }
+}
+
+/// The Filtering pane's values for `text`, with `filtered_today` messages
+/// filed away so far today (`focus_counts().filtered_today`; `None` before
+/// it is known), or `None` when the file will not parse -- for the reason
+/// [`settings_appearance`] gives.
+#[uniffi::export]
+pub fn settings_filtering(text: String, filtered_today: Option<u32>) -> Option<FilteringPageFfi> {
+    use postio_ui::filtering as words;
+    let config = Config::from_toml_str(&text).ok()?;
+    let keymap = postio_core::Keymap::resolve(&config.keys);
+    let page = words::page(&config.focus, filtered_today, &keymap);
+    Some(FilteringPageFfi {
+        switch: words::SWITCH.to_owned(),
+        on: page.on,
+        state: page.state,
+        filtered: words::FILTERED.to_owned(),
+        today: page.today,
+        open: words::OPEN.to_owned(),
+        open_key: keymap
+            .binding(postio_core::CommandId::GoToFiltered)
+            .map(str::to_owned),
+        kept: words::KEPT.to_owned(),
+        keys: page
+            .keys
+            .into_iter()
+            .map(|hint| KeyHintFfi {
+                key: hint.key,
+                label: hint.label,
+            })
+            .collect(),
+        never_heading: words::NEVER.to_owned(),
+        guards: words::GUARDS.to_owned(),
+        never: page.never.into_iter().map(Into::into).collect(),
+        never_empty: page.never_empty,
+        stopped_heading: words::STOPPED.to_owned(),
+        stopped: page.stopped.into_iter().map(Into::into).collect(),
+        stopped_empty: words::STOPPED_EMPTY.to_owned(),
+    })
+}
+
+/// Turn `[focus] filtering` on or off in `text`, the rest verbatim: what
+/// the pane's switch writes (FR-162), through the same edit GTK's makes.
+#[uniffi::export]
+pub fn settings_patch_filtering(text: String, on: bool) -> Result<String, SettingsError> {
+    written(postio_config::focus_edit::set_filtering(&text, on), text)
+}
+
+/// Take a `[focus.filter]` entry back in `text`, the rest verbatim: the
+/// control beside each entry of the pane's two lists.
+#[uniffi::export]
+pub fn settings_take_back_filter(
+    text: String,
+    undo: FilteringUndoFfi,
+) -> Result<String, SettingsError> {
+    let edit = match &undo {
+        FilteringUndoFfi::Never { entry } => {
+            postio_config::focus_edit::set_never(&text, entry, false)
+        }
+        FilteringUndoFfi::Marker { sender, kind } => {
+            postio_config::focus_edit::set_stop_marker(&text, sender, kind, false)
+        }
+    };
+    written(edit, text)
+}
+
+/// A `focus_edit` answer as the file to save: the edit, or the file as it
+/// was when there was nothing to change.
+fn written(
+    edit: postio_config::Result<Option<String>>,
+    text: String,
+) -> Result<String, SettingsError> {
+    match edit {
+        Ok(Some(written)) => Ok(written),
+        Ok(None) => Ok(text),
+        Err(error) => Err(SettingsError::Invalid {
+            message: error.to_string(),
+        }),
+    }
 }
 
 /// Why a settings write could not be made.
