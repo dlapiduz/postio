@@ -101,6 +101,9 @@ struct Entry {
     kind: ClientKind,
     state: SharedState,
     verbs: Arc<Dispatcher>,
+    /// The actions behind `verbs`: what its undo stack would take back is
+    /// read here (`Req::UndoTop`).
+    actions: Actions,
     /// Where this client's own command events go, to be sorted.
     sink: EventSink,
     /// The tasks that carry this client's events, stopped when it leaves:
@@ -294,12 +297,20 @@ const BLOCKING_THREADS: usize = 8;
 /// A frontend's verbs over the shared store: the session's actions and
 /// refresh, resolving against `state`.
 fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
-    let builder = actions::wire(
-        Dispatcher::builder(),
-        Actions::new(wiring.database.clone(), state.clone())
-            .with_blob_store(wiring.blobs.clone())
-            .with_focus(wiring.focus.clone()),
-    );
+    verbs_over(wiring, state, actions_for(wiring, state))
+}
+
+/// The session's actions for one frontend: kept beside its dispatcher so the
+/// host can read its undo stack without running a command.
+fn actions_for(wiring: &Wiring, state: &SharedState) -> Actions {
+    Actions::new(wiring.database.clone(), state.clone())
+        .with_blob_store(wiring.blobs.clone())
+        .with_focus(wiring.focus.clone())
+}
+
+/// [`verbs`], over `actions` the caller keeps a handle to.
+fn verbs_over(wiring: &Wiring, state: &SharedState, actions: Actions) -> Dispatcher {
+    let builder = actions::wire(Dispatcher::builder(), actions);
     refresh::wire(builder, wiring.engine.clone(), state.clone()).build()
 }
 
@@ -642,7 +653,8 @@ impl Inner {
     fn join(&self, kind: ClientKind) -> (ClientId, async_channel::Receiver<EventEnvelope>) {
         let id = ClientId(self.next_client.fetch_add(1, Ordering::Relaxed));
         let state = SharedState::default();
-        let verbs = Arc::new(verbs(&self.wiring, &state));
+        let actions = actions_for(&self.wiring, &state);
+        let verbs = Arc::new(verbs_over(&self.wiring, &state, actions.clone()));
         let (outbox, events) = async_channel::unbounded::<EventEnvelope>();
 
         // Everybody's news, from the engines and from every client's verbs.
@@ -689,6 +701,7 @@ impl Inner {
                 kind,
                 state,
                 verbs,
+                actions,
                 sink,
                 tasks: vec![hearing.abort_handle(), sorting.abort_handle()],
                 drafts: compose::DraftWriter::spawn(self.wiring.database.clone(), self.runtime()),
@@ -848,6 +861,10 @@ impl Inner {
             Req::ThreadLabels(threads) => {
                 Resp::ThreadLabels(compose::thread_labels(&self.wiring.database, &threads).await)
             }
+            Req::UndoTop => match self.entry(client) {
+                Some(entry) => Resp::UndoTop(entry.actions.peek_description()),
+                None => Resp::Stopped,
+            },
             Req::FocusCounts => compose::focus_counts(&self.wiring.database)
                 .await
                 .map_or_else(Resp::Failed, Resp::FocusCounts),
