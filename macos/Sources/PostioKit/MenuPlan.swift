@@ -182,7 +182,25 @@ public enum MenuPlan {
     /// each frontend owns, and `noAcceleratorLeaksAKeyName` is what notices
     /// when the core learns a name this does not know.
     private static func keyGlyph(_ key: String) -> String {
-        switch key.lowercased() {
+        // The keypad's keys are GDK's `KP_…` names; a Mac draws the
+        // character the key types (`zoom_in`'s `KP_Add` is `+`), and its
+        // Enter as ⌅.
+        let lowered = key.lowercased()
+        if lowered.hasPrefix("kp_") {
+            let name = String(lowered.dropFirst(3))
+            switch name {
+            case "add": return "+"
+            case "subtract": return "-"
+            case "multiply": return "*"
+            case "divide": return "/"
+            case "decimal": return "."
+            case "equal": return "="
+            case "enter": return "⌅"
+            default:
+                if name.count == 1, name.first?.isNumber == true { return name }
+            }
+        }
+        switch lowered {
         case "comma": return ","
         case "period": return "."
         case "slash": return "/"

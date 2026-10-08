@@ -98,6 +98,15 @@ import Testing
         #expect(MenuPlan.accelerator(from: "slash") == "/")
     }
 
+    @Test func aKeypadKeyIsDrawnAsItsCharacter() {
+        // `zoom_in`'s alternates name the keypad's keys by GDK's names, and
+        // the key map (screen 20) drew `⌘KP_ADD` for one.
+        #expect(MenuPlan.accelerator(from: "cmd+KP_Add") == "⌘+")
+        #expect(MenuPlan.accelerator(from: "cmd+KP_Subtract") == "⌘-")
+        #expect(MenuPlan.accelerator(from: "cmd+KP_0") == "⌘0")
+        #expect(MenuPlan.accelerator(from: "KP_Enter") == "⌅")
+    }
+
     @Test func noAcceleratorLeaksAKeyName() {
         // The class, over the whole registry rather than the three spellings
         // that happened to be wrong. A key name reaching a menu renders as a
