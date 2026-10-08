@@ -17,6 +17,10 @@
 //! runtime anywhere*, and that would supply one and make the case pass for the
 //! wrong reason.
 
+// GLib is a Linux dev-dependency (see Cargo.toml): the GTK app is the only
+// frontend that polls the store on its main loop.
+#![cfg(target_os = "linux")]
+
 #[test]
 fn a_store_opens_and_reads_on_the_main_context_with_no_runtime() {
     assert!(
