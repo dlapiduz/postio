@@ -125,6 +125,8 @@ final class Engine {
             // A demo never syncs: its mail is invented and its account has
             // no server (`DemoMode`).
             if DemoMode.seed == nil { _ = try? session.startSyncing() }
+            // What sync would have said, for screens 16 to 19 (T101).
+            if let said = DemoMode.state { _ = session.demoState(said) }
             // An account added while this runs gets its engine here, which is
             // what makes it sync without a relaunch (#1299).
             settingsActions.accountAdded = { [weak self] in

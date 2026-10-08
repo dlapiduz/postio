@@ -108,7 +108,7 @@ public struct BannerStrip: View {
     @ViewBuilder private var fill: some View {
         switch words.tone {
         case .error: Rectangle().fill(Color.red.opacity(0.1))
-        case .plain: Rectangle().fill(.quinary)
+        case .plain: Rectangle().fill(.quinary.opacity(0.5))
         }
     }
 }

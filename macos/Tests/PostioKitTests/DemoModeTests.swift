@@ -66,4 +66,13 @@ struct DemoModeTests {
         #expect(keys.map(\.modifiers.option) == [false, false, false, false, false, true, false, false])
         #expect(keys.allSatisfy { !$0.modifiers.shift })
     }
+
+    @Test func aStateIsSaidOnlyInADemo() {
+        // Screens 17 to 19 need sync to have said something, and a demo
+        // never syncs: `POSTIO_DEMO_STATE` says it for the demo's account.
+        #expect(DemoMode.state(in: ["POSTIO_DEMO_STATE": "offline"]) == nil)
+        #expect(DemoMode.state(in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_STATE": "offline"]) == "offline")
+        #expect(DemoMode.state(in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_STATE": ""]) == nil)
+        #expect(DemoMode.state(in: ["POSTIO_DEMO": "small"]) == nil)
+    }
 }

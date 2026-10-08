@@ -14,6 +14,9 @@ import PostioFFI
 /// `POSTIO_DEMO_KEYS="! x j x"` presses those keys on the list once its
 /// first page has landed, so a screen that needs a state -- `!` on, three
 /// rows marked -- can be photographed; only in a demo.
+/// `POSTIO_DEMO_STATE=offline` says what sync would have said about the
+/// demo's account (`offline`, `auth`, `first-sync`, `synced`), for screens
+/// 16 to 19; only in a demo.
 public enum DemoMode {
     /// The demo store asked for, if any.
     public static var seed: String? { seed(in: ProcessInfo.processInfo.environment) }
@@ -28,6 +31,11 @@ public enum DemoMode {
     public static var appearance: String? {
         appearance(in: ProcessInfo.processInfo.environment)
     }
+
+    /// What sync is to have said about the demo's account, in a demo only:
+    /// `offline`, `auth`, `first-sync` or `synced` (`demo_state`). A demo
+    /// never syncs, and screens 16 to 19 are what sync says.
+    public static var state: String? { state(in: ProcessInfo.processInfo.environment) }
 
     /// The keys to press on the list once it has landed, in a demo only.
     public static var keys: [KeyEvent.Reduced] { keys(in: ProcessInfo.processInfo.environment) }
@@ -79,6 +87,11 @@ public enum DemoMode {
         "⏎": "return", "↩": "return", "⎋": "escape", "⇥": "tab", "⌫": "backspace",
         "↓": "down", "↑": "up",
     ]
+
+    static func state(in environment: [String: String]) -> String? {
+        guard seed(in: environment) != nil else { return nil }
+        return environment["POSTIO_DEMO_STATE"].flatMap { $0.isEmpty ? nil : $0 }
+    }
 
     static func appearance(in environment: [String: String]) -> String? {
         environment["POSTIO_APPEARANCE"].flatMap { ["light", "dark"].contains($0) ? $0 : nil }

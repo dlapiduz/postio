@@ -45,6 +45,11 @@ public final class PostioSession {
         PostioSession(inner: try Session.openAt(storePath: nil))
     }
 
+    /// Say what sync would have said about a demo's account
+    /// (`DemoMode.state`); `false` for an unknown word, and always outside a
+    /// demo build.
+    public func demoState(_ state: String) -> Bool { inner.demoState(state: state) }
+
     /// Opens a session over the demo store `seed` names, in memory
     /// (`DemoMode`). Reads no Keychain; refused by a build without demos.
     public static func openDemo(_ seed: String) throws -> PostioSession {
