@@ -37,6 +37,7 @@ mod parts;
 mod provisioning;
 mod reader;
 mod reader_cost;
+mod recipients;
 mod registry;
 mod saved_search;
 mod session;

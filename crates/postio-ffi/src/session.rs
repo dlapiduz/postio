@@ -632,6 +632,9 @@ pub struct Session {
     /// The correspondents and labels the search box's `@` and `+` match
     /// against, with when they were read (`finder_contacts`).
     finder_sources: Mutex<Option<(std::time::Instant, FinderSources)>>,
+    /// Each account's recipient directory, as last read, for completion
+    /// on every keystroke without a query (`recipient_suggestions`).
+    pub(crate) recipient_directories: crate::contacts::Directories,
     /// The conversation the reading pane is showing, once its read lands.
     ///
     /// Held here rather than paged through Focus's list: the list is the
@@ -1854,6 +1857,7 @@ impl Session {
                 keys: Mutex::new(keys),
                 reachable: Mutex::new(Vec::new()),
                 finder_sources: Mutex::new(None),
+                recipient_directories: crate::contacts::Directories::default(),
                 conversation: Arc::default(),
                 sign_in: Mutex::new(None),
                 sign_in_port: Arc::default(),
@@ -1953,6 +1957,7 @@ impl Session {
             engines: Mutex::new(Vec::new()),
             reachable: Mutex::new(Vec::new()),
             finder_sources: Mutex::new(None),
+            recipient_directories: crate::contacts::Directories::default(),
             conversation: Arc::default(),
             sign_in: Mutex::new(None),
             sign_in_port: Arc::default(),

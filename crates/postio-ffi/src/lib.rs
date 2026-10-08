@@ -37,6 +37,7 @@
 
 mod account;
 mod compose;
+mod contacts;
 mod conversation;
 mod cost;
 mod demo;
@@ -68,6 +69,7 @@ pub use compose::{
     AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, outgoing_shape,
     recipient_summary,
 };
+pub use contacts::{ExternalContactFfi, RecipientSuggestionFfi};
 pub use conversation::{
     ConversationFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
     message_when, thread_expand_all_script, thread_observer_script, thread_scroll_script,
