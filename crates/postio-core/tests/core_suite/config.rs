@@ -311,7 +311,11 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
 fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
     // Between two explicit choices there is nothing to prefer, so the order
     // is at least deterministic, and the one that loses is told.
-    let keymap = Keymap::resolve(&bindings(&[("archive", "q"), ("delete", "q")]));
+    // Linux's, whose Delete is `Delete`; the Mac's is BackSpace.
+    let keymap = Keymap::resolve_on(
+        &bindings(&[("archive", "q"), ("delete", "q")]),
+        postio_config::paths::Platform::Freedesktop,
+    );
 
     assert_eq!(
         keymap.command_for(Context::List, "q"),

@@ -186,6 +186,10 @@ pub struct KeyBindings {
 /// So it is resolved once, when the bindings are read, and everything
 /// downstream sees a concrete accelerator.
 ///
+/// The same holds for the one key whose name differs: `Delete` is the Mac's
+/// "delete" key, which is BackSpace, on Apple, so a delete bound once is
+/// pressed where each platform's keyboard says delete.
+///
 /// `ctrl` stays literal on both. Somebody who writes it means Control, macOS
 /// genuinely uses it, and quietly turning their binding into Command would be
 /// Postio overriding a stated choice.
@@ -210,9 +214,17 @@ pub fn expand_mod(binding: &str, platform: Platform) -> String {
                 // The *key* half is untouched, and must be: shift is written
                 // into the character, so lowercasing the whole chord would
                 // turn `mod+K` into a different binding.
-                .map(|part| match part.eq_ignore_ascii_case("mod") {
-                    true => primary,
-                    false => part,
+                .map(|part| {
+                    if part.eq_ignore_ascii_case("mod") {
+                        primary
+                    } else if part == "Delete" && platform == Platform::Apple {
+                        // The key every Mac labels "delete" is BackSpace;
+                        // forward delete needs fn. So the portable `Delete`
+                        // is that key there (specs/009-focus-macos M6).
+                        "BackSpace"
+                    } else {
+                        part
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("+")
@@ -404,6 +416,26 @@ mod mod_token_tests {
             "ctrl+k".to_string()
         );
         assert_eq!(expand_mod("mod+k", Platform::Apple), "cmd+k".to_string());
+    }
+
+    #[test]
+    fn delete_is_the_key_a_mac_calls_delete() {
+        // A Mac keyboard's "delete" key is BackSpace; forward delete needs
+        // fn. So the portable `Delete` means that key on Apple, and Linux
+        // keeps its own Delete key (specs/009-focus-macos M6).
+        assert_eq!(expand_mod("Delete", Platform::Apple), "BackSpace");
+        assert_eq!(expand_mod("Delete", Platform::Freedesktop), "Delete");
+        assert_eq!(expand_mod("mod+Delete", Platform::Apple), "cmd+BackSpace");
+        assert_eq!(
+            expand_mod("g Delete", Platform::Apple),
+            "g BackSpace",
+            "chord by chord"
+        );
+        assert_eq!(
+            expand_mod("BackSpace", Platform::Apple),
+            "BackSpace",
+            "nothing else moves"
+        );
     }
 
     #[test]

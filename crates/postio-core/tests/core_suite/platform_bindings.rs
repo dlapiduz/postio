@@ -73,15 +73,49 @@ fn offered_on_the_mac(table: &str) -> String {
         .collect()
 }
 
+/// A Linux row as the Mac spells it: Command for Control, and the key a Mac
+/// labels "delete" -- BackSpace -- for Delete (specs/009-focus-macos M6).
+/// The only two translations `expand_mod` makes.
+fn as_the_mac_spells_it(table: &str) -> String {
+    table
+        .lines()
+        .map(|row| {
+            let (id, keys) = row.split_once('\t').unwrap_or((row, ""));
+            let keys = keys
+                .split(" | ")
+                .map(|binding| {
+                    binding
+                        .split(' ')
+                        .map(|chord| {
+                            chord
+                                .split('+')
+                                .map(|part| match part {
+                                    "ctrl" => "cmd",
+                                    "Delete" => "BackSpace",
+                                    other => other,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("+")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!("{id}\t{keys}\n")
+        })
+        .collect()
+}
+
 #[test]
 fn apple_gets_command_wherever_freedesktop_gets_control() {
     let linux = table(Platform::Freedesktop);
     let apple = table(Platform::Apple);
     assert_ne!(linux, apple, "nothing was translated at all");
     assert_eq!(
-        offered_on_the_mac(&linux).replace("ctrl+", "cmd+"),
+        as_the_mac_spells_it(&offered_on_the_mac(&linux)),
         offered_on_the_mac(&apple),
-        "the two tables differ somewhere other than the primary modifier"
+        "the two tables differ somewhere other than the primary modifier and Delete"
     );
 }
 

@@ -459,7 +459,8 @@ fn no_key_means_two_commands_in_one_context_in_any_app() {
 #[test]
 fn a_command_has_the_same_key_in_every_app_that_offers_it() {
     // The same key, spelled for each platform: `mod` is Ctrl on Linux and
-    // Command on macOS, and nothing else may differ.
+    // Command on macOS, `Delete` is the Mac's BackSpace, and nothing else may
+    // differ.
     for spec in registry::all() {
         let mut keys: Vec<(Frontend, Vec<String>)> = Vec::new();
         for app in APPS {
@@ -479,10 +480,17 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
                 "{app:?} does not give `{}` the registry's key",
                 spec.id
             );
+            // Back to one spelling: Command is Control, and the Mac's lone
+            // BackSpace is the `Delete` it was written as (specs/009-focus-macos
+            // M6). No registry default is a lone BackSpace, so that is
+            // unambiguous; `mod+BackSpace` keeps its modifier and its key.
             let as_written: Vec<String> = keymap
                 .bindings(spec.id)
                 .iter()
-                .map(|binding| binding.replace("cmd+", "ctrl+"))
+                .map(|binding| match binding.as_str() {
+                    "BackSpace" if platform_of(app) == Platform::Apple => "Delete".to_owned(),
+                    other => other.replace("cmd+", "ctrl+"),
+                })
                 .collect();
             keys.push((app, as_written));
         }
