@@ -234,6 +234,10 @@ impl Session {
         let notice = self
             .held_back_notice(&connection, message, rendered.held_back, remote)
             .await;
+        let document = flow(
+            &document_for_treated(&html, &rendered.styles, remote, shown),
+            shown,
+        );
         FocusReaderDocumentFfi {
             notice,
             caveat: decode_caveat(encoding_problems).map(str::to_owned),
@@ -250,10 +254,30 @@ impl Session {
                 }),
             sender_choice: remembered.map(Into::into),
             sender,
-            ..answer(
-                document_for_treated(&html, &rendered.styles, remote, shown),
-                treated,
-            )
+            ..answer(document, treated)
         }
     }
+}
+
+/// The reader palette in the Mac's own semantic colours, which WebKit
+/// resolves against the web view's appearance: the column's ground is the
+/// window's, the ink and hairlines are the platform's, and the accent is
+/// whatever the person chose (the Mac pack's section 6). Paper forces the
+/// light appearance on its web view, so its sheet reads these as light.
+const MAC_FLOW_PALETTE: &str = ":root { --flow-ground: transparent; \
+    --r-ink: -apple-system-label; --r-ink-secondary: -apple-system-secondary-label; \
+    --r-dim: -apple-system-tertiary-label; --r-accent: -apple-system-control-accent; \
+    --r-hairline: -apple-system-separator; --r-hairline-strong: -apple-system-grid; }\n";
+
+/// `document` as the message window's column flows it (T207): the column's
+/// ground and the Mac's palette, and for correspondence no frame -- the
+/// rules GTK's flowing reader adds, from the one place they are written.
+fn flow(document: &str, shown: Treatment) -> String {
+    use postio_ui::reader::document::{FLOW_CSS, FLOW_FLAT_CSS};
+    let mut css = String::from(MAC_FLOW_PALETTE);
+    css.push_str(FLOW_CSS);
+    if shown == Treatment::AppColours {
+        css.push_str(FLOW_FLAT_CSS);
+    }
+    document.replacen("</style>", &format!("{css}</style>"), 1)
 }

@@ -587,3 +587,35 @@ fn the_reader_s_faces_are_served_by_name_and_nothing_else_is() {
     assert_eq!(session.reader_font("Helvetica.ttf".to_owned()), None);
     session.shutdown();
 }
+
+/// The Mac's message window flows the body in its column, as GTK's open
+/// message does (T207): correspondence loses the reader's frame and its
+/// ground so its lines share the column's edges, and the palette is the
+/// platform's own semantic colours, so it follows light, dark and the
+/// accent. A page of its own (paper) keeps its sheet's inset.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mac_flows_the_body_in_its_column() {
+    let (session, id) = with_body_from("<p>Hi all,</p>", "ada@example.com").await;
+    let app = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(app.treatment_shown, postio_ffi::TreatmentFfi::AppColours);
+    assert!(app.html.contains(shared::FLOW_CSS), "no ground of its own");
+    assert!(
+        app.html.contains(shared::FLOW_FLAT_CSS),
+        "no frame for correspondence"
+    );
+    assert!(
+        app.html.contains("--r-ink: -apple-system-label"),
+        "the platform's ink, which follows the appearance"
+    );
+    session.shutdown();
+
+    let (session, id) = with_body_from(NEWSLETTER, "news@example.com").await;
+    let paper = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(paper.treatment_shown, postio_ffi::TreatmentFfi::Paper);
+    assert!(paper.html.contains(shared::FLOW_CSS));
+    assert!(
+        !paper.html.contains(shared::FLOW_FLAT_CSS),
+        "a sheet keeps its inset"
+    );
+    session.shutdown();
+}

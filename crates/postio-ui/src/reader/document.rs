@@ -724,6 +724,19 @@ impl Treated {
     };
 }
 
+/// What a column that flows the body adds to its document (Focus's open
+/// message): the body takes the column's ground, `--flow-ground`, which the
+/// column defines, and no padding of its own. The same rule as
+/// `postio-widgets`' flowing reader.
+pub const FLOW_CSS: &str = "\nbody { background: var(--flow-ground); padding: 0; }\n";
+
+/// What a flowing column adds for correspondence, which has no page of its
+/// own: the body loses its frame and the padding inside it, so its lines
+/// share both edges with the blocks above them (T207). A page of its own
+/// (paper, a sender's canvas) keeps its sheet.
+pub const FLOW_FLAT_CSS: &str =
+    ".postio-body { padding: 0; border: 0; border-radius: 0; min-height: 0; }\n";
+
 /// The render-mode line's button that keeps the treatment shown for every
 /// message from this sender (T213), while [`RenderModeWords::offer_always`].
 pub const ALWAYS_FOR_SENDER: &str = "Always for this sender";
