@@ -484,6 +484,11 @@ impl FocusController {
         effects
     }
 
+    /// Whether any surface the frontend reported is over the list.
+    pub fn has_surface(&self) -> bool {
+        self.surfaces.top().is_some()
+    }
+
     /// The key context in force: the top surface's, or the list's.
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
         self.surfaces.key_context()

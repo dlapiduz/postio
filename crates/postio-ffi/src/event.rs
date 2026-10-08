@@ -255,6 +255,40 @@ pub enum UiEvent {
         /// How long it stays, when not the usual (an answer's window).
         seconds: Option<u32>,
     },
+    /// Show `message` in the message window: opening it, or in place of the
+    /// one it shows. `index` of `total` is its row's place in the list.
+    FocusOpenMessage {
+        /// The message.
+        message: i64,
+        /// Its row's place.
+        index: u32,
+        /// How many rows the list draws.
+        total: u32,
+    },
+    /// A draft not yet on its way opens in the composer.
+    FocusOpenDraft {
+        /// The draft's message.
+        message: i64,
+    },
+    /// A digest's row opens its window. `delivery` is the digest delivery,
+    /// as `FocusRowFfi.id` carries it.
+    FocusOpenDigest {
+        /// The delivery.
+        delivery: i64,
+    },
+    /// Close this surface, then say `focus_surface_closed`.
+    FocusCloseSurface {
+        /// Which.
+        kind: crate::focus_list::SurfaceKindFfi,
+    },
+    /// The open message does this.
+    FocusReader {
+        /// What.
+        verb: crate::focus_list::ReaderVerbFfi,
+    },
+    /// Nothing is over the list: the keyboard goes back to it, on the
+    /// cursor's row.
+    FocusKeyboardHome,
 }
 
 /// How a Focus toast is drawn.

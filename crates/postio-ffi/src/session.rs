@@ -3737,7 +3737,11 @@ impl Session {
             return crate::KeyOutcomeFfi::Unhandled;
         };
 
-        let key_context = postio_ui::keymap::KeyContext::from(postio_core::Context::from(context));
+        // The controller's, while a surface it knows of is over the list:
+        // the open message's keys are its, whatever the caller saw.
+        let key_context = self.focus_list.key_context().unwrap_or_else(|| {
+            postio_ui::keymap::KeyContext::from(postio_core::Context::from(context))
+        });
         let outcome = self.resolver.lock().expect("resolver lock").press(
             &chord,
             key_context,

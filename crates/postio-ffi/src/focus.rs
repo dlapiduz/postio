@@ -88,6 +88,26 @@ impl Session {
             .input(postio_focus::Input::AtTop(at_top));
     }
 
+    /// A surface opened over Focus's list: the keys are its now, and on the
+    /// Mac it replaces the secondary window that was open (M4).
+    pub fn focus_surface_opened(&self, kind: crate::SurfaceKindFfi) {
+        self.focus_driver()
+            .input(postio_focus::Input::SurfaceOpened(kind.into()));
+    }
+
+    /// A surface over Focus's list closed, however it was closed.
+    pub fn focus_surface_closed(&self, kind: crate::SurfaceKindFfi) {
+        self.focus_driver()
+            .input(postio_focus::Input::SurfaceClosed(kind.into()));
+    }
+
+    /// The open message's More menu and find, as they are now: what Back
+    /// closes first.
+    pub fn focus_reader_state(&self, more_open: bool, finding: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::ReaderState { more_open, finding });
+    }
+
     /// What Undo would take back now, in the toast's words, or `None` when
     /// nothing can be: what the Edit menu names its Undo item with. Read,
     /// not taken; the engine's stack stays the only one (FR-041).

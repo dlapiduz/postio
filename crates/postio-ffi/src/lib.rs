@@ -81,6 +81,7 @@ pub use finder::{FinderAnswerFfi, FinderHitFfi};
 pub use focus::{FocusCountsFfi, FocusStripFfi};
 pub use focus_list::{
     FocusRowActionFfi, FocusRowFfi, FocusRowKindFfi, FocusScopeFfi, LabelPillFfi, MarkerLineFfi,
+    ReaderVerbFfi, SurfaceKindFfi,
 };
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};

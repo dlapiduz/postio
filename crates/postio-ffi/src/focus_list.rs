@@ -49,6 +49,118 @@ impl From<FocusScopeFfi> for ListScope {
     }
 }
 
+/// A surface over Focus's list, which takes the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SurfaceKindFfi {
+    /// One message, in its window.
+    Message,
+    /// A digest's window.
+    Digest,
+    /// The composer.
+    Composer,
+    /// The capture sheet.
+    Capture,
+    /// Settings.
+    Settings,
+    /// The key map.
+    KeyMap,
+    /// Any other dialog or sheet.
+    Dialog,
+    /// The command bar.
+    Bar,
+    /// The Filtered view.
+    Filtered,
+    /// A picker anchored to a row.
+    Picker,
+    /// A row's menu.
+    RowMenu,
+}
+
+impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
+    fn from(kind: SurfaceKindFfi) -> Self {
+        use postio_focus::SurfaceKind as Kind;
+        match kind {
+            SurfaceKindFfi::Message => Kind::Message,
+            SurfaceKindFfi::Digest => Kind::Digest,
+            SurfaceKindFfi::Composer => Kind::Composer,
+            SurfaceKindFfi::Capture => Kind::Capture,
+            SurfaceKindFfi::Settings => Kind::Settings,
+            SurfaceKindFfi::KeyMap => Kind::KeyMap,
+            SurfaceKindFfi::Dialog => Kind::Dialog,
+            SurfaceKindFfi::Bar => Kind::Bar,
+            SurfaceKindFfi::Filtered => Kind::Filtered,
+            SurfaceKindFfi::Picker => Kind::Picker,
+            SurfaceKindFfi::RowMenu => Kind::RowMenu,
+        }
+    }
+}
+
+impl SurfaceKindFfi {
+    /// The controller's kind, as the boundary names it; `None` for one this
+    /// build does not draw.
+    fn of(kind: postio_focus::SurfaceKind) -> Option<Self> {
+        use postio_focus::SurfaceKind as Kind;
+        Some(match kind {
+            Kind::Message => SurfaceKindFfi::Message,
+            Kind::Digest => SurfaceKindFfi::Digest,
+            Kind::Composer => SurfaceKindFfi::Composer,
+            Kind::Capture => SurfaceKindFfi::Capture,
+            Kind::Settings => SurfaceKindFfi::Settings,
+            Kind::KeyMap => SurfaceKindFfi::KeyMap,
+            Kind::Dialog => SurfaceKindFfi::Dialog,
+            Kind::Bar => SurfaceKindFfi::Bar,
+            Kind::Filtered => SurfaceKindFfi::Filtered,
+            Kind::Picker => SurfaceKindFfi::Picker,
+            Kind::RowMenu => SurfaceKindFfi::RowMenu,
+            _ => return None,
+        })
+    }
+}
+
+/// What the open message does, as its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ReaderVerbFfi {
+    /// Close the More menu.
+    CloseMore,
+    /// Close find.
+    CloseFind,
+    /// Find in the message.
+    FindInMessage,
+    /// The next match.
+    FindNext,
+    /// The previous match.
+    FindPrevious,
+    /// App colours or the original.
+    SwitchTreatment,
+    /// The raw source, in place of the content.
+    ViewSource,
+    /// The More menu.
+    ShowMore,
+    /// Step through the conversation.
+    StepThread {
+        /// By how many messages.
+        by: i32,
+    },
+}
+
+impl ReaderVerbFfi {
+    fn of(verb: postio_focus::ReaderVerb) -> Option<Self> {
+        use postio_focus::ReaderVerb as Verb;
+        Some(match verb {
+            Verb::CloseMore => ReaderVerbFfi::CloseMore,
+            Verb::CloseFind => ReaderVerbFfi::CloseFind,
+            Verb::FindInMessage => ReaderVerbFfi::FindInMessage,
+            Verb::FindNext => ReaderVerbFfi::FindNext,
+            Verb::FindPrevious => ReaderVerbFfi::FindPrevious,
+            Verb::SwitchTreatment => ReaderVerbFfi::SwitchTreatment,
+            Verb::ViewSource => ReaderVerbFfi::ViewSource,
+            Verb::ShowMore => ReaderVerbFfi::ShowMore,
+            Verb::StepThread(by) => ReaderVerbFfi::StepThread { by },
+            _ => return None,
+        })
+    }
+}
+
 /// What kind of row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FocusRowKindFfi {
@@ -127,6 +239,9 @@ pub struct FocusRowFfi {
     pub pills: Vec<LabelPillFfi>,
     /// The marker's line, for a marked row.
     pub marker: Option<MarkerLineFfi>,
+    /// Whether opening it writes rather than reads: a draft not yet on its
+    /// way, which opens in the composer.
+    pub writes: bool,
 }
 
 impl FocusRowFfi {
@@ -168,6 +283,7 @@ impl FocusRowFfi {
                     send_state: None,
                     pills: Vec::new(),
                     marker: None,
+                    writes: false,
                 }
             }
         }
@@ -236,6 +352,7 @@ fn conversation_row(
             })
             .collect(),
         marker,
+        writes: !postio_ui::focus_dialog::opens_to_read(message.send_state),
     }
 }
 
@@ -250,6 +367,7 @@ impl RowsView<'_> {
         postio_focus::RowFacts {
             id: postio_model::MessageId::new(if digest { -row.id } else { row.id }),
             digest,
+            writes: row.writes,
             threads: row
                 .threads
                 .iter()
@@ -338,6 +456,13 @@ impl FocusDriver {
                 .handle_on(input, &RowsView(&list))
         };
         self.apply(effects);
+    }
+
+    /// The key context the controller has in force, when a surface it knows
+    /// of is over the list; `None` leaves it to the caller.
+    pub(crate) fn key_context(&self) -> Option<postio_ui::keymap::KeyContext> {
+        let focus = self.focus.lock().expect("focus lock");
+        focus.has_surface().then(|| focus.key_context())
     }
 
     /// The message under the cursor, once its page has landed: what a verb
@@ -497,6 +622,32 @@ impl FocusDriver {
                 });
             }
             Intent::SingleHeading(text) => self.say(UiEvent::FocusHeading { text }),
+            Intent::OpenMessage {
+                message,
+                index,
+                total,
+            } => self.say(UiEvent::FocusOpenMessage {
+                message: message.get(),
+                index,
+                total,
+            }),
+            Intent::OpenDraft { message } => self.say(UiEvent::FocusOpenDraft {
+                message: message.get(),
+            }),
+            Intent::OpenDigest { row } => self.say(UiEvent::FocusOpenDigest {
+                delivery: -row.get(),
+            }),
+            Intent::CloseSurface(kind) => {
+                if let Some(kind) = SurfaceKindFfi::of(kind) {
+                    self.say(UiEvent::FocusCloseSurface { kind });
+                }
+            }
+            Intent::Reader(verb) => {
+                if let Some(verb) = ReaderVerbFfi::of(verb) {
+                    self.say(UiEvent::FocusReader { verb });
+                }
+            }
+            Intent::KeyboardHome => self.say(UiEvent::FocusKeyboardHome),
             Intent::ListToTop => self.say(UiEvent::FocusListToTop),
             Intent::Toast { text, kind } => {
                 let (kind, undoable, seconds) = match kind {

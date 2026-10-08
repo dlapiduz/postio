@@ -327,6 +327,70 @@ async fn clicks_reach_the_controller() {
     session.shutdown();
 }
 
+/// Return opens the cursor's message, `j` in it steps the list behind it,
+/// and Back closes it with the keyboard back on the list (T058, T062).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_open_message_is_the_controllers() {
+    use postio_ffi::UiEvent;
+    let session = inbox_of(&["First", "Second", "Third"]).await;
+    cursor_on_the_first_row(&session).await;
+
+    session.invoke("open_message");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusOpenMessage {
+                index: 0,
+                total: 3,
+                ..
+            }
+        ))
+        .await,
+        "Return opens the first row's message"
+    );
+    session.focus_surface_opened(postio_ffi::SurfaceKindFfi::Message);
+    session.invoke("find_in_message");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusReader {
+                verb: postio_ffi::ReaderVerbFfi::FindInMessage
+            }
+        ))
+        .await,
+        "find is the message's"
+    );
+    session.invoke("next_message");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusOpenMessage { index: 1, .. }
+        ))
+        .await,
+        "j steps the list and the message follows"
+    );
+    session.invoke("back");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusCloseSurface {
+                kind: postio_ffi::SurfaceKindFfi::Message
+            }
+        ))
+        .await,
+        "Back closes the message"
+    );
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusKeyboardHome
+        ))
+        .await,
+        "and the keyboard goes home"
+    );
+    session.shutdown();
+}
+
 /// Open Focus's inbox and wait until the cursor is on its first row: where
 /// a verb with nothing selected acts, as a person would find it.
 pub(crate) async fn cursor_on_the_first_row(session: &Session) {
