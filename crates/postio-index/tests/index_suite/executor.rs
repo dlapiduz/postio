@@ -2149,7 +2149,8 @@ async fn a_forgiving_search_finds_a_misspelling_in_a_body() {
 }
 
 /// A mailbox where a misspelling's neighbours are mostly the wrong word:
-/// sixty trips beside one girl scout troop, and every message saying "your".
+/// sixty trips beside one girl scout troop, every one saying "your" and
+/// "or" -- the word a disjunction becomes if it is lowercased.
 async fn crowded_world() -> (
     postio_storage::Store,
     postio_model::Account,
@@ -2167,7 +2168,7 @@ async fn crowded_world() -> (
             &account,
             mailbox,
             &format!("Your trip {i}"),
-            "Pack light",
+            "Scout the route, or stay home: your trip, your tour",
             at(1),
         )
         .await;
@@ -2177,6 +2178,8 @@ async fn crowded_world() -> (
         ("troop", "Girl scout troop meeting", "Bring the cookies", 3),
         ("tour", "Redfin home tour confirmed", "See you Saturday", 4),
         ("your home", "Your Redfin home value", "Updated estimate", 5),
+        // So "girl" has a word it begins, and is widened too.
+        ("girls", "Girls night", "Bring snacks", 6),
     ] {
         let message = with_body(&connection, &account, mailbox, subject, body, at(hour)).await;
         made.push((name, message.id));

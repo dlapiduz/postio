@@ -1248,37 +1248,51 @@ impl Plan {
             params.push(turso::Value::Text(postio_model::fold::fold(&literal)));
         }
 
-        let positive = request
+        // Each positive word, as the words it may be read as: itself, or in
+        // a forgiving search's second pass the words near it.
+        let positive: Vec<Vec<&str>> = request
             .query
             .searchable_terms()
             .filter(|term| !term.negated)
             .map(
                 |term| match near.get(&term.value).filter(|_| !term.quoted) {
-                    // `("ticket" OR "tickets")`: a disjunction of literals
-                    // rather than the index's own `ticket~1`, which it expands
-                    // only in a query of bare words and reads as plain text
-                    // beside a quoted one or an AND.
-                    Some(words) => format!(
-                        "({})",
-                        words
-                            .iter()
-                            .map(|word| fts_literal(word))
-                            .collect::<Vec<_>>()
-                            .join(" OR ")
-                    ),
-                    None => fts_literal(&term.value),
+                    Some(words) => words.iter().map(String::as_str).collect(),
+                    None => vec![term.value.as_str()],
                 },
             )
-            .collect::<Vec<_>>();
+            .collect();
+        // `("ticket" OR "tickets") AND "southwest"`: a disjunction of
+        // literals rather than the index's own `ticket~1`, which it expands
+        // only in a query of bare words and reads as plain text beside a
+        // quoted one or an AND. The body half folds each word, never the
+        // whole expression: folded, `OR` is the word "or", which nearly
+        // every message says.
+        let expression = |folded: bool| {
+            positive
+                .iter()
+                .map(|words| {
+                    let literals: Vec<String> = words
+                        .iter()
+                        .map(|word| {
+                            let literal = fts_literal(word);
+                            if folded {
+                                postio_model::fold::fold(&literal)
+                            } else {
+                                literal
+                            }
+                        })
+                        .collect();
+                    match literals.as_slice() {
+                        [one] => one.clone(),
+                        many => format!("({})", many.join(" OR ")),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ")
+        };
         if !positive.is_empty() {
-            let expr = positive.join(" AND ");
-            body_match_param = Some(turso::Value::Text(
-                positive
-                    .iter()
-                    .map(|literal| postio_model::fold::fold(literal))
-                    .collect::<Vec<_>>()
-                    .join(" AND "),
-            ));
+            let expr = expression(false);
+            body_match_param = Some(turso::Value::Text(expression(true)));
             // The match itself has moved into the join (see `Plan::join_sql`),
             // because free text now has to reach two indexes and a row that
             // matched in either one is a hit. `MATCH` cannot be written as an
