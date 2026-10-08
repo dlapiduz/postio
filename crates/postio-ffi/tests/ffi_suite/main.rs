@@ -28,6 +28,7 @@ mod facts;
 mod finder;
 mod first_run;
 mod focus;
+mod focus_bar;
 mod focus_scroll;
 mod host;
 mod keys;

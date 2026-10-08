@@ -12,12 +12,16 @@
 //! else here asserts that a thing works; this asserts that nothing was left
 //! out, which is the only shape that catches a command *not* wired.
 //!
-//! A command is answered if one of two things is true:
+//! A command is answered if one of three things is true:
 //!
 //! 1. The bus has a handler for it — `Dispatcher::wired`.
 //! 2. The Swift frontend presents a surface for it rather than dispatching
 //!    it — [`INTERCEPTED`], which is `PostioKit`'s `Intercepted.all`. A
 //!    session cannot open a window, so those stop here by design.
+//! 3. Focus's controller answers it on the list — `Session::invoke` hands
+//!    the controller its own commands before anything else
+//!    (specs/009-focus-macos T046), and what it says reaches Swift as
+//!    `UiEvent`s.
 //!
 //! Or it is not offered on the Mac at all — `postio_core::registry::offered_on`,
 //! or a requirement Focus on Apple does not meet — because the Mac has no
@@ -47,16 +51,6 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// Every entry is a Focus command whose surface the Mac builds in a later
 /// task of specs/009-focus-macos; the task that builds it deletes the line.
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    // The controller's cursor and selection, driven from the Mac's keys.
-    (CommandId::NextMessage, "specs/009-focus-macos T040"),
-    (CommandId::PrevMessage, "specs/009-focus-macos T040"),
-    (CommandId::FirstMessage, "specs/009-focus-macos T040"),
-    (CommandId::LastMessage, "specs/009-focus-macos T040"),
-    (CommandId::ToggleSelection, "specs/009-focus-macos T040"),
-    (CommandId::ExtendSelectionDown, "specs/009-focus-macos T040"),
-    (CommandId::ExtendSelectionUp, "specs/009-focus-macos T040"),
-    (CommandId::SelectAll, "specs/009-focus-macos T040"),
-    (CommandId::ToggleHasAction, "specs/009-focus-macos T040"),
     // The message window's raw source and treatment switch.
     (CommandId::ViewSource, "specs/009-focus-macos T070"),
     (CommandId::SwitchTreatment, "specs/009-focus-macos T070"),
@@ -73,16 +67,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     ),
     // The command bar's chip editor.
     (CommandId::BackToWords, "specs/009-focus-macos T085"),
-    // Go-to keys and pinned searches (spec 007, offered by every app).
-    (CommandId::GoToArchive, "specs/009-focus-macos T082"),
-    (CommandId::GoToSnoozed, "specs/009-focus-macos T082"),
-    (CommandId::GoToOutbox, "specs/009-focus-macos T082"),
-    (CommandId::GoToJunk, "specs/009-focus-macos T082"),
-    (CommandId::GoToTrash, "specs/009-focus-macos T082"),
-    (CommandId::SavedSearch1, "specs/009-focus-macos T082"),
-    (CommandId::SavedSearch2, "specs/009-focus-macos T082"),
-    (CommandId::SavedSearch3, "specs/009-focus-macos T082"),
-    (CommandId::SavedSearch4, "specs/009-focus-macos T082"),
     // Pickers at the row.
     (CommandId::PickerChoose1, "specs/009-focus-macos T089"),
     (CommandId::PickerChoose2, "specs/009-focus-macos T089"),
@@ -91,8 +75,8 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::PickerTypeDate, "specs/009-focus-macos T089"),
     (CommandId::PickerToggle, "specs/009-focus-macos T089"),
     (CommandId::PickerConfirm, "specs/009-focus-macos T089"),
-    // The Filtered view.
-    (CommandId::GoToFiltered, "specs/009-focus-macos T113"),
+    // The Filtered view. `g f` is the controller's now (`FocusShowFiltered`),
+    // and the view it shows is T113's.
     (CommandId::FilteredTab1, "specs/009-focus-macos T113"),
     (CommandId::FilteredTab2, "specs/009-focus-macos T113"),
     (CommandId::FilteredTab3, "specs/009-focus-macos T113"),
@@ -118,6 +102,15 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::CaptureUseSubject, "specs/009-focus-macos T116"),
     (CommandId::CaptureWrite, "specs/009-focus-macos T116"),
 ];
+
+/// Whether Focus's controller answers `id` on the Mac's list, with nothing
+/// over it: what `Session::invoke` routes to it first.
+fn the_controller_answers(id: CommandId) -> bool {
+    postio_focus::FocusController::new(postio_focus::Policy::for_platform(
+        postio_config::paths::Platform::Apple,
+    ))
+    .answers(id)
+}
 
 /// Whether the Mac offers `id` at all. See the module note.
 ///
@@ -168,6 +161,7 @@ async fn every_command_reaches_a_handler_a_window_or_this_boundary() {
         .filter(|id| {
             !wired.contains(id)
                 && !INTERCEPTED.contains(id)
+                && !the_controller_answers(*id)
                 && !known.contains(id)
                 && offered_on_the_mac(*id)
         })
@@ -191,7 +185,10 @@ async fn a_command_that_gained_a_handler_leaves_the_orphan_list() {
     // application, and the next reader believes it.
     let wired = wired().await;
     for &(id, issue) in KNOWN_ORPHANS {
-        let answered = wired.contains(&id) || INTERCEPTED.contains(&id) || !offered_on_the_mac(id);
+        let answered = wired.contains(&id)
+            || INTERCEPTED.contains(&id)
+            || the_controller_answers(id)
+            || !offered_on_the_mac(id);
         assert!(
             !answered,
             "{id} is in KNOWN_ORPHANS citing {issue}, and it is answered now \

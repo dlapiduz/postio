@@ -289,6 +289,44 @@ pub enum UiEvent {
     /// Nothing is over the list: the keyboard goes back to it, on the
     /// cursor's row.
     FocusKeyboardHome,
+    /// Show the command bar, opened `mode`'s way, its field holding `text`
+    /// with `select` selected (the chip being edited), or the caret at the
+    /// end. Said again while the bar is up, it is only new words for the
+    /// field. Say `focus_surface_opened(Bar)` once it shows; the controller
+    /// has already put it on the stack, so that changes nothing.
+    FocusOpenBar {
+        /// How it was opened.
+        mode: crate::focus_bar::BarModeFfi,
+        /// The field's words.
+        text: String,
+        /// What of them is selected.
+        select: Option<crate::focus_bar::BarSelectFfi>,
+    },
+    /// Redraw the bar's lines, whole.
+    FocusBarLines {
+        /// Everything the bar draws under its field.
+        view: crate::focus_bar::BarViewFfi,
+    },
+    /// The list shows this place now: what the header strip's Inbox ▾
+    /// button names.
+    FocusPlace {
+        /// "Inbox", "Receipts", "Snoozed".
+        name: String,
+    },
+    /// Show the folders popover, anchored to Inbox ▾, listing
+    /// `focus_places`.
+    FocusOpenPlaces,
+    /// The places were read again: the popover asks `focus_places` anew.
+    FocusPlacesChanged,
+    /// Show Filtered, the view of what Focus filed away.
+    FocusShowFiltered,
+    /// Run this registry command as the Mac's own -- a line of the bar the
+    /// controller does not answer, such as Compose or Settings -- the way a
+    /// menu item would run it.
+    FocusRun {
+        /// The registry command.
+        command: String,
+    },
 }
 
 /// How a Focus toast is drawn.

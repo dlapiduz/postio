@@ -399,6 +399,8 @@ pub(crate) struct FocusDriver {
     local: async_channel::Sender<UiEvent>,
     /// Pages read from the store, so a test can count what scrolling cost.
     page_reads: std::sync::atomic::AtomicUsize,
+    /// The `config.toml` a saved search is written to, when there is one.
+    config_path: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl FocusDriver {
@@ -414,6 +416,7 @@ impl FocusDriver {
             runtime,
             local,
             page_reads: std::sync::atomic::AtomicUsize::new(0),
+            config_path: Mutex::new(None),
         })
     }
 
@@ -452,6 +455,25 @@ impl FocusDriver {
                 .handle_on(input, &RowsView(&list))
         };
         self.apply(effects);
+    }
+
+    /// `Tab` in the bar: whether the controller used it.
+    pub(crate) fn bar_tab(self: &Arc<Self>) -> bool {
+        let effects = self.focus.lock().expect("focus lock").handle(Input::BarTab);
+        let used = !effects.is_empty();
+        self.apply(effects);
+        used
+    }
+
+    /// The folders popover's places holding `filter`, with their tokens.
+    pub(crate) fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
+        self.focus.lock().expect("focus lock").places(filter)
+    }
+
+    /// Where a saved search is written: the `config.toml` this session
+    /// reads, when it reads a file.
+    pub(crate) fn set_config_path(&self, path: Option<std::path::PathBuf>) {
+        *self.config_path.lock().expect("config path lock") = path;
     }
 
     /// The key context the controller has in force, when a surface it knows
@@ -673,8 +695,42 @@ impl FocusDriver {
                     seconds,
                 });
             }
+            Intent::OpenBar { mode, text, select } => self.say(UiEvent::FocusOpenBar {
+                mode: mode.into(),
+                text,
+                select: select.map(|(start, end)| crate::focus_bar::BarSelectFfi { start, end }),
+            }),
+            Intent::BarLines(view) => self.say(UiEvent::FocusBarLines { view: view.into() }),
+            Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
+            Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
+            Intent::PlacesChanged => self.say(UiEvent::FocusPlacesChanged),
+            Intent::ShowFiltered => self.say(UiEvent::FocusShowFiltered),
+            Intent::Run(command) => self.say(UiEvent::FocusRun {
+                command: command.to_string(),
+            }),
+            Intent::SaveSearch { query } => {
+                let saved = self.save_search(&query);
+                self.input(Input::SearchSaved(saved));
+            }
             _ => {}
         }
+    }
+
+    /// Keep `query` as a saved search in this session's `config.toml`, as
+    /// `postio_ui::saved_search` writes one -- `[saved_searches]` alone, the
+    /// rest of the file as it was -- and answer with the saved searches now,
+    /// or the sentence the toast says instead.
+    fn save_search(&self, query: &str) -> Result<Vec<(String, String)>, String> {
+        let Some(path) = self.config_path.lock().expect("config path lock").clone() else {
+            return Err(postio_ui::focus_target::NO_CONFIG_TO_SAVE.to_owned());
+        };
+        postio_ui::saved_search::apply(&path, postio_ui::saved_search::Verb::Save { query })
+            .and_then(|_| postio_config::Config::load_from_path(&path))
+            .map(|config| postio_session::focus::saved_searches(&config))
+            .map_err(|error| {
+                tracing::warn!(%error, "Focus could not save the search");
+                postio_ui::focus_target::SEARCH_NOT_WRITTEN.to_owned()
+            })
     }
 
     fn ask(self: &Arc<Self>, ticket: Ticket, request: Request) {

@@ -199,7 +199,7 @@ fn the_strip_says_what_gtk_s_strip_says() {
 }
 
 /// A session whose inbox holds one conversation per subject, newest first.
-async fn inbox_of(subjects: &[&str]) -> std::sync::Arc<Session> {
+pub(crate) async fn inbox_of(subjects: &[&str]) -> std::sync::Arc<Session> {
     let database = test_support::memory().await;
     {
         let connection = database.connect().await.expect("a connection");

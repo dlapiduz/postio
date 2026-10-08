@@ -1823,6 +1823,7 @@ impl Session {
             // no prompt. The moment a slice *does* read a secret, this is
             // where a `MemorySecretStore` goes.
             let config = load_config(&source);
+            let saved = postio_session::focus::saved_searches(&config);
             let sync_config = config.sync;
             // Honour `with_secrets` here too. It was read only on the real
             // path, so an in-memory session that had been handed a test
@@ -1895,6 +1896,7 @@ impl Session {
                 _scratch: Some(scratch),
             });
             session.follow_config(&source);
+            session.prime_focus(saved, &source);
             return Ok(session);
         }
 
@@ -1929,6 +1931,7 @@ impl Session {
                 .map_err(SessionError::from_refusal)?;
 
         let config = load_config(&source);
+        let saved = postio_session::focus::saved_searches(&config);
         let keys = config.keys;
         let sync_config = config.sync;
         let ui_config = config.ui;
@@ -1989,6 +1992,7 @@ impl Session {
             ),
         });
         session.follow_config(&source);
+        session.prime_focus(saved, &source);
         Ok(session)
     }
 
@@ -3827,11 +3831,22 @@ impl Session {
                 *session.resolver.lock().expect("resolver lock") = build_resolver(&keys);
                 *session.keys.lock().expect("keys lock") = keys;
                 *session.keymap.lock().expect("keymap lock") = None;
+                session
+                    .focus_list
+                    .input(postio_focus::Input::Keymap(session.keymap()));
                 let _ = session.local.0.try_send(UiEvent::KeymapChanged);
+            }
+            if update.changed.filters {
+                session.focus_list.input(postio_focus::Input::SavedSearches(
+                    postio_session::focus::saved_searches(service.config()),
+                ));
             }
             if update.changed.focus {
                 *session.focus_config.lock().expect("focus config lock") =
                     service.config().focus.clone();
+                session.focus_list.input(postio_focus::Input::Filtering(
+                    service.config().focus.filtering,
+                ));
                 session
                     ._host
                     .enable_focus(postio_host::FocusSetup::from_config(
@@ -3846,6 +3861,21 @@ impl Session {
                 tracing::warn!(%error, "config.toml will not be watched; edits need a restart")
             }
         }
+    }
+
+    /// Tell Focus's controller what the configuration says it needs: the
+    /// pinned saved searches (`alt+1`-`4`), the keys in force (the bar's
+    /// keycaps), whether Focus files mail away (the popover's Filtered), and
+    /// the file a saved search is written to. `follow_config` keeps them
+    /// current.
+    fn prime_focus(&self, saved: Vec<(String, String)>, source: &ConfigSource) {
+        let driver = &self.focus_list;
+        driver.set_config_path(source.path());
+        driver.input(postio_focus::Input::SavedSearches(saved));
+        driver.input(postio_focus::Input::Keymap(self.keymap()));
+        driver.input(postio_focus::Input::Filtering(
+            self.focus_config().filtering,
+        ));
     }
 
     /// `[focus]` as it stands.
