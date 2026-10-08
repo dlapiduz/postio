@@ -506,6 +506,14 @@ impl FocusDriver {
     /// The row at `position`, or `None` while its page is on its way: a miss
     /// asks for the page behind the caller, and `FocusPageReady` says when to
     /// draw it. Synchronous; what the table calls for every visible row.
+    /// The row standing for `message`, if its page is resident; reads
+    /// nothing.
+    pub(crate) fn row_of(&self, message: i64) -> Option<FocusRowFfi> {
+        let list = self.list.lock().expect("list lock");
+        let position = list.position_of(postio_model::MessageId::new(message))?;
+        list.resident_at(position).cloned()
+    }
+
     pub(crate) fn row_at(self: &Arc<Self>, position: u32) -> Option<FocusRowFfi> {
         let (wanted, stamp) = {
             let mut list = self.list.lock().expect("list lock");

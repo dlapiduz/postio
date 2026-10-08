@@ -636,6 +636,15 @@ async fn the_message_window_s_chrome_is_composed_in_rust() {
         postio_ui::format::human_size(48_000)
     );
 
+    // The card follows the message, not the place: the position line's
+    // index counts messages, and a list with a digest row above draws the
+    // row somewhere else. Asked at another index, the card is still there.
+    let elsewhere = session.focus_message_view(latest, 4, 9);
+    assert!(
+        elsewhere.marker.is_some(),
+        "the marked message has its card wherever its row stands"
+    );
+
     // `[`: the earlier message, in the same window. Its place in the
     // conversation is said, it has no card (the marker is the latest's),
     // and `]` comes back.

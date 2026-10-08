@@ -117,11 +117,13 @@ impl Session {
     ///
     /// A store read, so never on the main actor.
     pub fn focus_message_view(&self, message: i64, index: u32, total: u32) -> FocusMessageViewFfi {
-        // The row's marker is the list's, read with its page: the card is
-        // the marked message's, so a message stepped to has none.
+        // The marker is the list row's, read with its page: the card is
+        // the marked message's, so a message `[` stepped to has none. Found
+        // by the message, not by `index`, which counts messages where the
+        // list also draws digest rows.
         let row = self
             .focus_driver()
-            .row_at(index)
+            .row_of(message)
             .filter(|row| row.id == message);
         crate::session::blocking(self.focus_message_answers(message, index, total, row))
     }
