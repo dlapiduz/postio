@@ -91,10 +91,12 @@ frontend with the engine's Focus pass on, and the Swift package split.
   - `postio-ui/tests/ui_suite/{keymap_api.rs,keybindings_doc.rs}`;
   - the regenerated `docs/keybindings.md`.
 
-  This is behaviour-neutral for Linux, so it lands **main·fix**
+  It lands on `feature/focus-macos`, **not** `main`: until that branch
+  lands, `main`'s Mac app is still the three-pane app and uses these
+  commands every day
 - [ ] T013 Point the FFI at `Frontend::Focus` in `crates/postio-ffi/src/session.rs:422,4365` and `crates/postio-ffi/src/settings.rs:316`. Update `INTERCEPTED` (`crates/postio-ffi/src/registry.rs:275-345`) and its Swift mirror `Intercepted` (`macos/Sources/PostioKit/Accessibility.swift`) to drop the three-pane entries. Make T010 green
 - [ ] T014 Write a failing ffi_suite test: a session opened with `[focus]` enabled files a seeded promotion and marks a seeded question (the markers appear in `focus_counts().has_action`)
-- [ ] T015 Call `Host::enable_focus(FocusSetup::from_config(config.focus, Some(config_path)))` in `crates/postio-ffi/src/session.rs` after the host starts and before `start_syncing`, as `crates/postio-gtk/src/startup.rs:116,174` does (R8). Make T014 green
+- [ ] T015 (`feature/focus-macos` only: on `main` it would start filing the three-pane Mac app's mail away) Call `Host::enable_focus(FocusSetup::from_config(config.focus, Some(config_path)))` in `crates/postio-ffi/src/session.rs` after the host starts and before `start_syncing`, as `crates/postio-gtk/src/startup.rs:116,174` does (R8). Make T014 green
 - [ ] T016 Write a failing ffi_suite test: rewriting `[keys]` in the session's `config.toml` changes what `key()` resolves within 1 s, and emits `UiEvent::KeymapChanged`
 - [ ] T017 Start `ConfigService::watch` in `crates/postio-ffi/src/session.rs`:
   - on `ConfigChanged.keys`, rebuild the resolver and emit `UiEvent::KeymapChanged`;
