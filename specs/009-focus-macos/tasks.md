@@ -633,16 +633,36 @@ to a folder, and undo each with the pill and ⌘Z.
 
 ### Controller slice 10: states (**main·S10**)
 
-- [ ] T095 [US7] Write failing tests in `crates/postio-focus/tests/states.rs`:
+- [x] T095 [US7] Write failing tests in `crates/postio-focus/tests/states.rs`:
   - `ConnectionChanged`/`SyncProgress`/`BackfillProgress` produce `Banner` and `SyncLabel` intents per `postio_ui::focus_state::banner`;
   - an empty inbox produces `EmptyOrList(Some(page))` with only the shortcuts that exist;
   - a sign-in failure produces the banner with `UpdateCredential`.
-- [ ] T096 [US7] Move `hear_sync`, `note_account`, `show_state` and `announce` (`crates/postio-gtk/src/window.rs` ~3748-3803, 3048) into `crates/postio-focus/src/states.rs`. The guards are focus_suite `state`, `starts_offline`, `idle_passes` and `empty`. Make T095 green; land slice 10
+- [x] T096 [US7] Move `hear_sync`, `note_account`, `show_state` and `announce` (`crates/postio-gtk/src/window.rs` ~3748-3803, 3048) into `crates/postio-focus/src/states.rs`. The guards are focus_suite `state`, `starts_offline`, `idle_passes` and `empty`. Make T095 green; land slice 10
+
+  *As built (controller):* `crates/postio-focus/src/states.rs`, tests in `tests/states.rs` (11, all seen red against the new types before any behaviour). The words stay `postio_ui::focus_state`'s and the per-account state `postio_ui::status::Trackers`'; the controller keeps who each account is, when mail last synced, and what it last said, and says each of the three only when it changes.
+  - **Inputs:** `Event(..)` as before (sync events now reach the states too); `Config(FocusConfig)`, `[focus]` whole: the empty inbox's next digest, and Filtered offered only while filtering is on (it sets the bar's filtering too, so `Filtering(bool)` is no longer needed by a frontend that sends it); `Clock` (as slice 9's) is when a pass that finished says it synced.
+  - **Intents:** `Banner(Option<BannerView>)`; `SyncLabel(postio_ui::focus_state::SyncLabel)`; `Empty(Option<postio_ui::focus_state::EmptyInbox>)`. `BannerView{heading, sentence, button: Option<BannerButton{label, command, key}>, progress: Option<(done, total)>, error, account: Option<AccountId>}`: `account` is the account a refused or missing password is for. Retry is `Refresh`, "Update password…" is `UpdateCredential`.
+  - **Requests:** `Accounts`, answered by `Reply::Accounts(Result<AccountsRead{facts: Vec<AccountFacts>, last_synced}, String>)`: every enabled account's server, address and name, and the newest folder's last completed sync (GTK's window read the same when its accounts landed). Asked once per account, on the first sync word about an account the controller does not know. Its reply is not dropped by `invalidate()`: who an account is does not go stale with the list.
+  - **Rules kept from GTK:** the first word about an account is news even when its tracker does not change (a tracker starts Offline); a list pass reaching its total is when mail last synced; an empty place says why only once its first page has landed (`empty_place`, the folder named by the last `Place`); Focus's inbox with no conversations says `empty_inbox(..).saying(inbox_saying(..))`, so before a pass has finished it offers only Compose; the has-action filter showing nothing draws nothing.
+  - **Decisions:** the list is what a frontend draws until told otherwise, so `Empty(None)` is said only to take a page away. After `Keymap` or `Config`, what has been said is said again when it reads differently (a banner's key, a shortcut's key). A first sync's progress crosses as counts, not a fraction.
+  - **Not here:** `announce` (the notification decision) did not move: it needs the notifier, which is the host's and the frontends', and the Mac's `MailNotifier` already decides through `postio_ui::notify`. GTK has not adopted the slice, because it cannot be built on this Mac; its feed ignores the new intents and makes one extra `Accounts` read per account. The focus_suite guards were not run.
 
 ### FFI and Mac: states
 
-- [ ] T097 [US7] Write a failing ffi_suite test: `start_over(store_path)` on a store marked from another build leaves a fresh store that `Session::open_at` opens
-- [ ] T098 [US7] Export `start_over(store_path)` over `postio_session::start_over_at` in `crates/postio-ffi/src/lib.rs`, with the store key from the keyring. Make T097 green
+- [x] T097 [US7] Write a failing ffi_suite test: `start_over(store_path)` on a store marked from another build leaves a fresh store that `Session::open_at` opens
+- [x] T098 [US7] Export `start_over(store_path)` over `postio_session::start_over_at` in `crates/postio-ffi/src/lib.rs`, with the store key from the keyring. Make T097 green
+
+  *As built (for T100):* a free function, since there is no session when the store will not open: `start_over(store_path: Option<String>) throws(SessionError) -> StartedOverFfi{set_aside: String, accounts: u32}` (`None` is the usual path). It blocks, as `Session.openAt` does: call it off the main actor, then open again. It reads the store key from the Keychain as opening does, sets the database, its sidecars and its blobs aside in `set-aside/<when>/` beside the store (not deleted), and carries the accounts across. A failure is `StoreUnavailable{message}` with a sentence (another Postio has the store open, or the move failed), or `KeyringLocked`. The test, `store_on_disk.rs::starting_over_a_store_from_another_build_leaves_one_that_opens`, uses the Rust-only `start_over_with(SessionOptions)` to inject a secret store.
+
+  *As built (FFI, for T099):* `crates/postio-ffi/src/focus_states.rs`, the events in `event.rs`, the driver in `focus_list.rs`; tests in `ffi_suite/focus_states.rs`.
+  - **Events** (appended to `UiEvent`), each said only when it changes:
+    - `FocusBanner{banner: Option<BannerFfi>}`: show the strip full width under the header strip, or take it away with `None`.
+    - `FocusSyncLabel{text, mark: SyncMarkFfi}`: the toolbar's label. `SyncMarkFfi` is `Synced`, `Syncing`, `Offline` or `Failed`.
+    - `FocusEmpty{page: Option<EmptyPageFfi>}`: draw the page in the list's place, or the list again with `None`. The list is what is drawn until this says otherwise.
+    - `BackfillProgress{account, done, total}`: typed now, where it crossed as `Other`. The controller already folds it into the label.
+  - **`BannerFfi`:** `heading` (bold), `sentence`, `button: Option<BannerButtonFfi{label, command, key}>`, `progress: Option<BannerProgressFfi{done, total}>` (a first sync's bar), `error` (draw in `systemRed` at a low opacity), `account: Option<i64>`. A click runs `button.command` as a menu item would: `refresh` is the host's, through `invoke`; `update_credential` is in `Intercepted`, so Swift opens `AccountRepair` for `banner.account`.
+  - **`EmptyPageFfi`:** `heading`, `detail`, `next_digest`, `shortcuts: Vec<EmptyShortcutFfi{key, words, command}>`. A shortcut's click is `invoke(command)`; draw `key` as a keycap before `words`.
+  - **Session:** `[focus]` reaches the controller whole (`Input::Config`) at open and on every change of the file.
 - [ ] T099 [US7] Append a typed `UiEvent::BackfillProgress{account, done, total}` (`crates/postio-ffi/src/event.rs`), then implement the banner strip and the empty state in `macos/Sources/PostioKit/BannerStrip.swift` and `EmptyInbox.swift`:
   - full width under the header strip; the error strip in `systemRed` at low opacity;
   - Retry, and "Update password…" opening a sheet that stores through the engine's credential store (Keychain), reusing `AccountRepair.swift`.
@@ -660,8 +680,23 @@ show the new key without a restart.
 
 ### Controller slice 11: keymap reload and the key map (**main·S11**)
 
-- [ ] T102 [US8] Write failing tests in `crates/postio-focus/tests/keymap.rs`: an `Input::Keymap` rebuilds the resolver; the new binding resolves; `?` toggles `OpenKeyMap`/`CloseTop`
-- [ ] T103 [US8] Move `set_keymap` (`crates/postio-gtk/src/window.rs:716`) and the CheatSheet toggle into `crates/postio-focus/src/keys.rs`. The guards are focus_suite `keycaps` and `keymap`. Make T102 green; land slice 11
+- [x] T102 [US8] Write failing tests in `crates/postio-focus/tests/keymap.rs`: an `Input::Keymap` rebuilds the resolver; the new binding resolves; `?` toggles `OpenKeyMap`/`CloseTop`
+- [x] T103 [US8] Move `set_keymap` (`crates/postio-gtk/src/window.rs:716`) and the CheatSheet toggle into `crates/postio-focus/src/keys.rs`. The guards are focus_suite `keycaps` and `keymap`. Make T102 green; land slice 11
+
+  *As built (controller):* `crates/postio-focus/src/keys.rs`, tests in `tests/keymap.rs` (6, all seen red against the new types before any behaviour).
+  - **API:** `FocusController::press(&chord, KeyContext, in_text_entry, Instant) -> postio_ui::keymap::Outcome` is the one resolver a frontend presses keys through, built for Focus's commands (`Resolver::from_commands_for(.., Frontend::Focus)`) from the keymap in force; it resolves and does not run. `FocusController::keymap() -> &Keymap` is the keymap every key the controller spells reads.
+  - **Inputs:** `Keymap(Keymap)` (slice 8's) now rebuilds the resolver on the next key, dropping a half-typed sequence, and draws again what is on screen spelling a key: the bar's lines, the picker, the banner's button and the empty page's shortcuts.
+  - **Intents:** `OpenKeyMap`. `CheatSheet` is the controller's (`answers` is true): it opens the key map over whatever is up and puts `KeyMap` on the stack at once; `?` or Back with it on top says `CloseSurface(KeyMap)`, and the frontend's `SurfaceClosed(KeyMap)` brings `KeyboardHome`.
+  - **Behaviour change:** while the key map or a dialog is on top, every other command is swallowed (`answers` is true, nothing comes back) rather than acting on the list behind it. That is GTK's dialog close rule, which passed the key to the dialog. Quit is the exception.
+  - **Not here:** GTK has not adopted the slice (it does not build on this Mac): its window keeps its own resolver and dialog. The focus_suite guards were not run.
+
+  *As built (FFI, for T104-T106):* `crates/postio-ffi/src/focus_keymap.rs`, the event in `event.rs`; tests in `ffi_suite/focus_keymap.rs` and `ffi_suite/registry.rs`.
+  - **Keys:** `Session::key` presses through the controller's resolver; the session's own is gone. `follow_config` already sent `Input::Keymap` before `KeymapChanged`, so by the time Swift hears `KeymapChanged`, `key`, `bindingsFor`, `focus_key_map()` and every keycap the controller sends are the new keys.
+  - **Event:** `FocusOpenKeyMap{sheet: KeyMapSheetFfi}`: show the key map as a sheet. Say `focus_surface_opened(KeyMap)` when it shows (a harmless repeat); it closes on `FocusCloseSurface{kind: KeyMap}`, and any other way it closes (the close button, a click outside) is `focus_surface_closed(KeyMap)`. On `KeymapChanged` while it is up, draw `focus_key_map()` again.
+  - **`KeyMapSheetFfi`:** `title` ("Keys"), `subtitle` (the Mac's: no "Ctrl becomes ⌘"), `close_keys` (the keys of `cheat_sheet` and `back`, as `[keys]` spells them) with `close_or` ("or") and `close_word` ("close"), `groups: Vec<KeyMapGroupFfi{title, rows: Vec<KeyMapRowFfi{command, title, keys}>}>`, `columns: Vec<Vec<u32>>` (indices into `groups`, four columns, a group kept whole, `keymap_sheet::pack_columns`), `rebind_footer` ("Rebind anything in ~/Library/Application Support/Postio/config.toml under [keys]", C3), `mouse_footer`. The groups are `postio_ui::keymap_sheet::key_map_on(.., Focus, Apple)`, the key map GTK draws less what the Mac does not offer (`DarkenMessage`). Keys are `[keys]` spellings (`a`, `cmd+shift+a`, `g i`); render them as `MenuPlan` does.
+  - **Export:** `focus_key_map() -> KeyMapSheetFfi`, read now. It replaces `cheatSheetSections` for Focus. That one is the classic grouping (`postio_ui::cheatsheet`), and stays only while the classic views do.
+  - **For T106:** `cheat_sheet` is still in `INTERCEPTED` (Rust's `registry::INTERCEPTED` and Swift's `Intercepted`), so Swift's old `CheatSheet` catches `?` first. Drop it from both lists so `?` reaches `invoke`, as T085 does for the bar's keys.
+  - **For T104-T105:** no FFI change was needed. A command's `menu` (in `commands()`) is set exactly when Focus offers the command on this platform (`ffi_suite/registry.rs::the_menus_hold_what_focus_offers_here_and_nothing_else`; it passed on arrival, so it guards a property and found no bug). So `MenuPlan.build` over `PostioRegistry.commands` and `menus()` is Focus's menu bar. `bindingsFor(id)` is the key in force, current once `KeymapChanged` is heard.
 
 ### Mac: the key map and the menu bar
 
