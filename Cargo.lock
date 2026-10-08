@@ -4769,6 +4769,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-demo"
+version = "0.4.2"
+dependencies = [
+ "chrono",
+ "postio-index",
+ "postio-model",
+ "postio-storage",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "postio-ffi"
 version = "0.4.2"
 dependencies = [
@@ -4841,6 +4853,7 @@ dependencies = [
  "postio-client",
  "postio-config",
  "postio-core",
+ "postio-demo",
  "postio-gtk",
  "postio-host",
  "postio-index",

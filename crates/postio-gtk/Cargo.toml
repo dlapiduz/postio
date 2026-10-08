@@ -26,6 +26,7 @@ path = "src/main.rs"
 # default: the seeds and the in-memory store are test-support code and must
 # not reach a normal build.
 demo = [
+    "dep:postio-demo",
     "dep:postio-index",
     "dep:postio-storage",
     "postio-storage/test-support",
@@ -80,6 +81,7 @@ postio-index = { workspace = true, optional = true }
 # `demo` feature, which is where the runner lives, builds it
 # (specs/008-storyboards).
 postio-storyboard = { workspace = true, optional = true }
+postio-demo = { workspace = true, optional = true }
 # The demo's store; only the `demo` feature builds it.
 postio-storage = { workspace = true, optional = true }
 # The demo's blob directory; only the `demo` feature builds it.
