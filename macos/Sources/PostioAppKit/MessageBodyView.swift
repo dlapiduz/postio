@@ -170,11 +170,12 @@ struct MessageWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let coordinator = context.coordinator
-        let view = MessageBodySurface(
-            frame: .zero,
-            configuration: ReaderConfiguration.hardened(
-                cidHandler: coordinator.cid, baseHandler: coordinator.closed))
-        view.configuration.setURLSchemeHandler(coordinator.font, forURLScheme: ReaderConfiguration.fontScheme)
+        let configuration = ReaderConfiguration.hardened(
+            cidHandler: coordinator.cid, baseHandler: coordinator.closed)
+        // Before the view is made: a web view copies its configuration, and
+        // a handler set on the copy afterwards is never asked.
+        configuration.setURLSchemeHandler(coordinator.font, forURLScheme: ReaderConfiguration.fontScheme)
+        let view = MessageBodySurface(frame: .zero, configuration: configuration)
         view.navigationDelegate = coordinator.policy
         view.uiDelegate = coordinator.policy
         view.allowsBackForwardNavigationGestures = false
