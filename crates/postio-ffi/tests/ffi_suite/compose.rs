@@ -1403,3 +1403,42 @@ fn the_composers_words_are_postio_uis() {
     assert!(postio_ffi::remind_meaning(Some(at)).starts_with("Remind if no reply \u{b7} "));
     assert_eq!(postio_ffi::remind_presets().len(), 4);
 }
+
+/// The From picker: choosing another account moves the draft to it, saved
+/// or not, and it is sent from there.
+#[tokio::test(flavor = "multi_thread")]
+async fn choosing_another_account_moves_the_draft_to_it() {
+    let (session, database, _) = a_message_to_answer().await;
+    let second = {
+        let connection = database.connect().await.expect("a connection");
+        let mut account = postio_model::Account::new(
+            "Work",
+            EmailAddress::new(Some("Test User"), "work@example.org"),
+        );
+        account.incoming.host = "imap.example.org".to_owned();
+        account.outgoing.host = "smtp.example.org".to_owned();
+        postio_storage::repository::AccountRepository::new(&connection)
+            .create(&mut account)
+            .await
+            .expect("a second account");
+        account.id
+    };
+    let mut draft = session.new_draft().await.expect("a draft");
+    draft.subject = "From work".to_owned();
+    let saved = session.save_draft(draft).await.expect("saved");
+    assert_ne!(saved.account, i64::from(second), "written from the first");
+
+    let mut moved = saved.clone();
+    moved.account = second.into();
+    let saved = session.save_draft(moved).await.expect("saved again");
+    let connection = database.connect().await.expect("a connection");
+    let stored = DraftRepository::new(&connection)
+        .get(postio_model::ids::DraftId::new(saved.id))
+        .await
+        .expect("a read")
+        .expect("the draft is in the store");
+    assert_eq!(
+        stored.account_id, second,
+        "the draft moved to the account chosen"
+    );
+}

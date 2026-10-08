@@ -234,8 +234,17 @@ pub fn recipient_summary(draft: DraftFfi) -> Option<String> {
 /// `base` is what the boundary last knew about this draft — its kind, its
 /// ancestor, the `Message-ID` reserved for it — none of which the frontend
 /// edits and all of which would be lost by rebuilding from the fields alone.
+/// The account is the one field of those the frontend may change: the From
+/// picker (specs/009-focus-macos T079).
 pub(crate) fn from_ffi(base: Draft, edited: &DraftFfi) -> Draft {
     let mut draft = base;
+    // The From picker: another account chosen moves the draft to it, and
+    // the identity it signed as goes with the account it belonged to.
+    let account = postio_model::AccountId::new(edited.account);
+    if edited.account > 0 && draft.account_id != account {
+        draft.account_id = account;
+        draft.identity_id = None;
+    }
     draft.to = parse(&edited.to);
     draft.cc = parse(&edited.cc);
     draft.bcc = parse(&edited.bcc);
