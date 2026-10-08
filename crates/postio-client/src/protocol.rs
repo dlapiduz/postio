@@ -221,6 +221,10 @@ pub enum Req {
     /// Focus's header strip: its conversations, unread and has-action
     /// counts (spec 007 FR-018, T048).
     FocusCounts,
+    /// What this client's Undo would take back now, in the toast's words:
+    /// what a platform's Edit menu names its Undo item with
+    /// (specs/009-focus-macos T044).
+    UndoTop,
     /// The message a reply or forward is built from, and its account.
     ReplySource(MessageId),
     /// The local draft behind a Drafts row, if there is one.
@@ -607,6 +611,8 @@ pub enum Resp {
     ThreadLabels(Vec<(postio_model::ThreadId, postio_model::Label)>),
     /// Focus's counts.
     FocusCounts(FocusCounts),
+    /// What Undo would take back, or `None` when nothing can be.
+    UndoTop(Option<String>),
     /// A reply's source message and its account.
     ReplySource(Option<Box<(postio_model::Message, Account)>>),
     /// A draft, or none.

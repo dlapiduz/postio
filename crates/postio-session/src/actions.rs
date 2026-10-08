@@ -479,6 +479,18 @@ impl Actions {
         Ok(())
     }
 
+    /// What Undo would take back now, in the toast's words, or `None` when
+    /// there is nothing it can: the unit is read, not taken. What a
+    /// platform's Edit menu names its Undo item with (specs/009-focus-macos
+    /// T044).
+    pub fn peek_description(&self) -> Option<String> {
+        self.undo
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .peek()
+            .map(UndoEntry::description)
+    }
+
     /// Take back the last undoable unit.
     ///
     /// Nothing to take back is a rejection rather than a failure: pressing `u`
@@ -3134,6 +3146,42 @@ mod tests {
                 "one `u` takes all three back"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn the_undo_top_is_named_without_taking_it_back() {
+        // What Edit > Undo names (specs/009-focus-macos T043): the toast's
+        // words, read without consuming the unit.
+        let world = world().await;
+        assert_eq!(world.actions.peek_description(), None, "nothing yet");
+        let mut messages: Vec<MessageId> = Vec::new();
+        for _ in 0..3 {
+            messages.push(world.message(world.inbox, &[]).await);
+        }
+        world
+            .looking_at(world.inbox, &messages, Some(messages[0]))
+            .await;
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .await
+            .expect("archive");
+        assert_eq!(
+            world.actions.peek_description().as_deref(),
+            Some("Archived 3 messages")
+        );
+        assert_eq!(
+            world.actions.peek_description().as_deref(),
+            Some("Archived 3 messages"),
+            "reading it twice takes nothing back"
+        );
+        world.run(Command::Undo).await.expect("undo");
+        assert_eq!(
+            world.actions.peek_description(),
+            None,
+            "once undone there is nothing left to name"
+        );
     }
 
     #[tokio::test]

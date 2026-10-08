@@ -286,7 +286,7 @@ impl Fixture {
     }
 
     /// Parses this fixture into the domain [`Message`], via
-    /// [`mime::parse`](crate::mime::parse).
+    /// [`mime::parse`].
     ///
     /// A thin convenience so threading, search and reader tests do not each
     /// invoke the parser and [`ParsedMessage::into_message`](crate::mime::ParsedMessage::into_message)
