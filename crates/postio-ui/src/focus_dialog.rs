@@ -11,6 +11,7 @@
 //! ([`send_verbs`], T239), since that is a rule too and not a widget's.
 
 use postio_body::treatment::Treatment;
+use postio_config::paths::Platform;
 use postio_core::CommandId;
 
 /// The narrowest the dialog gets.
@@ -58,9 +59,7 @@ pub const SENDER_ROW_GAP: i32 = 2;
 /// The dialog's width in a window `window` pixels wide:
 /// `clamp(640, W - 2 * max(96, 0.18 * W), 820)`, rounded to the pixel.
 pub fn dialog_width(window: i32) -> i32 {
-    let window = f64::from(window);
-    let side = SIDE_MIN.max(SIDE_SHARE * window);
-    ((window - 2.0 * side).round() as i32).clamp(DIALOG_MIN, DIALOG_MAX)
+    Geometry::LINUX.dialog_width(window)
 }
 
 /// The dialog's height in a window `window` pixels tall: 40px off each end.
@@ -71,7 +70,7 @@ pub fn dialog_height(window: i32) -> i32 {
 /// Whether a dialog `dialog` pixels wide folds Label, Move and Delete into
 /// More (`.`).
 pub fn folds_into_more(dialog: i32) -> bool {
-    dialog < MORE_BELOW
+    Geometry::LINUX.folds_into_more(dialog)
 }
 
 /// The content column's width in a dialog `dialog` pixels wide, for a body
@@ -80,11 +79,102 @@ pub fn folds_into_more(dialog: i32) -> bool {
 /// thread marker, subject, labels, sender block, action card, body and
 /// attachments -- shares it.
 pub fn column_width(dialog: i32, treatment: Treatment) -> i32 {
-    match treatment {
-        Treatment::AppColours => COLUMN_APP_COLOURS.min(dialog - COLUMN_APP_COLOURS_INSET),
-        Treatment::Paper => COLUMN_PAPER.min(dialog - COLUMN_PAPER_INSET),
+    Geometry::LINUX.column_width(dialog, treatment)
+}
+
+/// The digest window's size on Linux (contracts/focus-surface.md): fixed,
+/// whatever the window.
+pub const DIGEST_LINUX: (i32, i32) = (980, 820);
+
+/// How big the open message and the digest are, and how wide their column,
+/// on one platform.
+///
+/// The free functions above are Linux's numbers and stay its API;
+/// [`Geometry::for_platform`] gives the same answers for
+/// [`Platform::Freedesktop`] and the Mac pack's for [`Platform::Apple`]
+/// (specs/009-focus-macos M1). The Mac's message window is narrower, and its
+/// column wider, because its window is a window of its own beside a list
+/// that stays undimmed, and its digest is the message window's size so that
+/// opening a reference inside it never resizes it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geometry {
+    dialog_min: i32,
+    dialog_max: i32,
+    more_below: i32,
+    app_column: i32,
+    app_inset: i32,
+    paper_column: i32,
+    paper_inset: i32,
+    digest: Option<(i32, i32)>,
+}
+
+impl Geometry {
+    /// Linux's: the dialog over a dimmed list (spec 007 FR-039).
+    pub const LINUX: Geometry = Geometry {
+        dialog_min: DIALOG_MIN,
+        dialog_max: DIALOG_MAX,
+        more_below: MORE_BELOW,
+        app_column: COLUMN_APP_COLOURS,
+        app_inset: COLUMN_APP_COLOURS_INSET,
+        paper_column: COLUMN_PAPER,
+        paper_inset: COLUMN_PAPER_INSET,
+        digest: Some(DIGEST_LINUX),
+    };
+
+    /// The Mac's: a window of its own (spec 009 M1, the Mac pack's
+    /// `message-window/SPEC.md` §1 and §3).
+    pub const MAC: Geometry = Geometry {
+        dialog_min: 640,
+        dialog_max: 720,
+        more_below: 700,
+        app_column: 560,
+        app_inset: 80,
+        paper_column: 640,
+        paper_inset: 80,
+        digest: None,
+    };
+
+    /// The geometry `platform`'s Focus app draws with.
+    pub const fn for_platform(platform: Platform) -> Geometry {
+        match platform {
+            Platform::Freedesktop => Geometry::LINUX,
+            Platform::Apple => Geometry::MAC,
+        }
     }
-    .max(0)
+
+    /// The message's width beside a main window `window` wide:
+    /// `clamp(min, W - 2 * max(96, 0.18 * W), max)`, rounded to the pixel.
+    pub fn dialog_width(&self, window: i32) -> i32 {
+        let window = f64::from(window);
+        let side = SIDE_MIN.max(SIDE_SHARE * window);
+        ((window - 2.0 * side).round() as i32).clamp(self.dialog_min, self.dialog_max)
+    }
+
+    /// The message's height beside a main window `window` tall.
+    pub fn dialog_height(&self, window: i32) -> i32 {
+        dialog_height(window)
+    }
+
+    /// Whether a message `dialog` wide folds Label, Move and Delete into More.
+    pub fn folds_into_more(&self, dialog: i32) -> bool {
+        dialog < self.more_below
+    }
+
+    /// The content column in a message `dialog` wide, for `treatment`.
+    pub fn column_width(&self, dialog: i32, treatment: Treatment) -> i32 {
+        match treatment {
+            Treatment::AppColours => self.app_column.min(dialog - self.app_inset),
+            Treatment::Paper => self.paper_column.min(dialog - self.paper_inset),
+        }
+        .max(0)
+    }
+
+    /// The digest's width and height beside a main window `width` by
+    /// `height`: fixed on Linux, the message window's on the Mac.
+    pub fn digest_size(&self, width: i32, height: i32) -> (i32, i32) {
+        self.digest
+            .unwrap_or_else(|| (self.dialog_width(width), self.dialog_height(height)))
+    }
 }
 
 /// The narrowest the list gets beside a reading pane (T232): canvas 1b's
@@ -575,5 +665,69 @@ mod tests {
         for command in FOLDED {
             assert!(OPEN_TOOLBAR.iter().any(|verb| verb.command == command));
         }
+    }
+
+    // The Mac's numbers (specs/009-focus-macos M1), beside Linux's, from the
+    // same `Geometry`: both platforms asserted from either host, because a
+    // gate that runs one platform cannot see the other's answer
+    // (docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md).
+
+    #[test]
+    fn linux_geometry_is_the_free_functions() {
+        let linux = Geometry::for_platform(Platform::Freedesktop);
+        for window in [500, 800, 1024, 1280, 1440, 1920] {
+            assert_eq!(linux.dialog_width(window), dialog_width(window));
+            assert_eq!(linux.dialog_height(window), dialog_height(window));
+            let dialog = linux.dialog_width(window);
+            assert_eq!(linux.folds_into_more(dialog), folds_into_more(dialog));
+            for treatment in [Treatment::AppColours, Treatment::Paper] {
+                assert_eq!(
+                    linux.column_width(dialog, treatment),
+                    column_width(dialog, treatment)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_mac_window_is_at_most_720() {
+        let mac = Geometry::for_platform(Platform::Apple);
+        // The pack draws 1024 as 656: its formula, 655.36, rounded up. We
+        // round to the nearest pixel, as Linux does; the 1px is listed in the
+        // phase-3 comparison.
+        assert_eq!(mac.dialog_width(1024), 655);
+        assert_eq!(mac.dialog_width(1280), 720);
+        assert_eq!(mac.dialog_width(1440), 720);
+        assert_eq!(mac.dialog_width(1920), 720);
+        assert_eq!(mac.dialog_width(800), 640);
+        assert_eq!(mac.dialog_height(900), 820);
+    }
+
+    #[test]
+    fn the_mac_columns_are_560_and_640_less_80() {
+        let mac = Geometry::for_platform(Platform::Apple);
+        assert_eq!(mac.column_width(720, Treatment::AppColours), 560);
+        assert_eq!(mac.column_width(720, Treatment::Paper), 640);
+        assert_eq!(mac.column_width(655, Treatment::AppColours), 560);
+        assert_eq!(mac.column_width(655, Treatment::Paper), 575);
+        assert_eq!(mac.column_width(600, Treatment::AppColours), 520);
+    }
+
+    #[test]
+    fn the_mac_folds_more_below_700() {
+        let mac = Geometry::for_platform(Platform::Apple);
+        assert!(mac.folds_into_more(699));
+        assert!(!mac.folds_into_more(700));
+        assert!(!mac.folds_into_more(720));
+    }
+
+    #[test]
+    fn the_digest_window_is_the_message_window_on_the_mac_and_fixed_on_linux() {
+        let mac = Geometry::for_platform(Platform::Apple);
+        assert_eq!(mac.digest_size(1440, 900), (720, 820));
+        assert_eq!(mac.digest_size(1024, 768), (655, 688));
+        let linux = Geometry::for_platform(Platform::Freedesktop);
+        assert_eq!(linux.digest_size(1440, 900), (980, 820));
+        assert_eq!(linux.digest_size(1024, 768), (980, 820));
     }
 }
