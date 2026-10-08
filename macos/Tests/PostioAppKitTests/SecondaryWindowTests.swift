@@ -49,6 +49,20 @@ struct SecondaryWindowTests {
         #expect(controller.window?.title == "Harbor", "the Window menu and VoiceOver name it")
     }
 
+    @Test func aSurfaceShorterThanTheMessageWindowKeepsItsOwnHeightCentred() {
+        // Capture (screen 25) is a form, not a page to read: it is as tall
+        // as it asks, centred on the main window like the others, and
+        // never taller than the message window would be.
+        let (controller, _) = Self.controller()
+        let main = Self.main()
+        controller.show(.capture, content: NSView(), width: 660, height: 600, title: "", over: main)
+        #expect(controller.window?.frame == NSRect(x: 490, y: 250, width: 660, height: 600))
+
+        let (tall, _) = Self.controller()
+        tall.show(.capture, content: NSView(), width: 660, height: 2000, title: "", over: main)
+        #expect(tall.window?.frame.height == 820)
+    }
+
     @Test func itIsAChildOfTheMainWindowAndNeverMinimisesToTheDock() {
         let (controller, _) = Self.controller()
         let main = Self.main()

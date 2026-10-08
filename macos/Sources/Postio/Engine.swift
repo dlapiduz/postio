@@ -119,6 +119,7 @@ final class Engine {
             filtered = FilteredModel(engine: session)
             digest = DigestModel(engine: session, source: session)
             ruleSheet = RuleSheetModel(engine: session)
+            capture = CaptureModel(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -256,6 +257,8 @@ final class Engine {
     /// is what a menu greys against.
     var mainContext: UiContext {
         if commandBar?.isOpen == true { return .search }
+        if capture?.isOpen == true { return .capture }
+        if digest?.isOpen == true { return .digest }
         if filtered?.isOpen == true { return .filtered }
         return .list
     }
@@ -509,6 +512,10 @@ final class Engine {
     /// A secondary window closed, however it did: tell the engine, which
     /// sends the keyboard home.
     private func secondaryClosed(_ kind: SurfaceKindFfi) {
+        if kind == .capture {
+            if capture?.closedByToolkit() == true { session?.focusSurfaceClosed(.capture) }
+            return
+        }
         if kind == .digest {
             digestChrome = nil
             // Only a close the toolkit made -- the close button, ⌘W -- is
@@ -645,6 +652,34 @@ final class Engine {
             break
         case .close:
             ruleSheetWindow.close()
+        }
+    }
+
+    // MARK: capture (T116)
+
+    /// Capture, as the controller's intents leave it.
+    private(set) var capture: CaptureModel?
+
+    /// How tall capture's window is: screen 25's, a form rather than a page.
+    private static let captureHeight: CGFloat = 620
+
+    /// What the controller said about capture.
+    private func apply(_ change: CaptureModel.Change) {
+        switch change {
+        case .open:
+            guard let model = capture, let main = mainWindow else { return }
+            let hosting = NSHostingView(
+                rootView: CaptureView(model: model).preferredColorScheme(colorScheme))
+            hosting.sizingOptions = []
+            // A secondary window (M4): it replaces the message or digest
+            // window it was opened from.
+            secondary.show(
+                .capture, content: hosting, width: CaptureView.width, height: Self.captureHeight,
+                title: model.view?.field ?? "", over: main)
+        case .redraw:
+            break
+        case .close:
+            secondary.close(.capture)
         }
     }
 
@@ -966,6 +1001,12 @@ final class Engine {
         // The digest-this-sender sheet (T115): `FocusOpenRule`, every
         // `FocusRule`, and `FocusCloseSurface(.dialog)`.
         if let change = ruleSheet?.apply(event) {
+            apply(change)
+            return
+        }
+        // Capture (T116): `FocusOpenCapture`, every `FocusCapture`, and
+        // `FocusCloseSurface(.capture)`.
+        if let change = capture?.apply(event) {
             apply(change)
             return
         }

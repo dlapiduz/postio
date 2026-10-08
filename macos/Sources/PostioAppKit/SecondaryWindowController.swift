@@ -71,9 +71,11 @@ public final class SecondaryWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Where a window `width` wide goes over `parent`: centred both ways,
-    /// the parent's height less `heightInset`.
-    public static func placed(width: CGFloat, over parent: NSRect) -> NSRect {
-        let height = max(minimumHeight, parent.height - heightInset)
+    /// the parent's height less `heightInset`, or `height` when the surface
+    /// asks for less (capture, a form rather than a page to read).
+    public static func placed(width: CGFloat, height wanted: CGFloat? = nil, over parent: NSRect) -> NSRect {
+        let tallest = max(minimumHeight, parent.height - heightInset)
+        let height = wanted.map { min($0, tallest) } ?? tallest
         return NSRect(
             x: (parent.midX - width / 2).rounded(),
             y: (parent.midY - height / 2).rounded(),
@@ -84,25 +86,26 @@ public final class SecondaryWindowController: NSObject, NSWindowDelegate {
     /// Show `content` as `kind` over `parent`: in the open window when it
     /// is the same kind (its frame kept), else in a new one `width` wide.
     public func show(
-        _ kind: SurfaceKindFfi, content: NSView, width: CGFloat, title: String,
-        over parent: NSWindow, configure: ((NSWindow) -> Void)? = nil
+        _ kind: SurfaceKindFfi, content: NSView, width: CGFloat, height: CGFloat? = nil,
+        title: String, over parent: NSWindow, configure: ((NSWindow) -> Void)? = nil
     ) {
         if let window, self.kind == kind {
             window.contentView = content
             window.title = title
             return
         }
+        let frame = { Self.placed(width: width, height: height, over: parent.frame) }
         if let open = self.kind { close(open) }
 
         let window = NSWindow(
-            contentRect: Self.placed(width: width, over: parent.frame),
+            contentRect: frame(),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: true)
         // ARC owns it. AppKit's default releases a window on close as well,
         // and the second release is a crash the next time it is touched.
         window.isReleasedWhenClosed = false
-        window.setFrame(Self.placed(width: width, over: parent.frame), display: false)
+        window.setFrame(frame(), display: false)
         window.title = title
         window.contentView = content
         window.delegate = self
@@ -112,7 +115,7 @@ public final class SecondaryWindowController: NSObject, NSWindowDelegate {
         // Again: a toolbar `configure` added keeps the content's size and
         // grows the window by its own height (the message window's title
         // area is one), and the frame is the geometry's, not the content's.
-        window.setFrame(Self.placed(width: width, over: parent.frame), display: false)
+        window.setFrame(frame(), display: false)
 
         self.window = window
         self.kind = kind
